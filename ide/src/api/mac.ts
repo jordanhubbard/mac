@@ -42,6 +42,28 @@ export interface TaskDetail {
   publications?: Array<Record<string, unknown>>;
 }
 
+export interface DispatchReason {
+  code: string;
+  message: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface TaskDispatchExplanation {
+  task: Task;
+  task_ready: boolean;
+  dispatchable: boolean;
+  eligible_agent_count: number;
+  candidate_count: number;
+  task_reasons: DispatchReason[];
+  unclaimed_reasons: DispatchReason[];
+  candidates: Array<{
+    agent_id: string;
+    agent_name: string;
+    eligible: boolean;
+    reasons: DispatchReason[];
+  }>;
+}
+
 export interface Agent {
   id: string;
   name?: string;
@@ -327,6 +349,8 @@ export const api = {
   listTasks: (state?: string) =>
     req<Task[]>("GET", `/tasks${state ? `?state=${encodeURIComponent(state)}` : ""}`),
   getTask: (id: string) => req<TaskDetail>("GET", `/tasks/${encodeURIComponent(id)}?view=compact`),
+  explainTaskDispatch: (id: string) =>
+    req<TaskDispatchExplanation>("GET", `/tasks/${encodeURIComponent(id)}/dispatch-explain`),
   listAgents: () => req<Agent[]>("GET", "/agents"),
   listCommunicationIdentities: () =>
     req<CommunicationIdentity[]>("GET", "/communication/identities"),

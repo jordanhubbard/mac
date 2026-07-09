@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 from mac.env_config import (
+    ENV_VARS,
+    EnvVar,
+    MAC_API_ALLOW_OPEN,
+    MAC_BEADS_BRIDGE_HUB_AGENT,
+    environment_catalog,
     env_bool,
     env_int,
     env_str,
@@ -51,3 +60,33 @@ def test_resolve_hub_agent_ignores_removed_beads_var():
     # A current var resolves normally.
     e2 = {"MAC_REVIEW_TICK_HUB_AGENT": "rocky"}
     assert resolve_hub_agent("MAC_REVIEW_TICK_HUB_AGENT", environ=e2) == "rocky"
+
+
+def test_generated_registry_exports_typed_named_accessors():
+    assert len(ENV_VARS) >= 200
+    assert isinstance(MAC_API_ALLOW_OPEN, EnvVar)
+    assert MAC_API_ALLOW_OPEN.kind == "bool"
+    assert MAC_API_ALLOW_OPEN(environ={"MAC_API_ALLOW_OPEN": "yes"}) is True
+    assert ENV_VARS["MAC_API_URL"](environ={"MAC_API_URL": " http://hub:8789 "}) == "http://hub:8789"
+    assert environment_catalog() == sorted(environment_catalog(), key=lambda item: item.name)
+
+
+def test_retired_registry_entry_is_documented_but_never_resolved():
+    assert MAC_BEADS_BRIDGE_HUB_AGENT.retired is True
+    assert (
+        MAC_BEADS_BRIDGE_HUB_AGENT(environ={"MAC_BEADS_BRIDGE_HUB_AGENT": "stale"})
+        is None
+    )
+    assert MAC_BEADS_BRIDGE_HUB_AGENT not in environment_catalog(include_retired=False)
+
+
+def test_generated_registry_and_reference_are_current():
+    root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [sys.executable, "scripts/generate-env-config-registry.py", "--check"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr

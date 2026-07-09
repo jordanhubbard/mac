@@ -76,6 +76,7 @@ class StrEnum(str, Enum):
 
 class TaskState(StrEnum):
     OPEN = "open"
+    WAITING = "waiting"
     BLOCKED = "blocked"
     CLAIMED = "claimed"
     RUNNING = "running"
@@ -132,17 +133,26 @@ def metadata_declares_report_deliverable(metadata: Any) -> bool:
 
 TASK_TRANSITIONS = {
     TaskState.OPEN.value: {
+        TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.CLAIMED.value,
         TaskState.CANCELLED.value,
         TaskState.FAILED.value,
     },
+    TaskState.WAITING.value: {
+        TaskState.OPEN.value,
+        TaskState.BLOCKED.value,
+        TaskState.CANCELLED.value,
+        TaskState.FAILED.value,
+    },
     TaskState.BLOCKED.value: {
         TaskState.OPEN.value,
+        TaskState.WAITING.value,
         TaskState.CANCELLED.value,
         TaskState.FAILED.value,
     },
     TaskState.CLAIMED.value: {
+        TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.OPEN.value,
         TaskState.RUNNING.value,
@@ -150,6 +160,7 @@ TASK_TRANSITIONS = {
         TaskState.CANCELLED.value,
     },
     TaskState.RUNNING.value: {
+        TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.NEEDS_REVIEW.value,
         TaskState.OPEN.value,
@@ -157,6 +168,7 @@ TASK_TRANSITIONS = {
         TaskState.CANCELLED.value,
     },
     TaskState.NEEDS_REVIEW.value: {
+        TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.REVIEWING.value,
         TaskState.RUNNING.value,
@@ -164,6 +176,7 @@ TASK_TRANSITIONS = {
         TaskState.CANCELLED.value,
     },
     TaskState.REVIEWING.value: {
+        TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.OPEN.value,
         TaskState.RUNNING.value,

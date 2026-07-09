@@ -829,6 +829,7 @@ def _assessment(
     )
     replacement_active = _text(replacement.get("state")) in {
         "open",
+        "waiting",
         "blocked",
         "claimed",
         "running",
@@ -925,6 +926,31 @@ def _assessment(
             findings.append("failed_work_remains_unsuperseded")
             verdict = "needs_review"
             action = "repair_root_cause_and_reopen_or_cancel_with_replacement"
+    elif state == "waiting":
+        incomplete = int(dependencies.get("incomplete_count") or 0)
+        dependency_count = int(dependencies.get("count") or 0)
+        if integrated:
+            findings.append("waiting_task_work_is_on_canonical_branch")
+            verdict = "contradiction"
+            action = "reconcile_waiting_task_as_completed"
+        elif not dependency_count:
+            findings.append("waiting_without_dependencies")
+            verdict = "contradiction"
+            action = "reopen_invalid_waiting_task"
+        elif incomplete == 0:
+            findings.append("waiting_with_all_dependencies_completed")
+            verdict = "contradiction"
+            action = "reopen_stranded_waiting_task"
+        elif int(dependencies.get("terminal_blocker_count") or 0):
+            findings.append("waiting_on_failed_cancelled_or_missing_dependency")
+            verdict = "contradiction"
+            action = "repair_terminal_dependency_or_cancel_with_replacement"
+        elif int(dependencies.get("cycle_count") or 0):
+            findings.append("waiting_dependency_cycle")
+            verdict = "contradiction"
+            action = "break_dependency_cycle"
+        else:
+            verdict = "active_valid"
     elif state == "blocked":
         incomplete = int(dependencies.get("incomplete_count") or 0)
         dependency_count = int(dependencies.get("count") or 0)
@@ -951,7 +977,9 @@ def _assessment(
             verdict = "contradiction"
             action = "reopen_stranded_blocked_task"
         elif dependency_count and incomplete:
-            verdict = "active_valid"
+            findings.append("actionable_block_also_has_incomplete_dependencies")
+            verdict = "needs_review"
+            action = "separate_blocker_from_dependency_wait"
         elif not entry_reason:
             findings.append("blocked_without_reason_or_incomplete_dependency")
             verdict = "contradiction"

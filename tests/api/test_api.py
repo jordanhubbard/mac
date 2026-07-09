@@ -639,7 +639,8 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert {item["id"] for item in work_context["tasks"]} == {dependency["id"], task["id"]}
     assert work_context["projects"][0]["project"] == "nanolang"
     assert work_context["projects"][0]["task_count"] == 2
-    assert work_context["projects"][0]["blocked_count"] == 1
+    assert work_context["projects"][0]["blocked_count"] == 0
+    assert work_context["projects"][0]["waiting_count"] == 1
     assert work_context["agents"][0]["hermes_instance_id"] == hermes["id"]
     assert work_context["agents"][0]["active_task_ids"] == [dependency["id"]]
     assert work_context["relationships"]["task_dependencies"][0]["task_id"] == task["id"]
@@ -675,7 +676,8 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert projects[0]["task_count"] == 2
     project_detail = client.get("/projects/nanolang").json()
     assert project_detail["project"] == "nanolang"
-    assert project_detail["summary"]["blocked_count"] == 1
+    assert project_detail["summary"]["blocked_count"] == 0
+    assert project_detail["summary"]["waiting_count"] == 1
     assert {item["id"] for item in project_detail["tasks"]} == {dependency["id"], task["id"]}
     created_project = client.post(
         "/projects",
@@ -2102,7 +2104,7 @@ def test_dashboard_workflow_planner_previews_and_accepts_task_chain():
     second = cp.get_task(second_id).to_dict()
     assert first["state"] == "open"
     assert second["title"] == "Implement edited c26 desktop"
-    assert second["state"] == "blocked"
+    assert second["state"] == "waiting"
     assert second["dependencies"] == [first_id]
     assert second["metadata"]["origin"] == {
         "type": "dashboard_workflow_plan",
@@ -2168,7 +2170,7 @@ def test_tasks_expose_lifecycle_timestamps_and_child_relationships():
     ).json()
     child_ids = [child["id"] for child in split["children"]]
 
-    assert split["parent"]["state"] == "blocked"
+    assert split["parent"]["state"] == "waiting"
     assert split["parent"]["owner_agent_id"] is None
     assert split["parent"]["lease_id"] is None
     assert split["parent"]["dependencies"] == child_ids
@@ -2184,7 +2186,7 @@ def test_tasks_expose_lifecycle_timestamps_and_child_relationships():
     assert first_child["metadata"]["coordination"]["plan_node_id"] == "parser"
     second_child = split["children"][1]
     assert second_child["dependencies"] == [first_child["id"]]
-    assert second_child["state"] == "blocked"
+    assert second_child["state"] == "waiting"
     assert second_child["metadata"]["coordination"]["depends_on_nodes"] == ["parser"]
 
     detail = client.get("/tasks/%s" % parent["id"]).json()
@@ -2292,7 +2294,8 @@ def test_dashboard_models_large_swarm_by_project_and_limits_dispatch_candidates(
 
     nanolang = next(project for project in state["project_summaries"] if project["project"] == "nanolang")
     assert nanolang["ready_count"] == 1
-    assert nanolang["blocked_count"] == 2
+    assert nanolang["blocked_count"] == 1
+    assert nanolang["waiting_count"] == 1
     assert nanolang["cross_project_dependency_count"] == 1
     assert nanolang["frontier_tasks"][0]["id"] == story["id"]
     manual_waiting = next(item for item in nanolang["waiting_tasks"] if item["id"] == manual_block["id"])

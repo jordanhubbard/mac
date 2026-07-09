@@ -63,7 +63,7 @@ class FakeTarget:
             "description": kwargs.get("description", ""),
             "project": kwargs.get("project"),
             "priority": kwargs.get("priority", 0),
-            "state": "blocked" if kwargs.get("dependencies") else "open",
+            "state": "waiting" if kwargs.get("dependencies") else "open",
             "required_capabilities": kwargs.get("required_capabilities") or [],
             "dependencies": kwargs.get("dependencies") or [],
             "metadata": kwargs.get("metadata") or {},
@@ -498,7 +498,7 @@ def test_archive_failure_restores_active_source_database(tmp_path, monkeypatch):
     conn = sqlite3.connect(source)
     try:
         assert conn.execute(
-            "SELECT COUNT(*) FROM tasks WHERE state IN ('open', 'blocked')"
+            "SELECT COUNT(*) FROM tasks WHERE state IN ('open', 'waiting', 'blocked')"
         ).fetchone()[0] == 2
     finally:
         conn.close()
@@ -534,7 +534,7 @@ def test_manifest_is_verified_before_source_removal_and_failure_restores(
     conn = sqlite3.connect(source)
     try:
         assert conn.execute(
-            "SELECT COUNT(*) FROM tasks WHERE state IN ('open', 'blocked')"
+            "SELECT COUNT(*) FROM tasks WHERE state IN ('open', 'waiting', 'blocked')"
         ).fetchone()[0] == 2
     finally:
         conn.close()

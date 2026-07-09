@@ -176,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks (owner_agent_id);
 CREATE OR REPLACE FUNCTION trg_tasks_state_enum() RETURNS trigger AS $$
 BEGIN
     IF NEW.state NOT IN (
-        'open', 'blocked', 'claimed', 'running',
+        'open', 'waiting', 'blocked', 'claimed', 'running',
         'needs_review', 'reviewing', 'completed',
         'failed', 'cancelled'
     ) THEN

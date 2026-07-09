@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import os
 from types import SimpleNamespace
 
 import pytest
@@ -168,18 +167,9 @@ def test_dashboard_agent_and_dispatch_reason_matrix(monkeypatch) -> None:
         "degraded",
         "at capacity",
     }
-    reasons = api._dashboard_dispatch_reasons(cp, agent, task, machine)
-    assert set(reasons) >= {
-        "agent status is offline",
-        "agent health is degraded",
-        "machine is not trusted",
-        "agent is at capacity",
-        "machine tenant policy blocks task",
-        "resources do not satisfy task",
-        "runtime digest mismatch",
-        "missing capabilities: gpu",
-    }
-    assert "agent machine is missing" in api._dashboard_dispatch_reasons(cp, agent, task, None)
+    # Pair-specific dispatch reasons are now owned by
+    # ControlPlane.explain_task_dispatch and covered at that public boundary;
+    # this helper only owns the agent-card summary above.
 
 
 def test_service_url_status_and_ticket_helpers(monkeypatch) -> None:

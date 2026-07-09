@@ -470,6 +470,17 @@ def test_task_ready_scopes_to_cwd_project(tmp_path, monkeypatch):
     assert {"alpha", "beta"} <= {t["project"] for t in everything}
 
 
+def test_task_why_unclaimed_reports_authoritative_reason(tmp_path):
+    rc, task = _run(tmp_path, "task", "create", "Explain unclaimed")
+    assert rc == 0
+    rc, explanation = _run(tmp_path, "task", "why-unclaimed", task["id"])
+    assert rc == 0
+    assert explanation["task"]["id"] == task["id"]
+    assert explanation["task_ready"] is True
+    assert explanation["dispatchable"] is False
+    assert explanation["unclaimed_reasons"][0]["code"] == "no_agents_registered"
+
+
 def test_task_search_scopes_to_cwd_project(tmp_path, monkeypatch):
     _run(tmp_path, "task", "create", "searchable alpha", "--project", "alpha")
     _run(tmp_path, "task", "create", "searchable beta", "--project", "beta")

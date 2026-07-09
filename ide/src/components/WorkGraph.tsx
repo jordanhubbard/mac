@@ -18,7 +18,7 @@ type TaskNodeData = {
   onInspect: (taskId: string) => void;
 };
 
-const STAGES = ["Intake", "Build", "Review", "Blocked"] as const;
+const STAGES = ["Intake", "Waiting", "Build", "Review", "Blocked"] as const;
 const MAX_VISIBLE_NODES = 25;
 const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
 
@@ -27,18 +27,20 @@ function stageIndex(state?: string): number {
     case "open":
     case "ready":
       return 0;
+    case "waiting":
+      return 1;
     case "claimed":
     case "running":
     case "in_progress":
-      return 1;
+      return 2;
     case "needs_review":
     case "reviewing":
     case "in_review":
-      return 2;
-    case "blocked":
       return 3;
+    case "blocked":
+      return 4;
     default:
-      return 1;
+      return 2;
   }
 }
 

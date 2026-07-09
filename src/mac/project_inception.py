@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.models import ReviewStatus, Task, TaskState
@@ -517,9 +517,11 @@ def _complete_task(
     project_path: str = "~/Src/c26",
     extra_metadata: Optional[JsonDict] = None,
 ) -> Task:
-    if task.state == TaskState.BLOCKED.value:
-        task = cp.claim_task(task.id, worker.id)[0]
-    elif task.state == TaskState.OPEN.value:
+    if task.state in {
+        TaskState.OPEN.value,
+        TaskState.WAITING.value,
+        TaskState.BLOCKED.value,
+    }:
         task = cp.claim_task(task.id, worker.id)[0]
     if task.state == TaskState.CLAIMED.value:
         task = cp.start_task(task.id, worker.id)

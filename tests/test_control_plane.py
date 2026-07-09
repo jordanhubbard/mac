@@ -3996,7 +3996,7 @@ def test_dependencies_block_until_parent_completes(cp):
     parent = cp.create_task("Parent", required_capabilities=["python"])
     child = cp.create_task("Child", required_capabilities=["python"], dependencies=[parent.id])
 
-    assert child.state == TaskState.BLOCKED.value
+    assert child.state == TaskState.WAITING.value
     finish_task(cp, parent, worker, reviewer)
     tick = cp.tick()
 
@@ -10461,7 +10461,7 @@ def test_reopen_task_recovers_blocked_task(cp):
     assert reopened.state == TaskState.OPEN.value
 
 
-def test_blocked_transitions_require_reason_and_dependency_updates_record_one(cp):
+def test_blocked_transitions_require_reason_and_dependency_updates_use_waiting(cp):
     dependency = cp.create_task("dependency")
     task = cp.create_task("blocked ledger contract")
 
@@ -10469,11 +10469,10 @@ def test_blocked_transitions_require_reason_and_dependency_updates_record_one(cp
         cp.transition_task(task.id, TaskState.BLOCKED.value, "worker", {})
 
     updated = cp.update_task(task.id, dependencies=[dependency.id], actor="worker")
-    assert updated.state == TaskState.BLOCKED.value
+    assert updated.state == TaskState.WAITING.value
     event = cp.task_history(task.id)[-1]
-    assert event.to_state == TaskState.BLOCKED.value
-    assert event.detail["reason"] == "waiting_on_dependencies"
-    assert event.detail["blocked_by_task_ids"] == [dependency.id]
+    assert event.to_state == TaskState.WAITING.value
+    assert event.detail["dependencies"] == [dependency.id]
 
 
 def test_force_complete_overrides_review_gate_for_stranded_task(cp):
@@ -11039,7 +11038,7 @@ def test_hub_verify_repo_info_accepts_deferred_test_evidence(cp):
     executor evidence carries a deferred test item and repo.pushed=True,
     so hub verify can run the contract test on behalf of the executor."""
     worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
+    register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
         "task",
         required_capabilities=["python"],

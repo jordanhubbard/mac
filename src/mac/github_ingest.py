@@ -43,7 +43,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -485,6 +485,7 @@ class GitHubIssueIngestor:
             return frozenset(
                 {
                     TaskState.OPEN.value,
+                    TaskState.WAITING.value,
                     TaskState.BLOCKED.value,
                     TaskState.CLAIMED.value,
                     TaskState.RUNNING.value,
@@ -496,6 +497,7 @@ class GitHubIssueIngestor:
             return frozenset(
                 {
                     "open",
+                    "waiting",
                     "blocked",
                     "claimed",
                     "running",

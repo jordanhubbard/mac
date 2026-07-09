@@ -606,7 +606,71 @@ def _failure_diagnosis(target_state: str, detail: Optional[Dict[str, Any]]) -> O
             "Task %s: %s" % (target_state, reason or problems_text or error),
             "Inspect the task evidence + history (`mac task show`) and the agent workspace logs for the root cause.",
         )
-    return None
+    return note(
+        "Task %s without a more specific failure description." % target_state,
+        "Inspect the task evidence and history; repair the producer that omitted failure context before retrying.",
+    )
+
+
+_DIAG_SECRET_RE = re.compile(
+    r"(?i)(\b(?:authorization|bearer|token|password|secret|api[_-]?key)\b\s*[:=]?\s*)([^\s,;]+)"
+)
+_DIAG_URL_AUTH_RE = re.compile(r"(https?://)([^/@\s]+)@", re.IGNORECASE)
+_DIAG_KNOWN_TOKEN_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|sk-[A-Za-z0-9_-]{12,})\b")
+
+
+def _diagnostic_output_tail(detail: Mapping[str, Any]) -> Tuple[str, str]:
+    """Return a bounded, secret-redacted output tail or an explicit absence reason."""
+    values: List[str] = []
+    for key in (
+        "output_tail",
+        "stderr_tail",
+        "stdout_tail",
+        "stderr",
+        "stdout",
+        "output",
+        "log_tail",
+        "logs",
+    ):
+        value = detail.get(key)
+        if value not in (None, "", [], {}):
+            values.append(str(value))
+    if not values:
+        return "", "transition supplied no stdout, stderr, output, log, or tail field"
+    text = "\n".join(values).replace("\x00", "")
+    text = _DIAG_URL_AUTH_RE.sub(r"\1<redacted>@", text)
+    text = _DIAG_SECRET_RE.sub(r"\1<redacted>", text)
+    text = _DIAG_KNOWN_TOKEN_RE.sub("<redacted>", text)
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines[-20:])[-4000:], ""
+
+
+def _structured_failure_diagnosis(
+    target_state: str,
+    detail: Mapping[str, Any],
+    *,
+    actor: str,
+    attempt_count: int,
+) -> Optional[JsonDict]:
+    summary = _failure_diagnosis(target_state, dict(detail))
+    if not summary:
+        return None
+    problem = summary
+    remediation = "Inspect the task evidence and history for the root cause."
+    if "\nRemediation:" in summary:
+        problem, remediation = summary.split("\nRemediation:", 1)
+    problem = problem.removeprefix("Problem:").strip()
+    output_tail, unavailable = _diagnostic_output_tail(detail)
+    record: JsonDict = {
+        "actor": str(actor or "unknown"),
+        "attempt": max(0, int(attempt_count)),
+        "failure": str(detail.get("reason") or detail.get("failure_class") or target_state),
+        "problem": problem,
+        "remediation": remediation.strip(),
+        "output_tail": output_tail,
+        "output_tail_unavailable_reason": unavailable,
+    }
+    return record
 
 
 def _safe_slug(value: str) -> str:
@@ -1317,6 +1381,137 @@ class ControlPlane:
         self._advance_queue: Optional[Any] = None
         self._advance_queued: set = set()
         self._advance_state_lock = threading.Lock()
+        self._reconcile_legacy_task_state_semantics()
+
+    def _reconcile_legacy_task_state_semantics(self) -> None:
+        """One-way repair for ledgers written before WAITING/diagnosis existed.
+
+        Pure dependency blocks become WAITING. Actionable blocks remain BLOCKED
+        and receive an atomic structured diagnosis/history activity when their
+        original transition did not have one. The operation is idempotent.
+        """
+        rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE state = ? ORDER BY created_at, id",
+            (TaskState.BLOCKED.value,),
+        )
+        if not rows:
+            return
+        migrated = 0
+        diagnosed = 0
+        now = utcnow()
+        with self.store.transaction() as conn:
+            for row in rows:
+                task = self._task_from_row(row)
+                history_row = conn.execute(
+                    """
+                    SELECT * FROM task_history
+                    WHERE task_id = ? AND to_state = ?
+                    ORDER BY created_at DESC, id DESC LIMIT 1
+                    """,
+                    (task.id, TaskState.BLOCKED.value),
+                ).fetchone()
+                raw_history_detail = history_row["detail"] if history_row is not None else {}
+                history_detail = ensure_json_object(
+                    raw_history_detail
+                    if isinstance(raw_history_detail, Mapping)
+                    else json_loads(raw_history_detail, {})
+                )
+                reason = str(history_detail.get("reason") or "").strip()
+                manual = history_detail.get("manual_repair_required") is True
+                if task.dependencies and not manual and reason in {
+                    "",
+                    "waiting_on_dependencies",
+                    "dependencies_incomplete",
+                }:
+                    changed = conn.execute(
+                        "UPDATE tasks SET state = ?, updated_at = ? WHERE id = ? AND state = ?",
+                        (TaskState.WAITING.value, now, task.id, TaskState.BLOCKED.value),
+                    )
+                    if changed.rowcount != 1:
+                        continue
+                    self._record_history(
+                        task.id,
+                        "task.state_semantics_migrated",
+                        "control-plane-migration",
+                        TaskState.BLOCKED.value,
+                        TaskState.WAITING.value,
+                        {
+                            "reason": "waiting_on_dependencies",
+                            "blocked_by_task_ids": list(task.dependencies),
+                            "legacy_state_migration": True,
+                        },
+                        conn=conn,
+                    )
+                    migrated += 1
+                    continue
+                existing_diagnosis = history_detail.get("diagnosis")
+                if isinstance(existing_diagnosis, dict) and all(
+                    existing_diagnosis.get(key)
+                    for key in ("actor", "failure", "problem", "remediation")
+                ) and (
+                    existing_diagnosis.get("output_tail")
+                    or existing_diagnosis.get("output_tail_unavailable_reason")
+                ):
+                    continue
+                repaired_detail = dict(history_detail)
+                repaired_detail.setdefault("reason", "legacy_block_reason_unavailable")
+                if repaired_detail["reason"] == "legacy_block_reason_unavailable":
+                    repaired_detail.setdefault("manual_repair_required", True)
+                actor = str(history_row["actor"] if history_row is not None else "unknown")
+                diagnosis = _structured_failure_diagnosis(
+                    TaskState.BLOCKED.value,
+                    repaired_detail,
+                    actor=actor,
+                    attempt_count=task.attempt_count,
+                )
+                if diagnosis is None:
+                    continue
+                repaired_detail["diagnosis"] = diagnosis
+                metadata = ensure_json_object(task.metadata)
+                activity = metadata.get("activity")
+                if not isinstance(activity, list):
+                    activity = []
+                summary = _failure_diagnosis(TaskState.BLOCKED.value, repaired_detail) or diagnosis["problem"]
+                activity.append(
+                    {
+                        "phase": "diagnosis",
+                        "actor": actor,
+                        "summary": summary,
+                        "detail": diagnosis,
+                        "at": now,
+                    }
+                )
+                metadata["activity"] = activity[-24:]
+                changed = conn.execute(
+                    "UPDATE tasks SET metadata = ?, updated_at = ? "
+                    "WHERE id = ? AND state = ? AND updated_at = ?",
+                    (
+                        json_dumps(metadata),
+                        now,
+                        task.id,
+                        TaskState.BLOCKED.value,
+                        task.updated_at,
+                    ),
+                )
+                if changed.rowcount != 1:
+                    continue
+                self._record_history(
+                    task.id,
+                    "task.diagnosis_backfilled",
+                    "control-plane-migration",
+                    TaskState.BLOCKED.value,
+                    TaskState.BLOCKED.value,
+                    repaired_detail,
+                    conn=conn,
+                )
+                diagnosed += 1
+        if migrated or diagnosed:
+            self.record_log(
+                "task.state_semantics.migrated",
+                layer="control_plane",
+                source="control-plane-migration",
+                detail={"waiting_migrated": migrated, "diagnoses_backfilled": diagnosed},
+            )
 
     def enable_event_driven_review_advance(self) -> None:
         """Start the review-advance nudge consumer (idempotent).
@@ -2504,6 +2699,7 @@ class ControlPlane:
                     "active_count": 0,
                     "ready_count": 0,
                     "held_count": 0,
+                    "waiting_count": 0,
                     "blocked_count": 0,
                     "review_count": 0,
                     "completed_count": 0,
@@ -2600,6 +2796,10 @@ class ControlPlane:
                 item["ready_count"] += 1
                 if len(item["frontier_tasks"]) < 10:
                     item["frontier_tasks"].append(compact)
+            elif task.state == TaskState.WAITING.value:
+                item["waiting_count"] += 1
+                if len(item["waiting_tasks"]) < 10:
+                    item["waiting_tasks"].append({**compact, "waiting_on": waiting_on[:8]})
             elif task.state == TaskState.BLOCKED.value:
                 item["blocked_count"] += 1
                 if len(item["waiting_tasks"]) < 10:
@@ -2608,7 +2808,7 @@ class ControlPlane:
                         blocked["waiting_on"] = waiting_on[:8]
                     item["waiting_tasks"].append(blocked)
             elif task.state == TaskState.OPEN.value and waiting_on:
-                item["blocked_count"] += 1
+                item["waiting_count"] += 1
                 if len(item["waiting_tasks"]) < 10:
                     item["waiting_tasks"].append({**compact, "waiting_on": waiting_on[:8]})
             elif task.state in {
@@ -3443,7 +3643,7 @@ class ControlPlane:
             raise ValidationError(
                 "workflow-linked task creation requires both run id and node key"
             )
-        state = TaskState.BLOCKED.value if dep_ids else TaskState.OPEN.value
+        state = TaskState.WAITING.value if dep_ids else TaskState.OPEN.value
         self._reject_reserved_break_glass_metadata(ensure_json_object(metadata))
         task_capabilities, task_metadata = self._apply_project_task_defaults(
             project,
@@ -3540,8 +3740,6 @@ class ControlPlane:
                             else None
                         ),
                     }
-                    if state == TaskState.BLOCKED.value:
-                        creation_detail = _normalize_blocked_detail(creation_detail)
                     self._record_history(
                         task_id,
                         "task.created",
@@ -3977,6 +4175,154 @@ class ControlPlane:
                 break
         return out
 
+    @staticmethod
+    def _dispatch_reason(code: str, **detail: Any) -> JsonDict:
+        messages = {
+            "task_state_not_open": "task is not in the open state",
+            "task_dispatch_held": "task is staged with no_dispatch",
+            "project_dispatch_paused": "project autonomous dispatch is paused",
+            "dependencies_incomplete": "one or more task dependencies are incomplete",
+            "task_already_owned": "task already has an owner or lease",
+            "no_agents_registered": "no agents are registered with the hub",
+            "no_eligible_agent": "no registered agent satisfies every dispatch constraint",
+            "awaiting_dispatch": "at least one agent is eligible; task is awaiting the next dispatch pass",
+            "break_glass_agent_mismatch": "break-glass authorization targets another agent",
+            "agent_dispatch_held": "agent dispatch is held",
+            "agent_status_unavailable": "agent status is not dispatchable",
+            "agent_health_unavailable": "agent health is not healthy",
+            "cooperative_distinct_agent_excluded": "agent already participated in this cooperative task family",
+            "target_agent_id_mismatch": "task targets a different agent id",
+            "target_agent_name_mismatch": "task targets a different agent name",
+            "runtime_digest_mismatch": "agent runtime digest does not match the task requirement",
+            "agent_machine_missing": "agent machine record is missing",
+            "machine_untrusted": "agent machine is not trusted",
+            "agent_capacity_full": "agent has no free execution capacity",
+            "machine_tenant_not_allowed": "machine tenant policy rejects the task",
+            "agent_resources_insufficient": "agent hardware resources do not satisfy the task",
+            "repository_commands_missing": "required repository commands are unavailable in the sandbox",
+            "required_role_unknown": "task requires an unknown role",
+            "agent_role_unknown": "agent is bound to an unknown role",
+            "required_role_mismatch": "agent role does not match the task role",
+            "required_role_capabilities_missing": "dispatcher lacks capabilities required by the task role",
+            "role_hardware_insufficient": "agent hardware does not satisfy its role",
+            "role_not_accepted_by_soul": "agent persona does not accept the required role",
+            "capabilities_missing": "agent capabilities do not satisfy the task",
+            "break_glass_authorized": "exact-agent break-glass authorization permits dispatch",
+            "matched": "agent satisfies every dispatch constraint",
+        }
+        item: JsonDict = {"code": code, "message": messages.get(code, code.replace("_", " "))}
+        if detail:
+            item["detail"] = detail
+        return item
+
+    def _task_dispatch_gate_reasons(self, task: Task) -> List[JsonDict]:
+        reasons: List[JsonDict] = []
+        if task.state != TaskState.OPEN.value:
+            reasons.append(self._dispatch_reason("task_state_not_open", state=task.state))
+        authorization = self._active_break_glass_authorization(task.id)
+        if authorization is None and self._task_dispatch_held(task):
+            reasons.append(self._dispatch_reason("task_dispatch_held"))
+        if authorization is None and self._project_dispatch_paused(task.project):
+            reasons.append(self._dispatch_reason("project_dispatch_paused", project=task.project))
+        incomplete: List[JsonDict] = []
+        for dependency_id in task.dependencies:
+            try:
+                dependency = self.get_task(dependency_id)
+                dependency_state = dependency.state
+            except NotFoundError:
+                dependency_state = "missing"
+            if dependency_state != TaskState.COMPLETED.value:
+                incomplete.append({"task_id": dependency_id, "state": dependency_state})
+        if incomplete:
+            reasons.append(self._dispatch_reason("dependencies_incomplete", dependencies=incomplete))
+        if task.owner_agent_id or task.lease_id:
+            reasons.append(
+                self._dispatch_reason(
+                    "task_already_owned",
+                    owner_agent_id=task.owner_agent_id,
+                    lease_id=task.lease_id,
+                )
+            )
+        return reasons
+
+    def explain_task_dispatch(
+        self,
+        task_id: Any,
+        *,
+        agents: Optional[Iterable[Agent]] = None,
+        candidate_limit: int = 60,
+        record_observation: bool = False,
+    ) -> JsonDict:
+        """Return the authoritative reason a task is or is not dispatchable.
+
+        The dispatcher, CLI, API, and dashboard all use the same task gates and
+        the same agent-pair predicate.  Reason codes are stable for automation;
+        messages are operator-facing descriptions.
+        """
+        task = task_id if isinstance(task_id, Task) else self.get_task(str(task_id))
+        task_reasons = self._task_dispatch_gate_reasons(task)
+        candidate_agents = list(agents) if agents is not None else self.list_agents()
+        candidates: List[JsonDict] = []
+        for agent in candidate_agents:
+            try:
+                eligible, code = self._agent_availability_for_task(agent, task)
+            except NotFoundError:
+                eligible, code = False, "agent_machine_missing"
+            candidate_reasons = [] if eligible else [self._dispatch_reason(code)]
+            candidates.append(
+                {
+                    "agent_id": agent.id,
+                    "agent_name": agent.name,
+                    "eligible": bool(eligible and not task_reasons),
+                    "reasons": candidate_reasons,
+                }
+            )
+        candidates.sort(key=lambda item: (not item["eligible"], item["agent_name"], item["agent_id"]))
+        eligible_count = sum(1 for item in candidates if item["eligible"])
+        if task_reasons:
+            unclaimed = list(task_reasons)
+        elif not candidate_agents:
+            unclaimed = [self._dispatch_reason("no_agents_registered")]
+        elif not eligible_count:
+            codes = sorted(
+                {
+                    str(reason["code"])
+                    for candidate in candidates
+                    for reason in candidate["reasons"]
+                }
+            )
+            unclaimed = [self._dispatch_reason("no_eligible_agent", rejected_by=codes)]
+        else:
+            unclaimed = [self._dispatch_reason("awaiting_dispatch")]
+        limit_value = max(1, int(candidate_limit))
+        result: JsonDict = {
+            "task": task.to_dict(),
+            "task_ready": not task_reasons,
+            "dispatchable": bool(eligible_count),
+            "eligible_agent_count": eligible_count,
+            "candidate_count": len(candidates),
+            "candidate_limit": limit_value,
+            "candidate_truncated": len(candidates) > limit_value,
+            "task_reasons": task_reasons,
+            "unclaimed_reasons": unclaimed,
+            "candidates": candidates[:limit_value],
+        }
+        if record_observation:
+            self.record_log(
+                "task.dispatch.explained",
+                layer="control_plane",
+                source="operator",
+                subject_type="task",
+                subject_id=task.id,
+                detail={
+                    "task_ready": result["task_ready"],
+                    "dispatchable": result["dispatchable"],
+                    "eligible_agent_count": eligible_count,
+                    "unclaimed_reason_codes": [item["code"] for item in unclaimed],
+                },
+            )
+        return result
+
     def search_tasks(
         self,
         query: str,
@@ -4078,13 +4424,15 @@ class ControlPlane:
             updates.append("dependencies = ?")
             params.append(json_dumps(dep_ids))
             detail["dependencies"] = dep_ids
-            if task.state in {TaskState.OPEN.value, TaskState.BLOCKED.value}:
-                next_state = TaskState.BLOCKED.value if dep_ids else TaskState.OPEN.value
+            if task.state in {
+                TaskState.OPEN.value,
+                TaskState.WAITING.value,
+                TaskState.BLOCKED.value,
+            }:
+                next_state = TaskState.WAITING.value if dep_ids else TaskState.OPEN.value
                 updates.append("state = ?")
                 params.append(next_state)
                 detail["state"] = next_state
-                if next_state == TaskState.BLOCKED.value:
-                    detail = _normalize_blocked_detail(detail)
         should_reconcile_metadata = metadata is not None or project is not None or required_capabilities is not None
         explicit_required_capabilities_update = required_capabilities is not None
         if required_capabilities is not None:
@@ -4150,6 +4498,7 @@ class ControlPlane:
         actor: str,
         summary: str,
         *,
+        detail: Optional[Mapping[str, Any]] = None,
         max_entries: int = 24,
     ) -> Task:
         """Append a short, human-readable entry to the task's per-task activity
@@ -4174,14 +4523,15 @@ class ControlPlane:
         activity = metadata.get("activity")
         if not isinstance(activity, list):
             activity = []
-        activity.append(
-            {
-                "phase": phase,
-                "actor": str(actor or "")[:120],
-                "summary": summary,
-                "at": utcnow(),
-            }
-        )
+        entry: JsonDict = {
+            "phase": phase,
+            "actor": str(actor or "")[:120],
+            "summary": summary,
+            "at": utcnow(),
+        }
+        if detail:
+            entry["detail"] = ensure_json_object(dict(detail))
+        activity.append(entry)
         metadata["activity"] = activity[-max_entries:]
         self.store.execute(
             "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
@@ -4237,12 +4587,13 @@ class ControlPlane:
         parent = self.get_task(task_id)
         if parent.state not in {
             TaskState.OPEN.value,
+            TaskState.WAITING.value,
             TaskState.BLOCKED.value,
             TaskState.CLAIMED.value,
             TaskState.RUNNING.value,
         }:
             raise ValidationError(
-                "child tasks can only be added to open, blocked, claimed, or running tasks"
+                "child tasks can only be added to open, waiting, blocked, claimed, or running tasks"
             )
 
         # --- Decomposition guardrails (T1) -----------------------------------
@@ -4405,7 +4756,7 @@ class ControlPlane:
                         else parent.priority
                     ),
                     "state": (
-                        TaskState.BLOCKED.value
+                        TaskState.WAITING.value
                         if child_dependencies
                         else TaskState.OPEN.value
                     ),
@@ -4482,10 +4833,6 @@ class ControlPlane:
                     "relationship": "child",
                     "dependencies": child["dependencies"],
                 }
-                if child["state"] == TaskState.BLOCKED.value:
-                    child_creation_detail = _normalize_blocked_detail(
-                        child_creation_detail
-                    )
                 self._record_history(
                     child["id"],
                     "task.created",
@@ -4520,14 +4867,15 @@ class ControlPlane:
                 (
                     json_dumps(parent_dependencies),
                     json_dumps(parent_metadata),
-                    TaskState.BLOCKED.value,
+                    TaskState.WAITING.value,
                     now,
                     parent.id,
                 ),
             )
             if parent.owner_agent_id:
                 self._set_agent_idle(parent.owner_agent_id, conn=conn)
-            detail = _normalize_blocked_detail({
+            detail = {
+                "reason": "waiting_on_dependencies",
                 "child_task_ids": child_ids,
                 "blocked_by_task_ids": parent_dependencies,
                 "released_lease_id": release_lease_id,
@@ -4539,13 +4887,13 @@ class ControlPlane:
                     }
                     for index, child in enumerate(prepared)
                 ],
-            })
+            }
             self._record_history(
                 parent.id,
                 "task.children_added",
                 actor,
                 parent.state,
-                TaskState.BLOCKED.value,
+                TaskState.WAITING.value,
                 detail,
                 conn=conn,
             )
@@ -4579,7 +4927,7 @@ class ControlPlane:
                 remaining = [dep_id for dep_id in dependent.dependencies if dep_id != task_id]
                 next_state = (
                     TaskState.OPEN.value
-                    if dependent.state == TaskState.BLOCKED.value and not remaining
+                    if dependent.state == TaskState.WAITING.value and not remaining
                     else dependent.state
                 )
                 conn.execute(
@@ -6946,6 +7294,17 @@ class ControlPlane:
         transition_detail = dict(detail or {})
         if target == TaskState.BLOCKED.value:
             transition_detail = _normalize_blocked_detail(transition_detail)
+        diagnosis_record = _structured_failure_diagnosis(
+            target,
+            transition_detail,
+            actor=actor,
+            attempt_count=task.attempt_count,
+        )
+        if diagnosis_record is not None:
+            existing_diagnosis = transition_detail.get("diagnosis")
+            if existing_diagnosis not in (None, "", {}, diagnosis_record):
+                diagnosis_record["reported_diagnosis"] = str(existing_diagnosis)[:1000]
+            transition_detail["diagnosis"] = diagnosis_record
         if target == TaskState.CANCELLED.value:
             # Resolve replacement_task_id prefix before normalization so that
             # normalize_cancellation_detail receives a canonical full ID.
@@ -7044,6 +7403,22 @@ class ControlPlane:
         updated_metadata: Optional[JsonDict] = None
         candidate_metadata = ensure_json_object(task.metadata)
         metadata_changed = False
+        if diagnosis_record is not None:
+            diagnosis_summary = _failure_diagnosis(target, detail) or diagnosis_record["problem"]
+            activity = candidate_metadata.get("activity")
+            if not isinstance(activity, list):
+                activity = []
+            activity.append(
+                {
+                    "phase": "diagnosis",
+                    "actor": str(actor or "")[:120],
+                    "summary": str(diagnosis_summary)[:1200],
+                    "detail": diagnosis_record,
+                    "at": utcnow(),
+                }
+            )
+            candidate_metadata["activity"] = activity[-24:]
+            metadata_changed = True
         if review_ready_evidence is not None:
             candidate_metadata["review_target"] = {
                 "executor_evidence_id": review_ready_evidence.id,
@@ -7053,6 +7428,7 @@ class ControlPlane:
             metadata_changed = True
         elif target in {
             TaskState.OPEN.value,
+            TaskState.WAITING.value,
             TaskState.BLOCKED.value,
             TaskState.RUNNING.value,
             TaskState.FAILED.value,
@@ -7076,6 +7452,7 @@ class ControlPlane:
         leased_until = task.leased_until
         release_lease_id = None
         if target in {
+            TaskState.WAITING.value,
             TaskState.BLOCKED.value,
             TaskState.OPEN.value,
             TaskState.NEEDS_REVIEW.value,
@@ -7154,7 +7531,12 @@ class ControlPlane:
                     (json_dumps(updated_metadata), now, task_id),
                 )
             if task.owner_agent_id and target in TERMINAL_TASK_STATES.union(
-                {TaskState.BLOCKED.value, TaskState.OPEN.value, TaskState.NEEDS_REVIEW.value}
+                {
+                    TaskState.WAITING.value,
+                    TaskState.BLOCKED.value,
+                    TaskState.OPEN.value,
+                    TaskState.NEEDS_REVIEW.value,
+                }
             ):
                 self._set_agent_idle(task.owner_agent_id, conn=conn)
             self._record_history(
@@ -7198,16 +7580,6 @@ class ControlPlane:
             return self._task_from_row(transitioned_row)
         if drain_outbox:
             self.drain_task_transition_outbox(task_id=task_id, limit=20)
-        # Self-documenting failures: on a block/fail, append a glanceable
-        # 'Problem / Remediation' note to the task's activity log so the cause +
-        # fix are visible in `mac task show`/`summary` without digging through
-        # logs. Best-effort: diagnostics must never break the transition.
-        try:
-            diagnosis = _failure_diagnosis(target, detail)
-            if diagnosis:
-                self.append_task_activity(task_id, "diagnosis", actor, diagnosis)
-        except Exception:  # noqa: BLE001 - diagnostics are advisory only
-            pass
         transitioned = self.get_task(task_id)
         return transitioned
 
@@ -7315,7 +7687,7 @@ class ControlPlane:
         task = self.get_task(task_id)
         agent = self.get_agent(agent_id)
         if (
-            task.state == TaskState.BLOCKED.value
+            task.state in {TaskState.WAITING.value, TaskState.BLOCKED.value}
             and task.dependencies
             and self._dependencies_satisfied(task)
             and not self._blocked_task_requires_manual_repair(task)
@@ -13688,6 +14060,7 @@ class ControlPlane:
             }
         if event_type == "task.transitioned" and to_state in {
             TaskState.RUNNING.value,
+            TaskState.WAITING.value,
             TaskState.BLOCKED.value,
             TaskState.NEEDS_REVIEW.value,
             TaskState.REVIEWING.value,
@@ -13719,10 +14092,13 @@ class ControlPlane:
                 continue
             detail = ensure_json_object(event.detail)
             reason = str(detail.get("reason") or "").strip()
-            return detail.get("manual_repair_required") is True or reason in {
-                "verification_contract_failed",
-                "executor_failed",
-                "worker_exception",
+            # In the current state model every non-legacy BLOCKED reason is an
+            # actionable execution/operator condition. Only the two historic
+            # dependency-wait encodings may be auto-migrated/opened here.
+            return detail.get("manual_repair_required") is True or reason not in {
+                "",
+                "waiting_on_dependencies",
+                "dependencies_incomplete",
             }
         return False
 
@@ -14028,8 +14404,8 @@ class ControlPlane:
         cursor: Optional[str] = None,
     ) -> JsonDict:
         limit_value = max(1, min(int(limit), 1000))
-        clauses = ["state = ?"]
-        params: List[Any] = [TaskState.BLOCKED.value]
+        clauses = ["state IN (?, ?)"]
+        params: List[Any] = [TaskState.WAITING.value, TaskState.BLOCKED.value]
         decoded = self._decode_scan_cursor(cursor, "blocked-tasks")
         if decoded is not None:
             updated_at, task_id = decoded
@@ -14047,11 +14423,8 @@ class ControlPlane:
         for row in rows:
             task = self._task_from_row(row)
             try:
-                if (
-                    task.dependencies
-                    and self._dependencies_satisfied(task)
-                    and not self._blocked_task_requires_manual_repair(task)
-                ):
+                manual_repair = self._blocked_task_requires_manual_repair(task)
+                if task.dependencies and self._dependencies_satisfied(task) and not manual_repair:
                     task = self._prepare_cooperative_integration_task(task)
                     unblocked.append(
                         self.transition_task(
@@ -14060,6 +14433,23 @@ class ControlPlane:
                             "dispatcher",
                             {"reason": "dependencies satisfied"},
                         )
+                    )
+                elif (
+                    task.state == TaskState.BLOCKED.value
+                    and task.dependencies
+                    and not manual_repair
+                ):
+                    # One-way compatibility migration for ledgers created
+                    # before dependency waits had their own state.
+                    self.transition_task(
+                        task.id,
+                        TaskState.WAITING.value,
+                        "dispatcher",
+                        {
+                            "reason": "waiting_on_dependencies",
+                            "blocked_by_task_ids": list(task.dependencies),
+                            "legacy_state_migration": True,
+                        },
                     )
             except Exception as exc:  # noqa: BLE001 - isolate corrupt blocked rows.
                 try:
@@ -14569,7 +14959,10 @@ class ControlPlane:
         required_runtime_digest = self._task_required_runtime_digest(task)
         if required_runtime_digest and agent.running_digest != required_runtime_digest:
             return False, "runtime_digest_mismatch"
-        machine = self.get_machine(agent.machine_id)
+        try:
+            machine = self.get_machine(agent.machine_id)
+        except NotFoundError:
+            return False, "agent_machine_missing"
         if not machine.trusted:
             return False, "machine_untrusted"
         if self._agent_active_lease_count(agent.id) >= self._agent_capacity(agent):

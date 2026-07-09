@@ -621,13 +621,13 @@ class TestLargeFixtureToChildren:
 
 
 class TestParentGatesOnChildren:
-    """Verify that a parent task blocks until all children complete.
+    """Verify that a parent task waits until all children complete.
 
     Uses ControlPlane.in_memory() so there is no external hub dependency.
     """
 
-    def test_parent_blocked_after_children_added(self):
-        """After add_child_tasks the parent must be in state=blocked."""
+    def test_parent_waiting_after_children_added(self):
+        """After add_child_tasks the parent must be in state=waiting."""
         cp = ControlPlane.in_memory()
         parent = cp.create_task(
             title="Large parent task",
@@ -642,8 +642,8 @@ class TestParentGatesOnChildren:
             ],
         )
         refreshed = cp.get_task(parent.id)
-        assert refreshed.state == TaskState.BLOCKED.value, (
-            "parent must be blocked while children are pending"
+        assert refreshed.state == TaskState.WAITING.value, (
+            "parent must be waiting while children are pending"
         )
 
     def test_children_open_after_add(self):
@@ -809,7 +809,7 @@ class TestParentGatesOnChildren:
             ids["analysis"], ids["worker"], ids["services"], ids["tests"]
         ]
         assert children[0]["state"] == TaskState.OPEN.value
-        assert all(child["state"] == TaskState.BLOCKED.value for child in children[1:])
+        assert all(child["state"] == TaskState.WAITING.value for child in children[1:])
 
         history = cp.task_history(parent.id)
         graph = next(
@@ -905,13 +905,13 @@ class TestParentGatesOnChildren:
         assert child_a_id in child_b.dependencies, (
             "Child B should depend on Child A"
         )
-        assert child_b.state == TaskState.BLOCKED.value, (
-            "Child B should be blocked until Child A completes"
+        assert child_b.state == TaskState.WAITING.value, (
+            "Child B should be waiting until Child A completes"
         )
 
         # Complete A; B should become unblocked
         cp.force_complete_task(child_a_id, "test_agent", reason="test")
         child_b_after = cp.get_task(child_b_id)
-        assert child_b_after.state in {TaskState.OPEN.value, TaskState.BLOCKED.value}, (
-            "Child B state after A completes should be open or blocked (outbox may not have drained)"
+        assert child_b_after.state in {TaskState.OPEN.value, TaskState.WAITING.value}, (
+            "Child B state after A completes should be open or waiting (outbox may not have drained)"
         )

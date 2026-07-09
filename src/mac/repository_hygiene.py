@@ -42,7 +42,7 @@ _SCP_REMOTE_RE = re.compile(
 )
 
 ACTIVE_TASK_STATES = frozenset(
-    {"open", "claimed", "running", "needs_review", "reviewing"}
+    {"open", "waiting", "claimed", "running", "needs_review", "reviewing"}
 )
 
 TERMINAL_TASK_STATES = frozenset({"completed", "failed", "cancelled"})
@@ -1164,4 +1164,3 @@ def validate_replacement_target(
             "replacement_task_id %s is held (no_dispatch=True); "
             "release it first or use archival_override=True if intentional" % replacement_task_id
         )
-

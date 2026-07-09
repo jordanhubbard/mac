@@ -141,6 +141,7 @@ _TASK_STATE_STYLES = {
     "claimed": ("◐", "36"),
     "reviewing": ("◆", "1;35"),
     "needs_review": ("◇", "35"),
+    "waiting": ("◷", "36"),
     "blocked": ("!", "1;33"),
     "failed": ("×", "1;31"),
     "open": ("○", "1;34"),
@@ -155,6 +156,7 @@ _TASK_STATE_ORDER = {
             "claimed",
             "reviewing",
             "needs_review",
+            "waiting",
             "blocked",
             "failed",
             "open",
@@ -1651,11 +1653,33 @@ def cmd_task_summary(args: argparse.Namespace) -> None:
 
 
 def cmd_task_ready(args: argparse.Namespace) -> None:
-    """List tasks ready to work — state=open, all dependencies completed,
-    unclaimed. Works in hub mode (parity-ready-http-01) and local --db mode."""
+    """List task-ready work with authoritative fleet eligibility attached."""
     cp = _plane(args)
     project = _effective_read_project(args)
-    _print([t.to_dict() for t in cp.ready_tasks(project=project, limit=args.limit or None)])
+    if hasattr(cp, "ready_task_explanations"):
+        items = cp.ready_task_explanations(project=project, limit=args.limit or None)
+    else:
+        items = [
+            cp.explain_task_dispatch(task.id)
+            for task in cp.ready_tasks(project=project, limit=args.limit or None)
+        ]
+    rendered = []
+    for item in items:
+        data = item.to_dict() if hasattr(item, "to_dict") else dict(item)
+        task = dict(data.pop("task", {}) or {})
+        task["dispatch"] = data
+        rendered.append(task)
+    _print(rendered)
+
+
+def cmd_task_why_unclaimed(args: argparse.Namespace) -> None:
+    """Explain every task-level and agent-pair reason preventing dispatch."""
+    _print(
+        _plane(args).explain_task_dispatch(
+            args.task_id,
+            record_observation=True,
+        )
+    )
 
 
 def cmd_task_claim(args: argparse.Namespace) -> None:
@@ -4708,11 +4732,21 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("task_id")
     _set(cmd_task_summary, summary)
 
-    ready = task.add_parser("ready", help="list open tasks ready to work (all deps completed, unclaimed)")
+    ready = task.add_parser(
+        "ready",
+        help="list task-ready work and the number of currently eligible fleet agents",
+    )
     ready.add_argument("--limit", type=int, default=0)
     ready.add_argument("--project", help="filter to this project (default: the cwd's project)")
     ready.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_ready, ready)
+
+    why_unclaimed = task.add_parser(
+        "why-unclaimed",
+        help="show the authoritative task and agent reasons preventing a claim",
+    )
+    why_unclaimed.add_argument("task_id")
+    _set(cmd_task_why_unclaimed, why_unclaimed)
 
     claim = task.add_parser("claim", help="atomically claim a task for an agent")
     claim.add_argument("task_id")

@@ -19,9 +19,14 @@ def test_non_failure_transition_returns_none():
     assert _failure_diagnosis(TaskState.OPEN.value, _d(reason="x")) is None
 
 
-def test_empty_detail_returns_none():
-    assert _failure_diagnosis(TaskState.BLOCKED.value, {}) is None
-    assert _failure_diagnosis(TaskState.BLOCKED.value, None) is None
+def test_empty_detail_returns_actionable_generic_diagnosis():
+    diagnosis = _failure_diagnosis(TaskState.BLOCKED.value, {})
+    assert diagnosis is not None
+    assert "without a more specific failure description" in diagnosis
+    assert "repair the producer" in diagnosis
+    assert "without a more specific failure description" in (
+        _failure_diagnosis(TaskState.BLOCKED.value, None) or ""
+    )
 
 
 def test_clone_auth_diagnosis():

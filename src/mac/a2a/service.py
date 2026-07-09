@@ -57,20 +57,20 @@ __all__ = ["A2AService", "MAC_STATE_TO_A2A", "map_task_state"]
 #: mac's lifecycle is richer than A2A's, so several mac states collapse onto one
 #: A2A state:
 #:   open / (no deps yet)      -> submitted   (accepted, not yet being worked)
-#:   blocked                   -> submitted   (accepted, waiting on deps)
+#:   waiting                   -> submitted   (accepted, waiting on deps)
+#:   blocked                   -> input-required (actionable intervention)
 #:   claimed / running         -> working     (an agent is actively on it)
 #:   needs_review / reviewing  -> working     (still in flight from the peer's view)
 #:   completed                 -> completed
 #:   failed                    -> failed
 #:   cancelled                 -> canceled    (A2A uses the single-'l' spelling)
 #:
-#: A mac state of ``blocked`` that represents "waiting for the caller" would map
-#: to ``input-required``; mac's ``blocked`` today means dependency-blocked, so
-#: it maps to ``submitted``. ``input-required`` is reserved for a future
-#: needs-input signal carried in task metadata (see :func:`map_task_state`).
+#: ``input-required`` is also selected explicitly by the metadata override in
+#: :func:`map_task_state` for an OPEN task awaiting caller input.
 MAC_STATE_TO_A2A: Dict[str, str] = {
     MacTaskState.OPEN.value: TaskState.SUBMITTED,
-    MacTaskState.BLOCKED.value: TaskState.SUBMITTED,
+    MacTaskState.WAITING.value: TaskState.SUBMITTED,
+    MacTaskState.BLOCKED.value: TaskState.INPUT_REQUIRED,
     MacTaskState.CLAIMED.value: TaskState.WORKING,
     MacTaskState.RUNNING.value: TaskState.WORKING,
     MacTaskState.NEEDS_REVIEW.value: TaskState.WORKING,

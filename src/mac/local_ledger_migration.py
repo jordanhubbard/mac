@@ -21,6 +21,7 @@ ARCHIVE_SCHEMA = "mac.local_ledger_archive.v1"
 ACTIVE_TASK_STATES = frozenset(
     {
         TaskState.OPEN.value,
+        TaskState.WAITING.value,
         TaskState.BLOCKED.value,
         TaskState.CLAIMED.value,
         TaskState.RUNNING.value,

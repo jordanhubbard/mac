@@ -32,7 +32,7 @@ function dashboardState(overrides?: {
   const baseTasks = [
     makeTask("alpha-open-1", "open", "alpha", 2, "Open alpha one"),
     makeTask("alpha-open-2", "open", "alpha", 1, "Open alpha two"),
-    makeTask("alpha-blocked-1", "blocked", "alpha", 1, "Blocked alpha", ["alpha-open-1"]),
+    makeTask("alpha-blocked-1", "blocked", "alpha", 1, "Blocked alpha"),
     makeTask("beta-open-1", "open", "beta", 1, "Open beta one"),
     makeTask("beta-completed-1", "completed", "beta", 0, "Completed beta"),
     makeTask("gamma-open-1", "open", "gamma", 1, "Open gamma one"),
@@ -190,7 +190,11 @@ async function setupPage(
           actor: "worker",
           from_state: "open",
           to_state: "blocked",
-          detail: { dependencies: summary.dependencies, state: "blocked" },
+          detail: {
+            reason: "operator_direction_required",
+            question: "Which target branch should be used?",
+            state: "blocked",
+          },
           created_at: "2026-07-08T10:00:00+00:00",
         }] : [],
         reviews: [],
@@ -317,8 +321,8 @@ test("task tree selection always opens the dedicated task pane with block contex
 
   await expect(page).toHaveURL(/view=task/);
   await expect(page.getByRole("heading", { name: "Blocked alpha" })).toBeVisible();
-  await expect(page.getByText("Waiting for dependency tasks to complete.")).toBeVisible();
-  await expect(page.locator(".blocked-context p", { hasText: "alpha-open-1" })).toBeVisible();
+  await expect(page.locator(".blocked-context p", { hasText: "Which target branch should be used?" })).toBeVisible();
+  await expect(page.locator(".blocked-context p", { hasText: "operator_direction_required" })).toBeVisible();
   await expect(page.locator(".task-inspector-embedded")).toBeVisible();
   await expect(page.locator(".task-inspector-backdrop")).toHaveCount(0);
 

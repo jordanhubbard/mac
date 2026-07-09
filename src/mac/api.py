@@ -2098,36 +2098,6 @@ def _dashboard_agent_base(
     }
 
 
-def _dashboard_dispatch_reasons(
-    cp: ControlPlane,
-    agent: Any,
-    task: Any,
-    machine: Optional[Any],
-) -> List[str]:
-    reasons: List[str] = []
-    if agent.status not in {"idle", "busy"}:
-        reasons.append("agent status is %s" % agent.status)
-    if agent.health_status != "healthy":
-        reasons.append("agent health is %s" % agent.health_status)
-    if machine is None:
-        reasons.append("agent machine is missing")
-    elif not machine.trusted:
-        reasons.append("machine is not trusted")
-    if cp._agent_active_lease_count(agent.id) >= cp._agent_capacity(agent):
-        reasons.append("agent is at capacity")
-    if machine is not None and not cp._machine_allows_tenant(machine, cp._task_tenant_id(task)):
-        reasons.append("machine tenant policy blocks task")
-    if machine is not None and not cp._agent_resources_satisfy(agent, machine, task):
-        reasons.append("resources do not satisfy task")
-    required_runtime_digest = cp._task_required_runtime_digest(task)
-    if required_runtime_digest and agent.running_digest != required_runtime_digest:
-        reasons.append("runtime digest mismatch")
-    missing = sorted(set(task.required_capabilities) - set(agent.capabilities))
-    if missing:
-        reasons.append("missing capabilities: %s" % ", ".join(missing))
-    return reasons
-
-
 def _dashboard_dispatch_explain(
     cp: ControlPlane,
     tasks: Optional[List[Any]] = None,
@@ -2137,43 +2107,18 @@ def _dashboard_dispatch_explain(
 ) -> Dict[str, Any]:
     tasks = tasks if tasks is not None else cp.list_tasks()
     agents = agents if agents is not None else cp.list_agents()
-    machines_by_id = machines_by_id if machines_by_id is not None else {
-        machine.id: machine for machine in cp.list_machines()
-    }
+    # Retained in the signature for callers that already have this snapshot;
+    # dispatch truth now comes exclusively from ControlPlane.
+    del machines_by_id
     open_tasks = [task for task in tasks if task.state == "open"]
-    explanations = []
-    for task in open_tasks:
-        candidates = []
-        eligible_count = 0
-        for agent in agents:
-            machine = machines_by_id.get(agent.machine_id)
-            eligible = cp._agent_available_for(agent, task)
-            if eligible:
-                eligible_count += 1
-            reasons = [] if eligible else _dashboard_dispatch_reasons(cp, agent, task, machine)
-            if not eligible and not reasons:
-                reasons.append("dispatch policy rejected pair")
-            candidates.append(
-                {
-                    "agent_id": agent.id,
-                    "agent_name": agent.name,
-                    "eligible": eligible,
-                    "reasons": reasons,
-                }
-            )
-        candidates.sort(key=lambda item: (not item["eligible"], item["agent_name"], item["agent_id"]))
-        limited_candidates = candidates[: max(1, int(candidate_limit))]
-        explanations.append(
-            {
-                "task": task.to_dict(),
-                "tenant_id": cp._task_tenant_id(task),
-                "candidates": limited_candidates,
-                "candidate_count": len(candidates),
-                "candidate_limit": max(1, int(candidate_limit)),
-                "candidate_truncated": len(candidates) > len(limited_candidates),
-                "eligible_agent_count": eligible_count,
-            }
+    explanations = [
+        cp.explain_task_dispatch(
+            task,
+            agents=agents,
+            candidate_limit=candidate_limit,
         )
+        for task in open_tasks
+    ]
     return {"open_task_count": len(open_tasks), "tasks": explanations}
 
 
@@ -4491,6 +4436,17 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return [t.to_dict() for t in cp.ready_tasks(project=project, tenant_id=tenant_id, limit=limit)]
 
+    @app.get("/tasks/ready/explain")
+    def ready_task_explanations(
+        project: Optional[str] = Query(default=None),
+        tenant_id: Optional[str] = Query(default=None),
+        limit: Optional[int] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return [
+            cp.explain_task_dispatch(task.id)
+            for task in cp.ready_tasks(project=project, tenant_id=tenant_id, limit=limit)
+        ]
+
     @app.get("/tasks/search")
     def search_tasks(
         q: str = Query(...),
@@ -4524,6 +4480,10 @@ def create_app(
         if view == "compact":
             return _dashboard_task(cp, task_id, compact=True)
         return cp.task_detail(task_id)
+
+    @app.get("/tasks/{task_id}/dispatch-explain")
+    def task_dispatch_explain(task_id: str) -> Dict[str, Any]:
+        return cp.explain_task_dispatch(task_id, record_observation=True)
 
     @app.get("/tasks/{task_id}/break-glass-authorizations")
     def list_break_glass_authorizations(

@@ -262,7 +262,8 @@ def test_state_mapping_covers_all_mac_states():
 
     expected = {
         MacTaskState.OPEN.value: TaskState.SUBMITTED,
-        MacTaskState.BLOCKED.value: TaskState.SUBMITTED,
+        MacTaskState.WAITING.value: TaskState.SUBMITTED,
+        MacTaskState.BLOCKED.value: TaskState.INPUT_REQUIRED,
         MacTaskState.CLAIMED.value: TaskState.WORKING,
         MacTaskState.RUNNING.value: TaskState.WORKING,
         MacTaskState.NEEDS_REVIEW.value: TaskState.WORKING,

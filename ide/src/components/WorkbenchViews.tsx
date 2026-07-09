@@ -171,6 +171,7 @@ function CockpitView({
         <Metric icon="heart-pulse" label="Fleet health" tone="good" value={`${health}`} unit="/ 100" />
         <Metric icon="pulse" label="Active" value={active} />
         <Metric icon="person-add" label="Review" tone="warn" value={Number(states.needs_review || 0) + Number(states.reviewing || 0)} />
+        <Metric icon="clock" label="Waiting" value={states.waiting || 0} />
         <Metric icon="error" label="Blocked" tone="bad" value={states.blocked || 0} />
         <Metric icon="organization" label="A2A routable" value={agents.length} />
       </div>

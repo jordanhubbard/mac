@@ -1,5 +1,5 @@
-import { type FormEvent, useState } from "react";
-import { api, type ActivityEntry, type TaskDetail } from "../api/mac";
+import { type FormEvent, useEffect, useState } from "react";
+import { api, type ActivityEntry, type TaskDetail, type TaskDispatchExplanation } from "../api/mac";
 
 type BlockedContext = {
   actor: string;
@@ -43,27 +43,7 @@ export function latestBlockedContext(detail: TaskDetail): BlockedContext | null 
 }
 
 function blockedContext(detail: TaskDetail): BlockedContext | null {
-  const recorded = latestBlockedContext(detail);
-  const dependencies = stringList(detail.task.dependencies);
-  if (recorded) {
-    const blockingTasks = recorded.blockingTasks.length ? recorded.blockingTasks : dependencies;
-    return {
-      ...recorded,
-      blockingTasks,
-      reason: recorded.reason || (blockingTasks.length ? "Waiting for dependency tasks to complete." : ""),
-    };
-  }
-  if (!dependencies.length) return null;
-  return {
-    actor: "task ledger",
-    at: stringValue(detail.task.updated_at || detail.task.created_at),
-    blockingTasks: dependencies,
-    detail: { dependencies, inferred_from: "task.dependencies" },
-    error: "",
-    problems: [],
-    question: "",
-    reason: "Waiting for dependency tasks to complete.",
-  };
+  return latestBlockedContext(detail);
 }
 
 function appendOperatorDirection(detail: TaskDetail, direction: string, at: string) {
@@ -105,9 +85,22 @@ export function TaskInspector({
   const [direction, setDirection] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dispatch, setDispatch] = useState<TaskDispatchExplanation | null>(null);
   const task = detail.task;
   const blocked = String(task.state) === "blocked";
+  const waiting = String(task.state) === "waiting";
   const context = blockedContext(detail);
+  const waitingOn = stringList(task.dependencies);
+
+  useEffect(() => {
+    let active = true;
+    setDispatch(null);
+    if (String(task.state) !== "open") return () => { active = false; };
+    void api.explainTaskDispatch(task.id)
+      .then((value) => { if (active) setDispatch(value); })
+      .catch(() => { if (active) setDispatch(null); });
+    return () => { active = false; };
+  }, [task.id, task.state]);
 
   async function provideDirection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -169,6 +162,39 @@ export function TaskInspector({
                 ) : null}
               </>
             ) : <p>The task ledger contains an invalid blocked transition with no reason. Reopen it with direction or repair the ledger event before redispatch.</p>}
+          </div>
+        ) : null}
+
+        {waiting ? (
+          <div className="task-inspector-section waiting-context">
+            <h3>Waiting for dependencies</h3>
+            {waitingOn.length ? (
+              <p><strong>Incomplete dependency tasks:</strong> {waitingOn.join(", ")}</p>
+            ) : (
+              <p>This task has no dependency ids recorded. The ledger reconciler will reopen it or report the invalid waiting state.</p>
+            )}
+            <small>This is a scheduling wait, not a request for operator direction.</small>
+          </div>
+        ) : null}
+
+        {String(task.state) === "open" && dispatch ? (
+          <div className={`task-inspector-section dispatch-context ${dispatch.dispatchable ? "dispatch-ready" : "dispatch-unavailable"}`}>
+            <h3>{dispatch.dispatchable ? "Ready for dispatch" : "Why this task is unclaimed"}</h3>
+            {dispatch.unclaimed_reasons.map((reason) => (
+              <p key={reason.code}><strong>{reason.code.replaceAll("_", " ")}:</strong> {reason.message}</p>
+            ))}
+            <small>{dispatch.eligible_agent_count} of {dispatch.candidate_count} registered agents currently eligible.</small>
+            {!dispatch.dispatchable && dispatch.candidates.length ? (
+              <details>
+                <summary>Agent-specific rejections</summary>
+                {dispatch.candidates.slice(0, 8).map((candidate) => (
+                  <p key={candidate.agent_id}>
+                    <strong>{candidate.agent_name || candidate.agent_id}:</strong>{" "}
+                    {candidate.reasons.map((reason) => reason.message).join("; ") || "eligible"}
+                  </p>
+                ))}
+              </details>
+            ) : null}
           </div>
         ) : null}
 

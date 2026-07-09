@@ -331,6 +331,29 @@ class RemoteDispatch:
             self._get("/tasks/ready", project=project, tenant_id=tenant_id, limit=limit)
         )
 
+    def ready_task_explanations(
+        self,
+        *,
+        project: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get(
+                "/tasks/ready/explain",
+                project=project,
+                tenant_id=tenant_id,
+                limit=limit,
+            )
+        )
+
+    def explain_task_dispatch(self, task_id: str, **_: Any) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/tasks/%s/dispatch-explain" % quote(task_id, safe="")
+            )
+        )
+
     def search_tasks(
         self,
         query: str,

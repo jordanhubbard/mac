@@ -304,7 +304,7 @@ class SQLiteStore:
                 BEFORE INSERT ON tasks
                 FOR EACH ROW
                 WHEN NEW.state NOT IN (
-                    'open', 'blocked', 'claimed', 'running',
+                    'open', 'waiting', 'blocked', 'claimed', 'running',
                     'needs_review', 'reviewing', 'completed',
                     'failed', 'cancelled'
                 )
@@ -315,7 +315,7 @@ class SQLiteStore:
                 BEFORE UPDATE OF state ON tasks
                 FOR EACH ROW
                 WHEN NEW.state NOT IN (
-                    'open', 'blocked', 'claimed', 'running',
+                    'open', 'waiting', 'blocked', 'claimed', 'running',
                     'needs_review', 'reviewing', 'completed',
                     'failed', 'cancelled'
                 )
@@ -1846,6 +1846,35 @@ class SQLiteStore:
             self._conn.commit()
 
     def _migrate(self) -> None:
+        # Dependency waits are intentionally distinct from actionable blocks.
+        # Recreate these triggers because IF NOT EXISTS cannot update the enum
+        # on databases created before the WAITING state was introduced.
+        self._conn.executescript(
+            """
+            DROP TRIGGER IF EXISTS trg_tasks_state_enum_ins;
+            DROP TRIGGER IF EXISTS trg_tasks_state_enum_upd;
+            CREATE TRIGGER trg_tasks_state_enum_ins
+            BEFORE INSERT ON tasks
+            FOR EACH ROW
+            WHEN NEW.state NOT IN (
+                'open', 'waiting', 'blocked', 'claimed', 'running',
+                'needs_review', 'reviewing', 'completed', 'failed', 'cancelled'
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid task state');
+            END;
+            CREATE TRIGGER trg_tasks_state_enum_upd
+            BEFORE UPDATE OF state ON tasks
+            FOR EACH ROW
+            WHEN NEW.state NOT IN (
+                'open', 'waiting', 'blocked', 'claimed', 'running',
+                'needs_review', 'reviewing', 'completed', 'failed', 'cancelled'
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid task state');
+            END;
+            """
+        )
         # beads→mac: the project repository registry was historically the
         # `beads_repositories` table. `project_repositories` is created empty
         # during table setup, so copy any legacy rows over and drop the old

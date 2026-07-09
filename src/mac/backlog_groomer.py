@@ -53,7 +53,7 @@ _log = logging.getLogger("mac.backlog_groomer")
 
 # Task states that count as "pending or in-flight work" for idle detection.
 _ACTIVE_STATES = frozenset(
-    {"open", "blocked", "claimed", "running", "needs_review", "reviewing"}
+    {"open", "waiting", "blocked", "claimed", "running", "needs_review", "reviewing"}
 )
 
 

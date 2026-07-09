@@ -3,6 +3,7 @@ import type { TaskDetail } from "../api/mac";
 
 const TASK_LANES = [
   ["open", "Open"],
+  ["waiting", "Waiting"],
   ["blocked", "Blocked"],
   ["claimed", "Claimed"],
   ["running", "Running"],

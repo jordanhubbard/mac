@@ -55,7 +55,23 @@ def test_ready_endpoint_excludes_tasks_with_unmet_dependencies():
     _make(client, "child", project="p", dependencies=[parent["id"]])
     ready_titles = {t["title"] for t in client.get("/tasks/ready").json()}
     assert "parent" in ready_titles
-    assert "child" not in ready_titles  # blocked until parent completes
+    assert "child" not in ready_titles  # waiting until parent completes
+
+
+def test_ready_and_task_dispatch_explain_routes_share_authoritative_reasons():
+    client = _client()
+    task = _make(client, "explain me", project="p")
+
+    ready = client.get("/tasks/ready/explain")
+    assert ready.status_code == 200
+    item = next(entry for entry in ready.json() if entry["task"]["id"] == task["id"])
+    assert item["task_ready"] is True
+    assert item["dispatchable"] is False
+    assert item["unclaimed_reasons"][0]["code"] == "no_agents_registered"
+
+    direct = client.get(f"/tasks/{task['id']}/dispatch-explain")
+    assert direct.status_code == 200
+    assert direct.json()["unclaimed_reasons"] == item["unclaimed_reasons"]
 
 
 def test_search_endpoint_matches_title_and_filters_project():

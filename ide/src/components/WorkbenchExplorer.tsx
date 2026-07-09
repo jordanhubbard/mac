@@ -273,6 +273,7 @@ export function WorkbenchExplorer({
             <option value="running">Running</option>
             <option value="needs_review">Needs review</option>
             <option value="blocked">Blocked</option>
+            <option value="waiting">Waiting</option>
             <option value="completed">Completed</option>
           </select>
         </div>
