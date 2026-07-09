@@ -17,6 +17,7 @@ import {
 import { ActivityRail, type WorkbenchView } from "./components/ActivityRail";
 import { AgentMesh } from "./components/AgentMesh";
 import { BottomPanel } from "./components/BottomPanel";
+import { isPhysicalFleetAgent } from "./components/agentFacts";
 import { projectFromUrl, pushProjectToUrl, replaceProjectInUrl } from "./components/projectScope";
 import { WorkbenchExplorer } from "./components/WorkbenchExplorer";
 import { selectedTask, WorkbenchViewContent } from "./components/WorkbenchViews";
@@ -77,17 +78,21 @@ export function App() {
   const selectedTaskIdRef = useRef(selectedTaskId);
   selectedTaskIdRef.current = selectedTaskId;
 
+  const physicalData = useMemo(
+    () => ({ ...data, agents: data.agents.filter(isPhysicalFleetAgent) }),
+    [data],
+  );
   const viewData = useMemo(() => {
-    if (!selectedDetail || selectedDetail.task.id !== selectedTaskId) return data;
+    if (!selectedDetail || selectedDetail.task.id !== selectedTaskId) return physicalData;
     return {
-      ...data,
-      tasks: data.tasks.map((summary) => summary.task.id === selectedDetail.task.id ? {
+      ...physicalData,
+      tasks: physicalData.tasks.map((summary) => summary.task.id === selectedDetail.task.id ? {
         ...selectedDetail,
         detail_loaded: true,
         task: { ...selectedDetail.task, ...summary.task },
       } : summary),
     };
-  }, [data, selectedDetail, selectedTaskId]);
+  }, [physicalData, selectedDetail, selectedTaskId]);
   const detail = useMemo(
     () => selectedTask(viewData, selectedTaskId),
     [selectedTaskId, viewData],
@@ -95,17 +100,17 @@ export function App() {
   const commandResults = useMemo(() => {
     const needle = commandQuery.trim().toLowerCase();
     if (!needle) return [];
-    const taskResults = data.tasks
+    const taskResults = physicalData.tasks
       .filter(({ task }) => [task.title, task.project, task.id].some((item) => String(item || "").toLowerCase().includes(needle)))
       .slice(0, 6)
       .map(({ task }) => ({ id: task.id, label: task.title || task.id, kind: "task" as const }));
-    const agentResults = data.agents
+    const agentResults = physicalData.agents
       .map((item) => item.agent)
       .filter((agent) => [agent.name, agent.id, ...(agent.capabilities || [])].some((item) => String(item || "").toLowerCase().includes(needle)))
       .slice(0, 4)
       .map((agent) => ({ id: agent.id, label: agent.name || agent.id, kind: "agent" as const }));
     return [...taskResults, ...agentResults];
-  }, [commandQuery, data.agents, data.tasks]);
+  }, [commandQuery, physicalData.agents, physicalData.tasks]);
 
   const fetchTaskDetail = useCallback((taskId: string, force = false): Promise<TaskDetail> => {
     if (!force) {
@@ -285,12 +290,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedTaskId && data.tasks.length) {
-      const active = data.tasks.find(({ task }) => !["completed", "cancelled", "failed"].includes(String(task.state)));
-      setSelectedTaskId((active || data.tasks[0]).task.id);
+    if (!selectedTaskId && physicalData.tasks.length) {
+      const active = physicalData.tasks.find(({ task }) => !["completed", "cancelled", "failed"].includes(String(task.state)));
+      setSelectedTaskId((active || physicalData.tasks[0]).task.id);
     }
-    if (!selectedAgentId && data.agents.length) setSelectedAgentId(data.agents[0].agent.id);
-  }, [data.agents, data.tasks, selectedAgentId, selectedTaskId]);
+    const selectedAgentExists = physicalData.agents.some(
+      (item) => item.agent.id === selectedAgentId,
+    );
+    if (!selectedAgentExists) {
+      setSelectedAgentId(physicalData.agents[0]?.agent.id || null);
+    }
+  }, [physicalData.agents, physicalData.tasks, selectedAgentId, selectedTaskId]);
 
   useEffect(() => {
     const url = new URL(window.location.href);

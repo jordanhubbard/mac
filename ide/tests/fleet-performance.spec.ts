@@ -24,7 +24,9 @@ function dashboardState() {
   return {
     schema: "mac.dashboard_ide.v1",
     overview: {
-      counts: { healthy_agents: 1, active_tasks: 40 },
+      // The hub verifier is healthy too, but it is a logical control-plane
+      // identity rather than a physical fleet node.
+      counts: { healthy_agents: 2, active_tasks: 40 },
       task_states: { completed: 400, blocked: 40 },
       agent_statuses: { idle: 1 },
     },
@@ -40,6 +42,17 @@ function dashboardState() {
       },
       machine: null,
       availability: { eligible: true, reasons: [] },
+    }, {
+      agent: {
+        id: "agent-hub-reviewer",
+        name: "hub-reviewer",
+        status: "idle",
+        health_status: "healthy",
+        capabilities: ["review"],
+        resources: { virtual: true, hub_review_verifier: { enabled: true } },
+      },
+      machine: null,
+      availability: { eligible: false, reasons: ["logical service"] },
     }],
     tasks,
     fleets: [], workflows: [], workflow_drafts: [], workflow_runs: {}, events: [],
@@ -90,6 +103,8 @@ test("Fleet IDE coalesces refreshes and bounds Kanban rendering", async ({ page 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Fleet cockpit" })).toBeVisible();
   await expect(page.getByText("Hub online")).toBeVisible();
+  await expect(page.getByText("1 agents", { exact: true })).toBeVisible();
+  await expect(page.getByText("hub-reviewer", { exact: true })).toHaveCount(0);
   await page.waitForTimeout(6_200);
 
   expect(dashboardRequests).toBe(2);

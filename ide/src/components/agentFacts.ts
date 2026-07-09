@@ -83,6 +83,16 @@ export function isAgentOnline(item: DashboardAgent): boolean {
   return item.agent.health_status === "healthy" && item.agent.status !== "offline";
 }
 
+/**
+ * The hub can register logical agents for control-plane services such as the
+ * in-process review verifier.  They participate in task/review accounting but
+ * are not fleet nodes and must not be presented as physical machines in the
+ * Fleet Workbench agent mesh.
+ */
+export function isPhysicalFleetAgent(item: DashboardAgent): boolean {
+  return record(item.agent.resources).virtual !== true;
+}
+
 export function availabilityLabel(item: DashboardAgent): string {
   if (!item.availability) return "eligibility unknown";
   if (item.availability.eligible === true) return "dispatch eligible";

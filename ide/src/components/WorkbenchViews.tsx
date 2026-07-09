@@ -135,7 +135,6 @@ function CockpitView({
   selectedProjectId: string | null;
   onSelectTask: (taskId: string) => void;
 }) {
-  const counts = data.overview.counts;
   const scopedTasks = useMemo(
     () =>
       selectedProjectId
@@ -155,7 +154,7 @@ function CockpitView({
     return totals;
   }, [data.overview.task_states, scopedTasks, selectedProjectId]);
   const health = agents.length
-    ? Math.round((Number(counts.healthy_agents || 0) / agents.length) * 100)
+    ? Math.round((agents.filter((agent) => agent.health_status === "healthy" && agent.status !== "offline").length / agents.length) * 100)
     : 100;
   const active = scopedTasks.filter(
     (detail) => !TERMINAL_STATES.has(String(detail.task.state)),
