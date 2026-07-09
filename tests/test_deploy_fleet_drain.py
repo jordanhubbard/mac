@@ -65,3 +65,14 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
         'restarting mac-agent after post-manifest reconciliation', reconcile_pos
     )
     assert reconcile_pos < external_restart_pos
+
+
+def test_remote_deploy_payload_is_materialized_before_execution():
+    text = script_text()
+
+    assert "Feeding the body directly to ``bash -s`` lets" in text
+    assert 'payload="$(mktemp "${TMPDIR:-/tmp}/mac-deploy.XXXXXX")"' in text
+    assert 'cat > "$payload"' in text
+    assert 'bash "$payload"' in text
+    assert 'remote_cmd="${remote_env[*]} bash -c $(shell_quote "$remote_payload_runner")"' in text
+    assert '${remote_env[*]} bash -s' not in text

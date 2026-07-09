@@ -2091,7 +2091,9 @@ def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests
 
 def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
     script = deploy_script_text()
-    ssh_invocation = script.split('remote_cmd="${remote_env[*]} bash -s"', 1)[1].split(
+    ssh_invocation = script.split(
+        'remote_cmd="${remote_env[*]} bash -c $(shell_quote "$remote_payload_runner")"', 1
+    )[1].split(
         '"$remote_cmd" <<', 1
     )[0]
     deploy_host_tail = script.split('if ssh -A -o BatchMode=yes', 1)[1].split(

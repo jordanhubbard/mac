@@ -1348,7 +1348,22 @@ deploy_host() {
   add_remote_env PERPLEXITY_API_KEY "$perplexity_api_key"
   add_remote_env PERPLEXITY_BASE_URL "$perplexity_base_url"
   add_remote_env PERPLEXITY_API_BASE "$perplexity_api_base"
-  remote_cmd="${remote_env[*]} bash -s"
+  # The deploy body is large and invokes tools (notably OpenShell/OpenClaw)
+  # that may read from stdin.  Feeding the body directly to ``bash -s`` lets
+  # such a child consume the unread remainder of the deployment program; bash
+  # then reaches EOF after the current function and exits successfully without
+  # writing the post manifest.  Materialize the complete body before executing
+  # it so child stdin can never be the deployment source stream.
+  local remote_payload_runner
+  remote_payload_runner='
+set -euo pipefail
+payload="$(mktemp "${TMPDIR:-/tmp}/mac-deploy.XXXXXX")"
+cleanup_remote_payload() { rm -f "$payload"; }
+trap cleanup_remote_payload EXIT
+cat > "$payload"
+bash "$payload"
+'
+  remote_cmd="${remote_env[*]} bash -c $(shell_quote "$remote_payload_runner")"
   unset -f add_remote_env
   if ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     "$remote_cmd" <<'REMOTE'
