@@ -347,8 +347,13 @@ if "slack" in configured:
         "mode": "socket",
         "accounts": {
             os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID", "default"): {
-                "botToken": secret_ref("SLACK_BOT_TOKEN"),
-                "appToken": secret_ref("SLACK_APP_TOKEN"),
+                # Stock OpenClaw auto-creates a second account named
+                # ``default`` whenever the conventional SLACK_* variables are
+                # present.  The explicit account below is MAC's sole channel
+                # owner, so use namespaced SecretRefs to avoid two Socket Mode
+                # consumers racing on the same app credentials.
+                "botToken": secret_ref("MAC_OPENCLAW_SLACK_BOT_TOKEN"),
+                "appToken": secret_ref("MAC_OPENCLAW_SLACK_APP_TOKEN"),
                 "groupPolicy": "open",
             }
         },
@@ -358,7 +363,10 @@ if "telegram" in configured:
         "enabled": True,
         "accounts": {
             os.environ.get("MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID", "default"): {
-                "botToken": secret_ref("TELEGRAM_BOT_TOKEN"),
+                # TELEGRAM_BOT_TOKEN has the same implicit-default semantics;
+                # one explicit account is required because long polling must
+                # have a single owner.
+                "botToken": secret_ref("MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"),
                 "dmPolicy": "pairing",
                 "groupPolicy": "allowlist",
             }
@@ -436,10 +444,10 @@ values = {
     "OPENCLAW_STATE_DIR": "/home/sandbox/.openclaw-data",
 }
 if os.environ.get("MAC_OPENCLAW_SLACK_APP_TOKEN"):
-    values["SLACK_APP_TOKEN"] = os.environ["MAC_OPENCLAW_SLACK_APP_TOKEN"]
-    values["SLACK_BOT_TOKEN"] = os.environ["MAC_OPENCLAW_SLACK_BOT_TOKEN"]
+    values["MAC_OPENCLAW_SLACK_APP_TOKEN"] = os.environ["MAC_OPENCLAW_SLACK_APP_TOKEN"]
+    values["MAC_OPENCLAW_SLACK_BOT_TOKEN"] = os.environ["MAC_OPENCLAW_SLACK_BOT_TOKEN"]
 if os.environ.get("MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"):
-    values["TELEGRAM_BOT_TOKEN"] = os.environ["MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"]
+    values["MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"] = os.environ["MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"]
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     handle.write("# Generated host-local OpenClaw runtime environment.\n")
     for key in sorted(values):

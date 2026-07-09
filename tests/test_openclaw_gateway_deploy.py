@@ -166,9 +166,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "x-mac-agent-id": "agent_test",
         "x-mac-hermes-instance-id": "hermes_test",
     }
-    assert slack["botToken"]["id"] == "SLACK_BOT_TOKEN"
-    assert slack["appToken"]["id"] == "SLACK_APP_TOKEN"
-    assert telegram["botToken"]["id"] == "TELEGRAM_BOT_TOKEN"
+    assert slack["botToken"]["id"] == "MAC_OPENCLAW_SLACK_BOT_TOKEN"
+    assert slack["appToken"]["id"] == "MAC_OPENCLAW_SLACK_APP_TOKEN"
+    assert telegram["botToken"]["id"] == "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"
     assert telegram["dmPolicy"] == "pairing"
     assert telegram["groupPolicy"] == "allowlist"
     assert config["plugins"] == {
@@ -183,6 +183,21 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert all(secret not in config_path.read_text(encoding="utf-8") for secret in secrets)
     assert config_path.stat().st_mode & 0o777 == 0o600
     assert runtime_path.stat().st_mode & 0o777 == 0o600
+    runtime_keys = {
+        line.split("=", 1)[0]
+        for line in runtime_path.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#") and "=" in line
+    }
+    assert {
+        "MAC_OPENCLAW_SLACK_APP_TOKEN",
+        "MAC_OPENCLAW_SLACK_BOT_TOKEN",
+        "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN",
+    } <= runtime_keys
+    assert {
+        "SLACK_APP_TOKEN",
+        "SLACK_BOT_TOKEN",
+        "TELEGRAM_BOT_TOKEN",
+    }.isdisjoint(runtime_keys)
     assert wrapper_path.stat().st_mode & 0o777 == 0o700
     assert stop_wrapper_path.stat().st_mode & 0o777 == 0o700
     assert (mac_home / "bin" / "openclaw-message").stat().st_mode & 0o777 == 0o700

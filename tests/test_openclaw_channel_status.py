@@ -23,8 +23,11 @@ def load_validator():
     return module
 
 
-def account(*, ok: bool = True, error: str = "") -> dict[str, object]:
+def account(
+    *, account_id: str = "default", ok: bool = True, error: str = ""
+) -> dict[str, object]:
     result: dict[str, object] = {
+        "accountId": account_id,
         "enabled": True,
         "configured": True,
         "probe": {"ok": ok},
@@ -70,3 +73,25 @@ def test_single_configured_channel_is_validated_without_requiring_others() -> No
     assert validator.channel_problems(payload, ("slack",)) == []
     payload["channelAccounts"]["slack"] = [account(ok=False)]
     assert validator.channel_problems(payload, ("slack",)) == ["slack"]
+
+
+def test_duplicate_active_accounts_fail_even_when_both_probes_are_healthy() -> None:
+    validator = load_validator()
+    payload = {
+        "channelAccounts": {
+            "slack": [account(account_id="default"), account(account_id="offtera")],
+        },
+        "channelDefaultAccountId": {"slack": "default"},
+    }
+    assert validator.channel_problems(payload, ("slack",)) == ["slack"]
+
+
+def test_default_account_must_match_the_only_configured_account() -> None:
+    validator = load_validator()
+    payload = {
+        "channelAccounts": {"slack": [account(account_id="offtera")]},
+        "channelDefaultAccountId": {"slack": "default"},
+    }
+    assert validator.channel_problems(payload, ("slack",)) == ["slack"]
+    payload["channelDefaultAccountId"]["slack"] = "offtera"
+    assert validator.channel_problems(payload, ("slack",)) == []

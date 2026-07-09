@@ -16,23 +16,33 @@ def channel_problems(
     payload: Mapping[str, Any], required_channels: tuple[str, ...] = REQUIRED_CHANNELS
 ) -> list[str]:
     accounts_by_channel = payload.get("channelAccounts") or {}
+    default_accounts = payload.get("channelDefaultAccountId") or {}
     problems = []
     for channel in required_channels:
         accounts = accounts_by_channel.get(channel) or []
-        healthy = False
-        for account in accounts:
-            probe = account.get("probe") if isinstance(account, dict) else None
-            if (
-                isinstance(account, dict)
-                and account.get("enabled") is True
-                and account.get("configured") is True
-                and isinstance(probe, dict)
-                and probe.get("ok") is True
-                and not account.get("lastError")
-            ):
-                healthy = True
-                break
-        if not healthy:
+        configured = [
+            account
+            for account in accounts
+            if isinstance(account, dict)
+            and account.get("enabled") is True
+            and account.get("configured") is True
+        ]
+        # Each MAC channel identity has one durable gateway owner. Multiple
+        # active accounts can consume the same Socket Mode or long-poll stream
+        # and make probes look healthy while real replies fail or disappear.
+        if len(configured) != 1:
+            problems.append(channel)
+            continue
+        account = configured[0]
+        probe = account.get("probe")
+        account_id = account.get("accountId")
+        default_id = default_accounts.get(channel)
+        if (
+            not isinstance(probe, dict)
+            or probe.get("ok") is not True
+            or account.get("lastError")
+            or (default_id is not None and account_id is not None and default_id != account_id)
+        ):
             problems.append(channel)
     return problems
 
@@ -54,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     problems = channel_problems(payload, required)
     if problems:
         print(
-            "channel probe did not prove healthy configured account(s): "
+            "channel probe did not prove one healthy configured account: "
             + ", ".join(problems),
             file=sys.stderr,
         )
