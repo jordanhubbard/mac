@@ -1,52 +1,32 @@
 {
+  "codegraph": {
+    "note": "Changed files are a bash shell script (install-openclaw-gateway.sh) and a test file. codegraph init ran successfully (38536 nodes, 126850 edges). codegraph affected reported no Python test files affected, as expected for shell script changes.",
+    "reason": "non_code_change",
+    "status": "skipped"
+  },
+  "evidence_type": "repo_change",
+  "files_changed": [
+    "deploy/openclaw/install-openclaw-gateway.sh",
+    "tests/test_openclaw_gateway_deploy.py"
+  ],
   "schema": "mac.worker_evidence.v1",
   "status": "complete",
-  "evidence_type": "repo_change",
-  "task_id": "task_1b28d2610777479ba3b759ab2d503598",
-  "files_changed": [
-    "src/mac/coding_agent.py"
-  ],
-  "summary": "Validated Dockerfile.codex-runner and all required executor scripts (mac-task-executor-codex, -codex-review, -opencode-build, -opencode-review) in deploy/codex-runner/. Confirmed two-pass blind review protocol (discovery + adjudication phases) is fully implemented in mac-task-executor-opencode-review, and mac.review_finalizer is available via the mac base image. Docker runtime is unavailable in this sandbox, so a live image build+push was not possible. Fixed pre-existing test regression in test_resolver_augments_service_path_like_inventory: _service_augmented_which now correctly prepends home-dir paths before system PATH so user-installed CLIs take priority, matching the intended heartbeat inventory behavior. Contract tests: 5533 passed, 0 failed (prev: 1 pre-existing failure); coverage 93.33%/84.81%.",
+  "summary": "Fixed NemoClaw gateway_ownership state: absent supervisor program now reports not_installed instead of a raw error string. For the supervisord path, captured full supervisorctl output and checked for 'no such process' to set nemoclaw_state=not_installed. For the systemd path, normalized 'unknown' is-active result to not_installed. Added a comment in the inline Python block accepting not_installed as a valid non-error state. Added two new pytest tests (supervisord 'no such process' and systemd 'unknown' paths). All 13 tests in test_openclaw_gateway_deploy.py pass; full contract suite: 5518 passed, 1 pre-existing failure (test_invoke_sandboxed_runs_full_lifecycle, unrelated to this change).",
+  "task_id": "task_477ec0c9cc564b9fb0b2d2636530499f",
   "tests": {
     "command": "scripts/run-contract-tests.sh",
-    "status": "passed",
-    "result": "5533 passed, 21 skipped in 306s",
     "coverage": {
-      "statements": "93.33%",
-      "branches": "84.81%",
+      "branches": "84.83%",
+      "floor_branches": "80.00%",
       "floor_statements": "90.00%",
-      "floor_branches": "80.00%"
+      "statements": "93.33%"
     },
-    "note": "Previously 1 pre-existing failure (test_resolver_augments_service_path_like_inventory). Fixed by reordering PATH search in _service_augmented_which to prepend home-dir paths."
-  },
-  "codegraph": {
+    "note": "1 pre-existing failure: tests/test_openshell_sandbox.py::test_invoke_sandboxed_runs_full_lifecycle (unrelated to this change).",
+    "result": "5518 passed, 21 skipped, 1 pre-existing failure",
     "status": "passed",
-    "commands": [
-      "codegraph init",
-      "codegraph affected src/mac/coding_agent.py",
-      "codegraph impact src/mac/coding_agent.py"
-    ],
-    "affected": "tests/test_coding_agent.py, tests/test_runtime_utility_edges.py, and 6 comfyui skill test files",
-    "impact": "3 affected symbols: coding_agent.py, test_coding_agent.py, test_runtime_utility_edges.py",
-    "note": "Change is limited to _service_augmented_which PATH ordering. All impacted tests pass."
-  },
-  "dockerfile_validation": {
-    "dockerfile": "Dockerfile.codex-runner",
-    "status": "verified",
-    "base_image": "gitea.omv.a113.casa/vpogu/mac:bea1534a50d5",
-    "executor_scripts": [
-      "deploy/codex-runner/mac-task-executor-codex",
-      "deploy/codex-runner/mac-task-executor-codex-review",
-      "deploy/codex-runner/mac-task-executor-opencode-build",
-      "deploy/codex-runner/mac-task-executor-opencode-review"
-    ],
-    "two_pass_blind_protocol": "verified in mac-task-executor-opencode-review (discovery + adjudication phases)",
-    "review_finalizer": "python3 -m mac.review_finalizer (available via mac base image)",
-    "docker_build": "not executed (Docker runtime unavailable in OpenShell sandbox; requires Docker-capable host or Gitea CI runner)",
-    "note": "Dockerfile and executor scripts are structurally complete and correct."
-  },
-  "image_digest": "not-built (Docker runtime unavailable in sandbox)",
-  "verification": {
-    "approach": "Static verification of Dockerfile.codex-runner and executor scripts; fix of pre-existing test regression in _service_augmented_which PATH ordering; full contract test suite passing clean"
+    "targeted": {
+      "command": "pytest tests/test_openclaw_gateway_deploy.py -v",
+      "result": "13 passed in 1.27s"
+    }
   }
 }

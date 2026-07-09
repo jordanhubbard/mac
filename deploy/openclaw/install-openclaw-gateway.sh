@@ -844,6 +844,7 @@ finalize() {
       openclaw_state="$(sudo systemctl is-active "${fleet}-openclaw-gateway.service" 2>/dev/null || true)"
       hermes_state="$(sudo systemctl is-active "${fleet}-hermes-gateway.service" 2>/dev/null || true)"
       nemoclaw_state="$(sudo systemctl is-active "${fleet}-nemoclaw-gateway.service" 2>/dev/null || true)"
+      [ "$nemoclaw_state" = unknown ] && nemoclaw_state=not_installed
       ;;
     launchd)
       local uid
@@ -855,7 +856,13 @@ finalize() {
     supervisord)
       openclaw_state="$(sudo supervisorctl status "${fleet}-openclaw-gateway" 2>/dev/null | awk '{print tolower($2)}' || true)"
       hermes_state="$(sudo supervisorctl status "${fleet}-hermes-gateway" 2>/dev/null | awk '{print tolower($2)}' || true)"
-      nemoclaw_state="$(sudo supervisorctl status "${fleet}-nemoclaw-gateway" 2>/dev/null | awk '{print tolower($2)}' || true)"
+      local _nemoclaw_raw
+      _nemoclaw_raw="$(sudo supervisorctl status "${fleet}-nemoclaw-gateway" 2>/dev/null || true)"
+      if printf '%s' "$_nemoclaw_raw" | grep -qi 'no such process'; then
+        nemoclaw_state=not_installed
+      else
+        nemoclaw_state="$(printf '%s' "$_nemoclaw_raw" | awk '{print tolower($2)}')"
+      fi
       ;;
     *) die "unsupported supervisor for OpenClaw finalization: $supervisor" ;;
   esac
@@ -893,6 +900,8 @@ ownership = {
     "services": {
         "openclaw": os.environ["MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE"],
         "hermes": os.environ["MAC_OPENCLAW_FINALIZE_HERMES_STATE"],
+        # not_installed is a valid non-error state: the NemoClaw program is
+        # optional and may not be registered with the supervisor at all.
         "nemoclaw": os.environ["MAC_OPENCLAW_FINALIZE_NEMOCLAW_STATE"],
     },
     "verified_at": verified_at,
