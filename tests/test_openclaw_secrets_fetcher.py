@@ -51,12 +51,37 @@ def test_owner_only_env_update_is_idempotent_and_supports_revocation(tmp_path: P
 def test_fetcher_prefers_logical_identity_namespace_with_legacy_agent_fallback() -> None:
     text = FETCHER.read_text(encoding="utf-8")
     assert '"channel-identity.%s.telegram.%s.bot"' in text
-    assert '"channel-identity.%s.slack.%s.bot"' in text
-    assert '"channel-identity.%s.slack.%s.app"' in text
+    assert 'canonical_prefix = "channel-identity.%s.slack."' in text
+    assert '"%s%s.bot" % (canonical_prefix, account)' in text
+    assert '"%s%s.app" % (canonical_prefix, account)' in text
     assert '"telegram.%s.bot" % agent' in text
     assert '"telegram.%s.canary_target" % agent' in text
     assert '".mac" / "openclaw" / "credentials.env"' in text
     assert '".hermes"' not in text
+
+
+def test_discovers_all_complete_slack_workspaces_with_primary_first() -> None:
+    module = load_fetcher()
+    names = [
+        "slack.bullwinkle.omgjkh.bot",
+        "slack.bullwinkle.omgjkh.app",
+        "slack.bullwinkle.offtera.bot",
+        "slack.bullwinkle.offtera.app",
+    ]
+    assert module.discover_slack_account_secrets(
+        names, "bullwinkle", "bullwinkle", "offtera"
+    ) == [
+        (
+            "offtera",
+            "slack.bullwinkle.offtera.bot",
+            "slack.bullwinkle.offtera.app",
+        ),
+        (
+            "omgjkh",
+            "slack.bullwinkle.omgjkh.bot",
+            "slack.bullwinkle.omgjkh.app",
+        ),
+    ]
 
 
 def test_headless_runtime_clears_credentials_without_vault_access(tmp_path: Path) -> None:

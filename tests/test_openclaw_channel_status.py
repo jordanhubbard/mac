@@ -24,13 +24,13 @@ def load_validator():
 
 
 def account(
-    *, account_id: str = "default", ok: bool = True, error: str = ""
+    *, account_id: str = "default", team_id: str = "T-default", ok: bool = True, error: str = ""
 ) -> dict[str, object]:
     result: dict[str, object] = {
         "accountId": account_id,
         "enabled": True,
         "configured": True,
-        "probe": {"ok": ok},
+        "probe": {"ok": ok, "team": {"id": team_id}},
     }
     if error:
         result["lastError"] = error
@@ -79,14 +79,17 @@ def test_duplicate_active_accounts_fail_even_when_both_probes_are_healthy() -> N
     validator = load_validator()
     payload = {
         "channelAccounts": {
-            "slack": [account(account_id="default"), account(account_id="offtera")],
+            "slack": [
+                account(account_id="default", team_id="T-offtera"),
+                account(account_id="offtera", team_id="T-offtera"),
+            ],
         },
         "channelDefaultAccountId": {"slack": "default"},
     }
     assert validator.channel_problems(payload, ("slack",)) == ["slack"]
 
 
-def test_default_account_must_match_the_only_configured_account() -> None:
+def test_default_account_must_name_a_configured_account() -> None:
     validator = load_validator()
     payload = {
         "channelAccounts": {"slack": [account(account_id="offtera")]},
@@ -94,4 +97,18 @@ def test_default_account_must_match_the_only_configured_account() -> None:
     }
     assert validator.channel_problems(payload, ("slack",)) == ["slack"]
     payload["channelDefaultAccountId"]["slack"] = "offtera"
+    assert validator.channel_problems(payload, ("slack",)) == []
+
+
+def test_distinct_slack_workspaces_are_valid_native_multi_account_residency() -> None:
+    validator = load_validator()
+    payload = {
+        "channelAccounts": {
+            "slack": [
+                account(account_id="offtera", team_id="T-offtera"),
+                account(account_id="omgjkh", team_id="T-omgjkh"),
+            ],
+        },
+        "channelDefaultAccountId": {"slack": "offtera"},
+    }
     assert validator.channel_problems(payload, ("slack",)) == []

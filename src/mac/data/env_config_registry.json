@@ -4677,6 +4677,18 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw slack account ids.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_SLACK_ACCOUNT_IDS",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "scripts/mac-fetch-openclaw-secrets.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw slack app token.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_SLACK_APP_TOKEN",
@@ -4752,7 +4764,8 @@
     "name": "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "scripts/mac-fetch-openclaw-secrets.py"
     ],
     "type": "str"
   },

@@ -2,10 +2,13 @@
 """Materialize identity-scoped OpenClaw channel credentials from MAC's vault.
 
 Workers without ``MAC_OPENCLAW_PUBLIC_IDENTITY`` are headless and receive no
-human-channel credentials.  A logical identity account uses names such as::
+human-channel credentials.  A logical identity can own multiple accounts per
+channel and uses names such as::
 
     channel-identity.mac-hive.slack.default.bot
     channel-identity.mac-hive.slack.default.app
+    channel-identity.mac-hive.slack.second-workspace.bot
+    channel-identity.mac-hive.slack.second-workspace.app
     channel-identity.mac-hive.telegram.default.bot
     channel-identity.mac-hive.telegram.default.canary_target
 
@@ -113,6 +116,80 @@ def update_env_file(path: Path, updates: dict[str, str | None]) -> bool:
     return True
 
 
+def env_suffix(account_id: str) -> str:
+    value = "".join(char if char.isalnum() else "_" for char in account_id.upper())
+    return value.strip("_") or "DEFAULT"
+
+
+def slack_env_keys(account_id: str) -> tuple[str, str]:
+    suffix = env_suffix(account_id)
+    return (
+        "MAC_OPENCLAW_SLACK_%s_BOT_TOKEN" % suffix,
+        "MAC_OPENCLAW_SLACK_%s_APP_TOKEN" % suffix,
+    )
+
+
+def discover_slack_account_secrets(
+    names: list[str], identity: str, agent: str, primary: str
+) -> list[tuple[str, str, str]]:
+    """Return complete Slack bot/app pairs, primary first.
+
+    Identity-scoped names win over the legacy per-agent namespace.  Discovery
+    keeps every complete workspace pair so OpenClaw can use its native
+    multi-account support instead of silently dropping all but one workspace.
+    """
+
+    available = set(names)
+    accounts: set[str] = set()
+    canonical_prefix = "channel-identity.%s.slack." % identity
+    legacy_prefix = "slack.%s." % agent
+    for name in available:
+        for prefix in (canonical_prefix, legacy_prefix):
+            if not name.startswith(prefix):
+                continue
+            remainder = name[len(prefix) :]
+            if remainder.endswith(".bot") or remainder.endswith(".app"):
+                accounts.add(remainder.rsplit(".", 1)[0])
+    ordered = ([primary] if primary in accounts else []) + sorted(accounts - {primary})
+    result: list[tuple[str, str, str]] = []
+    for account in ordered:
+        canonical = (
+            "%s%s.bot" % (canonical_prefix, account),
+            "%s%s.app" % (canonical_prefix, account),
+        )
+        legacy = (
+            "%s%s.bot" % (legacy_prefix, account),
+            "%s%s.app" % (legacy_prefix, account),
+        )
+        if canonical[0] in available and canonical[1] in available:
+            result.append((account, canonical[0], canonical[1]))
+        elif legacy[0] in available and legacy[1] in available:
+            result.append((account, legacy[0], legacy[1]))
+    return result
+
+
+def stale_channel_env_updates(path: Path) -> dict[str, None]:
+    """Remove legacy and previously generated channel variables on rewrite."""
+
+    stale = {
+        "SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN",
+        "TELEGRAM_BOT_TOKEN",
+        "MAC_OPENCLAW_SLACK_ACCOUNT_ID",
+        "MAC_OPENCLAW_SLACK_ACCOUNT_IDS",
+        "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN",
+        "MAC_OPENCLAW_TELEGRAM_CANARY_TARGET",
+    }
+    if path.exists():
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            key = line.split("=", 1)[0].strip() if "=" in line else ""
+            if key.startswith("MAC_OPENCLAW_SLACK_") and key.endswith(
+                ("_BOT_TOKEN", "_APP_TOKEN")
+            ):
+                stale.add(key)
+    return {key: None for key in stale}
+
+
 def main() -> int:
     agent = (os.environ.get("MAC_AGENT_NAME") or "").strip().lower()
     identity = (os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY") or "").strip().lower()
@@ -131,15 +208,7 @@ def main() -> int:
         return 2
 
     if not identity:
-        update_env_file(
-            output_path,
-            {
-                "SLACK_BOT_TOKEN": None,
-                "SLACK_APP_TOKEN": None,
-                "TELEGRAM_BOT_TOKEN": None,
-                "MAC_OPENCLAW_TELEGRAM_CANARY_TARGET": None,
-            },
-        )
+        update_env_file(output_path, stale_channel_env_updates(output_path))
         print("OpenClaw runtime is headless for agent=%s" % agent)
         return 0
 
@@ -164,13 +233,8 @@ def main() -> int:
         % (identity, telegram_account),
         "telegram.%s.canary_target" % agent,
     )
-    slack_bot_name = first_name(
-        "channel-identity.%s.slack.%s.bot" % (identity, slack_account),
-        "slack.%s.%s.bot" % (agent, slack_account),
-    )
-    slack_app_name = first_name(
-        "channel-identity.%s.slack.%s.app" % (identity, slack_account),
-        "slack.%s.%s.app" % (agent, slack_account),
+    slack_secret_names = discover_slack_account_secrets(
+        names, identity, agent, slack_account
     )
 
     telegram_token = (
@@ -190,35 +254,35 @@ def main() -> int:
         if telegram_target_name
         else ""
     )
-    slack_bot = vault_get(base, vault_token, slack_bot_name) if slack_bot_name else ""
-    slack_app = vault_get(base, vault_token, slack_app_name) if slack_app_name else ""
-    if bool(slack_bot) != bool(slack_app):
-        print(
-            "Slack identity account requires both bot and app credentials",
-            file=sys.stderr,
-        )
-        return 4
-    if slack_bot and not slack_bot.startswith("xoxb-"):
-        print("Slack bot credential has the wrong type", file=sys.stderr)
-        return 4
-    if slack_app and not slack_app.startswith("xapp-"):
-        print("Slack app credential has the wrong type", file=sys.stderr)
-        return 4
-    if not slack_bot and not telegram_token:
+    slack_credentials: dict[str, tuple[str, str]] = {}
+    for account, bot_name, app_name in slack_secret_names:
+        bot = vault_get(base, vault_token, bot_name)
+        app = vault_get(base, vault_token, app_name)
+        if not bot.startswith("xoxb-"):
+            print("Slack bot credential has the wrong type", file=sys.stderr)
+            return 4
+        if not app.startswith("xapp-"):
+            print("Slack app credential has the wrong type", file=sys.stderr)
+            return 4
+        slack_credentials[account] = (bot, app)
+    if not slack_credentials and not telegram_token:
         print(
             "no channel credentials found for public identity=%s" % identity,
             file=sys.stderr,
         )
         return 3
-    changed = update_env_file(
-        output_path,
-        {
-            "SLACK_BOT_TOKEN": slack_bot or None,
-            "SLACK_APP_TOKEN": slack_app or None,
-            "TELEGRAM_BOT_TOKEN": telegram_token or None,
-            "MAC_OPENCLAW_TELEGRAM_CANARY_TARGET": target or None,
-        },
-    )
+    updates: dict[str, str | None] = dict(stale_channel_env_updates(output_path))
+    account_ids = list(slack_credentials)
+    if account_ids:
+        updates["MAC_OPENCLAW_SLACK_ACCOUNT_ID"] = account_ids[0]
+        updates["MAC_OPENCLAW_SLACK_ACCOUNT_IDS"] = ",".join(account_ids)
+    for account, (bot, app) in slack_credentials.items():
+        bot_key, app_key = slack_env_keys(account)
+        updates[bot_key] = bot
+        updates[app_key] = app
+    updates["MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"] = telegram_token or None
+    updates["MAC_OPENCLAW_TELEGRAM_CANARY_TARGET"] = target or None
+    changed = update_env_file(output_path, updates)
     print(
         json.dumps(
             {
@@ -227,13 +291,14 @@ def main() -> int:
                 "channels": [
                     channel
                     for channel, configured in (
-                        ("slack", bool(slack_bot)),
+                        ("slack", bool(slack_credentials)),
                         ("telegram", bool(telegram_token)),
                     )
                     if configured
                 ],
                 "telegram_bot_id": telegram_identity.get("id"),
                 "telegram_bot_username": telegram_identity.get("username"),
+                "slack_accounts": account_ids,
                 "canary_target_configured": bool(target),
                 "credentials_file": str(output_path),
                 "changed": changed,

@@ -110,6 +110,8 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "xox" + "b-test-placeholder",
         "xap" + "p-test-placeholder",
         "123456:test-telegram-placeholder",
+        "xox" + "b-second-workspace-placeholder",
+        "xap" + "p-second-workspace-placeholder",
     )
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -126,9 +128,12 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "MAC_OPENCLAW_FLEET_NAME": "mac",
         "MAC_OPENCLAW_PUBLIC_IDENTITY": "mac-hive",
         "MAC_OPENCLAW_SLACK_ACCOUNT_ID": "offtera",
+        "MAC_OPENCLAW_SLACK_ACCOUNT_IDS": "offtera,omgjkh",
         "MAC_OPENCLAW_HOME_CHANNEL": "rockyandfriends",
         "MAC_OPENCLAW_SLACK_BOT_TOKEN": secrets[1],
         "MAC_OPENCLAW_SLACK_APP_TOKEN": secrets[2],
+        "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN": secrets[4],
+        "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN": secrets[5],
         "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN": secrets[3],
     }
     result = subprocess.run(
@@ -160,14 +165,17 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     config = json.loads(config_path.read_text(encoding="utf-8"))
     provider = config["models"]["providers"]["mac-router"]
     slack = config["channels"]["slack"]["accounts"]["offtera"]
+    second_slack = config["channels"]["slack"]["accounts"]["omgjkh"]
     telegram = config["channels"]["telegram"]["accounts"]["default"]
     assert provider["apiKey"] == "${MAC_OPENCLAW_ROUTER_API_KEY}"
     assert provider["headers"] == {
         "x-mac-agent-id": "agent_test",
         "x-mac-hermes-instance-id": "hermes_test",
     }
-    assert slack["botToken"]["id"] == "MAC_OPENCLAW_SLACK_BOT_TOKEN"
-    assert slack["appToken"]["id"] == "MAC_OPENCLAW_SLACK_APP_TOKEN"
+    assert slack["botToken"]["id"] == "MAC_OPENCLAW_SLACK_OFFTERA_BOT_TOKEN"
+    assert slack["appToken"]["id"] == "MAC_OPENCLAW_SLACK_OFFTERA_APP_TOKEN"
+    assert second_slack["botToken"]["id"] == "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN"
+    assert second_slack["appToken"]["id"] == "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN"
     assert telegram["botToken"]["id"] == "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"
     assert telegram["dmPolicy"] == "pairing"
     assert telegram["groupPolicy"] == "allowlist"
@@ -189,8 +197,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         if line and not line.startswith("#") and "=" in line
     }
     assert {
-        "MAC_OPENCLAW_SLACK_APP_TOKEN",
-        "MAC_OPENCLAW_SLACK_BOT_TOKEN",
+        "MAC_OPENCLAW_SLACK_OFFTERA_APP_TOKEN",
+        "MAC_OPENCLAW_SLACK_OFFTERA_BOT_TOKEN",
+        "MAC_OPENCLAW_SLACK_OMGJKH_APP_TOKEN",
+        "MAC_OPENCLAW_SLACK_OMGJKH_BOT_TOKEN",
         "MAC_OPENCLAW_TELEGRAM_BOT_TOKEN",
     } <= runtime_keys
     assert {

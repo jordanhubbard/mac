@@ -27,21 +27,33 @@ def channel_problems(
             and account.get("enabled") is True
             and account.get("configured") is True
         ]
-        # Each MAC channel identity has one durable gateway owner. Multiple
-        # active accounts can consume the same Socket Mode or long-poll stream
-        # and make probes look healthy while real replies fail or disappear.
-        if len(configured) != 1:
+        if not configured:
             problems.append(channel)
             continue
-        account = configured[0]
-        probe = account.get("probe")
-        account_id = account.get("accountId")
+        account_ids = {account.get("accountId") for account in configured}
         default_id = default_accounts.get(channel)
+        identities: list[str] = []
+        healthy = True
+        for account in configured:
+            probe = account.get("probe")
+            if (
+                not isinstance(probe, dict)
+                or probe.get("ok") is not True
+                or account.get("lastError")
+            ):
+                healthy = False
+                break
+            identity = probe.get("team") if channel == "slack" else probe.get("bot")
+            if isinstance(identity, dict) and identity.get("id"):
+                identities.append(str(identity["id"]))
+        # Multi-workspace residency is native OpenClaw behavior. What is not
+        # valid is two account names resolving to the same Slack team or bot,
+        # which is how an implicit environment account hid the reply outage.
         if (
-            not isinstance(probe, dict)
-            or probe.get("ok") is not True
-            or account.get("lastError")
-            or (default_id is not None and account_id is not None and default_id != account_id)
+            not healthy
+            or len(account_ids) != len(configured)
+            or len(identities) != len(set(identities))
+            or (default_id is not None and default_id not in account_ids)
         ):
             problems.append(channel)
     return problems

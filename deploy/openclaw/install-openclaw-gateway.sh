@@ -210,10 +210,15 @@ source_host_env() {
   MAC_OPENCLAW_MODEL="${MAC_OPENCLAW_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-${HERMES_INFERENCE_MODEL:-}}}"
   MAC_OPENCLAW_FLEET_NAME="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
   MAC_OPENCLAW_SLACK_ACCOUNT_ID="${MAC_OPENCLAW_SLACK_ACCOUNT_ID:-default}"
+  MAC_OPENCLAW_SLACK_ACCOUNT_IDS="${MAC_OPENCLAW_SLACK_ACCOUNT_IDS:-$MAC_OPENCLAW_SLACK_ACCOUNT_ID}"
   MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="${MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID:-default}"
   MAC_OPENCLAW_HOME_CHANNEL="${MAC_OPENCLAW_HOME_CHANNEL:-${MAC_HERMES_SLACK_HOME_CHANNEL_NAME:-${SLACK_HOME_CHANNEL_NAME:-}}}"
-  MAC_OPENCLAW_SLACK_BOT_TOKEN="${MAC_OPENCLAW_SLACK_BOT_TOKEN:-${SLACK_BOT_TOKEN:-}}"
-  MAC_OPENCLAW_SLACK_APP_TOKEN="${MAC_OPENCLAW_SLACK_APP_TOKEN:-${SLACK_APP_TOKEN:-}}"
+  local primary_slack_suffix primary_slack_bot_key primary_slack_app_key
+  primary_slack_suffix="$(printf '%s' "$MAC_OPENCLAW_SLACK_ACCOUNT_ID" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$//')"
+  primary_slack_bot_key="MAC_OPENCLAW_SLACK_${primary_slack_suffix:-DEFAULT}_BOT_TOKEN"
+  primary_slack_app_key="MAC_OPENCLAW_SLACK_${primary_slack_suffix:-DEFAULT}_APP_TOKEN"
+  MAC_OPENCLAW_SLACK_BOT_TOKEN="${!primary_slack_bot_key:-${MAC_OPENCLAW_SLACK_BOT_TOKEN:-${SLACK_BOT_TOKEN:-}}}"
+  MAC_OPENCLAW_SLACK_APP_TOKEN="${!primary_slack_app_key:-${MAC_OPENCLAW_SLACK_APP_TOKEN:-${SLACK_APP_TOKEN:-}}}"
   MAC_OPENCLAW_TELEGRAM_BOT_TOKEN="${MAC_OPENCLAW_TELEGRAM_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}"
   MAC_OPENCLAW_TELEGRAM_CANARY_TARGET="${MAC_OPENCLAW_TELEGRAM_CANARY_TARGET:-${TELEGRAM_CANARY_TARGET:-}}"
   MAC_OPENCLAW_PUBLIC_IDENTITY="${MAC_OPENCLAW_PUBLIC_IDENTITY:-}"
@@ -225,13 +230,14 @@ source_host_env() {
   if [ -z "$MAC_OPENCLAW_PUBLIC_IDENTITY" ]; then
     MAC_OPENCLAW_SLACK_BOT_TOKEN=""
     MAC_OPENCLAW_SLACK_APP_TOKEN=""
+    MAC_OPENCLAW_SLACK_ACCOUNT_IDS=""
     MAC_OPENCLAW_TELEGRAM_BOT_TOKEN=""
   fi
   # Keep this scalar for compatibility with the system Bash 3.2 on macOS:
   # expanding an empty array with ${channels[*]} under `set -u` is treated as
   # an unbound variable there, which broke intentionally headless gateways.
   MAC_OPENCLAW_CHANNELS=""
-  if [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] || [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ]; then
+  if [ -n "$MAC_OPENCLAW_SLACK_ACCOUNT_IDS" ] && { [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] || [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ]; }; then
     MAC_OPENCLAW_CHANNELS="slack"
   fi
   if [ -n "$MAC_OPENCLAW_TELEGRAM_BOT_TOKEN" ]; then
@@ -259,6 +265,7 @@ source_host_env() {
   export MAC_OPENCLAW_PUBLIC_IDENTITY MAC_OPENCLAW_CHANNELS
   export MAC_OPENCLAW_REPRESENTED_BY MAC_OPENCLAW_REPRESENTATION_MODE
   export MAC_OPENCLAW_SLACK_ACCOUNT_ID MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID
+  export MAC_OPENCLAW_SLACK_ACCOUNT_IDS
   export MAC_OPENCLAW_GATEWAY_PORT="$GATEWAY_PORT"
 }
 
@@ -278,10 +285,22 @@ validate_env() {
     *) die "MAC_OPENCLAW_ROUTER_URL must be an http(s) URL" ;;
   esac
   if [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] || [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ]; then
-    [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] && [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ] \
-      || die "Slack requires both bot and app tokens"
-    [[ "$MAC_OPENCLAW_SLACK_BOT_TOKEN" == xoxb-* ]] || die "Slack bot token has the wrong type"
-    [[ "$MAC_OPENCLAW_SLACK_APP_TOKEN" == xapp-* ]] || die "Slack app token has the wrong type"
+    local slack_account slack_suffix slack_bot_key slack_app_key slack_bot slack_app
+    for slack_account in $(printf '%s' "$MAC_OPENCLAW_SLACK_ACCOUNT_IDS" | tr ',' ' '); do
+      slack_suffix="$(printf '%s' "$slack_account" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+//; s/_+$//')"
+      slack_bot_key="MAC_OPENCLAW_SLACK_${slack_suffix:-DEFAULT}_BOT_TOKEN"
+      slack_app_key="MAC_OPENCLAW_SLACK_${slack_suffix:-DEFAULT}_APP_TOKEN"
+      slack_bot="${!slack_bot_key:-}"
+      slack_app="${!slack_app_key:-}"
+      if [ "$slack_account" = "$MAC_OPENCLAW_SLACK_ACCOUNT_ID" ]; then
+        slack_bot="${slack_bot:-$MAC_OPENCLAW_SLACK_BOT_TOKEN}"
+        slack_app="${slack_app:-$MAC_OPENCLAW_SLACK_APP_TOKEN}"
+      fi
+      [ -n "$slack_bot" ] && [ -n "$slack_app" ] \
+        || die "Slack account $slack_account requires both bot and app tokens"
+      [[ "$slack_bot" == xoxb-* ]] || die "Slack account $slack_account bot token has the wrong type"
+      [[ "$slack_app" == xapp-* ]] || die "Slack account $slack_account app token has the wrong type"
+    done
   fi
   if [ -n "$MAC_OPENCLAW_TELEGRAM_BOT_TOKEN" ]; then
     [[ "$MAC_OPENCLAW_TELEGRAM_BOT_TOKEN" =~ ^[0-9]+:.+ ]] || die "Telegram bot token has the wrong type"
@@ -342,20 +361,32 @@ configured = {
     if item.strip()
 }
 if "slack" in configured:
+    def slack_env_key(account: str, kind: str) -> str:
+        suffix = "".join(char if char.isalnum() else "_" for char in account.upper()).strip("_") or "DEFAULT"
+        return "MAC_OPENCLAW_SLACK_%s_%s_TOKEN" % (suffix, kind)
+
+    account_ids = [
+        item.strip()
+        for item in os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_IDS", "").split(",")
+        if item.strip()
+    ]
+    if not account_ids:
+        account_ids = [os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID", "default")]
     channels["slack"] = {
         "enabled": True,
         "mode": "socket",
         "accounts": {
-            os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID", "default"): {
+            account: {
                 # Stock OpenClaw auto-creates a second account named
                 # ``default`` whenever the conventional SLACK_* variables are
                 # present.  The explicit account below is MAC's sole channel
                 # owner, so use namespaced SecretRefs to avoid two Socket Mode
                 # consumers racing on the same app credentials.
-                "botToken": secret_ref("MAC_OPENCLAW_SLACK_BOT_TOKEN"),
-                "appToken": secret_ref("MAC_OPENCLAW_SLACK_APP_TOKEN"),
+                "botToken": secret_ref(slack_env_key(account, "BOT")),
+                "appToken": secret_ref(slack_env_key(account, "APP")),
                 "groupPolicy": "open",
             }
+            for account in account_ids
         },
     }
 if "telegram" in configured:
@@ -444,8 +475,18 @@ values = {
     "OPENCLAW_STATE_DIR": "/home/sandbox/.openclaw-data",
 }
 if os.environ.get("MAC_OPENCLAW_SLACK_APP_TOKEN"):
-    values["MAC_OPENCLAW_SLACK_APP_TOKEN"] = os.environ["MAC_OPENCLAW_SLACK_APP_TOKEN"]
-    values["MAC_OPENCLAW_SLACK_BOT_TOKEN"] = os.environ["MAC_OPENCLAW_SLACK_BOT_TOKEN"]
+    account_ids = [
+        item.strip()
+        for item in os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_IDS", "").split(",")
+        if item.strip()
+    ] or [os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID", "default")]
+    primary = os.environ.get("MAC_OPENCLAW_SLACK_ACCOUNT_ID", account_ids[0])
+    for account in account_ids:
+        suffix = "".join(char if char.isalnum() else "_" for char in account.upper()).strip("_") or "DEFAULT"
+        bot_key = "MAC_OPENCLAW_SLACK_%s_BOT_TOKEN" % suffix
+        app_key = "MAC_OPENCLAW_SLACK_%s_APP_TOKEN" % suffix
+        values[bot_key] = os.environ.get(bot_key) or (os.environ["MAC_OPENCLAW_SLACK_BOT_TOKEN"] if account == primary else "")
+        values[app_key] = os.environ.get(app_key) or (os.environ["MAC_OPENCLAW_SLACK_APP_TOKEN"] if account == primary else "")
 if os.environ.get("MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"):
     values["MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"] = os.environ["MAC_OPENCLAW_TELEGRAM_BOT_TOKEN"]
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
@@ -704,10 +745,13 @@ verify() {
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw health --verbose --json >/dev/null
   case ",$MAC_OPENCLAW_CHANNELS," in
     *,slack,*)
-      sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
-        --channel slack --account "$MAC_OPENCLAW_SLACK_ACCOUNT_ID" \
-        --target channel:C00000000 --message 'MAC plugin preflight' \
-        --dry-run --json >/dev/null
+      local slack_account
+      for slack_account in $(printf '%s' "$MAC_OPENCLAW_SLACK_ACCOUNT_IDS" | tr ',' ' '); do
+        sandbox_command "$openshell_bin" /usr/local/bin/openclaw message send \
+          --channel slack --account "$slack_account" \
+          --target channel:C00000000 --message 'MAC plugin preflight' \
+          --dry-run --json >/dev/null
+      done
       ;;
   esac
   case ",$MAC_OPENCLAW_CHANNELS," in

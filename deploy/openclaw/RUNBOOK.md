@@ -30,8 +30,10 @@ configuration or explicit `MAC_OPENCLAW_*` overrides:
 - agent and Hermes-instance identity;
 - MAC router URL, API key, and selected model;
 - Slack Socket Mode bot and app tokens;
-- an optional Slack and/or Telegram account assigned to the logical public
-  identity hosted by this agent.
+- one or more Slack and/or Telegram accounts assigned to the logical public
+  identity hosted by this agent. OpenClaw owns multi-workspace residency
+  natively; each configured account must resolve to a distinct workspace or
+  bot identity.
 
 During the first migration only, if OpenClaw has no channel-routing map yet,
 the installer sanitizes and copies Slack account/channel IDs from the legacy
@@ -50,6 +52,13 @@ with Telegram `getMe`, and materializes them in the OpenClaw-only, mode-0600
 `~/.mac/openclaw/credentials.env`. They are intentionally not written to
 `~/.hermes/.env`, which prevents the retained rollback gateway from competing
 for the same Telegram long-poll stream.
+
+Slack discovery includes every complete bot/app pair under the identity-scoped
+namespace, with the older `slack.<agent>.<workspace>.*` names accepted during
+migration. Tokens are exposed to OpenClaw only through account-specific
+`MAC_OPENCLAW_SLACK_<WORKSPACE>_*_TOKEN` SecretRefs. Do not export the stock
+`SLACK_BOT_TOKEN` or `SLACK_APP_TOKEN` names: OpenClaw interprets those as an
+additional implicit `default` account and would connect twice to one workspace.
 
 The generated `openclaw.json` contains SecretRefs and `${ENV}` references, not
 credential values. Actual values are written only to

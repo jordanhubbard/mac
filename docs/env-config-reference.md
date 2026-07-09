@@ -392,6 +392,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_SANDBOX_NAME` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox name. |
 | `MAC_OPENCLAW_SKIP_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw skip image. |
 | `MAC_OPENCLAW_SLACK_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack account id. |
+| `MAC_OPENCLAW_SLACK_ACCOUNT_IDS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack account ids. |
 | `MAC_OPENCLAW_SLACK_APP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack app token. |
 | `MAC_OPENCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack bot token. |
 | `MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack home channels file. |
