@@ -1104,6 +1104,14 @@ case "$supervisor" in
     if [ "$action" = "stop" ]; then
       launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
     else
+      # A deferred restart intentionally leaves the freshly written plist
+      # unregistered until the post manifest has reconciled.  ``kickstart``
+      # cannot load an absent job, so bootstrap it first when needed.
+      plist="$HOME/Library/LaunchAgents/${label}.plist"
+      if ! launchctl print "$domain/$label" >/dev/null 2>&1; then
+        [ -f "$plist" ] || { echo "launchd agent plist missing: $plist" >&2; exit 1; }
+        launchctl bootstrap "$domain" "$plist"
+      fi
       launchctl kickstart -k "$domain/$label"
     fi
     ;;

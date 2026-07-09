@@ -66,6 +66,14 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
     )
     assert reconcile_pos < external_restart_pos
 
+    service_control = text.split("set_remote_mac_agent_service() {", 1)[1].split(
+        "validate_router_topology_spec() {", 1
+    )[0]
+    assert 'plist="$HOME/Library/LaunchAgents/${label}.plist"' in service_control
+    assert 'if ! launchctl print "$domain/$label"' in service_control
+    assert 'launchctl bootstrap "$domain" "$plist"' in service_control
+    assert 'launchctl kickstart -k "$domain/$label"' in service_control
+
 
 def test_remote_deploy_payload_is_materialized_before_execution():
     text = script_text()
