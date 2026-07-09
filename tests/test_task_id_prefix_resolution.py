@@ -258,3 +258,120 @@ class TestAmbiguousIdErrorModel:
     def test_str_is_message(self):
         err = AmbiguousIdError("my message", ["a", "b"])
         assert str(err) == "my message"
+
+
+# ---------------------------------------------------------------------------
+# Acceptance tests: replacement_task_id prefix resolution in _transition_task_impl
+# ---------------------------------------------------------------------------
+
+
+class TestReplacementTaskIdPrefixResolution:
+    """Acceptance criteria for task-description:
+    (1) Unambiguous short prefix -> full canonical ID stored in lifecycle.
+    (2) Ambiguous prefix -> AmbiguousIdError before any state change.
+    (3) Unknown prefix -> NotFoundError before any state change.
+    (4) Full 37-char ID is accepted unchanged.
+    """
+
+    def _insert_task(self, cp, hex_prefix: str, state: str = "open", title: str = "t") -> str:
+        from mac.models import utcnow, TaskState
+        full_id = "task_" + hex_prefix + "0" * (32 - len(hex_prefix))
+        now = utcnow()
+        state_val = getattr(TaskState, state.upper()).value if hasattr(TaskState, state.upper()) else state
+        cp.store.execute(
+            """INSERT INTO tasks
+               (id, title, description, state, project, priority, required_capabilities,
+                dependencies, metadata, owner_agent_id, lease_id, created_at, updated_at,
+                started_at, completed_at)
+               VALUES (?, ?, '', ?, '', 0, '[]', '[]', '{}', NULL, NULL, ?, ?, NULL, NULL)""",
+            (full_id, title, state_val, now, now),
+        )
+        return full_id
+
+    def test_ac1_short_prefix_resolves_to_canonical_id(self, cp):
+        """(AC-1) An unambiguous short prefix resolves to the full canonical ID."""
+        subject_id = self._insert_task(cp, "aaaa11110000bbbb", title="subject task")
+        replacement_id = self._insert_task(cp, "bbbb22220000cccc", title="replacement task")
+        short_prefix = "task_bbbb2222"
+
+        result = cp.transition_task(
+            subject_id,
+            "cancelled",
+            "operator",
+            {
+                "disposition": "superseded",
+                "replacement_task_id": short_prefix,
+                "reason": "prefix resolution test",
+            },
+        )
+
+        assert result.state == "cancelled"
+        import json
+        metadata = result.metadata if isinstance(result.metadata, dict) else json.loads(result.metadata or "{}")
+        lifecycle = metadata.get("repository_ref_lifecycle", {})
+        assert lifecycle.get("replacement_task_id") == replacement_id
+
+    def test_ac2_ambiguous_prefix_raises_before_state_change(self, cp):
+        """(AC-2) Ambiguous prefix raises AmbiguousIdError before any state change."""
+        subject_id = self._insert_task(cp, "cccc11110000aaaa", title="subject")
+        self._insert_task(cp, "dddd11110000bbbb", title="replacement-A")
+        self._insert_task(cp, "dddd11110000cccc", title="replacement-B")
+        ambiguous_prefix = "task_dddd1111"
+
+        with pytest.raises(AmbiguousIdError):
+            cp.transition_task(
+                subject_id,
+                "cancelled",
+                "operator",
+                {
+                    "disposition": "superseded",
+                    "replacement_task_id": ambiguous_prefix,
+                    "reason": "ambiguous test",
+                },
+            )
+
+        # State must not have changed
+        task = cp.get_task(subject_id)
+        assert task.state == "open"
+
+    def test_ac3_unknown_prefix_raises_before_state_change(self, cp):
+        """(AC-3) Unknown prefix raises NotFoundError before any state change."""
+        subject_id = self._insert_task(cp, "eeee11110000ffff", title="subject")
+        unknown_prefix = "task_00000000dead"
+
+        with pytest.raises(NotFoundError):
+            cp.transition_task(
+                subject_id,
+                "cancelled",
+                "operator",
+                {
+                    "disposition": "superseded",
+                    "replacement_task_id": unknown_prefix,
+                    "reason": "unknown prefix test",
+                },
+            )
+
+        task = cp.get_task(subject_id)
+        assert task.state == "open"
+
+    def test_ac4_full_id_passes_through_unchanged(self, cp):
+        """(AC-4) A full 37-char task ID is accepted and stored without modification."""
+        subject_id = self._insert_task(cp, "ffff11110000aaaa", title="subject-full")
+        replacement_id = self._insert_task(cp, "ffff22220000bbbb", title="replacement-full")
+
+        result = cp.transition_task(
+            subject_id,
+            "cancelled",
+            "operator",
+            {
+                "disposition": "superseded",
+                "replacement_task_id": replacement_id,
+                "reason": "full id test",
+            },
+        )
+
+        assert result.state == "cancelled"
+        import json
+        metadata = result.metadata if isinstance(result.metadata, dict) else json.loads(result.metadata or "{}")
+        lifecycle = metadata.get("repository_ref_lifecycle", {})
+        assert lifecycle.get("replacement_task_id") == replacement_id

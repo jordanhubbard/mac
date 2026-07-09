@@ -6947,6 +6947,19 @@ class ControlPlane:
         if target == TaskState.BLOCKED.value:
             transition_detail = _normalize_blocked_detail(transition_detail)
         if target == TaskState.CANCELLED.value:
+            # Resolve replacement_task_id prefix before normalization so that
+            # normalize_cancellation_detail receives a canonical full ID.
+            # AmbiguousIdError and NotFoundError propagate without state change.
+            _raw_replacement = str(
+                (dict(transition_detail) if transition_detail else {}).get(
+                    "replacement_task_id"
+                ) or ""
+            ).strip()
+            if _raw_replacement:
+                _resolved_replacement = self._resolve_task_id(_raw_replacement)
+                if _resolved_replacement != _raw_replacement:
+                    transition_detail = dict(transition_detail)
+                    transition_detail["replacement_task_id"] = _resolved_replacement
             transition_detail = normalize_cancellation_detail(transition_detail)
             # Write guard: reject cancellations that point at a terminal or held
             # replacement task unless the caller has explicitly set archival_override.
