@@ -5539,7 +5539,7 @@ try:
             "--message",
             prompt,
             "--session-id",
-            "mac-openclaw-startup-self-test",
+            f"mac-openclaw-startup-self-test-{agent_id}-{int(time.time())}",
             "--json",
         ],
         text=True,
