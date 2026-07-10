@@ -250,7 +250,13 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "/opt/mac-openclaw/plugins/mac-continuity"
     ]
     assert config["agents"]["defaults"]["workspace"] == "/sandbox/workspace"
-    assert "memorySearch" not in config["agents"]["defaults"]
+    assert config["agents"]["defaults"]["memorySearch"] == {
+        "provider": "mac-router",
+        "model": "text-embedding-3-small",
+        "fallback": "none",
+        "experimental": {"sessionMemory": True},
+        "sources": ["memory", "sessions"],
+    }
     assert config["plugins"]["entries"]["mac-continuity"]["config"] == {
         "maxMemories": 5,
         "timeoutMs": 2500,

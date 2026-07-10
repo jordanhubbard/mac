@@ -381,6 +381,7 @@ def secret_ref(name: str) -> dict:
 
 model = os.environ["MAC_OPENCLAW_MODEL"]
 provider_model = "mac-router/%s" % model
+embedding_model = os.environ.get("MAC_OPENCLAW_EMBEDDING_MODEL", "text-embedding-3-small")
 channels = {}
 configured = {
     item.strip()
@@ -470,7 +471,10 @@ config = {
                     "x-mac-agent-id": os.environ["MAC_OPENCLAW_AGENT_ID"],
                     "x-mac-hermes-instance-id": os.environ["MAC_OPENCLAW_INSTANCE_ID"],
                 },
-                "models": [{"id": model, "name": model}],
+                "models": [
+                    {"id": model, "name": model},
+                    {"id": embedding_model, "name": embedding_model},
+                ],
             }
         },
     },
@@ -481,6 +485,13 @@ config = {
             # Memory is supplied by the MAC continuity plugin, which fronts
             # the Hermes holographic/Qdrant tiers.  Do not configure OpenClaw
             # with provider=none: that would silently discard continuity.
+            "memorySearch": {
+                "provider": "mac-router",
+                "model": embedding_model,
+                "fallback": "none",
+                "experimental": {"sessionMemory": True},
+                "sources": ["memory", "sessions"],
+            },
         },
         "list": [{
             "id": "main",
