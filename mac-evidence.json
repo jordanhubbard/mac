@@ -1,53 +1,88 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "repo_change",
-  "task_id": "task_32a629f53c5c48f0bb9680c55c2c392b",
+  "evidence_type": "investigation",
+  "task_id": "task_8198c76246b6423fbcc0c427d2d8c561",
   "status": "complete",
-  "summary": "Assessment of task_29ad56cef72546479f1243eace8bb640 (\"Finish OpenShell sandbox rollout: gateway standup + policies + enable + verify\"). Also fixed a pre-existing test bug in tests/test_openshell_sandbox.py where test_invoke_sandboxed_runs_full_lifecycle failed on OpenShell-hosted agents because the coding-agent sandbox preflight probe injects a delete step into the patched _sandbox_step list before the expected lifecycle download step. Fix: add MAC_CODING_AGENT_SANDBOX=off monkeypatch to suppress the probe in that test. Recommendation: ESCALATE_TO_OPERATOR — task_29ad56 remains valid, all code is merged (PRs #134, #138-#141), remaining work is live host-side operator deployment that no fleet agent can perform.",
-  "assessment": {
-    "target_task_id": "task_29ad56cef72546479f1243eace8bb640",
-    "target_task_title": "Finish OpenShell sandbox rollout: gateway standup + policies + enable + verify",
-    "target_task_state": "open",
-    "target_task_project": "mac-dev",
-    "target_task_attempt_count": 0,
-    "target_task_age_days": 27,
-    "target_task_required_capabilities": ["operator-manual-only"],
-    "investigation_findings": {
-      "code_state": "COMPLETE — all software PRs merged to jordanhubbard/mac main: executor sandbox seam (#134), enforced default policy + Landlock hard_requirement (#138), atomic yolo<->sandbox coupling + executor freeze-fix (#139), never-prompt config default (#140), gateway sandbox seam (#141). All code is default-OFF. Openshell reconcile tests (8/8) pass. OpenShell source files present: openshell_policy.py, openshell_reconcile.py, openshell_runtime.py, openshell_sandbox_gc.py, openshell_service.py, openshell_supervisor.py.",
-      "deployment_state": "INCOMPLETE — the deploy/openshell/mac-hermes-policy.yaml template still has __PLACEHOLDER__ tokens (__RUNTIME_VENV__, __RUNTIME_SRC__, __MAC_HUB_HOST__, __MAC_HUB_PORT__, __MODEL_GATEWAY_HOST__, __RUNTIME_PY__) that must be filled for each host. The OpenShell gateway daemon/container has not been installed on any fleet host (sparky/do-host1/bullwinkle). MAC_OPENSHELL_SANDBOX=1 and MAC_OPENSHELL_GATEWAY=1 have not been enabled. MAC_ALLOW_UNSANDBOXED_YOLO=0 enforcement has not been activated.",
-      "project_state": "mac-dev project has status=derived (no registered project_id), task_count=2, active_count=1. No project-level dispatch pause applies. task_29ad56 is dispatchable=false only because required_capabilities=[operator-manual-only] — no eligible fleet agent has that capability.",
-      "blocking_gate": "required_capabilities=[operator-manual-only] blocks all fleet dispatch. The task was created by a human with explicit intent that only a human operator can execute it.",
-      "sibling_task": "task_76c6cb74 ('Resolve mac-dev task_29ad56: close or requeue OpenShell gateway task') is waiting on task_32a629f53c5c48f0bb9680c55c2c392b (this assessment task) to complete before it can take resolution action."
-    },
-    "recommendation": "ESCALATE_TO_OPERATOR",
-    "rationale": "The work in task_29ad56 is genuinely remaining and valid. All code is merged (default-OFF); the remaining steps are host-side operator actions: (1) install OpenShell gateway on sparky/do-host1/bullwinkle via deploy/openshell/bootstrap-openshell.sh, (2) fill __PLACEHOLDER__ tokens in mac-hermes-policy.yaml with the hub IP/port, model gateway host, and runtime paths, (3) set MAC_OPENSHELL_SANDBOX=1 on executors and MAC_OPENSHELL_GATEWAY=1 on the gateway hosts, (4) live verify one sandboxed task run plus one off-policy rejection. None of these actions can be performed by a fleet agent. The task should remain open with operator-manual-only capability and be handed to a human operator with Docker access to the fleet hosts.",
-    "recommended_action": "No close. Hand to operator. Update task description if needed to reflect current hub IP (100.72.16.110) and fleet topology (agents: bullwinkle/rocky/natasha/jordanh-gke/jordanh-worker1/jordanh-worker2). The required_capabilities=[operator-manual-only] gate is correct and should remain.",
-    "operator_next_steps": [
-      "SSH to a Docker-capable fleet host (bullwinkle/do-host1/sparky)",
-      "Run: bash deploy/openshell/bootstrap-openshell.sh",
-      "Fill placeholder tokens in deploy/openshell/mac-hermes-policy.yaml (hub=100.72.16.110:8789, model gateway, runtime venv paths)",
-      "Install policy: cp mac-hermes-policy.yaml ~/.mac/openshell-policy.yaml",
-      "Enable on executor: add MAC_OPENSHELL_SANDBOX=1 to the agent service environment",
-      "Enable gateway: add MAC_OPENSHELL_GATEWAY=1, run: mac openshell reconcile",
-      "Live verify: run one real task confined; attempt one off-policy action and confirm denial",
-      "Once verified: set MAC_ALLOW_UNSANDBOXED_YOLO=0 to enforce YOLO=>sandboxed invariant",
-      "Close task_29ad56 with reason='OpenShell sandbox rollout complete and live-verified'"
-    ]
-  },
-  "files_changed": [
-    "tests/test_openshell_sandbox.py"
-  ],
-  "tests": {
-    "command": "python3 -m pytest tests/test_openshell_sandbox.py -q",
-    "result": "65 passed in 0.93s",
-    "status": "passed",
-    "targeted": {
-      "command": "python3 -m pytest tests/test_openshell_sandbox.py::test_invoke_sandboxed_runs_full_lifecycle tests/test_openshell_reconcile.py -q",
-      "result": "9 passed"
+  "summary": "Audit of environment_contract.py integration state. Module exists and exports all required symbols; all 52 unit tests pass. Integration gap is REAL: the module is never imported or called at the Python level anywhere in src/mac/. It is referenced only in documentation strings inside services.py._build_onboarding_description(). Concrete repair plan produced.",
+  "verdict": "REAL_INTEGRATION_GAP",
+  "module_check": {
+    "file": "src/mac/environment_contract.py",
+    "exists": true,
+    "exports": {
+      "derive_environment_contract": true,
+      "validate_environment_contract": true,
+      "environment_contract_summary": true
     }
   },
-  "codegraph": {
-    "status": "skipped",
-    "reason": "non_code_change — test fix only: added one monkeypatch.setenv line to suppress coding-agent sandbox probe in a pre-existing failing test. No production source files changed."
-  }
+  "test_results": {
+    "command": "python3 -m pytest tests/test_environment_contract.py -v -q",
+    "status": "passed",
+    "passed": 52,
+    "failed": 0,
+    "errors": 0,
+    "summary": "52 passed in 0.13s"
+  },
+  "integration_gap_findings": {
+    "services_py_build_onboarding_description": {
+      "function": "_build_onboarding_description",
+      "file": "src/mac/services.py",
+      "lines": "856-893",
+      "finding": "environment_contract is referenced only inside string literals (instruction text for agents). Lines 868, 870, 876, 884 contain doc-string mentions. There is NO Python-level import of environment_contract and NO call to derive_environment_contract or validate_environment_contract anywhere in the function or module.",
+      "verdict": "doc_string_only"
+    },
+    "task_executor_py": {
+      "file": "src/mac/task_executor.py",
+      "finding": "No reference to environment_contract, derive_environment_contract, or validate_environment_contract anywhere in the file. The onboarding code path in repository_contract_section() (lines ~2002-2019) constructs instruction text for agents but makes no runtime calls to the module.",
+      "verdict": "not_referenced"
+    },
+    "src_mac_wide_search": {
+      "command": "grep -rn 'environment_contract' src/mac/ --include='*.py'",
+      "files_with_runtime_import": [],
+      "files_with_doc_string_only": ["src/mac/services.py"],
+      "files_that_are_the_module_itself": ["src/mac/environment_contract.py"],
+      "verdict": "zero_runtime_imports_outside_module"
+    }
+  },
+  "repair_plan": {
+    "description": "The environment contract should be derived and attached to the onboarding task metadata at task-creation time so the executing agent receives a pre-computed contract in task.json rather than having to derive it themselves. Two alternative repair sites exist; Site A is preferred because it runs server-side at onboard time.",
+    "preferred_site": "Site A",
+    "sites": [
+      {
+        "id": "Site A",
+        "rationale": "Preferred. Runs derive_environment_contract() + validate_environment_contract() once at the moment services.py.onboard_repository() creates the task, so the resulting contract JSON is stored in task metadata and is available to the agent without any extra derivation step. This gives fail-fast semantics (a fatal preflight failure can abort task creation with a clear error) and makes the agent's job simpler.",
+        "file": "src/mac/services.py",
+        "function": "onboard_repository",
+        "current_line_range": "3775-3833",
+        "call_site_description": "After the repository is cloned for analysis (the worktree already exists at this point when called via cmd_project_onboard) but before create_task(), call derive_environment_contract(local_checkout_path) and validate_environment_contract(contract), then embed the resulting dict under metadata['environment_contract']. If preflight.status == 'fail', raise a descriptive error.",
+        "import_to_add": "from mac.environment_contract import derive_environment_contract, validate_environment_contract, environment_contract_summary",
+        "code_change_summary": "1. Add import at top of src/mac/services.py. 2. Inside onboard_repository(), after the local checkout path is known, add: contract = derive_environment_contract(local_checkout_path); contract = validate_environment_contract(contract); metadata['environment_contract'] = contract. 3. Optionally: if contract['preflight']['status'] == 'fail', raise RuntimeError with environment_contract_summary(contract) to give the caller an actionable error before a doomed task is queued.",
+        "caveat": "onboard_repository() does not currently receive a local path argument — it only has the remote URL. The local checkout is prepared later by worker.py when the task is dispatched. If server-side derivation is impractical, use Site B instead."
+      },
+      {
+        "id": "Site B",
+        "rationale": "Alternative. Runs derive_environment_contract() inside worker.py after the task-owned worktree has been prepared (git clone/worktree complete). Attaches the contract to the task execution context before handing off to the agent prompt. More complex plumbing but does not require the server to have a local checkout.",
+        "file": "src/mac/worker.py",
+        "function": "_prepare_repository_task_worktree (or the caller that attaches runtime metadata after worktree creation)",
+        "current_line_range": "3235-3560 (approx; see _repository_task_origin and worktree-setup block)",
+        "call_site_description": "After the worktree is confirmed ready (git worktree add or K8s clone succeeds), call derive_environment_contract(worktree_dir) and validate_environment_contract(contract), then write the result into the task's runtime metadata dict under key 'environment_contract'. If preflight.status == 'fail', log a warning and surface it in the agent prompt.",
+        "import_to_add": "from mac.environment_contract import derive_environment_contract, validate_environment_contract, environment_contract_summary",
+        "code_change_summary": "1. Add import at top of src/mac/worker.py. 2. After worktree is prepared, add: contract = derive_environment_contract(worktree_dir); contract = validate_environment_contract(contract); runtime_metadata['environment_contract'] = contract. 3. If preflight.status == 'fail', include environment_contract_summary(contract) in the agent task prompt warning section."
+      },
+      {
+        "id": "Site C (lowest priority)",
+        "rationale": "Minimal fix: update the instruction text in _build_onboarding_description() to remain accurate (it already describes calling derive_environment_contract) but add a companion in task_executor.py's repository_contract_section() that, when building the onboarding prompt, invokes derive_environment_contract on the $MAC_TASK_REPO_WORKTREE path and injects the result as structured JSON into the prompt. This keeps derivation agent-side but makes it systematic rather than relying on the agent reading and following prose instructions.",
+        "file": "src/mac/task_executor.py",
+        "function": "repository_contract_section",
+        "current_line_range": "1993-2058",
+        "call_site_description": "In the onboarding branch (has_checkout is True), derive the contract from the worktree path (available via os.environ.get('MAC_TASK_REPO_WORKTREE') or the task metadata) and embed it as a JSON block in the returned prompt string.",
+        "import_to_add": "from mac.environment_contract import derive_environment_contract, validate_environment_contract",
+        "code_change_summary": "1. Add import at top of src/mac/task_executor.py. 2. In repository_contract_section(), when has_checkout is True, read MAC_TASK_REPO_WORKTREE, call derive_environment_contract, validate_environment_contract, and inject result JSON into the returned instruction string."
+      }
+    ],
+    "recommended_action": "Implement Site B (worker.py, post-worktree-preparation) because: (a) the worktree already exists at that point so the local path is available; (b) keeps contract derivation close to where the physical checkout is created; (c) allows fail-fast before any agent prompt is issued. Follow with updating _build_onboarding_description() in services.py to note that the contract JSON is pre-attached in task metadata (not requiring the agent to re-derive it)."
+  },
+  "assumptions": [
+    "onboard_repository() in services.py does not receive a pre-cloned local path; clone happens later in worker.py — so Site A as described would require refactoring; Site B is more immediately actionable.",
+    "No code changes were made; this is a pure investigation deliverable as specified."
+  ]
 }
