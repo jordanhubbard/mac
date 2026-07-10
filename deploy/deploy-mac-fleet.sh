@@ -6493,7 +6493,7 @@ read_hub_token() {
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     'set -euo pipefail; set -a; . "$HOME/.mac/mac.env"; set +a; printf "%s" "${MAC_API_TOKEN:?}"'
 }
 
@@ -6505,7 +6505,7 @@ read_hub_tunnel_pubkey() {
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     "cat \"\$HOME/.ssh/mac_tunnel_id.pub\" 2>/dev/null || true"
 }
 
@@ -6630,7 +6630,7 @@ worker_has_mesh_client() {
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${ssh_args[@]}" "$ssh_target" \
+  ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     'command -v tailscale >/dev/null 2>&1 && tailscale status --self >/dev/null 2>&1' 2>/dev/null
 }
 
@@ -6641,7 +6641,7 @@ worker_can_reach_hub_url() {
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${ssh_args[@]}" "$ssh_target" \
+  ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
     "curl -fsS --connect-timeout 3 --max-time 5 '${hub_url%/}/health' >/dev/null 2>&1" 2>/dev/null
 }
 
@@ -6689,7 +6689,7 @@ main() {
       # the hub tunnel key has not been authorized yet. Allow Qdrant and Firecrawl
       # to be degraded for this first deploy; they are re-checked after the tunnel
       # is established below.
-      if ! ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${local_ssh_args[@]}" "$local_ssh_target" \
+      if ! ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${local_ssh_args[@]}" "$local_ssh_target" \
         "curl -fsS --max-time 3 http://127.0.0.1:8789/health >/dev/null 2>&1" 2>/dev/null; then
         allow_degraded_services=1
         echo "==> ${agent}: first deploy (no existing mac API); shared-services degraded override active"
@@ -6703,7 +6703,7 @@ main() {
       local attempt tunnel_ok=0
       for attempt in $(seq 1 6); do
         sleep 5
-        if ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${local_ssh_args[@]}" "$local_ssh_target" \
+        if ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${local_ssh_args[@]}" "$local_ssh_target" \
           "curl -fsS --max-time 3 http://127.0.0.1:18789/health >/dev/null 2>&1" 2>/dev/null; then
           echo "==> ${agent}: hub tunnel reachable after $((attempt * 5))s"
           tunnel_ok=1
@@ -6728,7 +6728,7 @@ main() {
         echo "==> ${agent}: using ${network_provider_field} hub URL ${hub_url_field}; skipping reverse tunnel"
       elif [ "${tunnel_ok:-0}" = "1" ]; then
         local agent_prog="${fleet_name_field}-agent"
-        ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${local_ssh_args[@]}" "$local_ssh_target" \
+        ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${local_ssh_args[@]}" "$local_ssh_target" \
           "sudo supervisorctl restart '$agent_prog' >/dev/null 2>&1 || sudo supervisorctl start '$agent_prog' >/dev/null 2>&1 || true" 2>/dev/null || true
         echo "==> ${agent}: restarted mac-agent with tunnel now available"
       elif [ "${allow_degraded_services:-0}" = "1" ]; then
@@ -6738,7 +6738,7 @@ main() {
         local attempt first_tunnel_ok=0
         for attempt in $(seq 1 12); do
           sleep 5
-          if ssh -n -o BatchMode=yes -o ConnectTimeout=5 "${local_ssh_args[@]}" "$local_ssh_target" \
+          if ssh -n -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${local_ssh_args[@]}" "$local_ssh_target" \
             "curl -fsS --max-time 3 http://127.0.0.1:18789/health >/dev/null 2>&1" 2>/dev/null; then
             echo "==> ${agent}: hub tunnel reachable after $((attempt * 5))s"
             first_tunnel_ok=1
@@ -6747,7 +6747,7 @@ main() {
         done
         local agent_prog="${fleet_name_field}-agent"
         if [ "$first_tunnel_ok" = "1" ]; then
-          ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${local_ssh_args[@]}" "$local_ssh_target" \
+          ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${local_ssh_args[@]}" "$local_ssh_target" \
             "sudo supervisorctl restart '$agent_prog' >/dev/null 2>&1 || sudo supervisorctl start '$agent_prog' >/dev/null 2>&1 || true" 2>/dev/null || true
           echo "==> ${agent}: restarted mac-agent with tunnel now available"
         else

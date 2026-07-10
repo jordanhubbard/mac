@@ -1992,6 +1992,7 @@ def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene()
     assert "--port-override" in script
     assert 'scp -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}"' in script
     assert 'ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}"' in script
+    assert script.count("-o ServerAliveInterval=30 -o ServerAliveCountMax=6") >= 10
     assert "reconcile_remote_deploy()" in script
     assert "remote reconciliation succeeded" in script
     assert "disk_hygiene_report" in script
