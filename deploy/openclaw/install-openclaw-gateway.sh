@@ -952,7 +952,7 @@ sandbox_command() {
   shift
   local attempt output rc
   output="$(mktemp "${TMPDIR:-/tmp}/mac-openclaw-exec.XXXXXX")"
-  trap 'rm -f "$output"' RETURN
+  trap 'rm -f "${output:-}"' RETURN
   for attempt in $(seq 1 30); do
     if HOME=/tmp BASH_ENV=/dev/null "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
       env HOME=/home/sandbox BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@" >"$output" 2>&1; then
