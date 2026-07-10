@@ -250,11 +250,8 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "/opt/mac-openclaw/plugins/mac-continuity"
     ]
     assert config["agents"]["defaults"]["workspace"] == "/sandbox/workspace"
-    assert config["agents"]["defaults"]["memorySearch"] == {
-        "experimental": {"sessionMemory": True},
-        "provider": "none",
-        "sources": ["memory", "sessions"],
-    }
+    assert "memorySearch" not in config["agents"]["defaults"]
+    assert config["plugins"]["entries"]["mac-continuity"]["config"]["memoryProvider"] == "mac-holographic-qdrant"
     assert config["tools"]["sessions"]["visibility"] == "agent"
     assert config["gateway"]["auth"]["token"]["id"] == "OPENCLAW_GATEWAY_TOKEN"
     assert all(secret not in config_path.read_text(encoding="utf-8") for secret in secrets)

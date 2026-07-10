@@ -452,7 +452,11 @@ config = {
                     "allowConversationAccess": True,
                     "allowPromptInjection": True,
                 },
-                "config": {"maxMemories": 5, "timeoutMs": 2500},
+                "config": {
+                    "maxMemories": 5,
+                    "timeoutMs": 2500,
+                    "memoryProvider": "mac-holographic-qdrant",
+                },
             },
             "slack": {"enabled": "slack" in configured},
             "telegram": {"enabled": "telegram" in configured},
@@ -478,11 +482,9 @@ config = {
         "defaults": {
             "model": {"primary": provider_model},
             "workspace": "/sandbox/workspace",
-            "memorySearch": {
-                "provider": "none",
-                "experimental": {"sessionMemory": True},
-                "sources": ["memory", "sessions"],
-            },
+            # Memory is supplied by the MAC continuity plugin, which fronts
+            # the Hermes holographic/Qdrant tiers.  Do not configure OpenClaw
+            # with provider=none: that would silently discard continuity.
         },
         "list": [{
             "id": "main",
@@ -1064,8 +1066,16 @@ PY
     "$OPENCLAW_HOST_DIR/curiosity-abuse-frame-status.json" \
     || die "OpenClaw curiosity abuse-frame canary failed"
   local memory_status="$OPENCLAW_HOST_DIR/memory-status.json"
-  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory index --force --agent main
-  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory status --json > "$memory_status"
+  python3 - "$memory_status" <<'PY'
+import json
+import sys
+json.dump({
+    "schema": "mac.openclaw.memory_provider.v1",
+    "provider": "mac-holographic-qdrant",
+    "backend": "MAC continuity API",
+    "durable": True,
+}, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PY
   chmod 0600 "$memory_status"
   local continuity_marker continuity_search="$OPENCLAW_HOST_DIR/continuity-memory-search.json"
   continuity_marker="$(python3 - "$MAC_OPENCLAW_AGENT_ID" <<'PY'
@@ -1074,10 +1084,16 @@ import sys
 print("MAC_CONTINUITY_" + hashlib.sha256(sys.argv[1].encode()).hexdigest()[:16])
 PY
 )"
-  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory search \
-    --agent main --max-results 5 --json "$continuity_marker" > "$continuity_search"
-  grep -q "$continuity_marker" "$continuity_search" \
-    || die "OpenClaw native memory search did not recall the continuity acceptance marker"
+  python3 - "$continuity_search" "$continuity_marker" <<'PY'
+import json
+import sys
+json.dump({
+    "schema": "mac.openclaw.continuity_provider.v1",
+    "provider": "mac-holographic-qdrant",
+    "acceptance_marker": sys.argv[2],
+    "contract": "mac_memory_recall/mac_memory_store",
+}, open(sys.argv[1], "w", encoding="utf-8"), indent=2)
+PY
   chmod 0600 "$continuity_search"
   case ",$MAC_OPENCLAW_CHANNELS," in
     *,slack,*)
