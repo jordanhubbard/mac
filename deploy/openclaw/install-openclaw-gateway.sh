@@ -1064,16 +1064,8 @@ PY
     "$OPENCLAW_HOST_DIR/curiosity-abuse-frame-status.json" \
     || die "OpenClaw curiosity abuse-frame canary failed"
   local memory_status="$OPENCLAW_HOST_DIR/memory-status.json"
-  if ! sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory index --force --agent main; then
-    # A provider=none configuration intentionally has no native vector index;
-    # continuity is still verified from the migrated workspace and marker
-    # files.  Do not roll back an otherwise healthy gateway for that optional
-    # accelerator path.
-    log "OpenClaw native memory index unavailable; continuing with durable workspace continuity"
-    printf '%s\n' '{"status":"unavailable","reason":"memory provider disabled"}' > "$memory_status"
-  else
-    sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory status --json > "$memory_status"
-  fi
+  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory index --force --agent main
+  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory status --json > "$memory_status"
   chmod 0600 "$memory_status"
   local continuity_marker continuity_search="$OPENCLAW_HOST_DIR/continuity-memory-search.json"
   continuity_marker="$(python3 - "$MAC_OPENCLAW_AGENT_ID" <<'PY'
@@ -1082,14 +1074,10 @@ import sys
 print("MAC_CONTINUITY_" + hashlib.sha256(sys.argv[1].encode()).hexdigest()[:16])
 PY
 )"
-  if grep -q '"status":"unavailable"' "$memory_status"; then
-    printf '%s\n' '{"status":"skipped","reason":"memory provider disabled"}' > "$continuity_search"
-  else
-    sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory search \
-      --agent main --max-results 5 --json "$continuity_marker" > "$continuity_search"
-    grep -q "$continuity_marker" "$continuity_search" \
-      || die "OpenClaw native memory search did not recall the continuity acceptance marker"
-  fi
+  sandbox_command "$openshell_bin" /usr/local/bin/openclaw memory search \
+    --agent main --max-results 5 --json "$continuity_marker" > "$continuity_search"
+  grep -q "$continuity_marker" "$continuity_search" \
+    || die "OpenClaw native memory search did not recall the continuity acceptance marker"
   chmod 0600 "$continuity_search"
   case ",$MAC_OPENCLAW_CHANNELS," in
     *,slack,*)
