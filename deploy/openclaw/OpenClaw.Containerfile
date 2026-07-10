@@ -40,6 +40,7 @@ RUN apt-get update \
     && chmod -R a+rX /opt/mac-openclaw/plugins \
     && install -d -m 0700 -o sandbox -g sandbox \
          /sandbox /sandbox/state /sandbox/workspace \
+    && ln -s /sandbox/state /home/sandbox/.openclaw \
     && printf '%s\n' "${MAC_OPENCLAW_IMAGE_REVISION}" \
          > /etc/mac-openclaw-image-revision
 
