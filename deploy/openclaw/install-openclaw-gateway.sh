@@ -1113,10 +1113,24 @@ PY
       ;;
   esac
   local channel_status="$OPENCLAW_HOST_DIR/channel-status.json"
-  sandbox_command "$openshell_bin" /usr/local/bin/openclaw channels status --probe --json > "$channel_status"
-  chmod 0600 "$channel_status"
-  python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
-    "$channel_status" --required "$MAC_OPENCLAW_CHANNELS"
+  local channel_status_tmp="$channel_status.tmp"
+  local channel_deadline=$((SECONDS + ${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}))
+  while :; do
+    if sandbox_command "$openshell_bin" /usr/local/bin/openclaw channels status \
+      --probe --json > "$channel_status_tmp" 2>&1 \
+      && python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
+        "$channel_status_tmp" --required "$MAC_OPENCLAW_CHANNELS"; then
+      mv -f "$channel_status_tmp" "$channel_status"
+      chmod 0600 "$channel_status"
+      break
+    fi
+    if [ "$SECONDS" -ge "$channel_deadline" ]; then
+      mv -f "$channel_status_tmp" "$channel_status" 2>/dev/null || true
+      chmod 0600 "$channel_status" 2>/dev/null || true
+      die "OpenClaw gateway/channel probes did not become healthy within ${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}s"
+    fi
+    sleep "${MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL:-2}"
+  done
   if truthy "$LIVE_CANARY"; then
     local output
     output="$(sandbox_command "$openshell_bin" /usr/local/bin/openclaw agent \

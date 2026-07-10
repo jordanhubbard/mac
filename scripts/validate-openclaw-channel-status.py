@@ -12,12 +12,37 @@ from typing import Any, Mapping
 REQUIRED_CHANNELS = ("slack", "telegram")
 
 
+def load_status_payload(path: Path) -> Mapping[str, Any]:
+    """Load the JSON object even when OpenClaw prefixes it with diagnostics.
+
+    ``openclaw channels status --json`` writes human-readable gateway failure
+    guidance before its JSON result on some failure paths. Treat that output as
+    a structured failed probe instead of surfacing a misleading JSON decoder
+    error or accepting an empty headless-channel set.
+    """
+
+    text = path.read_text(encoding="utf-8")
+    decoder = json.JSONDecoder()
+    for offset, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            value, _end = decoder.raw_decode(text[offset:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, Mapping):
+            return value
+    raise ValueError("OpenClaw channel status did not contain a JSON object")
+
+
 def channel_problems(
     payload: Mapping[str, Any], required_channels: tuple[str, ...] = REQUIRED_CHANNELS
 ) -> list[str]:
     accounts_by_channel = payload.get("channelAccounts") or {}
     default_accounts = payload.get("channelDefaultAccountId") or {}
     problems = []
+    if payload.get("gatewayReachable") is False:
+        problems.append("gateway")
     for channel in required_channels:
         accounts = accounts_by_channel.get(channel) or []
         configured = [
@@ -67,7 +92,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    payload = json.loads(Path(args[0]).read_text(encoding="utf-8"))
+    try:
+        payload = load_status_payload(Path(args[0]))
+    except (OSError, ValueError) as exc:
+        print("invalid OpenClaw channel status: %s" % exc, file=sys.stderr)
+        return 1
     required = (
         tuple(item.strip() for item in args[2].split(",") if item.strip())
         if len(args) == 3

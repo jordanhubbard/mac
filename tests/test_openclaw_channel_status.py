@@ -67,6 +67,19 @@ def test_headless_runtime_has_no_required_channel_probe() -> None:
     assert validator.channel_problems({}, ()) == []
 
 
+def test_explicitly_unreachable_gateway_fails_even_for_headless_runtime(tmp_path) -> None:
+    validator = load_validator()
+    status = tmp_path / "status.txt"
+    status.write_text(
+        "Gateway not reachable: connection closed\n"
+        '{"gatewayReachable": false, "channelAccounts": {}}\n',
+        encoding="utf-8",
+    )
+
+    payload = validator.load_status_payload(status)
+    assert validator.channel_problems(payload, ()) == ["gateway"]
+
+
 def test_single_configured_channel_is_validated_without_requiring_others() -> None:
     validator = load_validator()
     payload = {"channelAccounts": {"slack": [account()]}}
