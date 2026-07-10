@@ -1044,6 +1044,7 @@ if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled
 if not {
     "memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
     "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear",
+    "mac_image_generate",
     "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
 } <= tools:
     raise SystemExit("mac-continuity plugin tools are incomplete")

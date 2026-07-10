@@ -118,7 +118,7 @@ def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
       }};
       mod.default.register(api);
       if (!hooks.has("before_prompt_build")) process.exit(2);
-      if (!["mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
+      if (!["mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
       const result = await hooks.get("before_prompt_build")({{prompt: "what matters?"}});
       if (!result.prependContext.includes("Current mood: warm")) process.exit(4);
       if (!result.prependContext.includes("durable fact")) process.exit(5);
@@ -136,6 +136,54 @@ def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
         text=True,
         capture_output=True,
         timeout=10,
+    )
+
+
+def test_mac_image_generate_posts_to_hub_media_router_and_writes_png() -> None:
+    # 1x1 PNG, base64 — what the hub /v1/media/image.generate returns.
+    png_b64 = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").as_uri()
+    script = f"""
+      const {{readFileSync}} = await import("node:fs");
+      const mod = await import({json.dumps(plugin)});
+      const tools = new Map();
+      let captured = null;
+      globalThis.fetch = async (url, opts) => {{
+        captured = {{url: String(url), method: opts.method, body: JSON.parse(opts.body)}};
+        return {{ok: true, json: async () => ({{
+          artifacts: [{{base64: {json.dumps(png_b64)}}}],
+          provider: "nvidia", model: "black-forest-labs/flux.1-schnell",
+        }})}};
+      }};
+      const api = {{
+        pluginConfig: {{}}, logger: {{warn: () => {{}}}},
+        on: () => {{}}, registerTool: (t) => tools.set(t.name, t),
+      }};
+      mod.default.register(api);
+      const tool = tools.get("mac_image_generate");
+      if (!tool) process.exit(2);
+      const out = await tool.execute("id", {{prompt: "a red circle"}});
+      // Must hit the hub media router, NOT any nvidia endpoint directly.
+      if (!captured.url.endsWith("/v1/media/image.generate")) process.exit(3);
+      if (captured.url.includes("nvidia") || captured.url.includes("build.nvidia")) process.exit(4);
+      if (captured.body.prompt !== "a red circle") process.exit(5);
+      const payload = JSON.parse(out.content[0].text);
+      if (!payload.ok || !payload.path.endsWith(".png")) process.exit(6);
+      const bytes = readFileSync(payload.path);
+      if (bytes.length < 60 || bytes[0] !== 0x89 || bytes[1] !== 0x50) process.exit(7);
+    """
+    env = {
+        **os.environ,
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_CONTROL_URL": "http://hub:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "test-token",
+    }
+    subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        env=env, check=True, text=True, capture_output=True, timeout=10,
     )
 
 
@@ -451,7 +499,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
         "  sandbox:exec)\n"
         "    case \"$*\" in\n"
         "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {\"slack\": [{\"accountId\": \"offtera\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T123\"}}}, {\"accountId\": \"omgjkh\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T456\"}}}]}, \"channelDefaultAccountId\": {\"slack\": \"offtera\"}}' ;;\n"
-        "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"memory_search\", \"memory_get\", \"memory_store\", \"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
+        "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"memory_search\", \"memory_get\", \"memory_store\", \"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"mac_image_generate\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
         "      *'curiosity verify'*) printf '%s\\n' '{\"valid\": true, \"events\": 0}' ;;\n"
         "      *'curiosity abuse-frame'*) printf '%s\\n' '{\"possible_false_equivalence\": true}' ;;\n"
         "      *'memory status'*) printf '%s\\n' '{\"files\": 3}' ;;\n"

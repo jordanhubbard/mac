@@ -1,4 +1,12 @@
 import {spawnSync} from "node:child_process";
+import {mkdirSync, writeFileSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {randomBytes} from "node:crypto";
+
+// FLUX accepts a fixed set of side lengths; constrain here so the agent can't
+// send a value the upstream rejects with a 422.
+const FLUX_DIMS = [768, 832, 896, 960, 1024, 1088, 1152, 1216, 1280, 1344];
 
 const inputSchema = (properties, required = []) => ({
   type: "object",
@@ -78,6 +86,33 @@ async function selfApi(api, method, subpath, {body, query} = {}) {
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`MAC ${subpath} API returned HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function hubApi(api, method, path, {body, timeoutMs} = {}) {
+  const cfg = settings(api);
+  if (!cfg.controlUrl || !cfg.token) {
+    throw new Error("MAC continuity environment is incomplete");
+  }
+  const url = `${cfg.controlUrl}${path}`;
+  const controller = new AbortController();
+  // Media generation (FLUX) runs far longer than a memory recall; the caller
+  // sets an explicit budget rather than the short continuity default.
+  const timer = setTimeout(() => controller.abort(), timeoutMs || cfg.timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: {Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json"},
+      body: body === undefined ? undefined : JSON.stringify(body || {}),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`MAC ${path} returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
+    }
     return await response.json();
   } finally {
     clearTimeout(timer);
@@ -349,6 +384,48 @@ export default {
         if (params.moralInjury) args.push("--moral-injury");
         const value = curiosity(api, args);
         return {content: [{type: "text", text: JSON.stringify(value, null, 2)}]};
+      },
+    });
+
+    api.registerTool({
+      name: "mac_image_generate",
+      description: "Generate an image from a text prompt via MAC's hub media router (FLUX on NVIDIA). Returns a PNG file path you can attach/share. Use this instead of calling any NVIDIA or build.nvidia.com endpoint directly — spoke agents don't hold the upstream key; the hub does. Text-to-image only.",
+      parameters: inputSchema(
+        {
+          prompt: {type: "string", minLength: 1, maxLength: 4000},
+          model: {type: "string", description: "Optional; default black-forest-labs/flux.1-schnell (fast). flux.1-dev is higher quality but slower."},
+          width: {type: "integer", enum: FLUX_DIMS, description: "Optional; default 1024."},
+          height: {type: "integer", enum: FLUX_DIMS, description: "Optional; default 1024."},
+        },
+        ["prompt"],
+      ),
+      async execute(_id, params) {
+        const model = params.model || "black-forest-labs/flux.1-schnell";
+        const result = await hubApi(api, "POST", "/v1/media/image.generate", {
+          timeoutMs: 120000,
+          body: {
+            model,
+            prompt: params.prompt,
+            width: params.width || 1024,
+            height: params.height || 1024,
+          },
+        });
+        const artifact = (result?.artifacts || [])[0] || {};
+        const b64 = artifact.base64 || artifact.b64_json || "";
+        if (!b64) {
+          return {content: [{type: "text", text: `Image generation returned no artifact: ${JSON.stringify(result).slice(0, 300)}`}]};
+        }
+        const dir = join(tmpdir(), "mac-generated-images");
+        mkdirSync(dir, {recursive: true});
+        const file = join(dir, `img-${randomBytes(6).toString("hex")}.png`);
+        writeFileSync(file, Buffer.from(b64, "base64"));
+        return {content: [{type: "text", text: JSON.stringify({
+          ok: true,
+          path: file,
+          model: result?.model || model,
+          provider: result?.provider || null,
+          note: "PNG written to path; attach or share it.",
+        }, null, 2)}]};
       },
     });
   },
