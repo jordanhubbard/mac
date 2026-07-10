@@ -1563,6 +1563,70 @@ def recall_deployment_lessons(task: Dict[str, Any], *, limit: int = 5) -> List[s
     return lessons[:limit]
 
 
+def recall_prior_attempt_lessons(task: Dict[str, Any], *, limit: int = 2) -> List[str]:
+    """Surface THIS task's own prior-attempt outcomes when it is being retried.
+
+    The generic ``recall_deployment_lessons`` recall is project-scoped and
+    ranked by title/term overlap, so a task's *own* previous failed attempt is
+    not prioritized — it competes with every other project lesson and may not
+    surface at all. But the single most useful piece of hindsight when
+    re-running a task is "what happened last time I ran THIS exact task."
+
+    This is deliberately exact-match (``content.task_id == task.id``), not
+    semantic: retries are the highest-value moment and exact identity carries
+    zero retrieval noise. Only fires on a genuine retry (``attempt_count > 1``);
+    first attempts have no prior self to recall and pay nothing. Best-effort —
+    an unreachable hub just means the retry runs without self-hindsight.
+    """
+    try:
+        attempt = int(task.get("attempt_count") or 0)
+    except (TypeError, ValueError):
+        attempt = 0
+    if attempt <= 1:
+        return []
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return []
+    project = _task_project(task)
+    from urllib.parse import urlencode
+
+    records = _hub_get(
+        "/memory?%s" % urlencode({"subject_type": "project", "subject_id": project})
+    )
+    if not isinstance(records, list):
+        return []
+    own: List[Dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if not str(record.get("record_type") or "").startswith(DEPLOYMENT_LEARNING_PREFIX):
+            continue
+        content = str(record.get("content") or "")
+        try:
+            data = json.loads(content)
+        except Exception:
+            continue
+        if not isinstance(data, dict) or data.get("schema") != "mac.deployment_learning.v1":
+            continue
+        if str(data.get("task_id") or "") != task_id:
+            continue
+        own.append(record)
+    if not own:
+        return []
+    own.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    lessons: List[str] = []
+    for record in own[: max(1, int(limit))]:
+        rendered = _format_learning_content(str(record.get("content") or ""))
+        if not rendered:
+            continue
+        line = "Your previous attempt at THIS task recorded: %s" % rendered
+        if not _append_lesson_with_budget(lessons, line):
+            break
+        if len(lessons) >= limit:
+            break
+    return lessons
+
+
 def build_learning_record(task: Dict[str, Any], outcome: Dict[str, Any]) -> Dict[str, Any]:
     """Pure: build the ``/memory`` payload distilling this run's outcome into a
     reusable deployment lesson."""
@@ -6341,8 +6405,14 @@ def _run_executor(
         lessons: List[str] = []
     else:
         # Memory feed (in): recall prior deployment lessons so the agent works
-        # with the fleet's hindsight. Best-effort — never blocks the run.
-        lessons = recall_deployment_lessons(task)
+        # with the fleet's hindsight. Best-effort — never blocks the run. On a
+        # retry, lead with THIS task's own prior-attempt outcome (exact match,
+        # highest-value hindsight) before the project-wide lessons.
+        prior_attempt = recall_prior_attempt_lessons(task)
+        project_lessons = recall_deployment_lessons(task)
+        lessons = prior_attempt + [
+            lesson for lesson in project_lessons if lesson not in prior_attempt
+        ]
         # Prompt is built after planning-phase decision below.
         prompt = ""
     emit_telemetry(

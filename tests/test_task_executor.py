@@ -1215,6 +1215,56 @@ def test_recall_deployment_lessons_via_injected_get(monkeypatch):
     assert "project=demo" in captured["path"]
 
 
+def test_recall_prior_attempt_only_fires_on_retry(monkeypatch):
+    # First attempt (attempt_count<=1): no prior self to recall, no hub read.
+    called = {"n": 0}
+
+    def fake_get(path, *, timeout=5.0):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(te, "_hub_get", fake_get)
+    assert te.recall_prior_attempt_lessons({"id": "task_1", "attempt_count": 1}) == []
+    assert called["n"] == 0
+
+
+def test_recall_prior_attempt_surfaces_own_last_outcome(monkeypatch):
+    # A retry recalls THIS task's own prior deployment_learning by exact
+    # task_id, ignoring other tasks' project lessons, most-recent first.
+    def rec(task_id, title, outcome, err, created_at):
+        return {
+            "record_type": "deployment_learning:demo",
+            "created_at": created_at,
+            "content": json.dumps({
+                "schema": "mac.deployment_learning.v1",
+                "task_id": task_id,
+                "project": "demo",
+                "task_title": title,
+                "evidence_type": "repo_change",
+                "outcome": outcome,
+                "error_signature": err,
+            }),
+        }
+
+    def fake_get(path, *, timeout=5.0):
+        assert "subject_type=project" in path
+        return [
+            rec("task_OTHER", "Unrelated", "success", "", "2026-07-10T00:00:00"),
+            rec("task_ME", "Ship the widget", "failure", "untracked_new_files_at_finalize", "2026-07-10T01:00:00"),
+            rec("task_ME", "Ship the widget", "failure", "check:tests rc=1", "2026-07-10T02:00:00"),
+        ]
+
+    monkeypatch.setattr(te, "_hub_get", fake_get)
+    lessons = te.recall_prior_attempt_lessons(
+        {"id": "task_ME", "project": "demo", "attempt_count": 3}, limit=2
+    )
+    assert len(lessons) == 2
+    assert all(l.startswith("Your previous attempt at THIS task recorded:") for l in lessons)
+    # Most-recent prior attempt leads; only this task's records appear.
+    assert "check:tests rc=1" in lessons[0]
+    assert not any("Unrelated" in l for l in lessons)
+
+
 def test_recall_falls_back_to_direct_memory_records(monkeypatch):
     # Vector recall empty (no embeddings yet) → fall back to the project's
     # deployment_learning records so the very next task still gets hindsight.
