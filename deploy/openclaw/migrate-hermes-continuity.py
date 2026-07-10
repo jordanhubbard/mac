@@ -479,8 +479,16 @@ class Importer:
                 recovered = self._recover_database(source)
                 if recovered:
                     conn = sqlite3.connect(f"file:{recovered}?mode=ro", uri=True)
-                    conn.execute("SELECT 1 FROM messages LIMIT 1").fetchone()
-                    return conn, source
+                    tables = {
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        )
+                    }
+                    if "messages" in tables:
+                        conn.execute("SELECT 1 FROM messages LIMIT 1").fetchone()
+                        return conn, source
+                    conn.close()
         return None, None
 
     @staticmethod
