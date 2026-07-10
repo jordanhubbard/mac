@@ -4,10 +4,17 @@ Provides ``resolve_display_setting()`` — the single entry-point for reading
 display settings with platform-specific overrides and sensible defaults.
 
 Resolution order (first non-None wins):
+    0. ``display.channels.<platform:chat_id>.<key>`` — per-channel user override
     1. ``display.platforms.<platform>.<key>``  — explicit per-platform user override
     2. ``display.<key>``                       — global user setting
     3. ``_PLATFORM_DEFAULTS[<platform>][<key>]``  — built-in sensible default
     4. ``_GLOBAL_DEFAULTS[<key>]``              — built-in global default
+
+Channel keys are ``channel_config_key(platform_key, chat_id)`` (the same
+``platform:chat_id`` shape gateway voice mode uses). Callers may pass several
+candidate keys (e.g. a thread's chat_id then its parent channel) — the first
+channel section that defines the setting wins, so a preference set on a
+channel also covers its threads.
 
 Exception: ``display.streaming`` is CLI-only.  Gateway streaming follows the
 top-level ``streaming`` config unless ``display.platforms.<platform>.streaming``
@@ -21,7 +28,7 @@ config migration (version bump) automatically moves the old format into the new
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 # ---------------------------------------------------------------------------
 # Overrideable display settings and their global defaults
@@ -141,13 +148,23 @@ _PLATFORM_DEFAULTS: dict[str, dict[str, Any]] = {
 OVERRIDEABLE_KEYS = frozenset(_GLOBAL_DEFAULTS.keys())
 
 
+def channel_config_key(platform_key: str, chat_id: Any) -> str:
+    """Return the ``display.channels`` key for one chat/channel.
+
+    Platform-namespaced so numeric chat ids can't collide across platforms
+    (same convention as gateway voice-mode keys).
+    """
+    return f"{platform_key}:{chat_id}"
+
+
 def resolve_display_setting(
     user_config: dict,
     platform_key: str,
     setting: str,
     fallback: Any = None,
+    channel_key: str | Sequence[str] | None = None,
 ) -> Any:
-    """Resolve a display setting with per-platform override support.
+    """Resolve a display setting with per-channel and per-platform overrides.
 
     Parameters
     ----------
@@ -160,12 +177,28 @@ def resolve_display_setting(
         Display setting name (e.g. ``"tool_progress"``, ``"show_reasoning"``).
     fallback : Any
         Fallback value when the setting isn't found anywhere.
+    channel_key : str | Sequence[str] | None
+        One or more ``channel_config_key()`` candidates checked in order
+        (e.g. thread chat_id first, then its parent channel). ``None`` skips
+        the channel tier entirely.
 
     Returns
     -------
     The resolved value, or *fallback* if nothing is configured.
     """
     display_cfg = user_config.get("display") or {}
+
+    # 0. Per-channel override (display.channels.<platform:chat_id>.<key>)
+    if channel_key:
+        keys = [channel_key] if isinstance(channel_key, str) else list(channel_key)
+        channels = display_cfg.get("channels") or {}
+        if isinstance(channels, dict):
+            for key in keys:
+                chan_overrides = channels.get(key)
+                if isinstance(chan_overrides, dict):
+                    val = chan_overrides.get(setting)
+                    if val is not None:
+                        return _normalise(setting, val)
 
     # 1. Explicit per-platform override (display.platforms.<platform>.<key>)
     platforms = display_cfg.get("platforms") or {}
