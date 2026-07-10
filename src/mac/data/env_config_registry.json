@@ -5876,6 +5876,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: repo update self test.",
+    "family": "core",
+    "name": "MAC_REPO_UPDATE_SELF_TEST",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: repo update self test python.",
+    "family": "core",
+    "name": "MAC_REPO_UPDATE_SELF_TEST_PYTHON",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: require firecrawl.",
     "family": "core",
     "name": "MAC_REQUIRE_FIRECRAWL",

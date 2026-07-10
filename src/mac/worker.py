@@ -728,6 +728,14 @@ class MacWorker:
             if agentbus_control_state_path is not None
             else self.workspace / ".mac-agentbus-control.json"
         )
+        # Idle-gated deploys: a repo update that arrives while this agent is
+        # mid-task is stashed here and applied on a later iteration, before
+        # the next claim. Persisted so a pending update survives a worker
+        # restart (the agentbus stream is already marked processed by then).
+        self.pending_repo_update_path = (
+            self.agentbus_control_state_path.parent
+            / (self.agentbus_control_state_path.stem + "-pending-repo-update.json")
+        )
         self.status_update_sink = status_update_sink or self._send_status_update_to_home_channels
         self._stop = False
         self._declared_digest = False
@@ -846,6 +854,17 @@ class MacWorker:
         review_result = self._process_review_nudges()
         if review_result is not None:
             return review_result
+        # A deferred repo update applies here — after the previous task
+        # finished, before the next claim — so no task ever starts on a
+        # stale pin while an update is pending.
+        pending_update = self.apply_pending_repo_update_if_idle()
+        if pending_update and pending_update.get("restart_requested"):
+            self.stop()
+            return WorkerRunResult(
+                status="self_update_restart",
+                evidence=pending_update,
+                error=pending_update.get("summary"),
+            )
         self._observe_policy_once()
         assignment = self._claim_next_for_agent()
         if assignment is None:
@@ -2617,7 +2636,9 @@ class MacWorker:
             )
         self._observe_log(
             "worker.agentbus.repo_update.%s" % result["status"],
-            level="info" if result["status"] in {"updated", "no_update", "skipped"} else "error",
+            level="info"
+            if result["status"] in {"updated", "no_update", "skipped", "deferred"}
+            else "error",
             detail=result,
         )
         return result
@@ -2682,6 +2703,23 @@ class MacWorker:
                 request,
                 repo_path=str(repo),
             )
+
+        # Idle gate: never dirty the pinned environment under an active task.
+        # The serial loop makes this implicit for loop-mode; the explicit
+        # check covers service/job modes and defers the update until the
+        # agent is between tasks (applied before its next claim).
+        if not bool(request.get("force")):
+            active_task_id = self._active_task_id()
+            if active_task_id:
+                self._stash_pending_repo_update(request, stream_id)
+                return self._repo_update_result(
+                    stream_id,
+                    "deferred",
+                    "agent is mid-task (%s); update pending until idle" % active_task_id,
+                    request,
+                    repo_path=str(repo),
+                    active_task_id=active_task_id,
+                )
         if not repo.exists():
             return self._repo_update_result(
                 stream_id,
@@ -2742,6 +2780,30 @@ class MacWorker:
         after = _run_git(repo, ["rev-parse", "HEAD"])
         after_sha = after.stdout.strip() if after.returncode == 0 else ""
         updated = bool(before_sha and after_sha and before_sha != after_sha)
+
+        # Poisoned-checkout guard: a pulled tree that cannot even import
+        # produces executors that die before any telemetry (traceless lease
+        # expiries). Validate the new pin before restarting onto it or
+        # baking it into a sandbox image; roll back to the prior SHA on
+        # failure so the worker keeps running known-good code.
+        if updated:
+            self_test = self._repo_update_self_test(repo)
+            if not self_test.get("ok"):
+                rollback = _run_git(repo, ["reset", "--hard", before_sha])
+                return self._repo_update_result(
+                    stream_id,
+                    "rolled_back",
+                    "post-update self-test failed; checkout rolled back to %s"
+                    % before_sha[:12],
+                    request,
+                    repo_path=str(repo),
+                    before_sha=before_sha,
+                    after_sha=after_sha,
+                    self_test=self_test,
+                    rollback_ok=rollback.returncode == 0,
+                    rollback_stderr=rollback.stderr if rollback.returncode != 0 else "",
+                )
+
         summary = "repo already current"
         image_rebuild = self._maybe_rebuild_openshell_image_after_update(
             repo, before_sha, after_sha
@@ -2780,6 +2842,117 @@ class MacWorker:
             ),
             openshell_image_rebuild=image_rebuild,
         )
+
+    def _active_task_id(self) -> str:
+        """The task this agent is currently working, or '' when idle.
+
+        Fail-open to '' (idle): if the hub is unreachable the caller is the
+        control loop, which only runs between tasks in loop-mode anyway, and
+        a wrongly-applied update is recoverable while a wedged one is not.
+        """
+        try:
+            agent = self.client.get("/agents/%s" % quote(self.agent_id, safe=""))
+        except Exception:  # noqa: BLE001 - status probing must not break control
+            return ""
+        if not isinstance(agent, dict):
+            return ""
+        return str(agent.get("current_task_id") or "")
+
+    def _stash_pending_repo_update(self, request: JsonDict, stream_id: str) -> None:
+        try:
+            self.pending_repo_update_path.parent.mkdir(parents=True, exist_ok=True)
+            self.pending_repo_update_path.write_text(
+                json.dumps(
+                    {"request": request, "stream_id": stream_id},
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:  # noqa: BLE001 - a lost stash only delays the
+            # update until the next fleet refresh publishes again.
+            self._observe_log(
+                "worker.agentbus.repo_update.stash_failed",
+                level="warning",
+                detail={"path": str(self.pending_repo_update_path), "error": str(exc)},
+            )
+
+    def _load_pending_repo_update(self) -> Optional[JsonDict]:
+        try:
+            raw = json.loads(self.pending_repo_update_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return None
+        return raw if isinstance(raw, dict) and isinstance(raw.get("request"), dict) else None
+
+    def _clear_pending_repo_update(self) -> None:
+        try:
+            self.pending_repo_update_path.unlink()
+        except OSError:
+            pass
+
+    def apply_pending_repo_update_if_idle(self) -> Optional[JsonDict]:
+        """Apply a stashed repo update now that the agent may be idle.
+
+        Runs in run_once BEFORE claim-next, so new work never starts on a
+        stale pin while an update is pending. Returns the update result when
+        an application was attempted, else None.
+        """
+        pending = self._load_pending_repo_update()
+        if pending is None:
+            return None
+        if self._active_task_id():
+            return None  # still busy; keep the stash for the next iteration
+        request = dict(pending.get("request") or {})
+        request["force"] = True  # the idle check just passed; don't re-defer
+        stream_id = str(pending.get("stream_id") or "")
+        try:
+            result = self._execute_repo_update(request, stream_id)
+        except Exception as exc:  # noqa: BLE001 - a broken apply must clear
+            # the stash rather than wedge every future iteration.
+            result = self._repo_update_result(
+                stream_id, "error", "pending repo update failed: %s" % exc, request
+            )
+        self._clear_pending_repo_update()
+        self._observe_log(
+            "worker.agentbus.repo_update.%s" % result["status"],
+            level="info"
+            if result["status"] in {"updated", "no_update", "skipped", "deferred"}
+            else "error",
+            detail={**result, "applied_from": "pending_stash"},
+        )
+        self._run_repo_update_service_restarts(result)
+        return result
+
+    def _repo_update_self_test(self, repo: Path) -> JsonDict:
+        """Prove the updated tree can at least import before adopting it."""
+        if not _env_truthy(os.environ.get("MAC_REPO_UPDATE_SELF_TEST", "1")):
+            return {"ok": True, "skipped": "disabled"}
+        python = (
+            os.environ.get("MAC_REPO_UPDATE_SELF_TEST_PYTHON") or sys.executable
+        )
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(repo / "src")] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
+        )
+        try:
+            completed = subprocess.run(
+                [python, "-c", "import mac.services, mac.worker, mac.api"],
+                cwd=str(repo),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"ok": False, "error": str(exc)[:500]}
+        if completed.returncode == 0:
+            return {"ok": True}
+        return {
+            "ok": False,
+            "returncode": completed.returncode,
+            "stderr": (completed.stderr or "")[-1000:],
+        }
 
     def _maybe_rebuild_openshell_image_after_update(
         self, repo: Path, before_sha: str, after_sha: str

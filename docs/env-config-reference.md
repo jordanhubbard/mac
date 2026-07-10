@@ -491,6 +491,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REPO_BOOTSTRAP_SETUP_STATUS` | str | consumer-defined | core | Core setting: repo bootstrap setup status. |
 | `MAC_REPO_REQUIRED_COMMANDS` | bool | consumer-defined | core | Core setting: repo required commands. |
 | `MAC_REPO_TEST_COMMAND` | str | consumer-defined | core | Core setting: repo test command. |
+| `MAC_REPO_UPDATE_SELF_TEST` | str | consumer-defined | core | Core setting: repo update self test. |
+| `MAC_REPO_UPDATE_SELF_TEST_PYTHON` | str | consumer-defined | core | Core setting: repo update self test python. |
 | `MAC_REQUIRE_FIRECRAWL` | bool | consumer-defined | core | Core setting: require firecrawl. |
 | `MAC_REQUIRE_HERMES_STARTUP_READY` | bool | consumer-defined | core | Core setting: require hermes startup ready. |
 | `MAC_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | core | Core setting: require qdrant memory. |
