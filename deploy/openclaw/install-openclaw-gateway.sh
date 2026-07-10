@@ -501,7 +501,13 @@ import shlex
 import sys
 
 values = {
-    "HOME": "/home/sandbox",
+    # OpenShell may invoke the command through a login shell whose mapped
+    # /home/sandbox profile is not readable after the sandbox home overlay is
+    # mounted.  Runtime state/config/workspace are all explicit below, so use
+    # a neutral writable HOME and prevent profile lookup from becoming a
+    # gateway availability dependency.
+    "HOME": "/tmp",
+    "BASH_ENV": "/dev/null",
     "MAC_OPENCLAW_AGENT_ID": os.environ["MAC_OPENCLAW_AGENT_ID"],
     "MAC_OPENCLAW_CONTROL_URL": os.environ["MAC_OPENCLAW_CONTROL_URL"],
     "MAC_OPENCLAW_ROUTER_API_KEY": os.environ["MAC_OPENCLAW_ROUTER_API_KEY"],
