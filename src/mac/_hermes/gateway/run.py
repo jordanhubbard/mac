@@ -9161,14 +9161,25 @@ class GatewayRunner:
                     source, session_entry, reason="agent-result-compression",
                 )
 
-            # Prepend reasoning/thinking if display is enabled (per-platform)
+            # Prepend reasoning/thinking if display is enabled (per-channel,
+            # falling back to per-platform then global)
             try:
-                from gateway.display_config import resolve_display_setting as _rds
+                from gateway.display_config import (
+                    channel_config_key as _cck,
+                    resolve_display_setting as _rds,
+                )
+                _sr_platform_key = _platform_config_key(source.platform)
+                _sr_channel_keys = [_cck(_sr_platform_key, source.chat_id)]
+                if getattr(source, "parent_chat_id", None):
+                    _sr_channel_keys.append(
+                        _cck(_sr_platform_key, source.parent_chat_id)
+                    )
                 _show_reasoning_effective = _rds(
                     _load_gateway_config(),
-                    _platform_config_key(source.platform),
+                    _sr_platform_key,
                     "show_reasoning",
                     getattr(self, "_show_reasoning", False),
+                    channel_key=_sr_channel_keys,
                 )
             except Exception:
                 _show_reasoning_effective = getattr(self, "_show_reasoning", False)
@@ -12241,8 +12252,9 @@ class GatewayRunner:
             /reasoning <level>               Set reasoning effort for this session only
             /reasoning <level> --global      Persist reasoning effort to config.yaml
             /reasoning reset                 Clear this session's reasoning override
-            /reasoning show|on               Show model reasoning in responses
-            /reasoning hide|off              Hide model reasoning from responses
+            /reasoning show|on               Show model reasoning in THIS channel
+            /reasoning hide|off              Hide model reasoning in THIS channel
+            /reasoning show|hide --global    Apply to the whole platform instead
         """
         import yaml
 
@@ -12276,6 +12288,45 @@ class GatewayRunner:
                 logger.error("Failed to save config key %s: %s", key_path, e)
                 return False
 
+        from gateway.display_config import channel_config_key, resolve_display_setting
+
+        platform_key = _platform_config_key(event.source.platform)
+        channel_keys = [channel_config_key(platform_key, event.source.chat_id)]
+        if getattr(event.source, "parent_chat_id", None):
+            channel_keys.append(
+                channel_config_key(platform_key, event.source.parent_chat_id)
+            )
+
+        def _save_channel_display_key(setting: str, value):
+            """Persist display.channels.<platform:chat_id>.<setting>.
+
+            Explicit dict navigation instead of the dotted-path helper —
+            chat ids may themselves contain dots (e.g. matrix room ids).
+            """
+            try:
+                user_config = {}
+                if config_path.exists():
+                    with open(config_path, encoding="utf-8") as f:
+                        user_config = yaml.safe_load(f) or {}
+                display = user_config.setdefault("display", {})
+                if not isinstance(display, dict):
+                    display = user_config["display"] = {}
+                channels = display.setdefault("channels", {})
+                if not isinstance(channels, dict):
+                    channels = display["channels"] = {}
+                chan = channels.setdefault(channel_keys[0], {})
+                if not isinstance(chan, dict):
+                    chan = channels[channel_keys[0]] = {}
+                chan[setting] = value
+                atomic_yaml_write(config_path, user_config)
+                return True
+            except Exception as e:
+                logger.error(
+                    "Failed to save channel display key %s.%s: %s",
+                    channel_keys[0], setting, e,
+                )
+                return False
+
         if not raw_args:
             # Show current state
             rc = self._reasoning_config
@@ -12285,9 +12336,16 @@ class GatewayRunner:
                 level = t("gateway.reasoning.level_disabled")
             else:
                 level = rc.get("effort", "medium")
+            show_reasoning_effective = resolve_display_setting(
+                _load_gateway_config(),
+                platform_key,
+                "show_reasoning",
+                self._show_reasoning,
+                channel_key=channel_keys,
+            )
             display_state = (
                 t("gateway.reasoning.display_on")
-                if self._show_reasoning
+                if show_reasoning_effective
                 else t("gateway.reasoning.display_off")
             )
             has_session_override = session_key in (getattr(self, "_session_reasoning_overrides", {}) or {})
@@ -12303,17 +12361,30 @@ class GatewayRunner:
                 display=display_state,
             )
 
-        # Display toggle (per-platform)
-        platform_key = _platform_config_key(event.source.platform)
+        # Display toggle — per-channel by default so one room opting into
+        # reasoning doesn't turn it on for every channel on the platform;
+        # --global keeps the old platform-wide behavior.
         if args in {"show", "on"}:
-            self._show_reasoning = True
-            _save_config_key(f"display.platforms.{platform_key}.show_reasoning", True)
-            return t("gateway.reasoning.display_set_on", platform=platform_key)
+            if persist_global:
+                self._show_reasoning = True
+                _save_config_key(f"display.platforms.{platform_key}.show_reasoning", True)
+                return t("gateway.reasoning.display_set_on", platform=platform_key)
+            _save_channel_display_key("show_reasoning", True)
+            return t(
+                "gateway.reasoning.display_set_on",
+                platform=f"this channel ({channel_keys[0]})",
+            )
 
         if args in {"hide", "off"}:
-            self._show_reasoning = False
-            _save_config_key(f"display.platforms.{platform_key}.show_reasoning", False)
-            return t("gateway.reasoning.display_set_off", platform=platform_key)
+            if persist_global:
+                self._show_reasoning = False
+                _save_config_key(f"display.platforms.{platform_key}.show_reasoning", False)
+                return t("gateway.reasoning.display_set_off", platform=platform_key)
+            _save_channel_display_key("show_reasoning", False)
+            return t(
+                "gateway.reasoning.display_set_off",
+                platform=f"this channel ({channel_keys[0]})",
+            )
 
         # Effort level change
         effort = args.strip()
