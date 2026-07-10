@@ -486,7 +486,8 @@ def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
     assert 'initialize_codegraph_repository "$SRC_DIR" || true' not in install_window
     assert "ERROR: curl unavailable; cannot install CodeGraph CLI" in script
     assert "ERROR: codegraph install failed" in script
-    assert "ERROR: codegraph init failed" in script
+    assert "mac.codegraph_background_init.v1" in script
+    assert "CodeGraph index initialization queued" in script
     assert 'grep -qxF ".codegraph/"' in script
 
 
@@ -2176,7 +2177,7 @@ def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
     assert "MAC_REQUIRE_FIRECRAWL must be true" in selftest
     assert '"mandatory_services": {' in selftest
     assert 'str(openclaw_agent_bin)' in selftest
-    assert '"MAC_OPENCLAW_STARTUP_OK" not in agent_output' in selftest
+    assert '"MAC_OPENCLAW_STARTUP_OK" in raw_agent_output' in selftest
     assert '"exclusive_service_owner"' in selftest
     assert 'runtime["confinement"].get("provider") != "openshell"' in selftest
     assert "def output_text" in selftest

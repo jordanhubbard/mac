@@ -501,7 +501,9 @@ def test_env_model_drift_falls_back_to_collection_vector_ref_model(
     monkeypatch.setenv("MAC_MEMORY_EMBED_API_KEY", "k")
     monkeypatch.setenv("MAC_MEMORY_EMBED_MODEL", "drifted-1536")
 
-    def fake_tokenhub_embedding_fn(*, base_url, api_key, model, input_type="passage", timeout=30.0):
+    def fake_tokenhub_embedding_fn(
+        *, base_url, api_key, model, input_type="passage", dimensions=None, timeout=30.0
+    ):
         if model == "drifted-1536":
             return lambda text: [0.1] * 1536
         if model == "legacy-2048":

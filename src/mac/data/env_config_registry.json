@@ -1378,6 +1378,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy codegraph init timeout seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy configured agent ids.",
     "family": "deployment",
     "name": "MAC_DEPLOY_CONFIGURED_AGENT_IDS",
@@ -4092,6 +4103,18 @@
   },
   {
     "default": null,
+    "description": "Memory setting: memory embed dim.",
+    "family": "memory",
+    "name": "MAC_MEMORY_EMBED_DIM",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/vector_writer_service.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Memory setting: memory embed input type.",
     "family": "memory",
     "name": "MAC_MEMORY_EMBED_INPUT_TYPE",
@@ -4551,6 +4574,17 @@
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw embedding model.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_EMBEDDING_MODEL",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -5101,6 +5135,17 @@
     "retired": false,
     "sources": [
       "src/mac/hermes_gateway.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openshell Sandbox setting: openshell gateway endpoint.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_GATEWAY_ENDPOINT",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -5944,6 +5989,18 @@
       "src/mac/hermes_startup.py"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: resource health interval seconds.",
+    "family": "core",
+    "name": "MAC_RESOURCE_HEALTH_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/agent-resource-health.sh",
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,

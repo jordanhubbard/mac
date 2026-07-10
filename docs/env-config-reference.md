@@ -117,6 +117,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG` | bool | consumer-defined | deployment | Deployment setting: deploy allow sample config. |
 | `MAC_DEPLOY_API_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy api timeout seconds. |
 | `MAC_DEPLOY_ARCHIVE` | str | consumer-defined | deployment | Deployment setting: deploy archive. |
+| `MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy codegraph init timeout seconds. |
 | `MAC_DEPLOY_CONFIGURED_AGENT_IDS` | str | consumer-defined | deployment | Deployment setting: deploy configured agent ids. |
 | `MAC_DEPLOY_CONTROL_BIND_HOST` | str | consumer-defined | deployment | Deployment setting: deploy control bind host. |
 | `MAC_DEPLOY_CONTROL_PORT` | int | consumer-defined | deployment | Deployment setting: deploy control port. |
@@ -342,6 +343,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MEMORY_EMBED_API_KEY` | str | consumer-defined | memory | Memory setting: memory embed api key. |
 | `MAC_MEMORY_EMBED_BACKEND` | str | consumer-defined | memory | Memory setting: memory embed backend. |
 | `MAC_MEMORY_EMBED_BASE_URL` | str | consumer-defined | memory | Memory setting: memory embed base url. |
+| `MAC_MEMORY_EMBED_DIM` | int | consumer-defined | memory | Memory setting: memory embed dim. |
 | `MAC_MEMORY_EMBED_INPUT_TYPE` | str | consumer-defined | memory | Memory setting: memory embed input type. |
 | `MAC_MEMORY_EMBED_MODEL` | str | consumer-defined | memory | Memory setting: memory embed model. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | str | consumer-defined | memory | Memory setting: memory topology file. |
@@ -381,6 +383,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_CREDENTIALS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw credentials file. |
 | `MAC_OPENCLAW_DOCKER_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw docker bin. |
 | `MAC_OPENCLAW_DRY_RUN` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw dry run. |
+| `MAC_OPENCLAW_EMBEDDING_MODEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw embedding model. |
 | `MAC_OPENCLAW_FINALIZE_HERMES_STATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize hermes state. |
 | `MAC_OPENCLAW_FINALIZE_NEMOCLAW_STATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize nemoclaw state. |
 | `MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize openclaw state. |
@@ -428,6 +431,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_EVENTS_FILE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell events file. |
 | `MAC_OPENSHELL_GATEWAY` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gateway. |
 | `MAC_OPENSHELL_GATEWAY_CREATE_ARGS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gateway create args. |
+| `MAC_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gateway endpoint. |
 | `MAC_OPENSHELL_GATEWAY_POLICY` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gateway policy. |
 | `MAC_OPENSHELL_GC` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell gc. |
 | `MAC_OPENSHELL_HOST_ALIAS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell host alias. |
@@ -497,6 +501,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REQUIRE_HERMES_STARTUP_READY` | bool | consumer-defined | core | Core setting: require hermes startup ready. |
 | `MAC_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | core | Core setting: require qdrant memory. |
 | `MAC_REQUIRE_TOKENHUB` | bool | consumer-defined | core | Core setting: require tokenhub. |
+| `MAC_RESOURCE_HEALTH_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: resource health interval seconds. |
 | `MAC_REVIEW_HUB_VERIFY` | str | consumer-defined | review | Review setting: review hub verify. |
 | `MAC_REVIEW_ID` | str | consumer-defined | review | Review setting: review id. |
 | `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | int | consumer-defined | review | Review setting: review nudge max attempts. |

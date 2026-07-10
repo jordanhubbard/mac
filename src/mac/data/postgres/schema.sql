@@ -793,6 +793,19 @@ CREATE TABLE IF NOT EXISTS mood_overlays (
 );
 CREATE INDEX IF NOT EXISTS idx_mood_overlays_agent_set_at ON mood_overlays (agent_id, set_at);
 
+-- Allowlisted runtime-settable agent configuration flags. An empty channel is
+-- agent-global; otherwise the value is scoped to a gateway channel key.
+CREATE TABLE IF NOT EXISTS agent_config_flags (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    flag TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT '',
+    value TEXT NOT NULL,
+    set_by TEXT,
+    reason TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, flag, channel)
+);
+
 CREATE TABLE IF NOT EXISTS nap_schedules (
     agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
     offset_minutes INTEGER NOT NULL,

@@ -14173,17 +14173,33 @@ class ControlPlane:
             "verification_contract_failed" in json_dumps(ensure_json_object(event.detail)).lower()
             for event in recent_history
         )
-        if contract_failure:
-            metadata = ensure_json_object(task.metadata)
+        repairable_prerequisite = contract_failure or failure_class == "environment"
+        if repairable_prerequisite:
+            # Classification is persisted immediately above. Reload before
+            # adding dependency metadata so update_task cannot overwrite the
+            # freshly recorded failure class and salvage with the stale task
+            # object passed into this method.
+            metadata = ensure_json_object(self.get_task(task.id).metadata)
             repair_id = str(metadata.get("contract_repair_task_id") or "").strip()
             if not repair_id:
-                repair = self.create_task(
-                    "Repair contract prerequisites: %s" % task.title,
-                    description=(
+                if contract_failure:
+                    repair_title = "Repair contract prerequisites: %s" % task.title
+                    repair_description = (
                         "Repair the repository contract for parent task %s: commit all "
                         "changes, pass the required verification gate, and push a remote "
                         "ref/PR. The parent task will retry automatically after completion."
-                    ) % task.id,
+                    ) % task.id
+                else:
+                    repair_title = "Repair environment prerequisites: %s" % task.title
+                    repair_description = (
+                        "Repair the execution environment prerequisite for parent task %s. "
+                        "Use the parent failure evidence and salvage metadata to restore the "
+                        "required agent, service, credential source, or toolchain. The parent "
+                        "task will retry automatically after this prerequisite completes."
+                    ) % task.id
+                repair = self.create_task(
+                    repair_title,
+                    description=repair_description,
                     project=task.project,
                     priority=task.priority,
                     required_capabilities=task.required_capabilities,
@@ -14204,7 +14220,11 @@ class ControlPlane:
                     (utcnow(), task.id),
                 )
                 transition_detail["repair_task_id"] = repair_id
-            transition_detail["reason"] = "waiting_on_contract_prerequisite"
+            transition_detail["reason"] = (
+                "waiting_on_contract_prerequisite"
+                if contract_failure
+                else "waiting_on_environment_prerequisite"
+            )
             transition_detail["manual_repair_required"] = False
             return TaskState.WAITING.value, transition_detail
         if failure_class == "superseded":
