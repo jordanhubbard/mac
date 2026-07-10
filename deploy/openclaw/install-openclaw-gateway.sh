@@ -606,18 +606,28 @@ migrate_continuity() {
   [ -x "$CONTINUITY_MIGRATOR" ] \
     || die "continuity migrator not found or not executable: $CONTINUITY_MIGRATOR"
   local proposal="$MIGRATION_DIR/personality-proposal.json"
-  local proposal_args=()
-  [ ! -f "$proposal" ] || proposal_args=(--identity-proposal "$proposal")
-  "$CONTINUITY_MIGRATOR" \
+  local migration_status=0
+  if [ -f "$proposal" ]; then
+    "$CONTINUITY_MIGRATOR" \
+      --hermes-home "${HERMES_HOME:-$HOME/.hermes}" \
+      --workspace "$WORKSPACE_DIR" \
+      --state-dir "$STATE_DIR" \
+      --migration-dir "$MIGRATION_DIR" \
+      --agent-id "$MAC_OPENCLAW_AGENT_ID" \
+      --public-identity "$MAC_OPENCLAW_PUBLIC_IDENTITY" \
+      --report "$MIGRATION_DIR/last-run.json" \
+      --identity-proposal "$proposal" >/dev/null || migration_status=$?
+  else
+    "$CONTINUITY_MIGRATOR" \
     --hermes-home "${HERMES_HOME:-$HOME/.hermes}" \
     --workspace "$WORKSPACE_DIR" \
     --state-dir "$STATE_DIR" \
     --migration-dir "$MIGRATION_DIR" \
     --agent-id "$MAC_OPENCLAW_AGENT_ID" \
     --public-identity "$MAC_OPENCLAW_PUBLIC_IDENTITY" \
-    --report "$MIGRATION_DIR/last-run.json" \
-    "${proposal_args[@]}" >/dev/null \
-    || die "Hermes/OpenClaw continuity migration failed; see $MIGRATION_DIR/last-run.json"
+    --report "$MIGRATION_DIR/last-run.json" >/dev/null || migration_status=$?
+  fi
+  [ "$migration_status" -eq 0 ] || die "Hermes/OpenClaw continuity migration failed; see $MIGRATION_DIR/last-run.json"
   if [ -f "$MIGRATION_DIR/cron-plan.json" ]; then
     cp -f "$MIGRATION_DIR/cron-plan.json" "$MANAGED_DIR/cron-plan.json"
   else
