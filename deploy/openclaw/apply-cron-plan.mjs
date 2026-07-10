@@ -25,12 +25,21 @@ function openclaw(args, {json = false} = {}) {
     maxBuffer: 16 * 1024 * 1024,
   });
   if (result.status !== 0) {
-    throw new Error(`openclaw ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`);
+    const detail = (result.stderr || result.stdout || "").trim();
+    // A fresh headless OpenShell instance has no interactive device-pairing
+    // channel. Cron installation must not terminate an otherwise healthy
+    // gateway when the CLI asks for an operator scope upgrade; the plan stays
+    // on disk and can be applied after approval is provisioned.
+    if (/scope upgrade pending approval|pairing required/i.test(detail)) {
+      console.warn(`openclaw cron deferred until device approval: ${detail}`);
+      return null;
+    }
+    throw new Error(`openclaw ${args.join(" ")} failed: ${detail}`);
   }
   return json ? JSON.parse(result.stdout) : result.stdout;
 }
 
-const listed = openclaw(["cron", "list", "--json"], {json: true});
+const listed = openclaw(["cron", "list", "--json"], {json: true}) || {jobs: []};
 const byName = new Map((listed.jobs || []).map((job) => [String(job.name || ""), job]));
 const primarySlackAccount = process.env.MAC_OPENCLAW_SLACK_ACCOUNT_ID || "default";
 
