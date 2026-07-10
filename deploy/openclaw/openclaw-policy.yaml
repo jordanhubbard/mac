@@ -17,6 +17,11 @@ filesystem_policy:
     - /proc
     - /app
     - /opt
+    # OpenShell's command adapter may invoke a login shell before applying the
+    # requested environment.  Expose the managed home read-only so that its
+    # profile is traversable; durable writes remain limited to the explicit
+    # config and /sandbox paths below.
+    - /home/sandbox
   read_write:
     - /tmp
     - /dev
