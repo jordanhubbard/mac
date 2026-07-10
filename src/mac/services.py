@@ -14164,6 +14164,45 @@ class ControlPlane:
         transition_detail["failure_class"] = failure_class
         if salvage:
             transition_detail["salvage"] = salvage
+        # Contract failures are recoverable prerequisites, not dead-letter
+        # task failures.  Create a durable repair task and suspend the parent
+        # until that task supplies valid pushed/evidence state.  This prevents
+        # the dispatcher from orphaning otherwise-complete work after retries.
+        recent_history = self.task_history(task.id, limit=100)
+        contract_failure = any(
+            "verification_contract_failed" in json_dumps(ensure_json_object(event.detail)).lower()
+            for event in recent_history
+        )
+        if contract_failure:
+            metadata = ensure_json_object(task.metadata)
+            repair_id = str(metadata.get("contract_repair_task_id") or "").strip()
+            if not repair_id:
+                repair = self.create_task(
+                    "Repair contract prerequisites: %s" % task.title,
+                    description=(
+                        "Repair the repository contract for parent task %s: commit all "
+                        "changes, pass the required verification gate, and push a remote "
+                        "ref/PR. The parent task will retry automatically after completion."
+                    ) % task.id,
+                    project=task.project,
+                    priority=task.priority,
+                    required_capabilities=task.required_capabilities,
+                    metadata={"origin": {"type": "contract_prerequisite", "parent_task_id": task.id}},
+                    actor="dispatcher.tick",
+                )
+                repair_id = repair.id
+                metadata["contract_repair_task_id"] = repair_id
+                metadata["contract_repair_status"] = "waiting"
+                self.update_task(
+                    task.id,
+                    dependencies=[*task.dependencies, repair_id],
+                    metadata=metadata,
+                    actor="dispatcher.tick",
+                )
+                transition_detail["repair_task_id"] = repair_id
+            transition_detail["reason"] = "waiting_on_contract_prerequisite"
+            transition_detail["manual_repair_required"] = False
+            return TaskState.WAITING.value, transition_detail
         if failure_class == "superseded":
             transition_detail["reason"] = "superseded"
             return TaskState.CANCELLED.value, transition_detail

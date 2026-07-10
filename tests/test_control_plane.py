@@ -7774,7 +7774,10 @@ def test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage(cp):
     result = cp.tick(limit=0)
 
     failed = cp.get_task(task.id)
-    assert failed.state == TaskState.FAILED.value
+    assert failed.state == TaskState.WAITING.value
+    assert len(failed.dependencies) == 1
+    repair = cp.get_task(failed.dependencies[0])
+    assert repair.metadata["origin"]["type"] == "contract_prerequisite"
     assert failed.metadata["failure_class"] == "environment"
     assert failed.metadata["salvage"]["pushed_branch"] == "mac/agent/task"
     assert failed.metadata["salvage"]["recorded_lessons"] == ["memory-1"]
@@ -7836,8 +7839,10 @@ def test_claim_exhausted_attempt_records_failure_class(cp):
         cp.claim_task(task.id, agent.id)
 
     failed = cp.get_task(task.id)
-    assert failed.state == TaskState.FAILED.value
-    assert failed.metadata["failure_class"] == "work"
+    assert failed.state == TaskState.WAITING.value
+    assert len(failed.dependencies) == 1
+    repair = cp.get_task(failed.dependencies[0])
+    assert repair.metadata["origin"]["type"] == "contract_prerequisite"
 
 
 @pytest.mark.parametrize(
