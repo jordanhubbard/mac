@@ -3411,7 +3411,7 @@ ensure_codegraph_git_exclude() {
 }
 
 initialize_codegraph_repository() {
-  local repo_dir="$1"
+  local repo_dir="$1" log_file status_file pid_file
   [ -d "$repo_dir" ] || return 0
   if ! PATH="$MAC_HOME/bin:$PATH" command -v codegraph >/dev/null 2>&1; then
     log "CodeGraph CLI unavailable; skipping CodeGraph init for $repo_dir"
@@ -3422,18 +3422,51 @@ initialize_codegraph_repository() {
     return 0
   fi
   ensure_codegraph_git_exclude "$repo_dir"
-  log "initializing CodeGraph index for $repo_dir"
-  if "$PY" - "$repo_dir" "$MAC_HOME/bin:$PATH" "${MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS:-300}" \
-    > "$LOG_DIR/codegraph-init-source.txt" 2>&1 <<'PY'
+  log_file="$LOG_DIR/codegraph-init-source.txt"
+  status_file="$LOG_DIR/codegraph-init-source.json"
+  pid_file="$LOG_DIR/codegraph-init-source.pid"
+  log "queuing asynchronous CodeGraph index initialization for $repo_dir"
+  CODEGRAPH_STATUS_FILE="$status_file" nohup "$PY" - "$repo_dir" "$MAC_HOME/bin:$PATH" \
+    "${MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS:-300}" > "$log_file" 2>&1 <<'PY' &
+import json
 import os
 import signal
 import subprocess
 import sys
+import tempfile
+import time
+from pathlib import Path
 
 repo_dir, path, raw_timeout = sys.argv[1:4]
 timeout = max(1, int(raw_timeout))
+status_path = Path(os.environ["CODEGRAPH_STATUS_FILE"])
+
+def write_status(state, **extra):
+    payload = {
+        "schema": "mac.codegraph_background_init.v1",
+        "state": state,
+        "repository": repo_dir,
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **extra,
+    }
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix="." + status_path.name + ".", dir=str(status_path.parent)
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+        os.replace(temporary, status_path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
 env = dict(os.environ)
 env["PATH"] = path
+write_status("running", timeout_seconds=timeout)
 process = subprocess.Popen(
     ["codegraph", "init"],
     cwd=repo_dir,
@@ -3441,7 +3474,7 @@ process = subprocess.Popen(
     start_new_session=True,
 )
 try:
-    raise SystemExit(process.wait(timeout=timeout))
+    returncode = process.wait(timeout=timeout)
 except subprocess.TimeoutExpired:
     os.killpg(process.pid, signal.SIGTERM)
     try:
@@ -3450,14 +3483,17 @@ except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
     print("codegraph init timed out after %d seconds" % timeout, file=sys.stderr)
+    write_status("timed_out", timeout_seconds=timeout, returncode=124)
     raise SystemExit(124)
+if returncode == 0:
+    write_status("completed", timeout_seconds=timeout, returncode=0)
+else:
+    write_status("failed", timeout_seconds=timeout, returncode=returncode)
+raise SystemExit(returncode)
 PY
-  then
-    log "CodeGraph index initialized for $repo_dir"
-  else
-    log "ERROR: codegraph init failed for $repo_dir; see $LOG_DIR/codegraph-init-source.txt"
-    return 1
-  fi
+  local init_pid=$!
+  printf '%s\n' "$init_pid" > "$pid_file"
+  log "CodeGraph index initialization queued for $repo_dir (pid=$init_pid status=$status_file)"
 }
 
 

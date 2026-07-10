@@ -243,10 +243,14 @@ def test_supervisord_resource_health_uses_long_running_loop():
     assert 'sleep "$interval"' in watchdog
 
 
-def test_codegraph_init_is_bounded_and_terminates_its_process_group():
+def test_codegraph_init_is_asynchronous_bounded_and_observable():
     script = deploy_script_text()
 
     assert "MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS:-300" in script
+    assert 'nohup "$PY"' in script
+    assert 'status_file="$LOG_DIR/codegraph-init-source.json"' in script
+    assert '"schema": "mac.codegraph_background_init.v1"' in script
+    assert 'write_status("completed"' in script
     assert "start_new_session=True" in script
     assert "os.killpg(process.pid, signal.SIGTERM)" in script
     assert "os.killpg(process.pid, signal.SIGKILL)" in script
