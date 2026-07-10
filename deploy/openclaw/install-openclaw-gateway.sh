@@ -452,11 +452,7 @@ config = {
                     "allowConversationAccess": True,
                     "allowPromptInjection": True,
                 },
-                "config": {
-                    "maxMemories": 5,
-                    "timeoutMs": 2500,
-                    "memoryProvider": "mac-holographic-qdrant",
-                },
+                "config": {"maxMemories": 5, "timeoutMs": 2500},
             },
             "slack": {"enabled": "slack" in configured},
             "telegram": {"enabled": "telegram" in configured},

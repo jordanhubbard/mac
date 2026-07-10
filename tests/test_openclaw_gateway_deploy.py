@@ -251,7 +251,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     ]
     assert config["agents"]["defaults"]["workspace"] == "/sandbox/workspace"
     assert "memorySearch" not in config["agents"]["defaults"]
-    assert config["plugins"]["entries"]["mac-continuity"]["config"]["memoryProvider"] == "mac-holographic-qdrant"
+    assert config["plugins"]["entries"]["mac-continuity"]["config"] == {
+        "maxMemories": 5,
+        "timeoutMs": 2500,
+    }
     assert config["tools"]["sessions"]["visibility"] == "agent"
     assert config["gateway"]["auth"]["token"]["id"] == "OPENCLAW_GATEWAY_TOKEN"
     assert all(secret not in config_path.read_text(encoding="utf-8") for secret in secrets)
