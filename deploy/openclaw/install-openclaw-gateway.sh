@@ -513,7 +513,7 @@ values = {
     # mounted.  Runtime state/config/workspace are all explicit below, so use
     # a neutral writable HOME and prevent profile lookup from becoming a
     # gateway availability dependency.
-    "HOME": "/tmp",
+    "HOME": "/home/sandbox",
     "BASH_ENV": "/dev/null",
     "MAC_OPENCLAW_AGENT_ID": os.environ["MAC_OPENCLAW_AGENT_ID"],
     "MAC_OPENCLAW_CONTROL_URL": os.environ["MAC_OPENCLAW_CONTROL_URL"],
@@ -955,7 +955,7 @@ sandbox_command() {
   trap 'rm -f "$output"' RETURN
   for attempt in $(seq 1 30); do
     if HOME=/tmp BASH_ENV=/dev/null "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
-      env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@" >"$output" 2>&1; then
+      env HOME=/home/sandbox BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@" >"$output" 2>&1; then
       cat "$output"
       return 0
     fi
