@@ -3423,7 +3423,36 @@ initialize_codegraph_repository() {
   fi
   ensure_codegraph_git_exclude "$repo_dir"
   log "initializing CodeGraph index for $repo_dir"
-  if (cd "$repo_dir" && PATH="$MAC_HOME/bin:$PATH" codegraph init) > "$LOG_DIR/codegraph-init-source.txt" 2>&1; then
+  if "$PY" - "$repo_dir" "$MAC_HOME/bin:$PATH" "${MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS:-300}" \
+    > "$LOG_DIR/codegraph-init-source.txt" 2>&1 <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+repo_dir, path, raw_timeout = sys.argv[1:4]
+timeout = max(1, int(raw_timeout))
+env = dict(os.environ)
+env["PATH"] = path
+process = subprocess.Popen(
+    ["codegraph", "init"],
+    cwd=repo_dir,
+    env=env,
+    start_new_session=True,
+)
+try:
+    raise SystemExit(process.wait(timeout=timeout))
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    print("codegraph init timed out after %d seconds" % timeout, file=sys.stderr)
+    raise SystemExit(124)
+PY
+  then
     log "CodeGraph index initialized for $repo_dir"
   else
     log "ERROR: codegraph init failed for $repo_dir; see $LOG_DIR/codegraph-init-source.txt"

@@ -243,6 +243,15 @@ def test_supervisord_resource_health_uses_long_running_loop():
     assert 'sleep "$interval"' in watchdog
 
 
+def test_codegraph_init_is_bounded_and_terminates_its_process_group():
+    script = deploy_script_text()
+
+    assert "MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS:-300" in script
+    assert "start_new_session=True" in script
+    assert "os.killpg(process.pid, signal.SIGTERM)" in script
+    assert "os.killpg(process.pid, signal.SIGKILL)" in script
+
+
 def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
     # The Hermes runtime reads ~/.hermes/.env + config.yaml (not mac.env) for its
     # chat provider; the deploy must sync those from mac.env or agents dial the
