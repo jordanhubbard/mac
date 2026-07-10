@@ -446,6 +446,7 @@ config = {
     "channels": channels,
     "plugins": {
         "enabled": True,
+        "slots": {"memory": "mac-continuity"},
         "entries": {
             "mac-continuity": {
                 "enabled": True,
@@ -482,16 +483,6 @@ config = {
         "defaults": {
             "model": {"primary": provider_model},
             "workspace": "/sandbox/workspace",
-            # Memory is supplied by the MAC continuity plugin, which fronts
-            # the Hermes holographic/Qdrant tiers.  Do not configure OpenClaw
-            # with provider=none: that would silently discard continuity.
-            "memorySearch": {
-                "provider": "mac-router",
-                "model": embedding_model,
-                "fallback": "none",
-                "experimental": {"sessionMemory": True},
-                "sources": ["memory", "sessions"],
-            },
         },
         "list": [{
             "id": "main",
@@ -1051,7 +1042,7 @@ hooks.update(
 if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled"}:
     raise SystemExit("mac-continuity plugin was discovered but not imported")
 if not {
-    "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
+    "memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
     "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear",
     "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
 } <= tools:

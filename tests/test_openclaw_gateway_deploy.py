@@ -250,13 +250,8 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "/opt/mac-openclaw/plugins/mac-continuity"
     ]
     assert config["agents"]["defaults"]["workspace"] == "/sandbox/workspace"
-    assert config["agents"]["defaults"]["memorySearch"] == {
-        "provider": "mac-router",
-        "model": "text-embedding-3-small",
-        "fallback": "none",
-        "experimental": {"sessionMemory": True},
-        "sources": ["memory", "sessions"],
-    }
+    assert "memorySearch" not in config["agents"]["defaults"]
+    assert config["plugins"]["slots"]["memory"] == "mac-continuity"
     assert config["plugins"]["entries"]["mac-continuity"]["config"] == {
         "maxMemories": 5,
         "timeoutMs": 2500,
@@ -456,7 +451,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
         "  sandbox:exec)\n"
         "    case \"$*\" in\n"
         "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {\"slack\": [{\"accountId\": \"offtera\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T123\"}}}, {\"accountId\": \"omgjkh\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T456\"}}}]}, \"channelDefaultAccountId\": {\"slack\": \"offtera\"}}' ;;\n"
-        "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
+        "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"memory_search\", \"memory_get\", \"memory_store\", \"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
         "      *'curiosity verify'*) printf '%s\\n' '{\"valid\": true, \"events\": 0}' ;;\n"
         "      *'curiosity abuse-frame'*) printf '%s\\n' '{\"possible_false_equivalence\": true}' ;;\n"
         "      *'memory status'*) printf '%s\\n' '{\"files\": 3}' ;;\n"

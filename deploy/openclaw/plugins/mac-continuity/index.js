@@ -88,6 +88,12 @@ function mutateMood(api, method, body) {
   return selfApi(api, method, "/mood", {body});
 }
 
+function mutateMemory(api, content, kind) {
+  return selfApi(api, "POST", "/memory", {
+    body: {content, record_type: kind ? `agent_learning:${kind}` : "agent_learning"},
+  });
+}
+
 function renderContext(context) {
   const sections = [];
   if (context?.mood_prompt) {
@@ -124,6 +130,39 @@ export default {
         return undefined;
       }
     }, {timeoutMs: 4000});
+
+    api.registerTool({
+      name: "memory_search",
+      description: "Search MAC holographic and shared Qdrant memory for relevant durable context.",
+      parameters: inputSchema(
+        {query: {type: "string", minLength: 1}, maxResults: {type: "integer", minimum: 1, maximum: 20}},
+        ["query"],
+      ),
+      async execute(_id, params) {
+        const context = await loadContext(api, params.query, params.maxResults);
+        return {content: [{type: "text", text: JSON.stringify(context.memories || [], null, 2)}]};
+      },
+    });
+
+    api.registerTool({
+      name: "memory_get",
+      description: "Retrieve MAC durable memory matching a specific lookup.",
+      parameters: inputSchema({lookup: {type: "string", minLength: 1}}, ["lookup"]),
+      async execute(_id, params) {
+        const context = await loadContext(api, params.lookup, 20);
+        return {content: [{type: "text", text: JSON.stringify(context.memories || [], null, 2)}]};
+      },
+    });
+
+    api.registerTool({
+      name: "memory_store",
+      description: "Store a durable learning in MAC holographic/Qdrant memory.",
+      parameters: inputSchema({content: {type: "string", minLength: 1, maxLength: 16000}, kind: {type: "string"}}, ["content"]),
+      async execute(_id, params) {
+        const result = await mutateMemory(api, params.content, params.kind || "agent_learning");
+        return {content: [{type: "text", text: JSON.stringify(result, null, 2)}]};
+      },
+    });
 
     api.registerTool({
       name: "mac_memory_recall",
