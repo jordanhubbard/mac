@@ -956,8 +956,7 @@ wait_for_sandbox_ready() {
 
   local deadline=$((SECONDS + timeout))
   while :; do
-    if "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1 \
-      && sandbox_command "$openshell_bin" /bin/true >/dev/null 2>&1; then
+    if "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
       return 0
     fi
     if [ "$SECONDS" -ge "$deadline" ]; then
@@ -994,7 +993,7 @@ PY
   wait_for_sandbox_ready "$openshell_bin"
   sandbox_command "$openshell_bin" /usr/local/bin/mac-verify-bash-contract
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw config validate --json >/dev/null
-  sandbox_command "$openshell_bin" /bin/true >/dev/null
+  "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null
   local plugin_status="$OPENCLAW_HOST_DIR/continuity-plugin-status.json"
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw plugins inspect \
     mac-continuity --runtime --json > "$plugin_status"
