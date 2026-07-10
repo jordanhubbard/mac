@@ -806,6 +806,15 @@ EOF
 }
 
 build_image() {
+  local manifest revision
+  manifest="$(mktemp)"
+  for path in deploy/openclaw/OpenClaw.Containerfile deploy/openclaw/apply-cron-plan.mjs deploy/openclaw/curiosity-sidecar.py deploy/openclaw/plugins/mac-continuity/index.js deploy/openclaw/plugins/mac-continuity/openclaw.plugin.json deploy/verify-bash-contract.sh; do
+    sha256sum "$BUILD_CONTEXT/$path" >>"$manifest"
+  done
+  revision="$(sha256sum "$manifest" | cut -c1-12)"
+  rm -f "$manifest"
+  OPENCLAW_IMAGE_REVISION="$revision"
+  OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"
   if truthy "$DRY_RUN" && ! truthy "$SKIP_IMAGE"; then
     log "DRY-RUN: docker build --pull -t $OPENCLAW_IMAGE -f $CONTAINERFILE $BUILD_CONTEXT"
     return
@@ -824,7 +833,7 @@ build_image() {
     return
   fi
   [ -f "$CONTAINERFILE" ] || die "Containerfile not found: $CONTAINERFILE"
-  PATH="$docker_path" "$docker_bin" build --pull -t "$OPENCLAW_IMAGE" -f "$CONTAINERFILE" "$BUILD_CONTEXT"
+  PATH="$docker_path" "$docker_bin" build --pull --build-arg "MAC_OPENCLAW_IMAGE_REVISION=$OPENCLAW_IMAGE_REVISION" -t "$OPENCLAW_IMAGE" -f "$CONTAINERFILE" "$BUILD_CONTEXT"
 }
 
 backup_and_delete_stale_sandbox() {

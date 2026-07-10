@@ -33,7 +33,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     installer = INSTALLER.read_text(encoding="utf-8")
     assert "ghcr.io/openclaw/openclaw:2026.6.11@sha256:" in container
     assert 'OPENCLAW_SLACK_PLUGIN_VERSION="2026.6.11"' in container
-    assert 'MAC_OPENCLAW_IMAGE_REVISION="8"' in container
+    assert 'ARG MAC_OPENCLAW_IMAGE_REVISION=' in container
     assert "/etc/mac-openclaw-image-revision" in container
     # OpenShell's sandbox supervisor creates an isolated network namespace
     # inside the image and fails closed when no trusted `ip` helper exists.

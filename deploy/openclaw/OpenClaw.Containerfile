@@ -12,7 +12,7 @@ ARG OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:2026.6.11@sha256:3814fb1f62f9cfc59
 FROM ${OPENCLAW_IMAGE}
 
 ARG OPENCLAW_SLACK_PLUGIN_VERSION="2026.6.11"
-ARG MAC_OPENCLAW_IMAGE_REVISION="8"
+ARG MAC_OPENCLAW_IMAGE_REVISION="uncomputed"
 
 USER root
 COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
