@@ -831,9 +831,9 @@ backup_and_delete_stale_sandbox() {
   local openshell_bin="$1"
   "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1 || return 0
   local version
-  version="$($openshell_bin sandbox exec --name "$SANDBOX_NAME" --no-tty -- /usr/local/bin/openclaw --version 2>/dev/null || true)"
+  version="$(HOME=/tmp BASH_ENV=/dev/null $openshell_bin sandbox exec --name "$SANDBOX_NAME" --no-tty -- /usr/local/bin/openclaw --version 2>/dev/null || true)"
   local image_revision
-  image_revision="$($openshell_bin sandbox exec --name "$SANDBOX_NAME" --no-tty -- cat /etc/mac-openclaw-image-revision 2>/dev/null || true)"
+  image_revision="$(HOME=/tmp BASH_ENV=/dev/null $openshell_bin sandbox exec --name "$SANDBOX_NAME" --no-tty -- cat /etc/mac-openclaw-image-revision 2>/dev/null || true)"
   if [[ "$version" == *"$OPENCLAW_VERSION"* ]] \
     && [ "$image_revision" = "$OPENCLAW_IMAGE_REVISION" ]; then
     return 0
@@ -920,7 +920,7 @@ prepare() {
 sandbox_command() {
   local openshell_bin="$1"
   shift
-  "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
+  HOME=/tmp BASH_ENV=/dev/null "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
     env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@"
 }
 
