@@ -55,6 +55,8 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert 'BUILD_CONTEXT="${MAC_OPENCLAW_BUILD_CONTEXT:-$MAC_SRC}"' in installer
     assert '"$BUILD_CONTEXT"' in installer
     assert "USER sandbox" in container
+    assert "install -m 0644 -o sandbox -g sandbox /dev/null /home/sandbox/.profile" in container
+    assert "install -m 0644 -o sandbox -g sandbox /dev/null /home/sandbox/.bashrc" in container
     assert "nemoclaw gateway" not in container.lower()
     assert "/nemoclaw" not in container.lower()
     # The cutover audit must name the legacy service to prove it is inactive,

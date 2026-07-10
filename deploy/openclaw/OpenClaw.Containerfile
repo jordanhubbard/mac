@@ -30,6 +30,8 @@ RUN apt-get update \
          /home/sandbox/.config/mac-openclaw \
          /home/sandbox/.openclaw-data \
          /home/sandbox/workspace \
+    && install -m 0644 -o sandbox -g sandbox /dev/null /home/sandbox/.profile \
+    && install -m 0644 -o sandbox -g sandbox /dev/null /home/sandbox/.bashrc \
     && chmod 0755 /opt/mac-openclaw/apply-cron-plan.mjs \
     && chmod -R a+rX /opt/mac-openclaw/plugins \
     && install -d -m 0700 -o sandbox -g sandbox \
