@@ -8,6 +8,7 @@ StartLimitIntervalSec=0
 Type=simple
 User=__MAC_USER__
 WorkingDirectory=__MAC_HOME__
+Environment=OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17670
 ExecStart=__MAC_HOME__/bin/openclaw-gateway
 ExecStop=__MAC_HOME__/bin/openclaw-gateway-stop
 ExecStopPost=__MAC_HOME__/bin/openclaw-gateway-stop
