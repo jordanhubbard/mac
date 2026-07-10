@@ -1,108 +1,114 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_4d5ff6a1631a4273aa7b6579a7d3088b",
+  "task_id": "task_8c50e81876f746559cd6aa9c8193ff55",
   "status": "complete",
-  "summary": "Full audit of src/mac/evidence_blobs.py and tests/test_evidence_blobs.py for the '0600 docstring failure pattern'. All 9 tests pass. Three real security issues found: (1) silent chmod failure via bare 'except OSError: pass' at line 126 — if chmod fails, the 0600 guarantee is silently broken with no log, no exception, no retry; (2) TOCTOU window exists: the parent fan-out directory is created world-traversable (0755) by path.parent.mkdir(), so other users can list/enumerate blob files even though file content is protected by 0600; (3) the docstring claim is partially inaccurate — chmod(0o600) is actually redundant on Linux/Python 3 because tempfile.mkstemp() already hardcodes 0600, so the real risk is not the TOCTOU between rename and chmod, but rather that the chmod call can silently fail on exotic filesystems (NFS, ACL-restricted volumes) and the caller is never informed. Missing test coverage: no test exercises the silent-chmod-failure code path.",
+  "summary": "Investigated low-confidence dream finding (dreamrepair:30be46e76ec418c017d1aff0f1dc8b0e) for src/mac/ui freeze failure pattern. All 4 source files (app.ts, app.js, dashboard_api.ts, dashboard_api.js) carry the DEPRECATED / MAINTENANCE-ONLY / ADR-0010 freeze markers. The ADR doc (docs/adr/0010-fleet-ide-cutover-parity-matrix.md) exists. All 13 freeze-guard tests and all 76 tests/ui/ tests pass green with no regressions. Full contract test suite passes (coverage: 93.17% statements, 84.59% branches, above 90%/80% floors). Finding is NOT actionable: the single low-confidence memory record does not reflect the current clean state of the repo. No code changes were needed.",
   "repo": {
-    "head_sha": "02f29e806c8bb2290876dfa60bac5aa0eed775b4",
+    "head_sha": "560c0b25b9e4819d5f2419ce2a50f1077a02c585",
     "pushed": false,
     "dirty": false,
     "files_changed": []
   },
   "tests": {
-    "command": ".venv/bin/python -m pytest tests/test_evidence_blobs.py -v",
+    "command": ".venv/bin/pytest tests/ui/test_ui_freeze.py tests/ui/ -v",
     "status": "passed",
-    "passed": 9,
+    "passed": 76,
     "failed": 0,
     "errors": 0,
     "test_results": {
-      "test_store_and_read_blob_roundtrip": "PASSED",
-      "test_store_blob_sets_mode_0600": "PASSED",
-      "test_read_blob_fails_closed_on_corruption": "PASSED",
-      "test_large_artifact_externalizes_and_reads_back": "PASSED",
-      "test_small_artifact_stays_inline": "PASSED",
-      "test_unconfigured_blob_store_keeps_inline_behavior": "PASSED",
-      "test_missing_blob_fails_closed_with_clear_error": "PASSED",
-      "test_corrupted_blob_fails_closed_on_read": "PASSED",
-      "test_identical_content_across_evidence_deduplicates": "PASSED"
+      "tests/ui/test_ui_freeze.py::test_app_ts_has_deprecated_marker": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_app_ts_has_maintenance_only_phrase": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_app_ts_references_adr_0010": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_app_js_has_deprecated_marker": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_app_js_has_maintenance_only_phrase": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_app_js_references_adr_0010": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_dashboard_api_ts_has_deprecated_marker": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_dashboard_api_ts_has_maintenance_only_phrase": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_dashboard_api_ts_references_adr_0010": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_dashboard_api_js_has_deprecated_marker": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_dashboard_api_js_has_maintenance_only_phrase": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_dashboard_api_js_references_adr_0010": "PASSED",
+      "tests/ui/test_ui_freeze.py::test_adr_0010_exists": "PASSED"
     },
-    "summary": "9 passed in 0.16s"
+    "freeze_guard_tests": {
+      "total": 13,
+      "passed": 13,
+      "failed": 0,
+      "summary": "13 passed in 0.05s"
+    },
+    "full_ui_suite": {
+      "total": 76,
+      "passed": 76,
+      "failed": 0,
+      "summary": "76 passed, 1 warning in 6.18s"
+    },
+    "contract_suite": {
+      "command": "scripts/run-contract-tests.sh",
+      "status": "passed",
+      "coverage_statements_pct": 93.17,
+      "coverage_branches_pct": 84.59,
+      "coverage_floor_statements": 90.0,
+      "coverage_floor_branches": 80.0,
+      "summary": "All contract tests passed; coverage above floor"
+    }
   },
-  "findings": {
-    "question_1_test_store_blob_sets_mode_0600": {
-      "verdict": "PASSES",
-      "explanation": "test_store_blob_sets_mode_0600 currently passes on Python 3.12 / Linux. It passes because tempfile.mkstemp() on Linux always creates files with mode 0600 (hardcoded in CPython, unaffected by umask), so after os.replace(tmp_name, path) the final path is already at 0600. The explicit path.chmod(0o600) at line 125 is effectively a no-op on this platform. The test would also pass on macOS (same mkstemp behavior). The test does NOT catch the failure mode: it cannot distinguish 'chmod was called and worked' from 'chmod was never needed because mkstemp already set 0600'.",
-      "file": "tests/test_evidence_blobs.py",
-      "test_line": 46
-    },
-    "question_2_silent_chmod_failure": {
-      "verdict": "CONFIRMED_BUG",
-      "explanation": "Lines 124-127 of src/mac/evidence_blobs.py wrap the chmod call in a bare 'except OSError: pass' block. If os.chmod fails for any reason (NFS no_root_squash, immutable filesystem flag, ACL policy, read-only mount after rename, or an unexpected PermissionError on exotic storage), the exception is silently consumed. store_blob() returns blob_uri() with a success indication, but the file may be at a permissive mode such as 0644 or 0666. The caller in services.py also wraps store_blob in 'except OSError' (line 8205-8207) and falls back to inline, but this inner OSError swallow means neither the services.py caller nor any monitoring path ever learns that the 0600 guarantee was violated. The module docstring explicitly promises '0600 (owner-read/write only) to prevent other local users from reading evidence payloads' — this promise is unenforceable when chmod silently fails.",
-      "file": "src/mac/evidence_blobs.py",
-      "chmod_line": 125,
-      "silent_swallow_line": 126,
-      "recommendation": "Remove the bare 'except OSError: pass' and either (a) log a warning and re-raise (breaking the caller's OSError fallback in services.py, which would correctly cause fallback to inline storage rather than returning a world-readable blob), or (b) set the file descriptor permissions to 0o600 using os.open() with O_CREAT | O_EXCL | O_WRONLY and mode=0o600 before writing, which pre-empts the chmod entirely and makes the permission atomic with file creation."
-    },
-    "question_3_toctou_window": {
-      "verdict": "PARTIAL_WINDOW_EXISTS",
-      "explanation": "Two TOCTOU sub-issues: (A) Between os.replace(tmp_name, path) completing (line 117) and path.chmod(0o600) executing (line 125), the blob exists at the final content-addressed path. On Linux with mkstemp, the mode is already 0600 from the tmp file, so the window has correct permissions during the rename interval — but this is an implementation-level accident, not a documented guarantee. On a hypothetical platform where mkstemp creates wider permissions, the window would be world-readable. (B) More importantly: path.parent.mkdir(parents=True, exist_ok=True) at line 112 creates the two-character fanout directory (e.g., <root>/ab/) with default permissions subject to umask (typically 0755). A local attacker can traverse into any fanout directory and enumerate the sha256-named blob files, revealing which content digests are stored. They cannot read the file content if 0600 is enforced, but digest enumeration leaks artifact identity. The docstring does not document this directory-traversal exposure.",
-      "file": "src/mac/evidence_blobs.py",
-      "mkdir_line": 112,
-      "replace_line": 117,
-      "chmod_line": 125,
-      "recommendation": "Create the fanout directory with mode 0700 to prevent enumeration: path.parent.mkdir(mode=0o700, parents=True, exist_ok=True). Note that exist_ok=True means existing directories are not chmod'd; a separate os.chmod(path.parent, 0o700) after mkdir is needed for pre-existing directories."
-    },
-    "question_4_docstring_accuracy": {
-      "verdict": "INACCURATE_IN_TWO_WAYS",
-      "explanation": "The module docstring (lines 31-32) states: 'store_blob calls chmod(0o600) on the final path immediately after the atomic rename.' This is inaccurate in two ways: (1) 'immediately after' overstates the guarantee — the chmod is inside a separate try/except block with a silent failure path, so it can silently not execute. (2) The chmod is not the actual source of 0600 protection on Linux/Python 3; the permission comes from mkstemp()'s hardcoded 0600. The docstring misleads readers into thinking chmod is the enforcement mechanism when it is actually a belt-and-suspenders call that can fail without consequence. A more accurate statement would be: 'Blob files are created via mkstemp (which on POSIX sets mode 0600 by default), then renamed atomically; store_blob additionally calls chmod(0o600) on the final path, but any failure is silently ignored.'",
-      "file": "src/mac/evidence_blobs.py",
-      "docstring_lines": "31-32"
-    },
-    "question_5_missing_test_coverage": {
-      "verdict": "MISSING_COVERAGE_CONFIRMED",
-      "explanation": "There is no test that verifies behavior when chmod(0o600) fails. The existing test_store_blob_sets_mode_0600 only checks the happy path. A missing test would: (a) mock or monkeypatch os.chmod / Path.chmod to raise OSError, (b) call store_blob(), (c) assert that either (current behavior) the call succeeds silently with a permissive mode, OR (proposed fixed behavior) an exception or warning is raised. Without this test, a regression where chmod starts failing (e.g., due to a filesystem change) would not be caught. Additionally, there is no test for the directory mode issue (parent fanout dir being world-traversable).",
-      "missing_test_scenarios": [
-        "store_blob when path.chmod raises OSError: verify current behavior (silent success) and that the file mode is still 0600 only by luck of mkstemp",
-        "store_blob creates parent directory with mode 0700 (currently not enforced, would be a new test for a fix)"
-      ]
-    },
-    "concrete_fix_recommendation": {
-      "option_a_re_raise_chmod_failure": {
-        "description": "Replace bare 'except OSError: pass' with logging + re-raise. Since services.py wraps store_blob in 'except OSError' and falls back to inline, a re-raised OSError from chmod will correctly trigger inline fallback rather than storing a potentially world-readable blob.",
-        "before": "        try:\n            path.chmod(0o600)\n        except OSError:\n            pass",
-        "after": "        try:\n            path.chmod(0o600)\n        except OSError as exc:\n            os.unlink(path)\n            raise OSError(\n                \"evidence blob store: failed to set 0600 on %s: %s\" % (path, exc)\n            ) from exc",
-        "tradeoff": "More correct but causes fallback to inline for affected artifacts; no data loss."
+  "investigation": {
+    "finding_id": "dreamrepair:30be46e76ec418c017d1aff0f1dc8b0e",
+    "finding_kind": "failure_pattern",
+    "finding_scope": "project",
+    "finding_confidence": "low",
+    "finding_evidence_count": 1,
+    "referenced_task": "task_1c15ac7098e3459fab0877c5159fef64",
+    "verdict": "NOT_ACTIONABLE",
+    "evidence_gap": "Only 1 low-confidence memory record from a prior run; current repository state is fully correct and clean",
+    "source_files_checked": [
+      {
+        "file": "src/mac/ui/app.ts",
+        "has_deprecated_marker": true,
+        "has_maintenance_only_phrase": true,
+        "has_adr_0010_reference": true
       },
-      "option_b_atomic_permission": {
-        "description": "Open the temp file with O_CREAT | O_EXCL | O_WRONLY | mode=0o600 explicitly, bypassing mkstemp. This makes permission-setting atomic with file creation, removes the chmod call entirely, and eliminates both the TOCTOU window and the silent-failure risk. Also add mode=0o700 to the parent mkdir call.",
-        "before": "        fd, tmp_name = tempfile.mkstemp(prefix=\".blob-\", dir=str(path.parent))",
-        "after": "        tmp_name = str(path.parent / (\".blob-\" + os.urandom(8).hex()))\n        fd = os.open(tmp_name, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)",
-        "tradeoff": "Most correct; eliminates all three issues. Requires mkdir with mode=0o700."
+      {
+        "file": "src/mac/ui/app.js",
+        "has_deprecated_marker": true,
+        "has_maintenance_only_phrase": true,
+        "has_adr_0010_reference": true
       },
-      "recommended": "option_b_atomic_permission",
-      "rationale": "Option B eliminates the root cause (permission is set atomically at file creation) rather than patching the symptom (chmod after the fact). It also prevents the directory-traversal exposure if combined with mode=0o700 on mkdir."
+      {
+        "file": "src/mac/ui/dashboard_api.ts",
+        "has_deprecated_marker": true,
+        "has_maintenance_only_phrase": true,
+        "has_adr_0010_reference": true
+      },
+      {
+        "file": "src/mac/ui/dashboard_api.js",
+        "has_deprecated_marker": true,
+        "has_maintenance_only_phrase": true,
+        "has_adr_0010_reference": true
+      }
+    ],
+    "adr_doc_exists": true,
+    "adr_doc_path": "docs/adr/0010-fleet-ide-cutover-parity-matrix.md",
+    "test_module_completeness": {
+      "covers_app_ts": true,
+      "covers_app_js": true,
+      "covers_dashboard_api_ts": true,
+      "covers_dashboard_api_js": true,
+      "covers_adr_existence": true,
+      "markers_checked_per_file": ["DEPRECATED", "MAINTENANCE-ONLY", "0010-fleet-ide-cutover-parity-matrix.md"],
+      "assessment": "Complete — covers all 4 source files with 3 marker checks each plus ADR existence (13 tests total)"
     }
   },
   "codegraph": {
     "init": "codegraph init -- success (39119 nodes, 128119 edges)",
-    "affected_files": ["src/mac/evidence_blobs.py"],
-    "affected_test_files": [
-      "ide/tests/workbench-project-tree.spec.ts",
-      "src/mac/_hermes/skills/creative/comfyui/tests/conftest.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_common.py"
-    ],
-    "callers_of_store_blob": [
-      "src/mac/services.py:8143 (_prepare_evidence_artifacts)",
-      "tests/test_evidence_blobs.py:37 (test_store_and_read_blob_roundtrip)",
-      "tests/test_evidence_blobs.py:46 (test_store_blob_sets_mode_0600)",
-      "tests/test_evidence_blobs.py:63 (test_read_blob_fails_closed_on_corruption)"
-    ],
-    "note": "No code changes made in this task (investigation only). CodeGraph run for context and impact analysis."
+    "affected_files": [],
+    "affected_test_files": [],
+    "note": "No code changes made in this task (investigation only). CodeGraph run confirmed no affected tests for the investigation scope."
   },
   "assumptions": [
-    "Analysis performed on Python 3.12.13 / Linux (Ubuntu) where mkstemp hardcodes 0600 — this is why the test passes but does not validate the chmod path.",
-    "The task requests investigation only; no code changes were made. evidence_type=repo_change per task contract even though no files changed.",
-    "The 'immediately' in the docstring refers to sequencing, not atomicity — but the silent-failure path makes the sequencing guarantee hollow."
+    "This task required investigation only; no code changes were needed. evidence_type=repo_change per task contract even though files_changed is empty.",
+    "The prior low-confidence finding was generated from a single deployment_learning memory record that did not reflect the current (correct) state of the repo — the freeze markers were already in place.",
+    "mac-evidence.json was the only tracked file modified (updated from prior task evidence to current task evidence)."
   ]
 }
