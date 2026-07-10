@@ -456,6 +456,19 @@ class Importer:
                 continue
             try:
                 conn = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                # A freshly initialized Hermes home may contain a state DB
+                # without conversation history.  That is valid continuity
+                # state; treat it as history-empty rather than attempting
+                # recovery and failing the entire OpenClaw cutover.
+                if "messages" not in tables:
+                    conn.close()
+                    continue
                 conn.execute("SELECT 1 FROM messages LIMIT 1").fetchone()
                 return conn, source
             except sqlite3.DatabaseError:
