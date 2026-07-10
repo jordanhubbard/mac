@@ -98,6 +98,7 @@ def tokenhub_embedding_fn(
     api_key: str,
     model: str,
     input_type: str = "passage",
+    dimensions: Optional[int] = None,
     timeout: float = 30.0,
 ) -> EmbedFn:
     """Build an embed_fn that calls an OpenAI-compatible /v1/embeddings
@@ -113,6 +114,8 @@ def tokenhub_embedding_fn(
 
     def _embed(text: str) -> List[float]:
         body = {"model": model, "input": text, "input_type": input_type}
+        if dimensions is not None:
+            body["dimensions"] = int(dimensions)
         data = json.dumps(body).encode("utf-8")
         url = "%s/embeddings" % base_url.rstrip("/")
         headers = {
@@ -149,6 +152,7 @@ def tokenhub_embedding_batch_fn(
     api_key: str,
     model: str,
     input_type: str = "passage",
+    dimensions: Optional[int] = None,
     timeout: float = 60.0,
 ) -> BatchEmbedFn:
     """Batched embeddings (mem-store-02): one OpenAI-compatible /v1/embeddings
@@ -163,6 +167,8 @@ def tokenhub_embedding_batch_fn(
         if not texts:
             return []
         body = {"model": model, "input": list(texts), "input_type": input_type}
+        if dimensions is not None:
+            body["dimensions"] = int(dimensions)
         data = json.dumps(body).encode("utf-8")
         url = "%s/embeddings" % base_url.rstrip("/")
         headers = {
@@ -240,6 +246,8 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
     input_type = (
         os.environ.get("MAC_MEMORY_EMBED_INPUT_TYPE") or "passage"
     ).strip()
+    dimensions_raw = os.environ.get("MAC_MEMORY_EMBED_DIM", "").strip()
+    dimensions = int(dimensions_raw) if dimensions_raw.isdigit() else None
     if not (base_url and api_key and model):
         if backend == "tokenhub":
             raise ValidationError(
@@ -250,7 +258,8 @@ def resolve_embed_fn_from_env() -> Optional[EmbedFn]:
         # auto: nothing (or not enough) configured -> safe hash fallback.
         return None
     return tokenhub_embedding_fn(
-        base_url=base_url, api_key=api_key, model=model, input_type=input_type
+        base_url=base_url, api_key=api_key, model=model, input_type=input_type,
+        dimensions=dimensions,
     )
 
 
@@ -457,6 +466,9 @@ class VectorWriterService:
                     api_key=self._env_api_key,
                     model=model,
                     input_type=self._env_input_type,
+                    dimensions=int(os.environ["MAC_MEMORY_EMBED_DIM"])
+                    if os.environ.get("MAC_MEMORY_EMBED_DIM", "").isdigit()
+                    else None,
                 )
                 vector = embed_fn(text)
             except Exception:  # noqa: BLE001 - try the next recorded model
