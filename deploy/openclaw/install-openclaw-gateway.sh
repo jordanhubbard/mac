@@ -772,7 +772,7 @@ run_attached "\$OPEN_SHELL" sandbox create \
   --upload "\$WORKSPACE:/sandbox" \
   --upload "\$STATE:/sandbox" \
   --no-git-ignore \
-  -- /bin/bash /home/sandbox/.config/mac-openclaw/entrypoint.sh
+  -- env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc /home/sandbox/.config/mac-openclaw/entrypoint.sh
 exit \$?
 EOF
   chmod 0700 "$WRAPPER_PATH"

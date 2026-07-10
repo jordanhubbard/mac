@@ -306,7 +306,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     )
     managed_entrypoint = (managed / "entrypoint.sh").read_text(encoding="utf-8")
     assert "sandbox create" in wrapper
-    assert "-- /bin/bash /home/sandbox/.config/mac-openclaw/entrypoint.sh" in wrapper
+    assert "-- env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc /home/sandbox/.config/mac-openclaw/entrypoint.sh" in wrapper
     assert managed_entrypoint.startswith("#!/bin/bash\nset -euo pipefail\n")
     assert "sandbox delete" in stop_wrapper
     assert "sandbox download" in stop_wrapper
