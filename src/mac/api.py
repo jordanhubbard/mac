@@ -52,6 +52,9 @@ from mac.models import AmbiguousIdError, AuthorizationError, MACError, NotFoundE
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
+from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
+from mac.nap_ticker import NapTicker, NapTickerConfig
+from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
 from mac.repository_ref_reconciler import (
@@ -1282,6 +1285,12 @@ class ConfigFlagClear(BaseModel):
     channel: str = ""
     cleared_by: Optional[str] = None
     reason: Optional[str] = None
+
+
+class AgentMemoryStore(BaseModel):
+    content: str
+    record_type: str = "agent_learning"
+    task_id: Optional[str] = None
 
 
 class NapConfigure(BaseModel):
@@ -3431,6 +3440,18 @@ def create_app(
     # unless MAC_MODEL_SELECT_ENABLED is set.
     model_selection_service = ModelSelectionService(cp, ModelSelectionConfig.from_env())
     scientific_optimizer = cp.optimizer
+    # mac-nap-tick: OS-agnostic nap driver inside the hub process. The old
+    # systemd timer was useless on a launchd hub and the whole nap → dream →
+    # repair pipeline silently died with it. No-op unless MAC_NAP_TICK_ENABLED.
+    nap_ticker = NapTicker(cp, NapTickerConfig.from_env())
+    # mac-curiosity-review: close the curiosity quarantine loop by filing
+    # pinned adjudication tasks. No-op unless MAC_CURIOSITY_REVIEW_ENABLED.
+    curiosity_reviewer = CuriosityReviewer(cp, CuriosityReviewerConfig.from_env())
+    # mac-self-heal: observe → plan → act → verify over hub invariants (nap
+    # liveness, task starvation, daemon heartbeats, silent read paths, stuck
+    # quarantines). Violations become fleet tasks; fixes that don't hold are
+    # re-filed with escalation. No-op unless MAC_SELF_HEAL_ENABLED.
+    self_healing_sentinel = SelfHealingSentinel(cp, SelfHealingConfig.from_env())
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -3439,9 +3460,15 @@ def create_app(
         backlog_groomer.start()
         model_selection_service.start()
         scientific_optimizer.start()
+        nap_ticker.start()
+        curiosity_reviewer.start()
+        self_healing_sentinel.start()
         try:
             yield
         finally:
+            self_healing_sentinel.stop()
+            curiosity_reviewer.stop()
+            nap_ticker.stop()
             scientific_optimizer.stop()
             repository_ref_reconciler.stop()
             github_ingestor.stop()
@@ -3461,6 +3488,9 @@ def create_app(
     app.state.backlog_groomer = backlog_groomer
     app.state.model_selection_service = model_selection_service
     app.state.scientific_optimizer = scientific_optimizer
+    app.state.nap_ticker = nap_ticker
+    app.state.curiosity_reviewer = curiosity_reviewer
+    app.state.self_healing_sentinel = self_healing_sentinel
     # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
     # reconcile -> lease expiry) so the autonomous loop needs no external clock.
     _start_hub_tick_loop(app, cp)
@@ -3646,6 +3676,39 @@ def create_app(
     ) -> Dict[str, Any]:
         principal.require_global_fleet()
         return backlog_groomer.run_once(trigger="operator")
+
+    @app.get("/nap-tick/status")
+    def nap_tick_status() -> Dict[str, Any]:
+        return nap_ticker.status()
+
+    @app.post("/nap-tick/run")
+    def nap_tick_run(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return nap_ticker.run_once(trigger="operator")
+
+    @app.get("/curiosity-review/status")
+    def curiosity_review_status() -> Dict[str, Any]:
+        return curiosity_reviewer.status()
+
+    @app.post("/curiosity-review/run")
+    def curiosity_review_run(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return curiosity_reviewer.run_once(trigger="operator")
+
+    @app.get("/self-heal/status")
+    def self_heal_status() -> Dict[str, Any]:
+        return self_healing_sentinel.status()
+
+    @app.post("/self-heal/run")
+    def self_heal_run(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return self_healing_sentinel.run_once(trigger="operator")
 
     @app.get("/model-selection/status")
     def model_selection_status() -> Dict[str, Any]:
@@ -7093,6 +7156,18 @@ def create_app(
         from mac.mood_policy import render_mood_overlay
 
         mood_dict = mood.to_dict() if mood is not None else None
+        # The learning read-bridge failing silently is how a dead loop went
+        # unnoticed for weeks — every serve is now an observable event.
+        cp.record_log(
+            "continuity.context_served",
+            subject_type="agent",
+            subject_id=agent_id,
+            detail={
+                "memory_count": len(memories),
+                "query_length": len(q.strip()),
+                "has_mood": mood_dict is not None,
+            },
+        )
         return {
             "schema": "mac.openclaw_continuity_context.v1",
             "agent_id": agent_id,
@@ -7187,6 +7262,62 @@ def create_app(
             "channel": values.get("channel", ""),
             "cleared": bool(cleared),
         }
+
+    @app.post("/v1/agents/{agent_id}/memory")
+    def store_agent_memory(
+        agent_id: str,
+        body: AgentMemoryStore,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Let a bound runtime write a durable learning about ITSELF.
+
+        This is the conversational write path Hermes' background review used
+        to provide: without it, nothing an OpenClaw agent learns in chat can
+        outlive the session. Records land in the raw tier as
+        ``agent_learning*`` rows (``created_by = agent_id``), which is exactly
+        the population nap consolidation summarizes into the recallable
+        medium tier — so stored learnings flow into recall via the existing
+        nap → embed pipeline rather than a new one.
+
+        The record_type is constrained to the ``agent_learning`` namespace so
+        an agent cannot masquerade as protected tiers (``user``, ``feedback``,
+        ``fleet_learning``, ``dream`` — the decay-protected prefixes).
+        """
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot write a peer agent's memory"
+            )
+        cp.get_agent(agent_id)
+        record_type = (body.record_type or "agent_learning").strip()
+        if record_type != "agent_learning" and not record_type.startswith("agent_learning:"):
+            raise ValidationError(
+                "record_type must be 'agent_learning' or 'agent_learning:<kind>'"
+            )
+        content = (body.content or "").strip()
+        if not content:
+            raise ValidationError("memory content must not be empty")
+        if len(content) > 16000:
+            raise ValidationError("memory content too long (max 16000 chars)")
+        record = cp.add_memory(
+            body.task_id,
+            "agent",
+            agent_id,
+            record_type,
+            content,
+            None,
+            agent_id,
+        )
+        cp.record_log(
+            "memory.stored_by_agent",
+            subject_type="agent",
+            subject_id=agent_id,
+            detail={
+                "memory_id": record.id,
+                "record_type": record_type,
+                "content_length": len(content),
+            },
+        )
+        return record.to_dict()
 
     @app.get("/v1/memory/dreams/recall")
     def recall_dream_artifacts(

@@ -1540,6 +1540,10 @@ edges:
             "channel": "slack:CROUTE",
             "reason": "route coverage",
         },
+        ("POST", "/v1/agents/{agent_id}/memory"): {
+            "content": "route coverage learning: the hub answers on :8789",
+            "record_type": "agent_learning:route_coverage",
+        },
         ("POST", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 20, "window_minutes": 30},
         ("PUT", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 25, "window_minutes": 30},
         ("POST", "/agents/{agent_id}/nap-runs"): {"actor": "operator"},
@@ -1621,6 +1625,9 @@ edges:
         },
         ("POST", "/github-ingest/run"): {},
         ("POST", "/backlog-groom/run"): {},
+        ("POST", "/nap-tick/run"): {},
+        ("POST", "/curiosity-review/run"): {},
+        ("POST", "/self-heal/run"): {},
         ("POST", "/model-selection/refresh"): {},
         ("POST", "/model-selection/promote"): {},
         ("POST", "/observability/metrics"): {

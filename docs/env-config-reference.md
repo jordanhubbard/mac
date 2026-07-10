@@ -89,6 +89,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CONFIG_FILE` | str | consumer-defined | core | Core setting: config file. |
 | `MAC_CONTROLLER_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: controller interval seconds. |
 | `MAC_CONTROL_PLANE_ROLE` | str | consumer-defined | core | Core setting: control plane role. |
+| `MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS` | int | consumer-defined | core | Core setting: curiosity review cooldown seconds. |
+| `MAC_CURIOSITY_REVIEW_ENABLED` | bool | consumer-defined | core | Core setting: curiosity review enabled. |
+| `MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: curiosity review initial delay seconds. |
+| `MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: curiosity review interval seconds. |
 | `MAC_CURSOR_ENDPOINT` | str | consumer-defined | core | Core setting: cursor endpoint. |
 | `MAC_CURSOR_MODEL` | str | consumer-defined | core | Core setting: cursor model. |
 | `MAC_DATABASE_URL` | str | consumer-defined | core | Core setting: database url. |
@@ -347,6 +351,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MODEL_SELECT_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: model select interval seconds. |
 | `MAC_MODEL_SWAP_EVAL_ENABLED` | bool | consumer-defined | core | Core setting: model swap eval enabled. |
 | `MAC_MODEL_SWAP_EVAL_GOLDEN_SET` | str | consumer-defined | core | Core setting: model swap eval golden set. |
+| `MAC_NAP_TICK_ENABLED` | bool | consumer-defined | core | Core setting: nap tick enabled. |
+| `MAC_NAP_TICK_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: nap tick initial delay seconds. |
+| `MAC_NAP_TICK_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: nap tick interval seconds. |
+| `MAC_NAP_TICK_MAX_AGENTS_PER_TICK` | str | consumer-defined | core | Core setting: nap tick max agents per tick. |
 | `MAC_NEMOCLAW_AGENT_ID` | str | consumer-defined | core | Core setting: nemoclaw agent id. |
 | `MAC_NEMOCLAW_FLEET_NAME` | str | consumer-defined | core | Core setting: nemoclaw fleet name. |
 | `MAC_NEMOCLAW_GATEWAY_PORT` | int | consumer-defined | core | Core setting: nemoclaw gateway port. |
@@ -381,6 +389,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_GATEWAY_PORT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw gateway port. |
 | `MAC_OPENCLAW_HOME_CHANNEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw home channel. |
 | `MAC_OPENCLAW_HOST_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw host dir. |
+| `MAC_OPENCLAW_IMAGE_REVISION` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image revision. |
 | `MAC_OPENCLAW_INSTANCE_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw instance id. |
 | `MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw legacy slack home channels file. |
 | `MAC_OPENCLAW_LIVE_CANARY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw live canary. |
@@ -565,6 +574,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SECRET_KEY` | str | consumer-defined | core | Core setting: secret key. |
 | `MAC_SECRET_VAULT_TOKEN` | str | consumer-defined | core | Core setting: secret vault token. |
 | `MAC_SECRET_VAULT_URL` | str | consumer-defined | core | Core setting: secret vault url. |
+| `MAC_SELF_HEAL_ENABLED` | bool | consumer-defined | core | Core setting: self heal enabled. |
+| `MAC_SELF_HEAL_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: self heal initial delay seconds. |
+| `MAC_SELF_HEAL_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: self heal interval seconds. |
+| `MAC_SELF_HEAL_MAX_ATTEMPTS` | int | consumer-defined | core | Core setting: self heal max attempts. |
+| `MAC_SELF_HEAL_NAP_STALL_SECONDS` | int | consumer-defined | core | Core setting: self heal nap stall seconds. |
+| `MAC_SELF_HEAL_READ_SILENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal read silence seconds. |
+| `MAC_SELF_HEAL_STARVATION_SECONDS` | int | consumer-defined | core | Core setting: self heal starvation seconds. |
 | `MAC_SELF_UPDATE_GIT_TIMEOUT` | int | consumer-defined | core | Core setting: self update git timeout. |
 | `MAC_SELF_UPDATE_REPO` | str | consumer-defined | core | Core setting: self update repo. |
 | `MAC_SELF_UPDATE_SERVICE_TIMEOUT` | int | consumer-defined | core | Core setting: self update service timeout. |

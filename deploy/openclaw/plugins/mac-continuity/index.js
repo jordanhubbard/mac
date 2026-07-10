@@ -183,6 +183,22 @@ export default {
     });
 
     api.registerTool({
+      name: "mac_memory_store",
+      description: "Store a durable learning about yourself or your work into MAC memory (agent_learning tier). Use for non-obvious facts worth remembering across sessions: user preferences you were told, corrections you received, decisions and their reasons, environmental gotchas. NEVER store secrets, tokens, or personal data. Include provenance (who/what/when) in the content. Stored learnings become recallable after the next nap consolidation.",
+      parameters: inputSchema({
+        content: {type: "string", minLength: 1, maxLength: 16000, description: "The learning, written to be useful to a future session; include provenance."},
+        kind: {type: "string", pattern: "^[a-z0-9_-]{1,40}$", description: "Optional classifier, e.g. user_preference, correction, decision, gotcha."},
+      }, ["content"]),
+      async execute(_id, params) {
+        const recordType = params.kind ? `agent_learning:${params.kind}` : "agent_learning";
+        const result = await selfApi(api, "POST", "/memory", {
+          body: {content: params.content, record_type: recordType},
+        });
+        return {content: [{type: "text", text: JSON.stringify(result, null, 2)}]};
+      },
+    });
+
+    api.registerTool({
       name: "mac_config_flag_list",
       description: "List this agent's user-adjustable configuration flags (display/visibility only) with their effective values, defaults, and descriptions. Use when a user asks what behavior can be changed, or before changing one. Pass channel to see one chat's effective values.",
       parameters: inputSchema({

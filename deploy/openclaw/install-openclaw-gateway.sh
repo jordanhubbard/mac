@@ -1007,7 +1007,7 @@ hooks.update(
 if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled"}:
     raise SystemExit("mac-continuity plugin was discovered but not imported")
 if not {
-    "mac_memory_recall", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
+    "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
     "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear",
     "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
 } <= tools:

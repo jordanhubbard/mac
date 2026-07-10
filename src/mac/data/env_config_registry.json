@@ -621,7 +621,8 @@
     "retired": false,
     "sources": [
       "src/mac/backlog_groomer.py",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/self_healing.py"
     ],
     "type": "bool"
   },
@@ -643,7 +644,8 @@
     "name": "MAC_BACKLOG_GROOM_INTERVAL_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/backlog_groomer.py"
+      "src/mac/backlog_groomer.py",
+      "src/mac/self_healing.py"
     ],
     "type": "int"
   },
@@ -1037,6 +1039,52 @@
       "src/mac/store.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: curiosity review cooldown seconds.",
+    "family": "core",
+    "name": "MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/curiosity_reviewer.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: curiosity review enabled.",
+    "family": "core",
+    "name": "MAC_CURIOSITY_REVIEW_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/curiosity_reviewer.py",
+      "src/mac/self_healing.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: curiosity review initial delay seconds.",
+    "family": "core",
+    "name": "MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/curiosity_reviewer.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: curiosity review interval seconds.",
+    "family": "core",
+    "name": "MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/curiosity_reviewer.py",
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -3460,6 +3508,7 @@
     "name": "MAC_HOME",
     "retired": false,
     "sources": [
+      "deploy/agent-resource-health.sh",
       "deploy/deploy-mac-fleet.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
@@ -4148,6 +4197,52 @@
   },
   {
     "default": null,
+    "description": "Core setting: nap tick enabled.",
+    "family": "core",
+    "name": "MAC_NAP_TICK_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/nap_ticker.py",
+      "src/mac/self_healing.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: nap tick initial delay seconds.",
+    "family": "core",
+    "name": "MAC_NAP_TICK_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/nap_ticker.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: nap tick interval seconds.",
+    "family": "core",
+    "name": "MAC_NAP_TICK_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/nap_ticker.py",
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: nap tick max agents per tick.",
+    "family": "core",
+    "name": "MAC_NAP_TICK_MAX_AGENTS_PER_TICK",
+    "retired": false,
+    "sources": [
+      "src/mac/nap_ticker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: nemoclaw agent id.",
     "family": "core",
     "name": "MAC_NEMOCLAW_AGENT_ID",
@@ -4339,7 +4434,8 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/openclaw/curiosity-sidecar.py",
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "src/mac/self_healing.py"
     ],
     "type": "str"
   },
@@ -4417,7 +4513,8 @@
     "name": "MAC_OPENCLAW_CONTROL_URL",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "src/mac/self_healing.py"
     ],
     "type": "str"
   },
@@ -4546,6 +4643,17 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw image revision.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_IMAGE_REVISION",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw instance id.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_INSTANCE_ID",
@@ -4660,7 +4768,8 @@
     "name": "MAC_OPENCLAW_ROUTER_API_KEY",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "src/mac/self_healing.py"
     ],
     "type": "str"
   },
@@ -6754,6 +6863,83 @@
       "scripts/mac-fetch-slack-secrets.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal enabled.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal initial delay seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal interval seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal max attempts.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_MAX_ATTEMPTS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal nap stall seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_NAP_STALL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal read silence seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_READ_SILENCE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal starvation seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_STARVATION_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
   },
   {
     "default": null,
