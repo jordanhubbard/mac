@@ -5550,14 +5550,18 @@ try:
     )
     agent_returncode = completed.returncode
     agent_output = tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
-    if completed.returncode != 0:
+    if "MAC_OPENCLAW_STARTUP_OK" in agent_output:
+        # OpenClaw may report a non-zero CLI status after a gateway scope
+        # upgrade request while successfully completing the model turn via
+        # its embedded fallback runner.  The sentinel proves the execution
+        # contract; only a missing sentinel is a hard self-test failure.
+        checks["openclaw_agent"] = True
+    elif completed.returncode != 0:
         openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
         problems.append(f"OpenClaw agent self-test exited {completed.returncode}")
-    elif "MAC_OPENCLAW_STARTUP_OK" not in agent_output:
+    else:
         problems.append("OpenClaw agent self-test did not return its sentinel")
-    checks["openclaw_agent"] = not any(
-        problem.startswith("OpenClaw agent self-test") for problem in problems
-    )
+        checks["openclaw_agent"] = False
 except subprocess.TimeoutExpired as exc:
     agent_returncode = None
     agent_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
