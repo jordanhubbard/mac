@@ -1150,6 +1150,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "evidence_id": ctx["runtime_evidence_id"],
         "experiment_id": "route-review-experiment",
         "eval_set_id": ctx["eval_set_id"],
+        "flag": "show_reasoning",
         "fleet_id_or_name": ctx["fleet_id"],
         "instance_id": ctx["instance_id"],
         "artifact_id": ctx["evidence_artifact_id"],
@@ -1237,6 +1238,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
     if method == "DELETE":
         if path_template in {"/agents/{agent_id}/mood", "/v1/agents/{agent_id}/mood"}:
             kwargs["json"] = {"cleared_by": "operator", "reason": "route coverage"}
+        elif path_template == "/v1/agents/{agent_id}/config-flags/{flag}":
+            kwargs["json"] = {"channel": "slack:CROUTE", "reason": "route coverage"}
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
@@ -1532,6 +1535,11 @@ edges:
         ("POST", "/agents/{agent_id}/mood"): {"mode": "warm", "set_by": "operator"},
         ("PUT", "/agents/{agent_id}/mood"): {"mode": "cheerful", "set_by": "operator"},
         ("POST", "/v1/agents/{agent_id}/mood"): {"mode": "warm", "reason": "route coverage"},
+        ("PUT", "/v1/agents/{agent_id}/config-flags/{flag}"): {
+            "value": True,
+            "channel": "slack:CROUTE",
+            "reason": "route coverage",
+        },
         ("POST", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 20, "window_minutes": 30},
         ("PUT", "/agents/{agent_id}/nap-schedule"): {"offset_minutes": 25, "window_minutes": 30},
         ("POST", "/agents/{agent_id}/nap-runs"): {"actor": "operator"},

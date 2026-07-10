@@ -100,3 +100,59 @@ def test_bound_openclaw_agent_can_set_and_clear_only_its_own_mood() -> None:
     assert set_peer.status_code == 403
     assert clear_own.status_code == 200
     assert clear_own.json()["cleared_by"] == agent.id
+
+
+def test_bound_openclaw_agent_can_crud_only_its_own_config_flags() -> None:
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("flags-host")
+    agent = cp.register_agent(machine.id, "flags-agent")
+    peer = cp.register_agent(machine.id, "flags-peer")
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={
+            "agent-token": {"scopes": ["agent"], "agent_id": agent.id},
+        },
+    )
+    headers = {"Authorization": "Bearer agent-token"}
+    with TestClient(app) as client:
+        set_own = client.put(
+            f"/v1/agents/{agent.id}/config-flags/show_reasoning",
+            headers=headers,
+            json={"value": "on", "channel": "slack:C123", "reason": "asked by @jkh"},
+        )
+        set_peer = client.put(
+            f"/v1/agents/{peer.id}/config-flags/show_reasoning",
+            headers=headers,
+            json={"value": True},
+        )
+        set_unknown = client.put(
+            f"/v1/agents/{agent.id}/config-flags/sandbox_policy",
+            headers=headers,
+            json={"value": "off"},
+        )
+        listed = client.get(
+            f"/v1/agents/{agent.id}/config-flags?channel=slack:C123",
+            headers=headers,
+        )
+        listed_peer = client.get(
+            f"/v1/agents/{peer.id}/config-flags", headers=headers
+        )
+        cleared = client.request(
+            "DELETE",
+            f"/v1/agents/{agent.id}/config-flags/show_reasoning",
+            headers=headers,
+            json={"channel": "slack:C123", "reason": "user changed their mind"},
+        )
+
+    assert set_own.status_code == 200
+    assert set_own.json()["value"] is True
+    assert set_own.json()["set_by"] == agent.id
+    assert set_peer.status_code == 403
+    assert set_unknown.status_code == 400
+    assert listed.status_code == 200
+    flags = {f["flag"]: f for f in listed.json()["flags"]}
+    assert flags["show_reasoning"]["value"] is True
+    assert flags["show_reasoning"]["source"] == "channel"
+    assert listed_peer.status_code == 403
+    assert cleared.status_code == 200
+    assert cleared.json()["cleared"] is True

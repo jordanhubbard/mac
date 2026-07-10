@@ -214,6 +214,179 @@ class AgentStateService:
         )
         return [self._mood_from_row(row) for row in rows]
 
+    # Config flags --------------------------------------------------------
+    #
+    # Allowlisted runtime-settable flags (mac/config_flags.py), scoped per
+    # (agent, flag, channel). The conversational entry point: a user asks in
+    # chat, the agent's gateway tool calls the self-scoped API, the value
+    # lands here with an agent_events audit row. Effective resolution is
+    # channel row -> agent-global row ('') -> registry default.
+
+    def set_config_flag(
+        self,
+        agent_id: str,
+        flag: str,
+        value: Any,
+        channel: str = "",
+        set_by: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from mac.config_flags import normalise_channel, validate_flag_value
+
+        agent = self._get_agent(agent_id)
+        channel_key = normalise_channel(channel)
+        normalised = validate_flag_value(flag, value)
+        actor = (set_by or agent.id).strip() or agent.id
+        now = utcnow()
+        with self.store.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_config_flags (
+                    agent_id, flag, channel, value, set_by, reason, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(agent_id, flag, channel) DO UPDATE SET
+                    value = excluded.value,
+                    set_by = excluded.set_by,
+                    reason = excluded.reason,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    agent.id,
+                    flag,
+                    channel_key,
+                    json_dumps(normalised),
+                    actor,
+                    reason,
+                    now,
+                ),
+            )
+            self.insert_agent_event(
+                conn,
+                agent.id,
+                "agent.config_flag_set",
+                actor,
+                {
+                    "flag": flag,
+                    "channel": channel_key,
+                    "value": normalised,
+                    "reason": reason,
+                },
+                now,
+            )
+        return {
+            "agent_id": agent.id,
+            "flag": flag,
+            "channel": channel_key,
+            "value": normalised,
+            "set_by": actor,
+            "reason": reason,
+            "updated_at": now,
+            "source": "channel" if channel_key else "agent",
+        }
+
+    def get_config_flag(
+        self,
+        agent_id: str,
+        flag: str,
+        channel: str = "",
+    ) -> Dict[str, Any]:
+        from mac.config_flags import (
+            flag_default,
+            normalise_channel,
+            validate_flag_value,
+        )
+
+        agent = self._get_agent(agent_id)
+        channel_key = normalise_channel(channel)
+        # Validates the flag name (raises on unknown flags) without
+        # requiring a stored row.
+        flag_default(flag)
+        scopes = [channel_key] if channel_key else []
+        scopes.append("")
+        for scope in scopes:
+            row = self.store.query_one(
+                """
+                SELECT * FROM agent_config_flags
+                WHERE agent_id = ? AND flag = ? AND channel = ?
+                """,
+                (agent.id, flag, scope),
+            )
+            if row is not None:
+                return {
+                    "agent_id": agent.id,
+                    "flag": flag,
+                    "channel": channel_key,
+                    "value": validate_flag_value(flag, json_loads(row["value"], None)),
+                    "set_by": row["set_by"],
+                    "reason": row["reason"],
+                    "updated_at": row["updated_at"],
+                    "source": "channel" if row["channel"] else "agent",
+                }
+        return {
+            "agent_id": agent.id,
+            "flag": flag,
+            "channel": channel_key,
+            "value": flag_default(flag),
+            "set_by": None,
+            "reason": None,
+            "updated_at": None,
+            "source": "default",
+        }
+
+    def list_config_flags(
+        self,
+        agent_id: str,
+        channel: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Effective value of every registry flag for one (agent, channel)."""
+        from mac.config_flags import CONFIG_FLAG_REGISTRY
+
+        results = []
+        for flag in sorted(CONFIG_FLAG_REGISTRY):
+            spec = CONFIG_FLAG_REGISTRY[flag]
+            entry = self.get_config_flag(agent_id, flag, channel=channel)
+            entry["description"] = spec["description"]
+            entry["type"] = spec["type"]
+            if spec["type"] == "enum":
+                entry["values"] = list(spec["values"])
+            results.append(entry)
+        return results
+
+    def clear_config_flag(
+        self,
+        agent_id: str,
+        flag: str,
+        channel: str = "",
+        cleared_by: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        from mac.config_flags import flag_default, normalise_channel
+
+        agent = self._get_agent(agent_id)
+        channel_key = normalise_channel(channel)
+        flag_default(flag)
+        actor = (cleared_by or agent.id).strip() or agent.id
+        now = utcnow()
+        with self.store.transaction() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM agent_config_flags
+                WHERE agent_id = ? AND flag = ? AND channel = ?
+                """,
+                (agent.id, flag, channel_key),
+            )
+            if cursor.rowcount == 0:
+                return False
+            self.insert_agent_event(
+                conn,
+                agent.id,
+                "agent.config_flag_cleared",
+                actor,
+                {"flag": flag, "channel": channel_key, "reason": reason},
+                now,
+            )
+        return True
+
     # Nap schedules + runs ----------------------------------------------
 
     def configure_nap(

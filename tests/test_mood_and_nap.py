@@ -317,3 +317,102 @@ def test_nap_schedule_offset_spreads_across_typical_fleet():
     assert len(set(offsets.values())) == 4
     # And all within the documented window.
     assert all(0 <= o < 60 for o in offsets.values())
+
+
+# ── Config flags ─────────────────────────────────────────────────────────────
+#
+# Allowlisted runtime-settable flags: the conversational "show us your
+# reasoning in this channel" path. Resolution is channel row -> agent-global
+# row -> registry default; unknown flags and off-registry values are refused.
+
+
+def test_set_config_flag_records_value_and_audit_event(cp):
+    agent = _register_agent(cp)
+    result = cp.set_config_flag(
+        agent.id,
+        "show_reasoning",
+        True,
+        channel="slack:C123",
+        set_by="user:jkh",
+        reason="asked in #rockyandfriends",
+    )
+    assert result["value"] is True
+    assert result["channel"] == "slack:C123"
+    assert result["source"] == "channel"
+
+    events = cp.list_events(subject_type="agent", subject_id=agent.id)
+    types = [e["event_type"] for e in events]
+    assert "agent.config_flag_set" in types
+
+
+def test_config_flag_resolution_channel_beats_agent_beats_default(cp):
+    agent = _register_agent(cp)
+    # Default when nothing is set.
+    default = cp.get_config_flag(agent.id, "show_reasoning", channel="slack:C123")
+    assert default["value"] is False
+    assert default["source"] == "default"
+
+    cp.set_config_flag(agent.id, "show_reasoning", True)  # agent-global
+    inherited = cp.get_config_flag(agent.id, "show_reasoning", channel="slack:C123")
+    assert inherited["value"] is True
+    assert inherited["source"] == "agent"
+
+    cp.set_config_flag(agent.id, "show_reasoning", False, channel="slack:C123")
+    overridden = cp.get_config_flag(agent.id, "show_reasoning", channel="slack:C123")
+    assert overridden["value"] is False
+    assert overridden["source"] == "channel"
+
+    # A different channel still inherits the agent-global value.
+    other = cp.get_config_flag(agent.id, "show_reasoning", channel="slack:C999")
+    assert other["value"] is True
+    assert other["source"] == "agent"
+
+
+def test_config_flag_rejects_unknown_flags_and_bad_values(cp):
+    agent = _register_agent(cp)
+    with pytest.raises(ValidationError):
+        cp.set_config_flag(agent.id, "sandbox_policy", "off")
+    with pytest.raises(ValidationError):
+        cp.set_config_flag(agent.id, "tool_progress", "everything")
+    with pytest.raises(ValidationError):
+        cp.set_config_flag(agent.id, "show_reasoning", "maybe")
+    with pytest.raises(ValidationError):
+        cp.get_config_flag(agent.id, "not_a_flag")
+
+
+def test_config_flag_accepts_conversational_value_forms(cp):
+    agent = _register_agent(cp)
+    assert cp.set_config_flag(agent.id, "show_reasoning", "on")["value"] is True
+    assert cp.set_config_flag(agent.id, "show_reasoning", "false")["value"] is False
+    assert (
+        cp.set_config_flag(agent.id, "tool_progress", "NEW")["value"] == "new"
+    )
+
+
+def test_list_config_flags_covers_registry_with_descriptions(cp):
+    agent = _register_agent(cp)
+    cp.set_config_flag(agent.id, "verbose_status_updates", True, channel="slack:C1")
+    flags = {f["flag"]: f for f in cp.list_config_flags(agent.id, channel="slack:C1")}
+    from mac.config_flags import CONFIG_FLAG_REGISTRY
+
+    assert set(flags) == set(CONFIG_FLAG_REGISTRY)
+    assert flags["verbose_status_updates"]["value"] is True
+    assert flags["verbose_status_updates"]["source"] == "channel"
+    assert flags["show_reasoning"]["source"] == "default"
+    assert all(f["description"] for f in flags.values())
+    assert flags["tool_progress"]["values"] == ["off", "new", "all", "verbose"]
+
+
+def test_clear_config_flag_falls_back_and_audits(cp):
+    agent = _register_agent(cp)
+    cp.set_config_flag(agent.id, "show_reasoning", True, channel="slack:C1")
+    assert cp.clear_config_flag(agent.id, "show_reasoning", channel="slack:C1") is True
+    assert cp.clear_config_flag(agent.id, "show_reasoning", channel="slack:C1") is False
+
+    resolved = cp.get_config_flag(agent.id, "show_reasoning", channel="slack:C1")
+    assert resolved["value"] is False
+    assert resolved["source"] == "default"
+
+    events = cp.list_events(subject_type="agent", subject_id=agent.id)
+    types = [e["event_type"] for e in events]
+    assert "agent.config_flag_cleared" in types

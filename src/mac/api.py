@@ -1271,6 +1271,19 @@ class MoodClear(BaseModel):
     reason: Optional[str] = None
 
 
+class ConfigFlagSet(BaseModel):
+    value: Any
+    channel: str = ""
+    set_by: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class ConfigFlagClear(BaseModel):
+    channel: str = ""
+    cleared_by: Optional[str] = None
+    reason: Optional[str] = None
+
+
 class NapConfigure(BaseModel):
     offset_minutes: Optional[int] = None
     window_minutes: int = 15
@@ -7117,6 +7130,63 @@ def create_app(
         values.setdefault("cleared_by", agent_id)
         cleared = cp.clear_mood(agent_id, **values)
         return cleared.to_dict() if cleared is not None else None
+
+    @app.get("/v1/agents/{agent_id}/config-flags")
+    def list_agent_config_flags(
+        agent_id: str,
+        channel: str = Query(default="", max_length=200),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Effective allowlisted config flags for one agent (+channel scope)."""
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot read a peer agent's config flags"
+            )
+        cp.get_agent(agent_id)
+        return {
+            "schema": "mac.agent_config_flags.v1",
+            "agent_id": agent_id,
+            "channel": channel,
+            "flags": cp.list_config_flags(agent_id, channel=channel),
+        }
+
+    @app.put("/v1/agents/{agent_id}/config-flags/{flag}")
+    def set_agent_config_flag(
+        agent_id: str,
+        flag: str,
+        body: ConfigFlagSet,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Allow a bound runtime to set only its own allowlisted config flag."""
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot set a peer agent's config flags"
+            )
+        values = _data(body)
+        values.setdefault("set_by", agent_id)
+        return cp.set_config_flag(agent_id, flag, **values)
+
+    @app.delete("/v1/agents/{agent_id}/config-flags/{flag}")
+    def clear_agent_config_flag(
+        agent_id: str,
+        flag: str,
+        body: ConfigFlagClear,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Allow a bound runtime to clear only its own config flag override."""
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot clear a peer agent's config flags"
+            )
+        values = _data(body)
+        values.setdefault("cleared_by", agent_id)
+        cleared = cp.clear_config_flag(agent_id, flag, **values)
+        return {
+            "agent_id": agent_id,
+            "flag": flag,
+            "channel": values.get("channel", ""),
+            "cleared": bool(cleared),
+        }
 
     @app.get("/v1/memory/dreams/recall")
     def recall_dream_artifacts(

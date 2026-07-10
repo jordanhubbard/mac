@@ -10134,6 +10134,20 @@ class ControlPlane:
     def list_mood_history(self, *args: Any, **kwargs: Any) -> List[MoodOverlay]:
         return self.agent_state.list_mood_history(*args, **kwargs)
 
+    # Config flags: thin facade over ``self.agent_state``.
+
+    def set_config_flag(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self.agent_state.set_config_flag(*args, **kwargs)
+
+    def get_config_flag(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self.agent_state.get_config_flag(*args, **kwargs)
+
+    def list_config_flags(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.agent_state.list_config_flags(*args, **kwargs)
+
+    def clear_config_flag(self, *args: Any, **kwargs: Any) -> bool:
+        return self.agent_state.clear_config_flag(*args, **kwargs)
+
     # Nap schedule + lifecycle
     #
     # Each agent has a single nap_schedule row (offset_minutes, window_minutes).

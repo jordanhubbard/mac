@@ -1,9 +1,9 @@
 {
   "id": "mac-continuity",
   "name": "MAC identity and memory continuity",
-  "description": "Injects MAC mood and scoped memory, and provides evidence-gated curiosity tools.",
+  "description": "Injects MAC mood and scoped memory, provides evidence-gated curiosity tools, and lets the agent adjust its allowlisted config flags conversationally.",
   "activation": {"onStartup": true},
-  "contracts": {"tools": ["mac_memory_recall", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"]},
+  "contracts": {"tools": ["mac_memory_recall", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"]},
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

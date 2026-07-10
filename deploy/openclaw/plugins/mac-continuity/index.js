@@ -59,26 +59,33 @@ async function loadContext(api, query, requestedLimit) {
   }
 }
 
-async function mutateMood(api, method, body) {
+async function selfApi(api, method, subpath, {body, query} = {}) {
   const cfg = settings(api);
   if (!cfg.agentId || !cfg.controlUrl || !cfg.token) {
     throw new Error("MAC continuity environment is incomplete");
   }
-  const url = `${cfg.controlUrl}/v1/agents/${encodeURIComponent(cfg.agentId)}/mood`;
+  const url = new URL(`${cfg.controlUrl}/v1/agents/${encodeURIComponent(cfg.agentId)}${subpath}`);
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
   try {
     const response = await fetch(url, {
       method,
       headers: {Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json"},
-      body: JSON.stringify(body || {}),
+      body: body === undefined ? undefined : JSON.stringify(body || {}),
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`MAC mood API returned HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`MAC ${subpath} API returned HTTP ${response.status}`);
     return await response.json();
   } finally {
     clearTimeout(timer);
   }
+}
+
+function mutateMood(api, method, body) {
+  return selfApi(api, method, "/mood", {body});
 }
 
 function renderContext(context) {
@@ -170,6 +177,51 @@ export default {
       async execute(_id, params) {
         const result = await mutateMood(api, "DELETE", {
           reason: params.reason || null,
+        });
+        return {content: [{type: "text", text: JSON.stringify(result, null, 2)}]};
+      },
+    });
+
+    api.registerTool({
+      name: "mac_config_flag_list",
+      description: "List this agent's user-adjustable configuration flags (display/visibility only) with their effective values, defaults, and descriptions. Use when a user asks what behavior can be changed, or before changing one. Pass channel to see one chat's effective values.",
+      parameters: inputSchema({
+        channel: {type: "string", maxLength: 200, description: "Channel scope key, platform:chat_id (e.g. slack:C0AMSBEU7CJ). Omit for agent-global values."},
+      }),
+      async execute(_id, params) {
+        const result = await selfApi(api, "GET", "/config-flags", {query: {channel: params.channel || ""}});
+        return {content: [{type: "text", text: JSON.stringify(result, null, 2)}]};
+      },
+    });
+
+    api.registerTool({
+      name: "mac_config_flag_set",
+      description: "Set one of this agent's allowlisted configuration flags when a user asks in conversation (e.g. 'show us your reasoning in this channel' -> flag show_reasoning, value true, channel slack:<this channel id>). Scope to the requesting channel unless the user explicitly asks for everywhere. Only display/visibility flags exist; there is no flag for safety or review behavior.",
+      parameters: inputSchema({
+        flag: {type: "string", minLength: 1},
+        value: {},
+        channel: {type: "string", maxLength: 200, description: "Channel scope key, platform:chat_id. Omit only if the user asked for the agent-global setting."},
+        reason: {type: "string", description: "Who asked and why, e.g. 'requested by @jkh in #rockyandfriends'."},
+      }, ["flag", "value"]),
+      async execute(_id, params) {
+        const result = await selfApi(api, "PUT", `/config-flags/${encodeURIComponent(params.flag)}`, {
+          body: {value: params.value, channel: params.channel || "", reason: params.reason || null},
+        });
+        return {content: [{type: "text", text: JSON.stringify(result, null, 2)}]};
+      },
+    });
+
+    api.registerTool({
+      name: "mac_config_flag_clear",
+      description: "Clear one of this agent's configuration flag overrides so the scope falls back to the agent-global value or the default.",
+      parameters: inputSchema({
+        flag: {type: "string", minLength: 1},
+        channel: {type: "string", maxLength: 200},
+        reason: {type: "string"},
+      }, ["flag"]),
+      async execute(_id, params) {
+        const result = await selfApi(api, "DELETE", `/config-flags/${encodeURIComponent(params.flag)}`, {
+          body: {channel: params.channel || "", reason: params.reason || null},
         });
         return {content: [{type: "text", text: JSON.stringify(result, null, 2)}]};
       },
