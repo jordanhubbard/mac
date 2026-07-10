@@ -64,7 +64,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "/usr/local/bin/nemoclaw" not in installer.lower()
     assert "exec nemoclaw" not in installer.lower()
     assert 'image_revision" = "$OPENCLAW_IMAGE_REVISION"' in installer
-    assert installer.count("/bin/bash -lc") >= 2
+    assert installer.count("/bin/bash --noprofile --norc -c") >= 2
     assert "/usr/local/bin/mac-verify-bash-contract" in installer
     assert "migrate-hermes-continuity.py" in installer
     assert "apply-cron-plan.mjs" in container
@@ -322,9 +322,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
         message_wrapper
     )
-    assert "/bin/bash -lc" in message_wrapper
+    assert "env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c" in message_wrapper
     assert "/usr/local/bin/openclaw agent" in agent_wrapper
-    assert "/bin/bash -lc" in agent_wrapper
+    assert "env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c" in agent_wrapper
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
         INSTALLER.read_text(encoding="utf-8")
     )

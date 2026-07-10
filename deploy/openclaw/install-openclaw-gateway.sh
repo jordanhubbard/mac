@@ -782,7 +782,7 @@ set -euo pipefail
 OPEN_SHELL=$(printf '%q' "$openshell_bin")
 SANDBOX=$(printf '%q' "$SANDBOX_NAME")
 exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
-  /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw message "\$@"' mac-openclaw-message "\$@"
+  env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw message "\$@"' mac-openclaw-message "\$@"
 EOF
   chmod 0700 "$MESSAGE_WRAPPER_PATH"
   cat > "$AGENT_WRAPPER_PATH" <<EOF
@@ -791,7 +791,7 @@ set -euo pipefail
 OPEN_SHELL=$(printf '%q' "$openshell_bin")
 SANDBOX=$(printf '%q' "$SANDBOX_NAME")
 exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
-  /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw agent "\$@"' mac-openclaw-agent "\$@"
+  env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/openclaw agent "\$@"' mac-openclaw-agent "\$@"
 EOF
   chmod 0700 "$AGENT_WRAPPER_PATH"
   cat > "$CURIOSITY_WRAPPER_PATH" <<EOF
@@ -800,7 +800,7 @@ set -euo pipefail
 OPEN_SHELL=$(printf '%q' "$openshell_bin")
 SANDBOX=$(printf '%q' "$SANDBOX_NAME")
 exec "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
-  /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/curiosity "\$@"' mac-openclaw-curiosity "\$@"
+  env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec /usr/local/bin/curiosity "\$@"' mac-openclaw-curiosity "\$@"
 EOF
   chmod 0700 "$CURIOSITY_WRAPPER_PATH"
 }
@@ -921,7 +921,7 @@ sandbox_command() {
   local openshell_bin="$1"
   shift
   "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
-    /bin/bash -lc 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@"
+    env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@"
 }
 
 wait_for_sandbox_ready() {
