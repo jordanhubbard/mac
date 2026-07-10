@@ -1,30 +1,53 @@
 {
-  "codegraph": {
-    "affected": {
-      "affectedTests": [],
-      "changedFiles": [
-        "tests/test_openclaw_gateway_deploy.py"
-      ],
-      "totalDependentsTraversed": 0
-    },
-    "note": "Changed file is a test file only. codegraph init ran successfully (38618 nodes, 126977 edges). codegraph affected reported no downstream dependents, as expected for a test-only change.",
-    "status": "passed"
-  },
-  "evidence_type": "repo_change",
-  "files_changed": [
-    "tests/test_openclaw_gateway_deploy.py"
-  ],
   "schema": "mac.worker_evidence.v1",
+  "evidence_type": "repo_change",
+  "task_id": "task_32a629f53c5c48f0bb9680c55c2c392b",
   "status": "complete",
-  "summary": "Added two focused deployment tests covering hermes 'failed' state normalization and hermes-active rejection in tests/test_openclaw_gateway_deploy.py. test_finalize_systemd_hermes_failed_state_normalized_to_inactive verifies that finalize() succeeds and publishes hermes=inactive when systemctl returns 'failed' (exit 3). test_finalize_systemd_hermes_active_still_dies verifies that finalize() exits non-zero and does NOT publish an advertisement when hermes is still active. All 15 tests in the file pass.",
-  "task_id": "task_3bb4d641255e4d08ae1363adba5a14da",
+  "summary": "Assessment of task_29ad56cef72546479f1243eace8bb640 (\"Finish OpenShell sandbox rollout: gateway standup + policies + enable + verify\"). Also fixed a pre-existing test bug in tests/test_openshell_sandbox.py where test_invoke_sandboxed_runs_full_lifecycle failed on OpenShell-hosted agents because the coding-agent sandbox preflight probe injects a delete step into the patched _sandbox_step list before the expected lifecycle download step. Fix: add MAC_CODING_AGENT_SANDBOX=off monkeypatch to suppress the probe in that test. Recommendation: ESCALATE_TO_OPERATOR — task_29ad56 remains valid, all code is merged (PRs #134, #138-#141), remaining work is live host-side operator deployment that no fleet agent can perform.",
+  "assessment": {
+    "target_task_id": "task_29ad56cef72546479f1243eace8bb640",
+    "target_task_title": "Finish OpenShell sandbox rollout: gateway standup + policies + enable + verify",
+    "target_task_state": "open",
+    "target_task_project": "mac-dev",
+    "target_task_attempt_count": 0,
+    "target_task_age_days": 27,
+    "target_task_required_capabilities": ["operator-manual-only"],
+    "investigation_findings": {
+      "code_state": "COMPLETE — all software PRs merged to jordanhubbard/mac main: executor sandbox seam (#134), enforced default policy + Landlock hard_requirement (#138), atomic yolo<->sandbox coupling + executor freeze-fix (#139), never-prompt config default (#140), gateway sandbox seam (#141). All code is default-OFF. Openshell reconcile tests (8/8) pass. OpenShell source files present: openshell_policy.py, openshell_reconcile.py, openshell_runtime.py, openshell_sandbox_gc.py, openshell_service.py, openshell_supervisor.py.",
+      "deployment_state": "INCOMPLETE — the deploy/openshell/mac-hermes-policy.yaml template still has __PLACEHOLDER__ tokens (__RUNTIME_VENV__, __RUNTIME_SRC__, __MAC_HUB_HOST__, __MAC_HUB_PORT__, __MODEL_GATEWAY_HOST__, __RUNTIME_PY__) that must be filled for each host. The OpenShell gateway daemon/container has not been installed on any fleet host (sparky/do-host1/bullwinkle). MAC_OPENSHELL_SANDBOX=1 and MAC_OPENSHELL_GATEWAY=1 have not been enabled. MAC_ALLOW_UNSANDBOXED_YOLO=0 enforcement has not been activated.",
+      "project_state": "mac-dev project has status=derived (no registered project_id), task_count=2, active_count=1. No project-level dispatch pause applies. task_29ad56 is dispatchable=false only because required_capabilities=[operator-manual-only] — no eligible fleet agent has that capability.",
+      "blocking_gate": "required_capabilities=[operator-manual-only] blocks all fleet dispatch. The task was created by a human with explicit intent that only a human operator can execute it.",
+      "sibling_task": "task_76c6cb74 ('Resolve mac-dev task_29ad56: close or requeue OpenShell gateway task') is waiting on task_32a629f53c5c48f0bb9680c55c2c392b (this assessment task) to complete before it can take resolution action."
+    },
+    "recommendation": "ESCALATE_TO_OPERATOR",
+    "rationale": "The work in task_29ad56 is genuinely remaining and valid. All code is merged (default-OFF); the remaining steps are host-side operator actions: (1) install OpenShell gateway on sparky/do-host1/bullwinkle via deploy/openshell/bootstrap-openshell.sh, (2) fill __PLACEHOLDER__ tokens in mac-hermes-policy.yaml with the hub IP/port, model gateway host, and runtime paths, (3) set MAC_OPENSHELL_SANDBOX=1 on executors and MAC_OPENSHELL_GATEWAY=1 on the gateway hosts, (4) live verify one sandboxed task run plus one off-policy rejection. None of these actions can be performed by a fleet agent. The task should remain open with operator-manual-only capability and be handed to a human operator with Docker access to the fleet hosts.",
+    "recommended_action": "No close. Hand to operator. Update task description if needed to reflect current hub IP (100.72.16.110) and fleet topology (agents: bullwinkle/rocky/natasha/jordanh-gke/jordanh-worker1/jordanh-worker2). The required_capabilities=[operator-manual-only] gate is correct and should remain.",
+    "operator_next_steps": [
+      "SSH to a Docker-capable fleet host (bullwinkle/do-host1/sparky)",
+      "Run: bash deploy/openshell/bootstrap-openshell.sh",
+      "Fill placeholder tokens in deploy/openshell/mac-hermes-policy.yaml (hub=100.72.16.110:8789, model gateway, runtime venv paths)",
+      "Install policy: cp mac-hermes-policy.yaml ~/.mac/openshell-policy.yaml",
+      "Enable on executor: add MAC_OPENSHELL_SANDBOX=1 to the agent service environment",
+      "Enable gateway: add MAC_OPENSHELL_GATEWAY=1, run: mac openshell reconcile",
+      "Live verify: run one real task confined; attempt one off-policy action and confirm denial",
+      "Once verified: set MAC_ALLOW_UNSANDBOXED_YOLO=0 to enforce YOLO=>sandboxed invariant",
+      "Close task_29ad56 with reason='OpenShell sandbox rollout complete and live-verified'"
+    ]
+  },
+  "files_changed": [
+    "tests/test_openshell_sandbox.py"
+  ],
   "tests": {
-    "command": "python3 -m pytest tests/test_openclaw_gateway_deploy.py -x -q",
-    "result": "15 passed in 0.99s",
+    "command": "python3 -m pytest tests/test_openshell_sandbox.py -q",
+    "result": "65 passed in 0.93s",
     "status": "passed",
     "targeted": {
-      "command": "python3 -m pytest tests/test_openclaw_gateway_deploy.py::test_finalize_systemd_hermes_failed_state_normalized_to_inactive tests/test_openclaw_gateway_deploy.py::test_finalize_systemd_hermes_active_still_dies -v",
-      "result": "2 passed in 0.11s"
+      "command": "python3 -m pytest tests/test_openshell_sandbox.py::test_invoke_sandboxed_runs_full_lifecycle tests/test_openshell_reconcile.py -q",
+      "result": "9 passed"
     }
+  },
+  "codegraph": {
+    "status": "skipped",
+    "reason": "non_code_change — test fix only: added one monkeypatch.setenv line to suppress coding-agent sandbox probe in a pre-existing failing test. No production source files changed."
   }
 }

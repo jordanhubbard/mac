@@ -327,6 +327,7 @@ def test_env_passthrough_defaults_include_task_route_context(monkeypatch):
 def test_invoke_sandboxed_runs_full_lifecycle(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
     monkeypatch.setenv("MAC_OPENSHELL_SANDBOX_NAME", "sb1")
+    monkeypatch.setenv("MAC_CODING_AGENT_SANDBOX", "off")
     steps = []
     events = []
     monkeypatch.setattr(te, "_sandbox_step", lambda args, *, timeout: (steps.append(args) or (True, "")))
