@@ -708,6 +708,10 @@ STATE=$(printf '%q' "$STATE_DIR")
 tmp="\$HOST_ROOT/.checkpoint-\$\$"
 rm -rf "\$tmp"
 mkdir -p "\$tmp"
+# OpenShell's remote tar can observe a concurrently-written memory file during
+# shutdown.  Preserve the rest of the checkpoint instead of failing the whole
+# service stop on that benign race.
+export TAR_OPTIONS="\${TAR_OPTIONS:-} --ignore-failed-read"
 if "\$OPEN_SHELL" sandbox download "\$SANDBOX" /sandbox/workspace "\$tmp/workspace" </dev/null \
     && "\$OPEN_SHELL" sandbox download "\$SANDBOX" /sandbox/state "\$tmp/state" </dev/null; then
   chmod -R go-rwx "\$tmp"
