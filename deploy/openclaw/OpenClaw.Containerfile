@@ -19,9 +19,9 @@ COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
 COPY deploy/openclaw/apply-cron-plan.mjs /opt/mac-openclaw/apply-cron-plan.mjs
 COPY deploy/openclaw/curiosity-sidecar.py /usr/local/bin/curiosity
 COPY deploy/openclaw/plugins/mac-continuity /opt/mac-openclaw/plugins/mac-continuity
-# OpenShell may launch command probes through a login shell under a different
-# mapped uid, so the managed home must remain traversable even though its
-# profile/config files are owner-controlled.
+# OpenShell may force a login-shell profile lookup before command env is
+# applied. Use a neutral writable runtime home; MAC passes all durable
+# OpenClaw paths explicitly under /home/sandbox/.config and /sandbox.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bash iproute2 \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract /usr/local/bin/curiosity \
@@ -29,6 +29,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system sandbox \
     && useradd --system --gid sandbox --create-home --home-dir /home/sandbox sandbox \
+    && usermod --home /tmp sandbox \
     && chmod 0755 /home/sandbox \
     && install -d -m 0700 -o sandbox -g sandbox \
          /home/sandbox/.config/mac-openclaw \
