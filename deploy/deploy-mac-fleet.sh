@@ -5786,7 +5786,7 @@ install_supervisord_service() {
   log "installing supervisord programs in $conf"
   install_hermes_gateway_wrapper
   install_mac_agent_wrapper
-  install -m 0755 "$MAC_SRC/deploy/agent-resource-health.sh" "$MAC_HOME/bin/agent-resource-health"
+  install -m 0755 "$SRC_DIR/deploy/agent-resource-health.sh" "$MAC_HOME/bin/agent-resource-health"
   if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
     active_gateway_program="$OPENCLAW_SUPERVISORD_PROG"
     gateway_program="[program:$HERMES_SUPERVISORD_PROG]
