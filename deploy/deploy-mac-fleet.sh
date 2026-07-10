@@ -5874,7 +5874,7 @@ $control_program
 $gateway_program
 
 [program:${AGENT_SUPERVISORD_PROG}-resource-health]
-command=$MAC_HOME/bin/agent-resource-health
+command=$MAC_HOME/bin/agent-resource-health --loop
 directory=$MAC_HOME
 user=$USER
 autostart=true
@@ -5883,7 +5883,7 @@ startsecs=2
 stopwaitsecs=10
 stdout_logfile=$LOG_DIR/resource-health.log
 stderr_logfile=$LOG_DIR/resource-health.log
-environment=HOME="$HOME",MAC_HOME="$MAC_HOME"
+environment=HOME="$HOME",MAC_HOME="$MAC_HOME",MAC_RESOURCE_HEALTH_INTERVAL_SECONDS="300"
 
 [program:$AGENT_SUPERVISORD_PROG]
 command=$MAC_HOME/bin/mac-agent-service

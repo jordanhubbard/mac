@@ -6,6 +6,8 @@ set -euo pipefail
 LOG_DIR="${MAC_HOME:-$HOME/.mac}/logs"
 mkdir -p "$LOG_DIR"
 REPORT="$LOG_DIR/resource-health.json"
+
+run_once() {
 python3 - "$REPORT" <<'PY'
 import json, os, shutil, subprocess, sys, time
 from pathlib import Path
@@ -49,3 +51,31 @@ Path(sys.argv[1]).write_text(json.dumps(report, sort_keys=True) + "\n")
 if any(c["kind"] in {"disk_critical", "memory_low", "cpu_starved"} for c in report["conditions"]):
     print(json.dumps(report, sort_keys=True))
 PY
+}
+
+case "${1:-}" in
+  "")
+    run_once
+    ;;
+  --loop)
+    interval="${MAC_RESOURCE_HEALTH_INTERVAL_SECONDS:-300}"
+    case "$interval" in
+      ''|*[!0-9]*)
+        printf 'MAC_RESOURCE_HEALTH_INTERVAL_SECONDS must be a positive integer\n' >&2
+        exit 2
+        ;;
+    esac
+    if [ "$interval" -lt 1 ]; then
+      printf 'MAC_RESOURCE_HEALTH_INTERVAL_SECONDS must be at least 1\n' >&2
+      exit 2
+    fi
+    while :; do
+      run_once
+      sleep "$interval"
+    done
+    ;;
+  *)
+    printf 'usage: %s [--loop]\n' "$0" >&2
+    exit 2
+    ;;
+esac

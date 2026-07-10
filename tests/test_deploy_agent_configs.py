@@ -231,6 +231,18 @@ def test_deploy_env_import_is_dependency_light():
     assert "OK" in result.stdout
 
 
+def test_supervisord_resource_health_uses_long_running_loop():
+    script = deploy_script_text()
+    watchdog = (ROOT / "deploy" / "agent-resource-health.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "command=$MAC_HOME/bin/agent-resource-health --loop" in script
+    assert 'MAC_RESOURCE_HEALTH_INTERVAL_SECONDS="300"' in script
+    assert "--loop)" in watchdog
+    assert 'sleep "$interval"' in watchdog
+
+
 def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
     # The Hermes runtime reads ~/.hermes/.env + config.yaml (not mac.env) for its
     # chat provider; the deploy must sync those from mac.env or agents dial the
