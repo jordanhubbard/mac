@@ -14199,6 +14199,10 @@ class ControlPlane:
                     metadata=metadata,
                     actor="dispatcher.tick",
                 )
+                self.store.execute(
+                    "UPDATE tasks SET attempt_count = 0, updated_at = ? WHERE id = ?",
+                    (utcnow(), task.id),
+                )
                 transition_detail["repair_task_id"] = repair_id
             transition_detail["reason"] = "waiting_on_contract_prerequisite"
             transition_detail["manual_repair_required"] = False
