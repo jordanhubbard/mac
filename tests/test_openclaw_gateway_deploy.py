@@ -254,7 +254,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert config["plugins"]["slots"]["memory"] == "mac-continuity"
     assert config["plugins"]["entries"]["mac-continuity"]["config"] == {
         "maxMemories": 5,
-        "timeoutMs": 2500,
+        "timeoutMs": 10000,
     }
     assert config["tools"]["sessions"]["visibility"] == "agent"
     assert config["gateway"]["auth"]["token"]["id"] == "OPENCLAW_GATEWAY_TOKEN"

@@ -454,7 +454,7 @@ config = {
                     "allowConversationAccess": True,
                     "allowPromptInjection": True,
                 },
-                "config": {"maxMemories": 5, "timeoutMs": 2500},
+                "config": {"maxMemories": 5, "timeoutMs": 10000},
             },
             "slack": {"enabled": "slack" in configured},
             "telegram": {"enabled": "telegram" in configured},

@@ -10,7 +10,7 @@
     "additionalProperties": false,
     "properties": {
       "maxMemories": {"type": "integer", "minimum": 0, "maximum": 20},
-      "timeoutMs": {"type": "integer", "minimum": 100, "maximum": 10000},
+      "timeoutMs": {"type": "integer", "minimum": 100, "maximum": 20000},
       "curiosityBin": {"type": "string", "minLength": 1}
     }
   }

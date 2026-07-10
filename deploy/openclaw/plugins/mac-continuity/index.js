@@ -14,7 +14,7 @@ function settings(api) {
     controlUrl: String(process.env.MAC_OPENCLAW_CONTROL_URL || "").replace(/\/$/, ""),
     token: String(process.env.MAC_OPENCLAW_ROUTER_API_KEY || ""),
     maxMemories: Number.isInteger(configured.maxMemories) ? configured.maxMemories : 5,
-    timeoutMs: Number.isInteger(configured.timeoutMs) ? configured.timeoutMs : 2500,
+    timeoutMs: Number.isInteger(configured.timeoutMs) ? configured.timeoutMs : 10000,
     curiosityBin: String(configured.curiosityBin || "/usr/local/bin/curiosity"),
   };
 }
