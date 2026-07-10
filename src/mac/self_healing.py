@@ -46,6 +46,11 @@ DEFAULT_INITIAL_DELAY_SECONDS = 180.0
 DEFAULT_STARVATION_SECONDS = 7 * 24 * 60 * 60.0
 DEFAULT_NAP_STALL_SECONDS = 12 * 60 * 60.0
 DEFAULT_READ_SILENCE_SECONDS = 24 * 60 * 60.0
+# The repo-update sweep's publish->apply spread runs up to ~25 minutes on a
+# healthy fleet; hours of lag means a wedged agentbus consumer (the failure
+# that left one worker three weeks stale while heartbeating "healthy").
+DEFAULT_PIN_DIVERGENCE_SECONDS = 3 * 60 * 60.0
+DEFAULT_AGENT_SILENCE_SECONDS = 60 * 60.0
 DEFAULT_MAX_ATTEMPTS = 3
 
 _log = logging.getLogger("mac.self_healing")
@@ -91,6 +96,8 @@ class SelfHealingConfig:
     starvation_seconds: float = DEFAULT_STARVATION_SECONDS
     nap_stall_seconds: float = DEFAULT_NAP_STALL_SECONDS
     read_silence_seconds: float = DEFAULT_READ_SILENCE_SECONDS
+    pin_divergence_seconds: float = DEFAULT_PIN_DIVERGENCE_SECONDS
+    agent_silence_seconds: float = DEFAULT_AGENT_SILENCE_SECONDS
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
     configuration_error: str = ""
 
@@ -136,6 +143,12 @@ class SelfHealingConfig:
             read_silence_seconds=_num("MAC_SELF_HEAL_READ_SILENCE_SECONDS",
                                       DEFAULT_READ_SILENCE_SECONDS,
                                       30 * 60.0, 30 * 24 * 60 * 60.0),
+            pin_divergence_seconds=_num("MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS",
+                                        DEFAULT_PIN_DIVERGENCE_SECONDS,
+                                        30 * 60.0, 30 * 24 * 60 * 60.0),
+            agent_silence_seconds=_num("MAC_SELF_HEAL_AGENT_SILENCE_SECONDS",
+                                       DEFAULT_AGENT_SILENCE_SECONDS,
+                                       10 * 60.0, 7 * 24 * 60 * 60.0),
             max_attempts=int(_num("MAC_SELF_HEAL_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS, 1, 10)),
             configuration_error="; ".join(errors),
         )
@@ -166,6 +179,10 @@ class SelfHealingSentinel:
         self._state_lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self._last_report: Optional[Dict[str, Any]] = None
+        # Fingerprints already escalated to operators; cleared when the
+        # finding stops recurring so a NEW occurrence re-notifies, but a
+        # STANDING exhausted finding doesn't page every cycle.
+        self._escalated_fingerprints: set = set()
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -238,12 +255,17 @@ class SelfHealingSentinel:
                 self._check_daemon_heartbeats,
                 self._check_read_path_silence,
                 self._check_stuck_quarantine,
+                self._check_fleet_pin_divergence,
+                self._check_agent_unhealthy,
             ):
                 try:
                     findings.extend(check())
                 except Exception as exc:  # noqa: BLE001 - one broken check
                     # must not blind the others.
                     check_errors.append("%s: %s" % (check.__name__, str(exc)[:200]))
+            # Re-arm escalations for findings that cleared: a fresh
+            # occurrence later deserves a fresh operator notification.
+            self._escalated_fingerprints &= {f.fingerprint for f in findings}
             actions = [self._act_on(finding, actor=actor) for finding in findings]
         finally:
             self._run_lock.release()
@@ -469,6 +491,127 @@ class SelfHealingSentinel:
             ))
         return findings
 
+    _REPO_UPDATE_STATUSES = (
+        "updated", "no_update", "skipped", "deferred", "rolled_back", "error",
+    )
+
+    def _check_fleet_pin_divergence(self) -> List[Finding]:
+        """A heartbeating agent whose repo-update trail lags the fleet's
+        newest application is running stale code with a wedged agentbus
+        consumer — the failure that left a worker three weeks behind while
+        reporting healthy. Silent/held agents are the unhealthy check's job."""
+        latest: Dict[str, datetime] = {}
+        for status in self._REPO_UPDATE_STATUSES:
+            events = self.control_plane.list_observability(
+                name="worker.agentbus.repo_update.%s" % status, limit=200
+            )
+            for event in events:
+                source = str(getattr(event, "source", "") or "")
+                ts = _parse_ts(getattr(event, "created_at", None))
+                if source and ts and (source not in latest or ts > latest[source]):
+                    latest[source] = ts
+        if not latest:
+            return []
+        fleet_newest = max(latest.values())
+        now = _utcnow()
+        if (now - fleet_newest).total_seconds() < self.config.pin_divergence_seconds:
+            # The newest sweep is still inside the divergence window; agents
+            # that haven't consumed it yet are not diverged, just in-flight.
+            return []
+        findings: List[Finding] = []
+        for agent in self.control_plane.list_agents():
+            agent_id = str(getattr(agent, "id", "") or "")
+            if getattr(agent, "dispatch_hold", False):
+                continue
+            last_seen = _parse_ts(getattr(agent, "last_seen_at", None))
+            if last_seen is None or (now - last_seen).total_seconds() > self.config.agent_silence_seconds:
+                continue  # not heartbeating -> _check_agent_unhealthy owns it
+            agent_latest = latest.get(agent_id)
+            lag = (
+                (fleet_newest - agent_latest).total_seconds()
+                if agent_latest is not None
+                else None
+            )
+            if lag is not None and lag < self.config.pin_divergence_seconds:
+                continue
+            findings.append(Finding(
+                fingerprint="fleet_pin_divergence:%s" % agent_id,
+                kind="fleet_pin_divergence",
+                summary=(
+                    "agent %s heartbeats but its repo-update trail %s the fleet's newest application"
+                    % (agent_id,
+                       "lags %.1f hours behind" % (lag / 3600.0) if lag is not None
+                       else "is absent entirely from")
+                ),
+                detail={
+                    "agent_id": agent_id,
+                    "lag_seconds": lag,
+                    "fleet_newest_update": fleet_newest.isoformat(),
+                    "agent_latest_update": (
+                        agent_latest.isoformat() if agent_latest else None
+                    ),
+                    "remediation": (
+                        "The agent's agentbus control consumer is likely wedged: "
+                        "it heartbeats and claims work but never processes "
+                        "repo-update streams, so it runs stale code "
+                        "indefinitely. On its host, check the worker log for "
+                        "control-stream errors, run git -C ~/.mac/src/mac "
+                        "log -1 to confirm the stale pin, then git pull "
+                        "--ff-only to the FLEET pin (not past it) and restart "
+                        "the worker service. Verify a fresh "
+                        "worker.agentbus.repo_update event appears."
+                    ),
+                },
+            ))
+        return findings
+
+    def _check_agent_unhealthy(self) -> List[Finding]:
+        """An agent that stopped heartbeating, or heartbeats while reporting
+        degraded/offline (a crash-looping worker registers on each boot),
+        is invisible to dispatch's defensive filters — they skip it, nothing
+        restores it."""
+        findings: List[Finding] = []
+        now = _utcnow()
+        for agent in self.control_plane.list_agents():
+            if getattr(agent, "dispatch_hold", False):
+                continue  # deliberately benched; stuck_quarantine covers auto-holds
+            agent_id = str(getattr(agent, "id", "") or "")
+            last_seen = _parse_ts(getattr(agent, "last_seen_at", None))
+            age = None if last_seen is None else (now - last_seen).total_seconds()
+            stale = age is None or age > self.config.agent_silence_seconds
+            health = str(getattr(agent, "health_status", "") or "")
+            status = str(getattr(agent, "status", "") or "")
+            sick = health not in ("", "healthy") or status == "offline"
+            if not (stale or sick):
+                continue
+            symptom = (
+                "silent for %.0f minutes" % (age / 60.0)
+                if stale and age is not None
+                else "never seen" if stale
+                else "heartbeating but %s/%s" % (health or "?", status or "?")
+            )
+            findings.append(Finding(
+                fingerprint="agent_unhealthy:%s" % agent_id,
+                kind="agent_unhealthy",
+                summary="agent %s is %s" % (agent_id, symptom),
+                detail={
+                    "agent_id": agent_id,
+                    "last_seen_age_seconds": age,
+                    "health_status": health,
+                    "status": status,
+                    "remediation": (
+                        "Diagnose the agent host: is the worker service "
+                        "running (systemd/launchd/supervisord)? A crash-loop "
+                        "shows repeated registrations with degraded/offline "
+                        "state — read the service's startup/self-test log for "
+                        "the failing check. Fix the host or, if the agent is "
+                        "intentionally retired, remove its registration or "
+                        "set a dispatch hold with a reason."
+                    ),
+                },
+            ))
+        return findings
+
     # -- plan / act / verify -------------------------------------------------
 
     def _act_on(self, finding: Finding, *, actor: str) -> Dict[str, Any]:
@@ -479,9 +622,13 @@ class SelfHealingSentinel:
             return {"action": "in_progress", "task_id": getattr(active_task, "id", None)}
         attempt = completed_attempts + 1
         if attempt > self.config.max_attempts:
-            # Autonomy has failed max_attempts times; only now involve humans.
-            self._notify_escalation(finding, completed_attempts)
-            return {"action": "escalated", "attempts": completed_attempts}
+            # Autonomy has failed max_attempts times; only now involve
+            # humans — and only once per standing occurrence, not per cycle.
+            if finding.fingerprint not in self._escalated_fingerprints:
+                self._escalated_fingerprints.add(finding.fingerprint)
+                self._notify_escalation(finding, completed_attempts)
+                return {"action": "escalated", "attempts": completed_attempts}
+            return {"action": "escalated_previously", "attempts": completed_attempts}
         try:
             task = self._file_fix_task(
                 finding, attempt=attempt, actor=actor,

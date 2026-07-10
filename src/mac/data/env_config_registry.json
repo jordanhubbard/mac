@@ -6888,6 +6888,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: self heal agent silence seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_AGENT_SILENCE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: self heal enabled.",
     "family": "core",
     "name": "MAC_SELF_HEAL_ENABLED",
@@ -6935,6 +6946,17 @@
     "description": "Core setting: self heal nap stall seconds.",
     "family": "core",
     "name": "MAC_SELF_HEAL_NAP_STALL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal pin divergence seconds.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS",
     "retired": false,
     "sources": [
       "src/mac/self_healing.py"

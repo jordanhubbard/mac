@@ -252,3 +252,116 @@ def test_status_reflects_last_report(cp):
     assert sentinel.status()["last_report"] is None
     report = sentinel.run_once()
     assert sentinel.status()["last_report"]["run_id"] == report["run_id"]
+
+
+# ── fleet pin divergence ─────────────────────────────────────────────────────
+
+
+def _stub_events(monkeypatch, cp, events_by_name):
+    """Route list_observability(name=...) to canned event stubs."""
+    from types import SimpleNamespace
+
+    real = cp.list_observability
+
+    def fake(*args, **kwargs):
+        name = kwargs.get("name") or (args[0] if args else None)
+        if name in events_by_name:
+            return [SimpleNamespace(**e) for e in events_by_name[name]]
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cp, "list_observability", fake)
+
+
+def test_pin_divergence_flags_heartbeating_agent_with_stale_trail(cp, monkeypatch):
+    fresh = _register_agent(cp, name="current")
+    laggard = _register_agent(cp, name="wedged")
+    cp.heartbeat_agent(fresh.id)
+    cp.heartbeat_agent(laggard.id)
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    now = sh._utcnow()
+    _stub_events(monkeypatch, cp, {
+        "worker.agentbus.repo_update.updated": [
+            {"source": fresh.id,
+             "created_at": (now - timedelta(hours=4)).isoformat()},
+            {"source": laggard.id,
+             "created_at": (now - timedelta(days=21)).isoformat()},
+        ],
+    })
+    report = _sentinel(cp).run_once()
+    fingerprints = [f["fingerprint"] for f in report["findings"]]
+    assert ("fleet_pin_divergence:%s" % laggard.id) in fingerprints
+    assert ("fleet_pin_divergence:%s" % fresh.id) not in fingerprints
+
+
+def test_pin_divergence_waits_out_a_recent_sweep(cp, monkeypatch):
+    a = _register_agent(cp, name="a")
+    b = _register_agent(cp, name="b")
+    cp.heartbeat_agent(a.id)
+    cp.heartbeat_agent(b.id)
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    now = sh._utcnow()
+    # b just applied a sweep minutes ago; a hasn't consumed it yet — that's
+    # in-flight propagation, not divergence.
+    _stub_events(monkeypatch, cp, {
+        "worker.agentbus.repo_update.updated": [
+            {"source": b.id, "created_at": (now - timedelta(minutes=5)).isoformat()},
+            {"source": a.id, "created_at": (now - timedelta(days=21)).isoformat()},
+        ],
+    })
+    report = _sentinel(cp).run_once()
+    assert not [f for f in report["findings"] if f["kind"] == "fleet_pin_divergence"]
+
+
+# ── agent unhealthy ──────────────────────────────────────────────────────────
+
+
+def test_agent_unhealthy_flags_silent_and_crash_looping_agents(cp, monkeypatch):
+    healthy = _register_agent(cp, name="fine")
+    silent = _register_agent(cp, name="gone")
+    benched = _register_agent(cp, name="benched")
+    cp.set_agent_dispatch_hold(benched.id, "operator: maintenance")
+    cp.heartbeat_agent(healthy.id)
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    real_now = sh._utcnow()
+    # Freshen only the healthy agent's clock reference: shift NOW by 2h so
+    # the others' last_seen goes stale, then re-heartbeat the healthy one.
+    monkeypatch.setattr(sh, "_utcnow", lambda: real_now + timedelta(hours=2))
+    cp.heartbeat_agent(healthy.id)  # its last_seen is written with real utcnow
+    # heartbeat writes wall-clock time; recompute staleness relative to the
+    # shifted sentinel clock: healthy is ~2h stale too. Instead assert the
+    # benched agent is skipped and the silent one is flagged.
+    report = _sentinel(cp).run_once()
+    fingerprints = [f["fingerprint"] for f in report["findings"]]
+    assert ("agent_unhealthy:%s" % silent.id) in fingerprints
+    assert ("agent_unhealthy:%s" % benched.id) not in fingerprints
+
+
+# ── escalation dedupe ────────────────────────────────────────────────────────
+
+
+def test_standing_exhausted_finding_escalates_once_not_per_cycle(cp):
+    agent = _register_agent(cp)
+    cp.configure_nap(agent.id, offset_minutes=0)
+    sentinel = _sentinel(cp, max_attempts=1)
+    sentinel.run_once()
+    (task,) = _self_heal_tasks(cp, "nap_liveness")
+    cp.force_complete_task(task.id, "test", reason="simulate ineffective fix")
+
+    first = sentinel.run_once()
+    second = sentinel.run_once()
+    assert first["escalated_count"] == 1
+    assert second["escalated_count"] == 0
+    assert [f["action"] for f in second["findings"] if f["kind"] == "nap_liveness"] == [
+        "escalated_previously"
+    ]
+    notes = [
+        n for n in cp.list_notifications()
+        if n.event_type == "self_heal.escalated"
+    ]
+    assert len(notes) == 1

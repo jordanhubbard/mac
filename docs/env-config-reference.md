@@ -576,11 +576,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SECRET_KEY` | str | consumer-defined | core | Core setting: secret key. |
 | `MAC_SECRET_VAULT_TOKEN` | str | consumer-defined | core | Core setting: secret vault token. |
 | `MAC_SECRET_VAULT_URL` | str | consumer-defined | core | Core setting: secret vault url. |
+| `MAC_SELF_HEAL_AGENT_SILENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal agent silence seconds. |
 | `MAC_SELF_HEAL_ENABLED` | bool | consumer-defined | core | Core setting: self heal enabled. |
 | `MAC_SELF_HEAL_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: self heal initial delay seconds. |
 | `MAC_SELF_HEAL_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: self heal interval seconds. |
 | `MAC_SELF_HEAL_MAX_ATTEMPTS` | int | consumer-defined | core | Core setting: self heal max attempts. |
 | `MAC_SELF_HEAL_NAP_STALL_SECONDS` | int | consumer-defined | core | Core setting: self heal nap stall seconds. |
+| `MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal pin divergence seconds. |
 | `MAC_SELF_HEAL_READ_SILENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal read silence seconds. |
 | `MAC_SELF_HEAL_STARVATION_SECONDS` | int | consumer-defined | core | Core setting: self heal starvation seconds. |
 | `MAC_SELF_UPDATE_GIT_TIMEOUT` | int | consumer-defined | core | Core setting: self update git timeout. |
