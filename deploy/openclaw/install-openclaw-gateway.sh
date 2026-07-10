@@ -37,6 +37,13 @@ DRY_RUN="${MAC_OPENCLAW_DRY_RUN:-0}"
 SKIP_IMAGE="${MAC_OPENCLAW_SKIP_IMAGE:-0}"
 LIVE_CANARY="${MAC_OPENCLAW_LIVE_CANARY:-0}"
 
+# The gateway registration is user-local, while deployment may invoke this
+# installer from a supervisor/root context.  Always address the node-local
+# OpenShell gateway explicitly so verification and service setup do not depend
+# on whichever user's interactive `openshell gateway select` state happens to
+# exist.
+export OPENSHELL_GATEWAY_ENDPOINT="${OPENSHELL_GATEWAY_ENDPOINT:-${MAC_OPENSHELL_GATEWAY_ENDPOINT:-http://127.0.0.1:17670}}"
+
 log() { printf '[install-openclaw-gateway] %s\n' "$*"; }
 die() { log "ERROR: $*" >&2; exit 1; }
 truthy() {
@@ -943,8 +950,23 @@ prepare() {
 sandbox_command() {
   local openshell_bin="$1"
   shift
-  HOME=/tmp BASH_ENV=/dev/null "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
-    env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@"
+  local attempt output rc
+  output="$(mktemp "${TMPDIR:-/tmp}/mac-openclaw-exec.XXXXXX")"
+  trap 'rm -f "$output"' RETURN
+  for attempt in $(seq 1 30); do
+    if HOME=/tmp BASH_ENV=/dev/null "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
+      env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@" >"$output" 2>&1; then
+      cat "$output"
+      return 0
+    fi
+    rc=$?
+    if [ "$attempt" -lt 30 ] && grep -Eqi 'sandbox is not ready|sandbox not found|gateway unavailable|connection refused' "$output"; then
+      sleep 2
+      continue
+    fi
+    cat "$output" >&2
+    return "$rc"
+  done
 }
 
 wait_for_sandbox_ready() {
