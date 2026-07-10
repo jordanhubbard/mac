@@ -5549,8 +5549,9 @@ try:
         env={**os.environ, "MAC_AGENT_ID": agent_id},
     )
     agent_returncode = completed.returncode
-    agent_output = tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
-    if "MAC_OPENCLAW_STARTUP_OK" in agent_output:
+    raw_agent_output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+    agent_output = tail(raw_agent_output)
+    if "MAC_OPENCLAW_STARTUP_OK" in raw_agent_output:
         # OpenClaw may report a non-zero CLI status after a gateway scope
         # upgrade request while successfully completing the model turn via
         # its embedded fallback runner.  The sentinel proves the execution
