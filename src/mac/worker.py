@@ -91,6 +91,7 @@ VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DEFAULT_COMMAND_INVENTORY_NAMES = (
     "bash",
+    "cargo",
     "codegraph",
     "git",
     "gh",
@@ -101,6 +102,7 @@ DEFAULT_COMMAND_INVENTORY_NAMES = (
     "python",
     "python3",
     "pytest",
+    "rustup",
     "sh",
     "uv",
 )

@@ -3173,6 +3173,31 @@ def test_command_inventory_explicitly_probes_codegraph_when_scan_truncated(
     assert commands["paths"]["codegraph"] == str(codegraph)
 
 
+def test_command_inventory_explicitly_probes_cargo_when_scan_truncated(
+    tmp_path: Path,
+    monkeypatch,
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    cargo = bin_dir / "cargo"
+    cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    cargo.chmod(0o755)
+    rustup = bin_dir / "rustup"
+    rustup.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    rustup.chmod(0o755)
+    # Force the directory scan to stop almost immediately. The explicit command
+    # probe list must still discover cargo and rustup for Rust toolchain detection.
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("MAC_WORKER_COMMAND_INVENTORY_MAX", "1")
+
+    commands = _detect_command_inventory()
+
+    assert "cargo" in commands["available"]
+    assert commands["paths"]["cargo"] == str(cargo)
+    assert "rustup" in commands["available"]
+    assert commands["paths"]["rustup"] == str(rustup)
+
+
 def test_register_worker_binds_agent_to_hermes_instance():
     cp = ControlPlane.in_memory()
     tenant = cp.register_tenant("fleet")
