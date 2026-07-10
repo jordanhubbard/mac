@@ -45,6 +45,15 @@ NEW_HUB_HEADSCALE_LOGIN_SERVER="${MAC_DEPLOY_NEW_HUB_HEADSCALE_LOGIN_SERVER:-}"
 NEW_HUB_HEADSCALE_PREAUTH_KEY="${MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY:-}"
 REQUESTED_AGENTS=()
 
+# Keep fatal errors consistent in both the local launcher and the generated
+# remote deploy script.  Remote deployments execute selected functions in a
+# fresh shell, so relying on a caller-defined `die` silently turns a required
+# abort into `command not found` and leaves the host half-deployed.
+die() {
+  log "ERROR: $*"
+  exit 1
+}
+
 resolve_python_bin() {
   local candidate
   for candidate in "${PYTHON:-}" "${MAC_PYTHON:-}" "$ROOT/.venv/bin/python" python3.11 python3 python; do
@@ -1579,6 +1588,13 @@ exec > >(tee -a "$DEPLOY_LOG") 2>&1
 
 log() {
   printf '[%s] [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$AGENT" "$*"
+}
+
+# The remote deploy shell is assembled from this heredoc and does not inherit
+# the launcher functions.  Define the fatal-error helper in that shell too.
+die() {
+  log "ERROR: $*"
+  exit 1
 }
 
 if [ -n "$FLEET_REGISTRY_FILE" ] && [ -f "$FLEET_REGISTRY_FILE" ]; then
