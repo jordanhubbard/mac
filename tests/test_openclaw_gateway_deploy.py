@@ -43,6 +43,8 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     # image; user-scoped pip/venv installs go to the writable home).
     for pkg in ("bash iproute2", "python3", "python3-pip", "build-essential", "git"):
         assert pkg in container
+    # PEP 668: let the agent pip install --user in this throwaway dev sandbox.
+    assert "PIP_BREAK_SYSTEM_PACKAGES=1" in container
     assert (
         "COPY deploy/verify-bash-contract.sh "
         "/usr/local/bin/mac-verify-bash-contract" in container
@@ -94,6 +96,10 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
                  "download.pytorch.org", "developer.download.nvidia.com"):
         assert f"host: {repo}" in text
     assert "dev-repos" in text
+    # OpenShell's proxy is per-binary; the dev-repos egress must allowlist the
+    # tools that fetch (pip runs as python3, git via its remote-https helper).
+    assert "/usr/bin/python3" in text
+    assert "/usr/lib/git-core/git-remote-https" in text
     assert "__MAC_ROUTER_HOST__" in text
     assert "__MAC_ROUTER_PORT__" in text
     for host in (

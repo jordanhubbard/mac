@@ -56,7 +56,11 @@ RUN apt-get update \
 ENV HOME=/home/sandbox \
     OPENCLAW_CONFIG_PATH=/home/sandbox/.config/mac-openclaw/openclaw.json \
     OPENCLAW_STATE_DIR=/sandbox/state \
-    NODE_ENV=production
+    NODE_ENV=production \
+    # Debian marks its system python "externally managed" (PEP 668) and blocks
+    # `pip install` without a venv. This IS a throwaway dev sandbox, so let the
+    # agent pip install --user into its writable home directly; venvs also work.
+    PIP_BREAK_SYSTEM_PACKAGES=1
 
 WORKDIR /home/sandbox
 USER sandbox

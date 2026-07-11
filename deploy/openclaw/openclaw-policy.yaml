@@ -185,3 +185,20 @@ network_policies:
         protocol: rest
         enforcement: enforce
         rules: [ { allow: { method: GET, path: "/**" } } ]
+    # OpenShell's L7 proxy is per-binary: only listed binaries may reach the
+    # hosts above. Cover the tools an agent installs/builds with — pip runs as
+    # python3, git fetches via its remote-https helper — so `pip install`,
+    # `git clone`, and curl/wget all reach the curated repos (verified: pypi
+    # returns 200 with this list, and any host NOT above stays blocked).
+    binaries:
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3.12 }
+      - { path: /usr/bin/pip3 }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/wget }
+      - { path: /usr/bin/git }
+      - { path: /usr/lib/git-core/git-remote-https }
+      - { path: /usr/lib/git-core/git-remote-http }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
