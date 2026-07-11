@@ -3,22 +3,30 @@
   "task_id": "task_6c6db80120784c3da45131de135aef9e",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Write final evidence for skill-area dream classifier repair: tests pass, branch pushed, PR created.",
+  "summary": "Write final evidence for skill-area dream classifier repair: 33 tests pass, branch pushed to origin, PR #220 created.",
   "repo": {
-    "head_sha": "e28d6cd59aea227276721c000b30c505839ceb1b",
+    "head_sha": "edcfd0cee2c61d83d35007bba05711d2492e3c45",
+    "branch": "mac/agent_rocky/task_6c6db80120784c3da45131de135aef9e-lease_e08ef96c86a04c7c94",
+    "remote_url": "https://github.com/jordanhubbard/mac.git",
+    "remote_ref": "refs/heads/mac/agent_rocky/task_6c6db80120784c3da45131de135aef9e-lease_e08ef96c86a04c7c94",
     "pushed": true,
     "dirty": false,
     "files_changed": [
       "tests/test_dream_cycle_classifier.py",
       "src/mac/dream_cycle_classifier.py",
       "mac-evidence.json"
-    ]
+    ],
+    "pr_url": "https://github.com/jordanhubbard/mac/pull/220",
+    "pr_number": 220
   },
-  "tests": {
-    "command": "pytest tests/test_dream_cycle_classifier.py",
-    "result": "passed",
-    "detail": "33 passed in 0.04s"
-  },
+  "tests": [
+    {
+      "command": "pytest tests/test_dream_cycle_classifier.py -q",
+      "result": "33 passed in 0.04s",
+      "status": "passed",
+      "exit_code": 0
+    }
+  ],
   "checks": [
     {
       "name": "targeted_pytest_dream_classifier",
@@ -28,11 +36,13 @@
     }
   ],
   "codegraph": {
-    "note": "No new code changes in this task worktree; files_changed reflects the integrated skill-area classifier work already in origin/main (task_65583251b5a54c2e8ccb270f60ec4658, task_c7ca0e6834d74c9d970ac55ae3d28042). CodeGraph analysis was completed at the integration phase (task_176a33edc48342ffb9f89ae0a7d98f74)."
+    "status": "skipped",
+    "reason": "non_code_change",
+    "note": "No new source code changes in this task worktree. The files_changed reflect the integrated skill-area classifier work already present in origin/main (task_65583251b5a54c2e8ccb270f60ec4658). This task only updates mac-evidence.json."
   },
   "assumptions": [
     "The skill-area classifier code and tests landed in origin/main via the integration task (task_176a33edc48342ffb9f89ae0a7d98f74) before this evidence task was created.",
-    "The task branch mac/agent_rocky/task_6c6db80120784c3da45131de135aef9e-lease_e08ef96c86a04c7c94 is created from origin/main (e28d6cd) and mac-evidence.json is the sole change committed to it.",
-    "Full contract test suite was observed to pass (93.06% statement coverage, 84.42% branch coverage, above floor thresholds) in the OpenShell sandbox during this execution."
+    "GitHub token resolved via MAC hub secrets service (github.token) for push and PR creation.",
+    "Full contract test suite passed (93.06% statement, 84.42% branch coverage); targeted tests: 33 passed."
   ]
 }
