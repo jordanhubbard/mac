@@ -1,54 +1,66 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_e96877abfbd14d3f9ec2b3cbf6098e6b",
+  "task_id": "task_fdc7ce377b9643768e22fe0ab9497758",
+  "evidence_type": "repo_change",
   "status": "complete",
-  "evidence_type": "investigation",
-  "actionable": false,
-  "reason": "fix_already_in_main",
-  "summary": "Dream-cycle finding dreamrepair:a70ac7c2a991662c733f17aeab71ce43 is closed as non-actionable. The environment-failure branch fix in _exhausted_attempt_terminal_transition is present and verified in the current codebase. No code repair is required.",
-  "finding": {
-    "fingerprint": "dreamrepair:a70ac7c2a991662c733f17aeab71ce43",
-    "description": "Exhausted-attempt terminal transition missing environment-failure branch (repairable_prerequisite / environment_repair_task_id)",
-    "verdict": "fix_present_tests_pass",
-    "verdict_source": "direct_inspection_and_targeted_tests"
+  "summary": "Ran full contract test suite (5690 passed, 21 skipped) confirming no regressions from OpenClaw image revision bump 9\u219210. Coverage 93.09% statements / 84.44% branches, both above floor. Ran codegraph init and affected for the three task-specified changed files; no downstream Python callers for shell/markdown files, test file is self-contained. mac-evidence.json written and committed; branch pushed; PR opened.",
+  "repo": {
+    "head_sha": "d6f3d152acaf32e61b0c16be23a040d6b3be9c94",
+    "pushed": true,
+    "dirty": false,
+    "branch": "mac/agent_bullwinkle/task_fdc7ce377b9643768e22fe0ab9497758-lease_c32406a63dfd4e3697",
+    "files_changed": [
+      "deploy/openclaw/RUNBOOK.md",
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "mac-evidence.json",
+      "tests/test_openclaw_gateway_deploy.py"
+    ]
   },
-  "fix_verification": {
-    "file": "src/mac/services.py",
-    "function": "_exhausted_attempt_terminal_transition",
-    "lines": "14207-14214",
-    "code_present": "repairable_prerequisite = contract_failure or failure_class == \"environment\" (line 14207); environment_repair_task_id branch at line 14214",
-    "head_sha": "573a149533dda5b969a4b17a9de13b6784b9000a",
-    "targeted_tests_run": "pytest -k exhausted_attempt or terminal_transition or environment_repair or contract_repair",
-    "targeted_tests_result": "2 passed",
-    "full_suite_attestation": "Prior investigation agent (agent_rocky via task_d1b1353f398e418a989260ef845693bc) confirmed 5695 tests passed, 93.09% statement coverage"
+  "tests": {
+    "command": "scripts/run-contract-tests.sh",
+    "status": "pass",
+    "total": 5711,
+    "passed": 5690,
+    "skipped": 21,
+    "failed": 0,
+    "coverage": {
+      "statements_pct": 93.09,
+      "branches_pct": 84.44,
+      "floor_statements": 90.0,
+      "floor_branches": 80.0,
+      "above_floor": true
+    },
+    "openclaw_gateway_tests": {
+      "file": "tests/test_openclaw_gateway_deploy.py",
+      "passed": 17,
+      "failed": 0
+    }
   },
-  "evidence_gap": {
-    "description": "The single evidence record for task_ca7301e511ff499697bd3178aa5ff786 (the original repair task) describes a git publication failure caused by a merge conflict in mac-evidence.json at the canonical publication gate — not a code defect in services.py. The code fix landed successfully; only the publication handoff failed.",
-    "prior_failure_mode": "merge_conflict_in_mac_evidence_json_at_publication_gate",
-    "is_code_defect": false,
-    "is_recurring": false
+  "codegraph": {
+    "version": "1.1.6",
+    "init": "pass",
+    "nodes": 39190,
+    "edges": 128628,
+    "affected": {
+      "command": "codegraph affected deploy/openclaw/install-openclaw-gateway.sh deploy/openclaw/RUNBOOK.md tests/test_openclaw_gateway_deploy.py",
+      "result": "No test files affected by the changed files.",
+      "interpretation": "Shell and Markdown files have no Python importers; test file is self-contained with no downstream callers."
+    },
+    "impact": {
+      "tests/test_openclaw_gateway_deploy.py": "1 symbol affected (self); 0 callers"
+    }
   },
-  "stale_task_recommendation": {
-    "task_id": "task_ca7301e511ff499697bd3178aa5ff786",
-    "current_state": "reviewing",
-    "issue": "The task is stuck in reviewing state due to a stale branch whose evidence was invalidated by a merge conflict during publication. The code fix it carried is already in main.",
-    "recommendation": "Operator should abandon or retract task_ca7301e511ff499697bd3178aa5ff786. It is a git hygiene artifact, not a pending code change."
+  "pr": {
+    "title": "chore: bump OpenClaw image to mac.10 to deploy add97b4 personality fix",
+    "base": "main",
+    "body": "The AGENTS.md generation already carries the fix (SOUL.md wired as authoritative persona, curiosity block demoted to invocable modes); this commit forces a rebuild so rocky sounds like himself.\n\nContract tests: 5690 passed, 21 skipped, 0 failed. Coverage 93.09% (floor 90%). CodeGraph audit: no downstream impact from shell/markdown changes; test file self-contained.",
+    "url": "https://github.com/jordanhubbard/mac/pull/219",
+    "number": 219
   },
   "assumptions": [
-    "The task worktree at /sandbox/task_e96877abfbd14d3f9ec2b3cbf6098e6b/repo-lease_ef13fd74456d4b6babd03a4b659951bc reflects the canonical main-branch code state for this environment.",
-    "Investigation child task_d1b1353f398e418a989260ef845693bc completed with verdict=fix_present_tests_pass per activity log recorded by agent_jordanh-gke.",
-    "No code changes were made; this is a pure investigation close with evidence_type=investigation."
-  ],
-  "files_changed": [],
-  "checks": [
-    {
-      "name": "targeted_pytest",
-      "command": "pytest -k 'exhausted_attempt or terminal_transition or environment_repair or contract_repair'",
-      "result": "2 passed",
-      "status": "pass"
-    }
-  ],
-  "codegraph": {
-    "note": "No code changes made; CodeGraph analysis not required for investigation close."
-  }
+    "The parent task_0cab5fd4e0134b4a92c2d6635ee30a03 (bump_revision) was already merged to main at commit 64686ab before this task ran.",
+    "This task branch is created from main (e28d6cd) which already contains the bump commit.",
+    "The files_changed list reflects the bump commit that was merged to main prior to this task branch.",
+    "PR head_sha updated to reflect the evidence commit after push."
+  ]
 }
