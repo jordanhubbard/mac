@@ -1,89 +1,103 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_464bfbc13d444fdb93d38b153c0fb121",
+  "task_id": "task_6227c90a838f4af981fc2af5123dbcda",
   "status": "complete",
-  "summary": "Bootstrapped the project (venv already present, bootstrap confirmed clean). Ran all three required contract test files directly: tests/test_openclaw_gateway_deploy.py (17/17 passed), tests/test_nvidia_image_gen_plugin.py (3/3 passed), and tests/test_media_routing.py (44/44 passed) — 64 total, all green. Full contract suite (scripts/run-contract-tests.sh) passed. Coverage policy satisfied (statements 93.19% >= floor 90%; branches 84.64% >= floor 80%). No source files were modified. CodeGraph initialized (1,209 files, 39,130 nodes, 128,146 edges) and codegraph affected run against the three test files.",
+  "summary": "Conducted a full static and empirical audit of src/mac/evidence_blobs.py store_blob() covering all 7 requested investigation points. Key findings: (1) SOUND: mkstemp creates 0600 on Linux regardless of umask (empirically verified with 3 umask values); (2) SOUND: chmod at line 120 precedes os.replace() at line 121; (3) SOUND: no TOCTOU window on new-blob path; (4) REAL BUG: module docstring falsely claims post-rename path.chmod(0o600) is a fallback for the dedup/already-exists path — code analysis and empirical test show it is inside if not path.exists(): and never runs for existing blobs; (5) REAL BUG (test gap): test_store_blob_sets_mode_0600 only tests the new-blob path; (6) DEFENSE-IN-DEPTH: fchmod(handle.fileno(), 0o600) inside the with block would be more POSIX-portable on NFS. Committed audit-findings-blobs.txt, pushed branch, opened PR #218. All 16 evidence_blobs tests pass; full contract test suite (scripts/run-contract-tests.sh) passes (coverage: statements 93.19% >= 90%; branches 84.61% >= 80%).",
+  "finding": {
+    "audit_subject": "src/mac/evidence_blobs.py store_blob() 0600 chmod security guarantee",
+    "finding_1_mkstemp_mode": {
+      "classification": "SOUND",
+      "detail": "mkstemp creates tmp files at 0600 on Linux regardless of umask. Python's _mkstemp_inner() passes 0600 directly to os.open(); empirically confirmed with umask 022, 002, 000."
+    },
+    "finding_2_chmod_line_order": {
+      "classification": "SOUND",
+      "detail": "chmod(0o600) applied to tmp path at line 120 BEFORE os.replace() at line 121. Exact line order confirmed by static analysis."
+    },
+    "finding_3_toctou_window": {
+      "classification": "SOUND",
+      "detail": "No TOCTOU window on new-blob path. File arrives at target path already at 0600 (inherited from pre-rename chmod). Concurrent polling thread confirmed mode 0600 immediately after rename."
+    },
+    "finding_4_idempotent_path_rechmod": {
+      "classification": "REAL BUG (documentation) + DEFENSE-IN-DEPTH IMPROVEMENT",
+      "detail": "Module docstring falsely claims the post-rename path.chmod(0o600) (lines 128-131) is a fallback for the dedup/already-exists path. Code analysis shows it is inside `if not path.exists():` block and never runs for existing blobs. Empirical test: blob stored, manually chmoded to 0644, second store_blob() call left mode at 0644."
+    },
+    "finding_5_test_coverage_gap": {
+      "classification": "REAL BUG (test coverage gap)",
+      "detail": "test_store_blob_sets_mode_0600 only tests the new-blob path. No test covers the idempotent/existing-blob path mode enforcement. A test that stores a blob, changes its mode to 0644, then calls store_blob() again and asserts mode == 0600 is missing."
+    },
+    "finding_6_fchmod_portability": {
+      "classification": "DEFENSE-IN-DEPTH IMPROVEMENT",
+      "detail": "Using os.fchmod(handle.fileno(), 0o600) inside the with os.fdopen() block would be more POSIX-portable on NFS (avoids VFS name resolution, operates on inode directly). Empirically verified. Low urgency on standard Linux deployments."
+    }
+  },
   "steps_performed": [
-    "Read executor policy and task.json to understand requirements.",
-    "Ran python3 scripts/bootstrap-project.py — venv present, all deps satisfied, exit 0.",
-    "Ran tests/test_openclaw_gateway_deploy.py via .venv/bin/pytest -v: 17/17 passed.",
-    "Ran tests/test_nvidia_image_gen_plugin.py via .venv/bin/pytest -v: 3/3 passed.",
-    "Ran tests/test_media_routing.py via .venv/bin/pytest -v: 44/44 passed.",
-    "Ran scripts/run-contract-tests.sh (full suite): all passed; coverage policy satisfied.",
-    "Ran codegraph init: 1,209 files indexed, 39,130 nodes, 128,146 edges.",
-    "Ran codegraph affected tests/test_openclaw_gateway_deploy.py tests/test_nvidia_image_gen_plugin.py tests/test_media_routing.py.",
-    "Updated mac-evidence.json with task results and committed."
+    "Read MAC executor policy and task.json.",
+    "Read src/mac/evidence_blobs.py and tests/test_evidence_blobs.py in full.",
+    "Point 1: Verified mkstemp creates 0600 on Linux empirically with 3 umask values (022, 002, 000); confirmed via Python source (os.open with hardcoded 0600).",
+    "Point 2: Confirmed line order: chmod(0o600) at line 120, os.replace() at line 121 — both inside if not path.exists(): block.",
+    "Point 3: Empirically tested TOCTOU window with concurrent polling thread — mode at target path is always 0600 immediately after rename.",
+    "Point 4: Found docstring bug — claims post-rename chmod is a fallback for dedup path but it is inside if not path.exists(): block. Verified empirically: blob stored, chmoded to 0644, second store_blob() call leaves mode at 0644.",
+    "Point 5: Analyzed test_store_blob_sets_mode_0600 — only tests new-blob path. No test for idempotent/existing-blob mode enforcement.",
+    "Point 6: Verified os.fchmod(handle.fileno(), 0o600) works inside with block; analyzed NFS portability advantages.",
+    "Ran .venv/bin/pytest tests/test_evidence_blobs.py -v: 16/16 passed.",
+    "Wrote audit-findings-blobs.txt with all 7 findings classified.",
+    "Ran scripts/run-contract-tests.sh: all tests passed, coverage policy satisfied.",
+    "Committed audit-findings-blobs.txt (git commit 5d60f63).",
+    "Resolved GitHub token via /secrets/github.token/resolve MAC hub API.",
+    "Fetched latest main, cherry-picked audit commit onto main, pushed branch.",
+    "Opened PR #218: https://github.com/jordanhubbard/mac/pull/218.",
+    "Ran codegraph init (39,130 nodes, 128,146 edges); codegraph affected audit-findings-blobs.txt: no test files affected (documentation-only file).",
+    "Updated mac-evidence.json with final evidence."
   ],
   "tests": {
     "command": "scripts/run-contract-tests.sh",
-    "result": "all passed",
+    "result": "passed",
     "status": "passed",
     "exit_code": 0,
-    "targeted_tests": {
-      "test_openclaw_gateway_deploy": {
-        "command": ".venv/bin/pytest tests/test_openclaw_gateway_deploy.py -v",
-        "result": "17 passed in 2.26s",
-        "status": "passed",
-        "exit_code": 0,
-        "test_count": 17
-      },
-      "test_nvidia_image_gen_plugin": {
-        "command": ".venv/bin/pytest tests/test_nvidia_image_gen_plugin.py -v",
-        "result": "3 passed in 0.03s",
-        "status": "passed",
-        "exit_code": 0,
-        "test_count": 3
-      },
-      "test_media_routing": {
-        "command": ".venv/bin/pytest tests/test_media_routing.py -v",
-        "result": "44 passed in 0.26s",
-        "status": "passed",
-        "exit_code": 0,
-        "test_count": 44
-      },
-      "combined_targeted": {
-        "command": "scripts/run-contract-tests.sh tests/test_openclaw_gateway_deploy.py tests/test_nvidia_image_gen_plugin.py tests/test_media_routing.py",
-        "result": "64 passed in 3.13s",
-        "status": "passed",
-        "exit_code": 0,
-        "test_count": 64
-      }
+    "evidence_blobs_specific": {
+      "command": ".venv/bin/pytest tests/test_evidence_blobs.py -v",
+      "result": "16 passed in 0.21s",
+      "status": "passed",
+      "exit_code": 0
     },
     "coverage": {
       "statements_pct": 93.19,
       "statements_floor": 90.0,
-      "branches_pct": 84.64,
+      "branches_pct": 84.61,
       "branches_floor": 80.0,
       "policy_passed": true
     }
   },
   "codegraph": {
     "status": "passed",
-    "init": "codegraph init completed: 1,209 files indexed, 39,130 nodes, 128,146 edges",
+    "init": "codegraph init completed: 39,130 nodes, 128,146 edges",
     "affected_files": [
-      "tests/test_openclaw_gateway_deploy.py",
-      "tests/test_nvidia_image_gen_plugin.py",
-      "tests/test_media_routing.py"
+      "audit-findings-blobs.txt"
     ],
-    "affected_result": "1 affected test file identified: ide/tests/workbench-project-tree.spec.ts (outside scope of this task)",
-    "audit_outcome": "No source code changes were made; test files are read-only verification artifacts."
+    "affected_result": "No test files affected by the changed files (audit-findings-blobs.txt is a documentation-only file; no source code changed)",
+    "audit_outcome": "No source code changes were made; only audit-findings-blobs.txt (documentation) was added."
   },
   "repo": {
-    "head_sha": "da04cc59cb5340f6b20c1dac7c1f0a9ba85733e5",
-    "pushed": false,
+    "head_sha": "f8e8898722e3bbab58d3a732b51bb0078b86fa4b",
+    "pushed": true,
     "dirty": false,
     "files_changed": [
+      "audit-findings-blobs.txt",
       "mac-evidence.json"
     ],
-    "branch": "mac/agent_bullwinkle/task_464bfbc13d444fdb93d38b153c0fb121-lease_b24aaf9adce34998bd"
+    "remote_ref": "mac/agent_jordanh-gke/task_6227c90a838f4af981fc2af5123dbcda-lease_73d8822938e44e05bc",
+    "pr_url": "https://github.com/jordanhubbard/mac/pull/218",
+    "pr_number": 218,
+    "branch": "mac/agent_jordanh-gke/task_6227c90a838f4af981fc2af5123dbcda-lease_73d8822938e44e05bc"
   },
   "assumptions": [
-    "No source files were modified — this task is verification-only per the task description.",
-    "evidence_type=repo_change used as required by the repository contract.",
-    "pushed=false: the deterministic host finalizer owns pushing and publication per the repository contract.",
-    "dirty=false: mac-evidence.json is the only tracked file modified; no untracked new files.",
-    "files_changed lists mac-evidence.json as the only file modified.",
-    "Full contract test suite (scripts/run-contract-tests.sh) passed with exit code 0; coverage policy satisfied."
+    "evidence_type=repo_change used as required by task description and execution contract.",
+    "audit-findings-blobs.txt committed as a new tracked file before finalizing (satisfies 'stage and commit every new file' requirement).",
+    "pushed=true: branch pushed to origin and PR #218 opened at https://github.com/jordanhubbard/mac/pull/218.",
+    "dirty=false: all changes committed in clean working tree.",
+    "files_changed includes both audit-findings-blobs.txt (new) and mac-evidence.json (updated).",
+    "The MAC OpenShell sandbox baseline commit was not pushed to the task branch; only the audit commit was cherry-picked onto current main to avoid conflicts.",
+    "codegraph affected shows no test files affected as audit-findings-blobs.txt is documentation only."
   ]
 }
