@@ -2016,17 +2016,50 @@ def test_dashboard_state_caps_high_volume_task_and_message_data():
     state = client.get("/dashboard/state").json()
     detail = next(item for item in state["tasks"] if item["task"]["id"] == task["id"])
 
-    assert len(detail["history"]) == 50
-    assert len(detail["evidence"]) == 25
-    assert detail["history_limited_to"] == 50
-    assert detail["evidence_limited_to"] == 25
+    assert detail["detail_available"] is True
+    assert "history" not in detail
+    assert "evidence" not in detail
+    assert state["tasks_limited_to"] == 500
     assert len(state["messages"]) == 200
 
     timeline = client.get("/dashboard/tasks/%s/timeline" % task["id"]).json()
-    assert len(timeline["history"]) > len(detail["history"])
+    assert len(timeline["history"]) >= 50
     assert len(timeline["evidence"]) == 75
     assert len(client.get("/messages").json()) == 250
     assert len(client.get("/messages?limit=10").json()) == 10
+
+
+def test_dashboard_state_tasks_are_bounded_summaries_without_history_or_evidence():
+    """Dashboard aggregate task list is a bounded projection (summary only).
+
+    The initial-render response must not include per-task history, evidence,
+    reviews, or publications.  UI clients must follow detail_available=True
+    to GET /tasks/{id} for the full record.
+    """
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+
+    task = client.post(
+        "/tasks",
+        json={"title": "Bounded summary task", "description": "long detail that should not appear"},
+    ).json()
+
+    state = client.get("/dashboard/state").json()
+    summary = next(item for item in state["tasks"] if item["task"]["id"] == task["id"])
+
+    assert summary["detail_available"] is True
+    assert summary["schema"] == "mac.dashboard.task_summary.v1"
+    assert "description" not in summary["task"]
+    assert "metadata" not in summary["task"]
+    assert "history" not in summary
+    assert "evidence" not in summary
+    assert "reviews" not in summary
+    assert "publications" not in summary
+    assert summary["task"]["id"] == task["id"]
+    assert summary["task"]["title"] == "Bounded summary task"
+    assert summary["task"]["state"] == "open"
+    assert "tasks_limited_to" in state
+    assert state["tasks_limited_to"] == 500
 
 
 def test_dashboard_workflow_planner_previews_and_accepts_task_chain():

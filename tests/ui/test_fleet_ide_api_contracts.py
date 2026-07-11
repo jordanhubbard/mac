@@ -311,16 +311,25 @@ def test_workbench_blocked_task_context_and_operator_direction_round_trip():
 
     state_response = client.get("/dashboard/state", headers=_AUTH_HEADERS)
     assert state_response.status_code == 200
-    detail = next(
+    summary = next(
         item for item in state_response.json()["tasks"] if item["task"]["id"] == task_id
     )
-    blocked_event = detail["history"][-1]
+    assert summary["task"]["state"] == TaskState.BLOCKED.value
+    assert summary["detail_available"] is True
+
+    timeline_response = client.get(
+        "/dashboard/tasks/%s/timeline" % task_id, headers=_AUTH_HEADERS
+    )
+    assert timeline_response.status_code == 200
+    blocked_event = timeline_response.json()["history"][-1]
     assert blocked_event["to_state"] == TaskState.BLOCKED.value
     assert blocked_event["detail"]["reason"] == "missing_target_region"
     assert blocked_event["detail"]["question"].startswith("Which production region")
 
     direction = "Deploy to eu-west-1 and use the existing production account."
-    task = detail["task"]
+    task_detail_response = client.get("/tasks/%s" % task_id, headers=_AUTH_HEADERS)
+    assert task_detail_response.status_code == 200
+    task = task_detail_response.json()["task"]
     metadata = dict(task.get("metadata") or {})
     metadata["operator_guidance"] = [
         {"actor": "human", "at": "2026-07-03T22:00:00Z", "direction": direction}

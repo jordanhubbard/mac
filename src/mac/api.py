@@ -258,6 +258,7 @@ DASHBOARD_TASK_EVIDENCE_LIMIT = 25
 DASHBOARD_TASK_REVIEW_LIMIT = 25
 DASHBOARD_TASK_PUBLICATION_LIMIT = 10
 DASHBOARD_MESSAGE_LIMIT = 200
+DASHBOARD_TASK_LIMIT = 500
 DASHBOARD_IDE_EVENT_LIMIT = 100
 DASHBOARD_IDE_MESSAGE_LIMIT = 40
 DASHBOARD_IDE_NOTIFICATION_LIMIT = 40
@@ -272,6 +273,18 @@ _TASK_LIST_SUMMARY_FIELDS = frozenset(
         "created_at",
         "updated_at",
         "last_updated_at",
+    }
+)
+_DASHBOARD_TASK_SUMMARY_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
+    {
+        "dependencies",
+        "required_capabilities",
+        "attempt_count",
+        "max_attempts",
+        "lease_id",
+        "leased_until",
+        "started_at",
+        "completed_at",
     }
 )
 _DASHBOARD_IDE_TASK_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
@@ -2037,6 +2050,19 @@ def _dashboard_swarm_summary(
     }
 
 
+def _dashboard_task_summary(task: Any) -> Dict[str, Any]:
+    task_dict = task.to_dict()
+    return {
+        "task": {
+            key: task_dict[key]
+            for key in _DASHBOARD_TASK_SUMMARY_FIELDS
+            if key in task_dict
+        },
+        "detail_available": True,
+        "schema": "mac.dashboard.task_summary.v1",
+    }
+
+
 def _dashboard_task(
     cp: ControlPlane,
     task_id: str,
@@ -2785,7 +2811,7 @@ def _dashboard_state(
         event.to_dict()
         for event in cp.list_action_events(limit=240)
     ]
-    task_details = [_dashboard_task(cp, task.id, compact=True) for task in tasks]
+    task_details = [_dashboard_task_summary(task) for task in tasks[:DASHBOARD_TASK_LIMIT]]
     rollout_statuses = [_dashboard_rollout_status(cp, rollout.id) for rollout in rollouts]
     project_summaries = cp.list_projects()
     hermes_work_contexts = {
@@ -2868,6 +2894,7 @@ def _dashboard_state(
             for agent in agents
         ],
         "tasks": task_details,
+        "tasks_limited_to": DASHBOARD_TASK_LIMIT,
         "dead_letters": dead_letters,
         "dispatch": _dashboard_dispatch_explain(cp, tasks, agents, machines_by_id),
         "messages": [
