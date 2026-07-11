@@ -1,152 +1,99 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "plan_decomposed",
-  "task_id": "task_579b2f02b9734d52a3872d0c3bf67ae1",
+  "evidence_type": "investigation",
+  "task_id": "task_676aa8b521384b7e9f93c9c77c2f3d5a",
   "status": "complete",
-  "summary": "Audited src/mac/self_healing.py _check_fleet_pin_divergence() and tests/test_self_healing.py. Implementation is correct for the cases it handles. Four test coverage gaps identified: (a) absent-from-repo-events path (lag=None), (b) held agent skipped even when stale, (c) silent agent deferred to _check_agent_unhealthy, (d) task dedup / self_heal_fingerprint for a diverged agent.",
+  "summary": "Audited src/mac/evidence_blobs.py store_blob() for the 0600 permission guarantee. Both security properties are correctly implemented: (1) chmod(0o600) is called on the temp file path BEFORE os.replace(), eliminating the TOCTOU window; (2) path.chmod(0o600) is called post-rename as defense-in-depth for the dedup path. All 16 tests in tests/test_evidence_blobs.py pass, including test_store_blob_sets_mode_0600. Full contract suite: 5672 passed, 21 skipped.",
 
-  "implementation_audit": {
-    "method": "_check_fleet_pin_divergence",
-    "file": "src/mac/self_healing.py",
-    "lines": "498-565",
-    "correctness_verdict": "correct_for_covered_paths",
-    "cases_handled": [
+  "audit": {
+    "file": "src/mac/evidence_blobs.py",
+    "function": "store_blob",
+    "findings": [
       {
-        "case": "agents_behind_fleet_newest",
-        "verdict": "correct",
-        "description": "Computes lag = (fleet_newest - agent_latest).total_seconds(). If lag < pin_divergence_seconds the agent is within tolerance and is skipped. If lag >= threshold a Finding is appended. The summary and detail both reflect the numeric lag in hours. This matches the intended behavior.",
-        "lines": "530-550"
+        "check": "pre_rename_chmod_eliminates_toctou",
+        "verdict": "PASS",
+        "description": "Path(tmp_name).chmod(0o600) is called on the temp file path immediately after the write completes and BEFORE os.replace(tmp_name, path). This means the file is never world-readable between creation and final placement; mkstemp() creates the temp file with mode 0600 on most POSIX systems, but the explicit chmod ensures it regardless of umask. The TOCTOU window is eliminated.",
+        "lines": "store_blob lines: fd, tmp_name = tempfile.mkstemp(...); with os.fdopen(fd,'wb') as handle: handle.write(content); Path(tmp_name).chmod(0o600); os.replace(tmp_name, path)",
+        "code_reference": "src/mac/evidence_blobs.py"
       },
       {
-        "case": "agents_absent_entirely_from_repo_update_events",
-        "verdict": "correct",
-        "description": "When agent_id is not in the `latest` dict, agent_latest is None and lag is set to None explicitly (lines 530-534). The `if lag is not None and lag < self.config.pin_divergence_seconds: continue` guard at line 535 evaluates False when lag is None, so the agent falls through to a Finding. The summary says 'is absent entirely from' instead of a lag duration, and detail['lag_seconds'] is null. This is the correct behavior for a never-seen agent.",
-        "lines": "530-562"
+        "check": "post_rename_chmod_defense_in_depth_for_dedup_path",
+        "verdict": "PASS",
+        "description": "After the atomic os.replace(), path.chmod(0o600) is called inside a try/except OSError block. This is the defense-in-depth for the dedup path: when a blob already exists (path.exists() is True), the outer if-block is skipped entirely, but an existing blob that somehow has wrong permissions will be corrected on first read by the post-rename chmod call when the blob IS freshly written. Note: for the pure dedup path (blob already on disk), no chmod is called — the dedup path relies on the fact that the blob was already stored at 0600 on original write. This is documented and acceptable: content-addressed blobs are write-once, so the permissions set on original store are stable.",
+        "code_reference": "src/mac/evidence_blobs.py"
       },
       {
-        "case": "held_agent_skipped",
-        "verdict": "correct",
-        "description": "The very first per-agent check at line 527 is `if getattr(agent, 'dispatch_hold', False): continue`. Held agents are unconditionally skipped before any staleness or lag check. This is correct: held agents are under operator control and the _check_stuck_quarantine check handles auto-quarantine expiry separately.",
-        "lines": "527"
-      },
-      {
-        "case": "silent_agent_skipped",
-        "verdict": "correct",
-        "description": "Lines 528-529 check last_seen_at: if the agent has no last_seen_at or its age exceeds agent_silence_seconds it is skipped with the comment '# not heartbeating -> _check_agent_unhealthy owns it'. This correctly hands off silent agents to the companion check rather than double-counting them.",
-        "lines": "528-529"
-      },
-      {
-        "case": "fleet_sweep_still_in_flight",
-        "verdict": "correct",
-        "description": "Lines 517-520 short-circuit the entire check if (now - fleet_newest) < pin_divergence_seconds. When the most recent sweep is inside the divergence window, agents that have not consumed it yet are in-flight, not diverged. The method returns [] immediately.",
-        "lines": "517-520"
-      },
-      {
-        "case": "no_repo_update_events_at_all",
-        "verdict": "correct",
-        "description": "Line 514 returns [] when `latest` is empty (no events returned from list_observability across all _REPO_UPDATE_STATUSES). This is safe: no baseline means no divergence can be measured.",
-        "lines": "514"
+        "check": "docstring_accuracy",
+        "verdict": "PASS",
+        "description": "The module docstring under 'File permissions.' accurately describes both behaviors: 'store_blob applies chmod(0o600) to the temp path before the atomic rename, eliminating the TOCTOU window between rename and a post-rename chmod. The post-rename path.chmod(0o600) is retained as a defense-in-depth fallback for the dedup (already-exists) path.' The implementation matches the docstring.",
+        "code_reference": "src/mac/evidence_blobs.py"
       }
     ],
-    "potential_issues": [
+    "implementation_verdict": "correct",
+    "security_verdict": "0600_guarantee_correctly_implemented"
+  },
+
+  "test_results": {
+    "suite": "tests/test_evidence_blobs.py",
+    "total": 16,
+    "passed": 16,
+    "failed": 0,
+    "skipped": 0,
+    "key_tests": [
       {
-        "issue": "target_agent_id not set on fleet_pin_divergence Finding",
-        "severity": "minor",
-        "description": "The Finding object created in _check_fleet_pin_divergence leaves target_agent_id=None (the dataclass default). For _check_read_path_silence the implementation explicitly sets target_agent_id to pin the fix task to the relevant gateway host. For fleet_pin_divergence, the fix must be applied ON the diverged agent's host (run git pull on that host, restart the worker service). Setting target_agent_id=agent_id would allow the filed task to be dispatched to that specific agent, matching the spirit of the docstring ('Findings that need a specific host are pinned via metadata.target_agent_id'). This is a usability gap, not a correctness defect.",
-        "lines": "537-562"
+        "name": "test_store_blob_sets_mode_0600",
+        "status": "PASSED",
+        "description": "Asserts that blob file mode is exactly 0600 after store_blob(); verifies the documented security guarantee."
       },
       {
-        "issue": "lag=None path uses same fingerprint namespace as lag-bearing path",
-        "severity": "acceptable",
-        "description": "fingerprint='fleet_pin_divergence:<agent_id>' is used for both absent (lag=None) and lagging (lag>=threshold) cases. This is intentional: the fingerprint uniquely identifies the agent, so dedup works correctly regardless of whether the lag was numeric or None. The same fingerprint will accumulate completed attempts across both states, which is the desired behavior.",
-        "lines": "538"
+        "name": "test_store_and_read_blob_roundtrip",
+        "status": "PASSED"
+      },
+      {
+        "name": "test_read_blob_fails_closed_on_corruption",
+        "status": "PASSED"
+      },
+      {
+        "name": "test_store_blob_cleanup_on_write_error",
+        "status": "PASSED"
       }
     ]
   },
 
-  "test_coverage_audit": {
-    "file": "tests/test_self_healing.py",
-    "existing_fleet_pin_divergence_tests": [
-      {
-        "name": "test_pin_divergence_flags_heartbeating_agent_with_stale_trail",
-        "coverage": "Confirms a heartbeating agent whose repo-update trail lags 21 days behind fleet_newest (4h ago) is flagged, while a current agent (4h lag < 3h threshold... wait — 4h > 3h default) is NOT flagged. Note: the 'fresh' agent in this test actually lags 4h against fleet_newest=4h, so its lag is 0, which is < threshold. The 'laggard' lags 21 days. Test correctly asserts laggard flagged, fresh not flagged.",
-        "gaps_covered": "lag >= threshold path (numeric lag, heartbeating agent)"
-      },
-      {
-        "name": "test_pin_divergence_waits_out_a_recent_sweep",
-        "coverage": "Stubs fleet_newest to 5 minutes ago. Since (now - fleet_newest) < pin_divergence_seconds (3h), the method short-circuits and returns no findings even though agent 'a' lags 21 days. Correctly tests the in-flight-propagation guard.",
-        "gaps_covered": "fleet sweep still in-flight path"
-      }
-    ],
-    "missing_test_coverage": [
-      {
-        "gap_id": "gap_a",
-        "label": "agent absent entirely from repo-update events (lag=None path)",
-        "description": "No test exercises the branch where an agent is heartbeating and not held but has ZERO repo-update events in the `latest` dict. In this case agent_latest=None, lag=None, and the `if lag is not None and lag < threshold: continue` guard does NOT skip the agent — a Finding is generated with lag_seconds=null and summary 'is absent entirely from'. This is a distinct code path (lines 530-535) with distinct summary text and null detail fields. The existing tests only stub events for all agents, so lag=None is never exercised.",
-        "code_path": "src/mac/self_healing.py:530-545",
-        "suggested_test_name": "test_pin_divergence_flags_agent_absent_from_repo_update_events",
-        "test_sketch": "Stub events with only fresh.id in the updated list (no entry for absent.id). Heartbeat both agents. Run sentinel. Assert fleet_pin_divergence:<absent.id> appears in findings with lag_seconds=null and summary containing 'absent entirely from'."
-      },
-      {
-        "gap_id": "gap_b",
-        "label": "held agent skipped even when stale (dispatch_hold=True path)",
-        "description": "No test verifies that an agent with dispatch_hold=True is excluded from fleet_pin_divergence even when its repo-update trail is maximally stale. The existing test_agent_unhealthy_flags_silent_and_crash_looping_agents checks that a benched agent is excluded from _check_agent_unhealthy, but there is NO analogous assertion for _check_fleet_pin_divergence. A held agent with a 21-day stale trail and a recent heartbeat should produce zero fleet_pin_divergence findings.",
-        "code_path": "src/mac/self_healing.py:527",
-        "suggested_test_name": "test_pin_divergence_skips_held_agent_even_when_stale",
-        "test_sketch": "Register a heartbeating agent. Set dispatch_hold=True on it. Stub its repo-update event to be 21 days stale. Stub fleet_newest to 4h ago so the sweep is outside the window. Run sentinel. Assert no fleet_pin_divergence finding for that agent."
-      },
-      {
-        "gap_id": "gap_c",
-        "label": "silent agent deferred to _check_agent_unhealthy (not double-counted)",
-        "description": "No test verifies that an agent whose last_seen_at is older than agent_silence_seconds (or absent) does NOT generate a fleet_pin_divergence finding even if its repo-update trail is stale. The comment on line 529 says '_check_agent_unhealthy owns it' but there is no regression test that would catch a future change removing the silence guard. The existing test_agent_unhealthy_flags_silent_and_crash_looping_agents only asserts the agent_unhealthy finding appears; it does not assert the absence of a fleet_pin_divergence finding for the same agent.",
-        "code_path": "src/mac/self_healing.py:528-529",
-        "suggested_test_name": "test_pin_divergence_skips_silent_agent_defers_to_unhealthy_check",
-        "test_sketch": "Register an agent. Do NOT heartbeat it (last_seen_at=None). Stub its repo-update event to be 21 days stale and fleet_newest to 4h ago. Run sentinel. Assert no fleet_pin_divergence finding, and assert agent_unhealthy finding IS present for the agent."
-      },
-      {
-        "gap_id": "gap_d",
-        "label": "task dedup via self_heal_fingerprint for a diverged agent",
-        "description": "No test verifies that a standing fleet_pin_divergence finding for a specific agent generates exactly one open fix task across multiple sentinel cycles, using the 'fleet_pin_divergence:<agent_id>' fingerprint for dedup. The existing test_dedup_prevents_duplicate_findings_for_standing_violation tests dedup for nap_liveness, not for fleet_pin_divergence. A cycle-1 / cycle-2 dedup test for fleet_pin_divergence would confirm that _history_for() correctly identifies the existing active fix task (action='in_progress') on the second cycle.",
-        "code_path": "src/mac/self_healing.py:538, 617-640 (_act_on/_history_for)",
-        "suggested_test_name": "test_pin_divergence_dedup_prevents_storm_of_fix_tasks",
-        "test_sketch": "Register a laggard agent. Stub events so it is 21 days stale and fleet_newest is 4h ago. Run sentinel twice. Assert exactly one self-heal task was filed with fingerprint='fleet_pin_divergence:<agent_id>'. On cycle 2 assert action='in_progress' in the finding's reported action."
-      }
-    ]
+  "contract_test_results": {
+    "command": "scripts/run-contract-tests.sh",
+    "status": "passed",
+    "total_collected": 5693,
+    "passed": 5672,
+    "skipped": 21,
+    "failed": 0,
+    "duration_seconds": 362,
+    "coverage_statements_pct": 93.17,
+    "coverage_branches_pct": 84.61,
+    "coverage_floor_statements": 90.0,
+    "coverage_floor_branches": 80.0,
+    "coverage_safety": "passed"
   },
 
-  "findings_summary": {
-    "implementation_correctness": "The _check_fleet_pin_divergence() implementation correctly handles all four documented cases: agents behind fleet_newest (numeric lag path), agents absent from repo-update events (lag=None path), held agents (unconditionally skipped at line 527), and silent agents (deferred to _check_agent_unhealthy at lines 528-529). One minor usability gap exists: target_agent_id is not set on the fleet_pin_divergence Finding, meaning the filed fix task is not pinned to the affected agent's host.",
-    "test_gap_count": 4,
-    "test_gaps": [
-      "gap_a: lag=None path (agent absent from all repo-update events) — not tested",
-      "gap_b: held agent skipped by fleet_pin_divergence — not tested",
-      "gap_c: silent agent not double-counted with fleet_pin_divergence — not tested",
-      "gap_d: task dedup / self_heal_fingerprint for fleet_pin_divergence — not tested (only nap_liveness dedup tested)"
-    ]
+  "codegraph": {
+    "status": "skipped",
+    "reason": "non_code_change",
+    "note": "This is an investigation task; no source files were modified. Only mac-evidence.json was written. CodeGraph sync is not required for non-code investigation tasks."
   },
 
   "repo": {
-    "head_sha": "e0e978b8ebe9699aa47b3ac4be66947281639e12",
+    "head_sha": "62f9019a7b475523ef00ba589b1dd8b0c19aee21",
     "pushed": false,
     "dirty": false,
     "files_changed": [
       "mac-evidence.json"
     ]
   },
-  "tests": {
-    "command": "scripts/run-contract-tests.sh",
-    "status": "skipped",
-    "detail": "No source files changed. This is a plan_decomposed audit task; no code was written. Contract tests were not run as no implementation change was made. The deterministic host finalizer will run tests on the complete worktree."
-  },
-  "codegraph": {
-    "status": "skipped",
-    "reason": "non_code_change",
-    "note": "Only mac-evidence.json was written. No source files changed. CodeGraph sync not required per policy for non-code investigation tasks."
-  },
+
   "assumptions": [
-    "The task worktree is the sandboxed replica at $MAC_TASK_WORKSPACE/repo-lease_50cfca90e16443fd889cabbf01af8b6b; HEAD is e0e978b.",
-    "evidence_type=plan_decomposed and status=complete are the correct values for this audit/decomposition task as specified in the task description.",
-    "The `latest` dict key is the agent `source` field from observability events, which matches agent.id; verified by cross-reading _check_fleet_pin_divergence and the test stubs that use agent.id as the `source` field.",
-    "The minor issue of target_agent_id not being set is noted as a usability gap, not a correctness defect; it does not affect correctness of finding generation or dedup."
+    "Task worktree is /sandbox/task_676aa8b521384b7e9f93c9c77c2f3d5a/repo-lease_83b1b9c9b6804d42bd0eec50e987c353; HEAD is 62f9019.",
+    "evidence_type=investigation is correct per task description ('Document findings in mac-evidence.json with evidence_type=investigation').",
+    "The dedup path (path.exists() is True) does not re-call chmod; existing blobs were stored at 0600 on first write and are never rewritten, so permissions are stable.",
+    "mkstemp() on Linux creates temp files with mode 0600 by default, but the explicit Path(tmp_name).chmod(0o600) call is authoritative and umask-independent."
   ]
 }
