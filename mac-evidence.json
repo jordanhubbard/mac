@@ -1,43 +1,50 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_637fca3a8d9b4023a86ba147eea571ee",
+  "task_id": "task_6f41bfd41c51428cba556fd4573809b7",
   "status": "complete",
-  "summary": "Bumped OPENCLAW_IMAGE_REVISION to \"9\" in deploy/openclaw/install-openclaw-gateway.sh (line 11) and updated the matching test assertion in tests/test_openclaw_gateway_deploy.py (line 49). All 17 openclaw gateway deploy tests pass.",
-
-  "baseline_tests": {
-    "command": ".venv/bin/python -m pytest tests/test_openclaw_gateway_deploy.py -v",
-    "result": "17 passed in 1.45s",
-    "status": "green"
-  },
-
+  "summary": "Ran the full contract test suite (scripts/run-contract-tests.sh) in the task worktree; all 5672 tests passed (21 skipped, exit code 0), including the three explicitly required tests \u2014 test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw, test_mac_continuity_plugin_registers_runtime_hook_and_tools, and test_mac_image_generate_posts_to_hub_media_router_and_writes_png \u2014 all PASSED. Coverage met policy floors (statements 93.21% >= 90%, branches 84.62% >= 80%). Results recorded in mac-evidence.json with evidence_type=repo_change.",
   "tests": {
-    "command": ".venv/bin/python -m pytest tests/test_openclaw_gateway_deploy.py -v",
-    "result": "17 passed",
+    "command": "scripts/run-contract-tests.sh",
+    "result": "5672 passed, 21 skipped in 433.31s",
     "status": "green",
-    "note": "All 17 openclaw gateway deploy tests pass after bumping OPENCLAW_IMAGE_REVISION to \"9\". Full contract suite (scripts/run-contract-tests.sh) was also run and completed; pre-existing unrelated failures exist in the suite but are not caused by this change."
+    "exit_code": 0,
+    "required_tests": {
+      "test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw": "PASSED",
+      "test_mac_continuity_plugin_registers_runtime_hook_and_tools": "PASSED",
+      "test_mac_image_generate_posts_to_hub_media_router_and_writes_png": "PASSED"
+    },
+    "coverage": {
+      "statements_pct": 93.21,
+      "statements_floor": 90.0,
+      "branches_pct": 84.62,
+      "branches_floor": 80.0,
+      "policy": "pass"
+    }
   },
-
   "codegraph": {
-    "status": "not_applicable",
-    "reason": "config_only_change",
-    "note": "Changed files are a bash shell script variable (deploy/openclaw/install-openclaw-gateway.sh) and a test assertion string (tests/test_openclaw_gateway_deploy.py). No Python public APIs were modified; CodeGraph analysis is not applicable for shell config string changes."
+    "status": "run",
+    "command": "codegraph init && codegraph affected mac-evidence.json",
+    "result": "Indexed 1,209 files; 39,130 nodes, 128,146 edges. No test files affected by mac-evidence.json (data file, no code change).",
+    "affected_files": [
+      "mac-evidence.json"
+    ],
+    "impact": "none \u2014 mac-evidence.json is a JSON data file with no importers or callers in the code graph"
   },
-
   "repo": {
-    "head_sha": "36cd4d1e167bec735864cf28adeea4df7ecf8a18",
+    "head_sha": "d2c4c3459c6f9720e54d52b6e2ab63e5fc119a80",
     "pushed": false,
     "dirty": false,
     "files_changed": [
-      "deploy/openclaw/install-openclaw-gateway.sh",
-      "tests/test_openclaw_gateway_deploy.py"
+      "mac-evidence.json"
     ]
   },
-
   "assumptions": [
-    "The worktree baseline already had OPENCLAW_IMAGE_REVISION=\"c2ec8a61a7b1\" (a commit hash), not \"8\" as described in the task; the task description was written against an older version of the repo. The intent — triggering a fresh image build for mac_image_generate — is satisfied by bumping to \"9\".",
-    "Pre-existing test failures in the full suite are unrelated to this change and were present before any modifications.",
+    "The worktree was initialized as a single-commit baseline (89ddd61) from the sandbox; no prior task-owned commits exist.",
+    "The mac-evidence.json from a prior task (task_637fca3a...) was overwritten with this task evidence.",
+    "The deterministic finalizer owns rebasing against canonical main, committing tracked modifications, pushing, and publication.",
     "evidence_type=repo_change is correct per the repository contract.",
-    "The deterministic finalizer will handle rebasing, pushing, and publication."
+    "CodeGraph affected analysis confirmed mac-evidence.json is a data file with no downstream code impact.",
+    "No remote credentials are available in the sandbox; pushed=false. The deterministic finalizer will rebase and push."
   ]
 }
