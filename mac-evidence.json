@@ -1,56 +1,132 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "investigation",
-  "task_id": "task_285b806c104a48079dbc9fc5d9ce5dd3",
+  "evidence_type": "plan_decomposed",
+  "task_id": "task_579b2f02b9734d52a3872d0c3bf67ae1",
   "status": "complete",
-  "summary": "Investigated the low-confidence dream-repair finding (fingerprint: dreamrepair:6c70466c971039af1b03716f9a03eb27) for the missing src/mac/openclaw_fleet_rollout.py. Surveyed all relevant fleet/rollout modules and the deploy/openclaw/ directory. Confirmed: no existing Python module implements the 4-phase staged edge-node OpenClaw rollout order documented as prose in deploy/openclaw/RUNBOOK.md (lines 134-140). The generic rollout_service.py handles artifact promotion state machines but contains no openclaw-specific staged node-ordering logic. The fleet deploy shell script (deploy/deploy-mac-fleet.sh) does not enforce the canary-first, hub-last rollout sequence as a programmatic Python policy. The gap is real. Verdict: ACTIONABLE.",
-  "verdict": "ACTIONABLE",
-  "actionability": {
-    "root_cause": "The 4-phase staged OpenClaw fleet rollout sequence (canary non-hub physical worker first, remaining non-hub physical workers, containerized/hub-node workers, primary fleet hub last) is documented only as prose in deploy/openclaw/RUNBOOK.md lines 134-140. No Python module in src/mac/ implements or enforces this sequence programmatically. The generic rollout_service.py manages artifact promotion state machines (PLANNED → CANARYING → PROMOTED) but contains no openclaw-specific node-type classification or stage-ordering logic. The deploy shell script iterates agents from the fleet config order without enforcing the RUNBOOK-specified 4-phase sequence for openclaw gateway rollouts.",
-    "evidence_source": "Direct source inspection: src/mac/rollout_service.py, src/mac/fleet_deploy.py, src/mac/fleet_move.py, src/mac/fleet_setup.py, src/mac/fleet_learning.py, src/mac/deploy_service.py, deploy/openclaw/RUNBOOK.md, deploy/deploy-mac-fleet.sh, tests/ directory. Confirmed: no file named openclaw_fleet_rollout.py exists anywhere in the worktree (ls src/mac/ grep returned only rollout_service.py).",
-    "required_fix": "Create src/mac/openclaw_fleet_rollout.py following the pure-core pattern established by fleet_move.py and fleet_setup.py: (1) pure side-effect-free planning functions that classify fleet nodes into the 4 RUNBOOK phases and build an ordered deploy plan; (2) execution gated behind execute=True; (3) typed dataclasses for NodeKind, DeployPhase, and RolloutPlan; (4) dry-run by default. The new file must be staged and committed with git add + git commit before handoff.",
-    "pattern": "Real codebase gap — the openclaw-specific staged edge-node rollout sequence has no Python module. The failed prior task (task_35d5576ab3f64f29b4456224b8063037) left the file unimplemented. A prior investigation task (task_60a70351b67145929023fea18735718f) also confirmed ACTIONABLE but its evidence.json carried a different task_id and was not pushed.",
-    "confidence": "high"
+  "summary": "Audited src/mac/self_healing.py _check_fleet_pin_divergence() and tests/test_self_healing.py. Implementation is correct for the cases it handles. Four test coverage gaps identified: (a) absent-from-repo-events path (lag=None), (b) held agent skipped even when stale, (c) silent agent deferred to _check_agent_unhealthy, (d) task dedup / self_heal_fingerprint for a diverged agent.",
+
+  "implementation_audit": {
+    "method": "_check_fleet_pin_divergence",
+    "file": "src/mac/self_healing.py",
+    "lines": "498-565",
+    "correctness_verdict": "correct_for_covered_paths",
+    "cases_handled": [
+      {
+        "case": "agents_behind_fleet_newest",
+        "verdict": "correct",
+        "description": "Computes lag = (fleet_newest - agent_latest).total_seconds(). If lag < pin_divergence_seconds the agent is within tolerance and is skipped. If lag >= threshold a Finding is appended. The summary and detail both reflect the numeric lag in hours. This matches the intended behavior.",
+        "lines": "530-550"
+      },
+      {
+        "case": "agents_absent_entirely_from_repo_update_events",
+        "verdict": "correct",
+        "description": "When agent_id is not in the `latest` dict, agent_latest is None and lag is set to None explicitly (lines 530-534). The `if lag is not None and lag < self.config.pin_divergence_seconds: continue` guard at line 535 evaluates False when lag is None, so the agent falls through to a Finding. The summary says 'is absent entirely from' instead of a lag duration, and detail['lag_seconds'] is null. This is the correct behavior for a never-seen agent.",
+        "lines": "530-562"
+      },
+      {
+        "case": "held_agent_skipped",
+        "verdict": "correct",
+        "description": "The very first per-agent check at line 527 is `if getattr(agent, 'dispatch_hold', False): continue`. Held agents are unconditionally skipped before any staleness or lag check. This is correct: held agents are under operator control and the _check_stuck_quarantine check handles auto-quarantine expiry separately.",
+        "lines": "527"
+      },
+      {
+        "case": "silent_agent_skipped",
+        "verdict": "correct",
+        "description": "Lines 528-529 check last_seen_at: if the agent has no last_seen_at or its age exceeds agent_silence_seconds it is skipped with the comment '# not heartbeating -> _check_agent_unhealthy owns it'. This correctly hands off silent agents to the companion check rather than double-counting them.",
+        "lines": "528-529"
+      },
+      {
+        "case": "fleet_sweep_still_in_flight",
+        "verdict": "correct",
+        "description": "Lines 517-520 short-circuit the entire check if (now - fleet_newest) < pin_divergence_seconds. When the most recent sweep is inside the divergence window, agents that have not consumed it yet are in-flight, not diverged. The method returns [] immediately.",
+        "lines": "517-520"
+      },
+      {
+        "case": "no_repo_update_events_at_all",
+        "verdict": "correct",
+        "description": "Line 514 returns [] when `latest` is empty (no events returned from list_observability across all _REPO_UPDATE_STATUSES). This is safe: no baseline means no divergence can be measured.",
+        "lines": "514"
+      }
+    ],
+    "potential_issues": [
+      {
+        "issue": "target_agent_id not set on fleet_pin_divergence Finding",
+        "severity": "minor",
+        "description": "The Finding object created in _check_fleet_pin_divergence leaves target_agent_id=None (the dataclass default). For _check_read_path_silence the implementation explicitly sets target_agent_id to pin the fix task to the relevant gateway host. For fleet_pin_divergence, the fix must be applied ON the diverged agent's host (run git pull on that host, restart the worker service). Setting target_agent_id=agent_id would allow the filed task to be dispatched to that specific agent, matching the spirit of the docstring ('Findings that need a specific host are pinned via metadata.target_agent_id'). This is a usability gap, not a correctness defect.",
+        "lines": "537-562"
+      },
+      {
+        "issue": "lag=None path uses same fingerprint namespace as lag-bearing path",
+        "severity": "acceptable",
+        "description": "fingerprint='fleet_pin_divergence:<agent_id>' is used for both absent (lag=None) and lagging (lag>=threshold) cases. This is intentional: the fingerprint uniquely identifies the agent, so dedup works correctly regardless of whether the lag was numeric or None. The same fingerprint will accumulate completed attempts across both states, which is the desired behavior.",
+        "lines": "538"
+      }
+    ]
   },
-  "investigation_steps": [
-    {
-      "step": "Survey src/mac/ for any existing openclaw rollout module",
-      "outcome": "ls src/mac/ | grep -i 'openclaw|rollout' returned only rollout_service.py. No openclaw_fleet_rollout.py exists. rg for 'openclaw_fleet_rollout' across the entire repo returned zero matches."
-    },
-    {
-      "step": "Read deploy/openclaw/RUNBOOK.md Fleet deployment section (lines 134-140)",
-      "outcome": "The RUNBOOK documents a 4-phase deploy order: (1) one non-hub physical worker as canary, (2) remaining non-hub physical workers, (3) containerized worker and hub nodes, (4) primary fleet hub last. This is prose guidance only — no Python enforces it."
-    },
-    {
-      "step": "Read src/mac/rollout_service.py for openclaw/edge-node coverage",
-      "outcome": "rollout_service.py implements a generic artifact promotion state machine (PLANNED → CANARYING → PROMOTED → ROLLED_BACK). grep for 'openclaw', 'edge_node', 'staged', 'phase 1/2/3/4' returned zero matches. The service has no concept of node type (physical vs containerized vs hub) or the RUNBOOK 4-phase ordering."
-    },
-    {
-      "step": "Read deploy/deploy-mac-fleet.sh for openclaw staged rollout logic",
-      "outcome": "The shell script's main() loop iterates agents from fleet config via selected_hosts()/fleet_config_query('specs'). Agent ordering follows fleet config declaration order, not the RUNBOOK 4-phase sequence. grep for 'hub_last', 'non-hub', 'physical_first', 'containerized', 'stage 1/2/3/4' returned zero matches in the deploy loop. The require_canary worker field controls per-node canary requirement but does not enforce the global 4-phase rollout sequence."
-    },
-    {
-      "step": "Read src/mac/fleet_deploy.py, fleet_move.py, fleet_setup.py, fleet_learning.py, deploy_service.py",
-      "outcome": "None contain openclaw-specific staged rollout logic. fleet_move.py and fleet_setup.py establish the pure-core pattern (side-effect-free plan functions, execute=True gate, dataclass plan objects) that openclaw_fleet_rollout.py should follow. deploy_service.py is a generic artifact deployment record service with no node-type awareness."
-    },
-    {
-      "step": "Check tests/ for any existing coverage of openclaw staged rollout",
-      "outcome": "tests/test_openclaw_gateway_deploy.py covers installer artifact pinning and sandbox verification. No test file covers a 4-phase staged fleet rollout sequence or tests a Python module for openclaw node ordering. The gap in tests mirrors the gap in source."
-    },
-    {
-      "step": "Run contract tests to establish baseline",
-      "outcome": "scripts/run-contract-tests.sh exited 0. Coverage: statements 93.19% (floor 90%), branches 84.63% (floor 80%). All tests pass on the unmodified worktree."
-    }
-  ],
-  "gap_characterization": {
-    "missing_module": "src/mac/openclaw_fleet_rollout.py",
-    "missing_capability": "Programmatic enforcement of the 4-phase staged OpenClaw fleet rollout sequence (canary non-hub physical → remaining non-hub physical → containerized+hub-node → primary hub last) as described in deploy/openclaw/RUNBOOK.md",
-    "existing_coverage": "rollout_service.py covers generic artifact promotion state machines; deploy-mac-fleet.sh handles per-node deploy iteration; install-openclaw-gateway.sh covers per-node OpenClaw sandbox install and verification. None enforce the cross-node ordering for an OpenClaw fleet rollout.",
-    "is_redundant": false,
-    "redundancy_rationale": "No existing module covers the openclaw-specific node classification and 4-phase ordering. The gap is real."
+
+  "test_coverage_audit": {
+    "file": "tests/test_self_healing.py",
+    "existing_fleet_pin_divergence_tests": [
+      {
+        "name": "test_pin_divergence_flags_heartbeating_agent_with_stale_trail",
+        "coverage": "Confirms a heartbeating agent whose repo-update trail lags 21 days behind fleet_newest (4h ago) is flagged, while a current agent (4h lag < 3h threshold... wait — 4h > 3h default) is NOT flagged. Note: the 'fresh' agent in this test actually lags 4h against fleet_newest=4h, so its lag is 0, which is < threshold. The 'laggard' lags 21 days. Test correctly asserts laggard flagged, fresh not flagged.",
+        "gaps_covered": "lag >= threshold path (numeric lag, heartbeating agent)"
+      },
+      {
+        "name": "test_pin_divergence_waits_out_a_recent_sweep",
+        "coverage": "Stubs fleet_newest to 5 minutes ago. Since (now - fleet_newest) < pin_divergence_seconds (3h), the method short-circuits and returns no findings even though agent 'a' lags 21 days. Correctly tests the in-flight-propagation guard.",
+        "gaps_covered": "fleet sweep still in-flight path"
+      }
+    ],
+    "missing_test_coverage": [
+      {
+        "gap_id": "gap_a",
+        "label": "agent absent entirely from repo-update events (lag=None path)",
+        "description": "No test exercises the branch where an agent is heartbeating and not held but has ZERO repo-update events in the `latest` dict. In this case agent_latest=None, lag=None, and the `if lag is not None and lag < threshold: continue` guard does NOT skip the agent — a Finding is generated with lag_seconds=null and summary 'is absent entirely from'. This is a distinct code path (lines 530-535) with distinct summary text and null detail fields. The existing tests only stub events for all agents, so lag=None is never exercised.",
+        "code_path": "src/mac/self_healing.py:530-545",
+        "suggested_test_name": "test_pin_divergence_flags_agent_absent_from_repo_update_events",
+        "test_sketch": "Stub events with only fresh.id in the updated list (no entry for absent.id). Heartbeat both agents. Run sentinel. Assert fleet_pin_divergence:<absent.id> appears in findings with lag_seconds=null and summary containing 'absent entirely from'."
+      },
+      {
+        "gap_id": "gap_b",
+        "label": "held agent skipped even when stale (dispatch_hold=True path)",
+        "description": "No test verifies that an agent with dispatch_hold=True is excluded from fleet_pin_divergence even when its repo-update trail is maximally stale. The existing test_agent_unhealthy_flags_silent_and_crash_looping_agents checks that a benched agent is excluded from _check_agent_unhealthy, but there is NO analogous assertion for _check_fleet_pin_divergence. A held agent with a 21-day stale trail and a recent heartbeat should produce zero fleet_pin_divergence findings.",
+        "code_path": "src/mac/self_healing.py:527",
+        "suggested_test_name": "test_pin_divergence_skips_held_agent_even_when_stale",
+        "test_sketch": "Register a heartbeating agent. Set dispatch_hold=True on it. Stub its repo-update event to be 21 days stale. Stub fleet_newest to 4h ago so the sweep is outside the window. Run sentinel. Assert no fleet_pin_divergence finding for that agent."
+      },
+      {
+        "gap_id": "gap_c",
+        "label": "silent agent deferred to _check_agent_unhealthy (not double-counted)",
+        "description": "No test verifies that an agent whose last_seen_at is older than agent_silence_seconds (or absent) does NOT generate a fleet_pin_divergence finding even if its repo-update trail is stale. The comment on line 529 says '_check_agent_unhealthy owns it' but there is no regression test that would catch a future change removing the silence guard. The existing test_agent_unhealthy_flags_silent_and_crash_looping_agents only asserts the agent_unhealthy finding appears; it does not assert the absence of a fleet_pin_divergence finding for the same agent.",
+        "code_path": "src/mac/self_healing.py:528-529",
+        "suggested_test_name": "test_pin_divergence_skips_silent_agent_defers_to_unhealthy_check",
+        "test_sketch": "Register an agent. Do NOT heartbeat it (last_seen_at=None). Stub its repo-update event to be 21 days stale and fleet_newest to 4h ago. Run sentinel. Assert no fleet_pin_divergence finding, and assert agent_unhealthy finding IS present for the agent."
+      },
+      {
+        "gap_id": "gap_d",
+        "label": "task dedup via self_heal_fingerprint for a diverged agent",
+        "description": "No test verifies that a standing fleet_pin_divergence finding for a specific agent generates exactly one open fix task across multiple sentinel cycles, using the 'fleet_pin_divergence:<agent_id>' fingerprint for dedup. The existing test_dedup_prevents_duplicate_findings_for_standing_violation tests dedup for nap_liveness, not for fleet_pin_divergence. A cycle-1 / cycle-2 dedup test for fleet_pin_divergence would confirm that _history_for() correctly identifies the existing active fix task (action='in_progress') on the second cycle.",
+        "code_path": "src/mac/self_healing.py:538, 617-640 (_act_on/_history_for)",
+        "suggested_test_name": "test_pin_divergence_dedup_prevents_storm_of_fix_tasks",
+        "test_sketch": "Register a laggard agent. Stub events so it is 21 days stale and fleet_newest is 4h ago. Run sentinel twice. Assert exactly one self-heal task was filed with fingerprint='fleet_pin_divergence:<agent_id>'. On cycle 2 assert action='in_progress' in the finding's reported action."
+      }
+    ]
   },
+
+  "findings_summary": {
+    "implementation_correctness": "The _check_fleet_pin_divergence() implementation correctly handles all four documented cases: agents behind fleet_newest (numeric lag path), agents absent from repo-update events (lag=None path), held agents (unconditionally skipped at line 527), and silent agents (deferred to _check_agent_unhealthy at lines 528-529). One minor usability gap exists: target_agent_id is not set on the fleet_pin_divergence Finding, meaning the filed fix task is not pinned to the affected agent's host.",
+    "test_gap_count": 4,
+    "test_gaps": [
+      "gap_a: lag=None path (agent absent from all repo-update events) — not tested",
+      "gap_b: held agent skipped by fleet_pin_divergence — not tested",
+      "gap_c: silent agent not double-counted with fleet_pin_divergence — not tested",
+      "gap_d: task dedup / self_heal_fingerprint for fleet_pin_divergence — not tested (only nap_liveness dedup tested)"
+    ]
+  },
+
   "repo": {
-    "head_sha": "f0397f4bb930fdbf78f88ded0047d910f2261c97",
+    "head_sha": "e0e978b8ebe9699aa47b3ac4be66947281639e12",
     "pushed": false,
     "dirty": false,
     "files_changed": [
@@ -59,17 +135,18 @@
   },
   "tests": {
     "command": "scripts/run-contract-tests.sh",
-    "status": "passed",
-    "detail": "All contract tests passed (exit 0). Coverage: statements 93.19% >= 90% floor, branches 84.63% >= 80% floor. No source files were changed; this is an investigation task only."
+    "status": "skipped",
+    "detail": "No source files changed. This is a plan_decomposed audit task; no code was written. Contract tests were not run as no implementation change was made. The deterministic host finalizer will run tests on the complete worktree."
   },
   "codegraph": {
     "status": "skipped",
     "reason": "non_code_change",
-    "note": "No source files changed. Only mac-evidence.json was written. CodeGraph sync not required per AGENTS.md policy for non-code changes."
+    "note": "Only mac-evidence.json was written. No source files changed. CodeGraph sync not required per policy for non-code investigation tasks."
   },
   "assumptions": [
-    "The task worktree is a sandboxed replica; push to canonical remote is handled by the deterministic host finalizer.",
-    "The dream-repair fingerprint dreamrepair:6c70466c971039af1b03716f9a03eb27 and memory record mem_d4486ff9feb44de3bd071742114b95d0 are referenced in task context; their content was not directly accessible in this sandbox but the source code evidence independently confirms the ACTIONABLE verdict.",
-    "A prior investigation attempt (agent_natasha, task_285b806c104a48079dbc9fc5d9ce5dd3 attempt 1) reached the same ACTIONABLE verdict; this attempt independently corroborates it with fresh source inspection."
+    "The task worktree is the sandboxed replica at $MAC_TASK_WORKSPACE/repo-lease_50cfca90e16443fd889cabbf01af8b6b; HEAD is e0e978b.",
+    "evidence_type=plan_decomposed and status=complete are the correct values for this audit/decomposition task as specified in the task description.",
+    "The `latest` dict key is the agent `source` field from observability events, which matches agent.id; verified by cross-reading _check_fleet_pin_divergence and the test stubs that use agent.id as the `source` field.",
+    "The minor issue of target_agent_id not being set is noted as a usability gap, not a correctness defect; it does not affect correctness of finding generation or dedup."
   ]
 }
