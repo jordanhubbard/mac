@@ -78,6 +78,10 @@ from mac.gitops import (
     validate_git_ref,
     validate_git_remote_url,
 )
+from mac.environment_contract import (
+    derive_environment_contract,
+    validate_environment_contract,
+)
 
 
 JsonDict = Dict[str, Any]
@@ -3315,6 +3319,25 @@ class MacWorker:
             detail={"agent_id": self.agent_id, "policy": self._policy_payload()},
         )
 
+    def _is_onboarding_task(self, task: JsonDict) -> bool:
+        """Return True when this task is an onboarding task.
+
+        Onboarding tasks are identified by origin.onboarding == True OR by
+        the absence of a repository_contract with a schema field.
+        """
+        metadata = task.get("metadata") if isinstance(task, dict) else None
+        if not isinstance(metadata, dict):
+            return False
+        origin = metadata.get("origin")
+        if not isinstance(origin, dict):
+            return False
+        if origin.get("onboarding") is True:
+            return True
+        contract = origin.get("repository_contract")
+        if not isinstance(contract, dict) or not contract.get("schema"):
+            return True
+        return False
+
     def _prepare_task_workspace(self, task: JsonDict, lease: JsonDict) -> Path:
         task_dir = self.workspace / _safe_path_component(task["id"])
         task_dir.mkdir(parents=True, exist_ok=True)
@@ -3329,6 +3352,35 @@ class MacWorker:
                 json.dumps(repository_context, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
+        if repository_context is not None and self._is_onboarding_task(task):
+            worktree_dir = Path(repository_context.get("repository_worktree") or "")
+            if worktree_dir.is_dir():
+                try:
+                    env_contract = derive_environment_contract(worktree_dir)
+                    env_contract = validate_environment_contract(env_contract)
+                    (task_dir / "environment-contract.json").write_text(
+                        json.dumps(env_contract, indent=2, sort_keys=True),
+                        encoding="utf-8",
+                    )
+                    metadata = task.setdefault("metadata", {})
+                    if isinstance(metadata, dict):
+                        runtime = metadata.setdefault("runtime", {})
+                        if isinstance(runtime, dict):
+                            runtime["environment_contract"] = env_contract
+                    self._observe_log(
+                        "worker.environment_contract.derived",
+                        subject_type="task",
+                        subject_id=str(task.get("id") or ""),
+                        detail={"status": env_contract.get("preflight", {}).get("status", "unknown")},
+                    )
+                except Exception as _env_exc:
+                    self._observe_log(
+                        "worker.environment_contract.derivation_failed",
+                        level="warning",
+                        subject_type="task",
+                        subject_id=str(task.get("id") or ""),
+                        detail={"error": str(_env_exc)},
+                    )
         (task_dir / "task.json").write_text(
             json.dumps({"task": task, "lease": lease}, indent=2, sort_keys=True),
             encoding="utf-8",
