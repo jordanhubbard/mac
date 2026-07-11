@@ -552,6 +552,178 @@ PY''',
     assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
+def test_sandbox_toolchain_setup_provisions_cargo_from_existing_cargo_home(tmp_path):
+    """cargo is already installed in ~/.cargo/bin but not on the restricted sandbox
+    PATH (MAC_SANDBOX_BASE_PATH).  The toolchain setup must detect the existing
+    installation and symlink it into MAC_TOOLCHAIN_BIN so ``command -v cargo``
+    succeeds — fixing the false-negative that caused tasks requiring cargo to fail
+    provisioning even on agents that had Rust installed."""
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    fake_cargo_home = tmp_path / "fake-cargo"
+    (fake_cargo_home / "bin").mkdir(parents=True)
+    fake_cargo = fake_cargo_home / "bin" / "cargo"
+    fake_cargo.write_text("#!/bin/sh\nprintf 'cargo fake\\n'\n", encoding="utf-8")
+    fake_cargo.chmod(0o755)
+
+    task_file = workspace / "task.json"
+    task_file.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "repository_contract": {
+                            "schema": "mac.repository_contract.v1",
+                            "toolchain": {"required_commands": ["cargo"]},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for name in ("bash", "chmod", "id", "ln", "mkdir"):
+        target = shutil.which(name)
+        assert target, name
+        (fake_bin / name).symlink_to(target)
+
+    script = "\n".join(
+        [
+            te._sandbox_toolchain_setup_shell(),
+            "mac_sandbox_toolchain_setup",
+            r'''"$MAC_SANDBOX_PYTHON" - <<'PY'
+import json, os, shutil, subprocess
+assert shutil.which("cargo"), "cargo not on PATH: " + os.environ.get("PATH", "")
+out = subprocess.run(["cargo"], capture_output=True, text=True)
+assert out.returncode == 0, out.stderr
+assert "cargo fake" in out.stdout
+delta_path = os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "environment-delta.json")
+with open(delta_path, encoding="utf-8") as handle:
+    delta = json.load(handle)
+assert delta["commands"] == ["cargo"]
+assert delta["missing_after"] == []
+PY''',
+        ]
+    )
+
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=workspace,
+        env={
+            **os.environ,
+            "PATH": str(fake_bin),
+            "MAC_SANDBOX_BASE_PATH": str(fake_bin),
+            "CARGO_HOME": str(fake_cargo_home),
+            "MAC_TASK_WORKSPACE": str(workspace),
+            "MAC_TOOLCHAIN_ROOT": str(workspace / ".mac-toolchain"),
+            "MAC_TASK_FILE": str(task_file),
+            "MAC_SANDBOX_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+
+def test_sandbox_toolchain_setup_cargo_falls_back_to_rustup_when_absent(tmp_path):
+    """When cargo is absent from CARGO_HOME/bin, the toolchain setup falls back
+    to downloading via rustup.  A fake curl + sh pair is used so the test
+    stays offline and fast.  The fake curl emits a shell script to stdout
+    (as the real curl -fsSL https://sh.rustup.rs does) which the setup pipes
+    to sh -s, creating cargo in CARGO_HOME/bin."""
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    fake_cargo_home = tmp_path / "fake-cargo"
+    (fake_cargo_home / "bin").mkdir(parents=True)
+
+    task_file = workspace / "task.json"
+    task_file.write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "repository_contract": {
+                            "schema": "mac.repository_contract.v1",
+                            "toolchain": {"required_commands": ["cargo"]},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for name in ("bash", "cat", "chmod", "id", "ln", "mkdir", "sh"):
+        target = shutil.which(name)
+        assert target, name
+        (fake_bin / name).symlink_to(target)
+
+    # The fake curl outputs a shell installer script to stdout, mimicking
+    # `curl -fsSL https://sh.rustup.rs`.  The setup pipes that to sh -s which
+    # executes it, creating cargo in CARGO_HOME/bin.
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/bin/sh\n"
+        "# Emit a minimal rustup installer script to stdout for piping to sh\n"
+        "cat << \'INSTALLER\'\n"
+        "#!/bin/sh\n"
+        "mkdir -p \"${CARGO_HOME:-$HOME/.cargo}/bin\"\n"
+        "printf \'#!/bin/sh\\nprintf \"cargo from rustup\\\\n\"\\n\' "
+        "> \"${CARGO_HOME:-$HOME/.cargo}/bin/cargo\"\n"
+        "chmod +x \"${CARGO_HOME:-$HOME/.cargo}/bin/cargo\"\n"
+        "INSTALLER\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    script = "\n".join(
+        [
+            te._sandbox_toolchain_setup_shell(),
+            "mac_sandbox_toolchain_setup",
+            r'''"$MAC_SANDBOX_PYTHON" - <<'PY'
+import json, os, shutil, subprocess
+assert shutil.which("cargo"), "cargo not on PATH: " + os.environ.get("PATH", "")
+out = subprocess.run(["cargo"], capture_output=True, text=True)
+assert out.returncode == 0, out.stderr
+assert "cargo from rustup" in out.stdout
+delta_path = os.path.join(os.environ["MAC_TOOLCHAIN_ROOT"], "environment-delta.json")
+with open(delta_path, encoding="utf-8") as handle:
+    delta = json.load(handle)
+assert delta["commands"] == ["cargo"]
+assert delta["missing_after"] == []
+PY''',
+        ]
+    )
+
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=workspace,
+        env={
+            **os.environ,
+            "PATH": str(fake_bin),
+            "MAC_SANDBOX_BASE_PATH": str(fake_bin),
+            "CARGO_HOME": str(fake_cargo_home),
+            "MAC_TASK_WORKSPACE": str(workspace),
+            "MAC_TOOLCHAIN_ROOT": str(workspace / ".mac-toolchain"),
+            "MAC_TASK_FILE": str(task_file),
+            "MAC_SANDBOX_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
 def test_sandboxed_repo_task_runs_verification_before_download(tmp_path, monkeypatch):
     workspace = tmp_path / "task"
     workspace.mkdir()

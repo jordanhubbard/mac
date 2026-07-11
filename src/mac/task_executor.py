@@ -4374,6 +4374,30 @@ PYGH
         command -v apt-get >/dev/null 2>&1 || return 1
         DEBIAN_FRONTEND=noninteractive apt-get update >> "$mac_log" 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends make >> "$mac_log" 2>&1
         ;;
+      cargo|rustc|rustup)
+        # Cargo lives at ~/.cargo/bin, which is not on MAC_SANDBOX_BASE_PATH.
+        # Avoid a false-negative by first promoting any existing installation
+        # into the toolchain bin, then falling back to a rustup-based install.
+        mac_cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+        if [ -x "$mac_cargo_home/bin/cargo" ]; then
+          for mac_rust_bin in cargo rustc rustup rust-analyzer; do
+            [ -x "$mac_cargo_home/bin/$mac_rust_bin" ] && \
+              ln -sf "$mac_cargo_home/bin/$mac_rust_bin" "$MAC_TOOLCHAIN_BIN/$mac_rust_bin"
+          done
+          mac_refresh_sandbox_path
+          command -v cargo >/dev/null 2>&1 && return 0
+        fi
+        command -v curl >/dev/null 2>&1 || return 1
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path >> "$mac_log" 2>&1 || return 1
+        mac_cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+        for mac_rust_bin in cargo rustc rustup; do
+          [ -x "$mac_cargo_home/bin/$mac_rust_bin" ] && \
+            ln -sf "$mac_cargo_home/bin/$mac_rust_bin" "$MAC_TOOLCHAIN_BIN/$mac_rust_bin"
+        done
+        mac_refresh_sandbox_path
+        command -v cargo >/dev/null 2>&1 && return 0
+        return 1
+        ;;
       *)
         return 1
         ;;
