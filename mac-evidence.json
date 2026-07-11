@@ -3,7 +3,7 @@
   "evidence_type": "repo_change",
   "task_id": "task_6227c90a838f4af981fc2af5123dbcda",
   "status": "complete",
-  "summary": "Conducted a full static and empirical audit of src/mac/evidence_blobs.py store_blob() covering all 7 requested investigation points. Key findings: (1) SOUND: mkstemp creates 0600 on Linux regardless of umask (empirically verified with 3 umask values); (2) SOUND: chmod at line 120 precedes os.replace() at line 121; (3) SOUND: no TOCTOU window on new-blob path; (4) REAL BUG: module docstring falsely claims post-rename path.chmod(0o600) is a fallback for the dedup/already-exists path — code analysis and empirical test show it is inside if not path.exists(): and never runs for existing blobs; (5) REAL BUG (test gap): test_store_blob_sets_mode_0600 only tests the new-blob path; (6) DEFENSE-IN-DEPTH: fchmod(handle.fileno(), 0o600) inside the with block would be more POSIX-portable on NFS. Committed audit-findings-blobs.txt, pushed branch, opened PR #218. All 16 evidence_blobs tests pass; full contract test suite (scripts/run-contract-tests.sh) passes (coverage: statements 93.19% >= 90%; branches 84.61% >= 80%).",
+  "summary": "Conducted a full static and empirical audit of src/mac/evidence_blobs.py store_blob() covering all 7 requested investigation points. Key findings: (1) SOUND: mkstemp creates 0600 on Linux regardless of umask (empirically verified with 3 umask values); (2) SOUND: chmod at line 120 precedes os.replace() at line 121; (3) SOUND: no TOCTOU window on new-blob path; (4) REAL BUG: module docstring falsely claims post-rename path.chmod(0o600) is a fallback for the dedup/already-exists path \u2014 code analysis and empirical test show it is inside if not path.exists(): and never runs for existing blobs; (5) REAL BUG (test gap): test_store_blob_sets_mode_0600 only tests the new-blob path; (6) DEFENSE-IN-DEPTH: fchmod(handle.fileno(), 0o600) inside the with block would be more POSIX-portable on NFS. Committed audit-findings-blobs.txt, pushed branch, opened PR #218. All 16 evidence_blobs tests pass; full contract test suite (scripts/run-contract-tests.sh) passes (coverage: statements 93.19% >= 90%; branches 84.61% >= 80%).",
   "finding": {
     "audit_subject": "src/mac/evidence_blobs.py store_blob() 0600 chmod security guarantee",
     "finding_1_mkstemp_mode": {
@@ -35,10 +35,10 @@
     "Read MAC executor policy and task.json.",
     "Read src/mac/evidence_blobs.py and tests/test_evidence_blobs.py in full.",
     "Point 1: Verified mkstemp creates 0600 on Linux empirically with 3 umask values (022, 002, 000); confirmed via Python source (os.open with hardcoded 0600).",
-    "Point 2: Confirmed line order: chmod(0o600) at line 120, os.replace() at line 121 — both inside if not path.exists(): block.",
-    "Point 3: Empirically tested TOCTOU window with concurrent polling thread — mode at target path is always 0600 immediately after rename.",
-    "Point 4: Found docstring bug — claims post-rename chmod is a fallback for dedup path but it is inside if not path.exists(): block. Verified empirically: blob stored, chmoded to 0644, second store_blob() call leaves mode at 0644.",
-    "Point 5: Analyzed test_store_blob_sets_mode_0600 — only tests new-blob path. No test for idempotent/existing-blob mode enforcement.",
+    "Point 2: Confirmed line order: chmod(0o600) at line 120, os.replace() at line 121 \u2014 both inside if not path.exists(): block.",
+    "Point 3: Empirically tested TOCTOU window with concurrent polling thread \u2014 mode at target path is always 0600 immediately after rename.",
+    "Point 4: Found docstring bug \u2014 claims post-rename chmod is a fallback for dedup path but it is inside if not path.exists(): block. Verified empirically: blob stored, chmoded to 0644, second store_blob() call leaves mode at 0644.",
+    "Point 5: Analyzed test_store_blob_sets_mode_0600 \u2014 only tests new-blob path. No test for idempotent/existing-blob mode enforcement.",
     "Point 6: Verified os.fchmod(handle.fileno(), 0o600) works inside with block; analyzed NFS portability advantages.",
     "Ran .venv/bin/pytest tests/test_evidence_blobs.py -v: 16/16 passed.",
     "Wrote audit-findings-blobs.txt with all 7 findings classified.",
@@ -79,7 +79,7 @@
     "audit_outcome": "No source code changes were made; only audit-findings-blobs.txt (documentation) was added."
   },
   "repo": {
-    "head_sha": "f8e8898722e3bbab58d3a732b51bb0078b86fa4b",
+    "head_sha": "1fec119bc25f3b84cf1daf7553ca098837683737",
     "pushed": true,
     "dirty": false,
     "files_changed": [
