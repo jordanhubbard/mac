@@ -1,48 +1,55 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_4c28e96a50c445d9936c5a5699bee8df",
+  "task_id": "task_3c0dc9f4ea8b4079a5a00d4d15d7746d",
   "status": "complete",
-  "summary": "Hardened evidence_blobs.store_blob() to apply chmod(0o600) on the temp file path before the atomic os.replace rename, eliminating the TOCTOU window. Updated module docstring to describe the fd-based/temp-path chmod approach. Post-rename path.chmod(0o600) retained as defense-in-depth fallback. All 16 tests pass.",
+  "summary": "Audit of evidence_blobs.store_blob() chmod ordering against the security finding. The current code applies Path(tmp_name).chmod(0o600) BEFORE os.replace(tmp_name, path) (lines 120-121 of src/mac/evidence_blobs.py), which correctly eliminates the TOCTOU window. The original finding (chmod after rename) no longer applies. All 16 tests in test_evidence_blobs.py pass, including test_store_blob_sets_mode_0600. No code change required.",
   "repo": {
-    "head_sha": "565636c874b99d1f98eb23cf83c891da631a5645",
+    "head_sha": "6d41637",
     "pushed": false,
-    "dirty": true,
-    "files_changed": [
-      "src/mac/evidence_blobs.py"
-    ]
+    "dirty": false,
+    "files_changed": []
   },
   "tests": {
-    "command": ".venv/bin/python3 -m pytest tests/test_evidence_blobs.py -q",
+    "command": ".venv/bin/pytest tests/test_evidence_blobs.py -v",
     "status": "passed",
     "detail": {
       "total": "16 passed, 0 failed",
-      "test_store_blob_sets_mode_0600": "PASSED",
       "test_store_and_read_blob_roundtrip": "PASSED",
+      "test_store_blob_sets_mode_0600": "PASSED",
       "test_read_blob_fails_closed_on_corruption": "PASSED",
       "test_large_artifact_externalizes_and_reads_back": "PASSED",
       "test_small_artifact_stays_inline": "PASSED",
       "test_unconfigured_blob_store_keeps_inline_behavior": "PASSED",
       "test_missing_blob_fails_closed_with_clear_error": "PASSED",
       "test_corrupted_blob_fails_closed_on_read": "PASSED",
-      "test_identical_content_across_evidence_deduplicates": "PASSED"
+      "test_identical_content_across_evidence_deduplicates": "PASSED",
+      "test_inline_max_bytes_default_when_env_unset": "PASSED",
+      "test_inline_max_bytes_default_on_non_integer_value": "PASSED",
+      "test_digest_hex_raises_on_invalid_digest": "PASSED",
+      "test_read_blob_raises_on_wrong_uri_scheme": "PASSED",
+      "test_read_blob_raises_on_missing_sha256_prefix": "PASSED",
+      "test_read_blob_raises_on_expected_sha256_mismatch": "PASSED",
+      "test_store_blob_cleanup_on_write_error": "PASSED"
     }
   },
-  "checks": {
-    "syntax": {
-      "command": "python3 -m py_compile src/mac/evidence_blobs.py",
-      "status": "passed"
-    }
-  },
-  "codegraph": {
-    "changed_files": ["src/mac/evidence_blobs.py"],
-    "affected_modules": ["mac.evidence_blobs"],
-    "public_api_changed": false,
-    "note": "One line added inside store_blob() body (Path(tmp_name).chmod(0o600)); no signature or public API changes. Docstring updated. No callers impacted by signature change."
+  "audit_findings": {
+    "finding_description": "Security audit of evidence_blobs.store_blob() chmod-0600 ordering relative to os.replace() atomic rename.",
+    "original_concern": "The finding alleged that chmod(0o600) was called AFTER the atomic os.replace() rename rather than before it (as done correctly in bitwarden.py). If true, this would create a brief TOCTOU window during which the final blob file would be world-readable under a permissive umask.",
+    "current_code_order": "CORRECT: chmod is applied to the temp file path BEFORE the atomic rename. Line 120 (Path(tmp_name).chmod(0o600)) precedes line 121 (os.replace(tmp_name, path)).",
+    "permission_window_race": "NONE: The temp file is chmoded to 0600 while it still has the tmp_name path. The os.replace() then atomically promotes the already-restricted file to the final path. There is no window during which the final path exists with permissive permissions.",
+    "tmpfile_default_permissions": "tempfile.mkstemp() on Linux already creates files with mode 0600 (observed: 0o100600) regardless of umask, because it passes O_CREAT|O_EXCL with 0600 internally. However, the explicit chmod is still correct practice for portability and defense-in-depth, and matches the bitwarden.py pattern.",
+    "dedup_path_protection": "The post-rename path.chmod(0o600) at line 129 (inside try/except OSError) serves as defense-in-depth for the pre-existing-file dedup path, where the blob already exists and no rename occurs. This path is safe because the file was written by a previous correct invocation.",
+    "bitwarden_comparison": "bitwarden.py (src/mac/_hermes/agent/secret_sources/bitwarden.py, line 160): os.chmod(tmp, 0o600) is called before os.replace(tmp, path) at line 161 — identical pattern to the current evidence_blobs.py implementation.",
+    "severity": "NONE — the original finding does not apply to the current code. The code is safe-as-is.",
+    "verdict": "SAFE. No code changes required. The security model is correctly implemented: (1) mkstemp creates a 0600 temp file, (2) content is written, (3) chmod 0600 is applied to the temp path before rename, (4) os.replace atomically renames the already-restricted file, (5) a defense-in-depth post-rename chmod covers the dedup path.",
+    "code_location": "src/mac/evidence_blobs.py, store_blob() function, lines 116-130",
+    "git_sha_audited": "6d41637"
   },
   "assumptions": [
-    "The fd is consumed by os.fdopen context manager, so Path(tmp_name).chmod(0o600) on the tmp path is used instead of os.fchmod(fd, 0o600) as the fd is closed after the with block.",
-    "The task instructs not to commit or push here; the deterministic finalizer handles commit and push.",
-    "The pre-existing post-rename path.chmod(0o600) is retained as a defense-in-depth fallback for pre-existing-file dedup path."
+    "This is an investigation-only task; no code changes are made.",
+    "The worktree git HEAD is 6d41637 (MAC OpenShell sandbox baseline) and no uncommitted changes exist.",
+    "The existing mac-evidence.json in the worktree referenced task_4c28e96a50c445d9936c5a5699bee8df (a prior fix task); this evidence replaces it for the current investigation task.",
+    "Platform-specific umask behavior may differ on some non-Linux systems; the explicit chmod is still correct practice."
   ]
 }
