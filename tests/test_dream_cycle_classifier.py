@@ -390,3 +390,98 @@ def test_area_signals_is_non_empty_list():
     for area in provider_areas:
         assert isinstance(area["signals"], list)
         assert len(area["signals"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Skill-area classification tests (mem-11 repair coverage)
+# ---------------------------------------------------------------------------
+
+
+def test_skill_curator_pattern_detected():
+    """Candidate with 'curator' keyword triggers a skill area."""
+    cand = _make_candidate(
+        summary="curator updated the skill bundle",
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    skill_areas = [a for a in report["areas"] if a["area_type"] == "skill"]
+    assert len(skill_areas) >= 1, "expected at least one skill area for 'curator'"
+    area_names = {a["area_name"] for a in skill_areas}
+    assert "skill" in area_names
+
+
+def test_skill_hermes_skill_pattern_detected():
+    """Candidate with 'hermes.skill' triggers a skill area."""
+    cand = _make_candidate(
+        summary="hermes.skill invocation failed during agent startup",
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    skill_areas = [a for a in report["areas"] if a["area_type"] == "skill"]
+    assert len(skill_areas) >= 1, "expected at least one skill area for 'hermes.skill'"
+    area_names = {a["area_name"] for a in skill_areas}
+    assert "skill" in area_names
+
+
+def test_skill_command_and_utils_patterns_detected():
+    """skill_command and skill_utils keywords each produce skill area signals."""
+    cand = _make_candidate(
+        summary="skill_command registered but skill_utils import failed",
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    skill_areas = [a for a in report["areas"] if a["area_type"] == "skill"]
+    assert len(skill_areas) >= 1, "expected skill areas for skill_command / skill_utils"
+    combined_signals = []
+    for area in skill_areas:
+        combined_signals.extend(area["signals"])
+    assert any("skill[_-]command" in s for s in combined_signals), \
+        "skill_command pattern not in signals"
+    assert any("skill[_-]utils" in s for s in combined_signals), \
+        "skill_utils pattern not in signals"
+
+
+def test_skill_area_medium_confidence_with_two_evidence():
+    """skill keyword + 2 evidence records upgrades the skill area to medium confidence."""
+    cand = _make_candidate(
+        summary="skill usage observed during nap consolidation",
+        evidence_count=2,
+        confidence="low",
+    )
+    report = classify_candidate(cand)
+    skill_areas = [a for a in report["areas"] if a["area_type"] == "skill"]
+    assert len(skill_areas) >= 1, "expected a skill area"
+    for area in skill_areas:
+        assert area["confidence"] == "medium", \
+            "expected medium confidence with 2 evidence records, got: %s" % area["confidence"]
+        assert area["confidence_score"] == pytest.approx(0.65, abs=1e-9)
+
+
+def test_skill_area_high_confidence_with_three_evidence():
+    """skill keyword + 3 evidence records yields high confidence."""
+    cand = _make_candidate(
+        summary="skill invocation traced across three sessions",
+        evidence_count=3,
+        confidence="low",
+    )
+    report = classify_candidate(cand)
+    skill_areas = [a for a in report["areas"] if a["area_type"] == "skill"]
+    assert len(skill_areas) >= 1, "expected a skill area"
+    for area in skill_areas:
+        assert area["confidence"] == "high", \
+            "expected high confidence with 3 evidence records, got: %s" % area["confidence"]
+        assert area["confidence_score"] == pytest.approx(0.90, abs=1e-9)
+    assert report["overall_confidence"] == "high"
+
+
+def test_skill_and_tool_co_occurrence():
+    """Candidate with both skill and tool keywords produces both area_type=skill and area_type=tool entries."""
+    cand = _make_candidate(
+        summary="skill bundle loaded then terminal_tool executed a command",
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    skill_areas = [a for a in report["areas"] if a["area_type"] == "skill"]
+    tool_areas = [a for a in report["areas"] if a["area_type"] == "tool"]
+    assert len(skill_areas) >= 1, "expected at least one skill area"
+    assert len(tool_areas) >= 1, "expected at least one tool area"

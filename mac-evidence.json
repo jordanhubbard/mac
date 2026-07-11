@@ -1,60 +1,61 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_078b0696948d4f0b9e4d9e704bc5c1a5",
+  "task_id": "task_65583251b5a54c2e8ccb270f60ec4658",
   "status": "complete",
-  "summary": "Verified mac_image_generate plugin contract and media routing tests. Ran python3 -m pytest tests/test_openclaw_gateway_deploy.py tests/test_media_routing.py -v: 61 passed, 0 failed (2.94s). All three required tests confirmed green: test_mac_image_generate_posts_to_hub_media_router_and_writes_png, test_mac_continuity_plugin_registers_runtime_hook_and_tools, test_back_compat_synthesizes_image_generate_from_flat_vars. CodeGraph initialized (39,130 nodes, 128,146 edges). mac-evidence.json updated and pushed to task branch.",
+  "summary": "Added 6 missing skill-area test functions to tests/test_dream_cycle_classifier.py covering curator pattern, hermes.skill pattern, skill_command+skill_utils co-patterns, medium confidence (2 evidence), high confidence (3 evidence), and skill+tool co-occurrence. All 33 tests pass (27 pre-existing + 6 new). CodeGraph initialized: 39,136 nodes, 128,165 edges.",
   "steps_performed": [
     "Read executor policy and task.json to understand requirements.",
-    "Located task worktree at /sandbox/task_078b0696948d4f0b9e4d9e704bc5c1a5/repo-lease_3c683a42713f4870bfe0ec00821748c7.",
+    "Located task worktree at /sandbox/task_65583251b5a54c2e8ccb270f60ec4658/repo-lease_bde57d2bb4b24eff87b83874d352ce52.",
     "Confirmed .venv with Python 3.12.13 and pytest already bootstrapped.",
-    "Created task branch mac/agent_bullwinkle/task_078b0696948d4f0b9e4d9e704bc5c1a5-lease_3c683a42713f4870bf from origin/main (dd22359a9c8da797427f2069fb59e788c94a91fc).",
-    "Ran python3 -m pytest tests/test_openclaw_gateway_deploy.py tests/test_media_routing.py -v: 61 passed, 0 failed.",
-    "Confirmed test_mac_image_generate_posts_to_hub_media_router_and_writes_png PASSED (plugin posts to /v1/media/image.generate via hubApi, reads PNG from disk).",
-    "Confirmed test_mac_continuity_plugin_registers_runtime_hook_and_tools PASSED (mac_image_generate confirmed in tool registry).",
-    "Confirmed test_back_compat_synthesizes_image_generate_from_flat_vars PASSED (media routing table synthesizes image.generate from flat env vars).",
-    "Ran codegraph init: 39,130 nodes, 128,146 edges. Ran codegraph affected: no affected test files from test suite changes.",
-    "Updated mac-evidence.json with task results. Committed and pushed branch to origin."
+    "Read tests/test_dream_cycle_classifier.py to understand existing coverage (27 tests).",
+    "Read src/mac/dream_cycle_classifier.py to understand _SKILL_PATTERNS, _confidence_for, and _combined_text logic.",
+    "Verified classifier behavior interactively for all 6 new test scenarios.",
+    "Appended 6 new test functions under 'Skill-area classification tests (mem-11 repair coverage)' section.",
+    "Ran python3 -m pytest tests/test_dream_cycle_classifier.py -v: 33 passed, 0 failed (0.09s).",
+    "Ran codegraph init: 39,136 nodes, 128,165 edges. Ran codegraph affected tests/test_dream_cycle_classifier.py: no additional test files affected.",
+    "Updated mac-evidence.json with task results."
   ],
   "tests": {
-    "command": "python3 -m pytest tests/test_openclaw_gateway_deploy.py tests/test_media_routing.py -v",
-    "result": "61 passed, 0 failed, 1 warning in 2.94s",
+    "command": "python3 -m pytest tests/test_dream_cycle_classifier.py -v",
+    "result": "33 passed in 0.09s",
     "status": "passed",
     "exit_code": 0,
     "key_tests": {
-      "test_mac_image_generate_posts_to_hub_media_router_and_writes_png": "PASSED",
-      "test_mac_continuity_plugin_registers_runtime_hook_and_tools": "PASSED",
-      "test_back_compat_synthesizes_image_generate_from_flat_vars": "PASSED"
+      "test_skill_curator_pattern_detected": "PASSED",
+      "test_skill_hermes_skill_pattern_detected": "PASSED",
+      "test_skill_command_and_utils_patterns_detected": "PASSED",
+      "test_skill_area_medium_confidence_with_two_evidence": "PASSED",
+      "test_skill_area_high_confidence_with_three_evidence": "PASSED",
+      "test_skill_and_tool_co_occurrence": "PASSED"
     },
-    "total_tests": 61,
-    "passed": 61,
+    "total_tests": 33,
+    "passed": 33,
     "failed": 0
   },
   "codegraph": {
     "status": "passed",
-    "init": "codegraph init completed: 39,130 nodes, 128,146 edges",
+    "init": "codegraph init completed: 39,136 nodes, 128,165 edges",
     "affected_files": [
-      "tests/test_openclaw_gateway_deploy.py",
-      "tests/test_media_routing.py"
+      "tests/test_dream_cycle_classifier.py"
     ],
-    "affected_result": "1 affected test file (ide/tests/workbench-project-tree.spec.ts) \u2014 outside the scope of this task",
-    "audit_outcome": "No source code changes were made. Task verified existing tests pass."
+    "affected_result": "No additional test files affected by the changed test file.",
+    "audit_outcome": "Only test file changed; no source code modifications required."
   },
   "repo": {
-    "head_sha": "a122b4266755323b0e9c3d74109dad3e74dc7c25",
-    "pushed": true,
-    "dirty": false,
+    "head_sha": "547dbcc6a57ceeaabeed7a4d87ae1f7dc778201a",
+    "pushed": false,
+    "dirty": true,
     "files_changed": [
+      "tests/test_dream_cycle_classifier.py",
       "mac-evidence.json"
     ],
-    "branch": "mac/agent_bullwinkle/task_078b0696948d4f0b9e4d9e704bc5c1a5-lease_3c683a42713f4870bf",
-    "pr_url": "https://github.com/jordanhubbard/mac/pull/217",
-    "pr_number": 217
+    "branch": "master"
   },
   "assumptions": [
-    "No source code changes required \u2014 task is purely verification of existing tests.",
-    "Branch created from origin/main (canonical tip dd22359a9c8da797427f2069fb59e788c94a91fc) since no prior task branch existed.",
+    "All 6 skill-area tests are pure-Python with no ControlPlane, SQLite, or Qdrant dependencies.",
+    "The _SKILL_PATTERNS in dream_cycle_classifier.py already supports all required patterns (curator, hermes.skill, skill_command, skill_utils) — no source changes needed.",
     "evidence_type=repo_change used as required by task description and execution contract.",
-    "files_changed lists mac-evidence.json as the only file modified."
+    "The deterministic host finalizer will handle push and canonical freshness."
   ]
 }
