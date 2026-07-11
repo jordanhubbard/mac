@@ -30,9 +30,9 @@ Design constraints:
   (owner-read/write only) to prevent other local users from reading
   evidence payloads. ``store_blob`` applies ``chmod(0o600)`` to the temp
   path before the atomic rename, eliminating the TOCTOU window between
-  rename and a post-rename chmod. The post-rename ``path.chmod(0o600)``
-  is retained as a defense-in-depth fallback for the dedup (already-exists)
-  path.
+  rename and a post-rename chmod. An unconditional ``path.chmod(0o600)``
+  is applied after the write-or-dedup block, re-enforcing permissions on
+  both new-blob and dedup (already-exists) paths.
 """
 from __future__ import annotations
 
@@ -125,10 +125,10 @@ def store_blob(root: Path, content: bytes) -> str:
             except OSError:
                 pass
             raise
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
     return blob_uri(digest)
 
 

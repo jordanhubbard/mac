@@ -60,6 +60,30 @@ def test_store_blob_sets_mode_0600(tmp_path):
     )
 
 
+def test_store_blob_dedup_path_enforces_mode_0600(tmp_path):
+    """store_blob must re-enforce mode 0600 even when the blob already exists (dedup path).
+
+    Verifies fix for the bug where path.chmod(0o600) was inside the
+    'if not path.exists()' block and therefore never ran on the dedup path,
+    allowing permission drift to go uncorrected.
+    """
+    content = b"dedup sensitive payload"
+    digest = hashlib.sha256(content).hexdigest()
+    path = evidence_blobs.blob_path(tmp_path, digest)
+    # First call: writes the blob at 0600
+    evidence_blobs.store_blob(tmp_path, content)
+    # Simulate permission drift (e.g. by a backup restore or operator error)
+    path.chmod(0o644)
+    assert path.stat().st_mode & 0o777 == 0o644, "pre-condition: mode was widened"
+    # Second call: dedup path — should re-enforce 0600
+    evidence_blobs.store_blob(tmp_path, content)
+    actual_mode = path.stat().st_mode & 0o777
+    assert actual_mode == 0o600, (
+        "Expected blob file mode 0600 after dedup store_blob(), got %04o. "
+        "store_blob must enforce chmod(0o600) on the dedup (already-exists) path." % actual_mode
+    )
+
+
 def test_read_blob_fails_closed_on_corruption(tmp_path):
     content = b"payload"
     uri = evidence_blobs.store_blob(tmp_path, content)
