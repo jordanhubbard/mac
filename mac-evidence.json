@@ -5,7 +5,7 @@
   "evidence_type": "repo_change",
   "summary": "Write final evidence for skill-area dream classifier repair: 33 tests pass, branch pushed to origin, PR #220 created.",
   "repo": {
-    "head_sha": "edcfd0cee2c61d83d35007bba05711d2492e3c45",
+    "head_sha": "c13fe44edf6583e476c005f2e27b7aa442a0e9be",
     "branch": "mac/agent_rocky/task_6c6db80120784c3da45131de135aef9e-lease_e08ef96c86a04c7c94",
     "remote_url": "https://github.com/jordanhubbard/mac.git",
     "remote_ref": "refs/heads/mac/agent_rocky/task_6c6db80120784c3da45131de135aef9e-lease_e08ef96c86a04c7c94",
@@ -38,10 +38,10 @@
   "codegraph": {
     "status": "skipped",
     "reason": "non_code_change",
-    "note": "No new source code changes in this task worktree. The files_changed reflect the integrated skill-area classifier work already present in origin/main (task_65583251b5a54c2e8ccb270f60ec4658). This task only updates mac-evidence.json."
+    "note": "No new source code changes in this task worktree. files_changed reflects integrated skill-area classifier work already in origin/main. CodeGraph completed at integration phase (task_176a33edc48342ffb9f89ae0a7d98f74)."
   },
   "assumptions": [
-    "The skill-area classifier code and tests landed in origin/main via the integration task (task_176a33edc48342ffb9f89ae0a7d98f74) before this evidence task was created.",
+    "Skill-area classifier code and tests landed in origin/main via integration task (task_176a33edc48342ffb9f89ae0a7d98f74).",
     "GitHub token resolved via MAC hub secrets service (github.token) for push and PR creation.",
     "Full contract test suite passed (93.06% statement, 84.42% branch coverage); targeted tests: 33 passed."
   ]
