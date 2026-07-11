@@ -1,65 +1,96 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "investigation",
-  "task_id": "task_d1b1353f398e418a989260ef845693bc",
+  "evidence_type": "repo_change",
+  "task_id": "task_58f175517c484fd9af3f5e3b8bcf846e",
   "status": "complete",
-  "summary": "Dream-cycle investigation complete. Fix is present in main: _exhausted_attempt_terminal_transition() in src/mac/services.py contains 'repairable_prerequisite = contract_failure or failure_class == \"environment\"' (line 14207) and the environment_repair_task_id metadata branch (line 14214). Both targeted tests pass: test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage and test_tick_exhausted_environment_failure_repair_task_has_environment_prerequisite_reason. Full contract suite: 5689 passed, 21 skipped, 0 failed. Prior failure (task_ca7301e511ff499697bd3178aa5ff786) is still in state=reviewing — its evidence shows pushed=True with PR #215 created, indicating a publication-gate infrastructure issue (canonical rebase conflict at the host finalizer), not a code defect. The fix from task_192b02b54bb64d5b8c24092cf7b35f66 is fully integrated in current main.",
-  "verdict": {
-    "fix_present_in_main": true,
-    "fix_location": "src/mac/services.py, _exhausted_attempt_terminal_transition(), lines 14203-14259",
-    "fix_details": {
-      "repairable_prerequisite_line": "repairable_prerequisite = contract_failure or failure_class == \"environment\"",
-      "environment_repair_task_id_branch": "repair_metadata_key = 'contract_repair_task_id' if contract_failure else 'environment_repair_task_id'",
-      "line_numbers": "14207, 14214"
+  "summary": "Audit of scripts/select-sanity-tests.py and scripts/coverage-policy.py confirms the gap: neither script has a dedicated test file, no existing test exercises their public functions indirectly, both contain pure deterministic logic independently testable without live services, and scripts/ is excluded from the coverage source path requiring sys.path injection in new tests. Full contract suite passed (93.07% statement, 84.44% branch coverage).",
+  "investigation": {
+    "scripts_audited": [
+      "scripts/select-sanity-tests.py",
+      "scripts/coverage-policy.py"
+    ],
+    "gap_confirmed": true,
+    "findings": {
+      "dedicated_test_files_exist": false,
+      "dedicated_test_file_check": "ls tests/ | grep -E 'test_select|test_coverage_policy|test_sanity' returned empty — no dedicated test file for either script exists in the test suite.",
+      "indirect_coverage_exists": false,
+      "indirect_coverage_check": "grep -rl 'select_sanity_tests|coverage_policy|from scripts|import select' tests/ returned empty — no existing test imports or exercises these script functions indirectly.",
+      "coverage_source_path": "pyproject.toml [tool.coverage.run] source=['src/mac'] — scripts/ directory is NOT included; the coverage tool does not measure scripts/ at all.",
+      "pytest_pythonpath": "pyproject.toml [tool.pytest.ini_options] pythonpath=['src'] — scripts/ is not on the Python path; tests must use sys.path.insert or importlib to import scripts/select-sanity-tests.py and scripts/coverage-policy.py.",
+      "conftest_fixtures_relevant": false,
+      "conftest_analysis": "Root conftest.py provides portfolio measurement hooks (pytest_runtest_setup/logreport/sessionfinish) and coverage context switching — no fixtures relevant to script testing. tests/conftest.py provides postgres, soul-binding, and MAC CLI fixtures — none applicable to script unit tests."
     },
-    "tests_pass": true,
-    "targeted_tests": {
-      "test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage": "PASSED",
-      "test_tick_exhausted_environment_failure_repair_task_has_environment_prerequisite_reason": "PASSED"
+    "script_analysis": {
+      "select_sanity_tests_py": {
+        "public_functions": ["select(changed)"],
+        "private_helpers": ["_git_changed_files(base)", "_module_test_candidates(path)", "_codegraph_affected(changed)"],
+        "entry_point": "main(argv)",
+        "purity_assessment": "select() is pure/deterministic when given an explicit changed-files list — it performs no I/O other than filesystem existence checks (Path.is_file()) on test file paths rooted at ROOT (repo root). _git_changed_files() and _codegraph_affected() are subprocess-dependent and would need monkeypatching or be avoided by passing --changed-file args directly to select(). All branching logic in select() (broad_paths, broad_prefixes, code_changes, canaries, mode selection) is independently exercisable by varying the changed-files input.",
+        "testable_without_live_services": true,
+        "recommended_test_functions": [
+          "test_select_returns_full_mode_for_empty_changeset",
+          "test_select_returns_full_mode_for_broad_paths",
+          "test_select_returns_full_mode_for_broad_prefixes",
+          "test_select_returns_focused_mode_for_non_code_change",
+          "test_select_returns_full_mode_when_code_has_no_affected_tests",
+          "test_select_returns_focused_mode_with_canaries_for_code_change",
+          "test_select_mode_focused_direct_codegraph_and_canary_scope",
+          "test_module_test_candidates_matches_src_mac_modules",
+          "test_module_test_candidates_ignores_non_src_paths",
+          "test_select_schema_field_is_present"
+        ]
+      },
+      "coverage_policy_py": {
+        "public_functions": ["evaluate(coverage_doc, policy_doc)"],
+        "private_helpers": ["_percentage(covered, total)"],
+        "entry_point": "main(argv)",
+        "purity_assessment": "_percentage() is a pure arithmetic function with a zero-division guard. evaluate() is pure — it takes two dicts (coverage JSON and policy TOML content) and returns a deterministic result dict with no I/O or side effects. All branching (statement floor, branch floor, require_branch_measurement, zero-total edge cases, pass/fail status) is exercisable with synthetic input dicts.",
+        "testable_without_live_services": true,
+        "recommended_test_functions": [
+          "test_percentage_zero_total_returns_100",
+          "test_percentage_normal_calculation",
+          "test_evaluate_pass_when_above_floors",
+          "test_evaluate_fail_statement_below_floor",
+          "test_evaluate_fail_branch_below_floor",
+          "test_evaluate_fail_no_branch_measurement_when_required",
+          "test_evaluate_pass_when_branch_not_required_and_zero_branches",
+          "test_evaluate_result_schema_field",
+          "test_evaluate_raises_on_missing_totals",
+          "test_evaluate_raises_on_missing_policy",
+          "test_evaluate_statements_and_branches_rounded_to_4_places"
+        ]
+      }
     },
-    "full_suite": "5689 passed, 21 skipped, 0 failed in 356.80s",
-    "prior_failure_root_cause": "infrastructure_merge_conflict",
-    "prior_failure_analysis": "task_ca7301e511ff499697bd3178aa5ff786 (state=reviewing) has pushed=True evidence with PR #215 at https://github.com/jordanhubbard/mac/pull/215. The failure was at the publication gate (canonical tip not an ancestor of task HEAD — rebase conflict in mac-evidence.json), not a code defect. The underlying fix (task_192b02b54bb64d5b8c24092cf7b35f66) completed successfully.",
-    "actionability": "not_actionable_as_code_defect",
-    "dream_cycle_fingerprint": "dreamrepair:a70ac7c2a991662c733f17aeab71ce43",
-    "conclusion": "The dream-cycle finding is resolved. The fix is in main and tests confirm correct behavior. The original evidence record reflects an infrastructure publication conflict, not a missing or broken fix."
+    "recommended_test_files": {
+      "tests/test_select_sanity_tests.py": {
+        "purpose": "Unit tests for scripts/select-sanity-tests.py — covers select(), _module_test_candidates(), and schema/mode logic",
+        "sys_path_approach": "Use sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts')) and importlib.import_module or importlib.util.spec_from_file_location to load select-sanity-tests.py (filename contains hyphens, not valid as a bare import).",
+        "key_functions_to_cover": ["select", "_module_test_candidates"]
+      },
+      "tests/test_coverage_policy.py": {
+        "purpose": "Unit tests for scripts/coverage-policy.py — covers _percentage(), evaluate(), and result structure",
+        "sys_path_approach": "Use importlib.util.spec_from_file_location('coverage_policy', Path(__file__).resolve().parents[1] / 'scripts' / 'coverage-policy.py') to load the module despite the hyphenated filename.",
+        "key_functions_to_cover": ["_percentage", "evaluate"]
+      }
+    },
+    "exact_gap": "scripts/ is absent from both tool.coverage.run.source and tool.pytest.ini_options.pythonpath. Neither script has a dedicated test file (tests/test_select_sanity_tests.py and tests/test_coverage_policy.py do not exist). No existing test exercises these functions indirectly. Both scripts contain pure deterministic APIs (select(), _percentage(), evaluate()) that are fully testable with synthetic inputs and no live service dependencies."
   },
+  "files_changed": [
+    "mac-evidence.json"
+  ],
   "tests": {
     "command": "scripts/run-contract-tests.sh",
-    "result": "5689 passed, 21 skipped, 0 failed in 356.80s",
     "status": "passed",
     "exit_code": 0,
-    "key_tests": {
-      "test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage": "PASSED",
-      "test_tick_exhausted_environment_failure_repair_task_has_environment_prerequisite_reason": "PASSED",
-      "total_contract_tests": "5689 passed, 0 failed"
-    }
+    "result": "contract suite passed; 93.07% statement coverage (floor 90.00%), 84.44% branch coverage (floor 80.00%)"
   },
   "codegraph": {
-    "status": "completed",
-    "init": "codegraph init: 39,189 nodes, 128,625 edges",
-    "affected_files": [],
-    "callers_of_exhausted_attempt_terminal_transition": [
-      "claim_task (src/mac/services.py:7681)",
-      "_auto_retry_blocked_attempt_task (src/mac/services.py:14350)"
-    ],
-    "audit_outcome": "Investigation only — no code changes made. Fix already present in services.py. CodeGraph confirms _exhausted_attempt_terminal_transition is called by claim_task and _auto_retry_blocked_attempt_task."
+    "status": "not_required",
+    "reason": "Investigation task only — no src/ code changes were made; scripts/ are outside the coverage source path; CodeGraph is not applicable for this read-only audit."
   },
-  "api_check": {
-    "task_id": "task_ca7301e511ff499697bd3178aa5ff786",
-    "state": "reviewing",
-    "title": "Run contract tests, write evidence, commit and push PR",
-    "evidence_summary": "Full contract test suite passed (93.21% statement coverage). Fix for environment failure repair-task creation confirmed. Branch pushed, PR #215 created.",
-    "pushed": true,
-    "pr_url": "https://github.com/jordanhubbard/mac/pull/215",
-    "remote_ref": "mac/agent_jordanh-worker1/task_ca7301e511ff499697bd3178aa5ff786-lease_b75e4c8cb20946b9b1",
-    "review_status": "approved",
-    "review_reason": "reviewer approved via signed verdict evidence",
-    "note": "Task remains in reviewing state — publication gate blocked by canonical rebase conflict (mac-evidence.json merge conflict). Not a code defect; infrastructure issue at publication phase."
-  },
-  "files_changed": [],
   "assumptions": [
-    "The task worktree (master branch) reflects current main state with the fix integrated.",
-    "task_ca7301e511ff499697bd3178aa5ff786 remains stuck in reviewing due to a publication-gate infrastructure issue unrelated to the code fix."
+    "The task explicitly requires NOT writing new test files — this evidence records findings only.",
+    "scripts/ requires sys.path injection or importlib.util.spec_from_file_location in new tests due to hyphenated filenames and exclusion from pytest pythonpath.",
+    "conftest.py fixtures (postgres, soul) are irrelevant to script unit tests; no new fixtures are needed for the recommended test files."
   ]
 }
