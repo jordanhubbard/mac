@@ -316,6 +316,115 @@ def test_pin_divergence_waits_out_a_recent_sweep(cp, monkeypatch):
     assert not [f for f in report["findings"] if f["kind"] == "fleet_pin_divergence"]
 
 
+
+def test_pin_divergence_flags_agent_with_no_trail_at_all(cp, monkeypatch):
+    """A heartbeating agent with zero repo-update events is flagged."""
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    known = _register_agent(cp, name="known")
+    ghost = _register_agent(cp, name="ghost")
+    cp.heartbeat_agent(known.id)
+    cp.heartbeat_agent(ghost.id)
+
+    now = sh._utcnow()
+    # Only 'known' has events; 'ghost' never appears in any status stream.
+    _stub_events(monkeypatch, cp, {
+        "worker.agentbus.repo_update.updated": [
+            {"source": known.id,
+             "created_at": (now - timedelta(days=14)).isoformat()},
+        ],
+    })
+    report = _sentinel(cp).run_once()
+    findings = {f["fingerprint"]: f for f in report["findings"]}
+    fp = "fleet_pin_divergence:%s" % ghost.id
+    assert fp in findings
+    assert findings[fp]["detail"]["lag_seconds"] is None
+    assert findings[fp]["detail"]["agent_latest_update"] is None
+
+
+def test_pin_divergence_skips_held_agents(cp, monkeypatch):
+    """An agent with dispatch_hold is never included in findings."""
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    held = _register_agent(cp, name="held")
+    cp.heartbeat_agent(held.id)
+    cp.set_agent_dispatch_hold(held.id, "operator: maintenance")
+
+    anchor = _register_agent(cp, name="anchor")
+    cp.heartbeat_agent(anchor.id)
+
+    now = sh._utcnow()
+    _stub_events(monkeypatch, cp, {
+        "worker.agentbus.repo_update.updated": [
+            {"source": anchor.id,
+             "created_at": (now - timedelta(days=14)).isoformat()},
+        ],
+    })
+    report = _sentinel(cp).run_once()
+    fingerprints = [f["fingerprint"] for f in report["findings"]]
+    assert ("fleet_pin_divergence:%s" % held.id) not in fingerprints
+
+
+def test_pin_divergence_uses_max_across_all_statuses(cp, monkeypatch):
+    """The check merges all six status streams; the max timestamp wins."""
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    a = _register_agent(cp, name="a")
+    cp.heartbeat_agent(a.id)
+
+    now = sh._utcnow()
+    # 'updated' event is three weeks stale, but 'skipped' event is recent
+    # (yesterday). The merged max puts agent 'a' within the divergence
+    # window, so it should NOT be flagged.
+    _stub_events(monkeypatch, cp, {
+        "worker.agentbus.repo_update.updated": [
+            {"source": a.id,
+             "created_at": (now - timedelta(days=21)).isoformat()},
+        ],
+        "worker.agentbus.repo_update.skipped": [
+            {"source": a.id,
+             "created_at": (now - timedelta(hours=23)).isoformat()},
+        ],
+    })
+    report = _sentinel(cp).run_once()
+    assert not [f for f in report["findings"] if f["kind"] == "fleet_pin_divergence"]
+
+
+def test_pin_divergence_files_one_deduped_task_per_agent(cp, monkeypatch):
+    """run_once() files exactly one task per diverged agent; a second run
+    does not file another."""
+    import mac.self_healing as sh
+    from datetime import timedelta
+
+    laggard = _register_agent(cp, name="laggard")
+    anchor = _register_agent(cp, name="anchor")
+    cp.heartbeat_agent(laggard.id)
+    cp.heartbeat_agent(anchor.id)
+
+    now = sh._utcnow()
+    _stub_events(monkeypatch, cp, {
+        "worker.agentbus.repo_update.updated": [
+            {"source": anchor.id,
+             "created_at": (now - timedelta(days=14)).isoformat()},
+            {"source": laggard.id,
+             "created_at": (now - timedelta(days=21)).isoformat()},
+        ],
+    })
+
+    sentinel = _sentinel(cp)
+    sentinel.run_once()
+    fp = "fleet_pin_divergence:%s" % laggard.id
+    filed_after_first = _self_heal_tasks(cp, fp)
+    assert len(filed_after_first) == 1
+
+    sentinel.run_once()
+    filed_after_second = _self_heal_tasks(cp, fp)
+    assert len(filed_after_second) == 1
+
+
 # ── agent unhealthy ──────────────────────────────────────────────────────────
 
 
