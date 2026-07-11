@@ -67,6 +67,9 @@ def repo_update_payload(
     restart: bool = True,
     restart_services: Optional[List[str]] = None,
     request_id: Optional[str] = None,
+    target_sha: Optional[str] = None,
+    desired_generation: Optional[int] = None,
+    release_id: Optional[str] = None,
 ) -> JsonDict:
     payload: JsonDict = {
         "schema": REPO_UPDATE_SCHEMA,
@@ -80,6 +83,12 @@ def repo_update_payload(
         payload["restart_services"] = list(restart_services)
     if request_id:
         payload["request_id"] = request_id
+    if target_sha:
+        payload["target_sha"] = target_sha
+    if desired_generation is not None:
+        payload["desired_generation"] = int(desired_generation)
+    if release_id:
+        payload["release_id"] = release_id
     return payload
 
 

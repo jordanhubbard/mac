@@ -562,9 +562,12 @@ def _detect_command_inventory() -> JsonDict:
 def _resources_with_command_inventory(
     resources: Optional[JsonDict],
     coding_verification: Optional[JsonDict] = None,
+    source_repo: Optional[Path] = None,
 ) -> JsonDict:
     merged = ensure_json_object(resources)
     merged["commands"] = _detect_command_inventory()
+    if source_repo is not None:
+        merged["source_state"] = _worker_source_state(source_repo)
     # Coding-CLI auth status (secret-free) rides the same refresh cycle so the
     # hub — and `mac fleet creds status` on any workstation — can see which
     # agents have lost or never had claude/codex/cursor credentials and need a
@@ -599,6 +602,32 @@ def _resources_with_command_inventory(
         except Exception:  # noqa: BLE001 - resource stamping must never break registration
             pass
     return merged
+
+
+def _worker_source_state(repo: Path) -> JsonDict:
+    """Return secret-free source attestation used by the hub reconciler."""
+    state: JsonDict = {
+        "schema": "mac.worker_source_state.v1",
+        "repo_path": str(repo.expanduser()),
+        "commit_sha": "",
+        "tree_sha": "",
+        "dirty": False,
+        "observed_at": _utcnow(),
+    }
+    repo = repo.expanduser()
+    if not repo.is_dir():
+        state["error"] = "repository_missing"
+        return state
+    head = _run_git(repo, ["rev-parse", "HEAD"])
+    tree = _run_git(repo, ["rev-parse", "HEAD^{tree}"])
+    dirty = _run_git(repo, ["status", "--porcelain"])
+    if head.returncode != 0:
+        state["error"] = "not_a_git_worktree"
+        return state
+    state["commit_sha"] = head.stdout.strip()
+    state["tree_sha"] = tree.stdout.strip() if tree.returncode == 0 else ""
+    state["dirty"] = dirty.returncode != 0 or bool(dirty.stdout.strip())
+    return state
 
 
 def register_worker(
@@ -2703,6 +2732,7 @@ class MacWorker:
 
         remote = str(request.get("remote") or "origin").strip()
         branch = str(request.get("branch") or "").strip()
+        target_sha = str(request.get("target_sha") or "").strip()
         restart = bool(request.get("restart", True))
         try:
             restart_services = _normalize_restart_services(request.get("restart_services"))
@@ -2727,6 +2757,14 @@ class MacWorker:
                 stream_id,
                 "error",
                 "invalid git branch/ref name",
+                request,
+                repo_path=str(repo),
+            )
+        if target_sha and not re.fullmatch(r"[0-9a-f]{40}", target_sha):
+            return self._repo_update_result(
+                stream_id,
+                "error",
+                "target_sha must be a lowercase 40-character commit SHA",
                 request,
                 repo_path=str(repo),
             )
@@ -2788,24 +2826,65 @@ class MacWorker:
 
         before = _run_git(repo, ["rev-parse", "HEAD"])
         before_sha = before.stdout.strip() if before.returncode == 0 else ""
-        pull_args = ["pull", "--ff-only"]
-        if branch:
-            pull_args.extend([remote, branch])
-        pulled = _run_git(repo, pull_args)
+        if target_sha:
+            if not branch:
+                return self._repo_update_result(
+                    stream_id, "error", "branch/ref is required with target_sha",
+                    request, repo_path=str(repo), before_sha=before_sha,
+                )
+            fetched = _run_git(repo, ["fetch", "--no-tags", remote, branch])
+            if fetched.returncode != 0:
+                return self._repo_update_result(
+                    stream_id, "error", "git fetch for exact source release failed",
+                    request, repo_path=str(repo), before_sha=before_sha,
+                    stdout=fetched.stdout, stderr=fetched.stderr,
+                )
+            target_exists = _run_git(repo, ["cat-file", "-e", "%s^{commit}" % target_sha])
+            target_published = _run_git(repo, ["merge-base", "--is-ancestor", target_sha, "FETCH_HEAD"])
+            can_fast_forward = _run_git(repo, ["merge-base", "--is-ancestor", before_sha, target_sha])
+            if target_exists.returncode != 0 or target_published.returncode != 0:
+                return self._repo_update_result(
+                    stream_id, "error",
+                    "target_sha is not present on the fetched canonical ref",
+                    request, repo_path=str(repo), before_sha=before_sha,
+                    target_sha=target_sha,
+                )
+            if can_fast_forward.returncode != 0:
+                return self._repo_update_result(
+                    stream_id, "error",
+                    "exact source release is not a fast-forward from current HEAD",
+                    request, repo_path=str(repo), before_sha=before_sha,
+                    target_sha=target_sha,
+                )
+            pulled = _run_git(repo, ["merge", "--ff-only", target_sha])
+            failure_summary = "git merge --ff-only to target_sha failed"
+        else:
+            pull_args = ["pull", "--ff-only"]
+            if branch:
+                pull_args.extend([remote, branch])
+            pulled = _run_git(repo, pull_args)
+            failure_summary = "git pull --ff-only failed"
         if pulled.returncode != 0:
             return self._repo_update_result(
                 stream_id,
                 "error",
-                "git pull --ff-only failed",
+                failure_summary,
                 request,
                 repo_path=str(repo),
                 before_sha=before_sha,
+                target_sha=target_sha or None,
                 stdout=pulled.stdout,
                 stderr=pulled.stderr,
             )
 
         after = _run_git(repo, ["rev-parse", "HEAD"])
         after_sha = after.stdout.strip() if after.returncode == 0 else ""
+        if target_sha and after_sha != target_sha:
+            return self._repo_update_result(
+                stream_id, "error", "checkout did not reach requested target_sha",
+                request, repo_path=str(repo), before_sha=before_sha,
+                after_sha=after_sha, target_sha=target_sha,
+            )
         updated = bool(before_sha and after_sha and before_sha != after_sha)
 
         # Poisoned-checkout guard: a pulled tree that cannot even import
@@ -3137,6 +3216,9 @@ class MacWorker:
             "request_id": request.get("request_id"),
             "restart_requested": bool(extra.pop("restart_requested", False)),
         }
+        for key in ("target_sha", "desired_generation", "release_id"):
+            if request.get(key) is not None:
+                result[key] = request.get(key)
         for key, value in extra.items():
             if isinstance(value, str):
                 result[key] = value[:4000]
@@ -5152,7 +5234,11 @@ class MacWorker:
         with self._coding_route_probe_lock:
             route_report = dict(self._coding_route_report)
             self._coding_route_report_dirty = False
-        return _resources_with_command_inventory(resources, route_report)
+        return _resources_with_command_inventory(
+            resources,
+            route_report,
+            source_repo=self.self_update_repo,
+        )
 
     def _maybe_start_coding_route_probe(self) -> None:
         """Asynchronously verify the preferred route before the hub dispatches work."""

@@ -1759,6 +1759,7 @@ edges:
             "branch": "main",
             "restart": False,
         },
+        ("POST", "/source-convergence/tick"): {},
         ("POST", "/agentbus/artifact-publish"): {
             "sender_agent_id": ctx["agent_id"],
             "recipient_agent_ids": [ctx["reviewer_agent_id"]],

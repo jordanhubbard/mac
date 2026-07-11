@@ -1827,6 +1827,42 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
                     ON fleet_desired_source_idempotency (scope_key, request_id);
 
+                CREATE TABLE IF NOT EXISTS source_convergence_nodes (
+                    id TEXT PRIMARY KEY,
+                    desired_source_state_id TEXT NOT NULL
+                        REFERENCES fleet_desired_source_states(id) ON DELETE CASCADE,
+                    fleet_id TEXT NOT NULL REFERENCES fleets(id) ON DELETE CASCADE,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    desired_generation INTEGER NOT NULL,
+                    release_id TEXT NOT NULL REFERENCES source_releases(id),
+                    desired_sha TEXT NOT NULL,
+                    actual_sha TEXT,
+                    action TEXT NOT NULL,
+                    plan_digest TEXT NOT NULL,
+                    phase TEXT NOT NULL,
+                    attempt INTEGER NOT NULL DEFAULT 0,
+                    request_id TEXT,
+                    stream_id TEXT REFERENCES agentbus_streams(id) ON DELETE SET NULL,
+                    next_retry_at TEXT,
+                    blocker_code TEXT,
+                    blocker_detail TEXT,
+                    result TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(fleet_id, agent_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_source_convergence_nodes_phase
+                    ON source_convergence_nodes (fleet_id, desired_generation, phase);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_source_convergence_nodes_request
+                    ON source_convergence_nodes (request_id) WHERE request_id IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS source_convergence_controller_leases (
+                    scope_key TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 -- Human principals registry: first-class assignable human identities
                 -- (username / email / GitHub login) and explicit group membership.
                 CREATE TABLE IF NOT EXISTS humans (
@@ -2116,6 +2152,42 @@ class SQLiteStore:
             );
             CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
                 ON fleet_desired_source_idempotency (scope_key, request_id);
+
+            CREATE TABLE IF NOT EXISTS source_convergence_nodes (
+                id TEXT PRIMARY KEY,
+                desired_source_state_id TEXT NOT NULL
+                    REFERENCES fleet_desired_source_states(id) ON DELETE CASCADE,
+                fleet_id TEXT NOT NULL REFERENCES fleets(id) ON DELETE CASCADE,
+                agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                desired_generation INTEGER NOT NULL,
+                release_id TEXT NOT NULL REFERENCES source_releases(id),
+                desired_sha TEXT NOT NULL,
+                actual_sha TEXT,
+                action TEXT NOT NULL,
+                plan_digest TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                request_id TEXT,
+                stream_id TEXT REFERENCES agentbus_streams(id) ON DELETE SET NULL,
+                next_retry_at TEXT,
+                blocker_code TEXT,
+                blocker_detail TEXT,
+                result TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(fleet_id, agent_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_source_convergence_nodes_phase
+                ON source_convergence_nodes (fleet_id, desired_generation, phase);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_source_convergence_nodes_request
+                ON source_convergence_nodes (request_id) WHERE request_id IS NOT NULL;
+
+            CREATE TABLE IF NOT EXISTS source_convergence_controller_leases (
+                scope_key TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
 
             -- Human principals registry: first-class assignable human identities
             -- (username / email / GitHub login) and explicit group membership.

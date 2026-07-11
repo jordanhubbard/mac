@@ -1014,6 +1014,9 @@ class AgentBusRepoUpdate(BaseModel):
     restart: bool = True
     restart_services: List[str] = Field(default_factory=list)
     request_id: Optional[str] = None
+    target_sha: Optional[str] = None
+    desired_generation: Optional[int] = None
+    release_id: Optional[str] = None
 
 
 class AgentBusArtifactPublish(BaseModel):
@@ -6586,7 +6589,27 @@ def create_app(
             restart=body.restart,
             restart_services=body.restart_services,
             request_id=body.request_id,
+            target_sha=body.target_sha,
+            desired_generation=body.desired_generation,
+            release_id=body.release_id,
         )
+
+    @app.get("/source-convergence")
+    def source_convergence_status(
+        fleet_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=250, ge=1, le=1000),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.source_convergence_status(fleet_id=fleet_id, limit=limit)
+
+    @app.post("/source-convergence/tick")
+    def tick_source_convergence(
+        limit: int = Query(default=100, ge=1, le=1000),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.tick_source_convergence(limit=limit)
 
     @app.post("/agentbus/artifact-publish")
     def publish_agentbus_artifact(

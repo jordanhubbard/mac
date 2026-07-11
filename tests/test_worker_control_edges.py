@@ -298,6 +298,7 @@ def _cp(returncode=0, stdout="", stderr=""):
         ({"restart_services": ["../bad"]}, "error", "invalid systemd"),
         ({"remote": "--bad"}, "error", "invalid git remote"),
         ({"branch": "bad branch"}, "error", "invalid git branch"),
+        ({"target_sha": "abc"}, "error", "target_sha must"),
     ],
 )
 def test_repo_update_rejects_invalid_requests(tmp_path, payload, status, summary) -> None:
@@ -351,6 +352,68 @@ def test_repo_update_pull_failure_current_and_updated(monkeypatch, tmp_path) -> 
     assert result["restart_requested"] is True
     assert result["restart_services"] == ["one.service"]
     assert "openshell image rebuilt" in result["summary"]
+
+
+def test_repo_update_exact_sha_fetches_proves_and_fast_forwards(monkeypatch, tmp_path) -> None:
+    instance = _instance(tmp_path)
+    old = "a" * 40
+    target = "b" * 40
+    calls = []
+    results = iter(
+        [
+            _cp(stdout="true"),  # worktree
+            _cp(),  # clean
+            _cp(stdout=old),  # before
+            _cp(stdout="fetched"),  # fetch branch
+            _cp(),  # target exists
+            _cp(),  # target is published on FETCH_HEAD
+            _cp(),  # current can fast-forward to target
+            _cp(stdout="merged"),  # exact merge
+            _cp(stdout=target),  # after
+        ]
+    )
+
+    def run(_repo, args, **_kwargs):
+        calls.append(args)
+        return next(results)
+
+    monkeypatch.setattr(worker, "_run_git", run)
+    monkeypatch.setattr(instance, "_repo_update_self_test", lambda _repo: {"ok": True})
+    monkeypatch.setattr(instance, "_maybe_rebuild_openshell_image_after_update", lambda *_a: None)
+    result = instance._execute_repo_update(
+        {
+            "branch": "main",
+            "target_sha": target,
+            "desired_generation": 3,
+            "release_id": "release_1",
+        },
+        "s",
+    )
+
+    assert result["status"] == "updated"
+    assert result["after_sha"] == target
+    assert result["target_sha"] == target
+    assert result["desired_generation"] == 3
+    assert ["fetch", "--no-tags", "origin", "main"] in calls
+    assert ["merge", "--ff-only", target] in calls
+
+
+def test_worker_source_state_reports_commit_tree_and_dirty(monkeypatch, tmp_path) -> None:
+    results = iter(
+        [
+            _cp(stdout="a" * 40),
+            _cp(stdout="b" * 40),
+            _cp(stdout=" M local.py"),
+        ]
+    )
+    monkeypatch.setattr(worker, "_run_git", lambda *_a, **_k: next(results))
+
+    state = worker._worker_source_state(tmp_path)
+
+    assert state["schema"] == "mac.worker_source_state.v1"
+    assert state["commit_sha"] == "a" * 40
+    assert state["tree_sha"] == "b" * 40
+    assert state["dirty"] is True
 
 
 def test_openshell_image_rebuild_gates_and_drift(monkeypatch, tmp_path) -> None:

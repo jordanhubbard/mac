@@ -290,6 +290,7 @@
       "src/mac/openshell_runtime.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/router_app.py",
+      "src/mac/source_convergence_service.py",
       "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
@@ -6071,7 +6072,8 @@
     "sources": [
       "src/mac/deploy_env.py",
       "src/mac/env_config.py",
-      "src/mac/services.py"
+      "src/mac/services.py",
+      "src/mac/source_convergence_service.py"
     ],
     "type": "str"
   },

@@ -163,6 +163,7 @@ from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.retention_service import RetentionService
 from mac.service_role_service import ServiceRoleService
+from mac.source_convergence_service import SourceConvergenceService
 from mac.review_service import (
     ReviewService,
     cross_llm_review_problems,
@@ -1241,6 +1242,7 @@ class ControlPlane:
         )
         self.openshell = OpenShellService(self.store, get_agent=self.get_agent)
         self.agentbus = AgentBusService(self.store, self.observability)
+        self.source_convergence = SourceConvergenceService(self)
         self.provisioning = ProvisioningService(self.store, self.observability)
         self.service_roles = ServiceRoleService(self.store, self.observability)
         self.roles = RolesService(
@@ -11275,6 +11277,22 @@ class ControlPlane:
             actor="default-review-workflow",
             tenant_id=None,
         )
+        # Desired-source holds must land before dispatch.  Otherwise a stale
+        # idle node can acquire new work in the same tick that notices drift.
+        try:
+            source_convergence = self.source_convergence.tick(limit=limit_value)
+        except Exception as exc:  # noqa: BLE001 - controller failure must not stop lease maintenance.
+            source_convergence = {
+                "schema": "mac.source_convergence.v1",
+                "errors": [{"error": str(exc)[:500]}],
+            }
+            self.record_log(
+                "source_convergence.tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)[:500]},
+            )
         assignments = (
             self._dispatch_batch_impl(
                 lease_seconds=lease_seconds,
@@ -11290,6 +11308,7 @@ class ControlPlane:
             "expired": expired,
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
+            "source_convergence": source_convergence,
             "auto_reopened": [
                 task.to_dict() for task in auto_retry_page["tasks"]
             ],
@@ -11311,6 +11330,12 @@ class ControlPlane:
         }
 
     # Communication bus
+
+    def source_convergence_status(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.source_convergence.status(*args, **kwargs)
+
+    def tick_source_convergence(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.source_convergence.tick(*args, **kwargs)
 
     # Agent control messages: thin facade over ``self.messaging``.
 
@@ -11365,6 +11390,9 @@ class ControlPlane:
         restart: bool = True,
         restart_services: Optional[List[str]] = None,
         request_id: Optional[str] = None,
+        target_sha: Optional[str] = None,
+        desired_generation: Optional[int] = None,
+        release_id: Optional[str] = None,
     ) -> JsonDict:
         recipients = list(recipient_agent_ids or [])
         if all_agents:
@@ -11379,6 +11407,9 @@ class ControlPlane:
             restart=restart,
             restart_services=list(restart_services or []),
             request_id=request_id,
+            target_sha=target_sha,
+            desired_generation=desired_generation,
+            release_id=release_id,
         )
         published = [
             self.publish_agentbus_content(
