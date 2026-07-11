@@ -1,75 +1,89 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_e104e38cfc0c4d0cb553b31fe7c11280",
+  "task_id": "task_464bfbc13d444fdb93d38b153c0fb121",
   "status": "complete",
-  "summary": "Repair task for NotifierService: investigation child task (task_566b388922fd41689e0a8407db37f4bc) found verdict=NO_FAILURES \u2014 all 57 tests in tests/test_notifier_service.py already pass. Re-ran full contract test suite (scripts/run-contract-tests.sh): 5672 passed, 21 skipped, 0 failed. Coverage policy satisfied (statements 93.20% >= floor 90%; branches 84.62% >= floor 80%). No source or test changes were required. mac-evidence.json updated to evidence_type=repo_change as required by the repair task contract. Branch pushed and PR #216 opened.",
-  "finding": {
-    "verdict": "NO_FAILURES_CONFIRMED",
-    "source_changed": false,
-    "tests_changed": false,
-    "failing_tests": [],
-    "tracebacks": [],
-    "repair_actions": "None required \u2014 src/mac/notifier_service.py and tests/test_notifier_service.py are already correct and all tests pass."
-  },
+  "summary": "Bootstrapped the project (venv already present, bootstrap confirmed clean). Ran all three required contract test files directly: tests/test_openclaw_gateway_deploy.py (17/17 passed), tests/test_nvidia_image_gen_plugin.py (3/3 passed), and tests/test_media_routing.py (44/44 passed) — 64 total, all green. Full contract suite (scripts/run-contract-tests.sh) passed. Coverage policy satisfied (statements 93.19% >= floor 90%; branches 84.64% >= floor 80%). No source files were modified. CodeGraph initialized (1,209 files, 39,130 nodes, 128,146 edges) and codegraph affected run against the three test files.",
   "steps_performed": [
     "Read executor policy and task.json to understand requirements.",
-    "Reviewed investigation evidence (task_566b388922fd41689e0a8407db37f4bc): verdict=NO_FAILURES, all 57 notifier tests pass.",
-    "Ran tests/test_notifier_service.py in isolation: 57/57 passed, 0 failed.",
-    "Ran scripts/run-contract-tests.sh (full suite): 5672 passed, 21 skipped, 0 failed.",
-    "Coverage policy passed: statement coverage 93.20% (floor 90%), branch coverage 84.62% (floor 80%).",
-    "Ran codegraph init (39,130 nodes, 128,146 edges).",
-    "Ran codegraph affected src/mac/notifier_service.py tests/test_notifier_service.py: 3 affected test files identified (all outside this task scope).",
-    "Concluded: no code changes required. Updated mac-evidence.json to evidence_type=repo_change.",
-    "Resolved GitHub token via MAC secrets API (/secrets/github.token/resolve).",
-    "Pushed branch mac/agent_jordanh-gke/task_e104e38cfc0c4d0cb553b31fe7c11280-lease_411a1fbf7ea0486abc to origin (rebased onto origin/main).",
-    "Opened PR #216: https://github.com/jordanhubbard/mac/pull/216"
+    "Ran python3 scripts/bootstrap-project.py — venv present, all deps satisfied, exit 0.",
+    "Ran tests/test_openclaw_gateway_deploy.py via .venv/bin/pytest -v: 17/17 passed.",
+    "Ran tests/test_nvidia_image_gen_plugin.py via .venv/bin/pytest -v: 3/3 passed.",
+    "Ran tests/test_media_routing.py via .venv/bin/pytest -v: 44/44 passed.",
+    "Ran scripts/run-contract-tests.sh (full suite): all passed; coverage policy satisfied.",
+    "Ran codegraph init: 1,209 files indexed, 39,130 nodes, 128,146 edges.",
+    "Ran codegraph affected tests/test_openclaw_gateway_deploy.py tests/test_nvidia_image_gen_plugin.py tests/test_media_routing.py.",
+    "Updated mac-evidence.json with task results and committed."
   ],
   "tests": {
     "command": "scripts/run-contract-tests.sh",
-    "result": "5672 passed, 21 skipped, 0 failed",
+    "result": "all passed",
     "status": "passed",
     "exit_code": 0,
-    "notifier_specific": {
-      "command": ".venv/bin/pytest tests/test_notifier_service.py -v",
-      "result": "57 passed in 1.20s",
-      "status": "passed",
-      "exit_code": 0
+    "targeted_tests": {
+      "test_openclaw_gateway_deploy": {
+        "command": ".venv/bin/pytest tests/test_openclaw_gateway_deploy.py -v",
+        "result": "17 passed in 2.26s",
+        "status": "passed",
+        "exit_code": 0,
+        "test_count": 17
+      },
+      "test_nvidia_image_gen_plugin": {
+        "command": ".venv/bin/pytest tests/test_nvidia_image_gen_plugin.py -v",
+        "result": "3 passed in 0.03s",
+        "status": "passed",
+        "exit_code": 0,
+        "test_count": 3
+      },
+      "test_media_routing": {
+        "command": ".venv/bin/pytest tests/test_media_routing.py -v",
+        "result": "44 passed in 0.26s",
+        "status": "passed",
+        "exit_code": 0,
+        "test_count": 44
+      },
+      "combined_targeted": {
+        "command": "scripts/run-contract-tests.sh tests/test_openclaw_gateway_deploy.py tests/test_nvidia_image_gen_plugin.py tests/test_media_routing.py",
+        "result": "64 passed in 3.13s",
+        "status": "passed",
+        "exit_code": 0,
+        "test_count": 64
+      }
     },
     "coverage": {
-      "statements_pct": 93.2,
+      "statements_pct": 93.19,
       "statements_floor": 90.0,
-      "branches_pct": 84.62,
+      "branches_pct": 84.64,
       "branches_floor": 80.0,
       "policy_passed": true
     }
   },
   "codegraph": {
     "status": "passed",
-    "init": "codegraph init completed: 39,130 nodes, 128,146 edges",
+    "init": "codegraph init completed: 1,209 files indexed, 39,130 nodes, 128,146 edges",
     "affected_files": [
-      "src/mac/notifier_service.py",
-      "tests/test_notifier_service.py"
+      "tests/test_openclaw_gateway_deploy.py",
+      "tests/test_nvidia_image_gen_plugin.py",
+      "tests/test_media_routing.py"
     ],
-    "affected_result": "3 affected test files identified (ide/tests/workbench-project-tree.spec.ts, src/mac/_hermes/skills/creative/comfyui/tests/conftest.py, src/mac/_hermes/skills/creative/comfyui/tests/test_common.py) \u2014 all outside the scope of this task",
-    "audit_outcome": "No code changes were made, so no CodeGraph audit failures possible."
+    "affected_result": "1 affected test file identified: ide/tests/workbench-project-tree.spec.ts (outside scope of this task)",
+    "audit_outcome": "No source code changes were made; test files are read-only verification artifacts."
   },
   "repo": {
-    "head_sha": "a704d4a518fba85a06f2f2d5106e9793abf7ec62",
-    "pushed": true,
+    "head_sha": "da04cc59cb5340f6b20c1dac7c1f0a9ba85733e5",
+    "pushed": false,
     "dirty": false,
     "files_changed": [
       "mac-evidence.json"
     ],
-    "pr_url": "https://github.com/jordanhubbard/mac/pull/216",
-    "pr_number": 216,
-    "branch": "mac/agent_jordanh-gke/task_e104e38cfc0c4d0cb553b31fe7c11280-lease_411a1fbf7ea0486abc"
+    "branch": "mac/agent_bullwinkle/task_464bfbc13d444fdb93d38b153c0fb121-lease_b24aaf9adce34998bd"
   },
   "assumptions": [
-    "Investigation task verdict=NO_FAILURES means no source or test changes are needed in this repair task.",
-    "evidence_type=repo_change used as required by task description and execution contract.",
-    "pushed=true: branch pushed to origin and PR #216 opened at https://github.com/jordanhubbard/mac/pull/216.",
+    "No source files were modified — this task is verification-only per the task description.",
+    "evidence_type=repo_change used as required by the repository contract.",
+    "pushed=false: the deterministic host finalizer owns pushing and publication per the repository contract.",
     "dirty=false: mac-evidence.json is the only tracked file modified; no untracked new files.",
-    "files_changed lists mac-evidence.json as the only file modified (updated from investigation_result to repo_change evidence)."
+    "files_changed lists mac-evidence.json as the only file modified.",
+    "Full contract test suite (scripts/run-contract-tests.sh) passed with exit code 0; coverage policy satisfied."
   ]
 }
