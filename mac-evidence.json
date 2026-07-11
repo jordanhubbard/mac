@@ -79,7 +79,7 @@
     "audit_outcome": "No source code changes were made; only audit-findings-blobs.txt (documentation) was added."
   },
   "repo": {
-    "head_sha": "cea8ad2c93fbdc94c645ba409599d6b61bac1fd0",
+    "head_sha": "5da44c011f9bfba71240ff68a1d36f2ea3482585",
     "pushed": true,
     "dirty": false,
     "files_changed": [
