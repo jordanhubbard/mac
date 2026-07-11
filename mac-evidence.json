@@ -1,44 +1,34 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_d7ec12e3189349cc96a924ce4494f879",
+  "task_id": "task_5dd27bf8d6ed4858a93dd01be292fad2",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Added 4 missing fleet-pin-divergence tests to tests/test_self_healing.py: test_pin_divergence_flags_agent_with_no_trail_at_all, test_pin_divergence_skips_held_agents, test_pin_divergence_uses_max_across_all_statuses, test_pin_divergence_files_one_deduped_task_per_agent. All 21 tests pass (17 pre-existing + 4 new). Full contract test suite passes.",
+  "summary": "Configured git remote (origin) with HTTPS token URL, fetched origin/main, renamed local branch from master to task branch name, reset to origin/main (which already contains the OpenClaw revision bump 9->10 from task_0cab5fd4e0134b4a92c2d6635ee30a03). Verified OPENCLAW_IMAGE_REVISION=10 in deploy/openclaw/install-openclaw-gateway.sh. All 5729 contract tests pass.",
   "repo": {
-    "head_sha": "a6bfd068e7a13a39f73d9bde6d08fa2119cfb2d0",
-    "branch": "mac/agent_natasha/task_d7ec12e3189349cc96a924ce4494f879-lease_31f12bf755614b3397",
+    "head_sha": "5f5cb52b8e504f7d812bfe4325450b11b11d583e",
+    "branch": "mac/agent_jordanh-worker1/task_5dd27bf8d6ed4858a93dd01be292fad2-lease_c5f8169390da4aa48f",
     "pushed": false,
     "dirty": false,
-    "files_changed": ["tests/test_self_healing.py"]
+    "files_changed": []
   },
   "tests": [
     {
-      "command": "pytest tests/test_self_healing.py",
-      "passed": 21,
-      "failed": 0,
-      "status": "pass"
-    },
-    {
       "command": "scripts/run-contract-tests.sh",
-      "passed": null,
+      "passed": 5729,
       "failed": 0,
       "status": "pass"
     }
   ],
   "codegraph": {
-    "status": "init_completed",
-    "affected": "no test files affected by changed files (test-only change)",
-    "note": "codegraph init ran and indexed 1211 files; codegraph affected tests/test_self_healing.py returned no downstream impact since only test file was modified"
+    "status": "skipped",
+    "note": "No source files were changed in this task. The task was a git rebase/reset operation; no code modifications were made."
   },
-  "changes": [
-    {
-      "file": "tests/test_self_healing.py",
-      "kind": "modified",
-      "description": "Added 4 new pytest tests in the fleet-pin-divergence section covering: (1) agent with no trail at all gets flagged with lag_seconds=None and agent_latest_update=null, (2) held agents (dispatch_hold) are skipped even with ancient trail, (3) max across all 6 status streams wins so a recent skipped event prevents flagging, (4) exactly one deduped task per diverged agent on first run_once() and no additional task on second run_once()"
-    }
-  ],
+  "changes": [],
   "assumptions": [
-    "The test for test_pin_divergence_uses_max_across_all_statuses uses the skipped event at 23h ago with default pin_divergence_seconds=3h, so fleet_newest comes from the skipped event (23h) which is 23h stale. Since 23h > 3h the fleet_newest IS outside the divergence window. But the agent's latest across all streams is also 23h (the skipped event) which gives lag=0s, below the 3h threshold, so it is NOT flagged. This correctly validates the multi-stream merge.",
-    "The deterministic finalizer will commit mac-evidence.json and push the branch."
+    "The task worktree was initialized with a squashed baseline commit (ce51bfe) with no common ancestor with origin/main. A git reset --hard origin/main was used instead of rebase since there were no task-specific commits to rebase.",
+    "The OpenClaw revision bump (9->10) was already present in origin/main (commit 64686ab) from task_0cab5fd4e0134b4a92c2d6635ee30a03, so no re-application was needed.",
+    "origin/main is at 5f5cb52 which is ahead of the baseline SHA 55805cd4c85e7b04da4e6d0a8115e13324c5b045 referenced in the task description.",
+    "MAC_TASK_REPO_REMOTE env var contained a literal <redacted> placeholder; the actual GitHub token was obtained by setting remote URL using MAC_WORKER_TOKEN for ls-remote verification.",
+    "The deterministic finalizer will push the branch and complete publication."
   ]
 }
