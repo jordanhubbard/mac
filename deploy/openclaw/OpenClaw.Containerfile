@@ -22,8 +22,17 @@ COPY deploy/openclaw/plugins/mac-continuity /opt/mac-openclaw/plugins/mac-contin
 # Keep the agent's real home durable. OpenShell command wrappers receive
 # explicit no-profile flags and a readable profile, so profile lookup must not
 # force session state into a temporary directory.
+# bash iproute2: OpenShell runtime prerequisites (Bash >=5.2 contract, netns).
+# python3/pip/venv, build-essential, git, curl: a real dev toolchain so the
+# chat agent can install packages (pip --user / venv) and compile native/GPU
+# code in its sandbox. OpenShell forbids container root, so apt is unavailable
+# at runtime — the toolchain must be baked in; runtime installs go to the
+# writable /home/sandbox via pip. CUDA userspace comes from GPU-accelerated
+# pip wheels (cupy/torch/numba) plus the --gpu-passed driver, so no bulky CUDA
+# toolkit is baked in here.
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bash iproute2 \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+         bash iproute2 python3 python3-pip python3-venv build-essential git curl ca-certificates \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract /usr/local/bin/curiosity \
     && /usr/local/bin/mac-verify-bash-contract \
     && rm -rf /var/lib/apt/lists/* \

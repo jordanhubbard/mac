@@ -17,14 +17,16 @@ filesystem_policy:
     - /proc
     - /app
     - /opt
-    # OpenShell's command adapter may invoke a login shell before applying the
-    # requested environment.  Expose the managed home read-only so that its
-    # profile is traversable; durable writes remain limited to the explicit
-    # config and /sandbox paths below.
-    - /home/sandbox
   read_write:
     - /tmp
     - /dev
+    # The agent's home is writable so it can build a real dev environment as
+    # the (non-root) sandbox user: pip --user into ~/.local, virtualenvs, and
+    # git checkouts. OpenShell forbids container root, so system-wide installs
+    # (apt, /usr) are not available; user-scoped Python/venv installs and
+    # source builds are the supported path, paired with the curated
+    # package-repo egress below.
+    - /home/sandbox
     # OpenShell uploads MAC's owner-only managed config into this directory
     # before launching the gateway.  Marking it read-only prevents the trusted
     # upload itself; OpenClaw already needs read access to the credentials, and
@@ -123,3 +125,63 @@ network_policies:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
+
+  # Curated developer package repositories. The agent may install Python
+  # packages (pip), pull source (git), and fetch NVIDIA/PyTorch wheels so it
+  # can actually code — while the deny-by-default guard still blocks egress to
+  # any host NOT on this list, preserving the exfiltration boundary. No
+  # `binaries:` restriction here on purpose: any tool the agent uses (pip run
+  # from a venv, curl, git, wget) may reach these repos, but only these repos.
+  dev_repos:
+    name: dev-repos
+    endpoints:
+      - host: pypi.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } }, { allow: { method: POST, path: "/**" } } ]
+      - host: files.pythonhosted.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } } ]
+      - host: bootstrap.pypa.io
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } } ]
+      - host: github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } }, { allow: { method: POST, path: "/**" } } ]
+      - host: codeload.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } } ]
+      - host: objects.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } } ]
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } } ]
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } }, { allow: { method: POST, path: "/**" } } ]
+      - host: download.pytorch.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } } ]
+      - host: developer.download.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules: [ { allow: { method: GET, path: "/**" } } ]

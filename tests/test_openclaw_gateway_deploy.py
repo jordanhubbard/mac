@@ -37,7 +37,12 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "/etc/mac-openclaw-image-revision" in container
     # OpenShell's sandbox supervisor creates an isolated network namespace
     # inside the image and fails closed when no trusted `ip` helper exists.
-    assert "apt-get install -y --no-install-recommends bash iproute2" in container
+    assert "apt-get install -y --no-install-recommends" in container
+    # OpenShell prerequisites plus a baked-in dev toolchain (OpenShell forbids
+    # container root, so runtime apt is unavailable — tools must ship in the
+    # image; user-scoped pip/venv installs go to the writable home).
+    for pkg in ("bash iproute2", "python3", "python3-pip", "build-essential", "git"):
+        assert pkg in container
     assert (
         "COPY deploy/verify-bash-contract.sh "
         "/usr/local/bin/mac-verify-bash-contract" in container
@@ -79,6 +84,16 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
     assert "/home/sandbox/.config/mac-openclaw" not in read_only
     assert "/home/sandbox/.config/mac-openclaw" in read_write
     assert "- /sandbox" in read_write
+    # The agent's home is writable so it can build a dev environment (pip
+    # --user / venvs / git checkouts) as the non-root sandbox user.
+    assert "- /home/sandbox\n" in read_write
+    assert "- /home/sandbox\n" not in read_only
+    # Curated developer package-repo egress — enables install/build while the
+    # deny-by-default guard still blocks every other host.
+    for repo in ("pypi.org", "files.pythonhosted.org", "github.com",
+                 "download.pytorch.org", "developer.download.nvidia.com"):
+        assert f"host: {repo}" in text
+    assert "dev-repos" in text
     assert "__MAC_ROUTER_HOST__" in text
     assert "__MAC_ROUTER_PORT__" in text
     for host in (
