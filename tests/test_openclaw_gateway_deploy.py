@@ -44,7 +44,12 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     for pkg in ("bash iproute2", "python3", "python3-pip", "build-essential", "git"):
         assert pkg in container
     # PEP 668: let the agent pip install --user in this throwaway dev sandbox.
+    # The image ENV only reaches the gateway's own process, not OpenShell exec
+    # contexts (the agent's tool runs, ad-hoc exec), so removing Debian's
+    # EXTERNALLY-MANAGED marker is what actually makes `pip install --user`
+    # work in every context — env-independent.
     assert "PIP_BREAK_SYSTEM_PACKAGES=1" in container
+    assert "rm -f /usr/lib/python3*/EXTERNALLY-MANAGED" in container
     assert (
         "COPY deploy/verify-bash-contract.sh "
         "/usr/local/bin/mac-verify-bash-contract" in container

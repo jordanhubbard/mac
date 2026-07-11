@@ -33,6 +33,7 @@ COPY deploy/openclaw/plugins/mac-continuity /opt/mac-openclaw/plugins/mac-contin
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
          bash iproute2 python3 python3-pip python3-venv build-essential git curl ca-certificates \
+    && rm -f /usr/lib/python3*/EXTERNALLY-MANAGED \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract /usr/local/bin/curiosity \
     && /usr/local/bin/mac-verify-bash-contract \
     && rm -rf /var/lib/apt/lists/* \
