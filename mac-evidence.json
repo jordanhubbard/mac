@@ -5,7 +5,7 @@
   "evidence_type": "repo_change",
   "summary": "Ran full contract test suite (scripts/run-contract-tests.sh) in the task worktree on the apply_fix branch (db09479). Tests: 5699 passed, 21 skipped, exit 0 (coverage 93.05%/84.41%). 2 pre-existing failures confirmed: test_git_finalizer_blocks_when_canonical_remote_is_missing and test_repository_contract_canonical_branch_empty_when_absent. Branch mac/agent_bullwinkle/task_33957e38756e422bb5f6d02c435c6f8f-lease_de4a99e756c943bab3 pushed to origin. PR opened targeting main.",
   "repo": {
-    "head_sha": "ee510c3a8ff45cb634a81adf18823e2b73307f73",
+    "head_sha": "720fd9edde3dbf85ea70df0b58024fa6d8f20a46",
     "branch": "mac/agent_bullwinkle/task_33957e38756e422bb5f6d02c435c6f8f-lease_de4a99e756c943bab3",
     "pushed": true,
     "dirty": false,
