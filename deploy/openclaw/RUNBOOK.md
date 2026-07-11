@@ -14,7 +14,7 @@ host `openclaw-agent` wrapper; no path falls back to Hermes chat.
 - OpenClaw: `2026.6.11`
 - Source image: `ghcr.io/openclaw/openclaw:2026.6.11`
 - Manifest digest: `sha256:3814fb1f62f9cfc5944de088c5817c68c88b5d721feebe36420b666a90a61ce7`
-- Local image: `localhost/mac-openclaw:2026.6.11-mac.9`
+- Local image: `localhost/mac-openclaw:2026.6.11-mac.10`
 - OpenShell: the MAC fleet pin installed by `deploy/openshell/bootstrap-openshell.sh`
 
 The official image is extended only with OpenShell's required non-root

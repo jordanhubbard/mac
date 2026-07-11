@@ -1,61 +1,62 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_65583251b5a54c2e8ccb270f60ec4658",
+  "task_id": "task_0cab5fd4e0134b4a92c2d6635ee30a03",
   "status": "complete",
-  "summary": "Added 6 missing skill-area test functions to tests/test_dream_cycle_classifier.py covering curator pattern, hermes.skill pattern, skill_command+skill_utils co-patterns, medium confidence (2 evidence), high confidence (3 evidence), and skill+tool co-occurrence. All 33 tests pass (27 pre-existing + 6 new). CodeGraph initialized: 39,136 nodes, 128,165 edges.",
+  "summary": "Bumped OPENCLAW_IMAGE_REVISION from 9 to 10 in three files: deploy/openclaw/install-openclaw-gateway.sh (variable definition), deploy/openclaw/RUNBOOK.md (local-image tag localhost/mac-openclaw:2026.6.11-mac.10), and tests/test_openclaw_gateway_deploy.py (revision assertion). All 17 tests pass.",
   "steps_performed": [
     "Read executor policy and task.json to understand requirements.",
-    "Located task worktree at /sandbox/task_65583251b5a54c2e8ccb270f60ec4658/repo-lease_bde57d2bb4b24eff87b83874d352ce52.",
-    "Confirmed .venv with Python 3.12.13 and pytest already bootstrapped.",
-    "Read tests/test_dream_cycle_classifier.py to understand existing coverage (27 tests).",
-    "Read src/mac/dream_cycle_classifier.py to understand _SKILL_PATTERNS, _confidence_for, and _combined_text logic.",
-    "Verified classifier behavior interactively for all 6 new test scenarios.",
-    "Appended 6 new test functions under 'Skill-area classification tests (mem-11 repair coverage)' section.",
-    "Ran python3 -m pytest tests/test_dream_cycle_classifier.py -v: 33 passed, 0 failed (0.09s).",
-    "Ran codegraph init: 39,136 nodes, 128,165 edges. Ran codegraph affected tests/test_dream_cycle_classifier.py: no additional test files affected.",
+    "Located task worktree at $MAC_TASK_REPO_WORKTREE; confirmed single baseline commit.",
+    "Confirmed .venv/bin/pytest already bootstrapped.",
+    "Updated OPENCLAW_IMAGE_REVISION=9 to =10 in deploy/openclaw/install-openclaw-gateway.sh.",
+    "Updated localhost/mac-openclaw:2026.6.11-mac.9 to mac.10 in deploy/openclaw/RUNBOOK.md.",
+    "Updated assert OPENCLAW_IMAGE_REVISION=\"9\" to \"10\" in tests/test_openclaw_gateway_deploy.py.",
+    "Ran .venv/bin/pytest tests/test_openclaw_gateway_deploy.py -v: 17 passed (1.49s).",
+    "Ran codegraph init: 39,136 nodes, 128,165 edges. Ran codegraph affected on 3 files: no additional test files affected.",
+    "Committed 3 modified files with descriptive commit message.",
     "Updated mac-evidence.json with task results."
   ],
   "tests": {
-    "command": "python3 -m pytest tests/test_dream_cycle_classifier.py -v",
-    "result": "33 passed in 0.09s",
+    "command": ".venv/bin/pytest tests/test_openclaw_gateway_deploy.py -v",
+    "result": "17 passed in 1.49s",
     "status": "passed",
     "exit_code": 0,
     "key_tests": {
-      "test_skill_curator_pattern_detected": "PASSED",
-      "test_skill_hermes_skill_pattern_detected": "PASSED",
-      "test_skill_command_and_utils_patterns_detected": "PASSED",
-      "test_skill_area_medium_confidence_with_two_evidence": "PASSED",
-      "test_skill_area_high_confidence_with_three_evidence": "PASSED",
-      "test_skill_and_tool_co_occurrence": "PASSED"
+      "test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw": "PASSED",
+      "test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_services": "PASSED",
+      "test_shell_artifacts_parse": "PASSED",
+      "test_prepare_renders_valid_secret_ref_config_without_log_leaks": "PASSED",
+      "test_fleet_deploy_selects_stock_openclaw_on_every_supervisor": "PASSED"
     },
-    "total_tests": 33,
-    "passed": 33,
+    "total_tests": 17,
+    "passed": 17,
     "failed": 0
   },
   "codegraph": {
     "status": "passed",
-    "init": "codegraph init completed: 39,136 nodes, 128,165 edges",
+    "init": "codegraph init completed: 39,136 nodes, 128,165 edges in 1m 12s",
     "affected_files": [
-      "tests/test_dream_cycle_classifier.py"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/RUNBOOK.md",
+      "tests/test_openclaw_gateway_deploy.py"
     ],
-    "affected_result": "No additional test files affected by the changed test file.",
-    "audit_outcome": "Only test file changed; no source code modifications required."
+    "affected_result": "No test files affected by the changed files (shell scripts and test file already accounted for).",
+    "audit_outcome": "Three revision-bearing artifacts updated; no additional source changes required."
   },
   "repo": {
-    "head_sha": "547dbcc6a57ceeaabeed7a4d87ae1f7dc778201a",
+    "head_sha": "bda1eca2b09a8604c1b1660ea7c897874a6be744",
     "pushed": false,
-    "dirty": true,
+    "dirty": false,
     "files_changed": [
-      "tests/test_dream_cycle_classifier.py",
-      "mac-evidence.json"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/RUNBOOK.md",
+      "tests/test_openclaw_gateway_deploy.py"
     ],
     "branch": "master"
   },
   "assumptions": [
-    "All 6 skill-area tests are pure-Python with no ControlPlane, SQLite, or Qdrant dependencies.",
-    "The _SKILL_PATTERNS in dream_cycle_classifier.py already supports all required patterns (curator, hermes.skill, skill_command, skill_utils) — no source changes needed.",
-    "evidence_type=repo_change used as required by task description and execution contract.",
-    "The deterministic host finalizer will handle push and canonical freshness."
+    "The three files listed in the task description are the complete set of revision-bearing artifacts requiring the 9->10 bump.",
+    "evidence_type=repo_change used as required by execution contract.",
+    "The deterministic host finalizer will handle canonical fetch, rebase, push, and publication."
   ]
 }
