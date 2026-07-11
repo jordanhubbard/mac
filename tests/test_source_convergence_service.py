@@ -182,3 +182,54 @@ def test_controller_schema_exists_in_sqlite_and_postgres():
     schema = Path("src/mac/data/postgres/schema.sql").read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS source_convergence_nodes" in schema
     assert "CREATE TABLE IF NOT EXISTS source_convergence_controller_leases" in schema
+
+
+def test_controller_persists_intent_before_send_and_resumes_same_request(monkeypatch):
+    cp, fleet, agent = _fixture()
+    monkeypatch.setenv("MAC_REVIEW_TICK_HUB_AGENT", agent.id)
+    service = cp.source_convergence
+    real_publish = service._publish_exact_source_intent
+
+    def crash_before_send(**_kwargs):
+        row = cp.store.query_one(
+            "SELECT * FROM source_convergence_nodes WHERE fleet_id = ? AND agent_id = ?",
+            (fleet.id, agent.id),
+        )
+        assert row["phase"] == "dispatching"
+        assert row["request_id"]
+        raise RuntimeError("simulated hub crash")
+
+    monkeypatch.setattr(service, "_publish_exact_source_intent", crash_before_send)
+    failed = cp.tick_source_convergence()
+    assert failed["dispatched"] == 0
+    first = cp.store.query_one(
+        "SELECT * FROM source_convergence_nodes WHERE fleet_id = ? AND agent_id = ?",
+        (fleet.id, agent.id),
+    )
+    request_id = first["request_id"]
+    cp.store.execute(
+        "UPDATE source_convergence_nodes SET next_retry_at = ? WHERE id = ?",
+        ("2000-01-01T00:00:00+00:00", first["id"]),
+    )
+
+    monkeypatch.setattr(service, "_publish_exact_source_intent", real_publish)
+    resumed = cp.tick_source_convergence()
+
+    assert resumed["dispatched"] == 1
+    node = cp.store.query_one(
+        "SELECT * FROM source_convergence_nodes WHERE fleet_id = ? AND agent_id = ?",
+        (fleet.id, agent.id),
+    )
+    assert node["request_id"] == request_id
+    assert node["attempt"] == 1
+    assert node["phase"] == "dispatched"
+    assert (
+        len(
+            [
+                stream
+                for stream in cp.list_agentbus_streams(agent_id=agent.id)
+                if stream.topic == "mac.repo.update.v1"
+            ]
+        )
+        == 1
+    )

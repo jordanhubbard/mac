@@ -15,6 +15,7 @@ from mac.env_config import resolve_hub_agent
 from mac.models import (
     AgentStatus,
     JsonDict,
+    NotFoundError,
     json_dumps,
     json_loads,
     new_id,
@@ -341,12 +342,25 @@ class SourceConvergenceService:
                 )
                 summary["blocked"] += 1
                 continue
-            attempt = int(existing["attempt"] or 0) + 1 if existing else 1
-            request_id = "source-convergence:%s:%d:%s:%d" % (
-                fleet_id,
-                generation,
-                agent_id,
-                attempt,
+            recovering_dispatch = bool(
+                existing
+                and str(existing["phase"]) == "dispatching"
+                and int(existing["desired_generation"]) == generation
+                and str(existing["desired_sha"]) == desired_sha
+                and str(existing["request_id"] or "")
+            )
+            attempt = (
+                int(existing["attempt"] or 1)
+                if recovering_dispatch
+                else int(existing["attempt"] or 0) + 1
+                if existing
+                else 1
+            )
+            request_id = (
+                str(existing["request_id"])
+                if recovering_dispatch
+                else "source-convergence:%s:%d:%s:%d"
+                % (fleet_id, generation, agent_id, attempt)
             )
             payload = repo_update_payload(
                 remote=str(metadata.get("remote") or "origin"),
@@ -357,29 +371,89 @@ class SourceConvergenceService:
                 desired_generation=generation,
                 release_id=str(state["release_id"]),
             )
-            published = self.cp.publish_agentbus_content(
-                sender_agent_id=sender_id,
-                recipient_agent_id=agent_id,
-                content_type=REPO_UPDATE_CONTENT_TYPE,
-                topic=REPO_UPDATE_TOPIC,
-                payload=payload,
-            )
-            stream_id = str((published.get("stream") or {}).get("id") or "")
+            # Commit intent before touching AgentBus. The deterministic stream
+            # ID lets a replacement hub resume rather than duplicate mutation.
             self._write_node(
                 state,
                 row,
                 action,
                 plan_reason,
-                "dispatched",
+                "dispatching",
                 actual_sha,
                 request_id=request_id,
-                stream_id=stream_id,
+                stream_id=None,
                 blocker_code=None,
                 blocker_detail=None,
                 attempt=attempt,
             )
+            try:
+                stream_id = self._publish_exact_source_intent(
+                    sender_id=sender_id,
+                    recipient_id=agent_id,
+                    request_id=request_id,
+                    payload=payload,
+                )
+            except Exception as exc:  # noqa: BLE001 - durable state makes this retryable.
+                summary["errors"].append(
+                    {
+                        "fleet_id": fleet_id,
+                        "agent_id": agent_id,
+                        "error": str(exc)[:500],
+                    }
+                )
+                summary["waiting"] += 1
+                continue
+            self.store.execute(
+                """
+                UPDATE source_convergence_nodes
+                SET phase = 'dispatched', stream_id = ?, updated_at = ?
+                WHERE fleet_id = ? AND agent_id = ? AND request_id = ?
+                  AND phase = 'dispatching'
+                """,
+                (stream_id, utcnow(), fleet_id, agent_id, request_id),
+            )
             summary["dispatched"] += 1
         return len(agents)
+
+    def _publish_exact_source_intent(
+        self,
+        *,
+        sender_id: str,
+        recipient_id: str,
+        request_id: str,
+        payload: JsonDict,
+    ) -> str:
+        stream_id = (
+            "srcconv_%s" % hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:40]
+        )
+        try:
+            stream = self.cp.get_agentbus_stream(stream_id)
+        except NotFoundError:
+            stream = self.cp.open_agentbus_stream(
+                sender_agent_id=sender_id,
+                recipient_agent_id=recipient_id,
+                content_type=REPO_UPDATE_CONTENT_TYPE,
+                topic=REPO_UPDATE_TOPIC,
+                stream_id=stream_id,
+            )
+        if (
+            stream.sender_agent_id != sender_id
+            or stream.recipient_agent_id != recipient_id
+        ):
+            raise RuntimeError(
+                "deterministic source-convergence stream identity collision"
+            )
+        chunks = self.cp.read_agentbus_chunks(sender_id, stream_id, 0, 10)
+        if not chunks:
+            self.cp.append_agentbus_chunk(
+                stream_id,
+                sender_id,
+                payload=payload,
+                content_type=REPO_UPDATE_CONTENT_TYPE,
+                payload_encoding="json",
+                final=True,
+            )
+        return stream_id
 
     def _consume_results(self) -> None:
         rows = self.store.query_all(
@@ -403,6 +477,7 @@ class SourceConvergenceService:
                 (request_id,),
             )
             if node is None or str(node["phase"]) not in {
+                "dispatching",
                 "dispatched",
                 "awaiting_attestation",
             }:
@@ -479,7 +554,7 @@ class SourceConvergenceService:
                 parse_time(now)
                 + timedelta(seconds=min(900, 30 * (2 ** min(5, max(0, attempt - 1)))))
             ).isoformat()
-            if phase == "dispatched"
+            if phase in {"dispatching", "dispatched"}
             else None
         )
         self.store.execute(
@@ -536,7 +611,11 @@ class SourceConvergenceService:
             or str(row["desired_sha"]) != desired_sha
         ):
             return False
-        if str(row["phase"]) in {"awaiting_attestation", "dispatched"}:
+        if str(row["phase"]) in {
+            "awaiting_attestation",
+            "dispatching",
+            "dispatched",
+        }:
             retry_at = str(row["next_retry_at"] or "")
             return bool(retry_at and parse_time(retry_at) > parse_time(utcnow()))
         if str(row["phase"]) == "retry_wait":

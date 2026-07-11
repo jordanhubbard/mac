@@ -188,6 +188,14 @@ class AgentBusService:
                     (now, stream_id),
                 )
         chunk = self.get_chunk(chunk_id)
+        if final:
+            finalized_stream = self.get_stream(stream_id)
+            if finalized_stream.recipient_agent_id and is_control_stream(
+                finalized_stream.topic, finalized_stream.content_type
+            ):
+                self._stamp_control_stream_published(
+                    finalized_stream.recipient_agent_id
+                )
         self.observability.record_log(
             "agentbus.chunk.appended",
             layer="agentbus",
@@ -371,8 +379,6 @@ class AgentBusService:
             payload_encoding=payload_encoding,
             final=True,
         )
-        if recipient_agent_id and is_control_stream(topic, content_type):
-            self._stamp_control_stream_published(recipient_agent_id)
         self.observability.record_log(
             "agentbus.content.published",
             layer="agentbus",
