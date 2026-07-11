@@ -1,38 +1,41 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "repo_change",
-  "task_id": "task_6f41bfd41c51428cba556fd4573809b7",
+  "evidence_type": "investigation",
+  "task_id": "task_3ccd5a0ec35d4ad8b07cd3715b9fc9a9",
   "status": "complete",
-  "summary": "Ran the full contract test suite (scripts/run-contract-tests.sh) in the task worktree; all 5672 tests passed (21 skipped, exit code 0), including the three explicitly required tests \u2014 test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw, test_mac_continuity_plugin_registers_runtime_hook_and_tools, and test_mac_image_generate_posts_to_hub_media_router_and_writes_png \u2014 all PASSED. Coverage met policy floors (statements 93.21% >= 90%, branches 84.62% >= 80%). Results recorded in mac-evidence.json with evidence_type=repo_change.",
+  "summary": "Investigated the low-confidence dream-repair finding for src/mac/openclaw_fleet_rollout.py. Conclusion: NOT ACTIONABLE. The evidence is too thin to support a safe implementation without operator clarification.",
+  "finding": {
+    "verdict": "not_actionable",
+    "bullets": [
+      "ABSENT: src/mac/openclaw_fleet_rollout.py does not exist anywhere in the worktree. A global repo search found zero references to the module name in any source file, test file, import, or documentation — the module has never been imported or referenced in the codebase.",
+      "ADJACENT CODE AUDIT: fleet_deploy.py provides SSH targeting and cleanup utilities; fleet_setup.py converts declarative specs into fleet registry entries; rollout_service.py implements a general PLANNED→CANARYING→PROMOTING→RELEASED state machine for artifact rollouts in the MAC control plane. None of these modules contain openclaw-specific staged edge-node deployment logic, nor do they reference each other in an 'openclaw fleet rollout' capacity.",
+      "SHELL LOGIC EXISTS BUT IS NOT FORMALIZED: deploy/openclaw/RUNBOOK.md prescribes a 4-step deployment order (non-hub physical canary → remaining physical workers → containerized workers and hub nodes → primary hub last) and deploy/deploy-mac-fleet.sh implements WORKER_REQUIRE_CANARY and live-canary verification gates. This is the only extant 'staged edge-node deploy plan' logic; it lives entirely in Bash and the RUNBOOK, not in a Python module.",
+      "NO TEST SKELETON EXISTS: tests/ contains zero references to 'openclaw_fleet_rollout' or 'openclaw fleet rollout'. There is no test skeleton, no fixture, no TODO comment, and no import that would anchor a minimal correct implementation.",
+      "EVIDENCE GAP — implementation is not safe without clarification: (a) It is unclear what Python API surface the module would expose on top of the existing shell+rollout_service machinery — no callers, no interface contract, no docstring stub exists. (b) The 'staged edge-node deploy plan' in the RUNBOOK is already implemented and documented in Bash; a Python wrapper would need an explicit design decision on which parts to formalize and how they connect to rollout_service. (c) Confidence 0.35 with one evidence record from a prior failed task (task_f0458edbbde0401cbe8ea79688e8fe29) is below the actionable threshold. Writing a speculative implementation now risks introducing an API that conflicts with future operator intent or duplicates existing Bash logic incorrectly."
+    ],
+    "what_minimal_impl_would_contain": "If an operator decides this module is needed, a minimal correct implementation would: (1) import and wrap fleet_deploy.SshTarget/parse_ssh_target for node targeting; (2) import rollout_service.RolloutService for lifecycle management; (3) define an OpenclawyFleetRolloutPlan dataclass encoding the 4-step RUNBOOK order (canary non-hub, remaining non-hub, containerized+hub, primary hub); (4) expose a plan() function returning the step list and a verify_canary() function that calls the install-openclaw-gateway.sh verify gate via subprocess. Without an operator-supplied interface contract, any implementation would be speculative.",
+    "actionable": false,
+    "rationale": "Zero references to the module in any source, test, import, or doc; the staged-deploy logic it would formalize already exists in Bash; no interface contract or caller is defined; confidence 0.35 / 1 evidence record from a previously failed task is below the threshold for safe autonomous implementation."
+  },
+  "steps_performed": [
+    "Confirmed src/mac/openclaw_fleet_rollout.py is absent (ls + global rg search returned zero matches).",
+    "Surveyed fleet_deploy.py (SSH targeting + cleanup), fleet_setup.py (declarative spec planner), and rollout_service.py (artifact rollout state machine). None contain openclaw staged-deploy logic.",
+    "Searched all of tests/ for 'openclaw_fleet_rollout' — zero matches found.",
+    "Reviewed deploy/deploy-mac-fleet.sh (implements WORKER_REQUIRE_CANARY and live-canary gate) and deploy/openclaw/ (RUNBOOK.md 4-step order, install-openclaw-gateway.sh). The staged-deploy plan is entirely shell-based.",
+    "Performed global repo search for 'openclaw_fleet_rollout' — zero matches in source, tests, deploy, docs, or config."
+  ],
   "tests": {
-    "command": "scripts/run-contract-tests.sh",
-    "result": "5672 passed, 21 skipped in 433.31s",
-    "status": "green",
-    "exit_code": 0,
-    "required_tests": {
-      "test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw": "PASSED",
-      "test_mac_continuity_plugin_registers_runtime_hook_and_tools": "PASSED",
-      "test_mac_image_generate_posts_to_hub_media_router_and_writes_png": "PASSED"
-    },
-    "coverage": {
-      "statements_pct": 93.21,
-      "statements_floor": 90.0,
-      "branches_pct": 84.62,
-      "branches_floor": 80.0,
-      "policy": "pass"
-    }
+    "command": "investigation only — no contract tests run per task acceptance criteria",
+    "result": "n/a",
+    "status": "skipped",
+    "exit_code": null
   },
   "codegraph": {
-    "status": "run",
-    "command": "codegraph init && codegraph affected mac-evidence.json",
-    "result": "Indexed 1,209 files; 39,130 nodes, 128,146 edges. No test files affected by mac-evidence.json (data file, no code change).",
-    "affected_files": [
-      "mac-evidence.json"
-    ],
-    "impact": "none \u2014 mac-evidence.json is a JSON data file with no importers or callers in the code graph"
+    "status": "skipped",
+    "reason": "Investigation task — no code written or modified. No CodeGraph run required per contract (no files changed)."
   },
   "repo": {
-    "head_sha": "d2c4c3459c6f9720e54d52b6e2ab63e5fc119a80",
+    "head_sha": "5e070458fca428d05e26de67938c3d50a6203f27",
     "pushed": false,
     "dirty": false,
     "files_changed": [
@@ -40,11 +43,9 @@
     ]
   },
   "assumptions": [
-    "The worktree was initialized as a single-commit baseline (89ddd61) from the sandbox; no prior task-owned commits exist.",
-    "The mac-evidence.json from a prior task (task_637fca3a...) was overwritten with this task evidence.",
-    "The deterministic finalizer owns rebasing against canonical main, committing tracked modifications, pushing, and publication.",
-    "evidence_type=repo_change is correct per the repository contract.",
-    "CodeGraph affected analysis confirmed mac-evidence.json is a data file with no downstream code impact.",
-    "No remote credentials are available in the sandbox; pushed=false. The deterministic finalizer will rebase and push."
+    "This is an investigation-only task; no code is written per explicit acceptance criteria ('No code written by this child; it is investigation only').",
+    "evidence_type=investigation is used as directed by the task description acceptance criteria.",
+    "The deterministic finalizer owns rebasing, committing tracked modifications, pushing, and publication.",
+    "No remote credentials are available in the sandbox; pushed=false."
   ]
 }
