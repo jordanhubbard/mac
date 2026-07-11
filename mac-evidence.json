@@ -1,60 +1,56 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "investigation",
-  "task_id": "task_60a70351b67145929023fea18735718f",
+  "task_id": "task_285b806c104a48079dbc9fc5d9ce5dd3",
   "status": "complete",
-  "summary": "Confirmed root cause for two consecutive openclaw_fleet_rollout.py implementation failures: both agents (agent_jordanh-gke on attempt 2, agent_jordanh-worker2 on attempt 3) wrote the file to the worktree but did not stage and commit it with `git add` + `git commit` before completing their turn. The deterministic finalizer only commits pre-tracked modified files; brand-new files left untracked are not staged by the finalizer and cause it to refuse the push (dirty worktree). The current task worktree confirms src/mac/openclaw_fleet_rollout.py does not exist.",
+  "summary": "Investigated the low-confidence dream-repair finding (fingerprint: dreamrepair:6c70466c971039af1b03716f9a03eb27) for the missing src/mac/openclaw_fleet_rollout.py. Surveyed all relevant fleet/rollout modules and the deploy/openclaw/ directory. Confirmed: no existing Python module implements the 4-phase staged edge-node OpenClaw rollout order documented as prose in deploy/openclaw/RUNBOOK.md (lines 134-140). The generic rollout_service.py handles artifact promotion state machines but contains no openclaw-specific staged node-ordering logic. The fleet deploy shell script (deploy/deploy-mac-fleet.sh) does not enforce the canary-first, hub-last rollout sequence as a programmatic Python policy. The gap is real. Verdict: ACTIONABLE.",
   "verdict": "ACTIONABLE",
   "actionability": {
-    "root_cause": "New files created during task execution were left untracked (not staged and committed) before handoff to the deterministic finalizer. The finalizer only commits modifications to already-tracked files; it refuses to push when untracked or staged-but-not-committed new files are present.",
-    "evidence_source": "Hub task activity log for task_a5464dfb062d47b7ab8fa27bdc0fde67 (two attempts); memory record mem_07a80bb4e71c43e4a5203e727352fa78 (deployment_learning:mac, outcome=failure, all delivery signals null); dream record mem_d8d58237b22a4d66ae48d9dddb175197 (confidence=low, salience=0.35).",
-    "required_fix": "The blocked task (task_a5464dfb062d47b7ab8fa27bdc0fde67) must be retried by an agent that: (1) writes src/mac/openclaw_fleet_rollout.py following the pure-core pattern, (2) stages and commits the new file with `git add src/mac/openclaw_fleet_rollout.py && git commit -m ...` before declaring done, and (3) verifies `git status` shows a clean worktree before handoff.",
-    "pattern": "New-file commit omission — agent must git-add and git-commit every new file before finishing. The deterministic finalizer commits modified tracked files only; publication requires no untracked or staged-new files in the task worktree.",
+    "root_cause": "The 4-phase staged OpenClaw fleet rollout sequence (canary non-hub physical worker first, remaining non-hub physical workers, containerized/hub-node workers, primary fleet hub last) is documented only as prose in deploy/openclaw/RUNBOOK.md lines 134-140. No Python module in src/mac/ implements or enforces this sequence programmatically. The generic rollout_service.py manages artifact promotion state machines (PLANNED → CANARYING → PROMOTED) but contains no openclaw-specific node-type classification or stage-ordering logic. The deploy shell script iterates agents from the fleet config order without enforcing the RUNBOOK-specified 4-phase sequence for openclaw gateway rollouts.",
+    "evidence_source": "Direct source inspection: src/mac/rollout_service.py, src/mac/fleet_deploy.py, src/mac/fleet_move.py, src/mac/fleet_setup.py, src/mac/fleet_learning.py, src/mac/deploy_service.py, deploy/openclaw/RUNBOOK.md, deploy/deploy-mac-fleet.sh, tests/ directory. Confirmed: no file named openclaw_fleet_rollout.py exists anywhere in the worktree (ls src/mac/ grep returned only rollout_service.py).",
+    "required_fix": "Create src/mac/openclaw_fleet_rollout.py following the pure-core pattern established by fleet_move.py and fleet_setup.py: (1) pure side-effect-free planning functions that classify fleet nodes into the 4 RUNBOOK phases and build an ordered deploy plan; (2) execution gated behind execute=True; (3) typed dataclasses for NodeKind, DeployPhase, and RolloutPlan; (4) dry-run by default. The new file must be staged and committed with git add + git commit before handoff.",
+    "pattern": "Real codebase gap — the openclaw-specific staged edge-node rollout sequence has no Python module. The failed prior task (task_35d5576ab3f64f29b4456224b8063037) left the file unimplemented. A prior investigation task (task_60a70351b67145929023fea18735718f) also confirmed ACTIONABLE but its evidence.json carried a different task_id and was not pushed.",
     "confidence": "high"
   },
   "investigation_steps": [
     {
-      "step": "Read hub task history for task_a5464dfb062d47b7ab8fa27bdc0fde67",
-      "outcome": "Retrieved 4 activity entries. Attempt 2 (agent_jordanh-gke): wrote file, ran tests (passed), but left src/mac/openclaw_fleet_rollout.py untracked — finalizer refused to push. Attempt 3 (agent_jordanh-worker2): wrote file, committed ('commit e01ff5f'), ran tests (5663 passed), but the finalizer still reported untracked files and local errors, refusing to push."
+      "step": "Survey src/mac/ for any existing openclaw rollout module",
+      "outcome": "ls src/mac/ | grep -i 'openclaw|rollout' returned only rollout_service.py. No openclaw_fleet_rollout.py exists. rg for 'openclaw_fleet_rollout' across the entire repo returned zero matches."
     },
     {
-      "step": "Read memory record mem_07a80bb4e71c43e4a5203e727352fa78",
-      "outcome": "Record confirmed: deployment_learning:mac for task_a5464dfb062d47b7ab8fa27bdc0fde67, outcome=failure, all delivery signals null (files_changed=null, pushed=null, checks_pass=null, tests=null). The null signals indicate the finalizer rejected the work before any push occurred."
+      "step": "Read deploy/openclaw/RUNBOOK.md Fleet deployment section (lines 134-140)",
+      "outcome": "The RUNBOOK documents a 4-phase deploy order: (1) one non-hub physical worker as canary, (2) remaining non-hub physical workers, (3) containerized worker and hub nodes, (4) primary fleet hub last. This is prose guidance only — no Python enforces it."
     },
     {
-      "step": "Confirm src/mac/openclaw_fleet_rollout.py does NOT exist in current worktree",
-      "outcome": "Confirmed: ls returned 'No such file or directory'. The file was never pushed to the canonical branch. git status shows clean worktree. git log shows only the baseline commit e0e11b6."
+      "step": "Read src/mac/rollout_service.py for openclaw/edge-node coverage",
+      "outcome": "rollout_service.py implements a generic artifact promotion state machine (PLANNED → CANARYING → PROMOTED → ROLLED_BACK). grep for 'openclaw', 'edge_node', 'staged', 'phase 1/2/3/4' returned zero matches. The service has no concept of node type (physical vs containerized vs hub) or the RUNBOOK 4-phase ordering."
     },
     {
-      "step": "Read fleet_move.py and fleet_setup.py to document pure-core pattern",
-      "outcome": "Both modules follow identical conventions: (1) `from __future__ import annotations`; (2) pure side-effect-free planning/validation functions (no I/O, fully unit-testable) separated from execution functions gated by `execute=True`; (3) typed dicts or dataclasses for structured outputs; (4) dry-run by default; (5) clear docstrings describing the design. The new openclaw_fleet_rollout.py must follow this same pattern."
+      "step": "Read deploy/deploy-mac-fleet.sh for openclaw staged rollout logic",
+      "outcome": "The shell script's main() loop iterates agents from fleet config via selected_hosts()/fleet_config_query('specs'). Agent ordering follows fleet config declaration order, not the RUNBOOK 4-phase sequence. grep for 'hub_last', 'non-hub', 'physical_first', 'containerized', 'stage 1/2/3/4' returned zero matches in the deploy loop. The require_canary worker field controls per-node canary requirement but does not enforce the global 4-phase rollout sequence."
+    },
+    {
+      "step": "Read src/mac/fleet_deploy.py, fleet_move.py, fleet_setup.py, fleet_learning.py, deploy_service.py",
+      "outcome": "None contain openclaw-specific staged rollout logic. fleet_move.py and fleet_setup.py establish the pure-core pattern (side-effect-free plan functions, execute=True gate, dataclass plan objects) that openclaw_fleet_rollout.py should follow. deploy_service.py is a generic artifact deployment record service with no node-type awareness."
+    },
+    {
+      "step": "Check tests/ for any existing coverage of openclaw staged rollout",
+      "outcome": "tests/test_openclaw_gateway_deploy.py covers installer artifact pinning and sandbox verification. No test file covers a 4-phase staged fleet rollout sequence or tests a Python module for openclaw node ordering. The gap in tests mirrors the gap in source."
+    },
+    {
+      "step": "Run contract tests to establish baseline",
+      "outcome": "scripts/run-contract-tests.sh exited 0. Coverage: statements 93.19% (floor 90%), branches 84.63% (floor 80%). All tests pass on the unmodified worktree."
     }
   ],
-  "pure_core_pattern_summary": {
-    "description": "Both fleet_move.py and fleet_setup.py implement a pure-core architecture where planning/validation functions are side-effect-free and unit-tested, while execution is gated behind execute=True. Key conventions: from __future__ import annotations, dataclasses/TypedDicts for plan objects, dry-run by default, idempotent execution.",
-    "required_public_api": [
-      "validate_rollout_config(config) -> dict  # pure, side-effect-free",
-      "build_edge_node_deploy_steps(registry, config) -> List[DeployStep]  # pure",
-      "plan_staged_rollout(registry, config) -> DeployPlan  # pure, canary->edge->remaining",
-      "execute_rollout(plan, execute=False) -> dict  # gated by execute=True"
-    ],
-    "required_types": [
-      "NodeState enum: PENDING, DEPLOYING, HEALTHY, FAILED",
-      "DeployStep dataclass",
-      "RolloutStage dataclass",
-      "DeployPlan dataclass"
-    ]
-  },
-  "dream_finding": {
-    "memory_id": "mem_07a80bb4e71c43e4a5203e727352fa78",
-    "dream_record_id": "mem_d8d58237b22a4d66ae48d9dddb175197",
-    "confidence": "low",
-    "confidence_score": 0.35,
-    "classification": "TRUE_POSITIVE",
-    "explanation": "The low confidence score (0.35) reflects that only one nap window of data was available (one failure record). However the root cause is real and confirmed: both prior attempts failed because new files were left untracked. The dream correctly identified a repeating failure pattern for this task."
+  "gap_characterization": {
+    "missing_module": "src/mac/openclaw_fleet_rollout.py",
+    "missing_capability": "Programmatic enforcement of the 4-phase staged OpenClaw fleet rollout sequence (canary non-hub physical → remaining non-hub physical → containerized+hub-node → primary hub last) as described in deploy/openclaw/RUNBOOK.md",
+    "existing_coverage": "rollout_service.py covers generic artifact promotion state machines; deploy-mac-fleet.sh handles per-node deploy iteration; install-openclaw-gateway.sh covers per-node OpenClaw sandbox install and verification. None enforce the cross-node ordering for an OpenClaw fleet rollout.",
+    "is_redundant": false,
+    "redundancy_rationale": "No existing module covers the openclaw-specific node classification and 4-phase ordering. The gap is real."
   },
   "repo": {
-    "head_sha": "e0e11b6",
+    "head_sha": "f0397f4bb930fdbf78f88ded0047d910f2261c97",
     "pushed": false,
     "dirty": false,
     "files_changed": [
@@ -63,15 +59,17 @@
   },
   "tests": {
     "command": "scripts/run-contract-tests.sh",
-    "status": "skipped",
-    "detail": "Investigation task with no source code changes; contract test run skipped. The file mac-evidence.json is the only output."
+    "status": "passed",
+    "detail": "All contract tests passed (exit 0). Coverage: statements 93.19% >= 90% floor, branches 84.63% >= 80% floor. No source files were changed; this is an investigation task only."
   },
   "codegraph": {
-    "note": "No source files changed. CodeGraph sync not required for this investigation task."
+    "status": "skipped",
+    "reason": "non_code_change",
+    "note": "No source files changed. Only mac-evidence.json was written. CodeGraph sync not required per AGENTS.md policy for non-code changes."
   },
   "assumptions": [
-    "The attempt-3 commit 'e01ff5f' mentioned in the activity log was made in that agent's worktree but the worktree was torn down before the finalizer could push it, or the commit was made after the finalizer had already checked — hence the finalizer still found untracked files.",
-    "The memory record mem_07a80bb4e71c43e4a5203e727352fa78 could not be retrieved via direct REST GET (returned 404), but was retrieved successfully as part of the task-scoped memory list at /memory?task_id=task_a5464dfb062d47b7ab8fa27bdc0fde67.",
-    "Push and PR creation are delegated to the deterministic host finalizer per MAC executor policy."
+    "The task worktree is a sandboxed replica; push to canonical remote is handled by the deterministic host finalizer.",
+    "The dream-repair fingerprint dreamrepair:6c70466c971039af1b03716f9a03eb27 and memory record mem_d4486ff9feb44de3bd071742114b95d0 are referenced in task context; their content was not directly accessible in this sandbox but the source code evidence independently confirms the ACTIONABLE verdict.",
+    "A prior investigation attempt (agent_natasha, task_285b806c104a48079dbc9fc5d9ce5dd3 attempt 1) reached the same ACTIONABLE verdict; this attempt independently corroborates it with fresh source inspection."
   ]
 }
