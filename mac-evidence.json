@@ -5,7 +5,7 @@
   "status": "complete",
   "summary": "Ran full contract test suite (5690 passed, 21 skipped) confirming no regressions from OpenClaw image revision bump 9\u219210. Coverage 93.09% statements / 84.44% branches, both above floor. Ran codegraph init and affected for the three task-specified changed files; no downstream Python callers for shell/markdown files, test file is self-contained. mac-evidence.json written and committed; branch pushed; PR opened.",
   "repo": {
-    "head_sha": "d8a07ada2b5f1884b0522534d65df7055443c710",
+    "head_sha": "2fff4f67c2d5732f2683d6a55f3808173af319ee",
     "pushed": true,
     "dirty": false,
     "branch": "mac/agent_bullwinkle/task_fdc7ce377b9643768e22fe0ab9497758-lease_c32406a63dfd4e3697",
@@ -14,7 +14,8 @@
       "deploy/openclaw/install-openclaw-gateway.sh",
       "mac-evidence.json",
       "tests/test_openclaw_gateway_deploy.py"
-    ]
+    ],
+    "remote_ref": "refs/heads/mac/agent_bullwinkle/task_fdc7ce377b9643768e22fe0ab9497758-lease_c32406a63dfd4e3697"
   },
   "tests": {
     "command": "scripts/run-contract-tests.sh",
@@ -55,7 +56,8 @@
     "base": "main",
     "body": "The AGENTS.md generation already carries the fix (SOUL.md wired as authoritative persona, curiosity block demoted to invocable modes); this commit forces a rebuild so rocky sounds like himself.\n\nContract tests: 5690 passed, 21 skipped, 0 failed. Coverage 93.09% (floor 90%). CodeGraph audit: no downstream impact from shell/markdown changes; test file self-contained.",
     "url": "https://github.com/jordanhubbard/mac/pull/219",
-    "number": 219
+    "number": 219,
+    "head_sha": "2fff4f67c2d5732f2683d6a55f3808173af319ee"
   },
   "assumptions": [
     "The parent task_0cab5fd4e0134b4a92c2d6635ee30a03 (bump_revision) was already merged to main at commit 64686ab before this task ran.",
