@@ -181,3 +181,70 @@ def test_identical_content_across_evidence_deduplicates(cp, tmp_path, monkeypatc
         )
     blobs = [p for p in blob_dir.rglob("*") if p.is_file()]
     assert len(blobs) == 1
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage for previously-uncovered branches
+# ---------------------------------------------------------------------------
+
+
+def test_inline_max_bytes_default_when_env_unset(monkeypatch):
+    """inline_max_bytes returns the default constant when the env var is absent."""
+    monkeypatch.delenv(evidence_blobs.INLINE_MAX_ENV, raising=False)
+    assert evidence_blobs.inline_max_bytes() == evidence_blobs.DEFAULT_INLINE_MAX_BYTES
+
+
+def test_inline_max_bytes_default_on_non_integer_value(monkeypatch):
+    """inline_max_bytes falls back to the default when the env var is not a valid integer."""
+    monkeypatch.setenv(evidence_blobs.INLINE_MAX_ENV, "not-a-number")
+    assert evidence_blobs.inline_max_bytes() == evidence_blobs.DEFAULT_INLINE_MAX_BYTES
+
+
+def test_digest_hex_raises_on_invalid_digest():
+    """_digest_hex raises ValueError for strings that are not 64 hex chars."""
+    with pytest.raises(ValueError, match="invalid sha256 digest"):
+        evidence_blobs._digest_hex("tooshort")
+
+
+def test_read_blob_raises_on_wrong_uri_scheme(tmp_path):
+    """read_blob raises ValueError when the URI does not start with 'evidence-blob:'."""
+    with pytest.raises(ValueError, match="unsupported evidence blob uri"):
+        evidence_blobs.read_blob(tmp_path, "file:///tmp/something")
+
+
+def test_read_blob_raises_on_missing_sha256_prefix(tmp_path):
+    """read_blob raises ValueError when the scheme segment is not 'sha256/'."""
+    with pytest.raises(ValueError, match="unsupported evidence blob uri"):
+        evidence_blobs.read_blob(tmp_path, "evidence-blob:md5/abc123")
+
+
+def test_read_blob_raises_on_expected_sha256_mismatch(tmp_path):
+    """read_blob raises BlobIntegrityError when expected_sha256 differs from the stored digest."""
+    content = b"correct payload"
+    uri = evidence_blobs.store_blob(tmp_path, content)
+    wrong_digest = "a" * 64  # valid hex but wrong digest
+    with pytest.raises(evidence_blobs.BlobIntegrityError):
+        evidence_blobs.read_blob(tmp_path, uri, expected_sha256=wrong_digest)
+
+
+def test_store_blob_cleanup_on_write_error(tmp_path, monkeypatch):
+    """store_blob removes the temp file when an error occurs during write."""
+    import os as _os
+
+    original_fdopen = _os.fdopen
+    call_count = {"n": 0}
+
+    def failing_fdopen(fd, mode):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise OSError("simulated write failure")
+        return original_fdopen(fd, mode)
+
+    monkeypatch.setattr(_os, "fdopen", failing_fdopen)
+    content = b"payload that will fail"
+    with pytest.raises(OSError):
+        evidence_blobs.store_blob(tmp_path, content)
+    # No temp .blob- files should remain in the parent directory
+    fanout = tmp_path / hashlib.sha256(content).hexdigest()[:2]
+    leftover = list(fanout.glob(".blob-*")) if fanout.exists() else []
+    assert leftover == [], "Temp file was not cleaned up after write error"
