@@ -485,3 +485,55 @@ def test_skill_and_tool_co_occurrence():
     tool_areas = [a for a in report["areas"] if a["area_type"] == "tool"]
     assert len(skill_areas) >= 1, "expected at least one skill area"
     assert len(tool_areas) >= 1, "expected at least one tool area"
+
+
+# ---------------------------------------------------------------------------
+# Tests for bug fixes (candidate_id, _generic_tool public name, suppression)
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_id_uses_candidate_id_key_first():
+    """candidate_id field should prefer the 'candidate_id' key over task_id."""
+    cand = _make_candidate(summary="some text", task_id="task_aaa")
+    cand["candidate_id"] = "cand_explicit_999"
+    report = classify_candidate(cand)
+    assert report["candidate_id"] == "cand_explicit_999", (
+        "expected candidate_id from 'candidate_id' key, got: %s" % report["candidate_id"]
+    )
+
+
+def test_candidate_id_falls_back_to_task_id_when_no_candidate_id_key():
+    """When 'candidate_id' key is absent, candidate_id should fall back to task_id."""
+    cand = _make_candidate(summary="some text", task_id="task_bbb")
+    assert "candidate_id" not in cand
+    report = classify_candidate(cand)
+    assert report["candidate_id"] == "task_bbb", (
+        "expected task_id fallback, got: %s" % report["candidate_id"]
+    )
+
+
+def test_generic_tool_area_name_is_public_tool_not_internal():
+    """_generic_tool internal marker must not leak into public area_name; should be 'tool'."""
+    cand = _make_candidate(summary="the tool was invoked during processing")
+    report = classify_candidate(cand)
+    tool_areas = [a for a in report["areas"] if a["area_type"] == "tool"]
+    assert len(tool_areas) >= 1, "expected at least one tool area"
+    for area in tool_areas:
+        assert area["area_name"] != "_generic_tool", (
+            "internal _generic_tool marker leaked into public output"
+        )
+        assert area["area_name"] == "tool", (
+            "expected area_name 'tool' for generic match, got: %s" % area["area_name"]
+        )
+
+
+def test_generic_tool_suppressed_when_specific_tool_present():
+    """When a specific tool (e.g. terminal_tool) matches, generic 'tool' must not appear."""
+    cand = _make_candidate(summary="terminal_tool executed the command via tool interface")
+    report = classify_candidate(cand)
+    tool_areas = [a for a in report["areas"] if a["area_type"] == "tool"]
+    area_names = [a["area_name"] for a in tool_areas]
+    assert "terminal" in area_names, "expected 'terminal' area from terminal_tool"
+    assert "tool" not in area_names and "_generic_tool" not in area_names, (
+        "generic tool should be suppressed when specific tool present; got: %s" % area_names
+    )
