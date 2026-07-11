@@ -204,6 +204,7 @@ def _class_from_history(events: Iterable[Any]) -> str:
                 "lease expired",
                 "agent went offline",
                 "worker_exception",
+                "executor_failed",
                 "could not clone",
                 "authentication failed",
                 "permission denied",

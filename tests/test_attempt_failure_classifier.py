@@ -71,3 +71,41 @@ def test_attempt_failure_classifier_superseded_preempts_environment():
     )
 
     assert result.failure_class == "superseded"
+
+
+def test_attempt_failure_classifier_classifies_executor_failed_as_environment():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "executor_failed",
+                    "manual_repair_required": True,
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "environment"
+
+
+def test_attempt_failure_classifier_executor_failed_in_mixed_history():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.updated",
+                "detail": {"pushed_branch": "mac/agent/task"},
+            },
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "executor_failed",
+                    "manual_repair_required": True,
+                    "returncode": 1,
+                },
+            },
+        ]
+    )
+
+    assert result.failure_class == "environment"
+    assert result.salvage.get("pushed_branch") == "mac/agent/task"

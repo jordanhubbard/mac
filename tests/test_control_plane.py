@@ -7861,6 +7861,39 @@ def test_tick_exhausted_superseded_attempt_cancels_instead_of_failing(cp):
     assert transition.detail["reason"] == "superseded"
 
 
+
+def test_tick_exhausted_executor_failed_creates_environment_repair_task(cp):
+    task = cp.create_task(
+        "exhausted executor_failed attempt",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "executor_failed", "manual_repair_required": True, "returncode": 1},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value
+    assert waiting.metadata["failure_class"] == "environment"
+    assert len(waiting.dependencies) == 1
+    repair = cp.get_task(waiting.dependencies[0])
+    assert repair.metadata["origin"]["type"] == "environment_prerequisite"
+    assert repair.metadata["origin"]["parent_task_id"] == task.id
+    assert waiting.metadata["environment_repair_task_id"] == repair.id
+    assert "contract_repair_task_id" not in waiting.metadata
+    exhausted_ids = [item["id"] for item in result["auto_retry_exhausted"]]
+    assert task.id in exhausted_ids
+
+
 def test_claim_exhausted_attempt_records_failure_class(cp):
     agent = register_agent(cp, capabilities=["python"])
     task = cp.create_task(
