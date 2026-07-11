@@ -1,59 +1,53 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_5e68edb5b5fc4d11b217b0e3592285ae",
+  "task_id": "task_d953a606729149e6aab3a007f839dc75",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Applied 3 bug fixes to src/mac/dream_cycle_classifier.py as identified in the investigation (task_79a165d19870437cbccf804784f58337, verdict: actionable): (1) candidate_id now checks 'candidate_id' key before task_id/nap_run_id; (2) _generic_tool internal marker remapped to public area_name 'tool'; (3) _generic_tool suppression loop uses p_str (actual pattern) in re.search instead of area_name string. Added 4 new tests covering all 3 defects. 37 dream classifier tests pass, 53 dream tests pass total.",
+  "summary": "Investigated the low-confidence dream-cycle 'skill' finding. The finding is NOT actionable: the single evidence record describes a failure to complete a cargo/Rust PATH investigation — the 'skill' label was a classifier artifact from the word 'skill' in that task's title, not a genuine MAC fleet skill gap. Closed with evidence gap (1 record < 2 required for medium confidence). Contract tests pass (5711 collected, all pass).",
   "repo": {
-    "head_sha": "cb20a5268a5acf3377cda827506cdbb40421721a",
-    "branch": "mac/agent_jordanh-gke/task_5e68edb5b5fc4d11b217b0e3592285ae-lease_949be59df757463998",
+    "head_sha": "97f990920cb8e982a3f6836220d92698ef71898d",
+    "branch": "mac/agent_jordanh-gke/task_d953a606729149e6aab3a007f839dc75-lease_78347a40e03045c5bd",
     "remote_url": "git@github.com:jordanhubbard/mac.git",
     "pushed": false,
     "dirty": false,
     "files_changed": [
-      "src/mac/dream_cycle_classifier.py",
-      "tests/test_dream_cycle_classifier.py"
+      "mac-evidence.json"
     ]
   },
   "tests": [
     {
-      "command": "pytest tests/test_dream_cycle_classifier.py tests/test_dream_scanner.py tests/test_dream_repair_tasks.py -v",
-      "result": "53 passed",
-      "status": "passed",
-      "exit_code": 0
-    },
-    {
-      "command": "pytest tests/test_dream_cycle_classifier.py -k 'candidate_id or generic_tool' -v",
-      "result": "4 passed (new defect tests)",
-      "status": "passed",
+      "command": "scripts/run-contract-tests.sh",
+      "result": "all tests pass (5711 collected)",
+      "status": "pass",
       "exit_code": 0
     }
   ],
   "checks": [
     {
-      "name": "dream_classifier_all_tests",
-      "command": "pytest tests/test_dream_cycle_classifier.py -v",
-      "result": "37 passed",
-      "status": "pass"
-    },
-    {
-      "name": "all_dream_tests",
-      "command": "pytest tests/test_dream_cycle_classifier.py tests/test_dream_scanner.py tests/test_dream_repair_tasks.py -v",
-      "result": "53 passed",
+      "name": "dream_skill_finding_investigation",
+      "command": "investigated fleet memory record mem_ae31222d22d147ab8b28e8a3e032e4d9",
+      "result": "NOT actionable — classifier artifact, not a real skill gap",
       "status": "pass"
     }
   ],
   "codegraph": {
-    "status": "pass",
-    "init_command": "codegraph init",
-    "affected_command": "codegraph affected src/mac/dream_cycle_classifier.py tests/test_dream_cycle_classifier.py",
-    "affected_files": [],
-    "note": "No additional test files affected by changes to dream_cycle_classifier.py. Public API (classify_candidate, classify_candidates) unchanged; bug fixes are internal logic corrections. codegraph callers found no external callers in the codebase graph."
+    "status": "skipped",
+    "reason": "non_code_change",
+    "commands": [],
+    "relevant_files": [],
+    "schema": "mac.codegraph_audit.v1"
+  },
+  "finding": {
+    "type": "dream_cycle_skill",
+    "fingerprint": "dreamrepair:4f219bb54e2c27ded22edd1247b1e477",
+    "verdict": "not_actionable",
+    "evidence_count": 1,
+    "confidence_threshold": 2,
+    "reason": "Single evidence record (mem_ae31222d22d147ab8b28e8a3e032e4d9) describes a cargo/Rust PATH investigation failure. The 'skill' classification was a spurious classifier artifact triggered by the word 'skill' in the task title, not an actual MAC fleet skill gap. Evidence count 1 is below the medium-confidence threshold of 2; closing as evidence gap."
   },
   "assumptions": [
-    "Investigation verdict actionable from task_79a165d19870437cbccf804784f58337 with 3 identified defects.",
-    "The two pre-existing test failures (test_git_finalizer_blocks_when_canonical_remote_is_missing, test_repository_contract_canonical_branch_empty_when_absent) are unrelated to dream classifier changes.",
+    "The dream-cycle 'skill' finding is a classifier artifact, not a genuine skill gap, as confirmed by reviewing mem_ae31222d22d147ab8b28e8a3e032e4d9.",
     "The worktree starts from the OpenShell sandbox baseline (single commit) with no remote configured; the deterministic finalizer will rebase onto canonical main and push.",
-    "Bug 3 fix: the suppression check previously searched area_name strings (e.g. 'terminal', 'file') as regex patterns in text instead of the actual pattern strings (e.g. r'\\bterminal[_\\s]?tool\\b'), causing false suppression."
+    "No source code changes are required — this is a diagnostic/investigation task with a non_code_change evidence record."
   ]
 }
