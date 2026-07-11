@@ -1,89 +1,81 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_af3cd5ea34ce44aabf01f73d0a9c3d7e",
+  "task_id": "task_48b8b453d86244ceb4b4a7c71d850c1b",
   "status": "complete",
-  "evidence_type": "repo_change",
-  "summary": "Fetched dependency branch mac/agent_rocky/task_7a6dd317835c41f0a21866f2ee2a91cf-lease_bcfd8b2bbcd64426b1 (tip 0404b43). Applied src/mac/task_executor.py and tests/test_task_executor.py (cargo/Rust toolchain fix) to the task worktree. Files were verified identical to the dependency branch content (already present in baseline). Bootstrap confirmed ready. Contract tests: 5699 passed, 21 skipped in 354s.",
+  "evidence_type": "investigation",
+  "summary": "Investigated the low-confidence dream-repair finding that src/mac/openclaw_fleet_rollout.py is a codebase gap. Verdict: NOT_ACTIONABLE. The module does not exist, has never existed in git history, is not imported or referenced anywhere in the codebase (src/, tests/, deploy/), no test or caller expects it, and no gap in fleet_deploy.py, rollout_service.py, or deploy/openclaw/ would be bridged by creating it. The single memory record at confidence 0.35 is spurious.",
+  "verdict": {
+    "result": "not_actionable",
+    "confidence": "high",
+    "reason": "src/mac/openclaw_fleet_rollout.py does not exist and has never appeared in git history. A comprehensive grep across the entire worktree (src/, tests/, deploy/, scripts/) found zero references to 'openclaw_fleet_rollout' anywhere — no imports, no callers, no test stubs, no fixture references. The codebase covers openclaw fleet functionality through existing, well-tested modules: fleet deployment via deploy/openclaw/install-openclaw-gateway.sh and deploy/deploy-mac-fleet.sh; fleet-level rollout orchestration via src/mac/rollout_service.py (generic, not openclaw-specific); openclaw gateway lifecycle via src/mac/worker.py (_maintain_openclaw_gateway_leases) and src/mac/deploy_env.py; and gateway deployment contracts via tests/test_openclaw_gateway_deploy.py. There is no functional gap that a new openclaw_fleet_rollout.py module would fill. The 1 memory record at confidence 0.35 is well below the threshold for justifying a code change and is consistent with hallucinated or stale-pattern noise in the dream scanner."
+  },
+  "investigation": {
+    "finding_source": "dream_repair low-confidence memory record (confidence=0.35, count=1)",
+    "failed_task": "task_1a06f483c0e44dcbb64a9a37f072f086",
+    "module_queried": "src/mac/openclaw_fleet_rollout.py",
+    "module_exists": false,
+    "git_history_contains_module": false,
+    "references_in_src": 0,
+    "references_in_tests": 0,
+    "references_in_deploy": 0,
+    "callers_found": [],
+    "test_files_expecting_module": [],
+    "files_examined": [
+      "src/mac/fleet_deploy.py",
+      "src/mac/rollout_service.py",
+      "src/mac/fleet_setup.py",
+      "src/mac/fleet_move.py",
+      "src/mac/fleet_creds.py",
+      "src/mac/fleet_env.py",
+      "src/mac/fleet_ssh.py",
+      "src/mac/deploy_env.py",
+      "src/mac/worker.py",
+      "src/mac/self_healing.py",
+      "src/mac/deploy_service.py",
+      "src/mac/dream_repair_tasks.py",
+      "src/mac/dream_scanner.py",
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/RUNBOOK.md",
+      "deploy/openclaw/openclaw-policy.yaml",
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet/config.yaml",
+      "tests/test_openclaw_gateway_deploy.py",
+      "tests/test_openclaw_channel_status.py",
+      "tests/test_openclaw_continuity_migration.py",
+      "tests/test_openclaw_curiosity_sidecar.py",
+      "tests/test_openclaw_personality_provisioner.py",
+      "tests/test_openclaw_secrets_fetcher.py",
+      "tests/test_fleet_deploy_edges.py",
+      "tests/test_fleet_setup.py",
+      "tests/test_fleet_setup_edges.py"
+    ],
+    "existing_openclaw_fleet_coverage": {
+      "fleet_deploy": "src/mac/fleet_deploy.py — SSH target parsing, mesh address canonicalization, retention cleanup; imported by cli.py, fleet_setup.py, client_login.py, fleet_ssh.py",
+      "fleet_rollout": "src/mac/rollout_service.py — generic rollout state machine (PLANNED→CANARYING→PROMOTING→RELEASED), health gates, rescue tasks; not openclaw-specific",
+      "openclaw_gateway_install": "deploy/openclaw/install-openclaw-gateway.sh — fleet-wide openclaw gateway deployment script",
+      "openclaw_gateway_lifecycle": "src/mac/worker.py _maintain_openclaw_gateway_leases; src/mac/deploy_env.py openclaw service advertisement",
+      "openclaw_deploy_tests": "tests/test_openclaw_gateway_deploy.py — contract tests for openclaw/OpenShell deployment artifacts"
+    },
+    "assessment": "Functional coverage for openclaw fleet rollout is fully provided by the combination of rollout_service.py (rollout state machine), fleet_deploy.py (SSH/deploy primitives), deploy/deploy-mac-fleet.sh (fleet deployment shell), and deploy/openclaw/ (gateway install scripts). There is no missing module-shaped gap. The dream scanner finding at confidence 0.35 is a false positive."
+  },
   "repo": {
-    "head_sha": "c011a81a6dc63f0e4b6c973bb95749d3f7014f72",
+    "head_sha": "a576d64",
     "branch": "master",
-    "remote_url": "git@github.com:jordanhubbard/mac.git",
     "pushed": false,
     "dirty": false,
     "files_changed": [
-      "src/mac/task_executor.py",
-      "tests/test_task_executor.py",
       "mac-evidence.json"
     ]
   },
-  "tests": [
-    {
-      "command": "scripts/run-contract-tests.sh",
-      "result": "5699 passed, 21 skipped, 5 warnings in 354.15s",
-      "status": "pass",
-      "exit_code": 0,
-      "coverage": {
-        "statements": "93.05%",
-        "branches": "84.41%",
-        "statement_floor": "90.00%",
-        "branch_floor": "80.00%"
-      }
-    }
-  ],
+  "tests": [],
   "codegraph": {
-    "status": "run",
-    "schema": "mac.codegraph_audit.v1",
-    "commands": [
-      "codegraph init",
-      "codegraph affected src/mac/task_executor.py tests/test_task_executor.py"
-    ],
-    "relevant_files": [
-      "src/mac/task_executor.py",
-      "tests/test_task_executor.py"
-    ],
-    "affected_test_files": [
-      "ide/tests/workbench-project-tree.spec.ts",
-      "src/mac/_hermes/skills/creative/comfyui/tests/conftest.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_check_deps.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_cloud_integration.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_common.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_extract_schema.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_run_workflow.py",
-      "tests/e2e/test_openshell_nemo_relay.py"
-    ],
-    "indexed_files": 1211,
-    "nodes": 39199,
-    "edges": 128653,
-    "result": "No public API changes requiring caller/callee impact analysis; cargo/Rust fix is isolated to embedded shell script in task_executor.py and new tests."
+    "status": "skipped",
+    "reason": "Investigation only — no source code changes made; codegraph run not required per contract for evidence_type=investigation with no file modifications."
   },
-  "dependency": {
-    "task_id": "task_7a6dd317835c41f0a21866f2ee2a91cf",
-    "branch": "mac/agent_rocky/task_7a6dd317835c41f0a21866f2ee2a91cf-lease_bcfd8b2bbcd64426b1",
-    "tip_sha": "0404b43fe4bfe28784ebf7e11c2a8beedb157200",
-    "referenced_sha": "ad958a14c1944d6df24122dbd000cbf2e3a86950",
-    "files_applied": [
-      "src/mac/task_executor.py",
-      "tests/test_task_executor.py"
-    ],
-    "method": "content_verified_identical",
-    "note": "Referenced SHA ad958a14 not found in branch history (already merged to origin/main as 0404b43). Files verified identical by diff."
-  },
-  "checks": [
-    {
-      "name": "bootstrap_venv",
-      "command": "python3 scripts/bootstrap-project.py",
-      "result": ".venv/bin/python present, bootstrap already complete",
-      "status": "pass"
-    },
-    {
-      "name": "dependency_files_applied",
-      "result": "src/mac/task_executor.py and tests/test_task_executor.py match dependency branch tip 0404b43",
-      "status": "pass"
-    }
-  ],
   "assumptions": [
-    "Referenced SHA ad958a14c1944d6df24122dbd000cbf2e3a86950 was not directly accessible in git history; dependency branch tip 0404b43 (already merged to origin/main) was used as the authoritative source.",
-    "Worktree baseline (c5261f6) already contained the dependency files at correct content; application was verified by diff and recorded via explicit commit.",
-    "The deterministic finalizer will rebase onto canonical main and push."
+    "The task requires evidence_type=investigation. No code changes are made; verdict is written to mac-evidence.json only.",
+    "Git history is shallow (single commit a576d64 'MAC OpenShell sandbox baseline') — only HEAD state is available, but the module has never been tracked.",
+    "The source path /home/jkh/.mac/src/mac is not accessible in this sandbox; investigation is based on the task worktree, which is the authoritative registered checkout.",
+    "The deterministic finalizer will commit mac-evidence.json and push."
   ]
 }
