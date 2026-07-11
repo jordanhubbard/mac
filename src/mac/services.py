@@ -7685,6 +7685,7 @@ class ControlPlane:
         lease_seconds: int = 900,
         *,
         sync_beads: bool = True,
+        allow_cooperative_reuse: bool = False,
     ) -> Tuple[Task, Lease]:
         task = self.get_task(task_id)
         agent = self.get_agent(agent_id)
@@ -7711,7 +7712,9 @@ class ControlPlane:
                 "machine %s tenant policy refuses tenant %s for task %s"
                 % (machine.id, task_tenant, task_id)
             )
-        if not self._agent_available_for(agent, task):
+        if not self._agent_available_for(
+            agent, task, allow_cooperative_reuse=allow_cooperative_reuse
+        ):
             raise ValidationError("agent %s cannot claim task %s" % (agent_id, task_id))
         if task.attempt_count >= task.max_attempts:
             target_state, detail = self._exhausted_attempt_terminal_transition(
@@ -7754,11 +7757,23 @@ class ControlPlane:
                         % coordination_lock_task_id
                     )
                 placeholders = ",".join("?" for _ in coordination_related_ids)
-                prior_participation = conn.execute(
-                    "SELECT 1 FROM leases WHERE agent_id = ? AND task_id IN (%s) LIMIT 1"
-                    % placeholders,
-                    (agent_id, *sorted(coordination_related_ids)),
-                ).fetchone()
+                # Expired leases (crashed attempts) do not count as participation
+                # — see _coordination_excluded_agent_ids.  allow_cooperative_reuse
+                # relaxes the distinct-executor rule entirely when the dispatcher
+                # has determined the whole pool is otherwise exhausted.
+                prior_participation = (
+                    None
+                    if allow_cooperative_reuse
+                    else conn.execute(
+                        "SELECT 1 FROM leases WHERE agent_id = ? "
+                        "AND task_id IN (%s) AND status != ? LIMIT 1" % placeholders,
+                        (
+                            agent_id,
+                            *sorted(coordination_related_ids),
+                            LeaseStatus.EXPIRED.value,
+                        ),
+                    ).fetchone()
+                )
                 if prior_participation is not None:
                     raise ValidationError(
                         "agent %s already participated in cooperative task family for %s"
@@ -10872,55 +10887,89 @@ class ControlPlane:
                     )
                     skip_logs += 1
                 continue
-            matched = False
-            for agent in agents:
-                available, reason = self._agent_availability_for_task(agent, task)
-                if not available:
-                    if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                        self._record_routing_skip(
-                            name="dispatcher.routing.task_skipped",
-                            agent_id=agent.id,
-                            task=task,
-                            reason=reason,
-                            route="dispatch_once",
-                            candidate_rank=candidate_rank,
-                            reason_class="agent_availability",
+            def _try_assign(allow_cooperative_reuse: bool) -> bool:
+                nonlocal skip_logs
+                for agent in agents:
+                    available, reason = self._agent_availability_for_task(
+                        agent, task, allow_cooperative_reuse=allow_cooperative_reuse
+                    )
+                    if not available:
+                        if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                            self._record_routing_skip(
+                                name="dispatcher.routing.task_skipped",
+                                agent_id=agent.id,
+                                task=task,
+                                reason=reason,
+                                route="dispatch_once",
+                                candidate_rank=candidate_rank,
+                                reason_class="agent_availability",
+                            )
+                            skip_logs += 1
+                        continue
+                    try:
+                        claimed, lease = self.claim_task(
+                            task.id,
+                            agent.id,
+                            lease_seconds=lease_seconds,
+                            allow_cooperative_reuse=allow_cooperative_reuse,
                         )
-                        skip_logs += 1
-                    continue
-                try:
-                    claimed, lease = self.claim_task(task.id, agent.id, lease_seconds=lease_seconds)
-                except (TransitionError, ValidationError) as exc:
-                    # task was already claimed, exhausted attempts, or otherwise
-                    # ineligible — try the next (task, agent) pair.
-                    if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
-                        self._record_routing_skip(
-                            name="dispatcher.routing.task_skipped",
-                            agent_id=agent.id,
-                            task=task,
-                            reason=exc.__class__.__name__,
-                            route="dispatch_once",
-                            candidate_rank=candidate_rank,
-                            reason_class="claim_failed",
-                        )
-                        skip_logs += 1
-                    continue
-                self.send_message(
-                    "dispatcher",
-                    agent.id,
-                    MessageType.NUDGE.value,
-                    {"task_id": claimed.id, "lease_id": lease.id, "reason": "assigned"},
-                    task_id=claimed.id,
-                )
-                assignments.append(
-                    {
-                        "task": self._assignment_task_payload(claimed, lease),
-                        "agent": agent.to_dict(),
-                        "lease": lease.to_dict(),
+                    except (TransitionError, ValidationError) as exc:
+                        # task was already claimed, exhausted attempts, or otherwise
+                        # ineligible — try the next (task, agent) pair.
+                        if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
+                            self._record_routing_skip(
+                                name="dispatcher.routing.task_skipped",
+                                agent_id=agent.id,
+                                task=task,
+                                reason=exc.__class__.__name__,
+                                route="dispatch_once",
+                                candidate_rank=candidate_rank,
+                                reason_class="claim_failed",
+                            )
+                            skip_logs += 1
+                        continue
+                    nudge_detail = {
+                        "task_id": claimed.id,
+                        "lease_id": lease.id,
+                        "reason": "assigned",
                     }
-                )
-                matched = True
-                break
+                    if allow_cooperative_reuse:
+                        # The distinct-executor preference was relaxed because the
+                        # whole pool had already participated in this family.
+                        nudge_detail["cooperative_reuse_fallback"] = True
+                        self._record_routing_skip(
+                            name="dispatcher.routing.cooperative_fallback",
+                            agent_id=agent.id,
+                            task=task,
+                            reason="cooperative_reuse_fallback",
+                            route="dispatch_once",
+                            candidate_rank=candidate_rank,
+                            reason_class="fallback",
+                        )
+                    self.send_message(
+                        "dispatcher",
+                        agent.id,
+                        MessageType.NUDGE.value,
+                        nudge_detail,
+                        task_id=claimed.id,
+                    )
+                    assignments.append(
+                        {
+                            "task": self._assignment_task_payload(claimed, lease),
+                            "agent": agent.to_dict(),
+                            "lease": lease.to_dict(),
+                        }
+                    )
+                    return True
+                return False
+
+            matched = _try_assign(False)
+            if not matched and self._coordination_related_task_ids(task):
+                # Every eligible agent already participated in this cooperative
+                # family.  A distinct executor is preferred but not required: a
+                # relaxed re-assignment beats leaving the task permanently
+                # undispatchable.  Mirrors the reviewer-independence fallback.
+                matched = _try_assign(True)
             if not matched:
                 unmatched.append(task)
             if len(assignments) >= limit_value:
@@ -12287,10 +12336,36 @@ class ControlPlane:
         )
         has_more = len(rows) > limit_value
         tasks = [self._task_from_row(row) for row in rows[:limit_value]]
-        results = [
-            self.advance_default_review_workflow(task.id, actor=actor)
-            for task in tasks
-        ]
+        results = []
+        for task in tasks:
+            # Per-task isolation: a single unadvanceable review (stale state, a
+            # concurrent completion, bad evidence) must not abort the whole
+            # sweep — and, because this sweep runs inside the hub self-tick,
+            # must not abort the tick and starve dispatch. The self-driver never
+            # crashes the hub; it records the failure and moves on.
+            try:
+                results.append(
+                    self.advance_default_review_workflow(task.id, actor=actor)
+                )
+            except Exception as exc:  # noqa: BLE001 - one row must not stop the sweep
+                try:
+                    self._record_default_review_observation(
+                        task.id,
+                        "workflow.default_review.error",
+                        "error",
+                        {"error": str(exc), "error_class": exc.__class__.__name__},
+                        actor,
+                    )
+                except Exception:  # noqa: BLE001 - best-effort telemetry only
+                    pass
+                results.append(
+                    {
+                        "task_id": task.id,
+                        "status": "error",
+                        "error": str(exc),
+                        "error_class": exc.__class__.__name__,
+                    }
+                )
         next_cursor = (
             self._encode_review_sweep_cursor(tasks[-1])
             if has_more and tasks
@@ -12823,7 +12898,16 @@ class ControlPlane:
                     "nudge_status": "queued" if nudge is not None else "already_queued",
                 }
             verdict_value = self._verdict_value(verdict_evidence)
-            if verdict_value == "rejected":
+            if review.status != ReviewStatus.PENDING.value:
+                # A prior tick, the event-driven advance, or the reviewer already
+                # recorded this verdict, but the task never left the review state
+                # (e.g. the tick crashed before publishing). Re-submitting a
+                # completed review raises "review is already completed" which,
+                # unguarded, aborts the entire hub tick every cycle and wedges
+                # the task in review forever. Skip re-submission and fall through
+                # to the status gate + publication below so approved work lands.
+                pass
+            elif verdict_value == "rejected":
                 review = self.submit_review(
                     review.id,
                     ReviewStatus.REJECTED.value,
@@ -15044,28 +15128,44 @@ class ControlPlane:
         return related_ids
 
     def _coordination_excluded_agent_ids(self, task: Task) -> set[str]:
-        """Agents already participating in a cooperative task family.
+        """Agents that meaningfully participated in a cooperative task family.
 
         Decomposed children and the final integration pass require distinct
         executors.  Lease history is the durable source of participation: it
-        survives task handoff and rejected attempts, unlike ``owner_agent_id``.
+        survives task handoff, unlike ``owner_agent_id``.
+
+        Expired leases are *excluded* from the participation set: an expired
+        lease means the agent went offline / crashed mid-attempt (it never
+        produced a result to keep the reviewer independent from), so counting
+        it as durable participation permanently burns that agent for the whole
+        family after a mere crash.  In a finite agent pool, accumulated expired
+        leases ratchet every family into a permanent no-eligible-agent deadlock
+        that buys nothing — a re-attempt by the crashed agent is strictly better
+        than a task that can never run again.  Only active/renewed/released
+        leases (a real, completed-or-in-flight attempt) count.
         """
         related_ids = self._coordination_related_task_ids(task)
         if not related_ids:
             return set()
         placeholders = ",".join("?" for _ in related_ids)
         rows = self.store.query_all(
-            "SELECT DISTINCT agent_id FROM leases WHERE task_id IN (%s)"
-            % placeholders,
-            tuple(sorted(related_ids)),
+            "SELECT DISTINCT agent_id FROM leases "
+            "WHERE task_id IN (%s) AND status != ?" % placeholders,
+            (*sorted(related_ids), LeaseStatus.EXPIRED.value),
         )
         return {str(row["agent_id"]) for row in rows if row["agent_id"]}
 
-    def _agent_available_for(self, agent: Agent, task: Task) -> bool:
-        available, _reason = self._agent_availability_for_task(agent, task)
+    def _agent_available_for(
+        self, agent: Agent, task: Task, *, allow_cooperative_reuse: bool = False
+    ) -> bool:
+        available, _reason = self._agent_availability_for_task(
+            agent, task, allow_cooperative_reuse=allow_cooperative_reuse
+        )
         return available
 
-    def _agent_availability_for_task(self, agent: Agent, task: Task) -> Tuple[bool, str]:
+    def _agent_availability_for_task(
+        self, agent: Agent, task: Task, *, allow_cooperative_reuse: bool = False
+    ) -> Tuple[bool, str]:
         task_authorization = self._active_break_glass_authorization(task.id)
         break_glass = (
             task_authorization
@@ -15081,7 +15181,14 @@ class ControlPlane:
             return False, "agent_status_unavailable"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return False, "agent_health_unavailable"
-        if agent.id in self._coordination_excluded_agent_ids(task):
+        # Distinct-executor separation is a *preference*, not a hard rule: when
+        # the whole pool has already participated in the family, the dispatcher
+        # relaxes it (allow_cooperative_reuse=True) rather than leaving the task
+        # permanently undispatchable.  This mirrors the reviewer-independence
+        # fallback the review path already has.
+        if not allow_cooperative_reuse and agent.id in self._coordination_excluded_agent_ids(
+            task
+        ):
             return False, "cooperative_distinct_agent_excluded"
         target_agent_id = (
             task.metadata.get("target_agent_id")

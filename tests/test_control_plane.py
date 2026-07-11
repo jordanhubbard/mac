@@ -4016,8 +4016,13 @@ def test_dispatch_records_cooperative_skip_reason_per_agent(cp, monkeypatch):
 
     assignment = cp.dispatch_once()
 
+    # The per-agent cooperative skip reason is still recorded on the strict
+    # pass; the higher-priority integration task is then recovered by the
+    # distinct-executor fallback (it no longer deadlocks behind the lower
+    # priority standalone task).
     assert assignment is not None
-    assert assignment["task"]["id"] == fallback.id
+    assert assignment["task"]["id"] == integration.id
+    assert fallback.id  # standalone task remains open for a later pass
     observations = cp.list_observability(
         name="dispatcher.routing.task_skipped",
         subject_type="task",
@@ -4030,6 +4035,155 @@ def test_dispatch_records_cooperative_skip_reason_per_agent(cp, monkeypatch):
         for event in observations
     )
 
+
+def test_review_sweep_isolates_per_task_errors(cp, monkeypatch):
+    """A single unadvanceable review must not abort the whole sweep — which,
+    inside the hub self-tick, would abort the tick and starve dispatch."""
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    poison = cp.create_task("poison", required_capabilities=["python"])
+    healthy = cp.create_task("healthy", required_capabilities=["python"])
+    # Drive both into needs_review so the sweep query selects them.
+    for task in (poison, healthy):
+        cp.claim_task(task.id, worker.id)
+        cp.start_task(task.id, worker.id)
+        cp.add_evidence(
+            task.id,
+            "test",
+            "artifact://tests",
+            "tests passed",
+            worker.id,
+            metadata=verified_repo_metadata(cp, worker.id),
+        )
+        cp.submit_for_review(task.id, worker.id)
+
+    real_advance = cp.advance_default_review_workflow
+
+    def exploding_advance(task_id, *args, **kwargs):
+        if task_id == poison.id:
+            raise ValidationError("review is already completed")
+        return real_advance(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(cp, "advance_default_review_workflow", exploding_advance)
+
+    # Must not raise even though one row blows up.
+    result = cp.advance_default_review_workflows()
+    statuses = {r["task_id"]: r.get("status") for r in result["results"]}
+    assert statuses.get(poison.id) == "error"
+    assert poison.id in statuses and healthy.id in statuses
+    errors = cp.list_observability(
+        name="workflow.default_review.error",
+        subject_type="task",
+        subject_id=poison.id,
+        limit=10,
+    )
+    assert errors
+
+
+
+def test_expired_lease_does_not_cooperatively_exclude(cp):
+    """A crashed attempt (expired lease) must not permanently burn an agent for
+    the whole cooperative family — only a real, non-expired attempt counts."""
+    from mac.models import LeaseStatus
+
+    worker = register_agent(cp, "worker", ["python"])
+    child = cp.create_task("child", required_capabilities=["python"])
+    _task, lease = cp.claim_task(child.id, worker.id)
+    # Simulate the agent going offline mid-attempt: its lease expires.
+    cp.store.execute(
+        "UPDATE leases SET status = ? WHERE id = ?",
+        (LeaseStatus.EXPIRED.value, lease.id),
+    )
+    integration = cp.create_task(
+        "integration",
+        required_capabilities=["python"],
+        metadata={
+            "coordination": {
+                "require_distinct_agent": True,
+                "child_task_ids": [child.id],
+            },
+            "relationships": {"child_task_ids": [child.id]},
+        },
+    )
+
+    # The expired lease is not participation, so the crashed worker stays
+    # eligible (and can retry) rather than being excluded forever.
+    assert worker.id not in cp._coordination_excluded_agent_ids(integration)
+    available, _reason = cp._agent_availability_for_task(worker, integration)
+    assert available
+
+
+def test_cooperative_dispatch_falls_back_when_pool_exhausted(cp):
+    """When every python-capable agent has already participated in a cooperative
+    family, the dispatcher relaxes the distinct-executor preference and still
+    assigns the task instead of leaving it permanently undispatchable."""
+    agent_a = register_agent(cp, "agent-a", ["python"])
+    agent_b = register_agent(cp, "agent-b", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    child_a = cp.create_task("child-a", required_capabilities=["python"])
+    child_b = cp.create_task("child-b", required_capabilities=["python"])
+    # Both executors genuinely complete a family member (durable released leases).
+    finish_task(cp, child_a, agent_a, reviewer)
+    finish_task(cp, child_b, agent_b, reviewer)
+    integration = cp.create_task(
+        "integration",
+        required_capabilities=["python"],
+        metadata={
+            "coordination": {
+                "require_distinct_agent": True,
+                "child_task_ids": [child_a.id, child_b.id],
+            },
+            "relationships": {"child_task_ids": [child_a.id, child_b.id]},
+        },
+    )
+
+    # Strict pass excludes both executors; the reviewer lacks python. Without the
+    # fallback this task is undispatchable — with it, a real assignment is made.
+    assert cp._coordination_excluded_agent_ids(integration) >= {agent_a.id, agent_b.id}
+    assignment = cp.dispatch_once()
+    assert assignment is not None
+    assert assignment["task"]["id"] == integration.id
+    assert assignment["agent"]["id"] in {agent_a.id, agent_b.id}
+    fallback_events = cp.list_observability(
+        name="dispatcher.routing.cooperative_fallback",
+        subject_type="task",
+        subject_id=integration.id,
+        limit=20,
+    )
+    assert fallback_events
+
+
+def test_cooperative_dispatch_prefers_distinct_agent_over_fallback(cp):
+    """The fallback is a last resort: when an unexcluded distinct agent exists,
+    it is chosen and the fallback never fires."""
+    agent_a = register_agent(cp, "agent-a", ["python"])
+    agent_b = register_agent(cp, "agent-b", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    child_a = cp.create_task("child-a", required_capabilities=["python"])
+    finish_task(cp, child_a, agent_a, reviewer)
+    integration = cp.create_task(
+        "integration",
+        required_capabilities=["python"],
+        metadata={
+            "coordination": {
+                "require_distinct_agent": True,
+                "child_task_ids": [child_a.id],
+            },
+            "relationships": {"child_task_ids": [child_a.id]},
+        },
+    )
+
+    assignment = cp.dispatch_once()
+    assert assignment is not None
+    assert assignment["task"]["id"] == integration.id
+    # agent_b never touched the family, so it is the distinct choice.
+    assert assignment["agent"]["id"] == agent_b.id
+    assert not cp.list_observability(
+        name="dispatcher.routing.cooperative_fallback",
+        subject_type="task",
+        subject_id=integration.id,
+        limit=20,
+    )
 
 
 def test_dependencies_block_until_parent_completes(cp):
@@ -10285,8 +10439,8 @@ def test_cooperative_child_claims_atomically_enforce_distinct_agents(cp, monkeyp
     barrier = threading.Barrier(2)
     original_available = cp._agent_available_for
 
-    def synchronized_available(agent, task):
-        available = original_available(agent, task)
+    def synchronized_available(agent, task, **kwargs):
+        available = original_available(agent, task, **kwargs)
         barrier.wait(timeout=5)
         return available
 
