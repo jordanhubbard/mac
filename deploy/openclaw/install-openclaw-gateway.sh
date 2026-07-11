@@ -403,6 +403,13 @@ if "slack" in configured:
     channels["slack"] = {
         "enabled": True,
         "mode": "socket",
+        # Quiet the per-tool-call progress narration ("Tidepooling… 🔧 Exec")
+        # that stock OpenClaw posts into the channel — it's noise in a human
+        # chat. Final replies and mid-turn commentary still come through.
+        "streaming": {
+            "progress": {"toolProgress": False},
+            "preview": {"toolProgress": False},
+        },
         "accounts": {
             account: {
                 # Stock OpenClaw auto-creates a second account named
@@ -420,6 +427,10 @@ if "slack" in configured:
 if "telegram" in configured:
     channels["telegram"] = {
         "enabled": True,
+        "streaming": {
+            "progress": {"toolProgress": False},
+            "preview": {"toolProgress": False},
+        },
         "accounts": {
             os.environ.get("MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID", "default"): {
                 # TELEGRAM_BOT_TOKEN has the same implicit-default semantics;

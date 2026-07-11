@@ -274,6 +274,11 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     slack = config["channels"]["slack"]["accounts"]["offtera"]
     second_slack = config["channels"]["slack"]["accounts"]["omgjkh"]
     telegram = config["channels"]["telegram"]["accounts"]["default"]
+    # Per-tool-call progress narration ("Tidepooling… Exec") is suppressed —
+    # it's noise in a human chat channel.
+    assert config["channels"]["slack"]["streaming"]["progress"]["toolProgress"] is False
+    assert config["channels"]["slack"]["streaming"]["preview"]["toolProgress"] is False
+    assert config["channels"]["telegram"]["streaming"]["progress"]["toolProgress"] is False
     assert provider["apiKey"] == "${MAC_OPENCLAW_ROUTER_API_KEY}"
     assert provider["headers"] == {
         "x-mac-agent-id": "agent_test",
