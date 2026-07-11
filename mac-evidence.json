@@ -1,88 +1,179 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "investigation",
-  "task_id": "task_676aa8b521384b7e9f93c9c77c2f3d5a",
+  "evidence_type": "plan_decomposed",
+  "task_id": "task_2a9c9d3b411a49faa52802c191495613",
   "status": "complete",
-  "summary": "Audited src/mac/evidence_blobs.py store_blob() for the 0600 permission guarantee. Both security properties are correctly implemented: (1) chmod(0o600) is called on the temp file path BEFORE os.replace(), eliminating the TOCTOU window; (2) path.chmod(0o600) is called post-rename as defense-in-depth for the dedup path. All 16 tests in tests/test_evidence_blobs.py pass, including test_store_blob_sets_mode_0600. Full contract suite: 5672 passed, 21 skipped.",
+  "summary": "Audited mac.dream_cycle_classifier skill-area detection and test coverage. Implementation is functionally correct with one notable regex bug (unescaped dot in hermes.skill pattern). Identified 7 concrete test gaps for the repair child task.",
 
-  "audit": {
-    "file": "src/mac/evidence_blobs.py",
-    "function": "store_blob",
-    "findings": [
-      {
-        "check": "pre_rename_chmod_eliminates_toctou",
-        "verdict": "PASS",
-        "description": "Path(tmp_name).chmod(0o600) is called on the temp file path immediately after the write completes and BEFORE os.replace(tmp_name, path). This means the file is never world-readable between creation and final placement; mkstemp() creates the temp file with mode 0600 on most POSIX systems, but the explicit chmod ensures it regardless of umask. The TOCTOU window is eliminated.",
-        "lines": "store_blob lines: fd, tmp_name = tempfile.mkstemp(...); with os.fdopen(fd,'wb') as handle: handle.write(content); Path(tmp_name).chmod(0o600); os.replace(tmp_name, path)",
-        "code_reference": "src/mac/evidence_blobs.py"
-      },
-      {
-        "check": "post_rename_chmod_defense_in_depth_for_dedup_path",
-        "verdict": "PASS",
-        "description": "After the atomic os.replace(), path.chmod(0o600) is called inside a try/except OSError block. This is the defense-in-depth for the dedup path: when a blob already exists (path.exists() is True), the outer if-block is skipped entirely, but an existing blob that somehow has wrong permissions will be corrected on first read by the post-rename chmod call when the blob IS freshly written. Note: for the pure dedup path (blob already on disk), no chmod is called — the dedup path relies on the fact that the blob was already stored at 0600 on original write. This is documented and acceptable: content-addressed blobs are write-once, so the permissions set on original store are stable.",
-        "code_reference": "src/mac/evidence_blobs.py"
-      },
-      {
-        "check": "docstring_accuracy",
-        "verdict": "PASS",
-        "description": "The module docstring under 'File permissions.' accurately describes both behaviors: 'store_blob applies chmod(0o600) to the temp path before the atomic rename, eliminating the TOCTOU window between rename and a post-rename chmod. The post-rename path.chmod(0o600) is retained as a defense-in-depth fallback for the dedup (already-exists) path.' The implementation matches the docstring.",
-        "code_reference": "src/mac/evidence_blobs.py"
-      }
-    ],
-    "implementation_verdict": "correct",
-    "security_verdict": "0600_guarantee_correctly_implemented"
+  "baseline_tests": {
+    "command": ".venv/bin/python -m pytest tests/test_dream_cycle_classifier.py -v",
+    "result": "27 passed in 0.03s",
+    "status": "green"
   },
 
-  "test_results": {
-    "suite": "tests/test_evidence_blobs.py",
-    "total": 16,
-    "passed": 16,
-    "failed": 0,
-    "skipped": 0,
-    "key_tests": [
-      {
-        "name": "test_store_blob_sets_mode_0600",
-        "status": "PASSED",
-        "description": "Asserts that blob file mode is exactly 0600 after store_blob(); verifies the documented security guarantee."
-      },
-      {
-        "name": "test_store_and_read_blob_roundtrip",
-        "status": "PASSED"
-      },
-      {
-        "name": "test_read_blob_fails_closed_on_corruption",
-        "status": "PASSED"
-      },
-      {
-        "name": "test_store_blob_cleanup_on_write_error",
-        "status": "PASSED"
-      }
+  "implementation_review": {
+    "file": "src/mac/dream_cycle_classifier.py",
+
+    "_SKILL_PATTERNS_verdict": "functionally_correct_with_one_regex_bug",
+    "_SKILL_PATTERNS_notes": [
+      "Pattern (r'\\bskill[s]?\\b', 'skill') — correct generic catch-all.",
+      "Pattern (r'\\bhermes.skill\\b', 'skill') — BUG: dot is unescaped; matches 'hermesXskill', 'hermes skill', 'hermes-skill', etc. Should be r'\\bhermes\\.skill\\b'. In practice the first generic pattern already catches any text containing the literal word 'skill', so false-positives from the bug do not break existing tests; however tests that verify hermes.skill as a *distinct* signal from the generic pattern are absent.",
+      "Pattern (r'\\bskill[_-]bundle\\b', 'skill') — correct.",
+      "Pattern (r'\\bskill[_-]command\\b', 'skill') — correct.",
+      "Pattern (r'\\bskill[_-]utils?\\b', 'skill') — correct (matches skill_utils and skill_util).",
+      "Pattern (r'\\bskill[_-]preprocessing\\b', 'skill') — correct.",
+      "Pattern (r'\\bcurator\\b', 'skill') — correct."
+    ],
+
+    "_match_patterns_verdict": "correct",
+    "_match_patterns_notes": [
+      "All matching patterns fire against the combined text (_combined_text) of summary + kind + scope + observations + record_type_count keys + retrieval query_terms.",
+      "Multiple patterns that share the same area_name are correctly aggregated into one area hit dict; their distinct regex strings appear in the 'signals' list.",
+      "The _generic_tool suppression logic is correct: if any specific tool pattern matches, the generic '\\btool\\b' entry is dropped.",
+      "Area hits for 'skill' are always emitted as a single dict (all skill-area patterns map to area_name='skill'), so signal_count = len(matched_patterns). This is key for _confidence_for: two skill-specific patterns firing in the same text will produce signal_count=2 → medium confidence even with only one evidence record."
+    ],
+
+    "_confidence_for_verdict": "correct",
+    "_confidence_for_logic": {
+      "rule_1": "evidence_count >= 3 → high (0.90)",
+      "rule_2": "candidate_confidence=='high' AND signal_count >= 2 AND unique_record_types >= 1 → high (0.90)",
+      "rule_3": "evidence_count == 2 → medium (0.65)",
+      "rule_4": "signal_count >= 2 OR unique_record_types >= 2 → medium (0.65)",
+      "rule_5": "candidate_confidence=='medium' → medium (0.65)",
+      "rule_6": "otherwise → low (0.35)"
+    },
+    "_confidence_for_notes": [
+      "Rule ordering is deterministic and correct. The high-path conditions are checked before medium; no overlap.",
+      "signal_count is per-area (len of matched signals for that area), NOT global across all areas.",
+      "When multiple SKILL patterns co-fire on the same text (e.g. 'hermes.skill' + 'skill_command'), signal_count ≥ 2 → medium even with 1 evidence record. This is correct per spec but is only incidentally exercised by tests (not explicitly targeted)."
     ]
   },
 
-  "contract_test_results": {
-    "command": "scripts/run-contract-tests.sh",
-    "status": "passed",
-    "total_collected": 5693,
-    "passed": 5672,
-    "skipped": 21,
-    "failed": 0,
-    "duration_seconds": 362,
-    "coverage_statements_pct": 93.17,
-    "coverage_branches_pct": 84.61,
-    "coverage_floor_statements": 90.0,
-    "coverage_floor_branches": 80.0,
-    "coverage_safety": "passed"
+  "coverage_gaps": [
+    {
+      "gap_id": "GAP-1",
+      "category": "pattern_not_exercised",
+      "description": "hermes.skill pattern never individually tested. The test test_single_signal_skill_reference_detected uses 'skill bundle' (a space-separated phrase), which only triggers the generic \\bskill[s]?\\b pattern — not \\bhermes.skill\\b. No test exercises the hermes.skill pattern in isolation or alongside the generic pattern.",
+      "regex_bug": "The pattern r'\\bhermes.skill\\b' has an unescaped dot, so it also matches 'hermesXskill' and 'hermes skill'. A test using 'hermes.skill' in the summary would currently pass (both literal match and false-positive match fire), but a test asserting that 'hermesXskill' does NOT trigger the hermes.skill pattern would fail, revealing the bug.",
+      "actionable": true
+    },
+    {
+      "gap_id": "GAP-2",
+      "category": "pattern_not_exercised",
+      "description": "curator pattern never individually tested. It appears only as a co-occurring keyword inside test_high_confidence_candidate_plus_multi_signal_types (line 225), mixed with skill_bundle and terminal_tool. No standalone test asserts that 'curator' alone triggers a skill area.",
+      "actionable": true
+    },
+    {
+      "gap_id": "GAP-3",
+      "category": "pattern_not_exercised",
+      "description": "skill_command pattern never individually tested. Not referenced anywhere in the test file.",
+      "actionable": true
+    },
+    {
+      "gap_id": "GAP-4",
+      "category": "pattern_not_exercised",
+      "description": "skill_utils pattern never individually tested. Not referenced anywhere in the test file.",
+      "actionable": true
+    },
+    {
+      "gap_id": "GAP-5",
+      "category": "pattern_not_exercised",
+      "description": "skill_preprocessing pattern never individually tested. Not referenced anywhere in the test file.",
+      "actionable": true
+    },
+    {
+      "gap_id": "GAP-6",
+      "category": "confidence_upgrade_path",
+      "description": "Single-evidence → medium upgrade via two co-firing skill signals is not explicitly tested for skill areas. The test test_single_signal_with_two_evidence_upgrades_to_medium covers this for a tool area (web_search). When two skill-specific patterns co-fire on the same text (e.g. 'hermes.skill' and 'skill_command' both present, signal_count=2), _confidence_for returns medium with only 1 evidence record. This path is exercised by test_high_confidence_candidate_plus_multi_signal_types but only as a side-effect at high confidence (2 evidence + high candidate). An explicit skill-area medium-via-two-signals test is missing.",
+      "actionable": true
+    },
+    {
+      "gap_id": "GAP-7",
+      "category": "high_confidence_skill_path",
+      "description": "High-confidence skill path is only exercised inside test_high_confidence_candidate_plus_multi_signal_types, which uses a mixed summary involving terminal_tool (a tool area). No test verifies that skill areas alone reach high confidence via the candidate.confidence=='high' + signal_count>=2 rule (rule 2) or the 3-evidence rule (rule 1) for pure skill content.",
+      "actionable": true
+    },
+    {
+      "gap_id": "GAP-8",
+      "category": "skill_tool_co_occurrence",
+      "description": "No test directly asserts that when both skill and tool signals appear in the same candidate, both area types appear independently in the report with correct area_type values. test_high_confidence_candidate_plus_multi_signal_types implicitly exercises this but does not inspect individual area_type fields for skill + tool co-occurrence.",
+      "actionable": true
+    },
+    {
+      "gap_id": "GAP-9",
+      "category": "regex_correctness",
+      "description": "The unescaped dot bug in r'\\bhermes.skill\\b' is untested. No test supplies a string like 'hermesXskill' or 'hermes skill' (without a literal dot) to verify that only hermes.skill (with literal dot) triggers that pattern. Existing tests do not distinguish between the generic \\bskill[s]?\\b catch-all and the hermes.skill-specific pattern.",
+      "actionable": true
+    }
+  ],
+
+  "implementation_correctness_verdict": {
+    "verdict": "correct_with_minor_bug",
+    "details": "The classifier logic (pattern tables, _match_patterns, _confidence_for, classify_candidate) is correct and self-consistent with the module docstring. All 27 existing tests pass. One correctness issue exists: the hermes.skill regex has an unescaped dot (should be r'\\bhermes\\.skill\\b'). This is a latent false-positive bug — currently harmless in practice because the generic \\bskill[s]?\\b pattern fires first on real inputs, but it will silently over-count the hermes.skill signal on any text containing 'hermesXskill' or the two-word phrase 'hermes skill'. The bug is exercisable via tests but requires a test that distinguishes the two patterns."
   },
+
+  "recommended_tests_for_repair_child": [
+    {
+      "test_name": "test_hermes_skill_pattern_fires_on_dotted_form",
+      "description": "Supply a summary containing 'hermes.skill' (with literal dot) and assert area_type='skill' is detected. Check that the signals list includes the hermes.skill pattern string, not just the generic skill[s]? pattern.",
+      "targets": "GAP-1"
+    },
+    {
+      "test_name": "test_hermes_skill_pattern_does_not_fire_on_space_separated_form",
+      "description": "Supply a summary containing 'hermes skill' (space, no dot) but NOT the bare word 'skill' elsewhere. Verify that the hermes.skill specific pattern is NOT in the signals list; only the generic \\bskill[s]?\\b fires. This test will fail against the current unescaped-dot regex, confirming the bug.",
+      "targets": "GAP-1, GAP-9",
+      "expected_to_fail_before_fix": true
+    },
+    {
+      "test_name": "test_curator_alone_triggers_skill_area",
+      "description": "Supply a summary containing only 'curator' (e.g. 'curator service encountered an error'). Assert area_type='skill' is present and area_name='skill'. Evidence count=1 → confidence='low'.",
+      "targets": "GAP-2"
+    },
+    {
+      "test_name": "test_skill_command_alone_triggers_skill_area",
+      "description": "Supply a summary with 'skill_command was invoked'. Assert skill area hit with signals containing the skill_command pattern. 1 evidence → low confidence.",
+      "targets": "GAP-3"
+    },
+    {
+      "test_name": "test_skill_utils_alone_triggers_skill_area",
+      "description": "Supply a summary with 'skill_utils function returned error'. Assert skill area hit with signals containing the skill_utils? pattern. 1 evidence → low confidence.",
+      "targets": "GAP-4"
+    },
+    {
+      "test_name": "test_skill_preprocessing_alone_triggers_skill_area",
+      "description": "Supply a summary with 'skill_preprocessing pipeline failed'. Assert skill area hit with signals containing the skill_preprocessing pattern. 1 evidence → low confidence.",
+      "targets": "GAP-5"
+    },
+    {
+      "test_name": "test_skill_two_signals_upgrades_to_medium_with_one_evidence",
+      "description": "Supply a summary containing both 'hermes.skill' and 'skill_command' (two distinct skill patterns). evidence_count=1. Assert that the skill area has confidence='medium' (0.65) because signal_count=2 triggers rule 4 in _confidence_for.",
+      "targets": "GAP-6"
+    },
+    {
+      "test_name": "test_high_confidence_pure_skill_via_three_evidence",
+      "description": "Supply a summary with only skill content (e.g. 'curator processed skill bundles using skill_utils'). evidence_count=3. Assert overall_confidence='high' and all skill areas have confidence='high'.",
+      "targets": "GAP-7"
+    },
+    {
+      "test_name": "test_high_confidence_skill_via_candidate_high_and_two_signals",
+      "description": "Supply candidate with confidence='high', evidence_count=2, 2 distinct record types, summary containing 'skill_command and skill_utils conflict'. Assert skill area confidence='high' via rule 2 of _confidence_for.",
+      "targets": "GAP-7"
+    },
+    {
+      "test_name": "test_skill_and_tool_co_occurrence_produces_both_area_types",
+      "description": "Supply a summary with 'skill_command invoked terminal_tool'. Assert that report['areas'] contains at least one area with area_type='skill' AND at least one with area_type='tool', verifying co-occurrence isolation.",
+      "targets": "GAP-8"
+    }
+  ],
 
   "codegraph": {
     "status": "skipped",
-    "reason": "non_code_change",
-    "note": "This is an investigation task; no source files were modified. Only mac-evidence.json was written. CodeGraph sync is not required for non-code investigation tasks."
+    "reason": "audit_only_no_source_change",
+    "note": "This is an investigation/audit task with evidence_type=plan_decomposed. No source files were modified; only mac-evidence.json is written. CodeGraph sync is not applicable."
   },
 
   "repo": {
-    "head_sha": "62f9019a7b475523ef00ba589b1dd8b0c19aee21",
+    "head_sha": "48665c6a45f396e51da6433543aac5f013391165",
     "pushed": false,
     "dirty": false,
     "files_changed": [
@@ -90,10 +181,17 @@
     ]
   },
 
+  "tests": {
+    "command": ".venv/bin/python -m pytest tests/test_dream_cycle_classifier.py -v",
+    "result": "27 passed",
+    "status": "green",
+    "note": "Full contract test suite (scripts/run-contract-tests.sh) was not run to completion — it appears to block waiting for environment setup beyond the hermetic sandbox timeout. The 27 classifier tests are the targeted audit scope and all pass cleanly."
+  },
+
   "assumptions": [
-    "Task worktree is /sandbox/task_676aa8b521384b7e9f93c9c77c2f3d5a/repo-lease_83b1b9c9b6804d42bd0eec50e987c353; HEAD is 62f9019.",
-    "evidence_type=investigation is correct per task description ('Document findings in mac-evidence.json with evidence_type=investigation').",
-    "The dedup path (path.exists() is True) does not re-call chmod; existing blobs were stored at 0600 on first write and are never rewritten, so permissions are stable.",
-    "mkstemp() on Linux creates temp files with mode 0600 by default, but the explicit Path(tmp_name).chmod(0o600) call is authoritative and umask-independent."
+    "evidence_type=plan_decomposed is correct per task description ('Write mac-evidence.json with evidence_type=plan_decomposed').",
+    "The task worktree is /sandbox/task_2a9c9d3b411a49faa52802c191495613/repo-lease_f94cfe529f134350a7ee32ec150b7238; HEAD SHA 48665c6a45f396e51da6433543aac5f013391165.",
+    "No source code changes are made; this is an audit task.",
+    "The repair child task is expected to fix the hermes.skill regex bug and add the recommended tests."
   ]
 }
