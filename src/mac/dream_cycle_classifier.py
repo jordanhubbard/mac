@@ -262,7 +262,7 @@ def _match_patterns(
     for pattern_str, area_name in patterns:
         if area_name == "_generic_tool":
             # Only emit generic tool if no specific tool already matched
-            if any(a_name != "_generic_tool" for _, a_name in _TOOL_PATTERNS if re.search(a_name, text, re.IGNORECASE)):
+            if any(a_name != "_generic_tool" for p_str, a_name in _TOOL_PATTERNS if re.search(p_str, text, re.IGNORECASE)):
                 continue
         if re.search(pattern_str, text, re.IGNORECASE):
             hits.setdefault(area_name, []).append(pattern_str)
@@ -271,10 +271,11 @@ def _match_patterns(
         del hits["_generic_tool"]
     results = []
     for area_name, signals in hits.items():
+        public_name = "tool" if area_name == "_generic_tool" else area_name
         results.append(
             {
                 "area_type": area_type,
-                "area_name": area_name,
+                "area_name": public_name,
                 "signals": signals,
             }
         )
@@ -344,7 +345,7 @@ def classify_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "schema": CLASSIFIER_SCHEMA,
-        "candidate_id": candidate.get("task_id") or candidate.get("nap_run_id"),
+        "candidate_id": candidate.get("candidate_id") or candidate.get("task_id") or candidate.get("nap_run_id"),
         "kind": str(candidate.get("kind") or "knowledge_snippet"),
         "scope": str(candidate.get("scope") or "agent"),
         "areas": areas,

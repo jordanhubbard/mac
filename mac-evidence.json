@@ -1,80 +1,59 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_7a6dd317835c41f0a21866f2ee2a91cf",
+  "task_id": "task_5e68edb5b5fc4d11b217b0e3592285ae",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Fixed cargo/Rust false-negative in task_executor toolchain setup by adding a cargo|rustc|rustup case to mac_install_command. The fix promotes an existing ~/.cargo/bin installation into MAC_TOOLCHAIN_BIN (fast path) and falls back to rustup download when absent. Added 2 passing tests; 144 tests pass, 2 pre-existing unrelated failures unchanged.",
+  "summary": "Applied 3 bug fixes to src/mac/dream_cycle_classifier.py as identified in the investigation (task_79a165d19870437cbccf804784f58337, verdict: actionable): (1) candidate_id now checks 'candidate_id' key before task_id/nap_run_id; (2) _generic_tool internal marker remapped to public area_name 'tool'; (3) _generic_tool suppression loop uses p_str (actual pattern) in re.search instead of area_name string. Added 4 new tests covering all 3 defects. 37 dream classifier tests pass, 53 dream tests pass total.",
   "repo": {
-    "head_sha": "ad958a14c1944d6df24122dbd000cbf2e3a86950",
-    "branch": "mac/agent_rocky/task_7a6dd317835c41f0a21866f2ee2a91cf-lease_bcfd8b2bbcd64426b1",
-    "remote_url": "https://github.com/jordanhubbard/mac.git",
+    "head_sha": "cb20a5268a5acf3377cda827506cdbb40421721a",
+    "branch": "mac/agent_jordanh-gke/task_5e68edb5b5fc4d11b217b0e3592285ae-lease_949be59df757463998",
+    "remote_url": "git@github.com:jordanhubbard/mac.git",
     "pushed": false,
-    "dirty": true,
+    "dirty": false,
     "files_changed": [
-      "src/mac/task_executor.py",
-      "tests/test_task_executor.py"
+      "src/mac/dream_cycle_classifier.py",
+      "tests/test_dream_cycle_classifier.py"
     ]
   },
   "tests": [
     {
-      "command": "pytest tests/test_task_executor.py -k cargo -v",
-      "result": "2 passed, 144 deselected",
+      "command": "pytest tests/test_dream_cycle_classifier.py tests/test_dream_scanner.py tests/test_dream_repair_tasks.py -v",
+      "result": "53 passed",
       "status": "passed",
       "exit_code": 0
     },
     {
-      "command": "pytest tests/test_task_executor.py tests/test_task_executor_sandbox_edges.py tests/test_task_executor_boundary_coverage.py -q",
-      "result": "170 passed, 2 failed (pre-existing: test_git_finalizer_blocks_when_canonical_remote_is_missing, test_repository_contract_canonical_branch_empty_when_absent)",
+      "command": "pytest tests/test_dream_cycle_classifier.py -k 'candidate_id or generic_tool' -v",
+      "result": "4 passed (new defect tests)",
       "status": "passed",
       "exit_code": 0
     }
   ],
   "checks": [
     {
-      "name": "cargo_provisions_from_existing_cargo_home",
-      "command": "pytest tests/test_task_executor.py::test_sandbox_toolchain_setup_provisions_cargo_from_existing_cargo_home -v",
-      "result": "1 passed",
+      "name": "dream_classifier_all_tests",
+      "command": "pytest tests/test_dream_cycle_classifier.py -v",
+      "result": "37 passed",
       "status": "pass"
     },
     {
-      "name": "cargo_falls_back_to_rustup",
-      "command": "pytest tests/test_task_executor.py::test_sandbox_toolchain_setup_cargo_falls_back_to_rustup_when_absent -v",
-      "result": "1 passed",
-      "status": "pass"
-    },
-    {
-      "name": "shell_syntax",
-      "command": "bash -n /tmp/mac_toolchain_test.sh",
-      "result": "Syntax OK",
+      "name": "all_dream_tests",
+      "command": "pytest tests/test_dream_cycle_classifier.py tests/test_dream_scanner.py tests/test_dream_repair_tasks.py -v",
+      "result": "53 passed",
       "status": "pass"
     }
   ],
   "codegraph": {
     "status": "pass",
     "init_command": "codegraph init",
-    "affected_command": "codegraph affected src/mac/task_executor.py tests/test_task_executor.py",
-    "affected_files": [
-      "ide/tests/workbench-project-tree.spec.ts",
-      "src/mac/_hermes/skills/creative/comfyui/tests/conftest.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_check_deps.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_cloud_integration.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_common.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_extract_schema.py",
-      "src/mac/_hermes/skills/creative/comfyui/tests/test_run_workflow.py",
-      "tests/e2e/test_openshell_nemo_relay.py"
-    ],
-    "callers": {
-      "_sandbox_toolchain_setup_shell": [
-        "src/mac/task_executor.py::_sandbox_repository_verification_shell",
-        "src/mac/task_executor.py::_write_sandbox_runtime_files"
-      ]
-    },
-    "note": "Change is internal to task_executor.py shell string. No public API changes. Affected test files are transitive but unchanged; callers are within the same module."
+    "affected_command": "codegraph affected src/mac/dream_cycle_classifier.py tests/test_dream_cycle_classifier.py",
+    "affected_files": [],
+    "note": "No additional test files affected by changes to dream_cycle_classifier.py. Public API (classify_candidate, classify_candidates) unchanged; bug fixes are internal logic corrections. codegraph callers found no external callers in the codebase graph."
   },
   "assumptions": [
-    "The two pre-existing test failures (test_git_finalizer_blocks_when_canonical_remote_is_missing, test_repository_contract_canonical_branch_empty_when_absent) were present before this change and are unrelated to cargo/Rust toolchain setup.",
-    "The api test failure test_repository_ref_reconciler_follows_app_lifecycle is a MAC_API_TOKEN environment issue unrelated to this change.",
-    "cargo installations live at $CARGO_HOME/bin (defaulting to ~/.cargo/bin) which is not in MAC_SANDBOX_BASE_PATH; the fix correctly promotes existing installations into MAC_TOOLCHAIN_BIN.",
-    "The rustup fallback uses curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path, consistent with the official Rust installation method."
+    "Investigation verdict actionable from task_79a165d19870437cbccf804784f58337 with 3 identified defects.",
+    "The two pre-existing test failures (test_git_finalizer_blocks_when_canonical_remote_is_missing, test_repository_contract_canonical_branch_empty_when_absent) are unrelated to dream classifier changes.",
+    "The worktree starts from the OpenShell sandbox baseline (single commit) with no remote configured; the deterministic finalizer will rebase onto canonical main and push.",
+    "Bug 3 fix: the suppression check previously searched area_name strings (e.g. 'terminal', 'file') as regex patterns in text instead of the actual pattern strings (e.g. r'\\bterminal[_\\s]?tool\\b'), causing false suppression."
   ]
 }
