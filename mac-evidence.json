@@ -1,66 +1,55 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "repo_change",
-  "task_id": "task_176a33edc48342ffb9f89ae0a7d98f74",
+  "task_id": "task_b4366b8e24214d7f9eaffb4a3fb0af4b",
   "status": "complete",
-  "summary": "Integrated child branches task_2a9c9d3b411a49faa52802c191495613 (head 71e307692c) and task_65583251b5a54c2e8ccb270f60ec4658 (head 95e9dd01b3) into the task worktree. Both branches' content — including tests/test_dream_cycle_classifier.py (33 skill-area coverage tests, 487 lines) and src/mac/dream_cycle_classifier.py (full implementation) — was already present in the orphan-commit sandbox baseline. Bootstrapped venv and ran the full contract test suite: 5689 passed, 21 skipped, exit code 0. Statement coverage 93.03% (floor 90%), branch coverage 84.38% (floor 80%).",
-  "integration": {
-    "child_branch_1": {
-      "task_id": "task_2a9c9d3b411a49faa52802c191495613",
-      "head_sha": "71e307692c8123709de319dfa5affc1144fc37f1",
-      "remote_branch": "mac/agent_natasha/task_2a9c9d3b411a49faa52802c191495613-lease_f94cfe529f134350a7",
-      "key_commit_message": "Investigate skill-area dream finding: audit evidence and classify actionability",
-      "files_changed_vs_worktree_base": ["mac-evidence.json"]
-    },
-    "child_branch_2": {
-      "task_id": "task_65583251b5a54c2e8ccb270f60ec4658",
-      "head_sha": "95e9dd01b3e70a7c274a56cc30cb3e01e6b1089e",
-      "remote_branch": "mac/agent_jordanh-gke/task_65583251b5a54c2e8ccb270f60ec4658-lease_bde57d2bb4b24eff87",
-      "key_commit_message": "Repair skill-area dream classifier: add missing test coverage for all skill patterns",
-      "files_changed_vs_worktree_base": ["mac-evidence.json", "tests/test_dream_cycle_classifier.py"]
-    },
-    "integration_method": "Content already present in orphan-commit sandbox baseline (MAC OpenShell sandbox). Verified by diff: tests/test_dream_cycle_classifier.py and src/mac/dream_cycle_classifier.py are identical to child branch 95e9dd0 content. No merge conflicts.",
-    "note": "The sandbox worktree was initialized as an orphan commit (1a2d0f2) containing the full canonical repo state; both child branches' code changes were already reflected in this baseline."
-  },
-  "files_changed": [
-    "mac-evidence.json"
-  ],
-  "files_confirmed_present": [
-    "tests/test_dream_cycle_classifier.py",
-    "src/mac/dream_cycle_classifier.py"
-  ],
-  "tests": {
-    "command": "scripts/run-contract-tests.sh",
-    "status": "passed",
-    "exit_code": 0,
-    "result": "5689 passed, 21 skipped, 5 warnings in 433.47s; coverage safety: statements 93.03% (floor 90.00%); branches 84.38% (floor 80.00%)",
-    "dream_classifier_tests": {
-      "file": "tests/test_dream_cycle_classifier.py",
-      "count": 33,
-      "status": "all passed",
-      "skill_area_tests": [
-        "test_skill_curator_pattern_detected",
-        "test_skill_hermes_skill_pattern_detected",
-        "test_skill_command_and_utils_patterns_detected",
-        "test_skill_area_medium_confidence_with_two_evidence",
-        "test_skill_area_high_confidence_with_three_evidence",
-        "test_skill_and_tool_co_occurrence"
-      ]
-    }
-  },
-  "codegraph": {
-    "status": "not_required",
-    "reason": "Integration task — no new source changes authored by this task. Content already present from child branches via sandbox baseline. No public API was changed."
-  },
-  "repo": {
-    "head_sha": "1a2d0f284b2d1cf83bf5b02a5d8f3c5f063b4920",
-    "branch": "mac/agent_jordanh-worker2/task_176a33edc48342ffb9f89ae0a7d98f74-lease_3102d1c328e746c798",
-    "dirty": false,
-    "pushed": false
+  "evidence_type": "investigation",
+  "summary": "Gap report for dream-cycle finding dreamrepair:e191be93488a4b8bfa3ce059ff30c966 (cargo/Rust PATH fix). Three of five expected items are absent; finding is actionable.",
+  "gap_report": {
+    "worktree": "/sandbox/task_b4366b8e24214d7f9eaffb4a3fb0af4b/repo-lease_44c8871600c042da889590ba3969dca0",
+    "branch": "master",
+    "head_sha": "1ffae33",
+    "git_log_oneline_5": ["1ffae33 MAC OpenShell sandbox baseline"],
+    "git_status": "clean",
+    "items": [
+      {
+        "item": "src/mac/worker.py secondary file-based Rust probe (lines ~532-553)",
+        "expected": "present",
+        "actual": "PRESENT",
+        "detail": "Lines 532-553 contain _RUST_TOOL_CANDIDATES dict and loop that checks ~/.cargo/bin, /usr/local/bin, and /opt/homebrew/bin via Path.is_file() + os.access()."
+      },
+      {
+        "item": "src/mac/worker.py CARGO_HOME env-var branch",
+        "expected": "may be missing",
+        "actual": "ABSENT",
+        "detail": "No reference to CARGO_HOME environment variable found anywhere in src/mac/worker.py. The secondary probe uses hardcoded Path.home()/.cargo/bin but does not honour CARGO_HOME overrides."
+      },
+      {
+        "item": "skills/mac-agent-terminal-timeout/SKILL.md Rust/cargo pitfall section",
+        "expected": "expected missing",
+        "actual": "ABSENT",
+        "detail": "No mention of 'rust', 'cargo', or 'pitfall' in the file. The skill covers only terminal-timeout topics."
+      },
+      {
+        "item": "tests/test_worker.py: test_command_inventory_file_probe_finds_rust_tools_in_cargo_bin",
+        "expected": "present",
+        "actual": "PRESENT",
+        "detail": "Found at line 3201. Tests that launchd-style restricted PATH still detects Rust tools via file probe."
+      },
+      {
+        "item": "tests/test_worker.py: test_command_inventory_file_probe_uses_cargo_home_env_var",
+        "expected": "may be missing",
+        "actual": "ABSENT",
+        "detail": "No test with this name or any CARGO_HOME-related test exists in tests/test_worker.py."
+      }
+    ],
+    "action": "actionable_repair",
+    "action_detail": "Two items are absent: (1) CARGO_HOME env-var branch in worker.py so that tools installed to a non-default CARGO_HOME are detected, (2) corresponding test test_command_inventory_file_probe_uses_cargo_home_env_var, and (3) Rust/cargo pitfall section in skills/mac-agent-terminal-timeout/SKILL.md. A repair child task should implement all three."
   },
   "assumptions": [
-    "The orphan-commit sandbox baseline (1a2d0f2 'MAC OpenShell sandbox baseline') already contained the complete canonical repo state including all changes from both child branches.",
-    "Child branch content verified by bit-exact diff: tests/test_dream_cycle_classifier.py matches 95e9dd0 content (487 lines); src/mac/dream_cycle_classifier.py matches both child branches.",
-    "No explicit git merge/cherry-pick was needed since content was pre-integrated in the sandbox baseline."
-  ]
+    "The task worktree at $MAC_TASK_REPO_WORKTREE is the canonical inspection target for this investigation task.",
+    "The referenced parent-task worktree path (/sandbox/task_2901464b0a244356b6f1d4c6eaf72c29/...) was not accessible in this environment; investigation was performed against the current task worktree which contains the full mac repository source.",
+    "No code changes were made per task instructions ('Do NOT make any code changes in this child')."
+  ],
+  "files_changed": [],
+  "checks": []
 }
