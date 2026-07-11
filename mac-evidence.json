@@ -1,96 +1,66 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_58f175517c484fd9af3f5e3b8bcf846e",
+  "task_id": "task_176a33edc48342ffb9f89ae0a7d98f74",
   "status": "complete",
-  "summary": "Audit of scripts/select-sanity-tests.py and scripts/coverage-policy.py confirms the gap: neither script has a dedicated test file, no existing test exercises their public functions indirectly, both contain pure deterministic logic independently testable without live services, and scripts/ is excluded from the coverage source path requiring sys.path injection in new tests. Full contract suite passed (93.07% statement, 84.44% branch coverage).",
-  "investigation": {
-    "scripts_audited": [
-      "scripts/select-sanity-tests.py",
-      "scripts/coverage-policy.py"
-    ],
-    "gap_confirmed": true,
-    "findings": {
-      "dedicated_test_files_exist": false,
-      "dedicated_test_file_check": "ls tests/ | grep -E 'test_select|test_coverage_policy|test_sanity' returned empty — no dedicated test file for either script exists in the test suite.",
-      "indirect_coverage_exists": false,
-      "indirect_coverage_check": "grep -rl 'select_sanity_tests|coverage_policy|from scripts|import select' tests/ returned empty — no existing test imports or exercises these script functions indirectly.",
-      "coverage_source_path": "pyproject.toml [tool.coverage.run] source=['src/mac'] — scripts/ directory is NOT included; the coverage tool does not measure scripts/ at all.",
-      "pytest_pythonpath": "pyproject.toml [tool.pytest.ini_options] pythonpath=['src'] — scripts/ is not on the Python path; tests must use sys.path.insert or importlib to import scripts/select-sanity-tests.py and scripts/coverage-policy.py.",
-      "conftest_fixtures_relevant": false,
-      "conftest_analysis": "Root conftest.py provides portfolio measurement hooks (pytest_runtest_setup/logreport/sessionfinish) and coverage context switching — no fixtures relevant to script testing. tests/conftest.py provides postgres, soul-binding, and MAC CLI fixtures — none applicable to script unit tests."
+  "summary": "Integrated child branches task_2a9c9d3b411a49faa52802c191495613 (head 71e307692c) and task_65583251b5a54c2e8ccb270f60ec4658 (head 95e9dd01b3) into the task worktree. Both branches' content — including tests/test_dream_cycle_classifier.py (33 skill-area coverage tests, 487 lines) and src/mac/dream_cycle_classifier.py (full implementation) — was already present in the orphan-commit sandbox baseline. Bootstrapped venv and ran the full contract test suite: 5689 passed, 21 skipped, exit code 0. Statement coverage 93.03% (floor 90%), branch coverage 84.38% (floor 80%).",
+  "integration": {
+    "child_branch_1": {
+      "task_id": "task_2a9c9d3b411a49faa52802c191495613",
+      "head_sha": "71e307692c8123709de319dfa5affc1144fc37f1",
+      "remote_branch": "mac/agent_natasha/task_2a9c9d3b411a49faa52802c191495613-lease_f94cfe529f134350a7",
+      "key_commit_message": "Investigate skill-area dream finding: audit evidence and classify actionability",
+      "files_changed_vs_worktree_base": ["mac-evidence.json"]
     },
-    "script_analysis": {
-      "select_sanity_tests_py": {
-        "public_functions": ["select(changed)"],
-        "private_helpers": ["_git_changed_files(base)", "_module_test_candidates(path)", "_codegraph_affected(changed)"],
-        "entry_point": "main(argv)",
-        "purity_assessment": "select() is pure/deterministic when given an explicit changed-files list — it performs no I/O other than filesystem existence checks (Path.is_file()) on test file paths rooted at ROOT (repo root). _git_changed_files() and _codegraph_affected() are subprocess-dependent and would need monkeypatching or be avoided by passing --changed-file args directly to select(). All branching logic in select() (broad_paths, broad_prefixes, code_changes, canaries, mode selection) is independently exercisable by varying the changed-files input.",
-        "testable_without_live_services": true,
-        "recommended_test_functions": [
-          "test_select_returns_full_mode_for_empty_changeset",
-          "test_select_returns_full_mode_for_broad_paths",
-          "test_select_returns_full_mode_for_broad_prefixes",
-          "test_select_returns_focused_mode_for_non_code_change",
-          "test_select_returns_full_mode_when_code_has_no_affected_tests",
-          "test_select_returns_focused_mode_with_canaries_for_code_change",
-          "test_select_mode_focused_direct_codegraph_and_canary_scope",
-          "test_module_test_candidates_matches_src_mac_modules",
-          "test_module_test_candidates_ignores_non_src_paths",
-          "test_select_schema_field_is_present"
-        ]
-      },
-      "coverage_policy_py": {
-        "public_functions": ["evaluate(coverage_doc, policy_doc)"],
-        "private_helpers": ["_percentage(covered, total)"],
-        "entry_point": "main(argv)",
-        "purity_assessment": "_percentage() is a pure arithmetic function with a zero-division guard. evaluate() is pure — it takes two dicts (coverage JSON and policy TOML content) and returns a deterministic result dict with no I/O or side effects. All branching (statement floor, branch floor, require_branch_measurement, zero-total edge cases, pass/fail status) is exercisable with synthetic input dicts.",
-        "testable_without_live_services": true,
-        "recommended_test_functions": [
-          "test_percentage_zero_total_returns_100",
-          "test_percentage_normal_calculation",
-          "test_evaluate_pass_when_above_floors",
-          "test_evaluate_fail_statement_below_floor",
-          "test_evaluate_fail_branch_below_floor",
-          "test_evaluate_fail_no_branch_measurement_when_required",
-          "test_evaluate_pass_when_branch_not_required_and_zero_branches",
-          "test_evaluate_result_schema_field",
-          "test_evaluate_raises_on_missing_totals",
-          "test_evaluate_raises_on_missing_policy",
-          "test_evaluate_statements_and_branches_rounded_to_4_places"
-        ]
-      }
+    "child_branch_2": {
+      "task_id": "task_65583251b5a54c2e8ccb270f60ec4658",
+      "head_sha": "95e9dd01b3e70a7c274a56cc30cb3e01e6b1089e",
+      "remote_branch": "mac/agent_jordanh-gke/task_65583251b5a54c2e8ccb270f60ec4658-lease_bde57d2bb4b24eff87",
+      "key_commit_message": "Repair skill-area dream classifier: add missing test coverage for all skill patterns",
+      "files_changed_vs_worktree_base": ["mac-evidence.json", "tests/test_dream_cycle_classifier.py"]
     },
-    "recommended_test_files": {
-      "tests/test_select_sanity_tests.py": {
-        "purpose": "Unit tests for scripts/select-sanity-tests.py — covers select(), _module_test_candidates(), and schema/mode logic",
-        "sys_path_approach": "Use sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts')) and importlib.import_module or importlib.util.spec_from_file_location to load select-sanity-tests.py (filename contains hyphens, not valid as a bare import).",
-        "key_functions_to_cover": ["select", "_module_test_candidates"]
-      },
-      "tests/test_coverage_policy.py": {
-        "purpose": "Unit tests for scripts/coverage-policy.py — covers _percentage(), evaluate(), and result structure",
-        "sys_path_approach": "Use importlib.util.spec_from_file_location('coverage_policy', Path(__file__).resolve().parents[1] / 'scripts' / 'coverage-policy.py') to load the module despite the hyphenated filename.",
-        "key_functions_to_cover": ["_percentage", "evaluate"]
-      }
-    },
-    "exact_gap": "scripts/ is absent from both tool.coverage.run.source and tool.pytest.ini_options.pythonpath. Neither script has a dedicated test file (tests/test_select_sanity_tests.py and tests/test_coverage_policy.py do not exist). No existing test exercises these functions indirectly. Both scripts contain pure deterministic APIs (select(), _percentage(), evaluate()) that are fully testable with synthetic inputs and no live service dependencies."
+    "integration_method": "Content already present in orphan-commit sandbox baseline (MAC OpenShell sandbox). Verified by diff: tests/test_dream_cycle_classifier.py and src/mac/dream_cycle_classifier.py are identical to child branch 95e9dd0 content. No merge conflicts.",
+    "note": "The sandbox worktree was initialized as an orphan commit (1a2d0f2) containing the full canonical repo state; both child branches' code changes were already reflected in this baseline."
   },
   "files_changed": [
     "mac-evidence.json"
+  ],
+  "files_confirmed_present": [
+    "tests/test_dream_cycle_classifier.py",
+    "src/mac/dream_cycle_classifier.py"
   ],
   "tests": {
     "command": "scripts/run-contract-tests.sh",
     "status": "passed",
     "exit_code": 0,
-    "result": "contract suite passed; 93.07% statement coverage (floor 90.00%), 84.44% branch coverage (floor 80.00%)"
+    "result": "5689 passed, 21 skipped, 5 warnings in 433.47s; coverage safety: statements 93.03% (floor 90.00%); branches 84.38% (floor 80.00%)",
+    "dream_classifier_tests": {
+      "file": "tests/test_dream_cycle_classifier.py",
+      "count": 33,
+      "status": "all passed",
+      "skill_area_tests": [
+        "test_skill_curator_pattern_detected",
+        "test_skill_hermes_skill_pattern_detected",
+        "test_skill_command_and_utils_patterns_detected",
+        "test_skill_area_medium_confidence_with_two_evidence",
+        "test_skill_area_high_confidence_with_three_evidence",
+        "test_skill_and_tool_co_occurrence"
+      ]
+    }
   },
   "codegraph": {
     "status": "not_required",
-    "reason": "Investigation task only — no src/ code changes were made; scripts/ are outside the coverage source path; CodeGraph is not applicable for this read-only audit."
+    "reason": "Integration task — no new source changes authored by this task. Content already present from child branches via sandbox baseline. No public API was changed."
+  },
+  "repo": {
+    "head_sha": "1a2d0f284b2d1cf83bf5b02a5d8f3c5f063b4920",
+    "branch": "mac/agent_jordanh-worker2/task_176a33edc48342ffb9f89ae0a7d98f74-lease_3102d1c328e746c798",
+    "dirty": false,
+    "pushed": false
   },
   "assumptions": [
-    "The task explicitly requires NOT writing new test files — this evidence records findings only.",
-    "scripts/ requires sys.path injection or importlib.util.spec_from_file_location in new tests due to hyphenated filenames and exclusion from pytest pythonpath.",
-    "conftest.py fixtures (postgres, soul) are irrelevant to script unit tests; no new fixtures are needed for the recommended test files."
+    "The orphan-commit sandbox baseline (1a2d0f2 'MAC OpenShell sandbox baseline') already contained the complete canonical repo state including all changes from both child branches.",
+    "Child branch content verified by bit-exact diff: tests/test_dream_cycle_classifier.py matches 95e9dd0 content (487 lines); src/mac/dream_cycle_classifier.py matches both child branches.",
+    "No explicit git merge/cherry-pick was needed since content was pre-integrated in the sandbox baseline."
   ]
 }
