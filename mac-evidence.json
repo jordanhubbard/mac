@@ -1,57 +1,65 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "repo_change",
-  "task_id": "task_f4876ff85aa740c1a258e43a79fde1a4",
+  "evidence_type": "investigation",
+  "task_id": "task_d1b1353f398e418a989260ef845693bc",
   "status": "complete",
-  "summary": "Wired environment_contract derivation into MacWorker._prepare_task_workspace for onboarding tasks. Imported derive_environment_contract and validate_environment_contract from mac.environment_contract at the top of worker.py, added _is_onboarding_task() helper detecting onboarding by origin.onboarding==True or absent/schema-less repository_contract, and augmented _prepare_task_workspace to call both functions after worktree setup, write environment-contract.json to task_dir, and inject the result into metadata.runtime.environment_contract — with all exceptions caught and logged via _observe_log. The wiring applies for both local-worktree and K8s remote-clone paths since both flow through _prepare_task_workspace.",
-  "steps_performed": [
-    "Read executor policy and task.json to understand requirements.",
-    "Examined src/mac/worker.py: located _prepare_task_workspace (line 3340), _prepare_repository_worktree, _prepare_repository_worktree_from_remote (K8s path), and _repository_task_origin.",
-    "Examined src/mac/environment_contract.py: confirmed derive_environment_contract and validate_environment_contract public API.",
-    "Added import: 'from mac.environment_contract import derive_environment_contract, validate_environment_contract' after the mac.gitops import block.",
-    "Added _is_onboarding_task(task) method to MacWorker: returns True when origin.onboarding==True OR repository_contract is absent/schema-less.",
-    "Augmented _prepare_task_workspace: after worktree context injected into metadata.runtime, when repository_context is non-None and _is_onboarding_task is True, calls derive_environment_contract(worktree_dir) then validate_environment_contract(contract), writes environment-contract.json to task_dir, and injects result into metadata.runtime.environment_contract. Exceptions are caught and logged via _observe_log with level=warning.",
-    "Ran .venv/bin/pytest tests/test_worker_remote_clone.py -v: 35/35 passed.",
-    "Ran scripts/run-contract-tests.sh: 5689 passed, 21 skipped, 0 failed.",
-    "Ran codegraph init: 39,189 nodes, 128,625 edges. Ran codegraph affected src/mac/worker.py: 4 skill test files affected (expected). Ran codegraph callers _prepare_task_workspace: called by execute_assignment (line 950). Ran codegraph impact src/mac/worker.py: 20 affected symbols, all covered by existing test suite.",
-    "Updated mac-evidence.json with task results."
-  ],
+  "summary": "Dream-cycle investigation complete. Fix is present in main: _exhausted_attempt_terminal_transition() in src/mac/services.py contains 'repairable_prerequisite = contract_failure or failure_class == \"environment\"' (line 14207) and the environment_repair_task_id metadata branch (line 14214). Both targeted tests pass: test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage and test_tick_exhausted_environment_failure_repair_task_has_environment_prerequisite_reason. Full contract suite: 5689 passed, 21 skipped, 0 failed. Prior failure (task_ca7301e511ff499697bd3178aa5ff786) is still in state=reviewing — its evidence shows pushed=True with PR #215 created, indicating a publication-gate infrastructure issue (canonical rebase conflict at the host finalizer), not a code defect. The fix from task_192b02b54bb64d5b8c24092cf7b35f66 is fully integrated in current main.",
+  "verdict": {
+    "fix_present_in_main": true,
+    "fix_location": "src/mac/services.py, _exhausted_attempt_terminal_transition(), lines 14203-14259",
+    "fix_details": {
+      "repairable_prerequisite_line": "repairable_prerequisite = contract_failure or failure_class == \"environment\"",
+      "environment_repair_task_id_branch": "repair_metadata_key = 'contract_repair_task_id' if contract_failure else 'environment_repair_task_id'",
+      "line_numbers": "14207, 14214"
+    },
+    "tests_pass": true,
+    "targeted_tests": {
+      "test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage": "PASSED",
+      "test_tick_exhausted_environment_failure_repair_task_has_environment_prerequisite_reason": "PASSED"
+    },
+    "full_suite": "5689 passed, 21 skipped, 0 failed in 356.80s",
+    "prior_failure_root_cause": "infrastructure_merge_conflict",
+    "prior_failure_analysis": "task_ca7301e511ff499697bd3178aa5ff786 (state=reviewing) has pushed=True evidence with PR #215 at https://github.com/jordanhubbard/mac/pull/215. The failure was at the publication gate (canonical tip not an ancestor of task HEAD — rebase conflict in mac-evidence.json), not a code defect. The underlying fix (task_192b02b54bb64d5b8c24092cf7b35f66) completed successfully.",
+    "actionability": "not_actionable_as_code_defect",
+    "dream_cycle_fingerprint": "dreamrepair:a70ac7c2a991662c733f17aeab71ce43",
+    "conclusion": "The dream-cycle finding is resolved. The fix is in main and tests confirm correct behavior. The original evidence record reflects an infrastructure publication conflict, not a missing or broken fix."
+  },
   "tests": {
     "command": "scripts/run-contract-tests.sh",
-    "result": "5689 passed, 21 skipped, 0 failed in 357.62s",
+    "result": "5689 passed, 21 skipped, 0 failed in 356.80s",
     "status": "passed",
     "exit_code": 0,
     "key_tests": {
-      "tests/test_worker_remote_clone.py": "35/35 passed",
+      "test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage": "PASSED",
+      "test_tick_exhausted_environment_failure_repair_task_has_environment_prerequisite_reason": "PASSED",
       "total_contract_tests": "5689 passed, 0 failed"
-    },
-    "total_tests": 5689,
-    "passed": 5689,
-    "failed": 0
+    }
   },
   "codegraph": {
-    "status": "passed",
-    "init": "codegraph init completed: 39,189 nodes, 128,625 edges",
-    "affected_files": [
-      "src/mac/worker.py"
+    "status": "completed",
+    "init": "codegraph init: 39,189 nodes, 128,625 edges",
+    "affected_files": [],
+    "callers_of_exhausted_attempt_terminal_transition": [
+      "claim_task (src/mac/services.py:7681)",
+      "_auto_retry_blocked_attempt_task (src/mac/services.py:14350)"
     ],
-    "affected_result": "4 skill test files affected (comfyui skill tests that import worker indirectly); 20 symbols impacted overall, all covered by existing test suite.",
-    "audit_outcome": "New _is_onboarding_task method and environment_contract wiring added to MacWorker; callers: execute_assignment (worker.py:950). No new test files required — existing contract suite exercises the code paths."
+    "audit_outcome": "Investigation only — no code changes made. Fix already present in services.py. CodeGraph confirms _exhausted_attempt_terminal_transition is called by claim_task and _auto_retry_blocked_attempt_task."
   },
-  "repo": {
-    "head_sha": "3ad0aabf14fd7ccb2aaed03bb0a4a1be379bcff6",
-    "pushed": false,
-    "dirty": false,
-    "files_changed": [
-      "src/mac/worker.py"
-    ],
-    "branch": "master"
+  "api_check": {
+    "task_id": "task_ca7301e511ff499697bd3178aa5ff786",
+    "state": "reviewing",
+    "title": "Run contract tests, write evidence, commit and push PR",
+    "evidence_summary": "Full contract test suite passed (93.21% statement coverage). Fix for environment failure repair-task creation confirmed. Branch pushed, PR #215 created.",
+    "pushed": true,
+    "pr_url": "https://github.com/jordanhubbard/mac/pull/215",
+    "remote_ref": "mac/agent_jordanh-worker1/task_ca7301e511ff499697bd3178aa5ff786-lease_b75e4c8cb20946b9b1",
+    "review_status": "approved",
+    "review_reason": "reviewer approved via signed verdict evidence",
+    "note": "Task remains in reviewing state — publication gate blocked by canonical rebase conflict (mac-evidence.json merge conflict). Not a code defect; infrastructure issue at publication phase."
   },
+  "files_changed": [],
   "assumptions": [
-    "The _is_onboarding_task helper correctly identifies onboarding tasks by origin.onboarding==True OR absent/schema-less repository_contract, consistent with task description.",
-    "The K8s clone path (_prepare_repository_worktree_from_remote) benefits from the wiring because both local and remote clones return repository_context to _prepare_task_workspace, which then runs environment_contract derivation.",
-    "Lazy import (top-level) was used as the import style; no circular import issues detected during test runs.",
-    "evidence_type=repo_change used as required by execution contract.",
-    "The deterministic host finalizer will handle canonical fetch, rebase, committing modified tracked files, push, and publication."
+    "The task worktree (master branch) reflects current main state with the fix integrated.",
+    "task_ca7301e511ff499697bd3178aa5ff786 remains stuck in reviewing due to a publication-gate infrastructure issue unrelated to the code fix."
   ]
 }
