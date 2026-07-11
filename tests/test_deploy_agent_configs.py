@@ -1193,10 +1193,17 @@ def test_env_writer_hub_without_providers_fails_fast(tmp_path):
 def test_direct_fleet_deploy_loads_authoritative_env_before_defaults():
     script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
 
-    load = '. "$DEPLOY_ENV_FILE"'
     assert 'DEPLOY_ENV_FILE="${MAC_DEPLOY_ENV_FILE:-$HOME/.mac/.env}"' in script
-    assert load in script
-    assert script.index(load) < script.index('GIT_BRANCH="${MAC_DEPLOY_GIT_BRANCH:-main}"')
+    # The env-file load now goes through load_env_file_with_caller_precedence so
+    # caller-supplied variables always win over file defaults.
+    call = 'load_env_file_with_caller_precedence "$DEPLOY_ENV_FILE"'
+    assert 'load_env_file_with_caller_precedence()' in script, (
+        "load_env_file_with_caller_precedence function must be defined in deploy-mac-fleet.sh"
+    )
+    assert call in script, (
+        "deploy-mac-fleet.sh must call load_env_file_with_caller_precedence to load the env file"
+    )
+    assert script.index(call) < script.index('GIT_BRANCH="${MAC_DEPLOY_GIT_BRANCH:-main}"')
 
 
 def test_router_topology_preflight_runs_before_remote_mutation():

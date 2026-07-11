@@ -6902,6 +6902,7 @@
     "name": "MAC_SECRET_KEY",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/k8s/mac-api/deployment.yaml",
       "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/systemd/mac.service",

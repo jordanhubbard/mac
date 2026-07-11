@@ -2,15 +2,63 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# load_env_file_with_caller_precedence <path>
+#
+# Precedence contract: variables already set in the caller's environment always
+# win over values in the env file.  Variables absent from the caller still pick
+# up their values from the file.
+#
+# Mechanism: (1) snapshot the values of every variable we care about that the
+# caller already has set, (2) source the file with set -a so any variable in it
+# is exported as a default, then (3) restore each snapshotted caller value so
+# the explicit process environment is never overwritten by a file default.
+load_env_file_with_caller_precedence() {
+  local env_file="$1"
+  [ -f "$env_file" ] || return 0
+
+  # Variables whose caller-supplied values must survive the source.
+  local -a _PRECEDENCE_VARS=(
+    MAC_DEPLOY_FLEETS_CONFIG
+    MAC_DEPLOY_ENV_FILE
+    GH_TOKEN
+    GITHUB_TOKEN
+    MAC_DEPLOY_GH_TOKEN
+    MAC_SECRET_KEY
+    MAC_API_TOKEN
+    MAC_WORKER_TOKEN
+  )
+
+  # Also snapshot any fleet-scoped token variables already present.
+  local var
+  for var in $(compgen -v | grep -E '^MAC_API_TOKEN__'); do
+    _PRECEDENCE_VARS+=("$var")
+  done
+
+  # Phase 1: snapshot caller-supplied values (only for vars that are set).
+  local -A _caller_snapshot
+  for var in "${_PRECEDENCE_VARS[@]}"; do
+    if [ -v "$var" ]; then
+      _caller_snapshot["$var"]="${!var}"
+    fi
+  done
+
+  # Phase 2: source the file, exporting every declaration as a default.
+  set -a
+  # shellcheck source=/dev/null
+  . "$env_file"
+  set +a
+
+  # Phase 3: restore caller-supplied values so they win over file defaults.
+  for var in "${!_caller_snapshot[@]}"; do
+    export "$var"="${_caller_snapshot[$var]}"
+  done
+}
+
 # Direct fleet deploys use the same authoritative operator configuration as
 # setup.py. Load it before any deployment defaults are derived so callers do
 # not have to remember a separate `source ~/.mac/.env` step.
 DEPLOY_ENV_FILE="${MAC_DEPLOY_ENV_FILE:-$HOME/.mac/.env}"
-if [ -f "$DEPLOY_ENV_FILE" ]; then
-  set -a
-  . "$DEPLOY_ENV_FILE"
-  set +a
-fi
+load_env_file_with_caller_precedence "$DEPLOY_ENV_FILE"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 TMPDIR_LOCAL="${TMPDIR:-/tmp}/mac-fleet-deploy-${TS}.$$"
 ARCHIVE="${TMPDIR_LOCAL}/mac.tar.gz"
