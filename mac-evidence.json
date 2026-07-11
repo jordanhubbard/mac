@@ -5,7 +5,7 @@
   "evidence_type": "repo_change",
   "summary": "Ran full contract test suite (5699 passed, 21 skipped, 345s). No pre-existing failures in test_git_finalizer_blocks_when_canonical_remote_is_missing or test_repository_contract_canonical_branch_empty_when_absent (both skipped). Pushed task branch to origin and PR #221 opened targeting main. Coverage: statements 93.07%, branches 84.44%.",
   "repo": {
-    "head_sha": "3e230cbf07ace265a56fdc3c4814122dcf730333",
+    "head_sha": "6ec2b64e0f7ef62f8026758bc91eb02c9502f6cd",
     "branch": "mac/agent_rocky/task_33957e38756e422bb5f6d02c435c6f8f-lease_9e10909b0a47400b87",
     "remote_url": "git@github.com:jordanhubbard/mac.git",
     "pushed": true,
@@ -57,7 +57,7 @@
     "url": "https://github.com/jordanhubbard/mac/pull/221",
     "base": "main",
     "head": "mac/agent_rocky/task_33957e38756e422bb5f6d02c435c6f8f-lease_9e10909b0a47400b87",
-    "head_sha": "3e230cbf07ace265a56fdc3c4814122dcf730333"
+    "head_sha": "6ec2b64e0f7ef62f8026758bc91eb02c9502f6cd"
   },
   "dependency": {
     "task_id": "task_af3cd5ea34ce44aabf01f73d0a9c3d7e",
