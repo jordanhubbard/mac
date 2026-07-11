@@ -3198,6 +3198,32 @@ def test_command_inventory_explicitly_probes_cargo_when_scan_truncated(
     assert commands["paths"]["rustup"] == str(rustup)
 
 
+def test_command_inventory_file_probe_finds_rust_tools_in_cargo_bin(
+    tmp_path: Path,
+    monkeypatch,
+):
+    # Simulate a launchd PATH that excludes ~/.cargo/bin; the secondary
+    # file-based probe must still discover Rust tools from the well-known
+    # ~/.cargo/bin location via Path.is_file() + os.access() checks.
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    cargo_bin = tmp_path / ".cargo" / "bin"
+    cargo_bin.mkdir(parents=True)
+    for tool in ("cargo", "rustc", "rustup"):
+        t = cargo_bin / tool
+        t.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        t.chmod(0o755)
+    monkeypatch.setenv("PATH", str(empty_dir))
+    monkeypatch.setenv("MAC_WORKER_COMMAND_INVENTORY_MAX", "1")
+    monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: tmp_path))
+
+    commands = _detect_command_inventory()
+
+    for tool in ("cargo", "rustc", "rustup"):
+        assert tool in commands["available"], f"{tool} should be found via file probe"
+        assert commands["paths"][tool] == str(cargo_bin / tool)
+
+
 def test_register_worker_binds_agent_to_hermes_instance():
     cp = ControlPlane.in_memory()
     tenant = cp.register_tenant("fleet")

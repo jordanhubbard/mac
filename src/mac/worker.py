@@ -102,6 +102,7 @@ DEFAULT_COMMAND_INVENTORY_NAMES = (
     "python",
     "python3",
     "pytest",
+    "rustc",
     "rustup",
     "sh",
     "uv",
@@ -523,6 +524,30 @@ def _detect_command_inventory() -> JsonDict:
         if path:
             available.add(name)
             paths[name] = path
+
+    # Secondary file-based probe for well-known Rust tool locations.
+    # launchd and other non-login shells may exclude ~/.cargo/bin from PATH;
+    # this mirrors the codegraph detection pattern in services.py so Rust
+    # tools installed via rustup are always visible in the command inventory.
+    _RUST_TOOL_CANDIDATES: Dict[str, List[Path]] = {
+        tool: [
+            Path.home() / ".cargo" / "bin" / tool,
+            Path("/usr/local/bin") / tool,
+            Path("/opt/homebrew/bin") / tool,
+        ]
+        for tool in ("cargo", "rustc", "rustup")
+    }
+    for tool, candidates in _RUST_TOOL_CANDIDATES.items():
+        if tool in paths:
+            continue
+        for candidate in candidates:
+            try:
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    available.add(tool)
+                    paths[tool] = str(candidate)
+                    break
+            except OSError:
+                continue
 
     return {
         "schema": "mac.command_inventory.v1",

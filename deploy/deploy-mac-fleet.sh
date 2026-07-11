@@ -5252,7 +5252,7 @@ ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
 set -a
 . "$HOME/.mac/mac.env"
 set +a
-export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$HOME/.mac/node_modules/.bin:$PATH"
+export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$HOME/.mac/node_modules/.bin:$HOME/.cargo/bin:$PATH"
 
 : "${MAC_HUB_URL:?MAC_HUB_URL is required}"
 : "${MAC_WORKER_TOKEN:?MAC_WORKER_TOKEN is required}"
