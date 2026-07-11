@@ -1,89 +1,58 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "investigation",
-  "task_id": "task_79a165d19870437cbccf804784f58337",
+  "evidence_type": "repo_change",
+  "task_id": "task_e104e38cfc0c4d0cb553b31fe7c11280",
   "status": "complete",
-  "summary": "Investigated skill-area dream-cycle finding. All 43 targeted tests pass. Found 3 real defects and 4 coverage gaps. Verdict: ACTIONABLE.",
+  "summary": "Repair task for NotifierService: investigation child task (task_566b388922fd41689e0a8407db37f4bc) found verdict=NO_FAILURES — all 57 tests in tests/test_notifier_service.py already pass. Re-ran full contract test suite (scripts/run-contract-tests.sh): 5672 passed, 21 skipped, 0 failed. Coverage policy satisfied (statements 93.20% >= floor 90%; branches 84.62% >= floor 80%). No source or test changes were required. mac-evidence.json updated to evidence_type=repo_change as required by the repair task contract.",
   "finding": {
-    "verdict": "actionable",
-    "rationale": "Three real code defects were found and zero existing tests cover these paths. The defects are: (1) candidate_id propagation gap breaks traceability from scanner candidates through to repair task metadata, (2) internal marker _generic_tool leaks into the public classify_candidate() output as area_name, and (3) the _generic_tool suppression check inside _match_patterns tests area_names (not pattern strings) against text, causing incorrect suppression when unrelated words match area_name labels.",
-    "defects": [
-      {
-        "id": "defect_1",
-        "severity": "high",
-        "title": "candidate_id not propagated from scanner-emitted candidates",
-        "location": "src/mac/dream_cycle_classifier.py:347",
-        "description": "classify_candidate() resolves candidate_id as `candidate.get('task_id') or candidate.get('nap_run_id')`. However, _CandidateBucket.to_dict() in dream_scanner.py (line 494) sets the top-level key 'candidate_id' to a stable dreamcand_<sha> identifier. The classifier never reads this 'candidate_id' field, so all scanner-emitted candidates (which typically have task_id=None and nap_run_id=None) produce candidate_id=None in classification output. This None propagates into _task_metadata() in dream_repair_tasks.py as metadata.origin.candidate_id=None, breaking the audit trail from repair tasks back to their source scanner candidate.",
-        "evidence": "Running classify_candidate({'candidate_id': 'dreamcand_abc123', 'task_id': None, 'nap_run_id': None, ...}) returns candidate_id=None in the report. The expected value should be 'dreamcand_abc123'.",
-        "coverage_gap": "No test passes a candidate dict with a 'candidate_id' key and asserts the report's candidate_id matches it."
-      },
-      {
-        "id": "defect_2",
-        "severity": "medium",
-        "title": "_generic_tool internal marker leaks into public API output as area_name",
-        "location": "src/mac/dream_cycle_classifier.py:102-134 (_TOOL_PATTERNS), 255-282 (_match_patterns)",
-        "description": "The _TOOL_PATTERNS list includes (r'\\btool\\b', '_generic_tool') as a fallback entry. When text contains only the word 'tool' but no specific tool name, _match_patterns returns an area dict with area_name='_generic_tool'. This internal marker is returned verbatim from classify_candidate() as a public area_name. Downstream, _affected_labels() in dream_repair_tasks.py passes '_generic_tool' through _clean_label(), producing 'generic_tool' in affected['tools'], which then appears in repair task titles and descriptions. The module docstring states area_name should be a canonical tool name like 'terminal', 'file', 'web' — not an internal implementation detail.",
-        "evidence": "classify_candidate({'summary': 'the tool failed during execution', 'evidence': [...]}) returns areas=[{'area_type': 'tool', 'area_name': '_generic_tool', ...}]. Then _affected_labels() produces {'tools': ['generic_tool'], ...}.",
-        "coverage_gap": "No test asserts that area_name is never '_generic_tool' in the public output, and no test checks that affected['tools'] never contains 'generic_tool' from the classifier."
-      },
-      {
-        "id": "defect_3",
-        "severity": "low",
-        "title": "_generic_tool suppression checks area_names instead of pattern strings against text",
-        "location": "src/mac/dream_cycle_classifier.py:263-267 (_match_patterns inner loop)",
-        "description": "When processing the '_generic_tool' pattern entry, the suppression guard is: `if any(a_name != '_generic_tool' for _, a_name in _TOOL_PATTERNS if re.search(a_name, text, re.IGNORECASE)): continue`. This checks whether the area_name string (e.g., 'web', 'file', 'terminal') matches anywhere in the text, NOT whether the actual tool pattern (e.g., r'\\bweb[_\\s]?tool\\b') matched. As a result, text like 'The web page returned an error with a tool' incorrectly suppresses _generic_tool because re.search('web', text) matches 'web page', even though the web_tool pattern did not match. The second suppression (`if '_generic_tool' in hits and len(hits) > 1: del hits['_generic_tool']`) is correct but fires only after the loop — it cannot compensate for the inner suppression silently dropping the hit.",
-        "evidence": "For text='The web page returned an error with a tool': the inner suppression fires (re.search('web', text) is truthy), _generic_tool is not added to hits, and the final result has zero tool areas even though the text genuinely mentioned 'tool' with no specific web tool.",
-        "coverage_gap": "No test exercises text that contains an area_name substring (e.g., 'web') without the corresponding tool pattern (e.g., 'web_tool') co-occurring, to verify _generic_tool is NOT incorrectly suppressed."
-      }
-    ],
-    "coverage_gaps": [
-      {
-        "id": "gap_1",
-        "title": "No test for candidate_id field passthrough from scanner-format candidates",
-        "description": "None of the 27 tests in test_dream_cycle_classifier.py passes a candidate dict that has a 'candidate_id' key and asserts the classification report's candidate_id equals that value. This gap means defect_1 is not caught by the test suite."
-      },
-      {
-        "id": "gap_2",
-        "title": "No test that all _SKILL_PATTERNS map to area_name='skill' (not a specific skill name)",
-        "description": "The task spec asked about 'area_name populated correctly from pattern name vs matched text'. All entries in _SKILL_PATTERNS have area_name='skill' (not the actual matched word like 'curator' or 'skill_bundle'). This is intentional design, but no test explicitly verifies this — that 'curator' text yields area_name='skill', or that 'imagegen' from a skill:imagegen signature does NOT appear as area_name from the classifier (it comes from dimensions/signature processing in _affected_labels instead)."
-      },
-      {
-        "id": "gap_3",
-        "title": "No test for skill area deduplication across multiple matching patterns",
-        "description": "Text matching multiple _SKILL_PATTERNS (e.g., both 'skills' and 'hermes.skill' and 'skill_bundle') should produce a single skill area with multiple signals, not three separate areas. The code does deduplicate via the hits dict (hits.setdefault(area_name, []).append(pattern_str)), and in practice produces one area with multiple signals. But no test explicitly asserts this property — that N matching skill patterns produce exactly 1 area with N signals."
-      },
-      {
-        "id": "gap_4",
-        "title": "No test that _generic_tool never appears as area_name in classify_candidate output",
-        "description": "No test uses a summary like 'tool call failed' (which triggers the _generic_tool fallback) and asserts that area_name != '_generic_tool' in the returned areas. This means defect_2 is not caught."
-      }
-    ],
-    "test_results": {
-      "command": ".venv/bin/pytest tests/test_dream_cycle_classifier.py tests/test_dream_scanner.py tests/test_dream_repair_tasks.py -v",
-      "total": 43,
-      "passed": 43,
-      "failed": 0,
-      "skipped": 0,
-      "exit_code": 0,
-      "result": "43 passed in 0.37s"
-    }
+    "verdict": "NO_FAILURES_CONFIRMED",
+    "source_changed": false,
+    "tests_changed": false,
+    "failing_tests": [],
+    "tracebacks": [],
+    "repair_actions": "None required — src/mac/notifier_service.py and tests/test_notifier_service.py are already correct and all tests pass."
   },
   "steps_performed": [
-    "Read src/mac/dream_cycle_classifier.py: reviewed _SKILL_PATTERNS (all 7 entries map to area_name='skill'), _match_patterns() (inner _generic_tool suppression checks area_names not patterns), classify_candidate() (candidate_id looks for task_id/nap_run_id, ignores 'candidate_id'), _confidence_for() (deterministic thresholds matching nap_consolidator).",
-    "Read src/mac/dream_scanner.py: reviewed _SKILL_RE (captures named skill tokens from $, skills/, key=value syntax), _extract_skill_names() (filters .md/.json/.py extensions), _CandidateBucket.to_dict() (sets 'candidate_id' as stable_id('dreamcand', kind, signature)), tool_or_skill_name candidate path (emits kind='tool_or_skill_name' with signature='skill:<name>' or 'tool:<name>').",
-    "Read src/mac/dream_repair_tasks.py: reviewed _affected_labels() (reads area_type/area_name from classification areas, then supplements from candidate dimensions and signature prefix), _task_title() (uses affected labels in title), _task_metadata() (uses classification.get('candidate_id') for origin.candidate_id).",
-    "Ran targeted tests: .venv/bin/pytest tests/test_dream_cycle_classifier.py tests/test_dream_scanner.py tests/test_dream_repair_tasks.py -v — 43/43 passed, 0 failed.",
-    "Analyzed candidate_id propagation: confirmed classifier reads task_id/nap_run_id but ignores the 'candidate_id' field from scanner output. Demonstrated with direct Python invocation.",
-    "Analyzed _generic_tool leak: confirmed area_name='_generic_tool' appears in classify_candidate() output for generic 'tool' mentions, and propagates to 'generic_tool' in affected labels.",
-    "Analyzed _generic_tool suppression logic: confirmed inner suppression checks area_name strings (e.g., 're.search(\"web\", text)') rather than actual pattern strings (e.g., re.search(r'\\bweb[_\\s]?tool\\b', text)), leading to incorrect suppression for text like 'web page ... tool'.",
-    "Verified no existing test covers any of these three defect paths."
+    "Read executor policy and task.json to understand requirements.",
+    "Reviewed investigation evidence (task_566b388922fd41689e0a8407db37f4bc): verdict=NO_FAILURES, all 57 notifier tests pass.",
+    "Ran tests/test_notifier_service.py in isolation: 57/57 passed, 0 failed.",
+    "Ran scripts/run-contract-tests.sh (full suite): 5672 passed, 21 skipped, 0 failed.",
+    "Coverage policy passed: statement coverage 93.20% (floor 90%), branch coverage 84.62% (floor 80%).",
+    "Ran codegraph init (39,130 nodes, 128,146 edges).",
+    "Ran codegraph affected src/mac/notifier_service.py tests/test_notifier_service.py: 3 affected test files identified (all outside this task's scope).",
+    "Concluded: no code changes required. Updated mac-evidence.json to evidence_type=repo_change."
   ],
+  "tests": {
+    "command": "scripts/run-contract-tests.sh",
+    "result": "5672 passed, 21 skipped, 0 failed",
+    "status": "passed",
+    "exit_code": 0,
+    "notifier_specific": {
+      "command": ".venv/bin/pytest tests/test_notifier_service.py -v",
+      "result": "57 passed in 1.20s",
+      "status": "passed",
+      "exit_code": 0
+    },
+    "coverage": {
+      "statements_pct": 93.20,
+      "statements_floor": 90.0,
+      "branches_pct": 84.62,
+      "branches_floor": 80.0,
+      "policy_passed": true
+    }
+  },
   "codegraph": {
-    "status": "skipped",
-    "reason": "Investigation-only task; no code written or modified. CodeGraph not applicable per contract."
+    "status": "passed",
+    "init": "codegraph init completed: 39,130 nodes, 128,146 edges",
+    "affected_files": [
+      "src/mac/notifier_service.py",
+      "tests/test_notifier_service.py"
+    ],
+    "affected_result": "3 affected test files identified (ide/tests/workbench-project-tree.spec.ts, src/mac/_hermes/skills/creative/comfyui/tests/conftest.py, src/mac/_hermes/skills/creative/comfyui/tests/test_common.py) — all outside the scope of this task's changes",
+    "audit_outcome": "No code changes were made, so no CodeGraph audit failures possible."
   },
   "repo": {
-    "head_sha": "242e48b182a09428500e3ee78398aebd58911e65",
+    "head_sha": "5ae4eff2d2ac61a4ea87f6990d3ab1ed94b0218a",
     "pushed": false,
     "dirty": false,
     "files_changed": [
@@ -91,10 +60,11 @@
     ]
   },
   "assumptions": [
-    "evidence_type=investigation as required by task acceptance criteria.",
-    "The task states 'No code written by this child; investigation only' — no source code was modified.",
-    "pushed=false because remote push is performed by the deterministic host finalizer.",
-    "dirty=false because mac-evidence.json is a tracked file modified in-place (no new untracked files).",
-    "The severity ratings (high/medium/low) are relative to the dream-cycle traceability contract; all three defects are real and actionable."
+    "Investigation task verdict=NO_FAILURES means no source or test changes are needed in this repair task.",
+    "evidence_type=repo_change used as required by task description and execution contract.",
+    "pushed=false: no GitHub credentials available in sandbox; deterministic host finalizer owns push/PR creation.",
+    "dirty=false: mac-evidence.json is a tracked file modified in-place; no untracked new files.",
+    "files_changed lists mac-evidence.json as the only file modified (updated from investigation_result to repo_change evidence).",
+    "Branch name per task.json runtime: mac/agent_jordanh-gke/task_e104e38cfc0c4d0cb553b31fe7c11280-lease_411a1fbf7ea0486abc"
   ]
 }
