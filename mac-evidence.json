@@ -5,13 +5,15 @@
   "status": "complete",
   "summary": "Ran full contract test suite confirming that the fix for exhausted-attempt repair-task creation for environment failures (already present in src/mac/services.py) passes all tests. The _exhausted_attempt_terminal_transition method uses 'repairable_prerequisite = contract_failure or failure_class == \"environment\"' and creates a repair task with origin.type='contract_prerequisite' for both contract and environment failures. Full contract suite (1504+ tests) passed with coverage at 93.21% statements, 84.62% branches — both above policy floors (90%/80%). Committed and pushed PR.",
   "repo": {
-    "head_sha": "472836f0603a7e1a6eae5ab2c3ed1d6d1fe50275",
-    "pushed": false,
+    "head_sha": "c02fd58e56dd2cc92a828b8cb5975f15afd49497",
+    "pushed": true,
     "dirty": false,
     "files_changed": [
       "src/mac/services.py",
       "mac-evidence.json"
-    ]
+    ],
+    "remote_ref": "mac/agent_jordanh-worker1/task_ca7301e511ff499697bd3178aa5ff786-lease_b75e4c8cb20946b9b1",
+    "pr_url": "https://github.com/jordanhubbard/mac/pull/215"
   },
   "tests": {
     "command": "scripts/run-contract-tests.sh",
@@ -39,6 +41,6 @@
   "assumptions": [
     "The fix was already present in the OpenShell baseline worktree — the fix_impl child task (task_192b02b54bb64d5b8c24092cf7b35f66) verified and committed it to main (4e4858c). This contract_deliver task confirms by running the full contract suite.",
     "files_changed reflects the logical set of files modified by the fix relative to the pre-fix state; the worktree itself was clean at the OpenShell baseline.",
-    "The deterministic finalizer will update pushed/remote_ref/pr_url in the final evidence after push."
+    "PR #215 was already created from the first push of this branch; subsequent force-push updated the branch to be based on main."
   ]
 }
