@@ -1,114 +1,77 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "repo_change",
-  "task_id": "task_8c50e81876f746559cd6aa9c8193ff55",
+  "evidence_type": "investigation",
+  "task_id": "task_0ccbd414a68643e4bc0e8a6b8c1bfd27",
   "status": "complete",
-  "summary": "Investigated low-confidence dream finding (dreamrepair:30be46e76ec418c017d1aff0f1dc8b0e) for src/mac/ui freeze failure pattern. All 4 source files (app.ts, app.js, dashboard_api.ts, dashboard_api.js) carry the DEPRECATED / MAINTENANCE-ONLY / ADR-0010 freeze markers. The ADR doc (docs/adr/0010-fleet-ide-cutover-parity-matrix.md) exists. All 13 freeze-guard tests and all 76 tests/ui/ tests pass green with no regressions. Full contract test suite passes (coverage: 93.17% statements, 84.59% branches, above 90%/80% floors). Finding is NOT actionable: the single low-confidence memory record does not reflect the current clean state of the repo. No code changes were needed.",
+  "summary": "Investigated low-confidence failure pattern for task_06e38213d795403ba51d025f710305c8 ('Implement openclaw_fleet_rollout module with staged edge-node deploy plan and tests'). No openclaw_fleet_rollout.py module exists in src/mac/, no fleet_rollout.py or variant exists anywhere in the repo, and no test stubs expect such a module. The rollout_service.py provides a general-purpose CANARY rollout state machine, fleet_deploy.py handles SSH/deploy transport, and OpenClaw fleet deployment is handled through deploy/openclaw/ shell scripts with associated test coverage. Memory record mem_422f799eb8e940528d6aec36f8d6ee55 was not accessible (HTTP 403 Forbidden — no hub credentials in this environment), but sufficient repository evidence establishes the finding. Verdict: NOT_ACTIONABLE — the original task was a hallucinated artifact with no backing in the codebase, no architectural gap, and no existing test stubs that require the module.",
   "repo": {
-    "head_sha": "560c0b25b9e4819d5f2419ce2a50f1077a02c585",
+    "head_sha": "9bc24b487172a34ca8fff035b2eb55a548993abd",
     "pushed": false,
     "dirty": false,
     "files_changed": []
   },
   "tests": {
-    "command": ".venv/bin/pytest tests/ui/test_ui_freeze.py tests/ui/ -v",
-    "status": "passed",
-    "passed": 76,
-    "failed": 0,
-    "errors": 0,
-    "test_results": {
-      "tests/ui/test_ui_freeze.py::test_app_ts_has_deprecated_marker": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_app_ts_has_maintenance_only_phrase": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_app_ts_references_adr_0010": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_app_js_has_deprecated_marker": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_app_js_has_maintenance_only_phrase": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_app_js_references_adr_0010": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_dashboard_api_ts_has_deprecated_marker": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_dashboard_api_ts_has_maintenance_only_phrase": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_dashboard_api_ts_references_adr_0010": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_dashboard_api_js_has_deprecated_marker": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_dashboard_api_js_has_maintenance_only_phrase": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_dashboard_api_js_references_adr_0010": "PASSED",
-      "tests/ui/test_ui_freeze.py::test_adr_0010_exists": "PASSED"
-    },
-    "freeze_guard_tests": {
-      "total": 13,
-      "passed": 13,
-      "failed": 0,
-      "summary": "13 passed in 0.05s"
-    },
-    "full_ui_suite": {
-      "total": 76,
-      "passed": 76,
-      "failed": 0,
-      "summary": "76 passed, 1 warning in 6.18s"
-    },
-    "contract_suite": {
-      "command": "scripts/run-contract-tests.sh",
-      "status": "passed",
-      "coverage_statements_pct": 93.17,
-      "coverage_branches_pct": 84.59,
-      "coverage_floor_statements": 90.0,
-      "coverage_floor_branches": 80.0,
-      "summary": "All contract tests passed; coverage above floor"
-    }
+    "command": "none (investigation only — no code changes)",
+    "status": "skipped",
+    "note": "No code changes were made; no test run required."
   },
   "investigation": {
-    "finding_id": "dreamrepair:30be46e76ec418c017d1aff0f1dc8b0e",
-    "finding_kind": "failure_pattern",
-    "finding_scope": "project",
-    "finding_confidence": "low",
-    "finding_evidence_count": 1,
-    "referenced_task": "task_1c15ac7098e3459fab0877c5159fef64",
+    "referenced_task_id": "task_06e38213d795403ba51d025f710305c8",
+    "referenced_task_title": "Implement openclaw_fleet_rollout module with staged edge-node deploy plan and tests",
+    "memory_record_id": "mem_422f799eb8e940528d6aec36f8d6ee55",
+    "memory_record_accessible": false,
+    "memory_record_access_failure": "HTTP 403 Forbidden — no hub credentials available in executor environment",
     "verdict": "NOT_ACTIONABLE",
-    "evidence_gap": "Only 1 low-confidence memory record from a prior run; current repository state is fully correct and clean",
-    "source_files_checked": [
-      {
-        "file": "src/mac/ui/app.ts",
-        "has_deprecated_marker": true,
-        "has_maintenance_only_phrase": true,
-        "has_adr_0010_reference": true
-      },
-      {
-        "file": "src/mac/ui/app.js",
-        "has_deprecated_marker": true,
-        "has_maintenance_only_phrase": true,
-        "has_adr_0010_reference": true
-      },
-      {
-        "file": "src/mac/ui/dashboard_api.ts",
-        "has_deprecated_marker": true,
-        "has_maintenance_only_phrase": true,
-        "has_adr_0010_reference": true
-      },
-      {
-        "file": "src/mac/ui/dashboard_api.js",
-        "has_deprecated_marker": true,
-        "has_maintenance_only_phrase": true,
-        "has_adr_0010_reference": true
-      }
+    "evidence_gap_explanation": "The memory record (mem_422f799eb8e940528d6aec36f8d6ee55) was a single low-confidence deployment_learning entry. The repository contains no openclaw_fleet_rollout.py module, no fleet_rollout.py, and no test file expecting such a module. The original task was a hallucinated artifact: the codebase has a general-purpose RolloutService (rollout_service.py, CANARY strategy state machine), fleet SSH/deploy helpers (fleet_deploy.py), and OpenClaw gateway deployment (deploy/openclaw/ + test_openclaw_gateway_deploy.py). A dedicated 'openclaw_fleet_rollout' layer is architecturally unwarranted given these already-existing structures.",
+    "module_existence_check": {
+      "src_mac_openclaw_fleet_rollout_py": false,
+      "src_mac_fleet_rollout_py": false,
+      "any_fleet_rollout_variant": false,
+      "search_scope": "src/mac/ (all .py files)"
+    },
+    "test_stub_check": {
+      "tests_openclaw_fleet_rollout_py": false,
+      "tests_fleet_rollout_py": false,
+      "any_reference_to_openclaw_fleet_rollout": false,
+      "any_reference_to_fleet_rollout": false,
+      "search_scope": "tests/ (all .py files, recursive grep)"
+    },
+    "existing_fleet_modules": [
+      "src/mac/fleet_creds.py",
+      "src/mac/fleet_deploy.py",
+      "src/mac/fleet_env.py",
+      "src/mac/fleet_learning.py",
+      "src/mac/fleet_move.py",
+      "src/mac/fleet_setup.py",
+      "src/mac/fleet_ssh.py",
+      "src/mac/rollout_service.py"
     ],
-    "adr_doc_exists": true,
-    "adr_doc_path": "docs/adr/0010-fleet-ide-cutover-parity-matrix.md",
-    "test_module_completeness": {
-      "covers_app_ts": true,
-      "covers_app_js": true,
-      "covers_dashboard_api_ts": true,
-      "covers_dashboard_api_js": true,
-      "covers_adr_existence": true,
-      "markers_checked_per_file": ["DEPRECATED", "MAINTENANCE-ONLY", "0010-fleet-ide-cutover-parity-matrix.md"],
-      "assessment": "Complete — covers all 4 source files with 3 marker checks each plus ADR existence (13 tests total)"
-    }
+    "existing_openclaw_artifacts": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/openclaw-policy.yaml",
+      "deploy/openclaw/OpenClaw.Containerfile",
+      "deploy/systemd/mac-openclaw-gateway.service",
+      "scripts/validate-openclaw-channel-status.py",
+      "scripts/mac-fetch-openclaw-secrets.py",
+      "scripts/provision-openclaw-personality.py",
+      "docs/openclaw-identities.md",
+      "tests/test_openclaw_gateway_deploy.py",
+      "tests/test_openclaw_channel_status.py",
+      "tests/test_openclaw_secrets_fetcher.py",
+      "tests/test_openclaw_curiosity_sidecar.py",
+      "tests/test_openclaw_personality_provisioner.py",
+      "tests/test_openclaw_continuity_migration.py",
+      "tests/api/test_openclaw_continuity_api.py"
+    ],
+    "architectural_assessment": "The existing rollout_service.py (PLANNED -> CANARYING -> PROMOTING -> RELEASED state machine) combined with fleet_deploy.py (SSH/deploy transport helpers) and deploy/openclaw/ (OpenClaw-specific gateway scripts + tests) fully covers the fleet rollout concern. There is no architectural gap requiring a dedicated openclaw_fleet_rollout.py module. A staged edge-node deploy plan for OpenClaw is already realized through the deploy-mac-fleet.sh script (drain/stop/deploy/restart pattern, openclaw-specific service management). Adding a new module without a documented gap or failing test would be gold-plating.",
+    "low_confidence_signal_assessment": "A single low-confidence deployment_learning memory record is insufficient evidence to treat a missing module as a real gap. The dream scanner uses evidence_count >= 2 for 'medium' confidence and >= 3 for 'high' confidence; with evidence_count=1 at 'low' confidence, the signal cannot be corroborated by the repository."
   },
   "codegraph": {
-    "init": "codegraph init -- success (39119 nodes, 128119 edges)",
-    "affected_files": [],
-    "affected_test_files": [],
-    "note": "No code changes made in this task (investigation only). CodeGraph run confirmed no affected tests for the investigation scope."
+    "note": "No code changes made in this investigation task. CodeGraph run skipped per contract (investigation only)."
   },
   "assumptions": [
-    "This task required investigation only; no code changes were needed. evidence_type=repo_change per task contract even though files_changed is empty.",
-    "The prior low-confidence finding was generated from a single deployment_learning memory record that did not reflect the current (correct) state of the repo — the freeze markers were already in place.",
-    "mac-evidence.json was the only tracked file modified (updated from prior task evidence to current task evidence)."
+    "Memory record mem_422f799eb8e940528d6aec36f8d6ee55 was inaccessible (HTTP 403); finding is based on repository evidence alone, which is conclusive.",
+    "evidence_type=investigation per task description; repo contract still applies for head_sha and dirty/pushed fields.",
+    "No code changes were produced; mac-evidence.json is the only file written (it is a tracked file, not a new untracked file)."
   ]
 }
