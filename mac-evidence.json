@@ -37,20 +37,22 @@
       "tests/test_openclaw_gateway_deploy.py",
       "tests/test_media_routing.py"
     ],
-    "affected_result": "1 affected test file (ide/tests/workbench-project-tree.spec.ts) — outside the scope of this task",
+    "affected_result": "1 affected test file (ide/tests/workbench-project-tree.spec.ts) \u2014 outside the scope of this task",
     "audit_outcome": "No source code changes were made. Task verified existing tests pass."
   },
   "repo": {
-    "head_sha": "dd22359a9c8da797427f2069fb59e788c94a91fc",
-    "pushed": false,
+    "head_sha": "a122b4266755323b0e9c3d74109dad3e74dc7c25",
+    "pushed": true,
     "dirty": false,
     "files_changed": [
       "mac-evidence.json"
     ],
-    "branch": "mac/agent_bullwinkle/task_078b0696948d4f0b9e4d9e704bc5c1a5-lease_3c683a42713f4870bf"
+    "branch": "mac/agent_bullwinkle/task_078b0696948d4f0b9e4d9e704bc5c1a5-lease_3c683a42713f4870bf",
+    "pr_url": "https://github.com/jordanhubbard/mac/pull/217",
+    "pr_number": 217
   },
   "assumptions": [
-    "No source code changes required — task is purely verification of existing tests.",
+    "No source code changes required \u2014 task is purely verification of existing tests.",
     "Branch created from origin/main (canonical tip dd22359a9c8da797427f2069fb59e788c94a91fc) since no prior task branch existed.",
     "evidence_type=repo_change used as required by task description and execution contract.",
     "files_changed lists mac-evidence.json as the only file modified."
