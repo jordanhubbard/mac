@@ -3,9 +3,9 @@
   "evidence_type": "repo_change",
   "task_id": "task_ca7301e511ff499697bd3178aa5ff786",
   "status": "complete",
-  "summary": "Ran full contract test suite confirming that the fix for exhausted-attempt repair-task creation for environment failures (already present in src/mac/services.py) passes all tests. The _exhausted_attempt_terminal_transition method uses 'repairable_prerequisite = contract_failure or failure_class == \"environment\"' and creates a repair task with origin.type='contract_prerequisite' for both contract and environment failures. Full contract suite (1504+ tests) passed with coverage at 93.21% statements, 84.62% branches — both above policy floors (90%/80%). Committed and pushed PR.",
+  "summary": "Ran full contract test suite confirming that the fix for exhausted-attempt repair-task creation for environment failures (already present in src/mac/services.py) passes all tests. The _exhausted_attempt_terminal_transition method uses 'repairable_prerequisite = contract_failure or failure_class == \"environment\"' and creates a repair task with origin.type='contract_prerequisite' for both contract and environment failures. Full contract suite (1504+ tests) passed with coverage at 93.21% statements, 84.62% branches \u2014 both above policy floors (90%/80%). Committed and pushed PR.",
   "repo": {
-    "head_sha": "c02fd58e56dd2cc92a828b8cb5975f15afd49497",
+    "head_sha": "ecaede5b60e4a4ef83e8e355da835c751307c68b",
     "pushed": true,
     "dirty": false,
     "files_changed": [
@@ -26,7 +26,9 @@
     }
   },
   "codegraph": {
-    "changed_files": ["src/mac/services.py"],
+    "changed_files": [
+      "src/mac/services.py"
+    ],
     "affected_symbols": [
       "_exhausted_attempt_terminal_transition",
       "claim_task",
@@ -39,7 +41,7 @@
     "note": "Fix extends repairable_prerequisite condition to include failure_class == 'environment', routing environment failures to the same repair-task creation path as contract failures. No public API signature changes. Impact limited to internal dispatch and retry methods."
   },
   "assumptions": [
-    "The fix was already present in the OpenShell baseline worktree — the fix_impl child task (task_192b02b54bb64d5b8c24092cf7b35f66) verified and committed it to main (4e4858c). This contract_deliver task confirms by running the full contract suite.",
+    "The fix was already present in the OpenShell baseline worktree \u2014 the fix_impl child task (task_192b02b54bb64d5b8c24092cf7b35f66) verified and committed it to main (4e4858c). This contract_deliver task confirms by running the full contract suite.",
     "files_changed reflects the logical set of files modified by the fix relative to the pre-fix state; the worktree itself was clean at the OpenShell baseline.",
     "PR #215 was already created from the first push of this branch; subsequent force-push updated the branch to be based on main."
   ]
