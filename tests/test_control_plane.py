@@ -7777,11 +7777,55 @@ def test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage(cp):
     assert failed.state == TaskState.WAITING.value
     assert len(failed.dependencies) == 1
     repair = cp.get_task(failed.dependencies[0])
-    assert repair.metadata["origin"]["type"] == "contract_prerequisite"
+    assert repair.metadata["origin"]["type"] == "environment_prerequisite"
     assert failed.metadata["failure_class"] == "environment"
+    assert failed.metadata["environment_repair_task_id"] == repair.id
+    assert "contract_repair_task_id" not in failed.metadata
     assert failed.metadata["salvage"]["pushed_branch"] == "mac/agent/task"
     assert failed.metadata["salvage"]["recorded_lessons"] == ["memory-1"]
     assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
+
+
+def test_tick_exhausted_environment_failure_repair_task_has_environment_prerequisite_reason(cp):
+    task = cp.create_task(
+        "exhausted environment blocked attempt",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "heartbeat_offline"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value
+    assert waiting.metadata["failure_class"] == "environment"
+    assert len(waiting.dependencies) == 1
+    repair = cp.get_task(waiting.dependencies[0])
+    assert repair.metadata["origin"]["type"] == "environment_prerequisite"
+    assert repair.metadata["origin"]["parent_task_id"] == task.id
+    assert waiting.metadata["environment_repair_task_id"] == repair.id
+    assert "contract_repair_task_id" not in waiting.metadata
+    exhausted_ids = [item["id"] for item in result["auto_retry_exhausted"]]
+    assert task.id in exhausted_ids
+    waiting_updates = [
+        event
+        for event in cp.task_history(task.id)
+        if event.to_state == TaskState.WAITING.value
+    ]
+    assert waiting_updates, "Expected at least one history event with to_state=waiting"
+    waiting_states = {e.event_type for e in waiting_updates}
+    assert waiting_states & {"task.updated", "task.transitioned"}, (
+        "Expected task.updated or task.transitioned event for waiting state"
+    )
 
 
 def test_tick_exhausted_superseded_attempt_cancels_instead_of_failing(cp):

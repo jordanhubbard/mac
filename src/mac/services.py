@@ -14180,7 +14180,8 @@ class ControlPlane:
             # freshly recorded failure class and salvage with the stale task
             # object passed into this method.
             metadata = ensure_json_object(self.get_task(task.id).metadata)
-            repair_id = str(metadata.get("contract_repair_task_id") or "").strip()
+            repair_metadata_key = "contract_repair_task_id" if contract_failure else "environment_repair_task_id"
+            repair_id = str(metadata.get(repair_metadata_key) or "").strip()
             if not repair_id:
                 if contract_failure:
                     repair_title = "Repair contract prerequisites: %s" % task.title
@@ -14189,6 +14190,7 @@ class ControlPlane:
                         "changes, pass the required verification gate, and push a remote "
                         "ref/PR. The parent task will retry automatically after completion."
                     ) % task.id
+                    origin_type = "contract_prerequisite"
                 else:
                     repair_title = "Repair environment prerequisites: %s" % task.title
                     repair_description = (
@@ -14197,17 +14199,18 @@ class ControlPlane:
                         "required agent, service, credential source, or toolchain. The parent "
                         "task will retry automatically after this prerequisite completes."
                     ) % task.id
+                    origin_type = "environment_prerequisite"
                 repair = self.create_task(
                     repair_title,
                     description=repair_description,
                     project=task.project,
                     priority=task.priority,
                     required_capabilities=task.required_capabilities,
-                    metadata={"origin": {"type": "contract_prerequisite", "parent_task_id": task.id}},
+                    metadata={"origin": {"type": origin_type, "parent_task_id": task.id}},
                     actor="dispatcher.tick",
                 )
                 repair_id = repair.id
-                metadata["contract_repair_task_id"] = repair_id
+                metadata[repair_metadata_key] = repair_id
                 metadata["contract_repair_status"] = "waiting"
                 self.update_task(
                     task.id,
