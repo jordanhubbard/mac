@@ -796,7 +796,18 @@ run_attached() {
 # state tree before deletion.
 stop_gateway
 
-run_attached "\$OPEN_SHELL" sandbox create \
+# GPU passthrough: expose the host NVIDIA GPU to the sandbox when one is
+# present and reachable. Self-detecting so the same wrapper is correct on
+# every host — a no-op on GPU-less machines (e.g. Apple Silicon), --gpu on
+# CUDA hosts (verified on RTX 5090 x86_64 and GB10 aarch64). Scalar, not an
+# array: an empty array under 'set -u' aborts on bash 3.2 (macOS), which
+# would wedge the GPU-less gateway; an empty scalar expands to nothing.
+GPU_ARG=
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+  GPU_ARG=--gpu
+fi
+
+run_attached "\$OPEN_SHELL" sandbox create \$GPU_ARG \
   --no-auto-providers \
   --from "\$IMAGE" \
   --policy "\$POLICY" \

@@ -355,6 +355,12 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     )
     managed_entrypoint = (managed / "entrypoint.sh").read_text(encoding="utf-8")
     assert "sandbox create" in wrapper
+    # GPU passthrough is self-detecting per host: --gpu on CUDA machines, a
+    # no-op on GPU-less hosts (Apple Silicon). Scalar (not array) so an empty
+    # value under `set -u` doesn't abort bash 3.2 on macOS.
+    assert "nvidia-smi -L" in wrapper
+    assert "GPU_ARG=--gpu" in wrapper
+    assert "sandbox create $GPU_ARG" in wrapper
     assert "-- env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc /home/sandbox/.config/mac-openclaw/entrypoint.sh" in wrapper
     assert managed_entrypoint.startswith("#!/bin/bash\nset -euo pipefail\n")
     assert "sandbox delete" in stop_wrapper
