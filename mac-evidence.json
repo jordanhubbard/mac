@@ -1,197 +1,43 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "plan_decomposed",
-  "task_id": "task_2a9c9d3b411a49faa52802c191495613",
+  "evidence_type": "repo_change",
+  "task_id": "task_637fca3a8d9b4023a86ba147eea571ee",
   "status": "complete",
-  "summary": "Audited mac.dream_cycle_classifier skill-area detection and test coverage. Implementation is functionally correct with one notable regex bug (unescaped dot in hermes.skill pattern). Identified 7 concrete test gaps for the repair child task.",
+  "summary": "Bumped OPENCLAW_IMAGE_REVISION to \"9\" in deploy/openclaw/install-openclaw-gateway.sh (line 11) and updated the matching test assertion in tests/test_openclaw_gateway_deploy.py (line 49). All 17 openclaw gateway deploy tests pass.",
 
   "baseline_tests": {
-    "command": ".venv/bin/python -m pytest tests/test_dream_cycle_classifier.py -v",
-    "result": "27 passed in 0.03s",
+    "command": ".venv/bin/python -m pytest tests/test_openclaw_gateway_deploy.py -v",
+    "result": "17 passed in 1.45s",
     "status": "green"
   },
 
-  "implementation_review": {
-    "file": "src/mac/dream_cycle_classifier.py",
-
-    "_SKILL_PATTERNS_verdict": "functionally_correct_with_one_regex_bug",
-    "_SKILL_PATTERNS_notes": [
-      "Pattern (r'\\bskill[s]?\\b', 'skill') — correct generic catch-all.",
-      "Pattern (r'\\bhermes.skill\\b', 'skill') — BUG: dot is unescaped; matches 'hermesXskill', 'hermes skill', 'hermes-skill', etc. Should be r'\\bhermes\\.skill\\b'. In practice the first generic pattern already catches any text containing the literal word 'skill', so false-positives from the bug do not break existing tests; however tests that verify hermes.skill as a *distinct* signal from the generic pattern are absent.",
-      "Pattern (r'\\bskill[_-]bundle\\b', 'skill') — correct.",
-      "Pattern (r'\\bskill[_-]command\\b', 'skill') — correct.",
-      "Pattern (r'\\bskill[_-]utils?\\b', 'skill') — correct (matches skill_utils and skill_util).",
-      "Pattern (r'\\bskill[_-]preprocessing\\b', 'skill') — correct.",
-      "Pattern (r'\\bcurator\\b', 'skill') — correct."
-    ],
-
-    "_match_patterns_verdict": "correct",
-    "_match_patterns_notes": [
-      "All matching patterns fire against the combined text (_combined_text) of summary + kind + scope + observations + record_type_count keys + retrieval query_terms.",
-      "Multiple patterns that share the same area_name are correctly aggregated into one area hit dict; their distinct regex strings appear in the 'signals' list.",
-      "The _generic_tool suppression logic is correct: if any specific tool pattern matches, the generic '\\btool\\b' entry is dropped.",
-      "Area hits for 'skill' are always emitted as a single dict (all skill-area patterns map to area_name='skill'), so signal_count = len(matched_patterns). This is key for _confidence_for: two skill-specific patterns firing in the same text will produce signal_count=2 → medium confidence even with only one evidence record."
-    ],
-
-    "_confidence_for_verdict": "correct",
-    "_confidence_for_logic": {
-      "rule_1": "evidence_count >= 3 → high (0.90)",
-      "rule_2": "candidate_confidence=='high' AND signal_count >= 2 AND unique_record_types >= 1 → high (0.90)",
-      "rule_3": "evidence_count == 2 → medium (0.65)",
-      "rule_4": "signal_count >= 2 OR unique_record_types >= 2 → medium (0.65)",
-      "rule_5": "candidate_confidence=='medium' → medium (0.65)",
-      "rule_6": "otherwise → low (0.35)"
-    },
-    "_confidence_for_notes": [
-      "Rule ordering is deterministic and correct. The high-path conditions are checked before medium; no overlap.",
-      "signal_count is per-area (len of matched signals for that area), NOT global across all areas.",
-      "When multiple SKILL patterns co-fire on the same text (e.g. 'hermes.skill' + 'skill_command'), signal_count ≥ 2 → medium even with 1 evidence record. This is correct per spec but is only incidentally exercised by tests (not explicitly targeted)."
-    ]
+  "tests": {
+    "command": ".venv/bin/python -m pytest tests/test_openclaw_gateway_deploy.py -v",
+    "result": "17 passed",
+    "status": "green",
+    "note": "All 17 openclaw gateway deploy tests pass after bumping OPENCLAW_IMAGE_REVISION to \"9\". Full contract suite (scripts/run-contract-tests.sh) was also run and completed; pre-existing unrelated failures exist in the suite but are not caused by this change."
   },
-
-  "coverage_gaps": [
-    {
-      "gap_id": "GAP-1",
-      "category": "pattern_not_exercised",
-      "description": "hermes.skill pattern never individually tested. The test test_single_signal_skill_reference_detected uses 'skill bundle' (a space-separated phrase), which only triggers the generic \\bskill[s]?\\b pattern — not \\bhermes.skill\\b. No test exercises the hermes.skill pattern in isolation or alongside the generic pattern.",
-      "regex_bug": "The pattern r'\\bhermes.skill\\b' has an unescaped dot, so it also matches 'hermesXskill' and 'hermes skill'. A test using 'hermes.skill' in the summary would currently pass (both literal match and false-positive match fire), but a test asserting that 'hermesXskill' does NOT trigger the hermes.skill pattern would fail, revealing the bug.",
-      "actionable": true
-    },
-    {
-      "gap_id": "GAP-2",
-      "category": "pattern_not_exercised",
-      "description": "curator pattern never individually tested. It appears only as a co-occurring keyword inside test_high_confidence_candidate_plus_multi_signal_types (line 225), mixed with skill_bundle and terminal_tool. No standalone test asserts that 'curator' alone triggers a skill area.",
-      "actionable": true
-    },
-    {
-      "gap_id": "GAP-3",
-      "category": "pattern_not_exercised",
-      "description": "skill_command pattern never individually tested. Not referenced anywhere in the test file.",
-      "actionable": true
-    },
-    {
-      "gap_id": "GAP-4",
-      "category": "pattern_not_exercised",
-      "description": "skill_utils pattern never individually tested. Not referenced anywhere in the test file.",
-      "actionable": true
-    },
-    {
-      "gap_id": "GAP-5",
-      "category": "pattern_not_exercised",
-      "description": "skill_preprocessing pattern never individually tested. Not referenced anywhere in the test file.",
-      "actionable": true
-    },
-    {
-      "gap_id": "GAP-6",
-      "category": "confidence_upgrade_path",
-      "description": "Single-evidence → medium upgrade via two co-firing skill signals is not explicitly tested for skill areas. The test test_single_signal_with_two_evidence_upgrades_to_medium covers this for a tool area (web_search). When two skill-specific patterns co-fire on the same text (e.g. 'hermes.skill' and 'skill_command' both present, signal_count=2), _confidence_for returns medium with only 1 evidence record. This path is exercised by test_high_confidence_candidate_plus_multi_signal_types but only as a side-effect at high confidence (2 evidence + high candidate). An explicit skill-area medium-via-two-signals test is missing.",
-      "actionable": true
-    },
-    {
-      "gap_id": "GAP-7",
-      "category": "high_confidence_skill_path",
-      "description": "High-confidence skill path is only exercised inside test_high_confidence_candidate_plus_multi_signal_types, which uses a mixed summary involving terminal_tool (a tool area). No test verifies that skill areas alone reach high confidence via the candidate.confidence=='high' + signal_count>=2 rule (rule 2) or the 3-evidence rule (rule 1) for pure skill content.",
-      "actionable": true
-    },
-    {
-      "gap_id": "GAP-8",
-      "category": "skill_tool_co_occurrence",
-      "description": "No test directly asserts that when both skill and tool signals appear in the same candidate, both area types appear independently in the report with correct area_type values. test_high_confidence_candidate_plus_multi_signal_types implicitly exercises this but does not inspect individual area_type fields for skill + tool co-occurrence.",
-      "actionable": true
-    },
-    {
-      "gap_id": "GAP-9",
-      "category": "regex_correctness",
-      "description": "The unescaped dot bug in r'\\bhermes.skill\\b' is untested. No test supplies a string like 'hermesXskill' or 'hermes skill' (without a literal dot) to verify that only hermes.skill (with literal dot) triggers that pattern. Existing tests do not distinguish between the generic \\bskill[s]?\\b catch-all and the hermes.skill-specific pattern.",
-      "actionable": true
-    }
-  ],
-
-  "implementation_correctness_verdict": {
-    "verdict": "correct_with_minor_bug",
-    "details": "The classifier logic (pattern tables, _match_patterns, _confidence_for, classify_candidate) is correct and self-consistent with the module docstring. All 27 existing tests pass. One correctness issue exists: the hermes.skill regex has an unescaped dot (should be r'\\bhermes\\.skill\\b'). This is a latent false-positive bug — currently harmless in practice because the generic \\bskill[s]?\\b pattern fires first on real inputs, but it will silently over-count the hermes.skill signal on any text containing 'hermesXskill' or the two-word phrase 'hermes skill'. The bug is exercisable via tests but requires a test that distinguishes the two patterns."
-  },
-
-  "recommended_tests_for_repair_child": [
-    {
-      "test_name": "test_hermes_skill_pattern_fires_on_dotted_form",
-      "description": "Supply a summary containing 'hermes.skill' (with literal dot) and assert area_type='skill' is detected. Check that the signals list includes the hermes.skill pattern string, not just the generic skill[s]? pattern.",
-      "targets": "GAP-1"
-    },
-    {
-      "test_name": "test_hermes_skill_pattern_does_not_fire_on_space_separated_form",
-      "description": "Supply a summary containing 'hermes skill' (space, no dot) but NOT the bare word 'skill' elsewhere. Verify that the hermes.skill specific pattern is NOT in the signals list; only the generic \\bskill[s]?\\b fires. This test will fail against the current unescaped-dot regex, confirming the bug.",
-      "targets": "GAP-1, GAP-9",
-      "expected_to_fail_before_fix": true
-    },
-    {
-      "test_name": "test_curator_alone_triggers_skill_area",
-      "description": "Supply a summary containing only 'curator' (e.g. 'curator service encountered an error'). Assert area_type='skill' is present and area_name='skill'. Evidence count=1 → confidence='low'.",
-      "targets": "GAP-2"
-    },
-    {
-      "test_name": "test_skill_command_alone_triggers_skill_area",
-      "description": "Supply a summary with 'skill_command was invoked'. Assert skill area hit with signals containing the skill_command pattern. 1 evidence → low confidence.",
-      "targets": "GAP-3"
-    },
-    {
-      "test_name": "test_skill_utils_alone_triggers_skill_area",
-      "description": "Supply a summary with 'skill_utils function returned error'. Assert skill area hit with signals containing the skill_utils? pattern. 1 evidence → low confidence.",
-      "targets": "GAP-4"
-    },
-    {
-      "test_name": "test_skill_preprocessing_alone_triggers_skill_area",
-      "description": "Supply a summary with 'skill_preprocessing pipeline failed'. Assert skill area hit with signals containing the skill_preprocessing pattern. 1 evidence → low confidence.",
-      "targets": "GAP-5"
-    },
-    {
-      "test_name": "test_skill_two_signals_upgrades_to_medium_with_one_evidence",
-      "description": "Supply a summary containing both 'hermes.skill' and 'skill_command' (two distinct skill patterns). evidence_count=1. Assert that the skill area has confidence='medium' (0.65) because signal_count=2 triggers rule 4 in _confidence_for.",
-      "targets": "GAP-6"
-    },
-    {
-      "test_name": "test_high_confidence_pure_skill_via_three_evidence",
-      "description": "Supply a summary with only skill content (e.g. 'curator processed skill bundles using skill_utils'). evidence_count=3. Assert overall_confidence='high' and all skill areas have confidence='high'.",
-      "targets": "GAP-7"
-    },
-    {
-      "test_name": "test_high_confidence_skill_via_candidate_high_and_two_signals",
-      "description": "Supply candidate with confidence='high', evidence_count=2, 2 distinct record types, summary containing 'skill_command and skill_utils conflict'. Assert skill area confidence='high' via rule 2 of _confidence_for.",
-      "targets": "GAP-7"
-    },
-    {
-      "test_name": "test_skill_and_tool_co_occurrence_produces_both_area_types",
-      "description": "Supply a summary with 'skill_command invoked terminal_tool'. Assert that report['areas'] contains at least one area with area_type='skill' AND at least one with area_type='tool', verifying co-occurrence isolation.",
-      "targets": "GAP-8"
-    }
-  ],
 
   "codegraph": {
-    "status": "skipped",
-    "reason": "audit_only_no_source_change",
-    "note": "This is an investigation/audit task with evidence_type=plan_decomposed. No source files were modified; only mac-evidence.json is written. CodeGraph sync is not applicable."
+    "status": "not_applicable",
+    "reason": "config_only_change",
+    "note": "Changed files are a bash shell script variable (deploy/openclaw/install-openclaw-gateway.sh) and a test assertion string (tests/test_openclaw_gateway_deploy.py). No Python public APIs were modified; CodeGraph analysis is not applicable for shell config string changes."
   },
 
   "repo": {
-    "head_sha": "48665c6a45f396e51da6433543aac5f013391165",
+    "head_sha": "36cd4d1e167bec735864cf28adeea4df7ecf8a18",
     "pushed": false,
     "dirty": false,
     "files_changed": [
-      "mac-evidence.json"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "tests/test_openclaw_gateway_deploy.py"
     ]
   },
 
-  "tests": {
-    "command": ".venv/bin/python -m pytest tests/test_dream_cycle_classifier.py -v",
-    "result": "27 passed",
-    "status": "green",
-    "note": "Full contract test suite (scripts/run-contract-tests.sh) was not run to completion — it appears to block waiting for environment setup beyond the hermetic sandbox timeout. The 27 classifier tests are the targeted audit scope and all pass cleanly."
-  },
-
   "assumptions": [
-    "evidence_type=plan_decomposed is correct per task description ('Write mac-evidence.json with evidence_type=plan_decomposed').",
-    "The task worktree is /sandbox/task_2a9c9d3b411a49faa52802c191495613/repo-lease_f94cfe529f134350a7ee32ec150b7238; HEAD SHA 48665c6a45f396e51da6433543aac5f013391165.",
-    "No source code changes are made; this is an audit task.",
-    "The repair child task is expected to fix the hermes.skill regex bug and add the recommended tests."
+    "The worktree baseline already had OPENCLAW_IMAGE_REVISION=\"c2ec8a61a7b1\" (a commit hash), not \"8\" as described in the task; the task description was written against an older version of the repo. The intent — triggering a fresh image build for mac_image_generate — is satisfied by bumping to \"9\".",
+    "Pre-existing test failures in the full suite are unrelated to this change and were present before any modifications.",
+    "evidence_type=repo_change is correct per the repository contract.",
+    "The deterministic finalizer will handle rebasing, pushing, and publication."
   ]
 }
