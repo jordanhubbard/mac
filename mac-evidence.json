@@ -1,56 +1,63 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_ed64393a12e24904bd0db5a76096a32c",
+  "task_id": "task_0f45344fd43144f592b1654c70f62ce5",
   "status": "complete",
-  "summary": "Verified and confirmed the 0600 permission guarantee in evidence_blobs.store_blob(): chmod(0o600) is applied to the temp file path before the atomic os.replace() rename, eliminating the TOCTOU window. The post-rename path.chmod(0o600) is retained as defense-in-depth for the dedup path. All 16 tests in tests/test_evidence_blobs.py pass, including test_store_blob_sets_mode_0600. Full contract test suite (5671 passed, 21 skipped) passes.",
+  "summary": "Investigated the low-confidence dream-cycle failure pattern (fingerprint: dreamrepair:0a31730933c4034703681e5fdca2f4e4) for the mac repo ui freeze area. All 4 UI source files (app.ts, app.js, dashboard_api.ts, dashboard_api.js) carry the required DEPRECATED / MAINTENANCE-ONLY / ADR-0010 freeze markers. docs/adr/0010-fleet-ide-cutover-parity-matrix.md exists. All 13 freeze-guard tests pass, all 76 UI tests pass, and the full contract suite (5671 passed, 21 skipped) passes. Verdict: NOT_ACTIONABLE.",
+  "verdict": "NOT_ACTIONABLE",
+  "evidence_gap": "The dream-cycle failure pattern was a false positive. The ui freeze area is correctly annotated, the ADR exists, and all freeze-guard tests are green. No source changes are required.",
+  "source_files_checked": [
+    "src/mac/ui/app.ts",
+    "src/mac/ui/app.js",
+    "src/mac/ui/dashboard_api.ts",
+    "src/mac/ui/dashboard_api.js",
+    "docs/adr/0010-fleet-ide-cutover-parity-matrix.md"
+  ],
+  "freeze_markers_found": {
+    "app.ts": ["DEPRECATED", "MAINTENANCE-ONLY", "ADR-0010"],
+    "app.js": ["DEPRECATED", "MAINTENANCE-ONLY", "ADR-0010"],
+    "dashboard_api.ts": ["DEPRECATED", "MAINTENANCE-ONLY", "ADR-0010"],
+    "dashboard_api.js": ["DEPRECATED", "MAINTENANCE-ONLY", "ADR-0010"]
+  },
+  "adr_0010_exists": true,
   "repo": {
-    "head_sha": "e22337057143c035ecacba7fba7817affdbe3cfc",
+    "head_sha": "46b1abd8098078cbb512b0107793b4b87a5fdf70",
     "pushed": false,
     "dirty": false,
     "files_changed": [
-      "src/mac/evidence_blobs.py"
+      "mac-evidence.json"
     ]
   },
   "tests": {
     "command": "bash scripts/run-contract-tests.sh",
     "status": "passed",
     "detail": {
-      "total": "5671 passed, 21 skipped, 5 warnings",
-      "evidence_blobs_suite": "16/16 passed",
-      "test_store_blob_sets_mode_0600": "PASSED",
-      "test_store_and_read_blob_roundtrip": "PASSED",
-      "test_read_blob_fails_closed_on_corruption": "PASSED",
-      "test_large_artifact_externalizes_and_reads_back": "PASSED",
-      "test_small_artifact_stays_inline": "PASSED",
-      "test_unconfigured_blob_store_keeps_inline_behavior": "PASSED",
-      "test_missing_blob_fails_closed_with_clear_error": "PASSED",
-      "test_corrupted_blob_fails_closed_on_read": "PASSED",
-      "test_identical_content_across_evidence_deduplicates": "PASSED",
-      "test_inline_max_bytes_default_when_env_unset": "PASSED",
-      "test_inline_max_bytes_default_on_non_integer_value": "PASSED",
-      "test_digest_hex_raises_on_invalid_digest": "PASSED",
-      "test_read_blob_raises_on_wrong_uri_scheme": "PASSED",
-      "test_read_blob_raises_on_missing_sha256_prefix": "PASSED",
-      "test_read_blob_raises_on_expected_sha256_mismatch": "PASSED",
-      "test_store_blob_cleanup_on_write_error": "PASSED"
+      "freeze_guard_suite": "13/13 passed (tests/ui/test_ui_freeze.py)",
+      "ui_full_suite": "76/76 passed (tests/ui/)",
+      "contract_suite": "5671 passed, 21 skipped, 5 warnings",
+      "freeze_guard_tests": [
+        "test_app_ts_has_deprecated_marker: PASSED",
+        "test_app_ts_has_maintenance_only_phrase: PASSED",
+        "test_app_ts_references_adr_0010: PASSED",
+        "test_app_js_has_deprecated_marker: PASSED",
+        "test_app_js_has_maintenance_only_phrase: PASSED",
+        "test_app_js_references_adr_0010: PASSED",
+        "test_dashboard_api_ts_has_deprecated_marker: PASSED",
+        "test_dashboard_api_ts_has_maintenance_only_phrase: PASSED",
+        "test_dashboard_api_ts_references_adr_0010: PASSED",
+        "test_dashboard_api_js_has_deprecated_marker: PASSED",
+        "test_dashboard_api_js_has_maintenance_only_phrase: PASSED",
+        "test_dashboard_api_js_references_adr_0010: PASSED",
+        "test_adr_0010_exists: PASSED"
+      ]
     }
   },
   "codegraph": {
-    "init": "codegraph init completed (39129 nodes, 128143 edges)",
-    "affected_files": [
-      "src/mac/evidence_blobs.py"
-    ],
-    "callers": [
-      "src/mac/services.py",
-      "tests/test_evidence_blobs.py"
-    ],
-    "impact": "Security fix only: chmod(0o600) applied to temp file before os.replace() eliminates TOCTOU window. No API or behavioral changes for callers; the store_blob() signature and return value are unchanged. The post-rename path.chmod(0o600) retained as defense-in-depth."
+    "note": "No source files changed; CodeGraph sync not required. Freeze markers and ADR are in place as designed."
   },
   "assumptions": [
-    "The sandbox baseline (commit e22337057143c035ecacba7fba7817affdbe3cfc) already contains the correct implementation of the 0600 pre-rename chmod fix as described in the module docstring. The investigation child task (task_4d5ff6a1631a4273aa7b6579a7d3088b) confirmed the fix placement was correct.",
-    "The bare except OSError: pass on the post-rename path.chmod(0o600) call is intentional defense-in-depth for the dedup path (already-exists branch) and does NOT suppress the primary pre-rename chmod which is not wrapped in exception handling.",
-    "The full run-contract-tests.sh was executed and completed successfully (5671 passed, 21 skipped) confirming the fix does not regress any existing behavior.",
+    "The low-confidence dream-cycle failure pattern (dreamrepair:0a31730933c4034703681e5fdca2f4e4) was generated from stale/incorrect fleet memory data. The actual repo state is correct.",
+    "The one flaky test failure in test_k8s_orchestrator observed during the first contract run was a timing-sensitive race condition unrelated to the ui freeze area; it passes consistently when run in isolation and passed in the final contract run.",
     "Push and PR creation are delegated to the deterministic host finalizer per the MAC executor policy."
   ]
 }
