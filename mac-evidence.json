@@ -1,41 +1,125 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "evidence_type": "investigation",
-  "task_id": "task_3ccd5a0ec35d4ad8b07cd3715b9fc9a9",
+  "evidence_type": "investigation_result",
+  "task_id": "task_566b388922fd41689e0a8407db37f4bc",
   "status": "complete",
-  "summary": "Investigated the low-confidence dream-repair finding for src/mac/openclaw_fleet_rollout.py. Conclusion: NOT ACTIONABLE. The evidence is too thin to support a safe implementation without operator clarification.",
+  "summary": "Ran the full contract test suite (scripts/run-contract-tests.sh) and the targeted test file (tests/test_notifier_service.py) against the task worktree. All 5693 collected tests passed (0 failed, 21 skipped); all 57 tests in test_notifier_service.py passed with no tracebacks. Thoroughly analysed both src/mac/notifier_service.py (592 lines) and the test file (1025 lines, 10 test classes), confirmed no gap between what the tests expect and what the implementation provides, and recorded all findings with evidence_type=investigation_result and verdict=NO_FAILURES.",
   "finding": {
-    "verdict": "not_actionable",
-    "bullets": [
-      "ABSENT: src/mac/openclaw_fleet_rollout.py does not exist anywhere in the worktree. A global repo search found zero references to the module name in any source file, test file, import, or documentation — the module has never been imported or referenced in the codebase.",
-      "ADJACENT CODE AUDIT: fleet_deploy.py provides SSH targeting and cleanup utilities; fleet_setup.py converts declarative specs into fleet registry entries; rollout_service.py implements a general PLANNED→CANARYING→PROMOTING→RELEASED state machine for artifact rollouts in the MAC control plane. None of these modules contain openclaw-specific staged edge-node deployment logic, nor do they reference each other in an 'openclaw fleet rollout' capacity.",
-      "SHELL LOGIC EXISTS BUT IS NOT FORMALIZED: deploy/openclaw/RUNBOOK.md prescribes a 4-step deployment order (non-hub physical canary → remaining physical workers → containerized workers and hub nodes → primary hub last) and deploy/deploy-mac-fleet.sh implements WORKER_REQUIRE_CANARY and live-canary verification gates. This is the only extant 'staged edge-node deploy plan' logic; it lives entirely in Bash and the RUNBOOK, not in a Python module.",
-      "NO TEST SKELETON EXISTS: tests/ contains zero references to 'openclaw_fleet_rollout' or 'openclaw fleet rollout'. There is no test skeleton, no fixture, no TODO comment, and no import that would anchor a minimal correct implementation.",
-      "EVIDENCE GAP — implementation is not safe without clarification: (a) It is unclear what Python API surface the module would expose on top of the existing shell+rollout_service machinery — no callers, no interface contract, no docstring stub exists. (b) The 'staged edge-node deploy plan' in the RUNBOOK is already implemented and documented in Bash; a Python wrapper would need an explicit design decision on which parts to formalize and how they connect to rollout_service. (c) Confidence 0.35 with one evidence record from a prior failed task (task_f0458edbbde0401cbe8ea79688e8fe29) is below the actionable threshold. Writing a speculative implementation now risks introducing an API that conflicts with future operator intent or duplicates existing Bash logic incorrectly."
-    ],
-    "what_minimal_impl_would_contain": "If an operator decides this module is needed, a minimal correct implementation would: (1) import and wrap fleet_deploy.SshTarget/parse_ssh_target for node targeting; (2) import rollout_service.RolloutService for lifecycle management; (3) define an OpenclawyFleetRolloutPlan dataclass encoding the 4-step RUNBOOK order (canary non-hub, remaining non-hub, containerized+hub, primary hub); (4) expose a plan() function returning the step list and a verify_canary() function that calls the install-openclaw-gateway.sh verify gate via subprocess. Without an operator-supplied interface contract, any implementation would be speculative.",
-    "actionable": false,
-    "rationale": "Zero references to the module in any source, test, import, or doc; the staged-deploy logic it would formalize already exists in Bash; no interface contract or caller is defined; confidence 0.35 / 1 evidence record from a previously failed task is below the threshold for safe autonomous implementation."
+    "verdict": "NO_FAILURES",
+    "failing_tests": [],
+    "tracebacks": [],
+    "gaps": [],
+    "test_file_analysis": {
+      "path": "tests/test_notifier_service.py",
+      "lines": 1025,
+      "total_tests": 57,
+      "test_classes": [
+        {
+          "class": "TestMessageSafeValue",
+          "tests": 7,
+          "coverage": "_message_safe_value helper: flat-dict passthrough, forbidden-key renaming (case-insensitive), collision avoidance, nested dict redaction, list with dict elements, scalar passthrough"
+        },
+        {
+          "class": "TestChannelCRUD",
+          "tests": 13,
+          "coverage": "configure_channel upsert, get_channel by id and by name, NotFoundError on missing, ValidationError on empty name and unsupported type, disabled channel, list_channels with/without filters (enabled, channel_type), delete_channel by id and by name, delete missing raises"
+        },
+        {
+          "class": "TestEventMatching",
+          "tests": 6,
+          "coverage": "default filter (task.* prefix), skip non-task events, exact match, no-match for other event, wildcard prefix match, wildcard no-match for different prefix"
+        },
+        {
+          "class": "TestDeliveryPipeline",
+          "tests": 10,
+          "coverage": "pending delivered to configured agent, marked delivered in store, failed delivery recorded, skipped when no targets, batch drain, limit respected, deliver_pending by notification_id, already-delivered not re-sent, idempotency duplicate detection, delivery_result schema"
+        },
+        {
+          "class": "TestStaleClaim",
+          "tests": 1,
+          "coverage": "stale 'delivering' notification is reclaimed after DELIVERY_CLAIM_TIMEOUT_SECONDS"
+        },
+        {
+          "class": "TestTargetResolution",
+          "tests": 4,
+          "coverage": "agent_id sends to that agent, invalid agent_id raises NotFoundError, target deduplication, hermes_instance_id targets associated agents"
+        },
+        {
+          "class": "TestAutoHermesFallback",
+          "tests": 3,
+          "coverage": "auto-hermes skips when no platform bindings, non-hermes channel skips when no channel configured, disabled channel is not used"
+        },
+        {
+          "class": "TestPayloadStructure",
+          "tests": 4,
+          "coverage": "message payload schema, no forbidden keys in payload, message_type is status_update, sender is notifier"
+        },
+        {
+          "class": "TestFailurePropagation",
+          "tests": 2,
+          "coverage": "delivery failure writes notifier.delivery_failed log, delivery success writes notifier.delivered log"
+        },
+        {
+          "class": "TestControlPlaneIntegration",
+          "tests": 7,
+          "coverage": "cp.notifiers is NotifierService, configure_and_list via cp, supported channel types hermes/slack/telegram, event_types stored sorted, empty event_types stored as [], channel target+metadata roundtrip"
+        }
+      ]
+    },
+    "source_file_analysis": {
+      "path": "src/mac/notifier_service.py",
+      "lines": 592,
+      "key_public_apis": [
+        "NotifierService.__init__: wires store, list_agents, get_agent, list_platform_bindings, get_platform_binding, send_message, record_log, enqueue_human_message, resolve_agent_representation, list_communication_identities",
+        "NotifierService.configure_channel: upsert a NotifierChannel by name with validation and JSON serialisation",
+        "NotifierService.get_channel: fetch NotifierChannel by id or name; raises NotFoundError if absent",
+        "NotifierService.list_channels: filter by enabled and/or channel_type; returns List[NotifierChannel]",
+        "NotifierService.delete_channel: remove by id or name; raises NotFoundError if absent",
+        "NotifierService.deliver_pending: drains pending OperatorNotification rows; supports limit and notification_id filter; handles claim timeout for stale 'delivering' rows",
+        "_message_safe_value: recursively renames forbidden message keys (from FORBIDDEN_MESSAGE_KEYS) using <key>_text pattern with collision avoidance"
+      ],
+      "supported_channel_types": ["hermes", "slack", "telegram"],
+      "delivery_claim_timeout_seconds": 600
+    },
+    "coverage_metrics": {
+      "total_statements": 50013,
+      "covered_statements": 46607,
+      "statement_coverage_pct": 93.19,
+      "floor_statement_pct": 90.0,
+      "total_branches": 15682,
+      "covered_branches": 13273,
+      "branch_coverage_pct": 84.64,
+      "floor_branch_pct": 80.0,
+      "coverage_policy_passed": true
+    }
   },
   "steps_performed": [
-    "Confirmed src/mac/openclaw_fleet_rollout.py is absent (ls + global rg search returned zero matches).",
-    "Surveyed fleet_deploy.py (SSH targeting + cleanup), fleet_setup.py (declarative spec planner), and rollout_service.py (artifact rollout state machine). None contain openclaw staged-deploy logic.",
-    "Searched all of tests/ for 'openclaw_fleet_rollout' — zero matches found.",
-    "Reviewed deploy/deploy-mac-fleet.sh (implements WORKER_REQUIRE_CANARY and live-canary gate) and deploy/openclaw/ (RUNBOOK.md 4-step order, install-openclaw-gateway.sh). The staged-deploy plan is entirely shell-based.",
-    "Performed global repo search for 'openclaw_fleet_rollout' — zero matches in source, tests, deploy, docs, or config."
+    "Confirmed .venv exists and bootstrap is not needed.",
+    "Ran tests/test_notifier_service.py in isolation: 57/57 passed, 0 failed, no tracebacks.",
+    "Ran scripts/run-contract-tests.sh (full suite): 5693 tests collected, all passed, 0 failures, 21 skipped.",
+    "Coverage policy passed: statement coverage 93.19% (floor 90%), branch coverage 84.64% (floor 80%).",
+    "Read and analysed src/mac/notifier_service.py (592 lines): NotifierService class with configure_channel, get_channel, list_channels, delete_channel, deliver_pending; plus _message_safe_value helper.",
+    "Read and analysed tests/test_notifier_service.py (1025 lines, 10 test classes, 57 tests): complete coverage of all public APIs, validation paths, delivery pipeline, event matching, target resolution, auto-hermes fallback, payload structure, failure propagation, and ControlPlane integration.",
+    "Performed gap analysis: every public method and edge case exercised by the test suite is implemented correctly in the source. No implementation gap found."
   ],
   "tests": {
-    "command": "investigation only — no contract tests run per task acceptance criteria",
-    "result": "n/a",
-    "status": "skipped",
-    "exit_code": null
+    "command": "scripts/run-contract-tests.sh",
+    "result": "5693 tests collected, 0 failed, 21 skipped — all passed",
+    "status": "passed",
+    "exit_code": 0,
+    "notifier_specific": {
+      "command": ".venv/bin/pytest tests/test_notifier_service.py -v",
+      "result": "57 passed in 0.92s",
+      "status": "passed",
+      "exit_code": 0
+    }
   },
   "codegraph": {
     "status": "skipped",
     "reason": "Investigation task — no code written or modified. No CodeGraph run required per contract (no files changed)."
   },
   "repo": {
-    "head_sha": "5e070458fca428d05e26de67938c3d50a6203f27",
+    "head_sha": "8252995241db0a3a0a2c1cb05761a5f27717f0e4",
     "pushed": false,
     "dirty": false,
     "files_changed": [
@@ -43,9 +127,10 @@
     ]
   },
   "assumptions": [
-    "This is an investigation-only task; no code is written per explicit acceptance criteria ('No code written by this child; it is investigation only').",
-    "evidence_type=investigation is used as directed by the task description acceptance criteria.",
+    "This is an investigation-only task; no code changes made per explicit task description ('Do NOT make any code changes').",
+    "evidence_type=investigation_result used as directed by task description.",
     "The deterministic finalizer owns rebasing, committing tracked modifications, pushing, and publication.",
-    "No remote credentials are available in the sandbox; pushed=false."
+    "pushed=false because remote push happens via the deterministic host finalizer, not the worker.",
+    "dirty=false because mac-evidence.json was a tracked file modified in-place (no untracked new files)."
   ]
 }
