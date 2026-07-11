@@ -1,55 +1,54 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_b4366b8e24214d7f9eaffb4a3fb0af4b",
+  "task_id": "task_e96877abfbd14d3f9ec2b3cbf6098e6b",
   "status": "complete",
   "evidence_type": "investigation",
-  "summary": "Gap report for dream-cycle finding dreamrepair:e191be93488a4b8bfa3ce059ff30c966 (cargo/Rust PATH fix). Three of five expected items are absent; finding is actionable.",
-  "gap_report": {
-    "worktree": "/sandbox/task_b4366b8e24214d7f9eaffb4a3fb0af4b/repo-lease_44c8871600c042da889590ba3969dca0",
-    "branch": "master",
-    "head_sha": "1ffae33",
-    "git_log_oneline_5": ["1ffae33 MAC OpenShell sandbox baseline"],
-    "git_status": "clean",
-    "items": [
-      {
-        "item": "src/mac/worker.py secondary file-based Rust probe (lines ~532-553)",
-        "expected": "present",
-        "actual": "PRESENT",
-        "detail": "Lines 532-553 contain _RUST_TOOL_CANDIDATES dict and loop that checks ~/.cargo/bin, /usr/local/bin, and /opt/homebrew/bin via Path.is_file() + os.access()."
-      },
-      {
-        "item": "src/mac/worker.py CARGO_HOME env-var branch",
-        "expected": "may be missing",
-        "actual": "ABSENT",
-        "detail": "No reference to CARGO_HOME environment variable found anywhere in src/mac/worker.py. The secondary probe uses hardcoded Path.home()/.cargo/bin but does not honour CARGO_HOME overrides."
-      },
-      {
-        "item": "skills/mac-agent-terminal-timeout/SKILL.md Rust/cargo pitfall section",
-        "expected": "expected missing",
-        "actual": "ABSENT",
-        "detail": "No mention of 'rust', 'cargo', or 'pitfall' in the file. The skill covers only terminal-timeout topics."
-      },
-      {
-        "item": "tests/test_worker.py: test_command_inventory_file_probe_finds_rust_tools_in_cargo_bin",
-        "expected": "present",
-        "actual": "PRESENT",
-        "detail": "Found at line 3201. Tests that launchd-style restricted PATH still detects Rust tools via file probe."
-      },
-      {
-        "item": "tests/test_worker.py: test_command_inventory_file_probe_uses_cargo_home_env_var",
-        "expected": "may be missing",
-        "actual": "ABSENT",
-        "detail": "No test with this name or any CARGO_HOME-related test exists in tests/test_worker.py."
-      }
-    ],
-    "action": "actionable_repair",
-    "action_detail": "Two items are absent: (1) CARGO_HOME env-var branch in worker.py so that tools installed to a non-default CARGO_HOME are detected, (2) corresponding test test_command_inventory_file_probe_uses_cargo_home_env_var, and (3) Rust/cargo pitfall section in skills/mac-agent-terminal-timeout/SKILL.md. A repair child task should implement all three."
+  "actionable": false,
+  "reason": "fix_already_in_main",
+  "summary": "Dream-cycle finding dreamrepair:a70ac7c2a991662c733f17aeab71ce43 is closed as non-actionable. The environment-failure branch fix in _exhausted_attempt_terminal_transition is present and verified in the current codebase. No code repair is required.",
+  "finding": {
+    "fingerprint": "dreamrepair:a70ac7c2a991662c733f17aeab71ce43",
+    "description": "Exhausted-attempt terminal transition missing environment-failure branch (repairable_prerequisite / environment_repair_task_id)",
+    "verdict": "fix_present_tests_pass",
+    "verdict_source": "direct_inspection_and_targeted_tests"
+  },
+  "fix_verification": {
+    "file": "src/mac/services.py",
+    "function": "_exhausted_attempt_terminal_transition",
+    "lines": "14207-14214",
+    "code_present": "repairable_prerequisite = contract_failure or failure_class == \"environment\" (line 14207); environment_repair_task_id branch at line 14214",
+    "head_sha": "573a149533dda5b969a4b17a9de13b6784b9000a",
+    "targeted_tests_run": "pytest -k exhausted_attempt or terminal_transition or environment_repair or contract_repair",
+    "targeted_tests_result": "2 passed",
+    "full_suite_attestation": "Prior investigation agent (agent_rocky via task_d1b1353f398e418a989260ef845693bc) confirmed 5695 tests passed, 93.09% statement coverage"
+  },
+  "evidence_gap": {
+    "description": "The single evidence record for task_ca7301e511ff499697bd3178aa5ff786 (the original repair task) describes a git publication failure caused by a merge conflict in mac-evidence.json at the canonical publication gate — not a code defect in services.py. The code fix landed successfully; only the publication handoff failed.",
+    "prior_failure_mode": "merge_conflict_in_mac_evidence_json_at_publication_gate",
+    "is_code_defect": false,
+    "is_recurring": false
+  },
+  "stale_task_recommendation": {
+    "task_id": "task_ca7301e511ff499697bd3178aa5ff786",
+    "current_state": "reviewing",
+    "issue": "The task is stuck in reviewing state due to a stale branch whose evidence was invalidated by a merge conflict during publication. The code fix it carried is already in main.",
+    "recommendation": "Operator should abandon or retract task_ca7301e511ff499697bd3178aa5ff786. It is a git hygiene artifact, not a pending code change."
   },
   "assumptions": [
-    "The task worktree at $MAC_TASK_REPO_WORKTREE is the canonical inspection target for this investigation task.",
-    "The referenced parent-task worktree path (/sandbox/task_2901464b0a244356b6f1d4c6eaf72c29/...) was not accessible in this environment; investigation was performed against the current task worktree which contains the full mac repository source.",
-    "No code changes were made per task instructions ('Do NOT make any code changes in this child')."
+    "The task worktree at /sandbox/task_e96877abfbd14d3f9ec2b3cbf6098e6b/repo-lease_ef13fd74456d4b6babd03a4b659951bc reflects the canonical main-branch code state for this environment.",
+    "Investigation child task_d1b1353f398e418a989260ef845693bc completed with verdict=fix_present_tests_pass per activity log recorded by agent_jordanh-gke.",
+    "No code changes were made; this is a pure investigation close with evidence_type=investigation."
   ],
   "files_changed": [],
-  "checks": []
+  "checks": [
+    {
+      "name": "targeted_pytest",
+      "command": "pytest -k 'exhausted_attempt or terminal_transition or environment_repair or contract_repair'",
+      "result": "2 passed",
+      "status": "pass"
+    }
+  ],
+  "codegraph": {
+    "note": "No code changes made; CodeGraph analysis not required for investigation close."
+  }
 }
