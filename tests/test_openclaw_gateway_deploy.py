@@ -726,9 +726,19 @@ def test_prepare_supports_verified_headless_openclaw_runtime(tmp_path: Path) -> 
     assert "SLACK_BOT_TOKEN" not in runtime
     assert "TELEGRAM_" not in runtime
     assert "Representation mode: delegated" in workspace
-    assert "Be endlessly curious, ruthless toward bad data" in workspace
-    assert "Angry Librarian mode" in workspace
-    assert "false equivalence" in workspace
+    # SOUL.md is wired as the authoritative persona, first and prominently, so
+    # the OpenClaw runtime actually embodies the agent's personality instead of
+    # leaving SOUL.md an orphaned workspace file (rocky-personality-flattening).
+    assert "SOUL.md" in workspace
+    who, modes = workspace.split("## Modes you can invoke", maxsplit=1)
+    assert "Who you are" in who
+    assert "authoritative" in who
+    # The curiosity / moral-clarity block is demoted from default temperament to
+    # invocable modes — it must NOT read as "this is how you always are."
+    assert "Be endlessly curious, ruthless toward bad data" not in workspace
+    assert "not your default temperament" in workspace
+    assert "Angry Librarian mode" in modes
+    assert "false equivalence" in modes
     installer = INSTALLER.read_text(encoding="utf-8")
     assert 'MAC_OPENCLAW_CHANNELS=""' in installer
     assert "local channels=()" not in installer
