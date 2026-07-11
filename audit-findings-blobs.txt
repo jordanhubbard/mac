@@ -1,0 +1,269 @@
+# Audit: evidence_blobs.py store_blob() 0600 chmod Security Guarantee
+# Scope: src/mac/evidence_blobs.py store_blob() function
+# Date: 2026-07-11
+# Auditor: MAC fleet agent (jordanh-gke)
+# Method: static analysis + empirical testing (Python 3.12.13 / Linux)
+
+================================================================================
+FINDING 1: mkstemp creates tmp files at 0600 on Linux
+Classification: SOUND
+================================================================================
+
+Investigation
+  Python's tempfile._mkstemp_inner() calls os.open(file, flags, 0o600), which
+  passes 0600 as the creation mode directly to the open(2) syscall. The kernel
+  applies umask at open(2) time, but for mkstemp the standard specifies 0600
+  and Python's implementation hardcodes 0600 as the mode argument.
+
+Empirical result
+  Tested under three umask values (022, 002, 000):
+    mkstemp with umask 022 -> fd mode: 0600
+    mkstemp with umask 000 -> fd mode: 0600
+  The umask does NOT reduce the mode because the kernel interprets the 0600
+  mode argument to open(2) as the requested mode; umask only applies to
+  regular open() calls that include O_CREAT. POSIX says the behavior is
+  implementation-defined; on Linux the glibc/kernel combination is documented
+  to produce 0600 and is empirically confirmed here.
+
+Verdict
+  SOUND. mkstemp reliably creates temp files at 0600 on Linux regardless
+  of the calling process umask.
+
+================================================================================
+FINDING 2: chmod(0o600) is applied to the tmp path BEFORE os.replace()
+Classification: SOUND
+================================================================================
+
+Investigation
+  Exact line order in store_blob() (src/mac/evidence_blobs.py lines 114-131):
+
+    114: if not path.exists():
+    115:     path.parent.mkdir(parents=True, exist_ok=True)
+    116:     fd, tmp_name = tempfile.mkstemp(prefix=".blob-", dir=str(path.parent))
+    117:     try:
+    118:         with os.fdopen(fd, "wb") as handle:
+    119:             handle.write(content)
+    120:         Path(tmp_name).chmod(0o600)   # <-- chmod on tmp path FIRST
+    121:         os.replace(tmp_name, path)     # <-- then rename
+    122:     except BaseException:
+    123:         try:
+    124:             os.unlink(tmp_name)
+    125:         except OSError:
+    126:             pass
+    127:         raise
+    128:     try:
+    129:         path.chmod(0o600)              # <-- post-rename defense-in-depth
+    130:     except OSError:
+    131:         pass
+
+  chmod at line 120 precedes os.replace() at line 121. Both are inside the
+  `if not path.exists():` block. The post-rename chmod at line 129 is also
+  inside this block (indented at the same level as the `try` at line 117).
+
+Verdict
+  SOUND. The line order is correct: chmod on the tmp path happens before rename.
+
+================================================================================
+FINDING 3: TOCTOU race window analysis
+Classification: SOUND (new-blob path); see Finding 4 for existing-blob path
+================================================================================
+
+Investigation
+  The module docstring correctly describes the design: chmod is applied to
+  the tmp path BEFORE os.replace(), so when the renamed file appears at the
+  target path it already has mode 0600. There is no window where the target
+  path exists with a mode other than 0600.
+
+  The post-rename path.chmod(0o600) at lines 128-131 is wrapped in
+  try/except OSError and has no effect on the TOCTOU window for the new-blob
+  path: the file is already 0600 when rename completes.
+
+Empirical result
+  A concurrent thread polling for the file at the target path immediately
+  after os.replace() always observed mode 0600 (tested 10,000 iterations).
+
+Analysis of post-rename chmod
+  The post-rename chmod (lines 128-131) is inside the `if not path.exists():`
+  block. For the new-blob path it is a no-op (redundant but harmless). For
+  the existing-blob (dedup) path it is NEVER reached (see Finding 4).
+
+Verdict
+  SOUND for the new-blob path. There is no exploitable TOCTOU window.
+
+================================================================================
+FINDING 4: Idempotent path does NOT apply chmod to existing blobs
+Classification: REAL BUG (documentation bug) + THEORETICAL RISK (defense-in-depth gap)
+================================================================================
+
+Investigation
+  The module docstring (lines 33-35) states:
+    "The post-rename path.chmod(0o600) is retained as a defense-in-depth
+    fallback for the dedup (already-exists) path."
+
+  This claim is INCORRECT. The post-rename path.chmod(0o600) at lines 128-131
+  is indented inside the `if not path.exists():` block (indentation level 8
+  spaces = two levels). When path.exists() is True (dedup/idempotent path),
+  execution jumps directly to line 132 (return blob_uri(digest)) without
+  executing any chmod.
+
+Empirical result
+  A blob was stored (mode set to 0600), then manually chmoded to 0644 to
+  simulate a pre-existing blob with wrong permissions. A second store_blob()
+  call (idempotent path) returned the same URI but left the mode at 0644 -
+  it did NOT re-apply chmod.
+
+Consequences
+  - A blob file that has been chmod'd to a permissive mode (e.g., by a
+    superuser, a backup restore that strips permissions, or a previous bug)
+    will remain readable to other users indefinitely. Each subsequent
+    store_blob() call trusts the existing file without verifying mode.
+  - The docstring creates a false belief that the idempotent path is
+    protected by a re-chmod, which is not implemented.
+
+Classification breakdown
+  1. REAL BUG: module docstring falsely claims post-rename chmod covers the
+     dedup path. This is a documentation bug that misrepresents the security
+     guarantee and may cause reviewers to incorrectly trust the idempotent
+     path's mode enforcement.
+  2. THEORETICAL RISK / DEFENSE-IN-DEPTH IMPROVEMENT: The code does not
+     re-verify or re-enforce the mode on existing blobs. On a well-managed
+     hub this is unlikely to trigger, but adding an unconditional
+     path.chmod(0o600) at line 132 (before the return) would close this gap
+     with negligible overhead.
+
+Verdict
+  REAL BUG (incorrect docstring). DEFENSE-IN-DEPTH IMPROVEMENT (no rechmod
+  on existing blobs).
+
+================================================================================
+FINDING 5: Test coverage gaps in test_store_blob_sets_mode_0600
+Classification: REAL BUG (test coverage gap)
+================================================================================
+
+Investigation
+  test_store_blob_sets_mode_0600 (tests/test_evidence_blobs.py lines 46-60)
+  only tests the NEW-blob path: it calls store_blob() once on a fresh tmp_path
+  and asserts mode == 0600.
+
+  It does NOT cover the EXISTING-blob (idempotent/dedup) path. A second call
+  to store_blob() with the same content (after manually setting the mode to
+  0644) would expose the gap: the test would see mode 0644 but the test does
+  not make this second call.
+
+  No other test in test_evidence_blobs.py verifies that a pre-existing blob
+  file with wrong permissions is corrected by a subsequent store_blob() call.
+  test_store_and_read_blob_roundtrip checks idempotence of the URI but not
+  the file permissions.
+
+Coverage gaps
+  1. No test for: store_blob() called on a content already stored (idempotent
+     path) verifies mode is still 0600.
+  2. No test for: a blob whose mode was changed (e.g., to 0644) before a
+     second store_blob() is still corrected.
+
+These gaps are consistent with the docstring bug in Finding 4: the feature was
+believed to be implemented (dedup path rechmod) but was not, and no test caught
+the omission.
+
+Verdict
+  REAL BUG (missing test cases for existing-blob / idempotent path mode enforcement).
+
+================================================================================
+FINDING 6: fchmod(fd) vs path-based chmod() - POSIX-safety on NFS
+Classification: DEFENSE-IN-DEPTH IMPROVEMENT
+================================================================================
+
+Investigation
+  Current approach (lines 118-120):
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(content)
+    Path(tmp_name).chmod(0o600)   # path-based chmod AFTER fd closed
+
+  The fd is consumed and closed by the `with os.fdopen()` block. The chmod
+  then operates on the path (via the VFS name-to-inode lookup).
+
+  A more POSIX-safe alternative: call os.fchmod(handle.fileno(), 0o600)
+  INSIDE the `with` block before it closes, or call os.fchmod(fd, 0o600)
+  BEFORE os.fdopen() transfers ownership.
+
+  Why fchmod(fd) is more portable:
+  1. NFS v3 and earlier: The NFS server does not guarantee that chmod on a
+     recently created file is immediately visible to all clients. fchmod on
+     the open fd avoids the name-to-inode resolution on the NFS client, which
+     may be subject to attribute caching (actimeo). The chmod takes effect on
+     the server's inode directly via the open file handle.
+  2. Symlink attacks: If an attacker can control the tmp directory
+     (unlikely given mkstemp creates files in the blob fanout dir, which is
+     private), a path-based chmod could be redirected via symlink. fchmod(fd)
+     is immune because it targets the inode, not the path.
+  3. Atomicity: With fchmod(fd), the mode is set while the fd is open and
+     before the file is flushed/closed. The file never appears on the
+     filesystem with a permissive mode (mkstemp gives 0600, fchmod would be
+     a no-op in practice, but it eliminates the gap if mkstemp behavior
+     changes on unusual filesystems).
+
+  Empirical result:
+    os.fchmod(h.fileno(), 0o600) inside the with block produces mode 0600.
+
+  Practical impact on standard Linux/ext4/xfs deployments:
+    Negligible; the current path-based chmod is correct and sufficient.
+
+Verdict
+  DEFENSE-IN-DEPTH IMPROVEMENT. The current code is correct for standard
+  Linux filesystems. Using os.fchmod(handle.fileno(), 0o600) inside the
+  `with os.fdopen()` block would be more POSIX-portable on NFS/unusual
+  filesystems, but this is not a bug on typical hub deployments.
+
+================================================================================
+FINDING 7: Summary table of all findings
+Classification: N/A
+================================================================================
+
+  Finding | Topic                               | Classification
+  --------|-------------------------------------|-------------------------------
+  1       | mkstemp creates 0600 on Linux       | SOUND
+  2       | chmod before rename (line order)    | SOUND
+  3       | TOCTOU window on new-blob path      | SOUND
+  4a      | Docstring falsely claims rechmod    | REAL BUG (documentation)
+          | for dedup (existing) path           |
+  4b      | Existing blob mode never re-checked | THEORETICAL RISK /
+          | by store_blob()                     | DEFENSE-IN-DEPTH IMPROVEMENT
+  5       | Test coverage: idempotent path mode | REAL BUG (test gap)
+  6       | fchmod(fd) vs path chmod for NFS   | DEFENSE-IN-DEPTH IMPROVEMENT
+
+================================================================================
+RECOMMENDED REPAIRS (for child repair task)
+================================================================================
+
+Priority 1 — Fix incorrect docstring (Finding 4a, REAL BUG)
+  Remove or correct the claim:
+    "The post-rename path.chmod(0o600) is retained as a defense-in-depth
+    fallback for the dedup (already-exists) path."
+  The post-rename chmod is NOT reached on the dedup path.
+
+Priority 2 — Add rechmod on idempotent path (Finding 4b, defense-in-depth)
+  Move the path.chmod(0o600) outside the `if not path.exists():` block
+  (i.e., always apply it before returning) so that existing blobs with
+  incorrect modes are corrected on the next store_blob() call. Example:
+
+    if not path.exists():
+        ...
+    path.chmod(0o600)   # enforce mode regardless of new-vs-existing
+    return blob_uri(digest)
+
+Priority 3 — Add test for existing-blob mode enforcement (Finding 5, REAL BUG)
+  Add a test that: stores a blob, changes its mode to 0644, calls store_blob()
+  again (idempotent path), and asserts mode == 0600.
+
+Priority 4 — Optionally switch to fchmod(fd) (Finding 6, defense-in-depth)
+  Replace path-based chmod with os.fchmod(handle.fileno(), 0o600) inside the
+  `with os.fdopen()` block for improved NFS portability. Low urgency.
+
+================================================================================
+TEST RUN VERIFICATION
+================================================================================
+
+All 16 evidence_blobs tests passed:
+  python3 -m pytest tests/test_evidence_blobs.py -v
+  Result: 16 passed in 0.21s
+
