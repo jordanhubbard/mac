@@ -28,8 +28,11 @@ Design constraints:
   (files are never rewritten, so mtime is trustworthy).
 - **File permissions.** Every blob file is stored with mode 0600
   (owner-read/write only) to prevent other local users from reading
-  evidence payloads. ``store_blob`` calls ``chmod(0o600)`` on the final
-  path immediately after the atomic rename.
+  evidence payloads. ``store_blob`` applies ``chmod(0o600)`` to the temp
+  path before the atomic rename, eliminating the TOCTOU window between
+  rename and a post-rename chmod. The post-rename ``path.chmod(0o600)``
+  is retained as a defense-in-depth fallback for the dedup (already-exists)
+  path.
 """
 from __future__ import annotations
 
@@ -114,6 +117,7 @@ def store_blob(root: Path, content: bytes) -> str:
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(content)
+            Path(tmp_name).chmod(0o600)
             os.replace(tmp_name, path)
         except BaseException:
             try:

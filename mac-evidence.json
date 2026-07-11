@@ -1,91 +1,48 @@
 {
   "schema": "mac.worker_evidence.v1",
   "evidence_type": "repo_change",
-  "task_id": "task_5ba2020c37c44b4080eeecd83c1c994c",
+  "task_id": "task_4c28e96a50c445d9936c5a5699bee8df",
   "status": "complete",
-  "summary": "Investigated evidence_blobs 0600 security guarantee. Both src/mac/evidence_blobs.py and tests/test_evidence_blobs.py were verified correct in the baseline. Module docstring documents the 0600 guarantee; store_blob() calls path.chmod(0o600) after atomic rename. All 9 original evidence_blobs tests passed. Full contract suite: 5663 passed, 21 skipped, 0 failures. Added 7 new tests covering previously-uncovered branches (inline_max_bytes defaults, invalid digest, bad URI schemes, expected_sha256 mismatch, temp-file cleanup on write error), improving evidence_blobs.py coverage from 79.38% to 95.88%.",
-  "investigation": {
-    "evidence_blobs_py": {
-      "docstring_documents_0600": true,
-      "store_blob_calls_chmod_0600": true,
-      "chmod_location": "After atomic rename (os.replace) in store_blob(), inside a try/except OSError to handle read-only filesystems gracefully",
-      "notes": "The implementation is correct. chmod is applied to the final path after the atomic rename, not to the temp file. The OSError guard prevents failures on filesystems that do not support chmod."
-    },
-    "test_evidence_blobs_py": {
-      "test_store_blob_sets_mode_0600_present": true,
-      "test_store_blob_sets_mode_0600_correct": true,
-      "original_test_count": 9,
-      "all_original_tests_pass": true
-    },
-    "git_log": {
-      "baseline_commit": "07c6a91e80a38ad72f6b45260cfbc8045f860880",
-      "commit_message": "MAC OpenShell sandbox baseline",
-      "evidence_blobs_in_baseline": true,
-      "test_evidence_blobs_in_baseline": true,
-      "origin_remote_configured": false,
-      "notes": "This is a sandbox worktree with a single baseline commit. The canonical origin (git@github.com:jordanhubbard/mac.git) is not configured as a remote in this environment. Both src/mac/evidence_blobs.py and tests/test_evidence_blobs.py were part of the initial baseline commit."
-    },
-    "contract_tests": {
-      "command": "scripts/run-contract-tests.sh",
-      "result": "5663 passed, 21 skipped, 0 failed",
-      "duration_seconds": 362,
-      "coverage_statements": "93.16% (floor 90.00%)",
-      "coverage_branches": "84.57% (floor 80.00%)",
-      "coverage_floors_met": true,
-      "evidence_blobs_coverage_before": "79.38%",
-      "evidence_blobs_coverage_after": "95.88%"
-    },
-    "uncovered_branches_identified": [
-      "inline_max_bytes(): missing default return when env var is unset (line 69)",
-      "inline_max_bytes(): missing ValueError fallback when env var is non-integer (lines 72-73)",
-      "_digest_hex(): missing ValueError raise for invalid digest strings (line 83)",
-      "store_blob(): missing BaseException cleanup (os.unlink on temp file) failure path (lines 118-123)",
-      "store_blob(): missing OSError on chmod after rename (lines 126-127)",
-      "read_blob(): missing ValueError for wrong URI scheme prefix (line 140)",
-      "read_blob(): missing ValueError for non-sha256/ scheme segment (line 143)",
-      "read_blob(): missing BlobIntegrityError for expected_sha256 mismatch (line 154)"
-    ],
-    "repair_action": "Added 7 new tests in tests/test_evidence_blobs.py to cover the above branches. All 16 tests now pass. evidence_blobs.py coverage improved from 79.38% to 95.88%. The 4 remaining uncovered lines (121-122, 126-127) are OSError exception handlers inside try/except blocks that require platform-specific OS mocking to reach and are not critical gaps."
-  },
+  "summary": "Hardened evidence_blobs.store_blob() to apply chmod(0o600) on the temp file path before the atomic os.replace rename, eliminating the TOCTOU window. Updated module docstring to describe the fd-based/temp-path chmod approach. Post-rename path.chmod(0o600) retained as defense-in-depth fallback. All 16 tests pass.",
   "repo": {
-    "head_sha": "07c6a91e80a38ad72f6b45260cfbc8045f860880",
+    "head_sha": "565636c874b99d1f98eb23cf83c891da631a5645",
     "pushed": false,
     "dirty": true,
     "files_changed": [
-      "tests/test_evidence_blobs.py"
+      "src/mac/evidence_blobs.py"
     ]
   },
   "tests": {
-    "command": ".venv/bin/python -m pytest tests/test_evidence_blobs.py -v",
+    "command": ".venv/bin/python3 -m pytest tests/test_evidence_blobs.py -q",
     "status": "passed",
     "detail": {
-      "test_store_and_read_blob_roundtrip": "PASSED",
+      "total": "16 passed, 0 failed",
       "test_store_blob_sets_mode_0600": "PASSED",
+      "test_store_and_read_blob_roundtrip": "PASSED",
       "test_read_blob_fails_closed_on_corruption": "PASSED",
       "test_large_artifact_externalizes_and_reads_back": "PASSED",
       "test_small_artifact_stays_inline": "PASSED",
       "test_unconfigured_blob_store_keeps_inline_behavior": "PASSED",
       "test_missing_blob_fails_closed_with_clear_error": "PASSED",
       "test_corrupted_blob_fails_closed_on_read": "PASSED",
-      "test_identical_content_across_evidence_deduplicates": "PASSED",
-      "test_inline_max_bytes_default_when_env_unset": "PASSED",
-      "test_inline_max_bytes_default_on_non_integer_value": "PASSED",
-      "test_digest_hex_raises_on_invalid_digest": "PASSED",
-      "test_read_blob_raises_on_wrong_uri_scheme": "PASSED",
-      "test_read_blob_raises_on_missing_sha256_prefix": "PASSED",
-      "test_read_blob_raises_on_expected_sha256_mismatch": "PASSED",
-      "test_store_blob_cleanup_on_write_error": "PASSED",
-      "total": "16 passed"
+      "test_identical_content_across_evidence_deduplicates": "PASSED"
+    }
+  },
+  "checks": {
+    "syntax": {
+      "command": "python3 -m py_compile src/mac/evidence_blobs.py",
+      "status": "passed"
     }
   },
   "codegraph": {
-    "note": "CodeGraph tooling (codegraph CLI) not available in this sandbox environment. Changed file: tests/test_evidence_blobs.py (test-only change). The only affected module is mac.evidence_blobs; no public API signatures were changed. No callers/callees impact beyond the test file itself."
+    "changed_files": ["src/mac/evidence_blobs.py"],
+    "affected_modules": ["mac.evidence_blobs"],
+    "public_api_changed": false,
+    "note": "One line added inside store_blob() body (Path(tmp_name).chmod(0o600)); no signature or public API changes. Docstring updated. No callers impacted by signature change."
   },
   "assumptions": [
-    "The evidence_blobs 0600 implementation was already correct and present in the baseline worktree commit.",
-    "The sandbox has no configured git remote; canonical origin state could not be verified by git fetch, but both source files were committed in the single baseline commit.",
-    "The task instructs 'Do NOT commit or push yet - leave that for the repair child task'; only mac-evidence.json update and test additions were made.",
-    "The 4 remaining uncovered lines (store_blob OSError cleanup handlers) are defensive exception guards that are not practically reachable without OS-level injection and do not represent a quality gap.",
-    "files_changed lists tests/test_evidence_blobs.py as the real file change satisfying the repo.files_changed requirement."
+    "The fd is consumed by os.fdopen context manager, so Path(tmp_name).chmod(0o600) on the tmp path is used instead of os.fchmod(fd, 0o600) as the fd is closed after the with block.",
+    "The task instructs not to commit or push here; the deterministic finalizer handles commit and push.",
+    "The pre-existing post-rename path.chmod(0o600) is retained as a defense-in-depth fallback for pre-existing-file dedup path."
   ]
 }
