@@ -24,6 +24,13 @@ dist/
 # Operational task-ledger mirror (mac task is canonical; mirror is local-only).
 .tickets/
 
+# Per-task executor evidence manifest. Every task writes this into its own
+# workspace and the hub ingests it from there (never from git), so it is
+# per-run operational state, NOT product content. Committing it made every
+# task branch modify the same repo-root file, so every publication merge
+# conflicted on it and failed the merge gate. Keep it out of the tree.
+mac-evidence.json
+
 # CodeGraph indexes are local generated state.
 .codegraph/
 
