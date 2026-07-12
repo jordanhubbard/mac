@@ -1,4 +1,12 @@
-"""Small validation and formatting edges for fleet deployment helpers."""
+"""Contract tests for fleet deploy output and log permission hardening.
+
+Covers:
+- SshTarget validation and formatting
+- write_owner_only_file() atomicity, permissions (0o600), and encoding
+- ensure_owner_only_directory() creation, nesting, permission tightening, idempotency
+- cleanup_retention_plan() entries (mac logs, acc deploy, /tmp)
+- cleanup_path_strings() pipe-delimited format and count consistency
+"""
 
 from __future__ import annotations
 
