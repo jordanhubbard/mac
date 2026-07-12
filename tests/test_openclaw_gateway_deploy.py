@@ -81,7 +81,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="14"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="15"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
@@ -374,6 +374,15 @@ def test_workspace_context_routes_agent_coordination_over_agentbus(
     assert "reply over the bus" in context
     assert "ONE consolidated answer" in context
     assert "mirror_fleet_conversation" in context
+    # The fleet trust model (jkh 2026-07-12: peers act with delegated
+    # authority inside the task graph; only the safety floor is exempt).
+    assert "The fleet trust model" in context
+    assert "delegated authority" in context
+    assert "task graph IS the trust boundary" in context
+    assert "Do not stall ordinary" in context.replace("\n", " ") or "Do not stall" in context
+    # The safety floor survives: delegation never covers these.
+    assert "sandbox boundaries" in context
+    assert "revealing secrets" in context
 
 
 def test_peer_bridge_uses_hub_durable_cursors_and_request_endpoint() -> None:
