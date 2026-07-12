@@ -585,17 +585,29 @@ export default {
 
     api.registerTool({
       name: "mac_fleet_status",
-      description: "List authenticated MAC fleet peers, their health, and current work. Use this instead of OpenClaw sessions_list when coordinating across agent hosts or gateways.",
-      parameters: inputSchema({}),
-      async execute() {
-        const agents = await fleetAgents(api);
-        return peerTextResult(agents.map((agent) => ({
-          id: agent.id,
-          name: agent.name,
-          status: agent.status,
-          health_status: agent.health_status,
-          current_task_id: agent.current_task_id,
-          dispatch_hold: agent.dispatch_hold || null,
+      description: "List authenticated MAC fleet peers with their health, current work, capabilities, and hardware (GPU/accelerator). Answers 'who can do X?' / 'which agents have GPUs?' directly — pass capability (e.g. \"cuda\", \"python\", \"review\") to filter. Use this instead of OpenClaw sessions_list when coordinating across agent hosts or gateways, then mac_agent_send to task the peers you found.",
+      parameters: inputSchema({
+        capability: {type: "string", description: "Only list agents advertising this capability."},
+      }),
+      async execute(_id, params) {
+        const query = new URLSearchParams({limit: "50"});
+        const capability = String(params?.capability || "").trim();
+        if (capability) query.set("capability", capability);
+        const snapshot = await hubApi(api, "GET", `/fleet/snapshot?${query}`);
+        const members = Array.isArray(snapshot?.members) ? snapshot.members : [];
+        return peerTextResult(members.map((member) => ({
+          id: member.agent_id,
+          name: member.name,
+          status: member.status,
+          health: member.health,
+          capabilities: member.capabilities || [],
+          accelerator: member.accelerator || null,
+          hardware: member.hardware || null,
+          current_task_id: member.current_task_id || null,
+          current_task_title: member.current_task_title || null,
+          dispatch_hold: member.dispatch_hold || null,
+          ...(member.ephemeral ? {ephemeral: true} : {}),
+          ...(member.departed_at ? {departed_at: member.departed_at} : {}),
         })));
       },
     });

@@ -376,6 +376,24 @@ def test_workspace_context_routes_agent_coordination_over_agentbus(
     assert "mirror_fleet_conversation" in context
 
 
+def test_fleet_status_tool_is_capability_aware() -> None:
+    """Discovery (task_7debcc9c): the agent-facing fleet tool must surface
+    capabilities + hardware from the hub snapshot and accept a capability
+    filter, so 'which agents have GPUs?' never needs a human."""
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    tool = plugin.split('name: "mac_fleet_status"', 1)[1].split("registerTool", 1)[0]
+    assert "/fleet/snapshot" in tool
+    assert "capability" in tool
+    assert "capabilities" in tool
+    assert "accelerator" in tool
+    assert "hardware" in tool
+    assert "departed_at" in tool
+    # Discovery pairs with dispatch: the description points at mac_agent_send.
+    assert "mac_agent_send" in tool
+
+
 def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
     plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").as_uri()
     script = f"""

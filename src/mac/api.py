@@ -5483,8 +5483,11 @@ def create_app(
     def fleet_snapshot(
         exclude_agent_id: Optional[str] = Query(default=None),
         limit: int = Query(default=30, ge=1, le=200),
+        capability: Optional[str] = Query(default=None, max_length=100),
     ) -> Dict[str, Any]:
-        return cp.fleet_snapshot(exclude_agent_id=exclude_agent_id, limit=limit)
+        return cp.fleet_snapshot(
+            exclude_agent_id=exclude_agent_id, limit=limit, capability=capability
+        )
 
     # Mood — agent-self-reported emotional state
     @app.put("/agents/{agent_id}/mood")

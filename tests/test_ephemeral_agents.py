@@ -122,6 +122,38 @@ def test_deregister_leaves_a_final_message_that_outlives_the_agent(
         cp.deregister_agent(ephemeral.id)
 
 
+def test_fleet_snapshot_is_capability_aware(cp: ControlPlane) -> None:
+    """Discovery (task_7debcc9c): 'which agents have GPUs?' must be answerable
+    from the snapshot alone — capabilities, accelerator, and a hardware
+    summary per member, plus a capability filter."""
+    machine = cp.register_machine("host-disco")
+    gpu_agent = cp.register_agent(
+        machine.id,
+        "gpu-worker",
+        capabilities=["python", "cuda"],
+        resources={
+            "hardware": {
+                "accelerator": "cuda",
+                "gpu": {"name": "RTX 5090", "count": 1, "vram_mb": 32768},
+            }
+        },
+    )
+    cpu_agent = cp.register_agent(
+        machine.id, "cpu-worker", capabilities=["python", "review"]
+    )
+
+    snapshot = cp.fleet_snapshot()
+    members = {m["agent_id"]: m for m in snapshot["members"]}
+    assert set(members[gpu_agent.id]["capabilities"]) == {"python", "cuda"}
+    assert members[gpu_agent.id]["accelerator"] == "cuda"
+    assert "RTX 5090" in (members[gpu_agent.id]["hardware"] or "")
+    assert members[cpu_agent.id]["accelerator"] is None
+
+    filtered = cp.fleet_snapshot(capability="CUDA")  # case-insensitive
+    assert [m["agent_id"] for m in filtered["members"]] == [gpu_agent.id]
+    assert cp.fleet_snapshot(capability="quantum")["members"] == []
+
+
 def test_deregister_final_message_requires_target(cp: ControlPlane) -> None:
     ephemeral = _ephemeral(cp, "no-target", ttl=60)
     with pytest.raises(ValidationError, match="final_target"):

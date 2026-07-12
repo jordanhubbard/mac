@@ -10743,11 +10743,20 @@ class ControlPlane:
 
     # -- Fleet awareness (fleet-01/02) --------------------------------------
 
-    def fleet_snapshot(self, *, exclude_agent_id: Optional[str] = None, limit: int = 30) -> JsonDict:
-        """A compact, current view of the fleet — who's online, their status, and
-        what each agent is working on. Powers passive group awareness (injected
-        into each agent's runtime context) and the on-demand `fleet` tool, so the
-        three agents always know what the others are doing."""
+    def fleet_snapshot(
+        self,
+        *,
+        exclude_agent_id: Optional[str] = None,
+        limit: int = 30,
+        capability: Optional[str] = None,
+    ) -> JsonDict:
+        """A compact, current view of the fleet — who's online, their status,
+        what each agent is working on, and what each agent CAN DO. Powers
+        passive group awareness (injected into each agent's runtime context)
+        and the on-demand fleet tool. Capabilities + hardware make questions
+        like "which agents have GPUs?" answerable by an agent without asking
+        a human (task_7debcc9c); ``capability`` filters members to those
+        advertising it."""
         active = {
             TaskState.CLAIMED.value,
             TaskState.RUNNING.value,
@@ -10766,11 +10775,24 @@ class ControlPlane:
         grace_cutoff = parse_time(utcnow()) - timedelta(
             seconds=self.EPHEMERAL_DEPARTED_GRACE_SECONDS
         )
+        from mac.hardware import summarize as summarize_hardware
+
+        wanted_capability = (capability or "").strip().lower()
         for agent in self.list_agents(include_deleted=True):
             if exclude_agent_id and agent.id == exclude_agent_id:
                 continue
             if agent.deleted_at and parse_time(agent.deleted_at) < grace_cutoff:
                 continue
+            if wanted_capability and wanted_capability not in {
+                str(item).strip().lower() for item in agent.capabilities
+            }:
+                continue
+            resources = agent.resources if isinstance(agent.resources, dict) else {}
+            hardware = (
+                resources.get("hardware")
+                if isinstance(resources.get("hardware"), dict)
+                else None
+            )
             cur = by_owner.get(agent.id)
             members.append(
                 {
@@ -10778,12 +10800,16 @@ class ControlPlane:
                     "agent_id": agent.id,
                     "status": agent.status,
                     "health": agent.health_status,
+                    "capabilities": list(agent.capabilities),
+                    "accelerator": (hardware or {}).get("accelerator"),
+                    "hardware": summarize_hardware(hardware) if hardware else None,
                     "dispatch_hold": agent.dispatch_hold,
                     "dispatch_hold_reason": agent.dispatch_hold_reason,
                     "dispatch_hold_at": agent.dispatch_hold_at,
                     "current_task_id": cur.id if cur else agent.current_task_id,
                     "current_task_title": (cur.title if cur else None),
                     "last_seen_at": agent.last_seen_at,
+                    **({"ephemeral": True} if resources.get("ephemeral") is True else {}),
                     **({"departed_at": agent.deleted_at} if agent.deleted_at else {}),
                 }
             )

@@ -1135,12 +1135,14 @@ class RemoteDispatch:
         *,
         exclude_agent_id: Optional[str] = None,
         limit: int = 30,
+        capability: Optional[str] = None,
     ) -> _Dictish:
         return _Dictish(
             self._get(
                 "/fleet/snapshot",
                 exclude_agent_id=exclude_agent_id,
                 limit=limit,
+                capability=capability,
             )
         )
 
