@@ -60,6 +60,25 @@ network_policies:
           - allow: { method: PUT, path: "/**" }
           - allow: { method: PATCH, path: "/**" }
           - allow: { method: DELETE, path: "/**" }
+      # When the hub is LOCAL to the gateway host (e.g. Rocky on the hub node),
+      # the installer's rewrite_sandbox_local_url maps the loopback hub URL to
+      # OpenShell's host-bridge alias `host.openshell.internal` — the only way a
+      # sandbox can reach a host-local service. Without this endpoint the L7
+      # proxy denies node's egress to that alias ("Request was cancelled"),
+      # silently breaking the mac-continuity peer bridge (and everything else
+      # the plugin fetches from the hub) on the hub-local gateway. The remote
+      # gateways use __MAC_ROUTER_HOST__ above and are unaffected; allowing the
+      # alias here fixes the local one without widening egress (same host:port).
+      - host: host.openshell.internal
+        port: __MAC_ROUTER_PORT__
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+          - allow: { method: PUT, path: "/**" }
+          - allow: { method: PATCH, path: "/**" }
+          - allow: { method: DELETE, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/node }

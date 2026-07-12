@@ -130,6 +130,11 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
     assert "/usr/lib/git-core/git-remote-https" in text
     assert "__MAC_ROUTER_HOST__" in text
     assert "__MAC_ROUTER_PORT__" in text
+    # Hub-local gateways reach the hub via OpenShell's host-bridge alias (the
+    # installer rewrites the loopback hub URL to it); the mac-router policy must
+    # allow node's egress to that alias too, or the peer bridge silently breaks
+    # on the hub node ("Request was cancelled").
+    assert "host: host.openshell.internal" in text
     for host in (
         "slack.com",
         "api.slack.com",
