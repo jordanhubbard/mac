@@ -156,6 +156,39 @@ class SSHTransport:
         return meta
 
 
+    def list_dir(self, target: str) -> List[str]:
+        """Return a list of relative paths under ``~/.hermes`` by running
+        ``find ~/.hermes -type f`` via SSH.  Paths are relative to
+        ``~/.hermes`` (i.e. the ``~/.hermes/`` prefix is stripped).
+
+        Raises :class:`RuntimeError` on any non-zero exit code.
+        """
+        cmd = 'find "$HOME/%s" -type f' % self._sub
+        proc = subprocess.run(self._argv(target, cmd), capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "list_dir on %s failed (exit %d): %s"
+                % (target, proc.returncode, proc.stderr.strip())
+            )
+        prefix = "$HOME/%s/" % self._sub
+        # Normalise: strip the literal "$HOME/.hermes/" prefix that the remote
+        # shell expands to the actual home path.  We get the real expanded path,
+        # so we strip by the hermes subdir basename only.
+        results: List[str] = []
+        hermes_sub = self._sub.rstrip("/") + "/"
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Find the hermes subdir boundary and strip everything up to it.
+            idx = line.find(hermes_sub)
+            if idx >= 0:
+                results.append(line[idx + len(hermes_sub):])
+            else:
+                results.append(line)
+        return results
+
+
 # ---------------------------------------------------------------------------
 # Fleet roster
 # ---------------------------------------------------------------------------
@@ -174,6 +207,53 @@ def load_fleet_agents(fleets_config: dict, fleet_name: str) -> List[Tuple[str, s
         if name and target:
             out.append((name, target))
     return out
+
+
+
+# ---------------------------------------------------------------------------
+# Hermes salvage audit
+# ---------------------------------------------------------------------------
+
+HERMES_SALVAGE_AUDIT_SCHEMA = "mac.hermes_salvage_audit.v1"
+
+
+def hermes_salvage_audit(
+    agent: str,
+    target: str,
+    transport: "SSHTransport",
+    *,
+    audited_at: str,
+) -> Dict[str, Any]:
+    """Audit the remote ``~/.hermes`` directory for an agent and return a manifest.
+
+    Calls :meth:`SSHTransport.list_dir` to enumerate all files under
+    ``~/.hermes`` and returns a ``mac.hermes_salvage_audit.v1`` manifest dict
+    with the following fields:
+
+    * ``schema``     – always ``"mac.hermes_salvage_audit.v1"``
+    * ``agent``      – the agent name passed in
+    * ``target``     – the SSH target (host / jump path) passed in
+    * ``audited_at`` – the caller-supplied timestamp string
+    * ``files``      – list of relative paths (relative to ``~/.hermes``)
+    * ``file_count`` – ``int(len(files))``
+    * ``error``      – ``None`` on success; the error message string if
+                       :meth:`list_dir` raises :class:`RuntimeError`
+    """
+    files: List[str] = []
+    error: Optional[str] = None
+    try:
+        files = transport.list_dir(target)
+    except RuntimeError as exc:
+        error = str(exc)
+    return {
+        "schema": HERMES_SALVAGE_AUDIT_SCHEMA,
+        "agent": agent,
+        "target": target,
+        "audited_at": audited_at,
+        "files": files,
+        "file_count": len(files),
+        "error": error,
+    }
 
 
 # ---------------------------------------------------------------------------

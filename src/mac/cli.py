@@ -2743,6 +2743,27 @@ def cmd_fleet_soul_push(args: argparse.Namespace) -> None:
     })
 
 
+
+def cmd_fleet_soul_audit(args: argparse.Namespace) -> None:
+    """Audit the remote ~/.hermes directory for a named agent and print the manifest."""
+    from datetime import datetime, timezone
+    from mac import soul_snapshot as _ss
+
+    fleet_name, agents, transport = _soul_snapshot_setup(args)
+    agent_name = args.agent
+    # Resolve agent name to SSH target
+    agent_map = dict(agents)
+    if agent_name not in agent_map:
+        raise SystemExit(
+            "agent %r not found in fleet %r (have: %s)"
+            % (agent_name, fleet_name, sorted(agent_map))
+        )
+    target = agent_map[agent_name]
+    audited_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    manifest = _ss.hermes_salvage_audit(agent_name, target, transport, audited_at=audited_at)
+    _print(manifest)
+
+
 def cmd_fleet_memory_export(args: argparse.Namespace) -> None:
     """Phase 2b: export the fleet's Qdrant vector memory to greppable JSONL for
     vetting (find stale facts that wouldn't surface from the soul text)."""
@@ -5527,6 +5548,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
     )
     _set(cmd_fleet_soul_push, fleet_soul_push)
+
+    fleet_soul_audit = fleet.add_parser(
+        "soul-audit",
+        help="audit the remote ~/.hermes directory for a named agent",
+    )
+    fleet_soul_audit.add_argument("--agent", required=True, help="agent name to audit")
+    fleet_soul_audit.add_argument("--fleet", help="fleet name (default: first in fleets.yaml)")
+    fleet_soul_audit.add_argument(
+        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+    )
+    _set(cmd_fleet_soul_audit, fleet_soul_audit)
+
 
     # Phase 2b: export/vet the fleet's Qdrant vector memory.
     fleet_mem_export = fleet.add_parser(

@@ -111,3 +111,65 @@ def test_plan_push_skips_missing_local_snapshot(tmp_path: Path) -> None:
         stamp="T",
     )
     assert result.changes == []
+
+
+# ---------------------------------------------------------------------------
+# Tests for SSHTransport.list_dir and hermes_salvage_audit
+# ---------------------------------------------------------------------------
+
+
+def test_ssh_transport_list_dir_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """list_dir returns relative paths stripped of the ~/.hermes/ prefix."""
+    transport = snapshot.SSHTransport()
+    output = "/home/agent/.hermes/SOUL.md\n/home/agent/.hermes/USER.md\n/home/agent/.hermes/subdir/file.txt\n"
+    monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(0, output))
+    paths = transport.list_dir("host")
+    assert "SOUL.md" in paths
+    assert "USER.md" in paths
+    assert "subdir/file.txt" in paths
+
+
+def test_ssh_transport_list_dir_non_zero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """list_dir raises RuntimeError on a non-zero SSH exit code."""
+    transport = snapshot.SSHTransport()
+    monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(1, stderr="connection refused"))
+    with pytest.raises(RuntimeError, match="connection refused"):
+        transport.list_dir("host")
+
+
+def test_hermes_salvage_audit_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """hermes_salvage_audit returns the v1 manifest on success."""
+    transport = snapshot.SSHTransport()
+    output = "/home/agent/.hermes/SOUL.md\n/home/agent/.hermes/USER.md\n"
+    monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(0, output))
+    result = snapshot.hermes_salvage_audit(
+        "agent_test", "host", transport, audited_at="2026-01-01T00:00:00Z"
+    )
+    assert result["schema"] == "mac.hermes_salvage_audit.v1"
+    assert result["agent"] == "agent_test"
+    assert result["target"] == "host"
+    assert result["audited_at"] == "2026-01-01T00:00:00Z"
+    assert "SOUL.md" in result["files"]
+    assert result["file_count"] == len(result["files"])
+    assert result["error"] is None
+
+
+def test_hermes_salvage_audit_ssh_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """hermes_salvage_audit captures RuntimeError from list_dir in the error field."""
+    transport = snapshot.SSHTransport()
+    monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(255, stderr="ssh: no route to host"))
+    result = snapshot.hermes_salvage_audit(
+        "agent_test", "unreachable", transport, audited_at="2026-01-01T00:00:00Z"
+    )
+    assert result["schema"] == "mac.hermes_salvage_audit.v1"
+    assert result["files"] == []
+    assert result["file_count"] == 0
+    assert result["error"] is not None
+    assert "no route to host" in result["error"]
+
+
+def test_ssh_transport_list_dir_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """list_dir returns an empty list when find returns no output."""
+    transport = snapshot.SSHTransport()
+    monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(0, ""))
+    assert transport.list_dir("host") == []
