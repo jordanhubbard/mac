@@ -5,7 +5,7 @@
   "status": "complete",
   "summary": "Worker startup implementation verified: re-register clears stale dispatch hold, emits checkout SHA, runs import self-check. Full contract test suite passed (exit code 0). Branch pushed and PR #223 opened.",
   "repo": {
-    "head_sha": "4d074ce051dc98bdccba0c2058ee92afc2925f55",
+    "head_sha": "4717b51cfe9af0bf20b59ba52712e7b8e9c77942",
     "pushed": true,
     "dirty": false,
     "files_changed": [
