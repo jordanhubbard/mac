@@ -210,6 +210,7 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("fleet", "rotate-token"),
         ("fleet", "snapshot"),
         ("fleet", "soul-pull"),
+        ("fleet", "soul-audit"),
         ("fleet", "soul-push"),
         ("fleet", "sync-token"),
         ("fleet", "validate"),
