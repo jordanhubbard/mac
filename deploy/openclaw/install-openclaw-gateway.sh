@@ -1133,16 +1133,13 @@ PY
   # Prove the URL written into the sandbox is actually sandbox-reachable and
   # that the gateway token is accepted as this agent. A host-side /health
   # check cannot detect the common 127.0.0.1 namespace mistake.
-  sandbox_command "$openshell_bin" /usr/bin/node --input-type=module --eval '
-    const base = String(process.env.MAC_OPENCLAW_CONTROL_URL || "").replace(/\/$/, "");
-    const agent = String(process.env.MAC_OPENCLAW_AGENT_ID || "");
-    const token = String(process.env.MAC_OPENCLAW_ROUTER_API_KEY || "");
-    const url = `${base}/agentbus/streams?agent_id=${encodeURIComponent(agent)}&limit=1`;
-    const response = await fetch(url, {headers: {Authorization: `Bearer ${token}`}});
-    if (!response.ok) throw new Error(`MAC control-plane probe returned HTTP ${response.status}`);
-    const value = await response.json();
-    if (!Array.isArray(value)) throw new Error("MAC control-plane probe returned a non-list");
-  '
+  local control_probe_status="$OPENCLAW_HOST_DIR/control-plane-probe.txt"
+  local control_probe_script='const base=String(process.env.MAC_OPENCLAW_CONTROL_URL||"").replace(/\/$/,"");const agent=String(process.env.MAC_OPENCLAW_AGENT_ID||"");const token=String(process.env.MAC_OPENCLAW_ROUTER_API_KEY||"");const url=`${base}/agentbus/streams?agent_id=${encodeURIComponent(agent)}&limit=1`;const response=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error(`MAC control-plane probe returned HTTP ${response.status}`);const value=await response.json();if(!Array.isArray(value))throw new Error("MAC control-plane probe returned a non-list");console.log("OPENCLAW_CONTROL_PROBE_OK");'
+  sandbox_command "$openshell_bin" /usr/bin/node --input-type=module --eval \
+    "$control_probe_script" > "$control_probe_status"
+  grep -qx 'OPENCLAW_CONTROL_PROBE_OK' "$control_probe_status" \
+    || die "OpenClaw sandbox control-plane probe did not return its success sentinel"
+  chmod 0600 "$control_probe_status"
   sandbox_command "$openshell_bin" /usr/local/bin/curiosity verify \
     > "$OPENCLAW_HOST_DIR/curiosity-ledger-status.json"
   sandbox_command "$openshell_bin" /usr/local/bin/curiosity abuse-frame \
