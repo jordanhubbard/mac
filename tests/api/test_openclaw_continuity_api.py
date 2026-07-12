@@ -110,7 +110,9 @@ def test_mirror_fleet_conversation_flag_is_registered_and_agent_settable() -> No
 
     spec = CONFIG_FLAG_REGISTRY["mirror_fleet_conversation"]
     assert spec["type"] == "bool"
-    assert flag_default("mirror_fleet_conversation") is False
+    # On by default: real agent conversations mirror to the home channel unless a
+    # user turns it off ("I no longer want to know what you guys are talking about").
+    assert flag_default("mirror_fleet_conversation") is True
     assert validate_flag_value("mirror_fleet_conversation", "on") is True
     assert validate_flag_value("mirror_fleet_conversation", "off") is False
 

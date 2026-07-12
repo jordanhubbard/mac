@@ -63,7 +63,7 @@ CONFIG_FLAG_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "mirror_fleet_conversation": {
         "type": "bool",
-        "default": False,
+        "default": True,
         "description": (
             "Post human-friendly summaries of this agent's authenticated "
             "agent-to-agent (fleet peer) conversations into the home channel, "
