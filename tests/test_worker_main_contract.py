@@ -325,3 +325,114 @@ def test_worker_argument_helpers_and_attestation_probe(monkeypatch):
     assert worker._attestation_key_matches_hub(client, "agent", "k" * 40)
     client.post = lambda *_args, **_kwargs: []
     assert not worker._attestation_key_matches_hub(client, "agent", "k" * 40)
+
+
+# ---------------------------------------------------------------------------
+# Helper shared by startup-behavior tests
+# ---------------------------------------------------------------------------
+
+def _fake_register():
+    """Return a minimal registration payload that satisfies worker.main."""
+    return {"id": "agent_startup_test", "attestation_key": "", "resources": {}}
+
+
+def _register_args():
+    """Common CLI flags for a --register + --heartbeat-only run."""
+    return ["--register", "--hostname", "host", "--agent-name", "test", "--heartbeat-only"]
+
+
+# ---------------------------------------------------------------------------
+# 1. MAC_STARTUP_CLEAR_HOLD=1 → DELETE dispatched, hold_cleared=True in output
+# ---------------------------------------------------------------------------
+
+def test_startup_clear_hold_enabled(worker_main, monkeypatch, capsys):
+    monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "1")
+    monkeypatch.setattr(worker, "register_worker", lambda *_a, **_kw: _fake_register())
+    assert worker.main(_register_args()) == 0
+    client = worker_main[-1]
+    delete_calls = [r for r in client.requests if r[0] == "DELETE"]
+    assert any("/dispatch-hold" in r[1] for r in delete_calls), (
+        "Expected a DELETE /…/dispatch-hold request when MAC_STARTUP_CLEAR_HOLD=1"
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["hold_cleared"] is True
+
+
+# ---------------------------------------------------------------------------
+# 2. MAC_STARTUP_CLEAR_HOLD=0 → DELETE skipped, hold_cleared=False in output
+# ---------------------------------------------------------------------------
+
+def test_startup_clear_hold_disabled(worker_main, monkeypatch, capsys):
+    monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "0")
+    monkeypatch.setattr(worker, "register_worker", lambda *_a, **_kw: _fake_register())
+    assert worker.main(_register_args()) == 0
+    client = worker_main[-1]
+    delete_calls = [r for r in client.requests if r[0] == "DELETE"]
+    assert not any("/dispatch-hold" in r[1] for r in delete_calls), (
+        "DELETE /…/dispatch-hold must NOT be called when MAC_STARTUP_CLEAR_HOLD=0"
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["hold_cleared"] is False
+
+
+# ---------------------------------------------------------------------------
+# 3. MAC_STARTUP_EMIT_CHECKOUT_SHA=1 → checkout_sha present in output
+# ---------------------------------------------------------------------------
+
+def test_startup_emit_checkout_sha_enabled(worker_main, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("MAC_STARTUP_EMIT_CHECKOUT_SHA", "1")
+    monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "0")
+    monkeypatch.setattr(worker, "register_worker", lambda *_a, **_kw: _fake_register())
+    fake_sha = "a" * 40
+    monkeypatch.setattr(
+        worker.subprocess,
+        "check_output",
+        lambda *_args, **_kwargs: (fake_sha + "\n").encode(),
+    )
+    args = _register_args() + ["--self-update-repo", str(tmp_path)]
+    assert worker.main(args) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["checkout_sha"] == fake_sha
+
+
+# ---------------------------------------------------------------------------
+# 4. MAC_STARTUP_EMIT_CHECKOUT_SHA=0 → checkout_sha omitted (None) in output
+# ---------------------------------------------------------------------------
+
+def test_startup_emit_checkout_sha_disabled(worker_main, monkeypatch, capsys):
+    monkeypatch.setenv("MAC_STARTUP_EMIT_CHECKOUT_SHA", "0")
+    monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "0")
+    monkeypatch.setattr(worker, "register_worker", lambda *_a, **_kw: _fake_register())
+    assert worker.main(_register_args()) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["checkout_sha"] is None
+
+
+# ---------------------------------------------------------------------------
+# 5. MAC_STARTUP_IMPORT_SELF_CHECK=1 → import_self_check result in output
+# ---------------------------------------------------------------------------
+
+def test_startup_import_self_check_enabled(worker_main, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("MAC_STARTUP_IMPORT_SELF_CHECK", "1")
+    monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "0")
+    monkeypatch.setenv("MAC_STARTUP_EMIT_CHECKOUT_SHA", "0")
+    monkeypatch.setattr(worker, "register_worker", lambda *_a, **_kw: _fake_register())
+    monkeypatch.setattr(worker, "_startup_import_self_check", lambda _repo: "ok")
+    args = _register_args() + ["--self-update-repo", str(tmp_path)]
+    assert worker.main(args) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["import_self_check"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# 6. MAC_STARTUP_IMPORT_SELF_CHECK=0 → import_self_check skipped (None) in output
+# ---------------------------------------------------------------------------
+
+def test_startup_import_self_check_disabled(worker_main, monkeypatch, capsys):
+    monkeypatch.setenv("MAC_STARTUP_IMPORT_SELF_CHECK", "0")
+    monkeypatch.setenv("MAC_STARTUP_CLEAR_HOLD", "0")
+    monkeypatch.setenv("MAC_STARTUP_EMIT_CHECKOUT_SHA", "0")
+    monkeypatch.setattr(worker, "register_worker", lambda *_a, **_kw: _fake_register())
+    assert worker.main(_register_args()) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["import_self_check"] is None
