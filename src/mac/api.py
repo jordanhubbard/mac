@@ -58,6 +58,7 @@ from mac.nap_ticker import NapTicker, NapTickerConfig
 from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
 from mac.github_ingest import GitHubIngestConfig, GitHubIssueIngestor
+from mac.http_routes.system import SystemRouteServices, build_system_router
 from mac.repository_ref_reconciler import (
     RepositoryRefReconciler,
     RepositoryRefReconcilerConfig,
@@ -1468,11 +1469,6 @@ class ProjectRepositoryRegister(BaseModel):
     poll_interval_seconds: int = 60
     metadata: Dict[str, Any] = Field(default_factory=dict)
     actor: str = "bridge"
-
-
-class RepositoryRefReconcileRequest(BaseModel):
-    mode: Optional[str] = None
-    actor: str = "operator"
 
 
 class MemoryCreate(BaseModel):
@@ -3690,108 +3686,20 @@ def create_app(
         except Exception:  # noqa: BLE001 - inference must not fail because telemetry failed
             _log.warning("failed to record llm.route observation", exc_info=True)
 
-    @app.get("/health")
-    def health() -> Dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/repository-refs/reconciler")
-    def repository_ref_reconciler_status() -> Dict[str, Any]:
-        return repository_ref_reconciler.status()
-
-    @app.post("/repository-refs/reconcile")
-    def reconcile_repository_refs(
-        body: RepositoryRefReconcileRequest,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_global_fleet()
-        return repository_ref_reconciler.run_once(
-            mode=body.mode,
-            actor=body.actor,
-            trigger="operator",
+    app.include_router(
+        build_system_router(
+            SystemRouteServices(
+                repository_ref_reconciler=repository_ref_reconciler,
+                github_ingestor=github_ingestor,
+                backlog_groomer=backlog_groomer,
+                nap_ticker=nap_ticker,
+                curiosity_reviewer=curiosity_reviewer,
+                self_healing_sentinel=self_healing_sentinel,
+                model_selection_service=model_selection_service,
+            ),
+            get_principal=_get_principal,
         )
-
-    @app.get("/github-ingest/status")
-    def github_ingest_status() -> Dict[str, Any]:
-        return github_ingestor.status()
-
-    @app.post("/github-ingest/run")
-    def github_ingest_run(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_global_fleet()
-        return github_ingestor.run_once(trigger="operator")
-
-    @app.get("/backlog-groom/status")
-    def backlog_groom_status() -> Dict[str, Any]:
-        return backlog_groomer.status()
-
-    @app.post("/backlog-groom/run")
-    def backlog_groom_run(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_global_fleet()
-        return backlog_groomer.run_once(trigger="operator")
-
-    @app.get("/nap-tick/status")
-    def nap_tick_status() -> Dict[str, Any]:
-        return nap_ticker.status()
-
-    @app.post("/nap-tick/run")
-    def nap_tick_run(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_global_fleet()
-        return nap_ticker.run_once(trigger="operator")
-
-    @app.get("/curiosity-review/status")
-    def curiosity_review_status() -> Dict[str, Any]:
-        return curiosity_reviewer.status()
-
-    @app.post("/curiosity-review/run")
-    def curiosity_review_run(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_global_fleet()
-        return curiosity_reviewer.run_once(trigger="operator")
-
-    @app.get("/self-heal/status")
-    def self_heal_status() -> Dict[str, Any]:
-        return self_healing_sentinel.status()
-
-    @app.post("/self-heal/run")
-    def self_heal_run(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_global_fleet()
-        return self_healing_sentinel.run_once(trigger="operator")
-
-    @app.get("/model-selection/status")
-    def model_selection_status() -> Dict[str, Any]:
-        return model_selection_service.status()
-
-    @app.post("/model-selection/refresh")
-    def model_selection_refresh(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_global_fleet()
-        return model_selection_service.run_once(trigger="operator")
-
-    @app.post("/model-selection/promote")
-    def model_selection_promote(
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        principal.require_global_fleet()
-        return model_selection_service.promote(actor="operator")
-
-    @app.get("/.well-known/acp")
-    def acp_manifest_route() -> Dict[str, Any]:
-        # ADR 0006 Phase 3: the well-known ACP discovery manifest. Unauthenticated
-        # (see _required_scope); advertises protocolVersion, mac's agent
-        # capabilities, and the mac-specific _meta extensions. Dependency-light:
-        # no principal, no control-plane access — pure capability advertisement.
-        from mac.acp.capabilities import acp_manifest
-
-        return acp_manifest()
+    )
 
     def _a2a_base_url(request: Request) -> str:
         # The externally-visible origin the caller used to reach mac, so the
