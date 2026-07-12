@@ -2414,16 +2414,17 @@ def _cooperative_integration_section(task: Dict[str, Any]) -> str:
 MAC_TASK_SUMMARY_BEGIN = "=== MAC TASK SUMMARY ==="
 MAC_TASK_SUMMARY_END = "=== END MAC TASK SUMMARY ==="
 
-# Instruction injected into every task and planning prompt so agents know they
-# must commit their own new files before finishing. The deterministic finalizer
-# auto-commits modified tracked files but REFUSES publication when untracked or
-# staged-new files are present, causing verification_contract_failed
-# (dirty+unpushed).  This string is also the assertion target in the prompt
-# tests — do not change it without updating those tests.
+# Instruction injected into every task and planning prompt so agents understand
+# the host/sandbox Git ownership boundary.  OpenShell synchronizes repository
+# content back to the host worktree, but it does not preserve the sandbox Git
+# index or commits.  The deterministic host finalizer therefore owns the one
+# authoritative commit of tracked and new files before verification/publication.
+# This string is also the assertion target in the prompt tests.
 NEW_FILE_COMMIT_RULE = (
-    "New-file handoff: stage and commit every new file before finishing. "
-    "The deterministic finalizer commits modified tracked files; publication "
-    "requires the task worktree to contain no untracked or staged-new files."
+    "New-file handoff: leave every intended source and test file in the repository "
+    "worktree and keep generated artifacts covered by .gitignore. The deterministic "
+    "host finalizer stages and commits the complete repository change, including new "
+    "files, because sandbox Git index and commit state are not authoritative."
 )
 
 
@@ -2602,8 +2603,8 @@ def _git(args, cwd, *, timeout: Optional[float] = None):
 def _split_porcelain_status(status_text: str) -> tuple[List[str], List[str], List[str]]:
     """Return ``(tracked_lines, untracked_paths, added_paths)`` from porcelain v1.
 
-    Finalizers may rescue modified/deleted/renamed tracked files, but new files
-    must already be committed by the agent before publication.
+    This remains part of the preserved-refusal compatibility surface. New
+    executions stage all repository changes at the authoritative host boundary.
     """
     tracked_lines: List[str] = []
     untracked_paths: List[str] = []
@@ -3054,34 +3055,12 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
         tracked_lines, untracked_paths, staged_new_paths = _split_porcelain_status(
             status.stdout
         )
-        if untracked_paths:
-            _write_git_finalizer_refusal_manifest(
-                task_workspace,
-                task,
-                worktree_path,
-                _untracked_finalize_message(untracked_paths),
-                status_stdout=status.stdout,
-                untracked_paths=untracked_paths,
-                staged_new_paths=[],
-            )
-            phase.mark_failed("untracked files refused")
-            return
-        if staged_new_paths:
-            _write_git_finalizer_refusal_manifest(
-                task_workspace,
-                task,
-                worktree_path,
-                _new_file_finalize_message(staged_new_paths),
-                status_stdout=status.stdout,
-                untracked_paths=[],
-                staged_new_paths=staged_new_paths,
-            )
-            phase.mark_failed("staged new files refused")
-            return
-        if tracked_lines:
-            _git(["add", "-u"], worktree_path, timeout=phase.remaining)
+        if tracked_lines or untracked_paths or staged_new_paths:
+            add = _git(["add", "-A"], worktree_path, timeout=phase.remaining)
+            if add.returncode != 0:
+                phase.mark_failed(clip_process_text(add.stderr or add.stdout))
             commit_msg = "auto-commit: %s" % task.get("id", "unknown")
-            _git(
+            commit = _git(
                 [
                     "-c",
                     "user.email=mac-fleet@nvidia.com",
@@ -3094,6 +3073,8 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
                 worktree_path,
                 timeout=phase.remaining,
             )
+            if commit.returncode != 0:
+                phase.mark_failed(clip_process_text(commit.stderr or commit.stdout))
         head_sha = _git(
             ["rev-parse", "HEAD"], worktree_path, timeout=phase.remaining
         ).stdout.strip()

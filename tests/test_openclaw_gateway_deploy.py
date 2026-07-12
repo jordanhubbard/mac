@@ -81,7 +81,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="15"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="16"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
@@ -405,6 +405,26 @@ def test_peer_bridge_uses_hub_durable_cursors_and_request_endpoint() -> None:
     assert "hubStateMerged" in plugin
 
 
+def test_headless_agents_have_a_human_voice() -> None:
+    """A Slack-less agent must still reach humans (jkh 2026-07-13: GKE runners
+    have no Slack presence). mac_notify_human sends through the hub delivery
+    proxy with automatic attribution when represented, and AGENTS.md tells
+    agents this voice exists and that reporting is expected."""
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    tool = plugin.split('name: "mac_notify_human"', 1)[1].split("registerTool", 1)[0]
+    assert "/communication/deliveries" in tool
+    assert "MAC_OPENCLAW_HOME_CHANNEL" in tool
+    # Attribution for represented (Slack-less) agents.
+    assert "MAC_OPENCLAW_PUBLIC_IDENTITY" in tool
+    assert "mac.agent_human_notify.v1" in tool
+    installer = INSTALLER.read_text(encoding="utf-8")
+    assert "Your voice: talking to humans" in installer
+    assert "mac_notify_human" in installer
+    assert "expected to report" in installer
+
+
 def test_media_sharing_travels_typed_and_chunked_over_the_bus(tmp_path) -> None:
     """Multimodal sharing (task_ab4ee852, audit 6/7): files travel as typed
     base64 chunks on a dedicated topic — real MIME types, 128KiB raw chunks,
@@ -537,7 +557,7 @@ def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
       }};
       mod.default.register(api);
       if (!hooks.has("before_prompt_build")) process.exit(2);
-      if (!["mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
+      if (!["mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
       const result = await hooks.get("before_prompt_build")({{prompt: "what matters?"}});
       if (!result.prependContext.includes("Current mood: warm")) process.exit(4);
       if (!result.prependContext.includes("durable fact")) process.exit(5);

@@ -4673,15 +4673,12 @@ class MacWorker:
             )
             return
         tracked_lines, untracked_paths, staged_new_paths = _split_repository_porcelain_status(status.stdout)
-        if untracked_paths:
-            problems.append(_repository_untracked_finalize_message(untracked_paths))
+        if not (tracked_lines or untracked_paths or staged_new_paths):
             return
-        if staged_new_paths:
-            problems.append(_repository_new_file_finalize_message(staged_new_paths))
-            return
-        if not tracked_lines:
-            return
-        add = _run_git(worktree, ["add", "-u"])
+        # OpenShell returns repository content, not an authoritative Git index.
+        # Commit the complete synchronized change at the host boundary so newly
+        # created modules follow the same test/CodeGraph/push contract as edits.
+        add = _run_git(worktree, ["add", "-A"])
         if add.returncode != 0:
             problems.append(
                 "repository finalizer add failed: %s"

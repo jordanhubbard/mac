@@ -972,6 +972,45 @@ export default {
     });
 
     api.registerTool({
+      name: "mac_notify_human",
+      description: "Send a message to humans on a chat channel through the MAC hub's delivery proxy — works even if THIS agent has no Slack presence: the hub routes it through your representative gateway's identity. Use for status reports, results, questions for jkh, and anything a human should see. Durable (queued and retried); attribution is added automatically when you speak through a representative.",
+      parameters: inputSchema({
+        message: {type: "string", minLength: 1, maxLength: 8000},
+        target: {type: "string", description: "Delivery target like channel:C0AMSBEU7CJ or user:U123. Omit to use this agent's home channel."},
+      }, ["message"]),
+      async execute(_id, params) {
+        const cfg = settings(api);
+        if (!cfg.agentId) throw new Error("MAC_OPENCLAW_AGENT_ID is unset");
+        const target = String(params.target || process.env.MAC_OPENCLAW_HOME_CHANNEL || "").trim();
+        if (!target) {
+          throw new Error(
+            "no target: this agent has no home channel configured — pass target (e.g. channel:C0AMSBEU7CJ)",
+          );
+        }
+        // Represented (Slack-less) agents speak through another gateway's
+        // identity, so prefix attribution; agents with their own public
+        // identity speak as themselves.
+        const represented = !String(process.env.MAC_OPENCLAW_PUBLIC_IDENTITY || "").trim();
+        const name = await agentDisplayName(api, cfg.agentId, new Map());
+        const body = represented ? `📣 ${name}: ${params.message}` : String(params.message);
+        const delivery = await hubApi(api, "POST", "/communication/deliveries", {
+          body: {
+            origin_agent_id: cfg.agentId,
+            target,
+            body,
+            metadata: {schema: "mac.agent_human_notify.v1", tool: "mac_notify_human"},
+          },
+        });
+        return peerTextResult({
+          status: "queued",
+          delivery_id: delivery?.id || null,
+          target,
+          attributed: represented,
+        });
+      },
+    });
+
+    api.registerTool({
       name: "mac_agent_share",
       description: "Share a file (image, audio, video, PDF, dataset, any binary up to 8MB) with one or several MAC fleet agents over authenticated AgentBus. The file travels as typed base64 chunks with its real MIME type; each recipient's agent receives it on disk, gets an autonomous turn to look at it, and replies over the bus. Use for structured data and media — not for plain text messages (use mac_agent_send).",
       parameters: inputSchema({

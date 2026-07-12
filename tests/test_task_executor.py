@@ -1633,7 +1633,10 @@ def test_git_finalizer_emits_repo_change_from_real_state(tmp_path, monkeypatch):
     assert {item["name"]: item["status"] for item in manifest["checks"]}["git_finalizer"] == "pass"
 
 
-def test_git_finalizer_refuses_untracked_files_before_staging(tmp_path, monkeypatch):
+@pytest.mark.parametrize("prestage", [False, True], ids=["untracked", "staged-new"])
+def test_git_finalizer_commits_and_pushes_new_source_files(
+    tmp_path, monkeypatch, prestage
+):
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "--bare", str(origin))
     work = tmp_path / "work"
@@ -1647,8 +1650,8 @@ def test_git_finalizer_refuses_untracked_files_before_staging(tmp_path, monkeypa
     _git(work, "push", "origin", "main")
     _git(work, "checkout", "-b", "task/untracked")
     (work / "leaked_module.py").write_text("print('leak')\n", encoding="utf-8")
-    original_head = _git(work, "rev-parse", "HEAD").stdout.strip()
-
+    if prestage:
+        _git(work, "add", "leaked_module.py")
     ws = tmp_path / "ws"
     ws.mkdir()
     _install_fake_codegraph(tmp_path, monkeypatch)
@@ -1669,15 +1672,14 @@ def test_git_finalizer_refuses_untracked_files_before_staging(tmp_path, monkeypa
     te.run_deterministic_git_finalizer(ws, task)
 
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
-    message = " ".join(manifest.get("problems") or [])
-    assert manifest["status"] == "fail"
-    assert manifest["repo"]["pushed"] is False
-    assert manifest["push"]["status"] == "skipped"
-    assert "untracked files present at finalize time" in message
-    assert "leaked_module.py" in message
-    assert _git(work, "rev-parse", "HEAD").stdout.strip() == original_head
-    assert "?? leaked_module.py" in _git(work, "status", "--porcelain").stdout
-    assert _git(tmp_path, "ls-remote", str(origin), "refs/heads/task/untracked").stdout.strip() == ""
+    assert manifest["status"] == "complete"
+    assert manifest["repo"]["pushed"] is True
+    assert manifest["push"]["status"] == "pass"
+    assert manifest["repo"]["dirty"] is False
+    assert "leaked_module.py" in manifest["repo"]["files_changed"]
+    assert _git(work, "status", "--porcelain").stdout == ""
+    assert _git(work, "show", "HEAD:leaked_module.py").stdout == "print('leak')\n"
+    assert _git(tmp_path, "ls-remote", str(origin), "refs/heads/task/untracked").stdout.strip()
 
 
 def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, monkeypatch):

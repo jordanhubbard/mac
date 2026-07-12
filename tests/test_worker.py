@@ -1936,7 +1936,7 @@ def test_mac_worker_rescues_dirty_worktree_when_contract_test_passes(tmp_path: P
     )
 
 
-def test_mac_worker_blocks_untracked_files_before_repository_rescue(
+def test_mac_worker_commits_and_pushes_untracked_files_during_repository_rescue(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -1969,16 +1969,17 @@ def test_mac_worker_blocks_untracked_files_before_repository_rescue(
 
     result = worker.run_once()
 
-    assert result.status == "blocked", result.error
+    assert result.status == "submitted_for_review", result.error
     evidence = cp.list_evidence(task.id)[0]
     manifest = evidence.metadata["verification"]
     repo_anchor = manifest["repo"]
-    problems = " ".join(manifest.get("problems") or [])
-    assert repo_anchor["dirty"] is True
-    assert repo_anchor["pushed"] is False
-    assert "untracked files present at finalize time" in problems
-    assert "leaked_module.py" in problems
-    assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]) == ""
+    assert repo_anchor["dirty"] is False
+    assert repo_anchor["pushed"] is True
+    assert "leaked_module.py" in repo_anchor["files_changed"]
+    assert _git(repo, "show", "%s:leaked_module.py" % repo_anchor["head_sha"]) == "print('leak')"
+    assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]).startswith(
+        repo_anchor["head_sha"]
+    )
 
 
 def test_mac_worker_blocks_dirty_worktree_when_contract_test_fails(tmp_path: Path):
