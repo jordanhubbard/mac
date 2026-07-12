@@ -523,7 +523,9 @@ CREATE TABLE IF NOT EXISTS agentbus_streams (
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    closed_at TEXT
+    closed_at TEXT,
+    -- Group streams: JSON member list; NULL = legacy sender/recipient pair.
+    participants TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agentbus_streams_recipient_status
     ON agentbus_streams (recipient_agent_id, status, updated_at);

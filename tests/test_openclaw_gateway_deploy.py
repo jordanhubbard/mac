@@ -376,6 +376,29 @@ def test_workspace_context_routes_agent_coordination_over_agentbus(
     assert "mirror_fleet_conversation" in context
 
 
+def test_mac_agent_send_supports_group_conversations() -> None:
+    """Group semantics (task_588b67fd): several recipients open ONE shared
+    stream (participant_agent_ids); members reply as chunks on that same
+    stream; the bridge polls group streams with a per-stream cursor; the
+    mirror dedupes per reply, not per stream."""
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    assert "publishGroupMessage" in plugin
+    assert "participant_agent_ids" in plugin
+    assert "waitForGroupReplies" in plugin
+    assert "pollGroupMessages" in plugin
+    assert "groupCursors" in plugin
+    assert "appendGroupChunk" in plugin
+    # The single-recipient path must remain intact.
+    assert "publishPeerMessage" in plugin
+    assert "waitForPeerReply" in plugin
+    # Pair polling must skip group streams (they are chunk-cursor driven).
+    assert "!stream?.participants" in plugin
+    # Group mirror dedupe key includes the chunk sequence.
+    assert "${stream.id}:${sequence}" in plugin
+
+
 def test_fleet_status_tool_is_capability_aware() -> None:
     """Discovery (task_7debcc9c): the agent-facing fleet tool must surface
     capabilities + hardware from the hub snapshot and accept a capability

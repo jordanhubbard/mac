@@ -62,15 +62,16 @@ function peerStatePath() {
 
 function loadPeerState() {
   const path = peerStatePath();
-  if (!existsSync(path)) return {processed: [], attempts: {}};
+  if (!existsSync(path)) return {processed: [], attempts: {}, groupCursors: {}};
   try {
     const value = JSON.parse(readFileSync(path, "utf8"));
     return {
       processed: Array.isArray(value.processed) ? value.processed.map(String).slice(-2000) : [],
       attempts: value.attempts && typeof value.attempts === "object" ? value.attempts : {},
+      groupCursors: value.groupCursors && typeof value.groupCursors === "object" ? value.groupCursors : {},
     };
   } catch {
-    return {processed: [], attempts: {}};
+    return {processed: [], attempts: {}, groupCursors: {}};
   }
 }
 
@@ -79,9 +80,12 @@ function savePeerState(state) {
   const dir = dirname(path);
   mkdirSync(dir, {recursive: true, mode: 0o700});
   const temp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  const cursors = state.groupCursors || {};
+  const cursorEntries = Object.entries(cursors).slice(-500);
   writeFileSync(temp, `${JSON.stringify({
     processed: Array.from(new Set(state.processed || [])).slice(-2000),
     attempts: state.attempts || {},
+    groupCursors: Object.fromEntries(cursorEntries),
   }, null, 2)}\n`, {encoding: "utf8", mode: 0o600});
   chmodSync(temp, 0o600);
   renameSync(temp, path);
@@ -369,12 +373,16 @@ async function summarizeExchange(api, senderName, recipientName, message, reply)
 
 // Best-effort: summarize one peer exchange and post it to the home channel via
 // the sanctioned OpenClaw human-message outbox. Never throws into the peer bridge.
-async function mirrorExchangeToHomeChannel(api, stream, message, reply, nameCache) {
+// opts.senderId overrides who "spoke" (group threads: the chunk author, not the
+// stream opener); opts.dedupeKey scopes idempotency below the stream (one mirror
+// per group reply instead of one per stream).
+async function mirrorExchangeToHomeChannel(api, stream, message, reply, nameCache, opts = {}) {
   const cfg = settings(api);
   const homeChannel = String(process.env.MAC_OPENCLAW_HOME_CHANNEL || "").trim();
   if (!homeChannel || !cfg.agentId) return;
   if (!(await mirrorFlagEnabled(api))) return;
-  const senderName = await agentDisplayName(api, stream.sender_agent_id, nameCache);
+  const speakerId = opts.senderId || stream.sender_agent_id;
+  const senderName = await agentDisplayName(api, speakerId, nameCache);
   const recipientName = await agentDisplayName(api, cfg.agentId, nameCache);
   const summary = await summarizeExchange(api, senderName, recipientName, message, reply);
   if (!summary) return;
@@ -386,11 +394,11 @@ async function mirrorExchangeToHomeChannel(api, stream, message, reply, nameCach
       origin_agent_id: cfg.agentId,
       target: homeChannel,
       body: `🗣️ ${summary}`,
-      idempotency_key: `mirror:${stream.id}`,
+      idempotency_key: `mirror:${opts.dedupeKey || stream.id}`,
       metadata: {
         schema: MIRROR_SCHEMA,
         stream_id: stream.id,
-        sender_agent_id: stream.sender_agent_id,
+        sender_agent_id: speakerId,
       },
     },
   });
@@ -443,12 +451,18 @@ async function pollPeerMessages(api, state) {
   if (!cfg.agentId) return;
   const processed = new Set(state.processed || []);
   const nameCache = new Map();
+  await pollGroupMessages(api, state, nameCache).catch((error) =>
+    api.logger.warn?.(
+      `mac-continuity: group bridge poll failed: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
   const streams = await peerStreams(api);
   const incoming = streams
     .filter((stream) =>
       stream?.recipient_agent_id === cfg.agentId &&
       stream?.topic === PEER_MESSAGE_TOPIC &&
       stream?.status === "closed" &&
+      !stream?.participants &&
       !processed.has(stream.id)
     )
     .sort((left, right) => String(left.created_at || "").localeCompare(String(right.created_at || "")));
@@ -494,6 +508,139 @@ async function pollPeerMessages(api, state) {
       api.logger.warn?.(
         `mac-continuity: peer message ${stream.id} attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+}
+
+async function appendGroupChunk(api, streamId, payload) {
+  const cfg = settings(api);
+  return hubApi(api, "POST", `/agentbus/streams/${encodeURIComponent(streamId)}/chunks`, {
+    body: {
+      sender_agent_id: cfg.agentId,
+      payload,
+      payload_encoding: "json",
+      final: false,
+    },
+  });
+}
+
+async function publishGroupMessage(api, recipientIds, message, correlationId) {
+  const cfg = settings(api);
+  return hubApi(api, "POST", "/agentbus", {
+    body: {
+      sender_agent_id: cfg.agentId,
+      participant_agent_ids: [cfg.agentId, ...recipientIds],
+      topic: PEER_MESSAGE_TOPIC,
+      content_type: "application/vnd.mac.agent-peer+json",
+      headers: {
+        schema: PEER_MESSAGE_SCHEMA,
+        correlation_id: correlationId,
+        authenticated_by: "mac-agentbus",
+      },
+      payload_encoding: "json",
+      payload: {
+        schema: PEER_MESSAGE_SCHEMA,
+        correlation_id: correlationId,
+        from_agent_id: cfg.agentId,
+        to_agent_ids: recipientIds,
+        message: String(message).slice(0, 16000),
+      },
+    },
+  });
+}
+
+async function waitForGroupReplies(api, streamId, recipientIds, timeoutSeconds) {
+  // Group replies are chunks appended to the SAME stream (one conversation,
+  // one stream — task_588b67fd), tagged with the reply schema.
+  const deadline = Date.now() + Math.max(0, timeoutSeconds) * 1000;
+  const replies = {};
+  const wanted = new Set(recipientIds);
+  while (Date.now() <= deadline && wanted.size > 0) {
+    const chunks = await streamChunks(api, streamId);
+    for (const chunk of chunks) {
+      const payload = chunk?.payload;
+      if (payload?.schema !== PEER_REPLY_SCHEMA) continue;
+      const author = String(chunk.sender_agent_id || "");
+      if (wanted.has(author)) {
+        replies[author] = payload;
+        wanted.delete(author);
+      }
+    }
+    if (wanted.size === 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  return replies;
+}
+
+// Group streams stay OPEN so members converse as chunks; track a per-stream
+// sequence cursor and give each fresh group message from another member an
+// autonomous turn, replying on the same stream.
+async function pollGroupMessages(api, state, nameCache) {
+  const cfg = settings(api);
+  if (!cfg.agentId) return;
+  const streams = await peerStreams(api);
+  const groups = streams.filter((stream) =>
+    Array.isArray(stream?.participants) &&
+    stream.participants.includes(cfg.agentId) &&
+    stream?.topic === PEER_MESSAGE_TOPIC &&
+    stream?.status === "open"
+  );
+  for (const stream of groups) {
+    const cursorKey = String(stream.id);
+    let cursor = Number(state.groupCursors?.[cursorKey] || 0);
+    let advanced = false;
+    const chunks = await streamChunks(api, stream.id);
+    for (const chunk of chunks.sort((a, b) => Number(a.sequence) - Number(b.sequence))) {
+      const sequence = Number(chunk.sequence || 0);
+      if (sequence <= cursor) continue;
+      const author = String(chunk.sender_agent_id || "");
+      const payload = chunk?.payload;
+      const isFreshGroupMessage =
+        author && author !== cfg.agentId &&
+        payload?.schema === PEER_MESSAGE_SCHEMA &&
+        typeof payload.message === "string";
+      cursor = sequence;
+      advanced = true;
+      if (!isFreshGroupMessage) continue;
+      const correlationId = String(payload.correlation_id || stream?.headers?.correlation_id || stream.id);
+      try {
+        const reply = await runPeerTurn(api, {...stream, sender_agent_id: author}, payload);
+        await appendGroupChunk(api, stream.id, {
+          schema: PEER_REPLY_SCHEMA,
+          correlation_id: correlationId,
+          in_reply_to_sequence: sequence,
+          from_agent_id: cfg.agentId,
+          to_agent_id: author,
+          status: "ok",
+          reply: String(reply || "").slice(0, 32000),
+        });
+        await mirrorExchangeToHomeChannel(api, stream, payload.message, reply, nameCache, {
+          senderId: author,
+          dedupeKey: `${stream.id}:${sequence}:${cfg.agentId}`,
+        }).catch((error) =>
+          api.logger.warn?.(
+            `mac-continuity: group mirror failed for ${stream.id}#${sequence}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      } catch (error) {
+        api.logger.warn?.(
+          `mac-continuity: group message ${stream.id}#${sequence} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        await appendGroupChunk(api, stream.id, {
+          schema: PEER_REPLY_SCHEMA,
+          correlation_id: correlationId,
+          in_reply_to_sequence: sequence,
+          from_agent_id: cfg.agentId,
+          to_agent_id: author,
+          status: "error",
+          reply: `Peer turn failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000),
+        }).catch(() => undefined);
+      }
+    }
+    if (advanced) {
+      state.groupCursors = state.groupCursors || {};
+      state.groupCursors[cursorKey] = cursor;
+      savePeerState(state);
     }
   }
 }
@@ -614,30 +761,60 @@ export default {
 
     api.registerTool({
       name: "mac_agent_send",
-      description: "Send an authenticated message directly to another MAC fleet agent, even when it runs in a different OpenClaw gateway or sandbox. The receiving agent gets an autonomous turn and replies over MAC AgentBus; do not use Slack as an inter-agent transport.",
+      description: "Send an authenticated message to one or several MAC fleet agents, even when they run in different OpenClaw gateways or sandboxes. Each receiving agent gets an autonomous turn and replies over MAC AgentBus; do not use Slack as an inter-agent transport. Pass recipients (plural) to open ONE shared group conversation — everyone sees everyone's replies on the same stream.",
       parameters: inputSchema({
-        recipient: {type: "string", minLength: 1, description: "Fleet agent name or id."},
+        recipient: {type: "string", description: "Fleet agent name or id (single-recipient form)."},
+        recipients: {type: "array", items: {type: "string"}, maxItems: 16, description: "Several agent names/ids: opens one shared group stream instead of N separate messages."},
         message: {type: "string", minLength: 1, maxLength: 16000},
-        timeoutSeconds: {type: "integer", minimum: 0, maximum: 120, description: "Wait this long for the peer reply; zero is fire-and-forget."},
-      }, ["recipient", "message"]),
+        timeoutSeconds: {type: "integer", minimum: 0, maximum: 120, description: "Wait this long for the peer reply/replies; zero is fire-and-forget."},
+      }, ["message"]),
       async execute(_id, params) {
         const cfg = settings(api);
         if (!cfg.agentId) throw new Error("MAC_OPENCLAW_AGENT_ID is unset");
-        const peer = await resolvePeer(api, params.recipient);
-        if (peer.id === cfg.agentId) throw new Error("recipient resolves to this agent");
+        const wanted = Array.isArray(params.recipients) && params.recipients.length > 0
+          ? params.recipients
+          : params.recipient ? [params.recipient] : [];
+        if (wanted.length === 0) throw new Error("recipient or recipients is required");
+        const peers = [];
+        for (const item of wanted) {
+          const peer = await resolvePeer(api, item);
+          if (peer.id !== cfg.agentId && !peers.some((known) => known.id === peer.id)) peers.push(peer);
+        }
+        if (peers.length === 0) throw new Error("recipients resolve to this agent only");
         const correlationId = randomUUID();
-        const published = await publishPeerMessage(api, peer.id, params.message, correlationId);
         const timeoutSeconds = Number(params.timeoutSeconds || 0);
-        const reply = timeoutSeconds > 0
-          ? await waitForPeerReply(api, correlationId, Math.min(120, timeoutSeconds))
-          : null;
+        if (peers.length === 1) {
+          const published = await publishPeerMessage(api, peers[0].id, params.message, correlationId);
+          const reply = timeoutSeconds > 0
+            ? await waitForPeerReply(api, correlationId, Math.min(120, timeoutSeconds))
+            : null;
+          return peerTextResult({
+            status: reply ? "replied" : timeoutSeconds > 0 ? "timeout" : "queued",
+            recipient_agent_id: peers[0].id,
+            recipient_name: peers[0].name,
+            correlation_id: correlationId,
+            stream_id: published?.stream?.id || null,
+            reply,
+          });
+        }
+        const recipientIds = peers.map((peer) => peer.id);
+        const published = await publishGroupMessage(api, recipientIds, params.message, correlationId);
+        const streamId = published?.stream?.id;
+        const replies = timeoutSeconds > 0 && streamId
+          ? await waitForGroupReplies(api, streamId, recipientIds, Math.min(120, timeoutSeconds))
+          : {};
+        const replied = Object.keys(replies);
         return peerTextResult({
-          status: reply ? "replied" : timeoutSeconds > 0 ? "timeout" : "queued",
-          recipient_agent_id: peer.id,
-          recipient_name: peer.name,
+          status: replied.length === recipientIds.length
+            ? "all_replied"
+            : replied.length > 0
+              ? "partial_replies"
+              : timeoutSeconds > 0 ? "timeout" : "queued",
+          group_stream_id: streamId || null,
           correlation_id: correlationId,
-          stream_id: published?.stream?.id || null,
-          reply,
+          participants: [cfg.agentId, ...recipientIds],
+          recipients: peers.map((peer) => ({id: peer.id, name: peer.name})),
+          replies,
         });
       },
     });

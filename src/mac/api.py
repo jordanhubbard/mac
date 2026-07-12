@@ -1008,12 +1008,14 @@ class MessageCreate(BaseModel):
 
 class AgentBusOpen(BaseModel):
     sender_agent_id: str
-    recipient_agent_id: str
+    recipient_agent_id: Optional[str] = None
     task_id: Optional[str] = None
     topic: str = "content"
     content_type: str = "application/json"
     headers: Dict[str, Any] = Field(default_factory=dict)
     stream_id: Optional[str] = None
+    # Group stream member list (task_588b67fd); opener is always included.
+    participant_agent_ids: List[str] = Field(default_factory=list)
 
 
 class AgentBusAppend(BaseModel):
@@ -1026,13 +1028,16 @@ class AgentBusAppend(BaseModel):
 
 class AgentBusPublish(BaseModel):
     sender_agent_id: str
-    recipient_agent_id: str
+    recipient_agent_id: Optional[str] = None
     task_id: Optional[str] = None
     topic: str = "content"
     content_type: str = "application/json"
     headers: Dict[str, Any] = Field(default_factory=dict)
     payload: Any = None
     payload_encoding: str = "json"
+    # Group publish (task_588b67fd): opens one shared stream with these
+    # members and leaves it open for their replies.
+    participant_agent_ids: List[str] = Field(default_factory=list)
 
 
 class AgentBusRepoUpdate(BaseModel):

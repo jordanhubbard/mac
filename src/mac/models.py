@@ -984,6 +984,11 @@ class AgentBusStream:
     created_at: str
     updated_at: str
     closed_at: Optional[str]
+    # Group streams (task_588b67fd): when set, this is the full member list
+    # (opener included) — membership governs authorization, any member may
+    # append, and one conversation lives in one stream. None preserves the
+    # legacy sender/recipient pair semantics byte-for-byte.
+    participants: Optional[List[str]] = None
 
     def to_dict(self) -> JsonDict:
         return asdict(self)

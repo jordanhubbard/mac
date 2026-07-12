@@ -66,8 +66,34 @@ class AgentBusService:
         headers: Optional[Dict[str, Any]] = None,
         task_id: Optional[str] = None,
         stream_id: Optional[str] = None,
+        participant_agent_ids: Optional[List[str]] = None,
     ) -> AgentBusStream:
         self._require_agent(sender_agent_id)
+        # Group streams (task_588b67fd): a member list makes this one shared
+        # conversation — membership governs reads AND appends. The opener is
+        # always a member; recipient_agent_id is kept as the first recipient
+        # for compatibility with pair-shaped consumers.
+        participants: Optional[List[str]] = None
+        if participant_agent_ids:
+            members = [
+                str(item).strip()
+                for item in participant_agent_ids
+                if str(item or "").strip()
+            ]
+            ordered = list(dict.fromkeys([sender_agent_id, *members]))
+            if len(ordered) < 2:
+                raise ValidationError(
+                    "agentbus group stream requires at least one participant "
+                    "besides the sender"
+                )
+            if len(ordered) > 32:
+                raise ValidationError("agentbus group stream capped at 32 participants")
+            for member in ordered:
+                self._require_agent(member)
+            participants = ordered
+            recipient_agent_id = recipient_agent_id or next(
+                member for member in ordered if member != sender_agent_id
+            )
         if not recipient_agent_id:
             raise ValidationError("agentbus stream requires a recipient_agent_id")
         self._require_agent(recipient_agent_id)
@@ -90,8 +116,9 @@ class AgentBusService:
             """
             INSERT INTO agentbus_streams (
                 id, sender_agent_id, recipient_agent_id, task_id, topic,
-                content_type, headers, status, created_at, updated_at, closed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                content_type, headers, status, created_at, updated_at,
+                closed_at, participants
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
             """,
             (
                 sid,
@@ -104,6 +131,7 @@ class AgentBusService:
                 AgentBusStreamStatus.OPEN.value,
                 now,
                 now,
+                json_dumps(participants) if participants else None,
             ),
         )
         self.observability.record_log(
@@ -119,6 +147,7 @@ class AgentBusService:
                 "topic": topic_value,
                 "content_type": content_type,
                 "header_keys": sorted(headers_obj.keys()),
+                **({"participants": participants} if participants else {}),
             },
         )
         return self.get_stream(sid)
@@ -143,7 +172,19 @@ class AgentBusService:
             ).fetchone()
             if stream_row is None:
                 raise NotFoundError("agentbus stream not found: %s" % stream_id)
-            if stream_row["sender_agent_id"] != sender_agent_id:
+            keys = stream_row.keys() if hasattr(stream_row, "keys") else []
+            group_members = (
+                json_loads(stream_row["participants"], None)
+                if "participants" in keys and stream_row["participants"]
+                else None
+            )
+            if group_members:
+                # Group thread: any member may append (task_588b67fd).
+                if sender_agent_id not in group_members:
+                    raise AuthorizationError(
+                        "only group participants can append chunks"
+                    )
+            elif stream_row["sender_agent_id"] != sender_agent_id:
                 raise AuthorizationError("only the stream sender can append chunks")
             if stream_row["status"] != AgentBusStreamStatus.OPEN.value:
                 raise ValidationError("agentbus stream is not open: %s" % stream_id)
@@ -276,8 +317,13 @@ class AgentBusService:
         params: List[Any] = []
         if agent_id is not None:
             self._require_agent(agent_id)
-            clauses.append("(sender_agent_id = ? OR recipient_agent_id = ?)")
-            params.extend([agent_id, agent_id])
+            # Membership in a group stream is stored as a JSON array; the
+            # quoted-id LIKE is exact because agent ids contain no quotes.
+            clauses.append(
+                "(sender_agent_id = ? OR recipient_agent_id = ? "
+                "OR participants LIKE ?)"
+            )
+            params.extend([agent_id, agent_id, '%"' + agent_id + '"%'])
         if status is not None:
             status_value = _state_value(status)
             try:
@@ -360,6 +406,7 @@ class AgentBusService:
         headers: Optional[Dict[str, Any]] = None,
         task_id: Optional[str] = None,
         payload_encoding: str = "json",
+        participant_agent_ids: Optional[List[str]] = None,
     ) -> JsonDict:
         # Eager-validate payload so we don't open an orphan stream when the
         # body would be rejected at append time.
@@ -371,13 +418,18 @@ class AgentBusService:
             topic=topic,
             headers=headers,
             task_id=task_id,
+            participant_agent_ids=participant_agent_ids,
         )
+        # Pair publishes are one-shot (chunk finalizes the stream). A group
+        # publish is the OPENING of a conversation: members reply as further
+        # chunks on this same stream, so it stays open until the opener
+        # closes it.
         chunk = self.append_chunk(
             stream.id,
             sender_agent_id,
             payload=payload,
             payload_encoding=payload_encoding,
-            final=True,
+            final=not bool(participant_agent_ids),
         )
         self.observability.record_log(
             "agentbus.content.published",
@@ -458,6 +510,8 @@ class AgentBusService:
         return serialized
 
     def _authorized(self, stream: AgentBusStream, agent_id: str) -> bool:
+        if stream.participants:
+            return agent_id in stream.participants
         return agent_id in {stream.sender_agent_id, stream.recipient_agent_id}
 
     # Foreign-key existence checks. The service is the FK enforcement
@@ -474,6 +528,12 @@ class AgentBusService:
     # Row hydration ------------------------------------------------------
 
     def _stream_from_row(self, row: Any) -> AgentBusStream:
+        keys = row.keys() if hasattr(row, "keys") else []
+        participants = (
+            json_loads(row["participants"], None)
+            if "participants" in keys and row["participants"]
+            else None
+        )
         return AgentBusStream(
             row["id"],
             row["sender_agent_id"],
@@ -486,6 +546,7 @@ class AgentBusService:
             row["created_at"],
             row["updated_at"],
             row["closed_at"],
+            participants,
         )
 
     def _chunk_from_row(self, row: Any) -> AgentBusChunk:

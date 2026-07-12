@@ -2040,6 +2040,9 @@ class SQLiteStore:
         # row so AgentBus streams/events/deliveries survive with real
         # identities instead of cascading away with the agent.
         self._ensure_column("agents", "deleted_at", "deleted_at TEXT")
+        # task_588b67fd: group streams — JSON member list; NULL keeps the
+        # legacy sender/recipient pair semantics.
+        self._ensure_column("agentbus_streams", "participants", "participants TEXT")
         self._ensure_column(
             "agents", "attestation_key_ciphertext", "attestation_key_ciphertext TEXT"
         )
