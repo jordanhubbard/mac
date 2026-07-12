@@ -378,12 +378,13 @@ async function mirrorExchangeToHomeChannel(api, stream, message, reply, nameCach
   const recipientName = await agentDisplayName(api, cfg.agentId, nameCache);
   const summary = await summarizeExchange(api, senderName, recipientName, message, reply);
   if (!summary) return;
-  const accountId = String(process.env.MAC_OPENCLAW_SLACK_ACCOUNT_ID || "").trim();
+  // No account_id: the hub resolves the delivery account from origin_agent_id's
+  // communication representation (same as the notifier). MAC_OPENCLAW_SLACK_ACCOUNT_ID
+  // is a Slack account NAME, not a communication account id, so passing it 404s.
   await hubApi(api, "POST", "/communication/deliveries", {
     body: {
       origin_agent_id: cfg.agentId,
       target: homeChannel,
-      account_id: accountId || undefined,
       body: `🗣️ ${summary}`,
       idempotency_key: `mirror:${stream.id}`,
       metadata: {
