@@ -456,6 +456,11 @@ async function pollPeerMessages(api, state) {
       `mac-continuity: group bridge poll failed: ${error instanceof Error ? error.message : String(error)}`,
     ),
   );
+  await pollMediaShares(api, state, nameCache).catch((error) =>
+    api.logger.warn?.(
+      `mac-continuity: media share poll failed: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
   const streams = await peerStreams(api);
   const incoming = streams
     .filter((stream) =>
@@ -507,6 +512,170 @@ async function pollPeerMessages(api, state) {
       savePeerState(state);
       api.logger.warn?.(
         `mac-continuity: peer message ${stream.id} attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+const MEDIA_SHARE_TOPIC = "mac.media.share.v1";
+const MEDIA_SHARE_SCHEMA = "mac.media.share.v1";
+// Base64 inflates 4/3; keep raw chunks comfortably under the hub's 256KiB
+// serialized-chunk limit. 8MiB total keeps sqlite happy — bigger blobs
+// belong in the WebDAV artifact flow.
+const MEDIA_CHUNK_RAW_BYTES = 128 * 1024;
+const MEDIA_MAX_RAW_BYTES = 8 * 1024 * 1024;
+
+const MEDIA_MIME_BY_EXT = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp",
+  mp3: "audio/mpeg", ogg: "audio/ogg", opus: "audio/opus", wav: "audio/wav",
+  m4a: "audio/mp4", flac: "audio/flac",
+  mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime",
+  pdf: "application/pdf", json: "application/json", csv: "text/csv",
+  txt: "text/plain", md: "text/markdown", yaml: "application/yaml",
+  yml: "application/yaml", xml: "application/xml",
+};
+
+function mimeForFilename(name) {
+  const ext = String(name || "").split(".").pop().toLowerCase();
+  return MEDIA_MIME_BY_EXT[ext] || "application/octet-stream";
+}
+
+function sanitizeFilename(name) {
+  const base = String(name || "shared-file").split("/").pop().split("\\").pop();
+  return base.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120) || "shared-file";
+}
+
+async function shareMediaOverBus(api, recipientIds, filePath, note) {
+  const cfg = settings(api);
+  const data = readFileSync(filePath);
+  if (data.length === 0) throw new Error("cannot share an empty file");
+  if (data.length > MEDIA_MAX_RAW_BYTES) {
+    throw new Error(
+      `file is ${data.length} bytes; in-band bus sharing caps at ${MEDIA_MAX_RAW_BYTES} bytes — publish it as a WebDAV artifact instead (mac agentbus artifact-publish)`,
+    );
+  }
+  const filename = sanitizeFilename(filePath);
+  const mime = mimeForFilename(filename);
+  const chunkCount = Math.max(1, Math.ceil(data.length / MEDIA_CHUNK_RAW_BYTES));
+  const stream = await hubApi(api, "POST", "/agentbus/streams", {
+    body: {
+      sender_agent_id: cfg.agentId,
+      ...(recipientIds.length === 1
+        ? {recipient_agent_id: recipientIds[0]}
+        : {participant_agent_ids: [cfg.agentId, ...recipientIds]}),
+      topic: MEDIA_SHARE_TOPIC,
+      content_type: mime,
+      headers: {
+        schema: MEDIA_SHARE_SCHEMA,
+        filename,
+        mime,
+        note: String(note || "").slice(0, 2000),
+        total_bytes: data.length,
+        chunk_count: chunkCount,
+        from_agent_id: cfg.agentId,
+      },
+    },
+  });
+  const streamId = stream?.id || stream?.stream?.id;
+  if (!streamId) throw new Error("media share stream did not open");
+  for (let index = 0; index < chunkCount; index += 1) {
+    const slice = data.subarray(
+      index * MEDIA_CHUNK_RAW_BYTES,
+      Math.min((index + 1) * MEDIA_CHUNK_RAW_BYTES, data.length),
+    );
+    await hubApi(api, "POST", `/agentbus/streams/${encodeURIComponent(streamId)}/chunks`, {
+      body: {
+        sender_agent_id: cfg.agentId,
+        content_type: mime,
+        payload: slice.toString("base64"),
+        payload_encoding: "base64",
+        final: index === chunkCount - 1,
+      },
+    // A closed stream is the transfer-complete signal for receivers.
+    });
+  }
+  return {stream_id: streamId, filename, mime, total_bytes: data.length, chunk_count: chunkCount};
+}
+
+function reassembleMediaChunks(chunks) {
+  const parts = chunks
+    .filter((chunk) => chunk?.payload_encoding === "base64" && typeof chunk.payload === "string")
+    .sort((a, b) => Number(a.sequence) - Number(b.sequence))
+    .map((chunk) => Buffer.from(chunk.payload, "base64"));
+  return Buffer.concat(parts);
+}
+
+async function receiveMediaShare(api, stream, state, nameCache) {
+  const cfg = settings(api);
+  const headers = stream?.headers || {};
+  const filename = sanitizeFilename(headers.filename);
+  const chunks = await streamChunks(api, stream.id);
+  const data = reassembleMediaChunks(chunks);
+  if (data.length === 0 || data.length > MEDIA_MAX_RAW_BYTES) {
+    throw new Error(`media share ${stream.id} reassembled to ${data.length} bytes`);
+  }
+  const runtime = api.runtime?.agent;
+  const runtimeConfig = api.runtime?.config?.current?.() || api.config || {};
+  const workspaceDir = runtime?.resolveAgentWorkspaceDir?.(runtimeConfig, "main") || "/sandbox/workspace";
+  const incomingDir = join(workspaceDir, "incoming");
+  mkdirSync(incomingDir, {recursive: true, mode: 0o700});
+  const target = join(incomingDir, `${String(stream.id).slice(-8)}-${filename}`);
+  writeFileSync(target, data, {mode: 0o600});
+  const sender = String(headers.from_agent_id || stream.sender_agent_id || "");
+  const note = String(headers.note || "").trim();
+  const message = [
+    `Shared file received: ${target}`,
+    `Type: ${headers.mime || "unknown"}, ${data.length} bytes.`,
+    note ? `Sender's note: ${note}` : "",
+    "Open or analyze the file from that path if useful, then reply to the sender briefly.",
+  ].filter(Boolean).join("\n");
+  const reply = await runPeerTurn(
+    api,
+    {...stream, sender_agent_id: sender},
+    {message},
+  );
+  await publishPeerReply(api, {...stream, sender_agent_id: sender}, String(stream.id), reply);
+  await mirrorExchangeToHomeChannel(
+    api,
+    stream,
+    `[shared a file: ${filename} (${headers.mime || "file"}, ${data.length} bytes)]${note ? ` ${note}` : ""}`,
+    reply,
+    nameCache,
+    {senderId: sender, dedupeKey: `${stream.id}:media`},
+  ).catch(() => undefined);
+  return target;
+}
+
+async function pollMediaShares(api, state, nameCache) {
+  const cfg = settings(api);
+  if (!cfg.agentId) return;
+  const processed = new Set(state.processed || []);
+  const streams = await peerStreams(api);
+  const shares = streams.filter((stream) =>
+    stream?.topic === MEDIA_SHARE_TOPIC &&
+    stream?.status === "closed" &&
+    !processed.has(stream.id) &&
+    stream?.sender_agent_id !== cfg.agentId &&
+    (stream?.recipient_agent_id === cfg.agentId ||
+      (Array.isArray(stream?.participants) && stream.participants.includes(cfg.agentId)))
+  );
+  for (const stream of shares) {
+    try {
+      await receiveMediaShare(api, stream, state, nameCache);
+      state.processed.push(stream.id);
+      delete state.attempts[stream.id];
+      savePeerState(state);
+    } catch (error) {
+      const attempt = Number(state.attempts[stream.id] || 0) + 1;
+      state.attempts[stream.id] = attempt;
+      if (attempt >= settings(api).peerMaxAttempts) {
+        state.processed.push(stream.id);
+        delete state.attempts[stream.id];
+      }
+      savePeerState(state);
+      api.logger.warn?.(
+        `mac-continuity: media share ${stream.id} attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -756,6 +925,42 @@ export default {
           ...(member.ephemeral ? {ephemeral: true} : {}),
           ...(member.departed_at ? {departed_at: member.departed_at} : {}),
         })));
+      },
+    });
+
+    api.registerTool({
+      name: "mac_agent_share",
+      description: "Share a file (image, audio, video, PDF, dataset, any binary up to 8MB) with one or several MAC fleet agents over authenticated AgentBus. The file travels as typed base64 chunks with its real MIME type; each recipient's agent receives it on disk, gets an autonomous turn to look at it, and replies over the bus. Use for structured data and media — not for plain text messages (use mac_agent_send).",
+      parameters: inputSchema({
+        recipient: {type: "string", description: "Fleet agent name or id."},
+        recipients: {type: "array", items: {type: "string"}, maxItems: 16, description: "Several agents: one shared group transfer."},
+        path: {type: "string", minLength: 1, description: "Path of the file to share (inside this sandbox)."},
+        note: {type: "string", maxLength: 2000, description: "What this file is and what the recipient should do with it."},
+      }, ["path"]),
+      async execute(_id, params) {
+        const cfg = settings(api);
+        if (!cfg.agentId) throw new Error("MAC_OPENCLAW_AGENT_ID is unset");
+        const wanted = Array.isArray(params.recipients) && params.recipients.length > 0
+          ? params.recipients
+          : params.recipient ? [params.recipient] : [];
+        if (wanted.length === 0) throw new Error("recipient or recipients is required");
+        const peers = [];
+        for (const item of wanted) {
+          const peer = await resolvePeer(api, item);
+          if (peer.id !== cfg.agentId && !peers.some((known) => known.id === peer.id)) peers.push(peer);
+        }
+        if (peers.length === 0) throw new Error("recipients resolve to this agent only");
+        const result = await shareMediaOverBus(
+          api,
+          peers.map((peer) => peer.id),
+          params.path,
+          params.note,
+        );
+        return peerTextResult({
+          status: "shared",
+          ...result,
+          recipients: peers.map((peer) => ({id: peer.id, name: peer.name})),
+        });
       },
     });
 

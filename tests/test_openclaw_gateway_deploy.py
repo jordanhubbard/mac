@@ -81,7 +81,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="12"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="13"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
@@ -376,6 +376,76 @@ def test_workspace_context_routes_agent_coordination_over_agentbus(
     assert "mirror_fleet_conversation" in context
 
 
+def test_media_sharing_travels_typed_and_chunked_over_the_bus(tmp_path) -> None:
+    """Multimodal sharing (task_ab4ee852, audit 6/7): files travel as typed
+    base64 chunks on a dedicated topic — real MIME types, 128KiB raw chunks,
+    8MiB cap — and the receive side reassembles to disk, runs a peer turn,
+    replies over the bus, and mirrors with the filename. Verified by driving
+    the real module's share path against a scripted hub."""
+    import json as _json
+
+    plugin_uri = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").as_uri()
+    sample = tmp_path / "flamegraph.png"
+    sample.write_bytes(b"\x89PNG" + b"x" * (300 * 1024))  # forces 3 chunks
+    script = f"""
+      const mod = await import({_json.dumps(plugin_uri)});
+      const tools = new Map();
+      const calls = [];
+      globalThis.fetch = async (url, init) => {{
+        const body = init?.body ? JSON.parse(init.body) : null;
+        calls.push({{url: String(url), method: init?.method || "GET", body}});
+        if (String(url).endsWith("/agents")) return {{ok: true, json: async () => ([{{id: "agent_peer", name: "Peer"}}])}};
+        if (String(url).endsWith("/agentbus/streams") && init?.method === "POST")
+          return {{ok: true, json: async () => ({{id: "bus_media1"}})}};
+        return {{ok: true, json: async () => ({{}})}};
+      }};
+      const api = {{
+        pluginConfig: {{timeoutMs: 2000}},
+        logger: {{warn: () => {{}}}},
+        on: () => {{}},
+        registerTool: (tool) => tools.set(tool.name, tool),
+      }};
+      mod.default.register(api);
+      const share = tools.get("mac_agent_share");
+      if (!share) process.exit(2);
+      const result = await share.execute("t1", {{recipient: "Peer", path: {_json.dumps(str(sample))}, note: "benchmark flamegraph"}});
+      const parsed = JSON.parse(result.content[0].text);
+      if (parsed.status !== "shared") process.exit(3);
+      if (parsed.mime !== "image/png") process.exit(4);
+      if (parsed.chunk_count !== 3) process.exit(5);
+      const appends = calls.filter((c) => c.url.includes("/agentbus/streams/bus_media1/chunks"));
+      if (appends.length !== 3) process.exit(6);
+      if (!appends.every((c) => c.body.payload_encoding === "base64" && c.body.content_type === "image/png")) process.exit(7);
+      if (appends.at(-1).body.final !== true || appends[0].body.final !== false) process.exit(8);
+      const open = calls.find((c) => c.url.endsWith("/agentbus/streams"));
+      if (open.body.topic !== "mac.media.share.v1") process.exit(9);
+      if (open.body.headers.filename !== "flamegraph.png") process.exit(10);
+      if (open.body.headers.total_bytes !== {300 * 1024 + 4}) process.exit(11);
+    """
+    env = {
+        **os.environ,
+        "MAC_OPENCLAW_AGENT_ID": "agent_me",
+        "MAC_OPENCLAW_CONTROL_URL": "http://hub:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "test-token",
+    }
+    subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+    # Receive side is wired into the bridge poll.
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    assert "pollMediaShares" in plugin
+    assert "reassembleMediaChunks" in plugin
+    assert "receiveMediaShare" in plugin
+    assert 'join(workspaceDir, "incoming")' in plugin
+
+
 def test_mac_agent_send_supports_group_conversations() -> None:
     """Group semantics (task_588b67fd): several recipients open ONE shared
     stream (participant_agent_ids); members reply as chunks on that same
@@ -438,7 +508,7 @@ def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
       }};
       mod.default.register(api);
       if (!hooks.has("before_prompt_build")) process.exit(2);
-      if (!["mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
+      if (!["mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
       const result = await hooks.get("before_prompt_build")({{prompt: "what matters?"}});
       if (!result.prependContext.includes("Current mood: warm")) process.exit(4);
       if (!result.prependContext.includes("durable fact")) process.exit(5);
