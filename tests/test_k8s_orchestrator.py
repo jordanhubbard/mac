@@ -268,7 +268,7 @@ def test_controller_daemon_failure_does_not_kill_runner(
             raise RuntimeError("test bound: stop daemon")
         real_sleep(0)
 
-    monkeypatch.setattr(orchestrator.time, "sleep", _bounded_sleep)
+    monkeypatch.setattr(orchestrator, "_sleep", _bounded_sleep)
 
     # Short interval so the daemon loops fast.
     monkeypatch.setenv("MAC_CONTROLLER_INTERVAL_SECONDS", "0.01")
@@ -327,7 +327,7 @@ def test_run_controller_loop_forever_continues_after_iteration_failure(
             raise RuntimeError("stopping test loop")
         # Otherwise yield instantly.
 
-    monkeypatch.setattr(orchestrator.time, "sleep", _fake_sleep)
+    monkeypatch.setattr(orchestrator, "_sleep", _fake_sleep)
 
     orchestrator.controller_loop_failures = 0
     with caplog.at_level(logging.ERROR):
@@ -337,6 +337,7 @@ def test_run_controller_loop_forever_continues_after_iteration_failure(
             cfg=object(),
             interval=0.001,
             log=logging.getLogger("mac-k8s-orchestrator.controller"),
+            sleep_fn=_fake_sleep,
         )
 
     assert call_count["n"] >= 2
@@ -370,7 +371,7 @@ def test_review_tick_loop_posts_default_tick(
         if sleep_calls["n"] >= 2:
             raise RuntimeError("stop test loop")
 
-    monkeypatch.setattr(orchestrator.time, "sleep", _fake_sleep)
+    monkeypatch.setattr(orchestrator, "_sleep", _fake_sleep)
     orchestrator.review_tick_loop_failures = 0
     orchestrator._run_review_tick_loop_forever(
         mac=mac,
@@ -378,6 +379,7 @@ def test_review_tick_loop_posts_default_tick(
         limit=25,
         actor="mac-runner",
         log=logging.getLogger("mac-k8s-orchestrator.review-tick"),
+        sleep_fn=_fake_sleep,
     )
     assert mac.tick_calls, "review-tick loop must POST /reviews/default/tick"
     assert any("limit=25" in c for c in mac.tick_calls)
@@ -406,7 +408,7 @@ def test_review_tick_loop_survives_iteration_failure(
         if sleep_calls["n"] >= 2:
             raise RuntimeError("stop test loop")
 
-    monkeypatch.setattr(orchestrator.time, "sleep", _fake_sleep)
+    monkeypatch.setattr(orchestrator, "_sleep", _fake_sleep)
     orchestrator.review_tick_loop_failures = 0
     with caplog.at_level(logging.WARNING):
         orchestrator._run_review_tick_loop_forever(
@@ -415,6 +417,7 @@ def test_review_tick_loop_survives_iteration_failure(
             limit=10,
             actor="mac-runner",
             log=logging.getLogger("mac-k8s-orchestrator.review-tick"),
+            sleep_fn=_fake_sleep,
         )
     # First iteration failed but loop continued to a second POST.
     assert mac.calls >= 2
@@ -457,13 +460,18 @@ def test_loop_helpers_log_processed_stuck_jobs_and_review_failure(
         lambda *_a: [{"status": "deleted", "job": "stale"}],
     )
     monkeypatch.setattr(
-        orchestrator.time,
-        "sleep",
+        orchestrator,
+        "_sleep",
         lambda _seconds: (_ for _ in ()).throw(RuntimeError("stop")),
     )
     with caplog.at_level(logging.INFO):
         orchestrator._run_controller_loop_forever(
-            object(), object(), object(), 0.01, logging.getLogger("controller-edge")
+            object(),
+            object(),
+            object(),
+            0.01,
+            logging.getLogger("controller-edge"),
+            sleep_fn=lambda _seconds: (_ for _ in ()).throw(RuntimeError("stop")),
         )
     assert "stuck-job" in caplog.text
 
@@ -473,7 +481,12 @@ def test_loop_helpers_log_processed_stuck_jobs_and_review_failure(
 
     with caplog.at_level(logging.INFO):
         orchestrator._run_review_tick_loop_forever(
-            TickMac(), 0.01, 2, "actor", logging.getLogger("tick-edge")
+            TickMac(),
+            0.01,
+            2,
+            "actor",
+            logging.getLogger("tick-edge"),
+            sleep_fn=lambda _seconds: (_ for _ in ()).throw(RuntimeError("stop")),
         )
     assert "processed=2" in caplog.text
 
@@ -521,4 +534,3 @@ def test_main_warns_on_drift_starts_review_and_defaults_bad_tick_limit(
     assert orchestrator.main([]) == 0
     assert "mac-orchestrator-review" in started
     assert "mac-orchestrator-review-tick" in started
-

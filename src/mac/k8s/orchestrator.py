@@ -5,11 +5,16 @@ import os
 import sys
 import threading
 import time
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 controller_loop_failures = 0
 review_loop_failures = 0
 review_tick_loop_failures = 0
+
+# Keep the sleep seam local to this module. Patching ``time.sleep`` mutates the
+# process-wide time module and lets unrelated background threads consume test
+# counters or terminate controller loops nondeterministically.
+_sleep = time.sleep
 
 
 def _truthy(value: Optional[str]) -> bool:
@@ -22,6 +27,7 @@ def _run_review_tick_loop_forever(
     limit: int,
     actor: str,
     log: logging.Logger,
+    sleep_fn: Callable[[float], None] = time.sleep,
 ) -> None:
     """Periodically OPEN reviews for tasks in needs_review/reviewing.
 
@@ -55,7 +61,7 @@ def _run_review_tick_loop_forever(
                     "review_tick_loop_failures=%d",
                     review_tick_loop_failures,
                 )
-            time.sleep(interval)
+            sleep_fn(interval)
     except Exception:  # noqa: BLE001
         review_tick_loop_failures += 1
         log.exception(
@@ -72,6 +78,7 @@ def _run_controller_loop_forever(
     cfg: "object",
     interval: float,
     log: logging.Logger,
+    sleep_fn: Callable[[float], None] = time.sleep,
 ) -> None:
     global controller_loop_failures
 
@@ -87,7 +94,7 @@ def _run_controller_loop_forever(
             except Exception:  # noqa: BLE001
                 controller_loop_failures += 1
                 log.exception("controller reconcile iteration failed")
-            time.sleep(interval)
+            sleep_fn(interval)
     except Exception:  # noqa: BLE001
         controller_loop_failures += 1
         log.exception(
@@ -180,6 +187,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "cfg": controller_cfg,
             "interval": interval,
             "log": logging.getLogger("mac-k8s-orchestrator.controller"),
+            "sleep_fn": _sleep,
         },
         name="mac-orchestrator-controller",
         daemon=True,
@@ -233,6 +241,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "limit": tick_limit,
                 "actor": runner_cfg.agent_id,
                 "log": logging.getLogger("mac-k8s-orchestrator.review-tick"),
+                "sleep_fn": _sleep,
             },
             name="mac-orchestrator-review-tick",
             daemon=True,
