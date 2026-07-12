@@ -4693,6 +4693,17 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw gateway host.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_GATEWAY_HOST",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw gateway port.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_GATEWAY_PORT",
@@ -4718,6 +4729,17 @@
     "description": "Openclaw Runtime setting: openclaw host dir.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_HOST_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw image.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_IMAGE",
     "retired": false,
     "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh"
@@ -4777,6 +4799,17 @@
     "retired": false,
     "sources": [
       "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw mirror model.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_MIRROR_MODEL",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
   },
@@ -4864,6 +4897,17 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw sandbox.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_SANDBOX",
+    "retired": false,
+    "sources": [
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"

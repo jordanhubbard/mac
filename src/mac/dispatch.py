@@ -1144,6 +1144,25 @@ class RemoteDispatch:
             )
         )
 
+    # -- Consolidated per-agent config --------------------------------------
+
+    def effective_agent_config(self, agent_id: str) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/v1/agents/%s/effective-config" % quote(agent_id, safe="")
+            )
+        )
+
+    def report_agent_deploy_config(
+        self, agent_id: str, document: Dict[str, Any], **kw: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._put(
+                "/v1/agents/%s/deploy-config" % quote(agent_id, safe=""),
+                {"document": document, **_drop_none(kw)},
+            )
+        )
+
     # -- Mood (per-agent overlay) -------------------------------------------
 
     def set_mood(self, agent_id: str, **kw: Any) -> _Dictish:

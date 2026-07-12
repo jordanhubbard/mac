@@ -10088,6 +10088,21 @@ class ControlPlane:
     def clear_config_flag(self, *args: Any, **kwargs: Any) -> bool:
         return self.agent_state.clear_config_flag(*args, **kwargs)
 
+    # Deploy config + the consolidated per-agent effective view.
+
+    def report_agent_deploy_config(
+        self, *args: Any, **kwargs: Any
+    ) -> Dict[str, Any]:
+        return self.agent_state.report_deploy_config(*args, **kwargs)
+
+    def get_agent_deploy_config(
+        self, *args: Any, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        return self.agent_state.get_deploy_config(*args, **kwargs)
+
+    def effective_agent_config(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return self.agent_state.effective_agent_config(*args, **kwargs)
+
     # Nap schedule + lifecycle
     #
     # Each agent has a single nap_schedule row (offset_minutes, window_minutes).

@@ -1321,6 +1321,13 @@ class ConfigFlagClear(BaseModel):
     reason: Optional[str] = None
 
 
+class DeployConfigReport(BaseModel):
+    document: Dict[str, Any]
+    reported_by: Optional[str] = None
+    # Named schema_name (not "schema") to stay clear of BaseModel.schema().
+    schema_name: Optional[str] = None
+
+
 class AgentMemoryStore(BaseModel):
     content: str
     record_type: str = "agent_learning"
@@ -7293,6 +7300,42 @@ def create_app(
             "channel": values.get("channel", ""),
             "cleared": bool(cleared),
         }
+
+    @app.put("/v1/agents/{agent_id}/deploy-config")
+    def report_agent_deploy_config(
+        agent_id: str,
+        body: DeployConfigReport,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Let a bound gateway self-report only its own deploy-config doc."""
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot report a peer agent's deploy config"
+            )
+        values = _data(body)
+        _ensure_payload_bounded(values.get("document"), "agent.deploy_config")
+        values.setdefault("reported_by", agent_id)
+        schema_name = values.pop("schema_name", None)
+        return cp.report_agent_deploy_config(
+            agent_id, schema=schema_name, **values
+        )
+
+    @app.get("/v1/agents/{agent_id}/effective-config")
+    def get_agent_effective_config(
+        agent_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Consolidated per-agent config view: identity + flags + deploy doc.
+
+        The single place to see every "geek knob" an agent runs with,
+        instead of chasing launcher scripts, runtime.env, plugin constants,
+        and hub metadata across hosts (task_dfdf6ea9).
+        """
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot read a peer agent's effective config"
+            )
+        return cp.effective_agent_config(agent_id)
 
     @app.post("/v1/agents/{agent_id}/memory")
     def store_agent_memory(

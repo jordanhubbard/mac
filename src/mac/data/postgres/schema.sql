@@ -859,6 +859,16 @@ CREATE TABLE IF NOT EXISTS agent_config_flags (
     PRIMARY KEY (agent_id, flag, channel)
 );
 
+-- One consolidated deploy-config document per agent: the non-secret "geek
+-- knobs" its gateway actually launched with, self-reported at gateway startup.
+CREATE TABLE IF NOT EXISTS agent_deploy_configs (
+    agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    document TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    reported_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS nap_schedules (
     agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
     offset_minutes INTEGER NOT NULL,

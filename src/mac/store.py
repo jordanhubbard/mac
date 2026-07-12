@@ -978,6 +978,22 @@ class SQLiteStore:
                     PRIMARY KEY (agent_id, flag, channel)
                 );
 
+                -- One consolidated deploy-config document per agent: the
+                -- non-secret "geek knobs" its gateway actually launched
+                -- with (image tag, sandbox, home channel, model defaults,
+                -- plugin tuning), self-reported at gateway startup so the
+                -- effective-config view has a single place to look instead
+                -- of chasing launcher scripts, runtime.env, and plugin
+                -- constants across hosts. Secrets are rejected on write
+                -- (see agent_state_service). Audit trail: agent_events.
+                CREATE TABLE IF NOT EXISTS agent_deploy_configs (
+                    agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+                    document TEXT NOT NULL,
+                    schema_name TEXT NOT NULL,
+                    reported_by TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS nap_schedules (
                     agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
                     offset_minutes INTEGER NOT NULL,

@@ -81,7 +81,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="10"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="11"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
@@ -192,6 +192,77 @@ def test_prepare_rewrites_host_loopback_to_openshell_alias(tmp_path: Path) -> No
     assert "host: host.openshell.internal" in policy
     assert "127.0.0.1:8789" not in runtime
     assert "localhost:8789" not in runtime
+
+
+def test_installer_consolidates_agent_geek_knobs_and_plugin_reports_them(
+    tmp_path: Path,
+) -> None:
+    """Config consolidation (task_dfdf6ea9): the installer renders ONE on-host
+    agent-config.yaml with the non-secret deploy knobs, runtime.env carries the
+    same knobs into the sandbox (including the home channel the mirror needs),
+    and the plugin self-reports the document to the hub at startup so
+    `mac agent config show <agent>` has a single fleet-wide place to look."""
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    home.mkdir()
+    _seed_hermes_identity(home)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_knobs",
+        "MAC_OPENCLAW_INSTANCE_ID": "hermes_knobs",
+        "MAC_OPENCLAW_ROUTER_URL": "http://10.0.0.9:8789/v1",
+        "MAC_OPENCLAW_CONTROL_URL": "http://10.0.0.9:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "test-token",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "test",
+        "MAC_OPENCLAW_HOME_CHANNEL": "channel:C0TEST",
+    }
+    subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    # Consolidated on-host document.
+    summary = (mac_home / "openclaw" / "agent-config.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "schema: mac.agent_deploy_config.v1" in summary
+    assert "agent_id: agent_knobs" in summary
+    assert "image: localhost/mac-openclaw:" in summary
+    assert "sandbox: mac-openclaw-knobs" in summary
+    assert "home_channel: channel:C0TEST" in summary
+    assert "default: test/model" in summary
+    # No secrets in the world-readable summary.
+    assert "test-token" not in summary
+    # runtime.env now carries the knobs into the sandbox process env —
+    # including the home channel, whose omission silently killed the
+    # conversation mirror on reinstall.
+    runtime = (mac_home / "openclaw" / "managed" / "runtime.env").read_text(
+        encoding="utf-8"
+    )
+    assert "MAC_OPENCLAW_HOME_CHANNEL=channel:C0TEST" in runtime
+    assert "MAC_OPENCLAW_IMAGE=localhost/mac-openclaw:" in runtime
+    assert "MAC_OPENCLAW_SANDBOX=mac-openclaw-knobs" in runtime
+    assert "MAC_OPENCLAW_GATEWAY_HOST=" in runtime
+    # The plugin self-reports the same document to the hub at startup.
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    assert "reportDeployConfig" in plugin
+    assert '"/deploy-config"' in plugin
+    assert "mac.agent_deploy_config.v1" in plugin
+    # Never ship the router key in the reported document.
+    assert "token: cfg.token" not in plugin.split("reportDeployConfig", 1)[1].split(
+        "function mutateMood", 1
+    )[0]
 
 
 def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:

@@ -194,6 +194,100 @@ def test_bound_openclaw_agent_can_crud_only_its_own_config_flags() -> None:
     assert cleared.json()["cleared"] is True
 
 
+def test_bound_agent_reports_own_deploy_config_and_reads_effective_view() -> None:
+    """The consolidated 'geek knobs' path (task_dfdf6ea9): a gateway
+    self-reports its non-secret deploy document, and the effective-config
+    view merges identity + runtime flags + deploy doc in one response."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("knobs-host")
+    agent = cp.register_agent(machine.id, "knobs-agent")
+    peer = cp.register_agent(machine.id, "knobs-peer")
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={"agent-token": {"scopes": ["agent"], "agent_id": agent.id}},
+    )
+    headers = {"Authorization": "Bearer agent-token"}
+    document = {
+        "gateway": {
+            "host": "sparky",
+            "image": "localhost/mac-openclaw:test",
+            "sandbox": "mac-openclaw-knobs",
+            "home_channel": "channel:C123",
+        },
+        "models": {"mirror_summarizer": "azure/anthropic/claude-sonnet-4-6"},
+    }
+    with TestClient(app) as client:
+        reported = client.put(
+            f"/v1/agents/{agent.id}/deploy-config",
+            headers=headers,
+            json={"document": document},
+        )
+        reported_peer = client.put(
+            f"/v1/agents/{peer.id}/deploy-config",
+            headers=headers,
+            json={"document": document},
+        )
+        effective = client.get(
+            f"/v1/agents/{agent.id}/effective-config", headers=headers
+        )
+        effective_peer = client.get(
+            f"/v1/agents/{peer.id}/effective-config", headers=headers
+        )
+
+    assert reported.status_code == 200
+    assert reported.json()["schema"] == "mac.agent_deploy_config.v1"
+    assert reported.json()["reported_by"] == agent.id
+    assert reported_peer.status_code == 403
+    assert effective_peer.status_code == 403
+
+    assert effective.status_code == 200
+    view = effective.json()
+    assert view["schema"] == "mac.agent_effective_config.v1"
+    assert view["agent"]["id"] == agent.id
+    assert view["agent"]["name"] == "knobs-agent"
+    # Runtime flag registry included at agent-global scope.
+    flags = {f["flag"]: f["value"] for f in view["config_flags"]}
+    assert "mirror_fleet_conversation" in flags
+    # The reported deploy doc round-trips.
+    assert view["deploy_config"]["document"] == document
+    # Audited like every other agent-state mutation.
+    events = cp.list_observability(name="agent.deploy_config_reported", limit=5)
+    assert events and events[0].subject_id == agent.id
+
+
+def test_deploy_config_rejects_secret_like_keys_and_oversize() -> None:
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("secret-host")
+    agent = cp.register_agent(machine.id, "secret-agent")
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={"agent-token": {"scopes": ["agent"], "agent_id": agent.id}},
+    )
+    headers = {"Authorization": "Bearer agent-token"}
+    with TestClient(app) as client:
+        secret_top = client.put(
+            f"/v1/agents/{agent.id}/deploy-config",
+            headers=headers,
+            json={"document": {"router_api_key": "sk-nope"}},
+        )
+        secret_nested = client.put(
+            f"/v1/agents/{agent.id}/deploy-config",
+            headers=headers,
+            json={"document": {"gateway": {"slack_bot_token": "xoxb-nope"}}},
+        )
+        empty = client.put(
+            f"/v1/agents/{agent.id}/deploy-config",
+            headers=headers,
+            json={"document": {}},
+        )
+    assert secret_top.status_code == 400
+    assert "secret-like" in secret_top.json()["detail"]
+    assert secret_nested.status_code == 400
+    assert empty.status_code == 400
+    # Nothing stored after the rejected writes.
+    assert cp.get_agent_deploy_config(agent.id) is None
+
+
 def test_bound_agent_can_store_only_its_own_learnings() -> None:
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("store-host")

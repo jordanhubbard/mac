@@ -2302,6 +2302,37 @@ def cmd_agent_resume(args: argparse.Namespace) -> None:
     _print(_plane(args).clear_agent_dispatch_hold(args.agent_id))
 
 
+def _resolve_agent_id(cp: Any, agent: str) -> str:
+    """Accept an agent id or a human name; return the id."""
+    candidates = []
+    for row in cp.list_agents():
+        data = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+        if data.get("id") == agent:
+            return agent
+        if data.get("name") == agent:
+            candidates.append(str(data.get("id")))
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise SystemExit(
+            "agent name %r is ambiguous (%s); pass the agent id"
+            % (agent, ", ".join(candidates))
+        )
+    return agent
+
+
+def cmd_agent_config_show(args: argparse.Namespace) -> None:
+    """Consolidated per-agent config: identity + flags + deploy doc + mood."""
+    cp = _plane(args)
+    agent_id = _resolve_agent_id(cp, args.agent)
+    view = cp.effective_agent_config(agent_id)
+    if hasattr(view, "to_dict"):
+        view = view.to_dict()
+    # The whole point of this command is showing every knob; the compact
+    # text renderer would collapse the nested sections to "{n keys}".
+    print(json.dumps(view, indent=2, sort_keys=True, default=str))
+
+
 def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
 
@@ -5373,6 +5404,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_resume.add_argument("agent_id")
     _set(cmd_agent_resume, agent_resume)
+
+    agent_config = agent.add_parser(
+        "config",
+        help="consolidated per-agent configuration (the 'geek knobs')",
+    ).add_subparsers(dest="agent_config_command", required=True)
+    agent_config_show = agent_config.add_parser(
+        "show",
+        help="every effective knob for one agent from one place: identity, "
+        "runtime flags, gateway-reported deploy config, mood",
+    )
+    agent_config_show.add_argument("agent", help="agent id or name")
+    _set(cmd_agent_config_show, agent_config_show)
 
     agent_migrate = agent.add_parser(
         "migrate",

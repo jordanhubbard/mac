@@ -393,14 +393,17 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize openclaw state. |
 | `MAC_OPENCLAW_FINALIZE_SUPERVISOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw finalize supervisor. |
 | `MAC_OPENCLAW_FLEET_NAME` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw fleet name. |
+| `MAC_OPENCLAW_GATEWAY_HOST` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw gateway host. |
 | `MAC_OPENCLAW_GATEWAY_PORT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw gateway port. |
 | `MAC_OPENCLAW_HOME_CHANNEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw home channel. |
 | `MAC_OPENCLAW_HOST_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw host dir. |
+| `MAC_OPENCLAW_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image. |
 | `MAC_OPENCLAW_IMAGE_REVISION` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image revision. |
 | `MAC_OPENCLAW_INSTANCE_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw instance id. |
 | `MAC_OPENCLAW_LEGACY_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw legacy slack home channels file. |
 | `MAC_OPENCLAW_LIVE_CANARY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw live canary. |
 | `MAC_OPENCLAW_MESSAGE_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw message bin. |
+| `MAC_OPENCLAW_MIRROR_MODEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw mirror model. |
 | `MAC_OPENCLAW_MODEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw model. |
 | `MAC_OPENCLAW_POLICY_TEMPLATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw policy template. |
 | `MAC_OPENCLAW_PUBLIC_IDENTITY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw public identity. |
@@ -408,6 +411,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_REPRESENTED_BY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw represented by. |
 | `MAC_OPENCLAW_ROUTER_API_KEY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router api key. |
 | `MAC_OPENCLAW_ROUTER_URL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router url. |
+| `MAC_OPENCLAW_SANDBOX` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox. |
 | `MAC_OPENCLAW_SANDBOX_NAME` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox name. |
 | `MAC_OPENCLAW_SKIP_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw skip image. |
 | `MAC_OPENCLAW_SLACK_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack account id. |

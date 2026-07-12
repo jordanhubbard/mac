@@ -387,6 +387,151 @@ class AgentStateService:
             )
         return True
 
+    # Deploy config: one consolidated per-agent document of the non-secret
+    # "geek knobs" the agent's gateway actually launched with (image tag,
+    # sandbox, home channel, model defaults, plugin tuning). Self-reported
+    # at gateway startup; `effective_agent_config` merges it with the
+    # runtime flag registry so operators have a single place to look.
+
+    DEPLOY_CONFIG_SCHEMA = "mac.agent_deploy_config.v1"
+    DEPLOY_CONFIG_MAX_BYTES = 32768
+    _SECRETISH_KEY_MARKERS = (
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "api_key",
+        "apikey",
+        "credential",
+        "bearer",
+        "private_key",
+    )
+
+    @classmethod
+    def _reject_secretish_keys(cls, document: Any, path: str = "") -> None:
+        """Refuse documents carrying keys that look like credentials.
+
+        The deploy-config store is readable fleet-wide by design; rejecting
+        (not silently redacting) keeps a gateway from believing a secret was
+        durably stored when it never will be.
+        """
+        if isinstance(document, dict):
+            for key, value in document.items():
+                key_text = str(key).lower()
+                where = "%s.%s" % (path, key) if path else str(key)
+                if any(marker in key_text for marker in cls._SECRETISH_KEY_MARKERS):
+                    raise ValidationError(
+                        "deploy config must not contain secret-like keys: %s"
+                        % where
+                    )
+                cls._reject_secretish_keys(value, where)
+        elif isinstance(document, list):
+            for index, item in enumerate(document):
+                cls._reject_secretish_keys(item, "%s[%d]" % (path, index))
+
+    def report_deploy_config(
+        self,
+        agent_id: str,
+        document: Dict[str, Any],
+        reported_by: Optional[str] = None,
+        schema: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        agent = self._get_agent(agent_id)
+        doc = ensure_json_object(document)
+        if not doc:
+            raise ValidationError("deploy config document must be a non-empty object")
+        self._reject_secretish_keys(doc)
+        schema_name = (schema or self.DEPLOY_CONFIG_SCHEMA).strip()
+        encoded = json_dumps(doc)
+        if len(encoded.encode("utf-8")) > self.DEPLOY_CONFIG_MAX_BYTES:
+            raise ValidationError(
+                "deploy config document exceeds %d bytes"
+                % self.DEPLOY_CONFIG_MAX_BYTES
+            )
+        actor = (reported_by or agent.id).strip() or agent.id
+        now = utcnow()
+        with self.store.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_deploy_configs (
+                    agent_id, document, schema_name, reported_by, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    document = excluded.document,
+                    schema_name = excluded.schema_name,
+                    reported_by = excluded.reported_by,
+                    updated_at = excluded.updated_at
+                """,
+                (agent.id, encoded, schema_name, actor, now),
+            )
+            self.insert_agent_event(
+                conn,
+                agent.id,
+                "agent.deploy_config_reported",
+                actor,
+                {
+                    "schema": schema_name,
+                    "keys": sorted(doc),
+                    "bytes": len(encoded),
+                },
+                now,
+            )
+        return {
+            "agent_id": agent.id,
+            "schema": schema_name,
+            "document": doc,
+            "reported_by": actor,
+            "updated_at": now,
+        }
+
+    def get_deploy_config(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        agent = self._get_agent(agent_id)
+        row = self.store.query_one(
+            "SELECT * FROM agent_deploy_configs WHERE agent_id = ?",
+            (agent.id,),
+        )
+        if row is None:
+            return None
+        return {
+            "agent_id": agent.id,
+            "schema": row["schema_name"],
+            "document": json_loads(row["document"], {}),
+            "reported_by": row["reported_by"],
+            "updated_at": row["updated_at"],
+        }
+
+    def effective_agent_config(self, agent_id: str) -> Dict[str, Any]:
+        """Everything configurable about one agent, from one place.
+
+        Merges the agent registry row, the effective runtime flag registry
+        (agent-global scope), the gateway-reported deploy config, and the
+        current mood overlay — the consolidated view that used to require
+        chasing launcher scripts, runtime.env, and plugin constants.
+        """
+        agent = self._get_agent(agent_id)
+        agent_row = agent.to_dict()
+        identity = {
+            key: agent_row.get(key)
+            for key in (
+                "id",
+                "name",
+                "machine_id",
+                "status",
+                "capabilities",
+                "dispatch_hold",
+                "hermes_instance_id",
+            )
+            if key in agent_row
+        }
+        mood = self.get_current_mood(agent.id)
+        return {
+            "schema": "mac.agent_effective_config.v1",
+            "agent": identity,
+            "config_flags": self.list_config_flags(agent.id),
+            "deploy_config": self.get_deploy_config(agent.id),
+            "mood": mood.to_dict() if mood is not None else None,
+        }
+
     # Nap schedules + runs ----------------------------------------------
 
     def configure_nap(

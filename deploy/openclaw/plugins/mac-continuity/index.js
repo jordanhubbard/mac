@@ -498,6 +498,44 @@ async function pollPeerMessages(api, state) {
   }
 }
 
+async function reportDeployConfig(api) {
+  // Consolidated per-agent "geek knobs" self-report: everything non-secret
+  // this gateway actually launched with, in one hub-side document so
+  // `mac agent config show <agent>` doesn't require chasing launcher
+  // scripts, runtime.env, and plugin constants across hosts.
+  const cfg = settings(api);
+  const mirrorModel =
+    String(process.env.MAC_OPENCLAW_MIRROR_MODEL || process.env.MAC_OPENCLAW_MODEL || "").trim() ||
+    "azure/anthropic/claude-sonnet-4-6";
+  return selfApi(api, "PUT", "/deploy-config", {
+    body: {
+      schema_name: "mac.agent_deploy_config.v1",
+      document: {
+        gateway: {
+          host: String(process.env.MAC_OPENCLAW_GATEWAY_HOST || process.env.HOSTNAME || ""),
+          image: String(process.env.MAC_OPENCLAW_IMAGE || ""),
+          sandbox: String(process.env.MAC_OPENCLAW_SANDBOX || ""),
+          control_url: cfg.controlUrl,
+          home_channel: String(process.env.MAC_OPENCLAW_HOME_CHANNEL || ""),
+          node_version: process.version,
+        },
+        models: {
+          mirror_summarizer: mirrorModel,
+        },
+        plugin: {
+          name: "mac-continuity",
+          max_memories: cfg.maxMemories,
+          timeout_ms: cfg.timeoutMs,
+          curiosity_bin: cfg.curiosityBin,
+          peer_poll_interval_ms: cfg.peerPollIntervalMs,
+          peer_max_attempts: cfg.peerMaxAttempts,
+          peer_turn_timeout_ms: cfg.peerTurnTimeoutMs,
+        },
+      },
+    },
+  });
+}
+
 function mutateMood(api, method, body) {
   return selfApi(api, method, "/mood", {body});
 }
@@ -637,10 +675,24 @@ export default {
           running = false;
         }
       };
+      const reportKnobs = (attempt = 1) => {
+        reportDeployConfig(api)
+          .then(() => api.logger.info?.("mac-continuity: deploy config reported to hub"))
+          .catch((error) => {
+            api.logger.warn?.(
+              `mac-continuity: deploy config report failed (attempt ${attempt}): ${error instanceof Error ? error.message : String(error)}`,
+            );
+            if (attempt < 3) {
+              const retry = setTimeout(() => reportKnobs(attempt + 1), 60000);
+              retry.unref?.();
+            }
+          });
+      };
       api.registerService({
         id: "mac-agent-peer-bridge",
         start: () => {
           void tick();
+          reportKnobs();
           timer = setInterval(() => void tick(), settings(api).peerPollIntervalMs);
           timer.unref?.();
           api.logger.info?.("mac-continuity: authenticated MAC peer bridge started");
