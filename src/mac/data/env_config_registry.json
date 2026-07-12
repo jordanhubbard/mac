@@ -5702,8 +5702,8 @@
     "sources": [
       "deploy/install-nap-tick-service.sh",
       "deploy/systemd/mac-nap-tick.service",
-      "src/mac/api.py",
       "src/mac/cli.py",
+      "src/mac/memory_config.py",
       "src/mac/services.py"
     ],
     "type": "str"
