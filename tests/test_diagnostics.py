@@ -189,3 +189,106 @@ def test_threshold_finding_ok_and_warn_shape():
     assert warn.severity == "warn"
     assert warn.summary == "7 widget(s) exceed threshold 5"
     assert warn.detail == {"count": 7, "threshold": 5, "recent": recent}
+
+
+def test_stranded_replacements_check_ok_when_clean():
+    cp = ControlPlane.in_memory()
+
+    findings = diagnostics.run_diagnostics(cp, names=["stranded-replacements"])
+    assert findings and len(findings) == 1
+    assert findings[0].check == "stranded-replacements"
+    assert findings[0].severity == "ok"
+    assert findings[0].detail["count"] == 0
+
+
+def test_stranded_replacements_check_warns_when_stranded():
+    import json
+
+    cp = ControlPlane.in_memory()
+
+    # Create two tasks: A (cancelled) with replacement_task_id pointing to B (also cancelled, no
+    # further replacement). The chain A -> B is stranded because B has no live successor.
+    task_a = cp.create_task("task-a", project="diag")
+    task_b = cp.create_task("task-b", project="diag")
+
+    # Force both to cancelled state and wire replacement_task_id from A -> B.
+    meta_a = {
+        "repository_ref_lifecycle": {
+            "replacement_task_id": task_b.id,
+        }
+    }
+    cp.store.execute(
+        "UPDATE tasks SET state='cancelled', metadata=? WHERE id=?",
+        (json.dumps(meta_a), task_a.id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state='cancelled', metadata=? WHERE id=?",
+        (json.dumps({}), task_b.id),
+    )
+
+    findings = diagnostics.run_diagnostics(cp, names=["stranded-replacements"])
+    assert findings and len(findings) == 1
+    finding = findings[0]
+    assert finding.check == "stranded-replacements"
+    assert finding.severity == "warn"
+    assert finding.detail["count"] == 1
+    recent_ids = [r["id"] for r in finding.detail["recent"]]
+    assert task_a.id in recent_ids
+
+
+def test_stranded_replacements_check_ok_when_chain_has_live_successor():
+    import json
+
+    cp = ControlPlane.in_memory()
+
+    # A (cancelled) -> B (open). Chain is live, not stranded.
+    task_a = cp.create_task("task-a", project="diag")
+    task_b = cp.create_task("task-b", project="diag")
+
+    meta_a = {
+        "repository_ref_lifecycle": {
+            "replacement_task_id": task_b.id,
+        }
+    }
+    cp.store.execute(
+        "UPDATE tasks SET state='cancelled', metadata=? WHERE id=?",
+        (json.dumps(meta_a), task_a.id),
+    )
+    # task_b stays in 'open' state (the default after create_task).
+
+    findings = diagnostics.run_diagnostics(cp, names=["stranded-replacements"])
+    assert findings and len(findings) == 1
+    assert findings[0].severity == "ok"
+    assert findings[0].detail["count"] == 0
+
+
+def test_stranded_replacements_check_ok_when_chain_ends_completed():
+    import json
+
+    cp = ControlPlane.in_memory()
+
+    # A (failed) -> B (cancelled) -> C (completed). Chain is satisfied.
+    task_a = cp.create_task("task-a", project="diag")
+    task_b = cp.create_task("task-b", project="diag")
+    task_c = cp.create_task("task-c", project="diag")
+
+    meta_a = {"repository_ref_lifecycle": {"replacement_task_id": task_b.id}}
+    meta_b = {"repository_ref_lifecycle": {"replacement_task_id": task_c.id}}
+
+    cp.store.execute(
+        "UPDATE tasks SET state='failed', metadata=? WHERE id=?",
+        (json.dumps(meta_a), task_a.id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state='cancelled', metadata=? WHERE id=?",
+        (json.dumps(meta_b), task_b.id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state='completed' WHERE id=?",
+        (task_c.id,),
+    )
+
+    findings = diagnostics.run_diagnostics(cp, names=["stranded-replacements"])
+    assert findings and len(findings) == 1
+    assert findings[0].severity == "ok"
+    assert findings[0].detail["count"] == 0

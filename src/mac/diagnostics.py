@@ -257,3 +257,71 @@ def _failed_tasks(control_plane: Any, threshold: int = FAILED_TASKS_THRESHOLD) -
         "SELECT id, title, project FROM tasks WHERE state = 'failed' ORDER BY created_at DESC",
     )
     return [_threshold_finding("failed-tasks", count, threshold, recent, "failed task(s)")]
+
+
+#: How many stranded replacement chains are tolerated before "stranded-replacements" warns.
+#: Default 0 so any stranded chain surfaces a warning.
+STRANDED_REPLACEMENTS_THRESHOLD = 0
+
+
+@register(
+    "stranded-replacements",
+    "terminal tasks whose replacement_task_id chain ends without a live or completed successor",
+)
+def _stranded_replacements(
+    control_plane: Any, threshold: int = STRANDED_REPLACEMENTS_THRESHOLD
+) -> List[Finding]:
+    """Find terminal tasks whose replacement chain is stranded.
+
+    A replacement chain is stranded when a cancelled or failed task's
+    ``repository_ref_lifecycle.replacement_task_id`` pointer ultimately leads to
+    another terminal task with no live or completed successor.  Stranded chains
+    block ref-lifecycle progress indefinitely and should be repaired by creating
+    a new successor task.
+    """
+    from mac.repository_hygiene import walk_replacement_chain
+
+    rows = control_plane.store.query_all(
+        "SELECT id, title, project, state "
+        "FROM tasks "
+        "WHERE state IN ('failed', 'cancelled') "
+        "  AND json_extract(metadata, '$.repository_ref_lifecycle.replacement_task_id') IS NOT NULL "
+        "ORDER BY updated_at DESC"
+    )
+
+    def _get_task(task_id: str) -> Optional[Dict[str, Any]]:
+        row = control_plane.store.query_one("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        if row is None:
+            return None
+        import json as _json
+
+        metadata = row["metadata"]
+        if isinstance(metadata, str):
+            try:
+                metadata = _json.loads(metadata)
+            except Exception:
+                metadata = {}
+        return {"state": row["state"], "metadata": metadata}
+
+    stranded: List[Dict[str, Any]] = []
+    for row in rows:
+        result = walk_replacement_chain(row["id"], _get_task)
+        if result.status == "stranded":
+            stranded.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "project": row["project"],
+                    "state": row["state"],
+                    "chain": result.chain,
+                    "remediation": result.remediation,
+                }
+            )
+
+    count = len(stranded)
+    recent = stranded[:10]
+    return [
+        _threshold_finding(
+            "stranded-replacements", count, threshold, recent, "stranded replacement chain(s)"
+        )
+    ]
