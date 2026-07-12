@@ -281,6 +281,7 @@
       "src/mac/_hermes/agent/agent_init.py",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
+      "src/mac/coding_agent.py",
       "src/mac/deploy_env.py",
       "src/mac/evidence_cli.py",
       "src/mac/hermes_runtime.py",
@@ -1000,6 +1001,7 @@
     "name": "MAC_COMMAND_ID",
     "retired": false,
     "sources": [
+      "src/mac/coding_agent.py",
       "src/mac/router_app.py"
     ],
     "type": "str"
@@ -3031,6 +3033,7 @@
     "name": "MAC_FLEET",
     "retired": false,
     "sources": [
+      "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
@@ -3391,6 +3394,7 @@
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/_hermes/agent/agent_init.py",
+      "src/mac/coding_agent.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
@@ -3986,6 +3990,7 @@
     "retired": false,
     "sources": [
       "src/mac/_hermes/agent/agent_init.py",
+      "src/mac/coding_agent.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py",
       "src/mac/router_app.py",
@@ -7448,6 +7453,7 @@
     "retired": false,
     "sources": [
       "src/mac/_hermes/agent/agent_init.py",
+      "src/mac/coding_agent.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py",
       "src/mac/router_app.py",
