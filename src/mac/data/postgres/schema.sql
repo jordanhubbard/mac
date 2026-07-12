@@ -330,6 +330,9 @@ CREATE TABLE IF NOT EXISTS agents (
     consecutive_lease_expiries_no_telemetry INTEGER NOT NULL DEFAULT 0,
     last_control_stream_published_at TEXT,
     last_control_stream_consumed_at TEXT,
+    -- Tombstone: decommissioned agents keep their row so AgentBus streams,
+    -- events, and delivery history survive with real identities.
+    deleted_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL

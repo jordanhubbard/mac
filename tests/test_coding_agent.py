@@ -345,8 +345,31 @@ def test_codex_custom_route_is_rendered_without_credential_value():
     assert "mac-router" in joined
     assert "wire_api" in joined and "responses" in joined
     assert "MAC_CODEX_TOKEN" in joined
+    assert "env_http_headers" in joined
+    assert "X-MAC-Task-ID" in joined and "MAC_TASK_ID" in joined
+    assert "X-MAC-Agent-ID" in joined and "MAC_AGENT_ID" in joined
+    assert "X-MAC-Lease-ID" in joined and "MAC_LEASE_ID" in joined
     assert "super-secret" not in joined
     assert "exec" in argv
+
+
+def test_codex_non_mac_custom_route_does_not_receive_mac_context_headers():
+    choice = CodingAgentChoice(
+        agent="codex",
+        available=True,
+        binary="/b/codex",
+        auth_source="EXAMPLE_TOKEN",
+        provider="example",
+        protocol="responses",
+        auth_kind="bearer_env",
+        endpoint="https://provider.example/v1",
+    )
+
+    joined = " ".join(coding_agent_argv(choice, "fix bug", env={}))
+
+    assert "model_provider" in joined and "example" in joined
+    assert "env_http_headers" not in joined
+    assert "X-MAC-Task-ID" not in joined
 
 
 def test_cursor_default_argv():

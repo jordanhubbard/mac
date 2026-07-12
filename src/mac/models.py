@@ -732,6 +732,11 @@ class Agent:
     # Control-stream health timestamps for zombie detection.
     last_control_stream_published_at: Optional[str] = None
     last_control_stream_consumed_at: Optional[str] = None
+    # Tombstone: set when the agent is decommissioned. The row is kept so
+    # AgentBus streams, events, and delivery history survive with their real
+    # identities (ephemeral agents' results must outlive the agent); liveness
+    # operations (heartbeat, claims, publishing) refuse tombstoned agents.
+    deleted_at: Optional[str] = None
 
     def to_dict(self) -> JsonDict:
         return asdict(self)

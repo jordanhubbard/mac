@@ -5654,7 +5654,11 @@ def _unsandboxed_agent_argv(
 
 
 def _record_runner_choice(
-    target: str, rationale: List[str], *, task_id: str = ""
+    target: str,
+    rationale: List[str],
+    *,
+    task_id: str = "",
+    route: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """Make the coding-agent-vs-gateway routing decision legible (best-effort).
 
@@ -5666,14 +5670,25 @@ def _record_runner_choice(
         "[executor] coding-agent routing: %s (%s)\n" % (target, "; ".join(rationale) or "no rationale")
     )
     try:
-        emit_telemetry(
-            "runner_selected",
-            task_id=task_id or None,
-            level="info",
-            schema="mac.coding_agent.routing.v1",
-            runner=target,
-            rationale=list(rationale),
-        )
+        detail: Dict[str, Any] = {
+            "task_id": task_id or None,
+            "level": "info",
+            "schema": "mac.coding_agent.routing.v1",
+            "runner": target,
+            "rationale": list(rationale),
+        }
+        if route:
+            detail.update(
+                {
+                    "coding_agent": route.get("agent"),
+                    "provider": route.get("provider"),
+                    "protocol": route.get("protocol"),
+                    "endpoint": route.get("endpoint"),
+                    "requested_model": route.get("model"),
+                    "route_fingerprint": route.get("route_fingerprint"),
+                }
+            )
+        emit_telemetry("runner_selected", **detail)
     except Exception:  # noqa: BLE001 - telemetry must never break execution
         pass
 
@@ -6020,7 +6035,12 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     mcp_path = None
     if confined:
         rationale.append("verified inside the OpenShell sandbox")
-    _record_runner_choice(choice.agent, rationale, task_id=task_id)
+    _record_runner_choice(
+        choice.agent,
+        rationale,
+        task_id=task_id,
+        route=choice.observable(),
+    )
     argv_choice = _coding_agent_choice_for_sandbox(choice) if confined else choice
     argv_env = _coding_agent_env_for_sandbox(argv_choice) if confined else None
     return _ca.coding_agent_argv(

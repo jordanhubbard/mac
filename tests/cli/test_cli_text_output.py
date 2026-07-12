@@ -207,10 +207,27 @@ def test_task_show_wrapper_is_compact():
         "evidence": [1, 2],
         "reviews": [{"verdict": "approved"}],
         "publications": [{"status": "published"}],
+        "llm_usage": {
+            "observed_route_count": 2,
+            "resolved_models": ["azure/anthropic/claude-sonnet-4-6"],
+            "providers": ["nvidia"],
+            "total_tokens": 321,
+        },
     }
     out = cli._render_text(detail)
     assert out.splitlines()[0].startswith("task_x")
     assert "evidence: 2" in out and "reviews: 1" in out  # counts, not the full blob
+    assert "claude-sonnet-4-6 via nvidia" in out
+    assert "2 routes, 321 tokens" in out
+
+
+def test_task_show_wrapper_discloses_missing_model_attribution():
+    detail = {
+        "task": {"id": "task_x", "state": "running", "title": "T"},
+        "llm_usage": {"observed_route_count": 0},
+    }
+
+    assert "llm: no attributed model calls recorded" in cli._render_text(detail)
 
 
 def test_json_flag_strips_position_independently(monkeypatch):

@@ -417,6 +417,28 @@ def _render_text(value: Any) -> str:
                 v = value.get(k, t.get(k))
                 if isinstance(v, list) and v:
                     lines.append("  %s: %d" % (k, len(v)))
+            llm_usage = value.get("llm_usage")
+            if isinstance(llm_usage, dict):
+                route_count = int(llm_usage.get("observed_route_count") or 0)
+                models = [str(item) for item in llm_usage.get("resolved_models") or []]
+                providers = [str(item) for item in llm_usage.get("providers") or []]
+                if route_count:
+                    summary = "%s via %s" % (
+                        ", ".join(models) or "unknown model",
+                        ", ".join(providers) or "unknown provider",
+                    )
+                    total_tokens = int(llm_usage.get("total_tokens") or 0)
+                    lines.append(
+                        "  llm: %s (%d route%s, %d tokens)"
+                        % (
+                            summary,
+                            route_count,
+                            "" if route_count == 1 else "s",
+                            total_tokens,
+                        )
+                    )
+                else:
+                    lines.append("  llm: no attributed model calls recorded")
             return "\n".join(lines)
         if str(value.get("id", "")).startswith("task_") or "state" in value or (
             "status" in value and ("name" in value or "current_task_id" in value)
@@ -5384,7 +5406,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     agent_delete = agent.add_parser(
         "delete",
-        help="hard-delete an agent record (removes mood/nap/events/messages; task history is kept)",
+        help="decommission (tombstone) an agent: strips operational overlays "
+        "(moods/naps/config flags/deploy config) but preserves its AgentBus "
+        "streams, events, deliveries, and task history",
     )
     agent_delete.add_argument("agent_id")
     agent_delete.add_argument("--actor", default="human")

@@ -2036,6 +2036,10 @@ class SQLiteStore:
         self._ensure_column("agents", "running_digest", "running_digest TEXT")
         self._ensure_column("agents", "role_id", "role_id TEXT")
         self._ensure_column("agents", "hermes_instance_id", "hermes_instance_id TEXT")
+        # task_c394685a: tombstone column — decommissioned agents keep their
+        # row so AgentBus streams/events/deliveries survive with real
+        # identities instead of cascading away with the agent.
+        self._ensure_column("agents", "deleted_at", "deleted_at TEXT")
         self._ensure_column(
             "agents", "attestation_key_ciphertext", "attestation_key_ciphertext TEXT"
         )

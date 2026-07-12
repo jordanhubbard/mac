@@ -149,7 +149,9 @@ def test_delivery_from_deleted_ephemeral_origin_still_delivers(cp: ControlPlane)
 
     survived = cp.get_human_message(delivery.id)
     assert survived.status == "pending"
-    assert survived.origin_agent_id is None  # tombstoned origin, message intact
+    # Tombstoned (not hard-deleted): the origin identity is preserved on the
+    # delivery so humans can still see WHO reported, after the agent exited.
+    assert survived.origin_agent_id == ephemeral.id
     claimed = cp.claim_human_messages(gateway.id)
     assert [item.id for item in claimed] == [delivery.id]
     completed = cp.acknowledge_human_message(

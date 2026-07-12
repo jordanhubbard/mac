@@ -135,6 +135,19 @@ def test_get_task_returns_200_with_task_detail_wrapper():
     # TaskDetail shape used by the Fleet IDE renderer
     assert "task" in body, "response must have a 'task' key"
     assert body["task"]["id"] == task_id
+    assert body["llm_usage"] == {
+        "schema": "mac.task_llm_usage.v1",
+        "observed_route_count": 0,
+        "truncated": False,
+        "resolved_models": [],
+        "response_models": [],
+        "requested_models": [],
+        "providers": [],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "routes": [],
+    }
 
 
 def test_get_task_returns_evidence_collection():

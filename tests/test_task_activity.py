@@ -44,6 +44,58 @@ def test_append_task_activity_is_additive_not_evidence():
     assert not data.get("evidence"), "activity append must not create evidence rows"
 
 
+def test_task_detail_includes_attributed_resolved_llm_usage():
+    cp = ControlPlane.in_memory()
+    task = cp.create_task("model-ledger task", required_capabilities=[])
+    cp.record_log(
+        "llm.route",
+        layer="router",
+        source="agent_rocky",
+        subject_type="task",
+        subject_id=task.id,
+        detail={
+            "schema": "mac.llm_route.v1",
+            "agent_id": "agent_rocky",
+            "lease_id": "lease_1",
+            "requested_model": "*",
+            "resolved_model": "azure/anthropic/claude-sonnet-4-6",
+            "response_model": "claude-sonnet-4-6",
+            "provider": "nvidia",
+            "status_code": 200,
+            "outcome": "success",
+            "input_tokens": 100,
+            "output_tokens": 25,
+            "total_tokens": 125,
+        },
+    )
+    cp.record_log(
+        "llm.route",
+        layer="router",
+        source="agent_rocky",
+        subject_type="agent",
+        subject_id="agent_rocky",
+        detail={
+            "resolved_model": "unattributed/model",
+            "provider": "other",
+            "total_tokens": 999,
+        },
+    )
+
+    usage = cp.task_detail(task.id)["llm_usage"]
+
+    assert usage["schema"] == "mac.task_llm_usage.v1"
+    assert usage["observed_route_count"] == 1
+    assert usage["resolved_models"] == [
+        "azure/anthropic/claude-sonnet-4-6"
+    ]
+    assert usage["response_models"] == ["claude-sonnet-4-6"]
+    assert usage["providers"] == ["nvidia"]
+    assert usage["input_tokens"] == 100
+    assert usage["output_tokens"] == 25
+    assert usage["total_tokens"] == 125
+    assert usage["routes"][0]["agent_id"] == "agent_rocky"
+
+
 def test_prose_tail_prefers_agent_prose_over_diff_noise():
     """Worker narrative should read like the agent's recap, not raw diff lines."""
     out = "\n".join([

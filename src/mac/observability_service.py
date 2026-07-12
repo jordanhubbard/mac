@@ -242,6 +242,74 @@ class ObservabilityService:
             for row in self.store.query_all(sql, tuple(params))
         ]
 
+    def task_llm_usage(self, task_id: str, *, limit: int = 1000) -> JsonDict:
+        """Return task-attributed model routing and token usage ledger data.
+
+        ``llm.route`` is the authoritative record because it is written after
+        the router resolves a requested model to a concrete provider/model.
+        Runner selection is useful intent evidence, but cannot prove which
+        upstream actually served a request.
+        """
+        cap = min(max(1, int(limit)), 1000)
+        events = self.list_observability(
+            kind="log",
+            name="llm.route",
+            subject_type="task",
+            subject_id=task_id,
+            limit=cap,
+        )
+
+        def text_values(key: str) -> List[str]:
+            return sorted(
+                {
+                    str(event.detail.get(key) or "").strip()
+                    for event in events
+                    if str(event.detail.get(key) or "").strip()
+                }
+            )
+
+        def token_total(key: str) -> int:
+            return sum(
+                int(value)
+                for event in events
+                for value in [event.detail.get(key)]
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            )
+
+        routes = []
+        for event in events:
+            detail = event.detail
+            routes.append(
+                {
+                    "id": event.id,
+                    "created_at": event.created_at,
+                    "agent_id": detail.get("agent_id"),
+                    "lease_id": detail.get("lease_id"),
+                    "requested_model": detail.get("requested_model"),
+                    "resolved_model": detail.get("resolved_model"),
+                    "response_model": detail.get("response_model"),
+                    "provider": detail.get("provider"),
+                    "status_code": detail.get("status_code"),
+                    "outcome": detail.get("outcome"),
+                    "input_tokens": detail.get("input_tokens"),
+                    "output_tokens": detail.get("output_tokens"),
+                    "total_tokens": detail.get("total_tokens"),
+                }
+            )
+        return {
+            "schema": "mac.task_llm_usage.v1",
+            "observed_route_count": len(events),
+            "truncated": len(events) >= cap,
+            "resolved_models": text_values("resolved_model"),
+            "response_models": text_values("response_model"),
+            "requested_models": text_values("requested_model"),
+            "providers": text_values("provider"),
+            "input_tokens": token_total("input_tokens"),
+            "output_tokens": token_total("output_tokens"),
+            "total_tokens": token_total("total_tokens"),
+            "routes": routes,
+        }
+
     def prune(
         self,
         older_than: Optional[str] = None,

@@ -5191,6 +5191,7 @@ class ControlPlane:
                     resolved_task_id, limit=publication_limit
                 )
             ],
+            "llm_usage": self.observability.task_llm_usage(resolved_task_id),
         }
 
     def authorize_task_break_glass(
@@ -6750,9 +6751,18 @@ class ControlPlane:
     def resolve_agent_representation(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.communication.resolve_representation(*args, **kwargs)
 
+    @staticmethod
+    def _positional_or_kw(args: Any, kwargs: Any, name: str, index: int) -> Any:
+        if name in kwargs:
+            return kwargs[name]
+        return args[index] if len(args) > index else None
+
     def acquire_gateway_identity_lease(
         self, *args: Any, **kwargs: Any
     ) -> GatewayIdentityLease:
+        claimant = self._positional_or_kw(args, kwargs, "agent_id", 1)
+        if claimant:
+            self._require_live_agent(str(claimant))
         return self.communication.acquire_gateway_lease(*args, **kwargs)
 
     def renew_gateway_identity_lease(
@@ -6774,6 +6784,9 @@ class ControlPlane:
     def claim_human_messages(
         self, *args: Any, **kwargs: Any
     ) -> List[HumanMessageDelivery]:
+        claimant = self._positional_or_kw(args, kwargs, "agent_id", 0)
+        if claimant:
+            self._require_live_agent(str(claimant))
         return self.communication.claim_deliveries(*args, **kwargs)
 
     def acknowledge_human_message(
@@ -7594,7 +7607,7 @@ class ControlPlane:
         allow_cooperative_reuse: bool = False,
     ) -> Tuple[Task, Lease]:
         task = self.get_task(task_id)
-        agent = self.get_agent(agent_id)
+        agent = self._require_live_agent(agent_id)
         if (
             task.state in {TaskState.WAITING.value, TaskState.BLOCKED.value}
             and task.dependencies
@@ -9516,8 +9529,12 @@ class ControlPlane:
             raise NotFoundError("agent not found: %s" % agent_id)
         return self._agent_from_row(row)
 
-    def list_agents(self) -> List[Agent]:
-        rows = self.store.query_all("SELECT * FROM agents ORDER BY name, id")
+    def list_agents(self, *, include_deleted: bool = False) -> List[Agent]:
+        sql = "SELECT * FROM agents"
+        if not include_deleted:
+            sql += " WHERE deleted_at IS NULL"
+        sql += " ORDER BY name, id"
+        rows = self.store.query_all(sql)
         return [self._agent_from_row(row) for row in rows]
 
     def update_agent(
@@ -9718,7 +9735,21 @@ class ControlPlane:
         return max(0.0, age)
 
     def delete_agent(self, agent_id: str, *, actor: str = "human") -> None:
+        """Decommission an agent: tombstone, do NOT erase its history.
+
+        task_c394685a (AgentBus audit 2/7): the agents row previously
+        hard-deleted, cascading away the agent's entire AgentBus stream
+        history on both sides — for appear→work→exit ephemeral agents that
+        is precisely backwards, because their proxied results must outlive
+        them. The row now stays with ``deleted_at`` set (so bus streams,
+        agent_events, and delivery history keep their real identities) while
+        operational overlays (moods, naps, config flags, deploy config) are
+        purged and liveness operations refuse the tombstoned agent.
+        Idempotent: deleting a tombstoned agent is a no-op.
+        """
         agent = self.get_agent(agent_id)
+        if agent.deleted_at:
+            return
         if self._agent_has_active_lease(agent_id):
             raise ValidationError("agent cannot be deleted while holding an active lease")
         now = utcnow()
@@ -9741,9 +9772,40 @@ class ControlPlane:
             conn.execute("DELETE FROM mood_overlays WHERE agent_id = ?", (agent_id,))
             conn.execute("DELETE FROM nap_schedules WHERE agent_id = ?", (agent_id,))
             conn.execute("DELETE FROM nap_runs WHERE agent_id = ?", (agent_id,))
-            conn.execute("DELETE FROM agent_events WHERE agent_id = ?", (agent_id,))
-            conn.execute("DELETE FROM messages WHERE sender_agent_id = ? OR recipient_agent_id = ?", (agent_id, agent_id))
-            conn.execute("DELETE FROM agents WHERE id = ?", (agent.id,))
+            conn.execute("DELETE FROM agent_config_flags WHERE agent_id = ?", (agent_id,))
+            conn.execute("DELETE FROM agent_deploy_configs WHERE agent_id = ?", (agent_id,))
+            conn.execute(
+                """
+                UPDATE agents
+                SET deleted_at = ?, status = ?, current_task_id = NULL,
+                    dispatch_hold = 1, dispatch_hold_reason = ?,
+                    dispatch_hold_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    now,
+                    AgentStatus.OFFLINE.value,
+                    "decommissioned by %s" % actor,
+                    now,
+                    now,
+                    agent.id,
+                ),
+            )
+
+    def _require_live_agent(self, agent_id: str) -> Agent:
+        """Existence check that also refuses tombstoned agents.
+
+        Reads (history, effective config, stream hydration) stay permissive
+        via get_agent; anything that implies the agent is ALIVE — heartbeats,
+        task claims, gateway leases, publishing new bus streams — goes
+        through here instead.
+        """
+        agent = self.get_agent(agent_id)
+        if agent.deleted_at:
+            raise ValidationError(
+                "agent %s was decommissioned at %s" % (agent_id, agent.deleted_at)
+            )
+        return agent
 
     def heartbeat_agent(
         self,
@@ -9755,7 +9817,7 @@ class ControlPlane:
         running_digest_signature: Optional[str] = None,
         actor: Optional[str] = None,
     ) -> Agent:
-        agent_before = self.get_agent(agent_id)
+        agent_before = self._require_live_agent(agent_id)
         now = utcnow()
         updates = ["last_seen_at = ?", "updated_at = ?"]
         params: List[Any] = [now, now]
@@ -10960,6 +11022,7 @@ class ControlPlane:
         capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
     ) -> Optional[JsonDict]:
+        self._require_live_agent(agent_id)
         return self.dispatch.claim_next_for_agent(
             agent_id,
             lease_seconds=lease_seconds,
@@ -11357,6 +11420,11 @@ class ControlPlane:
     # New code should call ``cp.agentbus.<method>`` directly.
 
     def open_agentbus_stream(self, *args: Any, **kwargs: Any) -> AgentBusStream:
+        # New conversations require a live sender; reading history from or
+        # about tombstoned agents stays permitted (task_c394685a).
+        sender = self._positional_or_kw(args, kwargs, "sender_agent_id", 0)
+        if sender:
+            self._require_live_agent(str(sender))
         return self.agentbus.open_stream(*args, **kwargs)
 
     def append_agentbus_chunk(self, *args: Any, **kwargs: Any) -> AgentBusChunk:
@@ -11378,6 +11446,9 @@ class ControlPlane:
         return self.agentbus.read_chunks(*args, **kwargs)
 
     def publish_agentbus_content(self, *args: Any, **kwargs: Any) -> JsonDict:
+        sender = self._positional_or_kw(args, kwargs, "sender_agent_id", 0)
+        if sender:
+            self._require_live_agent(str(sender))
         return self.agentbus.publish(*args, **kwargs)
 
     def publish_agentbus_repo_update(
@@ -13784,6 +13855,7 @@ class ControlPlane:
             consecutive_lease_expiries_no_telemetry,
             last_control_stream_published_at,
             last_control_stream_consumed_at,
+            row["deleted_at"] if "deleted_at" in keys else None,
         )
 
     def _project_item_from_row(self, row: Any) -> ProjectItem:

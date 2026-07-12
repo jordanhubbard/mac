@@ -1557,7 +1557,10 @@ edges:
             "reason": "route coverage",
         },
         ("PUT", "/v1/agents/{agent_id}/deploy-config"): {
-            "document": {"version": "1.0", "deploy_type": "route-coverage"},
+            "document": {
+                "gateway": {"host": "route-host", "image": "localhost/mac-openclaw:route"},
+                "models": {"mirror_summarizer": "test/model"},
+            },
             "schema_name": "mac.agent_deploy_config.v1",
         },
         ("POST", "/v1/agents/{agent_id}/memory"): {

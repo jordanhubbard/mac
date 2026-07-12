@@ -2954,6 +2954,50 @@ def test_agent_argv_attributes_runner_choice_to_review_task(tmp_path, monkeypatc
     ]
 
 
+def test_agent_argv_records_secret_free_route_intent_for_available_runner(
+    tmp_path, monkeypatch
+):
+    from mac import coding_agent as ca
+
+    choice = ca.CodingAgentChoice(
+        agent="codex",
+        available=True,
+        binary="/b/codex",
+        auth_source="OPENAI_API_KEY",
+        provider="mac-router",
+        protocol="responses",
+        auth_kind="bearer_env",
+        endpoint="http://hub.example/v1",
+        model="*",
+        rationale=["Codex is configured"],
+    )
+    monkeypatch.setattr(ca, "resolve_coding_agent", lambda *a, **k: choice)
+    monkeypatch.setattr(te, "_coding_agent_sandbox_ok", lambda c: True)
+    emitted = []
+    monkeypatch.setattr(
+        te,
+        "emit_telemetry",
+        lambda event, **detail: emitted.append((event, detail)) or True,
+    )
+
+    te._agent_argv(
+        "do it",
+        tmp_path,
+        confined=True,
+        task={"id": "task_model_evidence"},
+    )
+
+    event, detail = emitted[-1]
+    assert event == "runner_selected"
+    assert detail["task_id"] == "task_model_evidence"
+    assert detail["coding_agent"] == "codex"
+    assert detail["provider"] == "mac-router"
+    assert detail["protocol"] == "responses"
+    assert detail["requested_model"] == "*"
+    assert detail["route_fingerprint"].startswith("sha256:")
+    assert "OPENAI_API_KEY" not in repr(detail)
+
+
 def test_agent_argv_sandboxed_repo_task_cannot_opt_into_fallback_when_not_verified(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 
