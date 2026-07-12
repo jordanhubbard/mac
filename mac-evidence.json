@@ -1,12 +1,12 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_5dd27bf8d6ed4858a93dd01be292fad2",
+  "task_id": "task_d7ab7de9fc234e4ab0ac8cf8f669a9b8",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Configured git remote (origin) with HTTPS token URL, fetched origin/main, renamed local branch from master to task branch name, reset to origin/main (which already contains the OpenClaw revision bump 9->10 from task_0cab5fd4e0134b4a92c2d6635ee30a03). Verified OPENCLAW_IMAGE_REVISION=10 in deploy/openclaw/install-openclaw-gateway.sh. All 5729 contract tests pass.",
+  "summary": "Environment prerequisite repair for parent task task_85d95fba52894b018a76c87af9b02ad5. Root-cause diagnosis: the parent task failed with git worktree creation errors (unable to write docs/forensics-*.md and couldn't write .lock files in .git/refs/heads/) on the host running agent_jordanh-gke. These are filesystem permission/stale-lock issues on the host, not code defects. Repair action: reset task worktree to origin/main (a201e21), ran bootstrap, verified all 5708 contract tests pass (plus 21 skipped) confirming a clean code-level environment. The parent task investigate work (skill-area dream finding assessment) can now proceed without code-level blockers.",
   "repo": {
-    "head_sha": "5f5cb52b8e504f7d812bfe4325450b11b11d583e",
-    "branch": "mac/agent_jordanh-worker1/task_5dd27bf8d6ed4858a93dd01be292fad2-lease_c5f8169390da4aa48f",
+    "head_sha": "a201e21caa25fde9001eaf0713b390d8d9ee2dbd",
+    "branch": "mac/agent_rocky/task_d7ab7de9fc234e4ab0ac8cf8f669a9b8-lease_b73997a0a14846e79d",
     "pushed": false,
     "dirty": false,
     "files_changed": []
@@ -14,21 +14,29 @@
   "tests": [
     {
       "command": "scripts/run-contract-tests.sh",
-      "passed": 5729,
+      "passed": 5708,
       "failed": 0,
+      "skipped": 21,
       "status": "pass"
     }
   ],
   "codegraph": {
     "status": "skipped",
-    "note": "No source files were changed in this task. The task was a git rebase/reset operation; no code modifications were made."
+    "note": "No source files were changed in this task. The task is a pure environment repair/reset operation with no code modifications."
   },
   "changes": [],
   "assumptions": [
-    "The task worktree was initialized with a squashed baseline commit (ce51bfe) with no common ancestor with origin/main. A git reset --hard origin/main was used instead of rebase since there were no task-specific commits to rebase.",
-    "The OpenClaw revision bump (9->10) was already present in origin/main (commit 64686ab) from task_0cab5fd4e0134b4a92c2d6635ee30a03, so no re-application was needed.",
-    "origin/main is at 5f5cb52 which is ahead of the baseline SHA 55805cd4c85e7b04da4e6d0a8115e13324c5b045 referenced in the task description.",
-    "MAC_TASK_REPO_REMOTE env var contained a literal <redacted> placeholder; the actual GitHub token was obtained by setting remote URL using MAC_WORKER_TOKEN for ls-remote verification.",
+    "The parent task (task_85d95fba52894b018a76c87af9b02ad5) failures were environment-level: git worktree creation failed due to filesystem write permission errors (unable to write docs/forensics-*.md and stale .lock files in .git/refs/) on the agent_jordanh-gke host, not a code defect.",
+    "Task worktree initialized as a standalone sandbox git repo; reset to origin/main (a201e21) using HTTPS token auth since the MAC_TASK_REPO_REMOTE env var had a literal <redacted> placeholder.",
+    "The parent task's description references skill-area dream investigation; all relevant tests (test_dream_cycle_classifier.py, test_dream_repair_tasks.py, test_dream_scanner.py, test_fleet_skills.py) pass cleanly — 55/55 targeted tests pass.",
     "The deterministic finalizer will push the branch and complete publication."
-  ]
+  ],
+  "investigation": {
+    "parent_task_id": "task_85d95fba52894b018a76c87af9b02ad5",
+    "failure_class": "environment",
+    "root_cause": "Git worktree creation failed on host filesystem: (1) attempt 1: unable to write file docs/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md and docs/f[orensics-task-a32a...] during sparse-checkout / worktree add; (2) attempts 2-3: fatal: cannot update ref '...task_85d95fba52894b018a76c87af9b02ad5-lease_041b81a1c677426dab.lock' — stale git lock file or filesystem permission denied on /home/horde/.mac/src/mac/.git/refs/heads/. Both failures are host-environment issues unrelated to Python code or test correctness.",
+    "code_defects_found": false,
+    "skill_area_test_status": "all 55 targeted tests pass",
+    "verdict": "not-actionable-code-defect: the failure is an environment/filesystem issue on the executing host, not a code regression in skill classification or dream cycle logic"
+  }
 }
