@@ -717,7 +717,8 @@
       "deploy/deploy-mac-fleet.sh",
       "deploy/k8s/mac-api/deployment.yaml",
       "src/mac/api.py",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -1040,7 +1041,8 @@
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/ledger_backup.py",
-      "src/mac/store.py"
+      "src/mac/store.py",
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -1161,7 +1163,8 @@
       "src/mac/deploy_env.py",
       "src/mac/ledger_backup.py",
       "src/mac/router_service.py",
-      "src/mac/store.py"
+      "src/mac/store.py",
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -1180,7 +1183,8 @@
       "src/mac/dispatch.py",
       "src/mac/ledger_backup.py",
       "src/mac/router_service.py",
-      "src/mac/store.py"
+      "src/mac/store.py",
+      "src/mac/worker.py"
     ],
     "type": "str"
   },

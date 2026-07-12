@@ -3113,6 +3113,16 @@ class MacWorker:
         env["PYTHONPATH"] = os.pathsep.join(
             [str(repo / "src")] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
         )
+        # A worker normally runs as a control-plane client.  Importing
+        # ``mac.api`` constructs its module-level application, and client role
+        # correctly refuses to own a database.  The source-adoption probe is
+        # not a live control-plane start: give it an isolated in-memory hub so
+        # it can validate the API import without touching the worker's live
+        # database or failing solely because of its production role.
+        env["MAC_CONTROL_PLANE_ROLE"] = "hub"
+        env["MAC_DB"] = ":memory:"
+        env.pop("MAC_DATABASE_URL", None)
+        env["MAC_BIND_HOST"] = "127.0.0.1"
         try:
             completed = subprocess.run(
                 [python, "-c", "import mac.services, mac.worker, mac.api"],

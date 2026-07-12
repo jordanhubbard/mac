@@ -183,3 +183,29 @@ def test_self_test_runs_real_python_and_can_be_disabled(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_REPO_UPDATE_SELF_TEST_PYTHON", "/usr/bin/false")
     verdict = instance._repo_update_self_test(tmp_path)
     assert verdict["ok"] is False
+
+
+def test_self_test_uses_isolated_hub_role_instead_of_live_client_state(
+    tmp_path, monkeypatch
+):
+    instance = _instance(tmp_path, _Client({}))
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["env"] = kwargs["env"]
+        return _cp()
+
+    monkeypatch.setenv("MAC_CONTROL_PLANE_ROLE", "client")
+    monkeypatch.setenv("MAC_DATABASE_URL", "postgresql://live.example/mac")
+    monkeypatch.setenv("MAC_BIND_HOST", "0.0.0.0")
+    monkeypatch.setattr(worker.subprocess, "run", fake_run)
+
+    verdict = instance._repo_update_self_test(tmp_path)
+
+    assert verdict == {"ok": True}
+    assert captured["env"]["MAC_CONTROL_PLANE_ROLE"] == "hub"
+    assert captured["env"]["MAC_DB"] == ":memory:"
+    assert "MAC_DATABASE_URL" not in captured["env"]
+    assert captured["env"]["MAC_BIND_HOST"] == "127.0.0.1"
+    assert captured["argv"][-1] == "import mac.services, mac.worker, mac.api"
