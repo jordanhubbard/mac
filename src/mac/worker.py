@@ -5916,7 +5916,7 @@ def _startup_import_self_check(repo: Path) -> str:
     """Run 'import mac.services, mac.worker, mac.api' in a subprocess; non-fatal."""
     try:
         pythonpath = str(repo / "src")
-        env = {**__import__("os").environ, "PYTHONPATH": pythonpath}
+        env = {**os.environ, "PYTHONPATH": pythonpath}
         result = subprocess.run(
             [sys.executable, "-c", "import mac.services, mac.worker, mac.api"],
             env=env,
