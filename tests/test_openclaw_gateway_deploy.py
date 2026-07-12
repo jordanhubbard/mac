@@ -18,6 +18,29 @@ FLEET_CONFIG = ROOT / "deploy" / "fleet" / "config.yaml"
 SYSTEMD_UNIT = ROOT / "deploy" / "systemd" / "mac-openclaw-gateway.service"
 
 
+def test_mac_continuity_plugin_mirrors_fleet_conversation_to_home_channel() -> None:
+    """The conversation-mirroring feature: gated by the mirror_fleet_conversation
+    flag, summarized via the gateway model, delivered through the sanctioned
+    OpenClaw human-message outbox to the home channel."""
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    # Gated by the config flag (natural-language toggle wires through the LLM
+    # + mac_config_flag_set, so the flag name must be exactly this).
+    assert '"mirror_fleet_conversation"' in plugin
+    assert "mirrorFlagEnabled" in plugin
+    # Summarized by the gateway's own model (the "translator").
+    assert "/v1/chat/completions" in plugin
+    # Delivered via the OpenClaw human-message outbox to the home channel — never
+    # a direct provider SDK (that would bypass the gateway identity/lease).
+    assert "/communication/deliveries" in plugin
+    assert "MAC_OPENCLAW_HOME_CHANNEL" in plugin
+    # Mirroring is hooked into the peer bridge after the reply is published.
+    assert "mirrorExchangeToHomeChannel" in plugin
+    # The set-flag tool teaches the LLM the on/off phrases.
+    assert "let me know what you guys are talking about" in plugin
+
+
 def _seed_hermes_identity(home: Path, name: str = "Test Agent") -> None:
     hermes = home / ".hermes"
     memories = hermes / "memories"

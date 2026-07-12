@@ -61,6 +61,23 @@ CONFIG_FLAG_REGISTRY: Dict[str, Dict[str, Any]] = {
             "iteration counts) rather than final results only."
         ),
     },
+    "mirror_fleet_conversation": {
+        "type": "bool",
+        "default": False,
+        "description": (
+            "Post human-friendly summaries of this agent's authenticated "
+            "agent-to-agent (fleet peer) conversations into the home channel, "
+            "so people can follow along with what the agents discuss amongst "
+            "themselves. Each peer exchange is summarized by the gateway's own "
+            "model as a neutral third-person relay using the agents' "
+            "human-facing names. Turn this ON when a user says something like "
+            "'let me know what you guys are talking about' / 'I want to see "
+            "you agents talking', and OFF on 'I no longer want to know what "
+            "you guys are talking about' / 'stop showing me your chatter'. "
+            "Set it agent-global (channel='') so it applies wherever this "
+            "agent converses; the home channel is always the destination."
+        ),
+    },
 }
 
 _TRUTHY = {"true", "1", "yes", "on"}

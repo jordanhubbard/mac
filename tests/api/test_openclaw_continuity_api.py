@@ -102,6 +102,40 @@ def test_bound_openclaw_agent_can_set_and_clear_only_its_own_mood() -> None:
     assert clear_own.json()["cleared_by"] == agent.id
 
 
+def test_mirror_fleet_conversation_flag_is_registered_and_agent_settable() -> None:
+    """The conversation-mirroring toggle the agent flips from natural language
+    ('let me know what you guys are talking about') must exist in the allowlist
+    and be a bool the bound agent can set on itself."""
+    from mac.config_flags import CONFIG_FLAG_REGISTRY, flag_default, validate_flag_value
+
+    spec = CONFIG_FLAG_REGISTRY["mirror_fleet_conversation"]
+    assert spec["type"] == "bool"
+    assert flag_default("mirror_fleet_conversation") is False
+    assert validate_flag_value("mirror_fleet_conversation", "on") is True
+    assert validate_flag_value("mirror_fleet_conversation", "off") is False
+
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("mirror-host")
+    agent = cp.register_agent(machine.id, "mirror-agent")
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={"agent-token": {"scopes": ["agent"], "agent_id": agent.id}},
+    )
+    headers = {"Authorization": "Bearer agent-token"}
+    with TestClient(app) as client:
+        # Agent-global scope (channel='') — the home channel is the destination.
+        set_on = client.put(
+            f"/v1/agents/{agent.id}/config-flags/mirror_fleet_conversation",
+            headers=headers,
+            json={"value": "on", "reason": "let me know what you guys are talking about"},
+        )
+        listed = client.get(f"/v1/agents/{agent.id}/config-flags", headers=headers)
+    assert set_on.status_code == 200
+    assert set_on.json()["value"] is True
+    effective = {f["flag"]: f["value"] for f in listed.json()["flags"]}
+    assert effective["mirror_fleet_conversation"] is True
+
+
 def test_bound_openclaw_agent_can_crud_only_its_own_config_flags() -> None:
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("flags-host")

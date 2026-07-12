@@ -41,6 +41,20 @@ const PEER_REPLY_TOPIC = "peer.reply.v1";
 const PEER_MESSAGE_SCHEMA = "mac.agent.peer_message.v1";
 const PEER_REPLY_SCHEMA = "mac.agent.peer_reply.v1";
 
+// Conversation mirroring: when the mirror_fleet_conversation config flag is on,
+// each authenticated agent-to-agent exchange is summarized by the gateway's own
+// model as a neutral third-person relay and posted to the home channel so humans
+// can follow what the agents discuss amongst themselves.
+const MIRROR_FLAG = "mirror_fleet_conversation";
+const MIRROR_SCHEMA = "mac.fleet_conversation_mirror.v1";
+const MIRROR_SYSTEM_PROMPT = [
+  "You are a neutral relay that lets a human follow a fleet of AI agents talking to each other.",
+  "Given ONE agent-to-agent exchange, write a single concise, friendly sentence in the third",
+  "person describing what the two agents discussed, using their human-facing names.",
+  "Represent it as two agents talking (e.g. \"Rocky asked Natasha to ... and she agreed to ...\").",
+  "No preamble, no quotes, no commentary, no markdown. Never invent facts beyond the exchange.",
+].join(" ");
+
 function peerStatePath() {
   const root = String(process.env.OPENCLAW_STATE_DIR || "/sandbox/state");
   return join(root, "mac-continuity", "peer-bridge.json");
@@ -283,6 +297,104 @@ function embeddedReplyText(result) {
     .trim();
 }
 
+async function mirrorFlagEnabled(api) {
+  try {
+    const result = await selfApi(api, "GET", "/config-flags", {query: {channel: ""}});
+    const flags = Array.isArray(result?.flags) ? result.flags : [];
+    const entry = flags.find((item) => item && item.flag === MIRROR_FLAG);
+    const value = entry ? entry.value : false;
+    return value === true || value === "true" || value === 1;
+  } catch {
+    return false;
+  }
+}
+
+async function agentDisplayName(api, agentId, cache) {
+  if (!agentId) return "an agent";
+  if (cache.has(agentId)) return cache.get(agentId);
+  let name = String(agentId);
+  try {
+    for (const agent of await fleetAgents(api)) {
+      const id = String(agent?.id || "");
+      if (!id) continue;
+      cache.set(id, String(agent?.name || agent?.representation?.identity || id));
+    }
+    name = cache.get(agentId) || String(agentId);
+  } catch {
+    // best-effort: fall back to the raw id.
+  }
+  cache.set(agentId, name);
+  return name;
+}
+
+async function summarizeExchange(api, senderName, recipientName, message, reply) {
+  const cfg = settings(api);
+  if (!cfg.controlUrl || !cfg.token) return "";
+  const model =
+    String(process.env.MAC_OPENCLAW_MIRROR_MODEL || process.env.MAC_OPENCLAW_MODEL || "").trim() ||
+    "azure/anthropic/claude-sonnet-4-6";
+  const user = [
+    `${senderName} said to ${recipientName}:`,
+    String(message || "").slice(0, 4000),
+    "",
+    `${recipientName} replied:`,
+    String(reply || "").slice(0, 4000),
+  ].join("\n");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(`${cfg.controlUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json"},
+      body: JSON.stringify({
+        model,
+        max_tokens: 200,
+        temperature: 0.3,
+        messages: [
+          {role: "system", content: MIRROR_SYSTEM_PROMPT},
+          {role: "user", content: user},
+        ],
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return "";
+    const data = await response.json();
+    return String(data?.choices?.[0]?.message?.content || "").trim();
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Best-effort: summarize one peer exchange and post it to the home channel via
+// the sanctioned OpenClaw human-message outbox. Never throws into the peer bridge.
+async function mirrorExchangeToHomeChannel(api, stream, message, reply, nameCache) {
+  const cfg = settings(api);
+  const homeChannel = String(process.env.MAC_OPENCLAW_HOME_CHANNEL || "").trim();
+  if (!homeChannel || !cfg.agentId) return;
+  if (!(await mirrorFlagEnabled(api))) return;
+  const senderName = await agentDisplayName(api, stream.sender_agent_id, nameCache);
+  const recipientName = await agentDisplayName(api, cfg.agentId, nameCache);
+  const summary = await summarizeExchange(api, senderName, recipientName, message, reply);
+  if (!summary) return;
+  const accountId = String(process.env.MAC_OPENCLAW_SLACK_ACCOUNT_ID || "").trim();
+  await hubApi(api, "POST", "/communication/deliveries", {
+    body: {
+      origin_agent_id: cfg.agentId,
+      target: homeChannel,
+      account_id: accountId || undefined,
+      body: `🗣️ ${summary}`,
+      idempotency_key: `mirror:${stream.id}`,
+      metadata: {
+        schema: MIRROR_SCHEMA,
+        stream_id: stream.id,
+        sender_agent_id: stream.sender_agent_id,
+      },
+    },
+  });
+}
+
 async function runPeerTurn(api, stream, payload) {
   const runtime = api.runtime?.agent;
   if (!runtime?.runEmbeddedAgent) {
@@ -329,6 +441,7 @@ async function pollPeerMessages(api, state) {
   const cfg = settings(api);
   if (!cfg.agentId) return;
   const processed = new Set(state.processed || []);
+  const nameCache = new Map();
   const streams = await peerStreams(api);
   const incoming = streams
     .filter((stream) =>
@@ -353,6 +466,12 @@ async function pollPeerMessages(api, state) {
     try {
       const reply = await runPeerTurn(api, stream, payload);
       await publishPeerReply(api, stream, correlationId, reply);
+      await mirrorExchangeToHomeChannel(api, stream, payload.message, reply, nameCache).catch(
+        (error) =>
+          api.logger.warn?.(
+            `mac-continuity: conversation mirror failed for ${stream.id}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+      );
       state.processed.push(stream.id);
       delete state.attempts[stream.id];
       savePeerState(state);
@@ -652,7 +771,7 @@ export default {
 
     api.registerTool({
       name: "mac_config_flag_set",
-      description: "Set one of this agent's allowlisted configuration flags when a user asks in conversation (e.g. 'show us your reasoning in this channel' -> flag show_reasoning, value true, channel slack:<this channel id>). Scope to the requesting channel unless the user explicitly asks for everywhere. Only display/visibility flags exist; there is no flag for safety or review behavior.",
+      description: "Set one of this agent's allowlisted configuration flags when a user asks in conversation (e.g. 'show us your reasoning in this channel' -> flag show_reasoning, value true, channel slack:<this channel id>). Scope to the requesting channel unless the user explicitly asks for everywhere. IMPORTANT: when a user on the home channel says something like 'let me know what you guys are talking about', 'I want to see you agents talking to each other', or 'show me your chatter' -> set flag mirror_fleet_conversation, value true, with channel '' (agent-global, since the home channel is always the destination); on 'I no longer want to know what you guys are talking about' / 'stop showing me your chatter' -> set mirror_fleet_conversation false. Only display/visibility flags exist; there is no flag for safety or review behavior.",
       parameters: inputSchema({
         flag: {type: "string", minLength: 1},
         value: {},
