@@ -17,6 +17,11 @@ class FakeClient:
         self.url = url
         self.token = token
         self.posts = []
+        self.requests = []
+
+    def request(self, method, path, body):
+        self.requests.append((method, path, body))
+        return {"ok": True}
 
     def post(self, path, body):
         self.posts.append((path, body))

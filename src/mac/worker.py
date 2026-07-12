@@ -5834,6 +5834,23 @@ def _default_self_update_repo() -> Path:
         return Path(configured).expanduser()
     return Path(__file__).resolve().parents[2]
 
+def _startup_import_self_check(repo: Path) -> str:
+    """Run 'import mac.services, mac.worker, mac.api' in a subprocess; non-fatal."""
+    try:
+        pythonpath = str(repo / "src")
+        env = {**__import__("os").environ, "PYTHONPATH": pythonpath}
+        result = subprocess.run(
+            [sys.executable, "-c", "import mac.services, mac.worker, mac.api"],
+            env=env,
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return "ok"
+        return "failed: " + result.stderr.decode("utf-8", errors="replace").strip()[:200]
+    except Exception as exc:
+        return "error: " + str(exc)
+
 
 def _repository_task_origin(task: JsonDict) -> Optional[JsonDict]:
     metadata = task.get("metadata") if isinstance(task, dict) else None
@@ -7702,6 +7719,45 @@ def main(argv: Optional[List[str]] = None) -> int:
             from mac.openshell_runtime import apply_openshell_requirement
 
             apply_openshell_requirement(registered.get("resources"), os.environ)
+        # --- startup behaviors (all default-on, env-gated) ---
+        startup_info: JsonDict = {"agent_id": agent_id}
+        if args.register and _env_bool("MAC_STARTUP_CLEAR_HOLD", True):
+            try:
+                client.request("DELETE", "/agents/%s/dispatch-hold" % quote(agent_id, safe=""), None)
+                startup_info["hold_cleared"] = True
+            except Exception:
+                startup_info["hold_cleared"] = False
+        else:
+            startup_info["hold_cleared"] = False
+        if args.register and _env_bool("MAC_STARTUP_EMIT_CHECKOUT_SHA", True):
+            try:
+                self_update_repo = (
+                    Path(args.self_update_repo).expanduser()
+                    if args.self_update_repo
+                    else _default_self_update_repo()
+                )
+                sha = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=str(self_update_repo),
+                    stderr=subprocess.DEVNULL,
+                ).decode("utf-8").strip()
+                startup_info["checkout_sha"] = sha
+            except Exception:
+                startup_info["checkout_sha"] = None
+        else:
+            startup_info["checkout_sha"] = None
+        if args.register and _env_bool("MAC_STARTUP_IMPORT_SELF_CHECK", True):
+            try:
+                self_update_repo_for_check = (
+                    Path(args.self_update_repo).expanduser()
+                    if args.self_update_repo
+                    else _default_self_update_repo()
+                )
+                startup_info["import_self_check"] = _startup_import_self_check(self_update_repo_for_check)
+            except Exception as exc:
+                startup_info["import_self_check"] = "error: " + str(exc)
+        else:
+            startup_info["import_self_check"] = None
         if not agent_id:
             raise MacApiError("--agent-id or --register is required")
         if args.install_pip or args.install_npm:
@@ -7749,7 +7805,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             print(
                 json.dumps(
-                    {"status": "heartbeat", "agent": heartbeat, "registered": registered},
+                    {**startup_info, "status": "heartbeat", "agent": heartbeat, "registered": registered},
                     indent=2,
                     sort_keys=True,
                 )
@@ -7778,7 +7834,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 else None,
                 attestation_key=attestation_key,
             )
-            print(json.dumps({"status": "dry_run", "assignment": worker.dry_run_claim()}, indent=2, sort_keys=True))
+            print(json.dumps({**startup_info, "status": "dry_run", "assignment": worker.dry_run_claim()}, indent=2, sort_keys=True))
             return 0
         if not executor_argv:
             raise MacApiError("--executor is required unless --heartbeat-only is set")
@@ -7801,12 +7857,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         if args.loop:
             results = worker.run_forever(max_iterations=args.max_iterations)
-            print(json.dumps([r.to_dict() for r in results], indent=2, sort_keys=True))
+            print(json.dumps([{**startup_info, **r.to_dict()} for r in results], indent=2, sort_keys=True))
             if any(result.status == "self_update_restart" for result in results):
                 return 75
         else:
             result = worker.run_once()
-            print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+            print(json.dumps({**startup_info, **result.to_dict()}, indent=2, sort_keys=True))
             if result.status == "self_update_restart":
                 return 75
     except MacApiError as exc:

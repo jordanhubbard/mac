@@ -7219,6 +7219,39 @@
   },
   {
     "default": null,
+    "description": "Core setting: startup clear hold.",
+    "family": "core",
+    "name": "MAC_STARTUP_CLEAR_HOLD",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: startup emit checkout sha.",
+    "family": "core",
+    "name": "MAC_STARTUP_EMIT_CHECKOUT_SHA",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: startup import self check.",
+    "family": "core",
+    "name": "MAC_STARTUP_IMPORT_SELF_CHECK",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: state to a2a.",
     "family": "core",
     "name": "MAC_STATE_TO_A2A",

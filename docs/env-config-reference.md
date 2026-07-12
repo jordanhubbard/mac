@@ -604,6 +604,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SKIP_SLACK_VERIFY` | str | consumer-defined | core | Core setting: skip slack verify. |
 | `MAC_SKIP_TELEGRAM_VERIFY` | str | consumer-defined | core | Core setting: skip telegram verify. |
 | `MAC_SRC` | str | consumer-defined | core | Core setting: src. |
+| `MAC_STARTUP_CLEAR_HOLD` | str | consumer-defined | core | Core setting: startup clear hold. |
+| `MAC_STARTUP_EMIT_CHECKOUT_SHA` | str | consumer-defined | core | Core setting: startup emit checkout sha. |
+| `MAC_STARTUP_IMPORT_SELF_CHECK` | str | consumer-defined | core | Core setting: startup import self check. |
 | `MAC_STATE_TO_A2A` | str | consumer-defined | core | Core setting: state to a2a. |
 | `MAC_SUPERVISORD_CONF_NAME` | str | consumer-defined | core | Core setting: supervisord conf name. |
 | `MAC_SUPERVISORD_PROG` | str | consumer-defined | core | Core setting: supervisord prog. |
