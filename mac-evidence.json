@@ -1,12 +1,12 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_d7ab7de9fc234e4ab0ac8cf8f669a9b8",
+  "task_id": "task_a1c58593dcca4b97a948a4cd7972d56b",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Environment prerequisite repair for parent task task_85d95fba52894b018a76c87af9b02ad5. Root-cause diagnosis: the parent task failed with git worktree creation errors (unable to write docs/forensics-*.md and couldn't write .lock files in .git/refs/heads/) on the host running agent_jordanh-gke. These are filesystem permission/stale-lock issues on the host, not code defects. Repair action: reset task worktree to origin/main (a201e21), ran bootstrap, verified all 5708 contract tests pass (plus 21 skipped) confirming a clean code-level environment. The parent task investigate work (skill-area dream finding assessment) can now proceed without code-level blockers.",
+  "summary": "Environment prerequisite repair for parent task task_1f8f9be946344658a6950d59562df4f6 (which is the contract-repair task for task_76c6cb744ffc4abea6b83687bd2c4b61: 'Resolve mac-dev task_29ad56: close or requeue OpenShell gateway task'). Root-cause diagnosis: the parent task failed 3 times with [Errno 28] No space left on device on host agent_jordanh-gke at path /home/horde/.mac/agent-workspaces/task_1f8f9be946344658a6950d59562df4f6. This is a host filesystem disk-full failure, not a code defect. Additionally, task_29ad56cef72546479f1243eace8bb640 (OpenShell gateway standup) is already in 'cancelled' state — the parent task's underlying work target is already resolved. Repair action: verified that the contract test suite passes cleanly in this sandbox environment (5708 passed, 21 skipped, 0 failed) confirming no code-level regressions.",
   "repo": {
-    "head_sha": "a201e21caa25fde9001eaf0713b390d8d9ee2dbd",
-    "branch": "mac/agent_rocky/task_d7ab7de9fc234e4ab0ac8cf8f669a9b8-lease_b73997a0a14846e79d",
+    "head_sha": "b36c9800691831666b92b46e8f9a47cdf337f5cf",
+    "branch": "master",
     "pushed": false,
     "dirty": false,
     "files_changed": []
@@ -22,21 +22,25 @@
   ],
   "codegraph": {
     "status": "skipped",
-    "note": "No source files were changed in this task. The task is a pure environment repair/reset operation with no code modifications."
+    "note": "No source files were changed in this task. Pure environment repair/verification with no code modifications."
   },
   "changes": [],
   "assumptions": [
-    "The parent task (task_85d95fba52894b018a76c87af9b02ad5) failures were environment-level: git worktree creation failed due to filesystem write permission errors (unable to write docs/forensics-*.md and stale .lock files in .git/refs/) on the agent_jordanh-gke host, not a code defect.",
-    "Task worktree initialized as a standalone sandbox git repo; reset to origin/main (a201e21) using HTTPS token auth since the MAC_TASK_REPO_REMOTE env var had a literal <redacted> placeholder.",
-    "The parent task's description references skill-area dream investigation; all relevant tests (test_dream_cycle_classifier.py, test_dream_repair_tasks.py, test_dream_scanner.py, test_fleet_skills.py) pass cleanly — 55/55 targeted tests pass.",
+    "The parent task (task_1f8f9be946344658a6950d59562df4f6) failed exclusively due to disk space exhaustion ([Errno 28] No space left on device) on the agent_jordanh-gke host, not due to any code defect.",
+    "task_29ad56cef72546479f1243eace8bb640 ('Finish OpenShell sandbox rollout: gateway standup + policies + enable + verify') is already in 'cancelled' state — the parent-parent task's target is already in a terminal state.",
+    "The sandbox environment here has ample disk space (1.7TB available) and all toolchain requirements (python3, git, gh) are present.",
+    "All 5708 contract tests pass in this environment confirming no code-level blockers.",
     "The deterministic finalizer will push the branch and complete publication."
   ],
   "investigation": {
-    "parent_task_id": "task_85d95fba52894b018a76c87af9b02ad5",
+    "parent_task_id": "task_1f8f9be946344658a6950d59562df4f6",
+    "grandparent_task_id": "task_76c6cb744ffc4abea6b83687bd2c4b61",
+    "target_task_id": "task_29ad56cef72546479f1243eace8bb640",
+    "target_task_state": "cancelled",
     "failure_class": "environment",
-    "root_cause": "Git worktree creation failed on host filesystem: (1) attempt 1: unable to write file docs/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md and docs/f[orensics-task-a32a...] during sparse-checkout / worktree add; (2) attempts 2-3: fatal: cannot update ref '...task_85d95fba52894b018a76c87af9b02ad5-lease_041b81a1c677426dab.lock' — stale git lock file or filesystem permission denied on /home/horde/.mac/src/mac/.git/refs/heads/. Both failures are host-environment issues unrelated to Python code or test correctness.",
+    "root_cause": "Host filesystem disk full ([Errno 28] No space left on device) on agent_jordanh-gke at /home/horde/.mac/agent-workspaces/task_1f8f9be946344658a6950d59562df4f6. All 3 attempts failed with this same error. The underlying work target (task_29ad56) is already in 'cancelled' state — so when the parent task retries it should find the target already resolved and complete quickly.",
     "code_defects_found": false,
-    "skill_area_test_status": "all 55 targeted tests pass",
-    "verdict": "not-actionable-code-defect: the failure is an environment/filesystem issue on the executing host, not a code regression in skill classification or dream cycle logic"
+    "disk_space_in_this_sandbox": "1.7TB available on overlay filesystem",
+    "verdict": "not-actionable-code-defect: the failure is an environment/filesystem disk-full issue on the executing host. The target task_29ad56 is already cancelled. No code changes required."
   }
 }
