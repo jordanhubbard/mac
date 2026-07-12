@@ -265,6 +265,55 @@ def test_installer_consolidates_agent_geek_knobs_and_plugin_reports_them(
     )[0]
 
 
+def test_workspace_context_routes_agent_coordination_over_agentbus(
+    tmp_path: Path,
+) -> None:
+    """Inter-agent coordination goes over the authenticated AgentBus peer
+    bridge (task_f7fdadf9), with Slack reserved for humans: the generated
+    AGENTS.md must teach the agent to use mac_agent_send instead of
+    @mentioning peers in channels, while still leading with SOUL.md
+    authority (the personality-flattening guard)."""
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    home.mkdir()
+    _seed_hermes_identity(home)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_bus",
+        "MAC_OPENCLAW_INSTANCE_ID": "hermes_bus",
+        "MAC_OPENCLAW_ROUTER_URL": "http://10.0.0.9:8789/v1",
+        "MAC_OPENCLAW_CONTROL_URL": "http://10.0.0.9:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "test-token",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "test",
+    }
+    subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    context = (mac_home / "openclaw" / "workspace" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
+    # SOUL.md stays authoritative — coordination guidance must not displace it.
+    assert "SOUL.md" in context
+    assert context.index("SOUL.md") < context.index("mac_agent_send")
+    # The coordination contract itself.
+    assert "use AgentBus, not Slack" in context
+    assert "mac_agent_send" in context
+    assert "reply over the bus" in context
+    assert "ONE consolidated answer" in context
+    assert "mirror_fleet_conversation" in context
+
+
 def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
     plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").as_uri()
     script = f"""
