@@ -284,6 +284,58 @@ def test_review_verdict_filters_signature_cross_llm_rejection_and_success(monkey
     assert found is approved and problems == []
 
 
+def test_pushed_executor_commit_skips_ephemeral_reachability_probe(monkeypatch, tmp_path) -> None:
+    """mac-9kij local-path reachability probe must run only for UNPUSHED work.
+    A pushed commit's SHA is durably on origin (re-verified at publish) but is
+    frequently unreachable in the recycled per-lease workspace, so probing it
+    there produced a false 'not reachable' that failed publishable reviews."""
+    import subprocess
+
+    cp = ControlPlane.in_memory()
+    # A real git repo that does NOT contain head_sha (the recycled ephemeral ws).
+    ws = tmp_path / "repo-lease"
+    ws.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=ws, check=True)
+    repo = {
+        "head_sha": "a" * 40,
+        "files_changed": ["src/x.py"],
+        "dirty": False,
+        "pushed": True,
+        "remote_ref": "refs/heads/mac/agent/task-lease",
+        "path": str(ws),
+    }
+    monkeypatch.setattr(cp, "get_task", lambda *_a: SimpleNamespace(metadata={}))
+    monkeypatch.setattr(cp, "_agent_attestation_key", lambda *_a: "key")
+    monkeypatch.setattr(services, "verify_verification_manifest_signature", lambda *_a: True)
+    monkeypatch.setattr(services, "cross_llm_review_problems", lambda *_a, **_k: [])
+    monkeypatch.setattr(services, "codegraph_audit_manifest_problems", lambda *_a: [])
+    monkeypatch.setattr(cp, "_cooperative_review_integration_problems", lambda *_a, **_k: [])
+
+    def _run_case(executor_pushed):
+        exec_repo = {**repo, "pushed": executor_pushed}
+        monkeypatch.setattr(
+            cp,
+            "get_evidence",
+            lambda *_a: SimpleNamespace(metadata={"verification": {"repo": exec_repo}}),
+        )
+        monkeypatch.setattr(
+            cp, "list_evidence", lambda *_a: [_verdict(_base_verdict(repo=dict(repo)))]
+        )
+        return cp._find_review_verdict_evidence(
+            "task", "reviewer", executor_evidence_id="executor"
+        )
+
+    # Pushed executor commit: the ephemeral probe is skipped -> verdict accepted.
+    found, problems = _run_case(True)
+    assert not any("not reachable" in p for p in problems), problems
+    assert found is not None
+
+    # Unpushed executor commit: the probe runs and correctly flags the missing SHA.
+    found_unpushed, problems_unpushed = _run_case(False)
+    assert any("not reachable" in p for p in problems_unpushed)
+    assert found_unpushed is None
+
+
 def test_review_verdict_selection_and_time_filters(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
     monkeypatch.setattr(cp, "get_task", lambda *_a: SimpleNamespace(metadata={}))

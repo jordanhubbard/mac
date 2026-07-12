@@ -16778,8 +16778,19 @@ class ControlPlane:
                 # but neither pushed" failure mode for local-path repos.
                 # Remote URLs (https/ssh) require network and are left
                 # to a future ``git ls-remote`` check.
+                #
+                # BUT only for UNPUSHED work. Per-lease executor workspaces
+                # (repo-lease_<id>) are ephemeral and the sandbox re-inits git
+                # in them, so once the commit is pushed its SHA is durably on
+                # the remote yet frequently NOT reachable in that local path —
+                # producing a false "not reachable" that fails an otherwise
+                # publishable review. When repo.pushed is true, the commit's
+                # reachability is authoritatively re-checked against origin at
+                # publish time (verify_commit: git cat-file -e after fetch
+                # origin), so the fragile local-path probe is both redundant
+                # and wrong here. Run it only when the work was never pushed.
                 repo_local_path = str(executor_repo.get("path") or "").strip()
-                if repo_local_path:
+                if repo_local_path and not executor_repo.get("pushed"):
                     from pathlib import Path as _RPath
                     from subprocess import run as _run, PIPE as _PIPE
                     candidate = _RPath(repo_local_path).expanduser()
