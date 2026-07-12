@@ -200,6 +200,32 @@ def test_two_zero_telemetry_expiries_auto_quarantine_agent(monkeypatch):
     assert any(stream.topic == REFLECT_REQUEST_TOPIC for stream in streams)
 
 
+def test_virtual_agent_lease_expiry_never_quarantines(monkeypatch):
+    """A virtual, hub-driven agent (e.g. the hub_verify review verifier) has no
+    worker process and by design emits no executor telemetry, so its expired
+    review leases must NOT be counted as zombie signals or quarantine it."""
+    monkeypatch.setenv("MAC_AGENT_QUARANTINE_THRESHOLD", "2")
+    cp = _make_cp()
+    machine = cp.register_machine("virtual-review-host", resources={"cpu": 1, "memory_gb": 1})
+    agent = cp.register_agent(
+        machine.id,
+        "hub-reviewer",
+        capabilities=["review"],
+        resources={"virtual": True, "review": {"mode": "hub_verify"}},
+    )
+
+    # Well past the threshold: a real agent would be quarantined after 2.
+    for index in range(4):
+        task = cp.create_task("virtual review %d" % index)
+        cp.claim_task(task.id, agent.id, lease_seconds=-1)
+        cp.expire_leases(now=utcnow())
+
+    refreshed = cp.get_agent(agent.id)
+    assert refreshed.dispatch_hold is False
+    assert refreshed.dispatch_hold_reason is None
+    assert refreshed.consecutive_lease_expiries_no_telemetry == 0
+
+
 def test_expired_lease_telemetry_resets_no_telemetry_counter(monkeypatch):
     monkeypatch.setenv("MAC_AGENT_QUARANTINE_THRESHOLD", "2")
     cp = _make_cp()

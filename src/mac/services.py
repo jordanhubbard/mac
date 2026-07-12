@@ -8785,7 +8785,24 @@ class ControlPlane:
         self.drain_task_transition_outbox(task_id=task.id, limit=20)
         return recovered
 
+    def _agent_is_virtual(self, agent_id: str) -> bool:
+        """True for hub-driven virtual agents (e.g. the hub_verify review
+        verifier) that have no worker process of their own."""
+        try:
+            agent = self.get_agent(agent_id)
+        except NotFoundError:
+            return False
+        return bool(ensure_json_object(agent.resources).get("virtual"))
+
     def _record_expired_lease_zombie_signal(self, lease: Lease) -> None:
+        # Virtual, hub-driven agents (the hub_verify review verifier) have no
+        # worker process and by design never emit executor telemetry, so the
+        # "consecutive lease expiries without telemetry" zombie signal — which
+        # exists to bench dead REAL hosts — is a category error for them. Every
+        # in-hub review the verifier drives would otherwise look like a zombie
+        # expiry, quarantining the verifier and stalling the whole review stage.
+        if self._agent_is_virtual(lease.agent_id):
+            return
         had_telemetry = self._lease_attempt_telemetry_exists(lease)
         now = utcnow()
         with self.store.transaction() as conn:
