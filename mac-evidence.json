@@ -1,50 +1,61 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_3f500a759f63453baa44b56a5418723b",
+  "task_id": "task_4fcf27041e6842f4ac07a3ae78ea888a",
   "status": "complete",
-  "evidence_type": "operator_result",
-  "summary": "Synced worktree from single-commit sandbox baseline to canonical main tip (24d01ec). All 45 targeted tests passed: 14 in test_diagnostics.py (including stranded-replacements and walk_replacement_chain checks) and 31 in test_replacement_liveness.py. No code changes were required; the existing implementations in src/mac/diagnostics.py and src/mac/repository_hygiene.py are correct.",
-  "rebase_sha": "24d01ec17c7fc20b1c45708b3d9c2df9d1f4d2c4",
+  "evidence_type": "repo_change",
+  "summary": "Full contract test suite passed (5727 passed, 21 skipped, 5 warnings). All 14 test_diagnostics.py tests pass including the stranded-replacements check. Coverage: 93.01% statements (floor 90%), 84.41% branches (floor 80%). Evidence committed to task branch; push delegated to deterministic host finalizer.",
   "repo": {
-    "head_sha": "24d01ec17c7fc20b1c45708b3d9c2df9d1f4d2c4",
-    "branch": "mac/agent_bullwinkle/task_3f500a759f63453baa44b56a5418723b-lease_580df48dfe8e441f8b",
+    "head_sha": "93239f5d3e5a8ebf150ed0991d2bf142018a1397",
+    "branch": "mac/agent_natasha/task_4fcf27041e6842f4ac07a3ae78ea888a-lease_1e4b95aca4824f66aa",
+    "remote_ref": "refs/heads/mac/agent_natasha/task_4fcf27041e6842f4ac07a3ae78ea888a-lease_1e4b95aca4824f66aa",
     "pushed": false,
     "dirty": false,
     "files_changed": ["mac-evidence.json"]
   },
   "tests": [
     {
-      "command": ".venv/bin/pytest tests/test_diagnostics.py tests/test_replacement_liveness.py -v",
+      "command": ".venv/bin/pytest tests/test_diagnostics.py -v",
       "passed": true,
-      "summary": "45/45 passed: 14 test_diagnostics tests + 31 test_replacement_liveness tests, all green. No failures.",
+      "summary": "14/14 passed: all diagnostics tests green including stranded-replacements check",
       "notable_tests": [
         "test_stranded_replacements_check_ok_when_clean",
         "test_stranded_replacements_check_warns_when_stranded",
         "test_stranded_replacements_check_ok_when_chain_has_live_successor",
-        "test_stranded_replacements_check_ok_when_chain_ends_completed",
-        "test_walk_follows_replacement_chain_to_live",
-        "test_walk_follows_chain_to_satisfied",
-        "test_walk_detects_cycle"
+        "test_stranded_replacements_check_ok_when_chain_ends_completed"
       ]
+    },
+    {
+      "command": "scripts/run-contract-tests.sh",
+      "passed": true,
+      "summary": "5727 passed, 21 skipped, 5 warnings in 358.17s. Coverage 93.01% statements (floor 90%), 84.41% branches (floor 80%). All gates passed.",
+      "coverage": {
+        "statements_pct": 93.01,
+        "branches_pct": 84.41,
+        "statement_floor": 90.0,
+        "branch_floor": 80.0
+      }
     }
   ],
-  "fixes_applied": [],
   "codegraph": {
-    "init": "39,362 nodes, 129,034 edges",
-    "affected_by_diagnostics_and_hygiene": [
+    "status": "passed",
+    "init": "39,362 nodes, 129,034 edges in 12.4s",
+    "affected_files": [
+      "src/mac/diagnostics.py",
+      "src/mac/repository_hygiene.py"
+    ],
+    "affected_test_files": [
       "ide/tests/workbench-project-tree.spec.ts",
       "src/mac/_hermes/skills/creative/comfyui/tests/conftest.py",
       "src/mac/_hermes/skills/creative/comfyui/tests/test_common.py",
       "tests/e2e/test_openshell_nemo_relay.py"
     ],
-    "note": "No source code changes were made so CodeGraph affected list is informational only"
+    "note": "No source code changes were required; all tests passed on first run. CodeGraph impact is informational."
   },
   "assumptions": [
-    "Sandbox had no git remote configured; added https://github.com/jordanhubbard/mac.git as origin and fetched.",
-    "Performed git reset --hard origin/main to bring worktree to canonical main tip (24d01ec).",
-    "Bootstrap venv was already present (.venv/bin/pytest existed).",
-    "No code fixes were needed; all 45 tests passed on first run after rebase.",
-    "Push to remote is delegated to the deterministic host finalizer per repository runtime contract.",
-    "evidence_type set to operator_result as this task produces no new git commits (no code changes)."
+    "Sandbox lacks SSH and live GitHub credentials; push to origin delegated to deterministic host finalizer per executor-policy.txt.",
+    "Worktree was at sandbox baseline with parent task evidence committed. Contract suite ran against existing diagnostics.py and repository_hygiene.py implementations.",
+    "Task branch mac/agent_natasha/task_4fcf27041e6842f4ac07a3ae78ea888a-lease_1e4b95aca4824f66aa created locally from baseline and evidence committed.",
+    "repo.pushed will be set to true by deterministic host finalizer after successful remote push.",
+    "stranded-replacements diagnostic check is fully implemented in src/mac/diagnostics.py using walk_replacement_chain from src/mac/repository_hygiene.py."
   ]
 }
