@@ -2324,6 +2324,19 @@ def cmd_agent_resume(args: argparse.Namespace) -> None:
     _print(_plane(args).clear_agent_dispatch_hold(args.agent_id))
 
 
+def cmd_agent_deregister(args: argparse.Namespace) -> None:
+    """Graceful exit for a session/ephemeral agent: optional final message,
+    then tombstone with history preserved."""
+    cp = _plane(args)
+    result = cp.deregister_agent(
+        args.agent_id,
+        actor=args.actor,
+        final_message=args.final_message,
+        final_target=args.final_target,
+    )
+    _print(result.to_dict() if hasattr(result, "to_dict") else result)
+
+
 def _resolve_agent_id(cp: Any, agent: str) -> str:
     """Accept an agent id or a human name; return the id."""
     candidates = []
@@ -5403,6 +5416,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="runtime_environments.digest declaring which build this agent is running",
     )
     _set(cmd_agent_heartbeat, heartbeat)
+
+    agent_deregister = agent.add_parser(
+        "deregister",
+        help="graceful exit for a session/ephemeral agent: optionally leave one "
+        "final human-facing message (delivered after the agent is gone), then "
+        "tombstone with history preserved",
+    )
+    agent_deregister.add_argument("agent_id")
+    agent_deregister.add_argument("--actor")
+    agent_deregister.add_argument(
+        "--final-message", help="one last status message to deliver on exit"
+    )
+    agent_deregister.add_argument(
+        "--final-target", help="delivery target for --final-message (e.g. channel:C123)"
+    )
+    _set(cmd_agent_deregister, agent_deregister)
 
     agent_delete = agent.add_parser(
         "delete",

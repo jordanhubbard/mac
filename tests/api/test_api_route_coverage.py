@@ -350,6 +350,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     )
     ctx["delegate_agent_id"] = agent("bullwinkle-route", ["python"])["id"]
     ctx["delete_agent_id"] = agent("delete-route-agent", ["python"])["id"]
+    ctx["deregister_agent_id"] = agent("deregister-route-agent", ["python"])["id"]
     ctx["disable_agent_id"] = agent("disable-route-agent", ["python"])["id"]
     ctx["bulk_agent_id"] = agent("bulk-route-agent", ["python"])["id"]
     ctx["claim_agent_id"] = agent("claim-route-agent", ["python"])["id"]
@@ -1090,6 +1091,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {"agent_id": "attest_verify_agent_id"},
         ("POST", "/agents/{agent_id}/disable"): {"agent_id": "disable_agent_id"},
         ("DELETE", "/agents/{agent_id}"): {"agent_id": "delete_agent_id"},
+        ("POST", "/v1/agents/{agent_id}/deregister"): {"agent_id": "deregister_agent_id"},
         ("POST", "/agents/bulk"): {},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
@@ -1563,6 +1565,7 @@ edges:
             },
             "schema_name": "mac.agent_deploy_config.v1",
         },
+        ("POST", "/v1/agents/{agent_id}/deregister"): {"actor": "operator"},
         ("POST", "/v1/agents/{agent_id}/memory"): {
             "content": "route coverage learning: the hub answers on :8789",
             "record_type": "agent_learning:route_coverage",

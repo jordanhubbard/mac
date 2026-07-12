@@ -49,6 +49,7 @@ from mac.models import (
     WorkflowRun,
     AgentBusChunk,
     AgentBusStream,
+    AgentBusStreamStatus,
     AgentMessage,
     AgentStatus,
     Artifact,
@@ -10759,8 +10760,16 @@ class ControlPlane:
                 if task.owner_agent_id:
                     by_owner.setdefault(task.owner_agent_id, task)
         members: List[JsonDict] = []
-        for agent in self.list_agents():
+        # Recently-departed agents stay visible for a grace window so peers
+        # can still read a just-exited ephemeral's final streams instead of
+        # watching it vanish mid-conversation (task_43f8d6e3).
+        grace_cutoff = parse_time(utcnow()) - timedelta(
+            seconds=self.EPHEMERAL_DEPARTED_GRACE_SECONDS
+        )
+        for agent in self.list_agents(include_deleted=True):
             if exclude_agent_id and agent.id == exclude_agent_id:
+                continue
+            if agent.deleted_at and parse_time(agent.deleted_at) < grace_cutoff:
                 continue
             cur = by_owner.get(agent.id)
             members.append(
@@ -10775,6 +10784,7 @@ class ControlPlane:
                     "current_task_id": cur.id if cur else agent.current_task_id,
                     "current_task_title": (cur.title if cur else None),
                     "last_seen_at": agent.last_seen_at,
+                    **({"departed_at": agent.deleted_at} if agent.deleted_at else {}),
                 }
             )
             if len(members) >= limit:
@@ -10802,6 +10812,145 @@ class ControlPlane:
             agent = self._agent_from_row(row)
             marked.append(self.heartbeat_agent(agent.id, status=AgentStatus.OFFLINE.value))
         return marked
+
+    # Ephemeral agent lifecycle (task_43f8d6e3, AgentBus audit 3/7).
+    #
+    # An ephemeral agent registers with ``resources.ephemeral: true`` and
+    # ``resources.ephemeral_ttl_seconds: N`` — no schema change: resources is
+    # already the structured agent-facts bag (see the ``virtual`` flag), and
+    # every heartbeat renews ``last_seen_at``, so the TTL lease renews for
+    # free. When the lease lapses the hub tick tombstones the agent (history
+    # preserved per task_c394685a) after closing its open bus streams; its
+    # queued human deliveries still deliver because drain is account-scoped
+    # and liveness-decoupled (task_c049302b).
+
+    EPHEMERAL_MIN_TTL_SECONDS = 30
+    EPHEMERAL_DEPARTED_GRACE_SECONDS = 900
+
+    @staticmethod
+    def _agent_ephemeral_ttl(agent: Agent) -> Optional[int]:
+        resources = agent.resources if isinstance(agent.resources, dict) else {}
+        if resources.get("ephemeral") is not True:
+            return None
+        try:
+            ttl = int(resources.get("ephemeral_ttl_seconds") or 0)
+        except (TypeError, ValueError):
+            return None
+        return max(ControlPlane.EPHEMERAL_MIN_TTL_SECONDS, ttl) if ttl > 0 else None
+
+    def expire_ephemeral_agents(self, *, limit: int = 50) -> List[Agent]:
+        """Tombstone ephemeral agents whose heartbeat lease has lapsed.
+
+        Skips agents holding an active task lease (lease expiry reclaims the
+        task first; the agent is swept on a later tick). Open bus streams the
+        departed agent left behind are closed so waiting peers see a terminal
+        status rather than an open stream that will never append again.
+        """
+        now = utcnow()
+        expired: List[Agent] = []
+        for agent in self.list_agents():
+            if len(expired) >= max(1, int(limit)):
+                break
+            ttl = self._agent_ephemeral_ttl(agent)
+            if ttl is None:
+                continue
+            deadline = parse_time(agent.last_seen_at) + timedelta(seconds=ttl)
+            if parse_time(now) < deadline:
+                continue
+            if self._agent_has_active_lease(agent.id):
+                continue
+            self.store.execute(
+                """
+                UPDATE agentbus_streams
+                SET status = ?, updated_at = ?, closed_at = ?
+                WHERE sender_agent_id = ? AND status = ?
+                """,
+                (
+                    AgentBusStreamStatus.CLOSED.value,
+                    now,
+                    now,
+                    agent.id,
+                    AgentBusStreamStatus.OPEN.value,
+                ),
+            )
+            self.delete_agent(agent.id, actor="hub-ephemeral-expiry")
+            self.record_log(
+                "agent.ephemeral.expired",
+                layer="control_plane",
+                source="dispatcher.tick",
+                subject_type="agent",
+                subject_id=agent.id,
+                detail={
+                    "agent_name": agent.name,
+                    "ttl_seconds": ttl,
+                    "last_seen_at": agent.last_seen_at,
+                },
+            )
+            expired.append(self.get_agent(agent.id))
+        return expired
+
+    def deregister_agent(
+        self,
+        agent_id: str,
+        *,
+        actor: Optional[str] = None,
+        final_message: Optional[str] = None,
+        final_target: Optional[str] = None,
+    ) -> JsonDict:
+        """Graceful exit for a session/ephemeral agent.
+
+        Optionally enqueues one last human-facing status message BEFORE
+        tombstoning — the delivery outlives the agent (account-scoped drain +
+        SET NULL-free tombstone), which is the whole hub-as-proxy point: an
+        agent may appear, work, report, and disappear.
+        """
+        agent = self._require_live_agent(agent_id)
+        actor_value = (actor or agent.id).strip() or agent.id
+        delivery_id: Optional[str] = None
+        if final_message:
+            if not final_target:
+                raise ValidationError(
+                    "deregister final_message requires final_target "
+                    "(e.g. channel:C123)"
+                )
+            delivery_id = self.enqueue_human_message(
+                final_target,
+                final_message,
+                origin_agent_id=agent.id,
+            ).id
+        now = utcnow()
+        self.store.execute(
+            """
+            UPDATE agentbus_streams
+            SET status = ?, updated_at = ?, closed_at = ?
+            WHERE sender_agent_id = ? AND status = ?
+            """,
+            (
+                AgentBusStreamStatus.CLOSED.value,
+                now,
+                now,
+                agent.id,
+                AgentBusStreamStatus.OPEN.value,
+            ),
+        )
+        self.delete_agent(agent.id, actor=actor_value)
+        self.record_log(
+            "agent.deregistered",
+            layer="control_plane",
+            source=actor_value,
+            subject_type="agent",
+            subject_id=agent.id,
+            detail={
+                "agent_name": agent.name,
+                "final_delivery_id": delivery_id,
+            },
+        )
+        return {
+            "schema": "mac.agent_deregister.v1",
+            "agent_id": agent.id,
+            "deregistered_at": now,
+            "final_delivery_id": delivery_id,
+        }
 
     # Dispatcher
 
@@ -11295,6 +11444,20 @@ class ControlPlane:
                 agent.to_dict()
                 for agent in self.mark_stale_agents_offline(stale_after_seconds)
             ]
+        try:
+            expired_ephemerals = [
+                agent.to_dict()
+                for agent in self.expire_ephemeral_agents(limit=limit_value)
+            ]
+        except Exception as exc:  # noqa: BLE001 - expiry must never stop dispatch.
+            expired_ephemerals = []
+            self.record_log(
+                "agent.ephemeral.expiry_tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)[:500]},
+            )
         expired_page = self._expire_leases_sweep_page(limit=limit_value)
         expired = [task.to_dict() for task in expired_page["tasks"]]
         try:
@@ -11369,6 +11532,7 @@ class ControlPlane:
         dead_letters_page = self.list_dead_letters_page(limit=limit_value)
         return {
             "stale_agents": stale_agents,
+            "expired_ephemeral_agents": expired_ephemerals,
             "expired": expired,
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,

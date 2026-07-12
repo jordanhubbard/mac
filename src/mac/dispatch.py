@@ -1144,6 +1144,14 @@ class RemoteDispatch:
             )
         )
 
+    def deregister_agent(self, agent_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/v1/agents/%s/deregister" % quote(agent_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
     # -- Consolidated per-agent config --------------------------------------
 
     def effective_agent_config(self, agent_id: str) -> _Dictish:

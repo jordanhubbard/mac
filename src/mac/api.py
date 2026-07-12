@@ -1328,6 +1328,12 @@ class DeployConfigReport(BaseModel):
     schema_name: Optional[str] = None
 
 
+class AgentDeregister(BaseModel):
+    actor: Optional[str] = None
+    final_message: Optional[str] = None
+    final_target: Optional[str] = None
+
+
 class AgentMemoryStore(BaseModel):
     content: str
     record_type: str = "agent_learning"
@@ -7319,6 +7325,26 @@ def create_app(
         return cp.report_agent_deploy_config(
             agent_id, schema=schema_name, **values
         )
+
+    @app.post("/v1/agents/{agent_id}/deregister")
+    def deregister_agent_route(
+        agent_id: str,
+        body: AgentDeregister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Graceful exit for a session/ephemeral agent (task_43f8d6e3).
+
+        The agent (or its spawner) announces departure: an optional final
+        human-facing message is enqueued first — it delivers even after the
+        agent is gone — then the agent is tombstoned with history preserved.
+        """
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot deregister a peer agent"
+            )
+        values = _data(body)
+        values.setdefault("actor", agent_id)
+        return cp.deregister_agent(agent_id, **values)
 
     @app.get("/v1/agents/{agent_id}/effective-config")
     def get_agent_effective_config(
