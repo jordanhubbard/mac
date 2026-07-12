@@ -1,12 +1,12 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_4dd78bdb1b93443aaa4a826396a8ef76",
+  "task_id": "task_3bfe442b20f94620aced700ff659a592",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Verified all four target tests exist and pass in the canonical main-tip codebase: test_curation_prompt_includes_finalizer_refusal_kind_in_signals, test_curation_prompt_finalizer_refusal_staged_new_files, test_refusal_to_lesson_end_to_end (tests/test_outcome_grounded_lessons.py) and test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task (tests/test_task_executor.py). Full contract suite passes (5727 passed, 21 skipped; 93.03% statement / 84.42% branch coverage, both above floors). No source fixes required. Task branch rebased on canonical main tip (512a39d) before evidence commit.",
+  "summary": "Environment repair task: verified the repository environment is functional for the skill-area dream finding investigation. The dream finding (fingerprint dreamrepair:f9a42d000eada02baceef83bf86be508) is NOT actionable. Evidence: (1) memory record mem_8524a27bffd64a318eb01ffdbea03949 returns 404-Not Found (no longer available); (2) the finding has only 1 evidence record of type deployment_learning:mac with confidence 0.35 (low), triggered by the generic signal \\bskill[s]?\\b which is prone to false-positive matching; (3) no tools, providers, or repo_areas were implicated; (4) the dream_cycle_classifier implementation is correct (27/27 tests pass); (5) the skills/ directory contains 2 skills (mac-agent-terminal-timeout, setup-mac-fleet) with no defects. Full contract suite passed: 5730+ passed, 21 skipped; 93.01% statement / 84.42% branch coverage, both above required floors.",
   "repo": {
-    "head_sha": "3b9d05fc077340c2a675915fedc549379afcf80c",
-    "branch": "mac/agent_jordanh-gke/task_4dd78bdb1b93443aaa4a826396a8ef76-lease_a1d67369928744f3ad",
+    "head_sha": "d22f8c72de794e7e88bd601c4e8700532746d830",
+    "branch": "mac/agent_bullwinkle/task_3bfe442b20f94620aced700ff659a592-lease_606102d2f1ba4e298e",
     "pushed": false,
     "dirty": false,
     "files_changed": [
@@ -15,35 +15,43 @@
   },
   "tests": [
     {
-      "command": ".venv/bin/pytest tests/test_outcome_grounded_lessons.py::test_curation_prompt_includes_finalizer_refusal_kind_in_signals tests/test_outcome_grounded_lessons.py::test_curation_prompt_finalizer_refusal_staged_new_files tests/test_outcome_grounded_lessons.py::test_refusal_to_lesson_end_to_end tests/test_task_executor.py::test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task -v",
+      "command": ".venv/bin/pytest tests/test_dream_cycle_classifier.py tests/test_fleet_skills.py -v",
       "passed": true,
-      "summary": "4/4 target tests passed: test_curation_prompt_includes_finalizer_refusal_kind_in_signals, test_curation_prompt_finalizer_refusal_staged_new_files, test_refusal_to_lesson_end_to_end, test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task"
+      "summary": "39/39 targeted tests passed: all test_dream_cycle_classifier and test_fleet_skills tests pass"
     },
     {
       "command": "scripts/run-contract-tests.sh",
       "passed": true,
-      "summary": "Full contract suite passed: 5727 passed, 21 skipped; 93.03% statement coverage (floor 90%), 84.42% branch coverage (floor 80%)"
+      "summary": "Full contract suite passed: statements 93.01% (floor 90.00%), branches 84.42% (floor 80.00%)"
     }
   ],
-  "codegraph": {
-    "status": "passed",
-    "command": "codegraph init && codegraph affected tests/test_outcome_grounded_lessons.py tests/test_task_executor.py",
-    "affected_test_files": [
-      "ide/tests/workbench-project-tree.spec.ts"
-    ],
-    "note": "No source files were changed in this task \u2014 verification only. Codegraph init completed (39,362 nodes, 129,034 edges). Test files are not primary source, so no callers/callees impact analysis needed."
+  "investigation": {
+    "finding_fingerprint": "dreamrepair:f9a42d000eada02baceef83bf86be508",
+    "memory_record": "mem_8524a27bffd64a318eb01ffdbea03949",
+    "memory_status": "404-Not Found (record no longer exists)",
+    "signal": "\\bskill[s]?\\b",
+    "confidence_score": 0.35,
+    "evidence_count": 1,
+    "record_type": "deployment_learning:mac",
+    "area_type": "skill",
+    "area_name": "skill",
+    "actionable": false,
+    "classification": "not_actionable",
+    "rationale": "The finding is not actionable for three reasons: (1) the backing memory record is gone (404), eliminating the only evidence; (2) the triggering signal is the generic word 'skill' at low confidence (0.35) with a single evidence record, which is pattern-noise common to deployment log text; (3) no specific skill name, tool, provider, or repo_area is implicated. The dream_cycle_classifier correctly assigns low confidence to single-evidence generic-keyword matches per its documented thresholds.",
+    "code_health": "No defects found in src/mac/dream_cycle_classifier.py, tests/test_dream_cycle_classifier.py, tests/test_fleet_skills.py, or tests/test_hermes_skills_dedup.py. All tests pass. Skills directory contains 2 skills with no coverage gaps."
   },
   "changes": {
     "files_modified": [
       "mac-evidence.json"
     ],
-    "description": "No source or test changes were needed. All four target tests were already present and passing in the canonical codebase (main tip 512a39d). Evidence-only commit documenting verification results. Task branch rebased on canonical main to satisfy publication ancestry requirement."
+    "description": "Environment repair: verified functional environment, investigated skill-area dream finding, classified as not actionable (insufficient evidence, memory record gone, generic signal noise). Updated mac-evidence.json with this task's evidence."
   },
   "assumptions": [
     "Bootstrap was already complete (.venv/bin/python and .venv/bin/pytest were present in the worktree).",
-    "The worktree sandbox baseline (a60bcde) had an identical tree to canonical main (512a39d) \u2014 verified via git diff showing 0 lines of difference. Reset to canonical main to satisfy the publication ancestry requirement.",
-    "Push to remote is delegated to the deterministic host finalizer per repository runtime contract (executor policy: host exclusively owns publication and remote refs).",
-    "Full contract suite was run on the canonical main-tip codebase after rebase \u2014 5727 passed, 21 skipped.",
-    "The previous attempt (attempt 1) failed because the task branch diverged from canonical main. This attempt resolves that by resetting to FETCH_HEAD (512a39d) before committing evidence."
+    "Memory record mem_8524a27bffd64a318eb01ffdbea03949 returned 404-Not Found from the MAC API; the record has been expunged or expired.",
+    "Previous attempts of this task (attempts 1 and 2) failed as worker_exceptions with no output - likely agent-level crashes unrelated to the task content.",
+    "The parent task (task_4887533d311942389871838b577bec90) failed at worktree creation with 'unable to write file' errors - an infrastructure-level git issue, not a code defect.",
+    "Push to remote is delegated to the deterministic host finalizer per repository runtime contract.",
+    "Full contract suite was run: statements 93.01% (floor 90.00%), branches 84.42% (floor 80.00%) - both pass their floors."
   ]
 }
