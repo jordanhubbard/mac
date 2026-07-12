@@ -1,12 +1,12 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_6a9f81cd95bd4a498117937e43ff5798",
+  "task_id": "task_0dce914eb3a04c88a21ca36fa46024c6",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Audited stranded-replacements diagnostic check in src/mac/diagnostics.py and tests/test_diagnostics.py. All four requirements are confirmed: (1) _stranded_replacements is registered via @register(\"stranded-replacements\", ...) at line 268; (2) walk_replacement_chain is imported from mac.repository_hygiene inside the function and used correctly; (3) all four required test functions are present in tests/test_diagnostics.py; (4) all 14 tests in the diagnostics suite pass, including all 4 stranded-replacements tests.",
+  "summary": "Audited tests/test_task_executor.py and tests/test_outcome_grounded_lessons.py in the mac repo at commit dc60f16c. All four specified tests exist and pass: test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task, test_curation_prompt_includes_finalizer_refusal_kind_in_signals, test_curation_prompt_finalizer_refusal_staged_new_files, test_refusal_to_lesson_end_to_end. Full file runs: 144/146 in test_task_executor.py (2 pre-existing env-specific failures), 12/12 in test_outcome_grounded_lessons.py. Full contract suite: 5727 passed, 21 skipped. No missing tests or source gaps for the audited scope.",
   "repo": {
-    "head_sha": "b1edc5382ea7fe08feb2efaf454e597e31654730",
-    "branch": "master",
+    "head_sha": "bdb62a1abae7ac9f1e40ce7b45a268ad55eee1dd",
+    "branch": "mac/agent_natasha/task_0dce914eb3a04c88a21ca36fa46024c6-lease_84e692660d8c440ebb",
     "pushed": false,
     "dirty": false,
     "files_changed": [
@@ -15,50 +15,83 @@
   },
   "tests": [
     {
-      "command": "scripts/run-contract-tests.sh",
+      "command": ".venv/bin/pytest tests/test_task_executor.py::test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task tests/test_outcome_grounded_lessons.py::test_curation_prompt_includes_finalizer_refusal_kind_in_signals tests/test_outcome_grounded_lessons.py::test_curation_prompt_finalizer_refusal_staged_new_files tests/test_outcome_grounded_lessons.py::test_refusal_to_lesson_end_to_end -v",
       "passed": true,
-      "summary": "14/14 tests in tests/test_diagnostics.py passed; full contract suite passed with 90.97% statement coverage (floor 90%) and 84.39% branch coverage (floor 80%)"
+      "summary": "4/4 specified target tests passed"
     },
     {
-      "command": ".venv/bin/pytest tests/test_diagnostics.py -k stranded -v",
+      "command": ".venv/bin/pytest tests/test_task_executor.py -q",
       "passed": true,
-      "summary": "4/4 stranded-replacements tests passed: ok_when_clean, warns_when_stranded, ok_when_chain_has_live_successor, ok_when_chain_ends_completed"
+      "summary": "144/146 passed; 2 pre-existing environment-specific failures: test_git_finalizer_blocks_when_canonical_remote_is_missing (SSH unavailable in sandbox) and test_repository_contract_canonical_branch_empty_when_absent (MAC_TASK_REPO_DEFAULT_BRANCH env var leaks 'main' into sandbox)"
+    },
+    {
+      "command": ".venv/bin/pytest tests/test_outcome_grounded_lessons.py -q",
+      "passed": true,
+      "summary": "12/12 passed"
+    },
+    {
+      "command": "scripts/run-contract-tests.sh",
+      "passed": true,
+      "summary": "5727 passed, 21 skipped in 358.99s; statement coverage 92.99% (floor 90%), branch coverage 84.39% (floor 80%)"
     }
   ],
-  "codegraph": {
-    "status": "complete",
-    "init": "codegraph init: 39,359 nodes, 129,042 edges indexed in 12.4s",
-    "affected": "codegraph affected src/mac/diagnostics.py tests/test_diagnostics.py -> 2 affected test files: ide/tests/workbench-project-tree.spec.ts, tests/e2e/test_openshell_nemo_relay.py",
-    "impact": "codegraph impact src/mac/diagnostics.py -> 2 affected symbols in diagnostics.py and test_diagnostics.py (no public API changes; this is an audit task with no source modifications)"
-  },
   "audit_findings": {
-    "task_id": "task_6a9f81cd95bd4a498117937e43ff5798",
+    "task_id": "task_0dce914eb3a04c88a21ca36fa46024c6",
     "implementation_status": "complete",
-    "checks": {
-      "registration": {
-        "satisfied": true,
-        "detail": "_stranded_replacements is decorated with @register(\"stranded-replacements\", \"terminal tasks whose replacement_task_id chain ends without a live or completed successor\") at line 267-270 of src/mac/diagnostics.py"
+    "target_tests": {
+      "test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task": {
+        "file": "tests/test_task_executor.py",
+        "line": 76,
+        "exists": true,
+        "passes": true,
+        "description": "Verifies NEW_FILE_COMMIT_RULE appears in both build_task_prompt and build_planning_prompt for repo-coupled tasks, and that it appears before Repository runtime contract/PLANNING PHASE INSTRUCTIONS sections respectively."
       },
-      "walk_replacement_chain_import": {
-        "satisfied": true,
-        "detail": "walk_replacement_chain is imported from mac.repository_hygiene inside the _stranded_replacements function body (lazy import pattern) and called correctly as walk_replacement_chain(row[\"id\"], _get_task) at line 305"
+      "test_curation_prompt_includes_finalizer_refusal_kind_in_signals": {
+        "file": "tests/test_outcome_grounded_lessons.py",
+        "line": 162,
+        "exists": true,
+        "passes": true,
+        "description": "Verifies that curate_lessons_from_outcome passes finalizer_refusal_kind signal through to the LLM curation prompt when a task fails with untracked_new_files_at_finalize."
       },
-      "test_functions": {
-        "satisfied": true,
-        "functions_present": [
-          "test_stranded_replacements_check_ok_when_clean",
-          "test_stranded_replacements_check_warns_when_stranded",
-          "test_stranded_replacements_check_ok_when_chain_has_live_successor",
-          "test_stranded_replacements_check_ok_when_chain_ends_completed"
-        ],
-        "all_pass": true,
-        "file": "tests/test_diagnostics.py"
+      "test_curation_prompt_finalizer_refusal_staged_new_files": {
+        "file": "tests/test_outcome_grounded_lessons.py",
+        "line": 203,
+        "exists": true,
+        "passes": true,
+        "description": "Verifies staged_new_files variant of finalizer refusal is included in the curation prompt."
+      },
+      "test_refusal_to_lesson_end_to_end": {
+        "file": "tests/test_outcome_grounded_lessons.py",
+        "line": 235,
+        "exists": true,
+        "passes": true,
+        "description": "End-to-end: classify_outcome on a finalizer-refusal evidence file produces an outcome with error_signature=untracked_new_files_at_finalize and signals.finalizer_refusal_kind=untracked_new_files, which flows into the curation pipeline."
       }
     },
+    "pre_existing_failures": [
+      {
+        "test": "test_git_finalizer_blocks_when_canonical_remote_is_missing",
+        "file": "tests/test_task_executor.py",
+        "cause": "Test expects freshness_error to contain 'remote URL' but sandbox returns SSH-unavailable error ('cannot run ssh: No such file or directory'). Environment-specific, unrelated to task scope.",
+        "scope_relevant": false
+      },
+      {
+        "test": "test_repository_contract_canonical_branch_empty_when_absent",
+        "file": "tests/test_task_executor.py",
+        "cause": "Test expects _repository_contract_canonical_branch({}) == '' but MAC_TASK_REPO_DEFAULT_BRANCH env var is set to 'main' in the sandbox, causing the function to return 'main' via os.environ fallback. Environment-specific, unrelated to task scope.",
+        "scope_relevant": false
+      }
+    ],
     "gaps": []
   },
+  "codegraph": {
+    "status": "skipped",
+    "reason": "Investigation task with no source code modifications; no files changed requiring CodeGraph analysis."
+  },
   "assumptions": [
-    "No source code modifications were needed; the implementation was already complete and correct.",
-    "mac-evidence.json is the only file changed; previous evidence from a different task was overwritten."
+    "Bootstrap was already complete (.venv/bin/python and .venv/bin/pytest were present in the sandbox worktree).",
+    "The two pre-existing failures in test_task_executor.py are environment-specific (SSH unavailable, MAC_TASK_REPO_DEFAULT_BRANCH env leak) and are not caused by any code defect in the audited scope.",
+    "mac-evidence.json is the only file changed in this investigation task.",
+    "Push is delegated to the deterministic host finalizer per the repository runtime contract."
   ]
 }
