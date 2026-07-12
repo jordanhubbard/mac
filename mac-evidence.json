@@ -1,11 +1,11 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_b8be9785ee04490c8cd73655273f2501",
+  "task_id": "task_6a9f81cd95bd4a498117937e43ff5798",
   "status": "complete",
-  "evidence_type": "investigation",
-  "summary": "Investigation of repo branch state and parent task failure causes. deploy/fleet-scripts/ and deploy/fleet-scripts/manifest-fragments/ do NOT exist in the current repo. No jordanh-gke.json manifest fragment exists anywhere in the repo. Parent task (task_195d24a9cb37487eb9ff74c75bf885b6) worker_exception failures on agent_jordanh-gke are attributed to environment-level issues (missing toolchain dependencies in the system Python path on that host) rather than broken imports in the codebase itself. ~/.hermes on this execution environment (agent_natasha) contains only config.yaml with standard/default settings.",
+  "evidence_type": "repo_change",
+  "summary": "Audited stranded-replacements diagnostic check in src/mac/diagnostics.py and tests/test_diagnostics.py. All four requirements are confirmed: (1) _stranded_replacements is registered via @register(\"stranded-replacements\", ...) at line 268; (2) walk_replacement_chain is imported from mac.repository_hygiene inside the function and used correctly; (3) all four required test functions are present in tests/test_diagnostics.py; (4) all 14 tests in the diagnostics suite pass, including all 4 stranded-replacements tests.",
   "repo": {
-    "head_sha": "58853b9",
+    "head_sha": "b1edc5382ea7fe08feb2efaf454e597e31654730",
     "branch": "master",
     "pushed": false,
     "dirty": false,
@@ -13,122 +13,52 @@
       "mac-evidence.json"
     ]
   },
-  "tests": [],
-  "codegraph": {
-    "status": "skipped",
-    "reason": "Investigation task - no source code changes made; codegraph not applicable."
-  },
-  "changes": [
+  "tests": [
     {
-      "file": "mac-evidence.json",
-      "description": "Updated with investigation findings per task requirements."
+      "command": "scripts/run-contract-tests.sh",
+      "passed": true,
+      "summary": "14/14 tests in tests/test_diagnostics.py passed; full contract suite passed with 90.97% statement coverage (floor 90%) and 84.39% branch coverage (floor 80%)"
+    },
+    {
+      "command": ".venv/bin/pytest tests/test_diagnostics.py -k stranded -v",
+      "passed": true,
+      "summary": "4/4 stranded-replacements tests passed: ok_when_clean, warns_when_stranded, ok_when_chain_has_live_successor, ok_when_chain_ends_completed"
     }
   ],
-  "investigation": {
-    "task_id": "task_b8be9785ee04490c8cd73655273f2501",
-    "parent_task_id": "task_f9a3d8a888934b989f21ee6f3a898128",
-    "repair_task_id_under_investigation": "task_195d24a9cb37487eb9ff74c75bf885b6",
-    "prior_audit_task_id": "task_601d5264f35a4b78b08d34d7c37c3e00",
-    "findings": {
-      "deploy_fleet_scripts_directory": {
-        "exists": false,
-        "path": "deploy/fleet-scripts/",
-        "detail": "The directory deploy/fleet-scripts/ does not exist in the repository. Only deploy/fleet/, deploy/hermes/, deploy/codex-runner/, deploy/systemd/, deploy/openclaw/, deploy/nemoclaw/, deploy/openshell/, deploy/skills/, and deploy/k8s/ are present."
+  "codegraph": {
+    "status": "complete",
+    "init": "codegraph init: 39,359 nodes, 129,042 edges indexed in 12.4s",
+    "affected": "codegraph affected src/mac/diagnostics.py tests/test_diagnostics.py -> 2 affected test files: ide/tests/workbench-project-tree.spec.ts, tests/e2e/test_openshell_nemo_relay.py",
+    "impact": "codegraph impact src/mac/diagnostics.py -> 2 affected symbols in diagnostics.py and test_diagnostics.py (no public API changes; this is an audit task with no source modifications)"
+  },
+  "audit_findings": {
+    "task_id": "task_6a9f81cd95bd4a498117937e43ff5798",
+    "implementation_status": "complete",
+    "checks": {
+      "registration": {
+        "satisfied": true,
+        "detail": "_stranded_replacements is decorated with @register(\"stranded-replacements\", \"terminal tasks whose replacement_task_id chain ends without a live or completed successor\") at line 267-270 of src/mac/diagnostics.py"
       },
-      "deploy_fleet_scripts_manifest_fragments_directory": {
-        "exists": false,
-        "path": "deploy/fleet-scripts/manifest-fragments/",
-        "detail": "The directory deploy/fleet-scripts/manifest-fragments/ does not exist; its parent deploy/fleet-scripts/ does not exist either. No deliverable infrastructure for fleet-scripts or manifest-fragments has been created."
+      "walk_replacement_chain_import": {
+        "satisfied": true,
+        "detail": "walk_replacement_chain is imported from mac.repository_hygiene inside the _stranded_replacements function body (lazy import pattern) and called correctly as walk_replacement_chain(row[\"id\"], _get_task) at line 305"
       },
-      "jordanh_gke_manifest_fragment": {
-        "exists": false,
-        "searched_paths": [
-          "deploy/fleet-scripts/manifest-fragments/jordanh-gke.json",
-          "All files matching *jordanh* or *gke* in repo"
+      "test_functions": {
+        "satisfied": true,
+        "functions_present": [
+          "test_stranded_replacements_check_ok_when_clean",
+          "test_stranded_replacements_check_warns_when_stranded",
+          "test_stranded_replacements_check_ok_when_chain_has_live_successor",
+          "test_stranded_replacements_check_ok_when_chain_ends_completed"
         ],
-        "matches_found": [
-          "deploy/fleet/samples/gke.fleet.yaml (sample only, not a manifest fragment)"
-        ],
-        "detail": "No jordanh-gke.json manifest fragment exists anywhere in the repository. The only GKE-related file is the sample fleet config at deploy/fleet/samples/gke.fleet.yaml, which is a generic sample, not an agent-specific manifest fragment."
-      },
-      "parent_task_worker_exception_cause": {
-        "task_id": "task_195d24a9cb37487eb9ff74c75bf885b6",
-        "agent": "agent_jordanh-gke",
-        "failure_class": "environment",
-        "root_cause": "worker_exception on agent_jordanh-gke is consistent with missing Python package dependencies in the system Python environment. When src/mac/ modules are imported using the system Python3 (outside the project .venv), missing packages including yaml (PyYAML), fastapi, cryptography, and numpy cause ModuleNotFoundError on import. The .venv created by bootstrap (python3 scripts/bootstrap-project.py) correctly resolves all dependencies. If agent_jordanh-gke ran the task executor with the wrong Python interpreter (system Python instead of .venv), or if bootstrap was not run/failed silently, any import of mac.services, mac.worker, mac.cli, mac.api, etc. would raise an unhandled exception that the worker catches and records as worker_exception. The codebase itself has no broken imports when executed within the .venv.",
-        "import_errors_with_system_python": [
-          "mac.a2a: No module named 'yaml'",
-          "mac.activation_probe: No module named 'numpy'",
-          "mac.api: No module named 'fastapi'",
-          "mac.cli: No module named 'yaml'",
-          "mac.client_login: No module named 'yaml'",
-          "mac.client_profiles: No module named 'yaml'",
-          "mac.evidence_cli: No module named 'yaml'",
-          "mac.firecrawl_gateway: No module named 'fastapi'",
-          "mac.hermes_config_surface: No module named 'yaml'",
-          "mac.hermes_runtime: No module named 'yaml'",
-          "mac.hermes_startup: No module named 'yaml'",
-          "mac.ide_launcher: No module named 'yaml'",
-          "mac.k8s: No module named 'yaml'",
-          "mac.migration: No module named 'yaml'",
-          "mac.openshell_reconcile: No module named 'yaml'",
-          "mac.openshell_service: No module named 'yaml'",
-          "mac.project_inception: No module named 'yaml'",
-          "mac.router_app: No module named 'fastapi'",
-          "mac.secrets_service: No module named 'cryptography'",
-          "mac.services: No module named 'yaml'",
-          "mac.worker: No module named 'yaml'"
-        ],
-        "import_errors_with_venv_python": "None - all imports succeed correctly within .venv",
-        "code_defects_found": false,
-        "remediation": "Ensure python3 scripts/bootstrap-project.py runs successfully on agent_jordanh-gke before task execution, and that the task executor invokes .venv/bin/python (not system python3)."
-      },
-      "hermes_config_audit": {
-        "agent": "agent_natasha",
-        "hermes_dir": "~/.hermes",
-        "files_present": [
-          "config.yaml"
-        ],
-        "non_standard_files": [],
-        "scripts_found": false,
-        "cron_found": false,
-        "config_standard": true,
-        "detail": "~/.hermes on this execution environment (agent_natasha) contains only config.yaml (10101 bytes, dated 2026-07-02). No non-standard files, scripts, or cron configurations are present. The config.yaml contains standard Hermes defaults including model provider configuration, agent settings, terminal/web/browser config, display settings, memory, delegation, security, and MCP server configuration. The only notable entries are fleet-specific: custom provider pointing to 100.72.16.110:8789, ACC_URL=http://100.125.137.89:8789, AGENT_NAME=natasha, and standard Slack bot tokens.",
-        "prior_audit_task_id": "task_601d5264f35a4b78b08d34d7c37c3e00",
-        "prior_audit_confirmation": "Cannot directly access task_601d52 evidence from this execution environment (different task sandbox). However, direct inspection of ~/.hermes confirms: only config.yaml with standard defaults is present. This is consistent with what a prior audit would confirm."
+        "all_pass": true,
+        "file": "tests/test_diagnostics.py"
       }
     },
-    "deliverables_status": {
-      "deploy_fleet_scripts_dir": "MISSING - not yet created",
-      "manifest_fragments_dir": "MISSING - not yet created",
-      "jordanh_gke_json": "MISSING - not yet created",
-      "instruction": "Per task description: do NOT write any deliverable files yet. This investigation records the current state only."
-    },
-    "repo_state_summary": {
-      "branch": "master",
-      "head_commit": "58853b9 MAC OpenShell sandbox baseline",
-      "worktree": "/sandbox/task_b8be9785ee04490c8cd73655273f2501/repo-lease_aa37b1cc75154cdea5590c86b9af3041",
-      "deploy_dirs_present": [
-        "deploy/fleet/",
-        "deploy/hermes/",
-        "deploy/codex-runner/",
-        "deploy/systemd/",
-        "deploy/openclaw/",
-        "deploy/nemoclaw/",
-        "deploy/openshell/",
-        "deploy/skills/",
-        "deploy/k8s/"
-      ],
-      "deploy_dirs_absent": [
-        "deploy/fleet-scripts/",
-        "deploy/fleet-scripts/manifest-fragments/"
-      ]
-    }
+    "gaps": []
   },
   "assumptions": [
-    "The integration task (task_f9a3d8a888934b989f21ee6f3a898128) sandbox is not accessible from this execution environment; findings are based on the task worktree.",
-    "The prior audit evidence for task_601d5264f35a4b78b08d34d7c37c3e00 cannot be directly read from this environment, but direct inspection of ~/.hermes confirms it contains only config.yaml with standard defaults.",
-    "worker_exception cause is inferred from import error analysis: the codebase has no broken imports within the .venv but has many missing dependencies when using system Python. The actual exception message on agent_jordanh-gke is not available in this environment.",
-    "No deliverable files are created per explicit task instruction: 'Do NOT write any deliverable files yet.'"
+    "No source code modifications were needed; the implementation was already complete and correct.",
+    "mac-evidence.json is the only file changed; previous evidence from a different task was overwritten."
   ]
 }
