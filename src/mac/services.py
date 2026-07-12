@@ -12788,7 +12788,20 @@ class ControlPlane:
                     is_experiment = (
                         experiment_assignment.get("schema") == "mac.review_experiment.v1"
                     )
-                    if not is_experiment:
+                    # Hold the merge gate only for evidence hub-verify can
+                    # actually gate: a pushed repo change with a contract test to
+                    # run. Evidence that is NOT a pushed repo change (e.g. an
+                    # operator_result log from a non-code task) has nothing to
+                    # hub-verify, so waiting for a verdict that can never be
+                    # produced stalls the review forever — until the lease
+                    # expires and the task fails. Fall through to the agent-nudge
+                    # path so a real reviewer performs the semantic second-eyes
+                    # review instead (its signed verdict is still required; the
+                    # merge gate is not weakened for actual code changes).
+                    hub_verifiable = (
+                        self._hub_verify_repo_info(task, evidence) is not None
+                    )
+                    if not is_experiment and hub_verifiable:
                         self._record_default_review_observation(
                             task_id,
                             "workflow.default_review.waiting_for_hub_verify",

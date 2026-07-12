@@ -11262,6 +11262,29 @@ def test_hub_verify_blocking_guard_does_not_fire_for_experiments(cp, monkeypatch
     assert "workflow.default_review.hub_verify_skipped" in obs_names
 
 
+def test_hub_verify_gate_falls_through_for_non_repo_evidence(cp, monkeypatch):
+    """Evidence that is not a pushed repo change (e.g. an operator_result log
+    from a non-code task) has nothing for hub-verify to gate. The blocking guard
+    must NOT wait_for_hub_verify forever — it falls through to the agent-nudge
+    path so a real reviewer produces the semantic verdict. The merge gate is
+    unchanged for actual repo changes (see the waiting test above)."""
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+
+    def unreachable(*args):
+        raise AssertionError("hub verify runner must not run for non-repo evidence")
+
+    worker, reviewer, task, evidence = _setup_hubverify_task(cp, unreachable)
+    # Nothing pushed to independently verify -> _hub_verify_repo_info is None.
+    monkeypatch.setattr(cp, "_hub_verify_repo_info", lambda *a, **k: None)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] != "waiting_for_hub_verify"
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    obs_names = {ev.name for ev in cp.list_observability(limit=50)}
+    assert "workflow.default_review.waiting_for_hub_verify" not in obs_names
+
+
 def test_evidence_tests_are_hub_verify_deferred_detects_deferred(cp):
     """_evidence_tests_are_hub_verify_deferred returns True only when all test
     items carry status='deferred' and none has already passed."""
