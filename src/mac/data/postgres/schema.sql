@@ -529,6 +529,15 @@ CREATE TABLE IF NOT EXISTS agentbus_streams (
 );
 CREATE INDEX IF NOT EXISTS idx_agentbus_streams_recipient_status
     ON agentbus_streams (recipient_agent_id, status, updated_at);
+
+-- Hub-durable consumer read positions (opaque client-defined bookmarks).
+CREATE TABLE IF NOT EXISTS agentbus_consumer_cursors (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    topic TEXT NOT NULL,
+    position TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, topic)
+);
 CREATE INDEX IF NOT EXISTS idx_agentbus_streams_sender_status
     ON agentbus_streams (sender_agent_id, status, updated_at);
 

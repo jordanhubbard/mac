@@ -1408,6 +1408,27 @@ class RemoteDispatch:
     def publish_agentbus_artifact(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus/artifact-publish", _drop_none(kw)))
 
+    def agentbus_request(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/agentbus/request", _drop_none(kw)))
+
+    def get_agentbus_consumer_cursor(self, agent_id: str, topic: str) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/v1/agents/%s/agentbus-cursor" % quote(agent_id, safe=""),
+                topic=topic,
+            )
+        )
+
+    def set_agentbus_consumer_cursor(
+        self, agent_id: str, topic: str, position: Any
+    ) -> _Dictish:
+        return _Dictish(
+            self._put(
+                "/v1/agents/%s/agentbus-cursor" % quote(agent_id, safe=""),
+                {"topic": topic, "position": position},
+            )
+        )
+
     # -- Review / Publish ---------------------------------------------------
 
     def request_review(self, task_id: str, reviewer_agent_id: str, actor: str) -> _Dictish:

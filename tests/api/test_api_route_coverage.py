@@ -1092,6 +1092,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/disable"): {"agent_id": "disable_agent_id"},
         ("DELETE", "/agents/{agent_id}"): {"agent_id": "delete_agent_id"},
         ("POST", "/v1/agents/{agent_id}/deregister"): {"agent_id": "deregister_agent_id"},
+        ("GET", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
+        ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
         ("POST", "/agents/bulk"): {},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
@@ -1247,6 +1249,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"timeout_seconds": 0, "poll_interval_seconds": 0.25}
         elif path_template == "/v1/memory/recall":
             kwargs["params"] = {"q": "route coverage", "limit": 1}
+        elif path_template == "/v1/agents/{agent_id}/agentbus-cursor":
+            kwargs["params"] = {"topic": "peer.message.v1"}
         elif path_template == "/v1/memory/dreams/recall":
             kwargs["params"] = {"q": "route coverage dream", "limit": 1, "min_confidence": "low"}
         elif path_template == "/tasks/search":
@@ -1566,6 +1570,16 @@ edges:
             "schema_name": "mac.agent_deploy_config.v1",
         },
         ("POST", "/v1/agents/{agent_id}/deregister"): {"actor": "operator"},
+        ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {
+            "topic": "peer.message.v1",
+            "position": {"watermark": "2026-07-12T00:00:00+00:00", "processed": []},
+        },
+        ("POST", "/agentbus/request"): {
+            "sender_agent_id": ctx["agent_id"],
+            "recipient_agent_id": ctx["reviewer_agent_id"],
+            "payload": {"schema": "mac.agent.peer_message.v1", "message": "route coverage ping"},
+            "deadline_seconds": 0,
+        },
         ("POST", "/v1/agents/{agent_id}/memory"): {
             "content": "route coverage learning: the hub answers on :8789",
             "record_type": "agent_learning:route_coverage",

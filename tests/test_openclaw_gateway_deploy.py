@@ -81,7 +81,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="13"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="14"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
@@ -374,6 +374,26 @@ def test_workspace_context_routes_agent_coordination_over_agentbus(
     assert "reply over the bus" in context
     assert "ONE consolidated answer" in context
     assert "mirror_fleet_conversation" in context
+
+
+def test_peer_bridge_uses_hub_durable_cursors_and_request_endpoint() -> None:
+    """Contract layer (task_0d50e190): bridge read positions persist via the
+    hub cursor endpoint (sandbox rebuilds resume, not reset), and single-
+    recipient waits go through the hub's first-class /agentbus/request."""
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    assert "loadPeerStateFromHub" in plugin
+    assert "persistPeerState" in plugin
+    assert '"/agentbus-cursor"' in plugin
+    assert '"/agentbus/request"' in plugin
+    # Poll paths persist through the hub-backed variant, not the bare local
+    # file write (only the definition and the wrapper's own internal call
+    # remain).
+    assert plugin.count("savePeerState(state)") == 2
+    assert plugin.count("persistPeerState(api, state)") >= 5
+    # Hub state merges once per gateway start.
+    assert "hubStateMerged" in plugin
 
 
 def test_media_sharing_travels_typed_and_chunked_over_the_bus(tmp_path) -> None:

@@ -49,7 +49,7 @@ from mac.hermes_config_surface import (
 )
 from mac.hermes_startup import build_hermes_startup_report
 from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
-from mac.models import AmbiguousIdError, AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
+from mac.models import AmbiguousIdError, AuthorizationError, MACError, NotFoundError, ValidationError, new_id, utcnow
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
@@ -1337,6 +1337,23 @@ class AgentDeregister(BaseModel):
     actor: Optional[str] = None
     final_message: Optional[str] = None
     final_target: Optional[str] = None
+
+
+class AgentBusCursorSet(BaseModel):
+    topic: str
+    position: Any
+
+
+class AgentBusRequest(BaseModel):
+    sender_agent_id: str
+    recipient_agent_id: str
+    payload: Dict[str, Any]
+    topic: str = "peer.message.v1"
+    content_type: str = "application/vnd.mac.agent-peer+json"
+    reply_topic: str = "peer.reply.v1"
+    deadline_seconds: float = 30.0
+    correlation_id: Optional[str] = None
+    task_id: Optional[str] = None
 
 
 class AgentMemoryStore(BaseModel):
@@ -7333,6 +7350,109 @@ def create_app(
         return cp.report_agent_deploy_config(
             agent_id, schema=schema_name, **values
         )
+
+    @app.get("/v1/agents/{agent_id}/agentbus-cursor")
+    def get_agentbus_cursor(
+        agent_id: str,
+        topic: str = Query(max_length=200),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Hub-durable consumer read position (task_0d50e190): survives
+        gateway/sandbox rebuilds, unlike a local state file."""
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot read a peer agent's agentbus cursor"
+            )
+        cursor = cp.get_agentbus_consumer_cursor(agent_id, topic)
+        return cursor or {"agent_id": agent_id, "topic": topic, "position": None}
+
+    @app.put("/v1/agents/{agent_id}/agentbus-cursor")
+    def set_agentbus_cursor(
+        agent_id: str,
+        body: AgentBusCursorSet,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        if principal.agent_id and principal.agent_id != agent_id:
+            raise AuthorizationError(
+                "agent token cannot set a peer agent's agentbus cursor"
+            )
+        return cp.set_agentbus_consumer_cursor(agent_id, body.topic, body.position)
+
+    @app.post("/agentbus/request")
+    async def agentbus_request(
+        body: AgentBusRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """First-class request/reply (task_0d50e190): publish a request and
+        long-poll its correlated reply hub-side, so every consumer stops
+        re-implementing the correlation-id wait loop. A lapsed deadline
+        returns a standard mac.agentbus.error.v1 timeout payload instead of
+        a bespoke shape per caller."""
+        from mac.agentbus_schemas import error_payload
+
+        principal.assert_actor(body.sender_agent_id)
+        correlation_id = (body.correlation_id or "").strip() or new_id("corr")
+        payload = dict(body.payload)
+        payload.setdefault("correlation_id", correlation_id)
+        headers = {"correlation_id": correlation_id, "reply_topic": body.reply_topic}
+        published = cp.publish_agentbus_content(
+            sender_agent_id=body.sender_agent_id,
+            recipient_agent_id=body.recipient_agent_id,
+            topic=body.topic,
+            content_type=body.content_type,
+            headers=headers,
+            payload=payload,
+            task_id=body.task_id,
+        )
+        deadline_seconds = min(
+            max(0.0, float(body.deadline_seconds)), AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS
+        )
+        deadline = time.monotonic() + deadline_seconds
+        reply_payload: Optional[Dict[str, Any]] = None
+        reply_stream_id: Optional[str] = None
+        while time.monotonic() < deadline:
+            for stream in cp.list_agentbus_streams(
+                agent_id=body.sender_agent_id, limit=100
+            ):
+                if (
+                    stream.recipient_agent_id == body.sender_agent_id
+                    and stream.topic == body.reply_topic
+                    and str((stream.headers or {}).get("correlation_id") or "")
+                    == correlation_id
+                ):
+                    chunks = cp.read_agentbus_chunks(
+                        body.sender_agent_id, stream.id, limit=100
+                    )
+                    if chunks:
+                        candidate = chunks[-1].payload
+                        if isinstance(candidate, dict):
+                            reply_payload = candidate
+                            reply_stream_id = stream.id
+                    break
+            if reply_payload is not None:
+                break
+            await asyncio.sleep(0.35)
+        if reply_payload is None:
+            return {
+                "schema": "mac.agentbus.request.v1",
+                "status": "timeout",
+                "correlation_id": correlation_id,
+                "request_stream": published["stream"],
+                "reply": error_payload(
+                    "timeout",
+                    "no reply within %.1fs" % deadline_seconds,
+                    retryable=True,
+                    correlation_id=correlation_id,
+                ),
+            }
+        return {
+            "schema": "mac.agentbus.request.v1",
+            "status": "replied",
+            "correlation_id": correlation_id,
+            "request_stream": published["stream"],
+            "reply_stream_id": reply_stream_id,
+            "reply": reply_payload,
+        }
 
     @app.post("/v1/agents/{agent_id}/deregister")
     def deregister_agent_route(

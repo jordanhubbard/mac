@@ -96,6 +96,48 @@ function peerTextResult(value) {
   return {content: [{type: "text", text: JSON.stringify(value, null, 2)}]};
 }
 
+// Hub-durable bridge state (task_0d50e190): the local peer-bridge.json dies
+// with every sandbox rebuild, which used to reset read positions. The hub
+// cursor is the durable copy; the local file stays as the fast path.
+async function loadPeerStateFromHub(api, localState) {
+  try {
+    const cursor = await selfApi(api, "GET", "/agentbus-cursor", {
+      query: {topic: PEER_MESSAGE_TOPIC},
+    });
+    const position = cursor?.position;
+    if (position && typeof position === "object") {
+      const merged = {
+        processed: Array.from(new Set([
+          ...((localState.processed || []).map(String)),
+          ...((Array.isArray(position.processed) ? position.processed : []).map(String)),
+        ])).slice(-2000),
+        attempts: localState.attempts || {},
+        groupCursors: {...(localState.groupCursors || {})},
+      };
+      for (const [key, value] of Object.entries(position.groupCursors || {})) {
+        merged.groupCursors[key] = Math.max(Number(value) || 0, Number(merged.groupCursors[key]) || 0);
+      }
+      return merged;
+    }
+  } catch {
+    // best-effort: hub unreachable at boot — the local file still works.
+  }
+  return localState;
+}
+
+function persistPeerState(api, state) {
+  savePeerState(state);
+  selfApi(api, "PUT", "/agentbus-cursor", {
+    body: {
+      topic: PEER_MESSAGE_TOPIC,
+      position: {
+        processed: Array.from(new Set(state.processed || [])).slice(-500),
+        groupCursors: state.groupCursors || {},
+      },
+    },
+  }).catch(() => undefined);
+}
+
 function curiosity(api, args) {
   const cfg = settings(api);
   const result = spawnSync(cfg.curiosityBin, args, {
@@ -480,7 +522,7 @@ async function pollPeerMessages(api, state) {
     if (!payload || payload.schema !== PEER_MESSAGE_SCHEMA || typeof payload.message !== "string") {
       state.processed.push(stream.id);
       delete state.attempts[stream.id];
-      savePeerState(state);
+      persistPeerState(api, state);
       continue;
     }
     try {
@@ -494,7 +536,7 @@ async function pollPeerMessages(api, state) {
       );
       state.processed.push(stream.id);
       delete state.attempts[stream.id];
-      savePeerState(state);
+      persistPeerState(api, state);
     } catch (error) {
       const attempt = Number(state.attempts[stream.id] || 0) + 1;
       state.attempts[stream.id] = attempt;
@@ -509,7 +551,7 @@ async function pollPeerMessages(api, state) {
         state.processed.push(stream.id);
         delete state.attempts[stream.id];
       }
-      savePeerState(state);
+      persistPeerState(api, state);
       api.logger.warn?.(
         `mac-continuity: peer message ${stream.id} attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -665,7 +707,7 @@ async function pollMediaShares(api, state, nameCache) {
       await receiveMediaShare(api, stream, state, nameCache);
       state.processed.push(stream.id);
       delete state.attempts[stream.id];
-      savePeerState(state);
+      persistPeerState(api, state);
     } catch (error) {
       const attempt = Number(state.attempts[stream.id] || 0) + 1;
       state.attempts[stream.id] = attempt;
@@ -673,7 +715,7 @@ async function pollMediaShares(api, state, nameCache) {
         state.processed.push(stream.id);
         delete state.attempts[stream.id];
       }
-      savePeerState(state);
+      persistPeerState(api, state);
       api.logger.warn?.(
         `mac-continuity: media share ${stream.id} attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -809,7 +851,7 @@ async function pollGroupMessages(api, state, nameCache) {
     if (advanced) {
       state.groupCursors = state.groupCursors || {};
       state.groupCursors[cursorKey] = cursor;
-      savePeerState(state);
+      persistPeerState(api, state);
     }
   }
 }
@@ -989,17 +1031,49 @@ export default {
         const correlationId = randomUUID();
         const timeoutSeconds = Number(params.timeoutSeconds || 0);
         if (peers.length === 1) {
+          if (timeoutSeconds > 0) {
+            // First-class hub request/reply (task_0d50e190): the hub owns
+            // the correlation wait, capped at its 60s event budget; longer
+            // caller budgets fall back to one client-side wait on top.
+            const deadline = Math.min(60, timeoutSeconds);
+            const result = await hubApi(api, "POST", "/agentbus/request", {
+              timeoutMs: (deadline + 15) * 1000,
+              body: {
+                sender_agent_id: cfg.agentId,
+                recipient_agent_id: peers[0].id,
+                correlation_id: correlationId,
+                deadline_seconds: deadline,
+                payload: {
+                  schema: PEER_MESSAGE_SCHEMA,
+                  correlation_id: correlationId,
+                  from_agent_id: cfg.agentId,
+                  to_agent_id: peers[0].id,
+                  message: String(params.message).slice(0, 16000),
+                },
+              },
+            });
+            let reply = result?.status === "replied" ? result.reply : null;
+            if (!reply && timeoutSeconds > deadline) {
+              reply = await waitForPeerReply(api, correlationId, timeoutSeconds - deadline);
+            }
+            return peerTextResult({
+              status: reply ? "replied" : "timeout",
+              recipient_agent_id: peers[0].id,
+              recipient_name: peers[0].name,
+              correlation_id: correlationId,
+              stream_id: result?.request_stream?.id || null,
+              reply,
+              ...(reply ? {} : {error: result?.reply || null}),
+            });
+          }
           const published = await publishPeerMessage(api, peers[0].id, params.message, correlationId);
-          const reply = timeoutSeconds > 0
-            ? await waitForPeerReply(api, correlationId, Math.min(120, timeoutSeconds))
-            : null;
           return peerTextResult({
-            status: reply ? "replied" : timeoutSeconds > 0 ? "timeout" : "queued",
+            status: "queued",
             recipient_agent_id: peers[0].id,
             recipient_name: peers[0].name,
             correlation_id: correlationId,
             stream_id: published?.stream?.id || null,
-            reply,
+            reply: null,
           });
         }
         const recipientIds = peers.map((peer) => peer.id);
@@ -1056,10 +1130,17 @@ export default {
       let timer = null;
       let running = false;
       const state = loadPeerState();
+      let hubStateMerged = false;
       const tick = async () => {
         if (running) return;
         running = true;
         try {
+          if (!hubStateMerged) {
+            // One-time merge of the hub-durable cursor so a rebuilt sandbox
+            // resumes where its predecessor left off (task_0d50e190).
+            Object.assign(state, await loadPeerStateFromHub(api, state));
+            hubStateMerged = true;
+          }
           await pollPeerMessages(api, state);
         } catch (error) {
           api.logger.warn?.(

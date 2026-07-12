@@ -163,6 +163,28 @@ class AgentBusService:
     ) -> AgentBusChunk:
         self._require_agent(sender_agent_id)
         payload_json = self._serialize_payload(payload, payload_encoding)
+        # Contract layer (task_0d50e190): payloads declaring a REGISTERED
+        # schema are validated at publish time so producers learn about
+        # malformed messages immediately, instead of consumers discovering
+        # them at turn time. Unregistered schema names stay advisory.
+        from mac.agentbus_schemas import is_registered, validate_payload
+
+        declared_schema, problems = validate_payload(payload)
+        if problems:
+            raise ValidationError(
+                "agentbus payload violates %s: %s"
+                % (declared_schema, "; ".join(problems))
+            )
+        if declared_schema and not is_registered(declared_schema):
+            self.observability.record_log(
+                "agentbus.schema.unregistered",
+                layer="agentbus",
+                source=sender_agent_id,
+                level="warning",
+                subject_type="agentbus_stream",
+                subject_id=stream_id,
+                detail={"schema": declared_schema},
+            )
         chunk_id = new_id("chunk")
         now = utcnow()
         with self.store.transaction() as conn:
@@ -508,6 +530,60 @@ class AgentBusService:
                 "agentbus chunk exceeds %d-byte limit" % AGENTBUS_MAX_CHUNK_BYTES
             )
         return serialized
+
+    # Consumer cursors (task_0d50e190): hub-durable read positions so a
+    # gateway rebuild no longer loses its place (the peer bridge previously
+    # kept its bookmark in a sandbox-local file). The position document is
+    # opaque to the hub — client-defined semantics, bounded size.
+
+    CURSOR_MAX_BYTES = 8192
+
+    def set_consumer_cursor(
+        self,
+        agent_id: str,
+        topic: str,
+        position: Any,
+    ) -> JsonDict:
+        self._require_agent(agent_id)
+        topic_value = self._validate_topic(topic)
+        encoded = json_dumps(position)
+        if len(encoded.encode("utf-8")) > self.CURSOR_MAX_BYTES:
+            raise ValidationError(
+                "agentbus cursor position exceeds %d bytes" % self.CURSOR_MAX_BYTES
+            )
+        now = utcnow()
+        self.store.execute(
+            """
+            INSERT INTO agentbus_consumer_cursors (agent_id, topic, position, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(agent_id, topic) DO UPDATE SET
+                position = excluded.position,
+                updated_at = excluded.updated_at
+            """,
+            (agent_id, topic_value, encoded, now),
+        )
+        return {
+            "agent_id": agent_id,
+            "topic": topic_value,
+            "position": position,
+            "updated_at": now,
+        }
+
+    def get_consumer_cursor(self, agent_id: str, topic: str) -> Optional[JsonDict]:
+        self._require_agent(agent_id)
+        topic_value = self._validate_topic(topic)
+        row = self.store.query_one(
+            "SELECT * FROM agentbus_consumer_cursors WHERE agent_id = ? AND topic = ?",
+            (agent_id, topic_value),
+        )
+        if row is None:
+            return None
+        return {
+            "agent_id": agent_id,
+            "topic": topic_value,
+            "position": json_loads(row["position"], None),
+            "updated_at": row["updated_at"],
+        }
 
     def _authorized(self, stream: AgentBusStream, agent_id: str) -> bool:
         if stream.participants:

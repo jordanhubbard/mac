@@ -2043,6 +2043,21 @@ class SQLiteStore:
         # task_588b67fd: group streams — JSON member list; NULL keeps the
         # legacy sender/recipient pair semantics.
         self._ensure_column("agentbus_streams", "participants", "participants TEXT")
+        # task_0d50e190: hub-durable consumer read positions. The position
+        # document is opaque to the hub (client-defined bookmark, e.g. an
+        # updated_at watermark + per-stream chunk sequences) so gateway
+        # rebuilds no longer lose their place.
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS agentbus_consumer_cursors (
+                agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                topic TEXT NOT NULL,
+                position TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (agent_id, topic)
+            );
+            """
+        )
         self._ensure_column(
             "agents", "attestation_key_ciphertext", "attestation_key_ciphertext TEXT"
         )

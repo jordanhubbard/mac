@@ -11641,6 +11641,14 @@ class ControlPlane:
             self._require_live_agent(str(sender))
         return self.agentbus.publish(*args, **kwargs)
 
+    def set_agentbus_consumer_cursor(self, *args: Any, **kwargs: Any) -> JsonDict:
+        return self.agentbus.set_consumer_cursor(*args, **kwargs)
+
+    def get_agentbus_consumer_cursor(
+        self, *args: Any, **kwargs: Any
+    ) -> Optional[JsonDict]:
+        return self.agentbus.get_consumer_cursor(*args, **kwargs)
+
     def publish_agentbus_repo_update(
         self,
         sender_agent_id: str,
