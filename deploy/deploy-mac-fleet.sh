@@ -1636,8 +1636,13 @@ MAC_PLIST_BACKUP=""
 HERMES_PLIST_BACKUP=""
 MAC_AGENT_PLIST_BACKUP=""
 
+# Apply a restrictive umask before creating LOG_DIR so it gets 0700 (owner only).
+umask 0077
 mkdir -p "$LOG_DIR" "$MAC_HOME/backups"
+umask 0022
 exec > >(tee -a "$DEPLOY_LOG") 2>&1
+# Tighten deploy log to owner-read/write only (the tee process already has the fd open).
+chmod 0600 "$DEPLOY_LOG" 2>/dev/null || true
 
 log() {
   printf '[%s] [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$AGENT" "$*"
@@ -3016,7 +3021,23 @@ manifest = {
     },
     "rollback": str(Path(os.environ["LOG_DIR"]) / "rollback-latest.sh"),
 }
-output_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+import os, tempfile as _tempfile
+fd, tmp_name = _tempfile.mkstemp(prefix="." + output_path.name + ".", dir=str(output_path.parent))
+_tmp = __import__("pathlib").Path(tmp_name)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as _fh:
+        _fh.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        _fh.flush()
+        os.fsync(_fh.fileno())
+    os.replace(_tmp, output_path)
+    try:
+        output_path.chmod(0o600)
+    except OSError:
+        pass
+finally:
+    if _tmp.exists():
+        _tmp.unlink()
 PY
 }
 
@@ -3116,7 +3137,9 @@ esac
 
 echo "rollback complete from $DEPLOY_TS"
 EOF
+  # Rollback script contains sensitive paths; restrict to owner-only execution (0700).
   chmod 700 "$ROLLBACK_SCRIPT"
+  # cp preserves the 0700 mode, so ROLLBACK_LATEST also gets owner-only permissions.
   cp -f "$ROLLBACK_SCRIPT" "$ROLLBACK_LATEST"
 }
 
@@ -6545,6 +6568,7 @@ esac
 
 write_deploy_manifest "post" "$MANIFEST_POST"
 cp -f "$MANIFEST_POST" "$LOG_DIR/deploy-manifest-latest.json"
+chmod 0600 "$LOG_DIR/deploy-manifest-latest.json" 2>/dev/null || true
 log "deploy complete"
 REMOTE
   then
@@ -6591,6 +6615,9 @@ upsert_local_env() {
   chmod 600 "$env_file"
 }
 
+# Handoff file is written atomically with 0o600 mode via tempfile-then-replace so
+# credentials stored in the JSON are never visible to other users or in a
+# partially-written state.  See also: write_owner_only_file() in fleet_deploy.py.
 write_ide_handoff_file() {
   local api_url="$1" token="$2" hub_agent="$3" fleet_name="$4"
   local handoff_file="${MAC_DEPLOY_IDE_HANDOFF_FILE:-$HOME/.mac/fleet-ide-handoff.json}"

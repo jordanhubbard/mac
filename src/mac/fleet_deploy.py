@@ -196,3 +196,46 @@ def cleanup_path_strings(home: Path, mac_home: Path) -> List[str]:
 
 def shell_words(items: Iterable[str]) -> str:
     return " ".join(items)
+
+
+def write_owner_only_file(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Atomically write *text* to *path* with mode 0o600 (owner read/write only).
+
+    Uses a tempfile-then-replace pattern matching ``write_ide_handoff_file`` so
+    the target path is never visible to other processes in a partially-written
+    state.  The temporary file is created in the same directory as *path* to
+    ensure ``os.replace`` is always within a single filesystem.
+    """
+    import os
+    import tempfile
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".%s." % path.name, dir=str(path.parent))
+    tmp = Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding=encoding) as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def ensure_owner_only_directory(path: Path) -> None:
+    """Create *path* (and any missing parents) with mode 0o700 (owner only).
+
+    If the directory already exists its permissions are tightened to 0o700.
+    Parent directories that must be created receive the default umask-filtered
+    permissions; only the final component is guaranteed to be 0o700.
+    """
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(0o700)
