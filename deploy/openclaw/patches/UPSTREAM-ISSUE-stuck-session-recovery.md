@@ -1,8 +1,9 @@
 # Draft upstream issue for github.com/openclaw/openclaw
 
-Status: DRAFT — not yet filed. Companion to MAC task task_b6315ed0 and
-patch-stuck-session-recovery.py in this directory. When filed, record the
-issue URL here and in the ledger task.
+Status: FILED 2026-07-12 as https://github.com/openclaw/openclaw/issues/105586
+(by jordanhubbard). Companion to MAC task task_b6315ed0 and
+patch-stuck-session-recovery.py in this directory. Drop the local image patch
+once an upstream release ships the fix and the pinned base image is bumped.
 
 ---
 
