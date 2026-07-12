@@ -81,7 +81,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="11"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="12"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
@@ -192,6 +192,68 @@ def test_prepare_rewrites_host_loopback_to_openshell_alias(tmp_path: Path) -> No
     assert "host: host.openshell.internal" in policy
     assert "127.0.0.1:8789" not in runtime
     assert "localhost:8789" not in runtime
+
+
+def test_stuck_session_recovery_patch_is_wired_exact_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """keep_lane fix (task_b6315ed0): the image build patches OpenClaw's
+    stuck-session recovery so a terminal last-progress reason (run:completed /
+    embedded_run:ended — what the detector logs as terminalProgressStale) with
+    queued work reclaims the lane instead of looping keep_lane forever. The
+    patcher must be exact-match, idempotent, and fail the build on upstream
+    drift rather than silently dropping the fix."""
+    patcher = OPENCLAW_DIR / "patches" / "patch-stuck-session-recovery.py"
+    container = CONTAINERFILE.read_text(encoding="utf-8")
+    # Wired into the image build, applied as root before USER sandbox.
+    assert (
+        "COPY deploy/openclaw/patches/patch-stuck-session-recovery.py" in container
+    )
+    assert (
+        "RUN python3 /opt/mac-openclaw/patches/patch-stuck-session-recovery.py"
+        in container
+    )
+    assert container.index("patch-stuck-session-recovery.py") < container.index(
+        "USER sandbox"
+    )
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("stuck_patch", patcher)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # Patches the verbatim upstream function (surrounding bundle context
+    # included to prove exact-match replacement, not whole-file rewrite).
+    target = tmp_path / "diagnostic-stuck-session-recovery.runtime-test.js"
+    target.write_text(
+        "const recoveriesInFlight = new Set();\n"
+        + mod.ORIGINAL
+        + "\nexport { recoverStuckDiagnosticSession };\n",
+        encoding="utf-8",
+    )
+    assert mod.patch_file(str(target)) == "patched"
+    patched = target.read_text(encoding="utf-8")
+    assert 'reason === "run:completed"' in patched
+    assert 'reason === "embedded_run:ended"' in patched
+    assert "task_b6315ed0" in patched
+    # The age fallback survives for genuinely idle wedges.
+    assert "lastProgressAgeMs >= params.staleAbortMs" in patched
+    # Idempotent on a second pass.
+    assert mod.patch_file(str(target)) == "already-patched"
+
+    # Fail-closed: upstream drift must abort the build, not skip the fix.
+    drifted = tmp_path / "drifted.js"
+    drifted.write_text(
+        "function isActiveRunProgressStale(params) { return false; }\n",
+        encoding="utf-8",
+    )
+    try:
+        mod.patch_file(str(drifted))
+    except SystemExit as exc:
+        assert "upstream changed" in str(exc)
+    else:
+        raise AssertionError("patcher must fail on drifted upstream source")
 
 
 def test_installer_consolidates_agent_geek_knobs_and_plugin_reports_them(

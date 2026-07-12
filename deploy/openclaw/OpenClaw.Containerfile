@@ -19,6 +19,7 @@ COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
 COPY deploy/openclaw/apply-cron-plan.mjs /opt/mac-openclaw/apply-cron-plan.mjs
 COPY deploy/openclaw/curiosity-sidecar.py /usr/local/bin/curiosity
 COPY deploy/openclaw/plugins/mac-continuity /opt/mac-openclaw/plugins/mac-continuity
+COPY deploy/openclaw/patches/patch-stuck-session-recovery.py /opt/mac-openclaw/patches/patch-stuck-session-recovery.py
 # Keep the agent's real home durable. OpenShell command wrappers receive
 # explicit no-profile flags and a readable profile, so profile lookup must not
 # force session state into a temporary directory.
@@ -53,6 +54,13 @@ RUN apt-get update \
     && ln -s /sandbox/state /home/sandbox/.openclaw \
     && printf '%s\n' "${MAC_OPENCLAW_IMAGE_REVISION}" \
          > /etc/mac-openclaw-image-revision
+
+# Upstream fix (MAC task task_b6315ed0): the stuck-session RECOVERY ignores
+# terminal progress reasons its own DETECTOR flags (terminalProgressStale), so
+# a wedged channel lane loops "keep_lane reason=active_reply_work" forever and
+# the agent can react but never reply until a gateway restart. Exact-match
+# patch; FAILS THE BUILD if the upstream source drifted (re-derive it then).
+RUN python3 /opt/mac-openclaw/patches/patch-stuck-session-recovery.py
 
 ENV HOME=/home/sandbox \
     OPENCLAW_CONFIG_PATH=/home/sandbox/.config/mac-openclaw/openclaw.json \
