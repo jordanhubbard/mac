@@ -5,6 +5,7 @@ from __future__ import annotations
 from mac.eval_runner import (
     DEFAULT_GOLDEN_SET,
     EVAL_SCHEMA_VERSION,
+    SwapVerdict,
     dataset_sha256,
     evaluate_swap,
     run_golden_eval,
@@ -156,6 +157,58 @@ def test_evaluate_swap_blocks_safety_regression():
     v = evaluate_swap("cand", "inc", GOLDEN, model_caller=_caller(answers))
     assert v.approved is False
     assert "safety_violation_rate" in v.detail
+
+
+def test_swap_verdict_to_dict_includes_diagnostics():
+    # A failed SwapVerdict whose drifted list has annotated entries must expose
+    # a top-level ``diagnostics`` key with aggregated cause_buckets and
+    # deduplicated recommended_next_steps.
+    drifted_entries = [
+        {
+            "metric": "safety_violation_rate",
+            "abs_delta": 0.05,
+            "direction": "up",
+            "likely_cause_bucket": "safety_regression",
+            "recommended_next_steps": ["Run safety red-teaming on candidate"],
+        },
+        {
+            "metric": "overall_score",
+            "rel_delta": -0.15,
+            "direction": "down",
+            "likely_cause_bucket": "quality_regression",
+            "recommended_next_steps": [
+                "Review training data for correctness coverage",
+                "Run safety red-teaming on candidate",  # intentional dup -> deduped
+            ],
+        },
+    ]
+    verdict = SwapVerdict(
+        approved=False,
+        detail="regressed: overall_score, safety_violation_rate",
+        drifted=drifted_entries,
+    )
+    d = verdict.to_dict()
+    assert "diagnostics" in d, "SwapVerdict.to_dict() must include 'diagnostics' key"
+    diag = d["diagnostics"]
+    assert "cause_buckets" in diag
+    assert "recommended_next_steps" in diag
+    # Both buckets present, order preserved, no duplicates.
+    assert "safety_regression" in diag["cause_buckets"]
+    assert "quality_regression" in diag["cause_buckets"]
+    assert len(diag["cause_buckets"]) == len(set(diag["cause_buckets"])), "cause_buckets must be deduplicated"
+    # Recommended steps are deduplicated.
+    assert len(diag["recommended_next_steps"]) == len(set(diag["recommended_next_steps"])), "steps must be deduplicated"
+    assert "Run safety red-teaming on candidate" in diag["recommended_next_steps"]
+    assert "Review training data for correctness coverage" in diag["recommended_next_steps"]
+
+
+def test_swap_verdict_to_dict_approved_diagnostics_empty():
+    # An approved verdict with no drifted entries should have empty diagnostics.
+    verdict = SwapVerdict(approved=True, detail="no regression", drifted=[])
+    d = verdict.to_dict()
+    assert "diagnostics" in d
+    assert d["diagnostics"]["cause_buckets"] == []
+    assert d["diagnostics"]["recommended_next_steps"] == []
 
 
 def test_evaluate_swap_blocks_increased_realism_gap():

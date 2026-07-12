@@ -522,6 +522,70 @@ _ROBUSTNESS_METRICS = ("realism_gap",)
 _SAFETY_METRIC = "safety_violation_rate"
 
 
+# Static diagnostics data keyed by metric name — no new runtime dependencies.
+_METRIC_DIAGNOSTICS: Dict[str, Tuple[str, List[str]]] = {
+    "overall_score": (
+        "quality_regression",
+        [
+            "Review training data for correctness coverage",
+            "Inspect eval cases for scoring anomalies",
+            "Run a broader golden set to confirm the regression is real",
+        ],
+    ),
+    "avg_correctness": (
+        "quality_regression",
+        [
+            "Review training data for correctness coverage",
+            "Inspect eval cases for scoring anomalies",
+            "Run a broader golden set to confirm the regression is real",
+        ],
+    ),
+    "avg_groundedness": (
+        "quality_regression",
+        [
+            "Check that the candidate model respects context grounding",
+            "Inspect retrieval/citation behavior for candidate model",
+        ],
+    ),
+    "safety_violation_rate": (
+        "safety_regression",
+        [
+            "Run safety red-teaming on candidate",
+            "Review refusal coverage for must-refuse categories",
+            "Escalate to safety review before adopting candidate",
+        ],
+    ),
+    "latency_p50_ms": (
+        "cost_regression",
+        [
+            "Profile latency/token usage for candidate model",
+            "Check for context-length increases vs incumbent",
+        ],
+    ),
+    "latency_p95_ms": (
+        "cost_regression",
+        [
+            "Profile latency/token usage for candidate model",
+            "Check tail-latency outliers; may indicate retries or timeouts",
+        ],
+    ),
+    "unit_output_cost_avg": (
+        "cost_regression",
+        [
+            "Profile latency/token usage for candidate model",
+            "Compare token-output distribution between candidate and incumbent",
+        ],
+    ),
+    "realism_gap": (
+        "robustness_regression",
+        [
+            "Inspect benchmark-vs-realistic case pairs for behavior divergence",
+            "Review candidate for benchmark-gaming or distribution shift",
+        ],
+    ),
+}
+
+
 def compare_eval_metrics(
     baseline: Mapping[str, float],
     current: Mapping[str, float],
@@ -536,33 +600,43 @@ def compare_eval_metrics(
     count as a regression. ``threshold`` is a relative delta for quality/cost
     and an absolute delta for bounded robustness metrics. NOTE this is not a
     significance test — small eval sets make it noise-prone, so treat it as a
-    floor and prefer a statistical test when the golden set is small."""
+    floor and prefer a statistical test when the golden set is small.
+
+    Each entry in ``drifted`` includes ``likely_cause_bucket`` and
+    ``recommended_next_steps`` for actionable operator diagnostics."""
     drifted: List[dict] = []
 
     def rel(b: float, c: float) -> float:
         return (c - b) / b if b else (0.0 if c == 0 else 1.0)
 
+    def _annotate(entry: dict) -> dict:
+        metric = entry["metric"]
+        cause, steps = _METRIC_DIAGNOSTICS.get(metric, ("unknown_regression", []))
+        entry["likely_cause_bucket"] = cause
+        entry["recommended_next_steps"] = list(steps)
+        return entry
+
     for metric in _QUALITY_METRICS:
         if metric in baseline and metric in current:
             d = rel(float(baseline[metric]), float(current[metric]))
             if d < -threshold:
-                drifted.append({"metric": metric, "rel_delta": d, "direction": "down"})
+                drifted.append(_annotate({"metric": metric, "rel_delta": d, "direction": "down"}))
     if _SAFETY_METRIC in baseline and _SAFETY_METRIC in current:
         if float(current[_SAFETY_METRIC]) > float(baseline[_SAFETY_METRIC]):
-            drifted.append({"metric": _SAFETY_METRIC,
+            drifted.append(_annotate({"metric": _SAFETY_METRIC,
                             "abs_delta": float(current[_SAFETY_METRIC]) - float(baseline[_SAFETY_METRIC]),
-                            "direction": "up"})
+                            "direction": "up"}))
     for metric in _COST_METRICS:
         if metric in baseline and metric in current:
             d = rel(float(baseline[metric]), float(current[metric]))
             if d > threshold:
-                drifted.append({"metric": metric, "rel_delta": d, "direction": "up"})
+                drifted.append(_annotate({"metric": metric, "rel_delta": d, "direction": "up"}))
     for metric in _ROBUSTNESS_METRICS:
         if metric in baseline and metric in current:
             delta = float(current[metric]) - float(baseline[metric])
             if delta > threshold:
                 drifted.append(
-                    {"metric": metric, "abs_delta": delta, "direction": "up"}
+                    _annotate({"metric": metric, "abs_delta": delta, "direction": "up"})
                 )
     return {"regressed": bool(drifted), "drifted": drifted}
 

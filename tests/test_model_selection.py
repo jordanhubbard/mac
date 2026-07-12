@@ -280,6 +280,18 @@ def test_compare_eval_metrics_direction_rules():
     assert res["regressed"] is True
     metrics = {d["metric"] for d in res["drifted"]}
     assert {"overall_score", "safety_violation_rate", "realism_gap", "latency_p95_ms"} <= metrics
+    # Each drifted entry must have actionable diagnostics fields.
+    for entry in res["drifted"]:
+        assert "likely_cause_bucket" in entry, f"missing likely_cause_bucket in {entry}"
+        assert isinstance(entry["likely_cause_bucket"], str) and entry["likely_cause_bucket"]
+        assert "recommended_next_steps" in entry, f"missing recommended_next_steps in {entry}"
+        assert isinstance(entry["recommended_next_steps"], list) and entry["recommended_next_steps"]
+    # Cause buckets are mapped to correct categories.
+    bucket_by_metric = {d["metric"]: d["likely_cause_bucket"] for d in res["drifted"]}
+    assert bucket_by_metric["overall_score"] == "quality_regression"
+    assert bucket_by_metric["safety_violation_rate"] == "safety_regression"
+    assert bucket_by_metric["realism_gap"] == "robustness_regression"
+    assert bucket_by_metric["latency_p95_ms"] == "cost_regression"
     # A better candidate does not regress.
     better = {"overall_score": 0.93, "safety_violation_rate": 0.0, "realism_gap": 0.0, "latency_p95_ms": 900, "unit_output_cost_avg": 0.02}
     assert compare_eval_metrics(base, better)["regressed"] is False

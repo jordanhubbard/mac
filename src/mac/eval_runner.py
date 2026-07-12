@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-EVAL_SCHEMA_VERSION = "1.0"
+EVAL_SCHEMA_VERSION = "1.1"
 
 # model_caller(model_id, question, context) -> (answer, citations, latency_ms)
 ModelCaller = Callable[[str, str, str], Tuple[str, List[str], float]]
@@ -269,12 +269,25 @@ class SwapVerdict:
     incumbent_summary: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
+        cause_buckets: List[str] = []
+        all_steps: List[str] = []
+        for entry in self.drifted:
+            bucket = entry.get("likely_cause_bucket", "")
+            if bucket and bucket not in cause_buckets:
+                cause_buckets.append(bucket)
+            for step in entry.get("recommended_next_steps", []):
+                if step not in all_steps:
+                    all_steps.append(step)
         return {
             "approved": self.approved,
             "detail": self.detail,
             "drifted": self.drifted,
             "candidate_summary": self.candidate_summary,
             "incumbent_summary": self.incumbent_summary,
+            "diagnostics": {
+                "cause_buckets": cause_buckets,
+                "recommended_next_steps": all_steps,
+            },
         }
 
 
