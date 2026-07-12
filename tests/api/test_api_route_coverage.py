@@ -311,6 +311,18 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     reviewer = agent("natasha-route", ["review", "qa"])
     ctx["reviewer_agent_id"] = reviewer["id"]
     ctx["reviewer_attestation_key"] = reviewer["attestation_key"]
+    seeded_crash = cp.crashes.ingest(
+        default_agent["id"],
+        {
+            "event_id": "route-crash-seed",
+            "supervisor": "systemd",
+            "process_name": "mac-agent-service",
+            "exit_code": 1,
+            "revision": "route-revision",
+            "stack_trace": "Traceback (most recent call last):\nRuntimeError: route crash",
+        },
+    )
+    ctx["crash_report_id"] = seeded_crash["id"]
     ctx["terminal_session_id"] = "term_route_case"
     ctx["terminal_input_stream_id"] = "term_route_case.in"
     ctx["terminal_output_stream_id"] = "term_route_case.out"
@@ -1082,6 +1094,9 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("POST", "/agents/{agent_id}/claim-next"): {"agent_id": "claim_next_agent_id"},
+        ("POST", "/agents/{agent_id}/crash-reports"): {"agent_id": "agent_id"},
+        ("GET", "/crash-reports/{report_id}"): {"report_id": "crash_report_id"},
+        ("POST", "/crash-reports/{report_id}/resolve"): {"report_id": "crash_report_id"},
         ("POST", "/agents/{agent_id}/nap-runs"): {"agent_id": "nap_begin_agent_id"},
         ("GET", "/agents/{agent_id}/nap-schedule"): {"agent_id": "nap_agent_id"},
         ("GET", "/agents/{agent_id}/nap-schedule/next"): {"agent_id": "nap_agent_id"},
@@ -1170,6 +1185,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "project": ctx["project_name"],
         "request_id": ctx["request_id"],
         "review_id": ctx["review_id"],
+        "report_id": ctx["crash_report_id"],
         "role_id": ctx["role_id"],
         "role_id_or_slug": ctx["role_slug"],
         "rollout_id": ctx["rollout_id"],
@@ -1563,6 +1579,18 @@ edges:
             "status": "idle",
             "health_status": "healthy",
             "resources": {"cpu": 8},
+        },
+        ("POST", "/agents/{agent_id}/crash-reports"): {
+            "event_id": "route-crash-post",
+            "supervisor": "systemd",
+            "process_name": "mac-agent-service",
+            "exit_code": 1,
+            "revision": "route-revision",
+            "stack_trace": "Traceback (most recent call last):\nRuntimeError: route crash",
+        },
+        ("POST", "/crash-reports/{report_id}/resolve"): {
+            "reason": "route coverage repair verified",
+            "actor": "route-coverage",
         },
         ("POST", "/agents/{agent_id}/reflect"): {
             "recipient_agent_id": ctx["reviewer_agent_id"],

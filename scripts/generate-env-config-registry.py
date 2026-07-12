@@ -66,6 +66,7 @@ INT_SUFFIXES = (
     "_SECONDS", "_PORT", "_LIMIT", "_BYTES", "_DIM", "_ATTEMPTS",
     "_THRESHOLD", "_SIZE", "_MAX", "_TIMEOUT", "_INTERVAL",
     "_CONCURRENCY", "_TTL", "_FLOOR", "_AGE",
+    "_COUNT",
 )
 RETIRED = {"MAC_BEADS_BRIDGE_HUB_AGENT"}
 

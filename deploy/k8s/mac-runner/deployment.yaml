@@ -38,10 +38,19 @@ spec:
           # Same mac image as mac-api; selection is via console-script.
           image: ghcr.io/anthropics/mac:CHANGE-ME@sha256:CHANGE-ME
           imagePullPolicy: IfNotPresent
-          command: ["mac-k8s-orchestrator"]
+          command:
+            - /usr/local/bin/mac-crash-observer
+            - --supervisor
+            - kubernetes
+            - --
+            - mac-k8s-orchestrator
           env:
             - name: MAC_URL
               value: "http://mac-api.mac.svc:80"
+            - name: MAC_CRASH_SPOOL_DIR
+              value: "/var/lib/mac/crash-spool"
+            - name: PYTHONFAULTHANDLER
+              value: "1"
             - name: MAC_AGENT_ID
               valueFrom:
                 fieldRef:
@@ -81,8 +90,12 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: crash-spool
+              mountPath: /var/lib/mac/crash-spool
       volumes:
         - name: tmp
+          emptyDir: {}
+        - name: crash-spool
           emptyDir: {}
       topologySpreadConstraints:
         - maxSkew: 1

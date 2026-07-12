@@ -157,6 +157,7 @@ from mac.memory_service import MemoryService
 from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
 from mac.communication_service import CommunicationService
+from mac.crash_service import CrashService
 from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
 from mac.openshell_service import OpenShellService
@@ -1236,6 +1237,7 @@ class ControlPlane:
             self.store,
             action_event_recorder=self.action_events.project_observability,
         )
+        self.crashes = CrashService(self)
         self.retention = RetentionService(
             self.store,
             observability_recorder=self._retention_obs_recorder,
@@ -4192,6 +4194,7 @@ class ControlPlane:
             "agent_dispatch_held": "agent dispatch is held",
             "agent_status_unavailable": "agent status is not dispatchable",
             "agent_health_unavailable": "agent health is not healthy",
+            "explicit_agent_excluded": "task explicitly excludes this agent",
             "cooperative_distinct_agent_excluded": "agent already participated in this cooperative task family",
             "target_agent_id_mismatch": "task targets a different agent id",
             "target_agent_name_mismatch": "task targets a different agent name",
@@ -11342,6 +11345,20 @@ class ControlPlane:
                 level="error",
                 detail={"error": str(exc)[:500]},
             )
+        try:
+            crash_repairs = self.crashes.tick(limit=limit_value)
+        except Exception as exc:  # noqa: BLE001 - crash repair must not stop dispatch.
+            crash_repairs = {
+                "schema": "mac.agent_crash_repair_tick.v1",
+                "errors": [{"error": str(exc)[:500]}],
+            }
+            self.record_log(
+                "agent.crash.repair_tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)[:500]},
+            )
         assignments = (
             self._dispatch_batch_impl(
                 lease_seconds=lease_seconds,
@@ -11358,6 +11375,7 @@ class ControlPlane:
             "workflow_runs": workflow_runs,
             "review_workflows": review_workflows,
             "source_convergence": source_convergence,
+            "crash_repairs": crash_repairs,
             "auto_reopened": [
                 task.to_dict() for task in auto_retry_page["tasks"]
             ],
@@ -15181,6 +15199,18 @@ class ControlPlane:
             return False, "agent_status_unavailable"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return False, "agent_health_unavailable"
+        # Hard safety exclusion used by crash-repair tasks: a worker must not
+        # diagnose or approve a crash in the same revision that killed it.
+        # Unlike cooperative distinctness this is not relaxed when the pool is
+        # exhausted; the repair waits for an unaffected healthy peer.
+        task_metadata = ensure_json_object(task.metadata)
+        explicit_excluded = {
+            str(value)
+            for value in task_metadata.get("excluded_agent_ids", [])
+            if str(value)
+        } if isinstance(task_metadata.get("excluded_agent_ids"), list) else set()
+        if agent.id in explicit_excluded:
+            return False, "explicit_agent_excluded"
         # Distinct-executor separation is a *preference*, not a hard rule: when
         # the whole pool has already participated in the family, the dispatcher
         # relaxes it (allow_cooperative_reuse=True) rather than leaving the task

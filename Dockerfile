@@ -22,6 +22,7 @@ FROM python:3.12.7-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
     MAC_DB=/var/lib/mac/mac.db
 
 RUN groupadd --system mac && \
@@ -30,6 +31,7 @@ RUN groupadd --system mac && \
     chown -R mac:mac /var/lib/mac
 
 COPY --from=builder /wheels/*.whl /tmp/
+COPY --chmod=0755 deploy/mac-crash-observer.py /usr/local/bin/mac-crash-observer
 # Install optional extras so the single image serves every
 # console-script the K8s topology needs:
 #   [postgres]  PostgresStore (mac-api)

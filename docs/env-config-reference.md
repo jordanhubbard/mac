@@ -89,6 +89,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CONFIG_FILE` | str | consumer-defined | core | Core setting: config file. |
 | `MAC_CONTROLLER_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: controller interval seconds. |
 | `MAC_CONTROL_PLANE_ROLE` | str | consumer-defined | core | Core setting: control plane role. |
+| `MAC_CRASH_CORE_MAX_BYTES` | int | consumer-defined | core | Core setting: crash core max bytes. |
+| `MAC_CRASH_CORE_RETAIN_COUNT` | int | consumer-defined | core | Core setting: crash core retain count. |
+| `MAC_CRASH_SPOOL_DIR` | str | consumer-defined | core | Core setting: crash spool dir. |
 | `MAC_CURIOSITY_REVIEW_COOLDOWN_SECONDS` | int | consumer-defined | core | Core setting: curiosity review cooldown seconds. |
 | `MAC_CURIOSITY_REVIEW_ENABLED` | bool | consumer-defined | core | Core setting: curiosity review enabled. |
 | `MAC_CURIOSITY_REVIEW_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: curiosity review initial delay seconds. |
@@ -203,6 +206,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE` | str | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler mode. |
 | `MAC_DEPLOY_REQUIRE_FIRECRAWL` | bool | consumer-defined | deployment | Deployment setting: deploy require firecrawl. |
 | `MAC_DEPLOY_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | deployment | Deployment setting: deploy require qdrant memory. |
+| `MAC_DEPLOY_REV` | str | consumer-defined | deployment | Deployment setting: deploy rev. |
 | `MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router audio upstream. |
 | `MAC_DEPLOY_ROUTER_BACKEND` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router backend. |
 | `MAC_DEPLOY_ROUTER_DEFAULT_MODEL` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router default model. |

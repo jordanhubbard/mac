@@ -5293,14 +5293,20 @@ install_mac_agent_wrapper() {
   local executor="$MAC_HOME/bin/mac-task-executor"
   local executor_py="$MAC_HOME/bin/mac-task-executor.py"
   mkdir -p "$MAC_HOME/bin"
+  # Deliberately run outside the MAC virtualenv: it must remain usable when a
+  # broken MAC import graph is the reason the worker cannot start.
+  install -m 0755 "$SRC_DIR/deploy/mac-crash-observer.py" "$MAC_HOME/bin/mac-crash-observer"
   cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
+ulimit -c unlimited 2>/dev/null || true
 set -a
 . "$HOME/.mac/mac.env"
 set +a
 export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$HOME/.mac/node_modules/.bin:$HOME/.cargo/bin:$PATH"
+export PYTHONFAULTHANDLER=1
+export PYTHONUNBUFFERED=1
 
 : "${MAC_HUB_URL:?MAC_HUB_URL is required}"
 : "${MAC_WORKER_TOKEN:?MAC_WORKER_TOKEN is required}"
@@ -5842,6 +5848,7 @@ ExecReload=/bin/kill -USR1 \$MAINPID
 # is raised above 180.
 TimeoutStopSec=210
 LimitNOFILE=65536
+LimitCORE=infinity
 StandardOutput=journal
 StandardError=journal
 
@@ -5882,11 +5889,12 @@ Type=simple
 User=$USER
 WorkingDirectory=$MAC_HOME
 EnvironmentFile=$ENV_FILE
-ExecStart=$MAC_HOME/bin/mac-agent-service
+ExecStart=$MAC_HOME/bin/mac-crash-observer --supervisor systemd -- $MAC_HOME/bin/mac-agent-service
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
 LimitNOFILE=65536
+LimitCORE=infinity
 StandardOutput=journal
 StandardError=journal
 
@@ -5999,7 +6007,7 @@ stderr_logfile=$LOG_DIR/resource-health.log
 environment=HOME="$HOME",MAC_HOME="$MAC_HOME",MAC_RESOURCE_HEALTH_INTERVAL_SECONDS="300"
 
 [program:$AGENT_SUPERVISORD_PROG]
-command=$MAC_HOME/bin/mac-agent-service
+command=$MAC_HOME/bin/mac-crash-observer --supervisor supervisord -- $MAC_HOME/bin/mac-agent-service
 directory=$MAC_HOME
 user=$USER
 autostart=true
@@ -6261,10 +6269,18 @@ install_darwin_agent_service() {
 <dict>
   <key>Label</key><string>$MAC_AGENT_LAUNCHD_LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>$MAC_HOME/bin/mac-agent-service</string></array>
+  <array>
+    <string>$MAC_HOME/bin/mac-crash-observer</string>
+    <string>--supervisor</string><string>launchd</string>
+    <string>--</string><string>$MAC_HOME/bin/mac-agent-service</string>
+  </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>WorkingDirectory</key><string>$MAC_HOME</string>
+  <key>SoftResourceLimits</key>
+  <dict><key>Core</key><integer>9223372036854775807</integer></dict>
+  <key>HardResourceLimits</key>
+  <dict><key>Core</key><integer>9223372036854775807</integer></dict>
   <key>StandardOutPath</key><string>$LOG_DIR/mac-agent.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/mac-agent.log</string>
 </dict>

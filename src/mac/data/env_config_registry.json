@@ -273,6 +273,7 @@
       "deploy/deploy-mac-fleet.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-runner/deployment.yaml",
+      "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/systemd/mac-agent-journal.service",
       "deploy/systemd/mac-fleet-context.service",
@@ -1038,6 +1039,40 @@
       "src/mac/dispatch.py",
       "src/mac/ledger_backup.py",
       "src/mac/store.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: crash core max bytes.",
+    "family": "core",
+    "name": "MAC_CRASH_CORE_MAX_BYTES",
+    "retired": false,
+    "sources": [
+      "deploy/mac-crash-observer.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: crash core retain count.",
+    "family": "core",
+    "name": "MAC_CRASH_CORE_RETAIN_COUNT",
+    "retired": false,
+    "sources": [
+      "deploy/mac-crash-observer.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: crash spool dir.",
+    "family": "core",
+    "name": "MAC_CRASH_SPOOL_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "deploy/mac-crash-observer.py"
     ],
     "type": "str"
   },
@@ -2357,6 +2392,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy rev.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REV",
+    "retired": false,
+    "sources": [
+      "deploy/mac-crash-observer.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deploy Router setting: deploy router audio upstream.",
     "family": "deploy-router",
     "name": "MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM",
@@ -3527,6 +3573,7 @@
       "deploy/install-qdrant-service.sh",
       "deploy/install-tailscale.sh",
       "deploy/install-webdav-server.sh",
+      "deploy/mac-crash-observer.py",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/nemoclaw/install-nemoclaw-pilot.sh",
@@ -3663,6 +3710,7 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
+      "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/systemd/mac-fleet-context.service",
@@ -7063,6 +7111,7 @@
     "name": "MAC_SELF_UPDATE_REPO",
     "retired": false,
     "sources": [
+      "deploy/mac-crash-observer.py",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -7627,6 +7676,7 @@
     "sources": [
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-runner/deployment.yaml",
+      "deploy/mac-crash-observer.py",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
@@ -7824,6 +7874,7 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
+      "deploy/mac-crash-observer.py",
       "deploy/systemd/mac-fleet-context.service",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
@@ -7842,6 +7893,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/mac-crash-observer.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/openshell_runtime.py",
@@ -8114,6 +8166,7 @@
       "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/k8s/mac-runner/serviceaccount.yaml",
+      "deploy/mac-crash-observer.py",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",

@@ -834,6 +834,32 @@ class HeartbeatRequest(BaseModel):
     actor: Optional[str] = None
 
 
+class CrashReportCreate(BaseModel):
+    event_id: str
+    observed_at: Optional[str] = None
+    supervisor: str
+    process_name: str = "mac-agent"
+    pid: Optional[int] = None
+    exit_code: Optional[int] = None
+    signal: Optional[int] = None
+    reason: str = "process exited unexpectedly"
+    revision: str = "unknown"
+    tree_sha: str = ""
+    task_id: Optional[str] = None
+    lease_id: Optional[str] = None
+    stack_trace: str = ""
+    stderr_tail: str = ""
+    core_reference: str = ""
+    core_metadata: Dict[str, Any] = Field(default_factory=dict)
+    resource_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CrashReportResolve(BaseModel):
+    reason: str
+    actor: str = "operator"
+
+
 class AgentReflectRequest(BaseModel):
     recipient_agent_id: Optional[str] = None
     request_id: Optional[str] = None
@@ -1599,14 +1625,22 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # result manifests. Listing metadata is a read model; fetching bytes is
         # closer to secret reveal and requires the narrower secret scope.
         return "secret"
+    if method == "GET" and re.match(r"^/crash-reports/[^/]+$", path):
+        # Occurrences include bounded stderr/fatal-trace tails. They are
+        # redacted on ingestion, but retain the evidence-artifact privilege
+        # boundary because arbitrary application output can still be private.
+        return "secret"
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
         path.endswith("/heartbeat") or path.endswith("/messages/deliver")
         or path.endswith("/command-audit")
         or path.endswith("/openshell/status")
+        or path.endswith("/crash-reports")
     ):
         return "agent"
+    if path.startswith("/crash-reports"):
+        return "read" if method == "GET" else "admin"
     if path.startswith("/agentbus"):
         return "agent"
     if path.startswith("/communication"):
@@ -5647,6 +5681,42 @@ def create_app(
         # as a peer. Bind to principal.
         principal.assert_actor(agent_id)
         return cp.heartbeat_agent(agent_id, **_data(body)).to_dict()
+
+    @app.post("/agents/{agent_id}/crash-reports")
+    def report_agent_crash(
+        agent_id: str,
+        body: CrashReportCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)
+        data = _data(body)
+        _ensure_payload_bounded(data.get("metadata"), "crash.metadata")
+        _ensure_payload_bounded(data.get("core_metadata"), "crash.core_metadata")
+        _ensure_payload_bounded(
+            data.get("resource_snapshot"), "crash.resource_snapshot"
+        )
+        return cp.crashes.ingest(agent_id, data)
+
+    @app.get("/crash-reports")
+    def list_crash_reports(
+        status: Optional[str] = Query(default=None),
+        agent_id: Optional[str] = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        return cp.crashes.list_reports(status=status, agent_id=agent_id, limit=limit)
+
+    @app.get("/crash-reports/{report_id}")
+    def get_crash_report(report_id: str) -> Dict[str, Any]:
+        return cp.crashes.get_report(report_id)
+
+    @app.post("/crash-reports/{report_id}/resolve")
+    def resolve_crash_report(
+        report_id: str,
+        body: CrashReportResolve,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.crashes.resolve(report_id, actor=body.actor, reason=body.reason)
 
     @app.post("/agents/{agent_id}/reflect")
     def reflect_agent(

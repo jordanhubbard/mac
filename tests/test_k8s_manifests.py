@@ -120,7 +120,13 @@ def test_orchestrator_deployment_uses_orchestrator_sa_and_runs_correct_binary() 
     assert pod["serviceAccountName"] == "mac-k8s-orchestrator"
     assert pod["automountServiceAccountToken"] is True
     container = pod["containers"][0]
-    assert container["command"] == ["mac-k8s-orchestrator"]
+    assert container["command"] == [
+        "/usr/local/bin/mac-crash-observer",
+        "--supervisor",
+        "kubernetes",
+        "--",
+        "mac-k8s-orchestrator",
+    ]
     env_names = {e["name"] for e in container["env"]}
     for required in (
         "MAC_URL",
@@ -141,4 +147,3 @@ def test_runner_image_is_not_latest() -> None:
     deploy = _load(ROOT / "mac-runner" / "deployment.yaml")[0]
     image = deploy["spec"]["template"]["spec"]["containers"][0]["image"]
     assert ":latest" not in image
-

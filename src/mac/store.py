@@ -493,6 +493,60 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_agents_status_health
                     ON agents (status, health_status);
 
+                -- Durable crash diagnosis. ``agent_crash_reports`` is the
+                -- deduplicated incident keyed by a server-computed
+                -- revision+stack fingerprint; ``agent_crash_occurrences``
+                -- preserves every supervisor-observed failure, including
+                -- reports spooled while the hub was unavailable.
+                CREATE TABLE IF NOT EXISTS agent_crash_reports (
+                    id TEXT PRIMARY KEY,
+                    fingerprint TEXT NOT NULL UNIQUE,
+                    process_name TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    stack_signature TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    occurrence_count INTEGER NOT NULL DEFAULT 0,
+                    repair_attempt_count INTEGER NOT NULL DEFAULT 0,
+                    affected_agent_ids TEXT NOT NULL DEFAULT '[]',
+                    repair_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_crash_reports_status_last_seen
+                    ON agent_crash_reports (status, last_seen_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_crash_reports_repair_task
+                    ON agent_crash_reports (repair_task_id);
+
+                CREATE TABLE IF NOT EXISTS agent_crash_occurrences (
+                    id TEXT PRIMARY KEY,
+                    event_id TEXT NOT NULL UNIQUE,
+                    report_id TEXT NOT NULL REFERENCES agent_crash_reports(id) ON DELETE CASCADE,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    observed_at TEXT NOT NULL,
+                    supervisor TEXT NOT NULL,
+                    process_name TEXT NOT NULL,
+                    pid INTEGER,
+                    exit_code INTEGER,
+                    signal INTEGER,
+                    reason TEXT NOT NULL,
+                    revision TEXT NOT NULL,
+                    tree_sha TEXT NOT NULL,
+                    task_id TEXT,
+                    lease_id TEXT,
+                    stack_trace TEXT NOT NULL,
+                    stderr_tail TEXT NOT NULL,
+                    core_reference TEXT NOT NULL,
+                    core_metadata TEXT NOT NULL DEFAULT '{}',
+                    resource_snapshot TEXT NOT NULL DEFAULT '{}',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_crash_occurrences_report
+                    ON agent_crash_occurrences (report_id, observed_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_crash_occurrences_agent
+                    ON agent_crash_occurrences (agent_id, observed_at);
+
                 CREATE TABLE IF NOT EXISTS fleets (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
@@ -2232,6 +2286,11 @@ class SQLiteStore:
         )
         self._ensure_column(
             "tasks", "idempotency_key", "idempotency_key TEXT"
+        )
+        self._ensure_column(
+            "agent_crash_reports",
+            "repair_attempt_count",
+            "repair_attempt_count INTEGER NOT NULL DEFAULT 0",
         )
         self._conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_idempotency_key"
