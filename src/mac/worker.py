@@ -814,6 +814,15 @@ class MacWorker:
         self._last_dispatch_hold_reason: Optional[str] = None
         self.debug_terminal_enabled = _env_bool("MAC_DEBUG_TERMINAL_ENABLED", True)
         self._debug_terminal_sessions: Dict[str, DebugTerminalSession] = {}
+        self._delivery_drain_lock = threading.Lock()
+        self._delivery_drain_stop: Optional[threading.Event] = None
+        self._delivery_drain_thread: Optional[threading.Thread] = None
+        try:
+            self.delivery_drain_interval_seconds = float(
+                os.environ.get("MAC_WORKER_DELIVERY_DRAIN_SECONDS", "20") or 20
+            )
+        except (TypeError, ValueError):
+            self.delivery_drain_interval_seconds = 20.0
 
     def stop(self) -> None:
         """Signal the run loop to exit after the current task."""
@@ -836,6 +845,9 @@ class MacWorker:
         # required versions on (re)start. Skipped for bounded test runs.
         if max_iterations is None:
             self._reconcile_runtime_deps_best_effort()
+            # Daemon mode only: bounded test runs stay single-threaded and
+            # deterministic; the loop-side drain still runs every iteration.
+            self._start_delivery_drain_thread()
         try:
             while not self._stop and (max_iterations is None or iterations < max_iterations):
                 iterations += 1
@@ -865,6 +877,7 @@ class MacWorker:
                 results.append(outcome)
         finally:
             self._restore_signal_handlers(prior_handlers)
+            self._stop_delivery_drain_thread()
             self._shutdown()
         return results
 
@@ -1592,6 +1605,57 @@ class MacWorker:
             )
 
     def _process_human_delivery_outbox(self) -> None:
+        """Lock-guarded outbox drain, callable from the task loop AND the
+        background drain thread; a drain already in progress is skipped
+        rather than queued (claims are leased hub-side, so skipping is safe)."""
+        if not self._delivery_drain_lock.acquire(blocking=False):
+            return
+        try:
+            self._drain_human_delivery_outbox()
+        finally:
+            self._delivery_drain_lock.release()
+
+    def _start_delivery_drain_thread(self) -> None:
+        """Drain the human-message outbox on a timer independent of the task loop.
+
+        The loop-side drain in run_once only runs between task iterations, so a
+        worker busy on a long task starved its gateway's outbox for the whole
+        iteration even though the gateway itself was idle and connected
+        (task_c049302b). Ephemeral or represented agents' proxied messages land
+        on this gateway's account; they must not wait for its task cadence.
+        """
+        if (
+            self._delivery_drain_thread is not None
+            or self.delivery_drain_interval_seconds <= 0
+        ):
+            return
+        stop = threading.Event()
+
+        def _loop() -> None:
+            while not stop.wait(self.delivery_drain_interval_seconds):
+                try:
+                    self._process_human_delivery_outbox()
+                except Exception as exc:  # noqa: BLE001 — drain must never kill the thread
+                    self._observe_log(
+                        "worker.communication.outbox_drain_thread_error",
+                        level="warning",
+                        detail={"error": str(exc)},
+                    )
+
+        thread = threading.Thread(
+            target=_loop, name="delivery-outbox-drain", daemon=True
+        )
+        self._delivery_drain_stop = stop
+        self._delivery_drain_thread = thread
+        thread.start()
+
+    def _stop_delivery_drain_thread(self) -> None:
+        if self._delivery_drain_stop is not None:
+            self._delivery_drain_stop.set()
+        self._delivery_drain_thread = None
+        self._delivery_drain_stop = None
+
+    def _drain_human_delivery_outbox(self) -> None:
         identity = os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY", "").strip()
         message_bin = Path(
             os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")

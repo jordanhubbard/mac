@@ -671,6 +671,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker command inventory interval seconds. |
 | `MAC_WORKER_COMMAND_INVENTORY_MAX` | int | consumer-defined | worker | Worker setting: worker command inventory max. |
 | `MAC_WORKER_COMMAND_PROBES` | str | consumer-defined | worker | Worker setting: worker command probes. |
+| `MAC_WORKER_DELIVERY_DRAIN_SECONDS` | int | consumer-defined | worker | Worker setting: worker delivery drain seconds. |
 | `MAC_WORKER_EXECUTOR` | str | consumer-defined | worker | Worker setting: worker executor. |
 | `MAC_WORKER_HEARTBEAT_INTERVAL` | int | consumer-defined | worker | Worker setting: worker heartbeat interval. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | str | consumer-defined | worker | Worker setting: worker hermes instance id. |

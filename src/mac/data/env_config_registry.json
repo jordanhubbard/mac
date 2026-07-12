@@ -8061,6 +8061,17 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker delivery drain seconds.",
+    "family": "worker",
+    "name": "MAC_WORKER_DELIVERY_DRAIN_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker executor.",
     "family": "worker",
     "name": "MAC_WORKER_EXECUTOR",

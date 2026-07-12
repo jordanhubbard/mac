@@ -126,6 +126,38 @@ def test_outbox_claim_ack_retry_and_idempotency(cp: ControlPlane) -> None:
     assert completed.metadata["provider_receipt"] == {"ok": True}
 
 
+def test_delivery_from_deleted_ephemeral_origin_still_delivers(cp: ControlPlane) -> None:
+    """Hub-as-proxy guarantee (task_c049302b): an agent may appear, enqueue a
+    human-facing status message, and EXIT — the delivery must survive the
+    origin's deletion (origin_agent_id is SET NULL, not CASCADE) and remain
+    claimable by whichever live gateway worker holds the account lease."""
+    ephemeral = _agent(cp, "ephemeral")
+    gateway = _agent(cp, "gateway")
+    hive = cp.configure_communication_identity("mac-hive", is_default=True)
+    account = cp.configure_communication_account(
+        hive.id, "slack", config={"default": True}
+    )
+    cp.acquire_gateway_identity_lease(account.id, gateway.id)
+
+    delivery = cp.enqueue_human_message(
+        "channel:C123",
+        "Ephemeral job finished: 42 artifacts published",
+        origin_agent_id=ephemeral.id,
+        channel="slack",
+    )
+    cp.delete_agent(ephemeral.id, actor="test")
+
+    survived = cp.get_human_message(delivery.id)
+    assert survived.status == "pending"
+    assert survived.origin_agent_id is None  # tombstoned origin, message intact
+    claimed = cp.claim_human_messages(gateway.id)
+    assert [item.id for item in claimed] == [delivery.id]
+    completed = cp.acknowledge_human_message(
+        delivery.id, gateway.id, provider_message_id="1700000000.0002"
+    )
+    assert completed.status == "delivered"
+
+
 def test_pending_delivery_prevents_identity_and_account_deletion(cp: ControlPlane) -> None:
     origin = _agent(cp, "origin")
     hive = cp.configure_communication_identity("mac-hive", is_default=True)
