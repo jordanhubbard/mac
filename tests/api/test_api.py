@@ -2477,7 +2477,12 @@ def test_fastapi_exposes_agent_crud_operations():
     deleted = client.delete("/agents/%s" % agent["id"])
     assert deleted.status_code == 200
     assert deleted.json() == {"deleted": agent["id"]}
-    assert client.get("/agents/%s" % agent["id"]).status_code == 404
+    # Deletion is now a durable tombstone: direct historical lookup remains
+    # available while operational list/dispatch paths exclude the agent.
+    departed = client.get("/agents/%s" % agent["id"])
+    assert departed.status_code == 200
+    assert departed.json()["deleted_at"]
+    assert departed.json()["status"] == "offline"
 
 
 def test_fastapi_exposes_first_class_object_crud_e2e():
