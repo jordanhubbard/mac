@@ -3418,7 +3418,10 @@ def test_agentbus_rejects_broadcast_oversized_and_unauthorized_readers():
     no_recipient = client.post(
         "/agentbus/streams", json={"sender_agent_id": sender["id"]}
     )
-    assert no_recipient.status_code == 422
+    # AgentBus now accepts either a direct recipient or group participants in
+    # the request schema. Supplying neither is therefore a semantic MAC
+    # ValidationError (400), not a Pydantic shape error (422).
+    assert no_recipient.status_code == 400
 
     stream = client.post(
         "/agentbus/streams",
