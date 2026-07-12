@@ -168,6 +168,7 @@ from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
+from mac.project_repository_service import ProjectRepositoryService
 from mac.retention_service import RetentionService
 from mac.service_role_service import ServiceRoleService
 from mac.source_convergence_service import SourceConvergenceService
@@ -619,11 +620,6 @@ def _structured_failure_diagnosis(
         "output_tail_unavailable_reason": unavailable,
     }
     return record
-
-
-def _safe_slug(value: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-._").lower()
-    return slug or "repo"
 
 
 _SCP_GIT_URL_RE = re.compile(r"^(?P<user>[^@]+@)?(?P<host>[^:/]+):(?P<path>.+)$")
@@ -1159,6 +1155,13 @@ class ControlPlane:
         self.observability = ObservabilityService(
             self.store,
             action_event_recorder=self.action_events.project_observability,
+        )
+        self.project_repositories = ProjectRepositoryService(
+            self.store,
+            load_contract=_load_repository_contract,
+            initialize_codegraph=_initialize_codegraph_repository,
+            validate_codegraph=_raise_for_codegraph_init_failure,
+            record_log=self.record_log,
         )
         self.crashes = CrashService(self)
         self.retention = RetentionService(
@@ -3942,33 +3945,10 @@ class ControlPlane:
         return normalized
 
     def _project_repository_url(self, project: Optional[str]) -> Optional[str]:
-        if not project:
-            return None
-        row = self.store.query_one(
-            "SELECT metadata FROM projects WHERE name = ? OR id = ?",
-            (project, project),
-        )
-        if row is None:
-            return None
-        metadata = ensure_json_object(json_loads(row["metadata"], {}))
-        value = metadata.get("repository_url")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        return None
+        return self.project_repositories.project_repository_url(project)
 
     def _repository_for_project(self, project: Optional[str]) -> Optional[ProjectRepository]:
-        if not project:
-            return None
-        row = self.store.query_one(
-            """
-            SELECT * FROM project_repositories
-            WHERE project = ? AND enabled = ?
-            ORDER BY name, id
-            LIMIT 1
-            """,
-            (project, 1),
-        )
-        return self._repository_from_row(row) if row is not None else None
+        return self.project_repositories.repository_for_project(project)
 
     def get_task(self, task_id: str) -> Task:
         resolved = self._resolve_task_id(task_id)
@@ -13275,105 +13255,26 @@ class ControlPlane:
         metadata: Optional[Dict[str, Any]] = None,
         actor: str = "project-repo",
     ) -> ProjectRepository:
-        name = name.strip()
-        if not name:
-            raise ValidationError("project repository name is required")
-        repo_path_obj = Path(path).expanduser()
-        repo_path = str(repo_path_obj)
-        repo_source = (source or "repo-%s" % _safe_slug(name)).strip()
-        if not repo_source:
-            raise ValidationError("project repository source is required")
-        repo_project = (project or repo_source).strip()
-        contract = _load_repository_contract(repo_path_obj)
-        if contract["project"] != repo_project:
-            raise ValidationError(
-                "repository runtime contract project %s does not match registered project %s"
-                % (contract["project"], repo_project)
-            )
-        codegraph_status = _initialize_codegraph_repository(repo_path_obj)
-        _raise_for_codegraph_init_failure(codegraph_status)
-        repo_metadata = ensure_json_object(metadata)
-        repo_metadata["repository_contract"] = contract
-        repo_metadata["codegraph"] = codegraph_status
-        now = utcnow()
-        row = self.store.query_one("SELECT id FROM project_repositories WHERE name = ?", (name,))
-        repo_id = row["id"] if row is not None else new_id("projectrepo")
-        self.store.execute(
-            """
-            INSERT INTO project_repositories (
-                id, name, path, source, project, required_capabilities,
-                enabled, poll_interval_seconds, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                path = excluded.path,
-                source = excluded.source,
-                project = excluded.project,
-                required_capabilities = excluded.required_capabilities,
-                enabled = excluded.enabled,
-                poll_interval_seconds = excluded.poll_interval_seconds,
-                metadata = excluded.metadata,
-                updated_at = excluded.updated_at
-            """,
-            (
-                repo_id,
-                name,
-                repo_path,
-                repo_source,
-                repo_project,
-                json_dumps(coerce_list(required_capabilities)),
-                1 if enabled else 0,
-                max(1, int(poll_interval_seconds)),
-                json_dumps(repo_metadata),
-                now,
-                now,
-            ),
+        return self.project_repositories.register(
+            name,
+            path,
+            source=source,
+            project=project,
+            required_capabilities=required_capabilities,
+            enabled=enabled,
+            poll_interval_seconds=poll_interval_seconds,
+            metadata=metadata,
+            actor=actor,
         )
-        self.record_log(
-            "bridge.project_repository.registered",
-            layer="control_plane",
-            source=actor,
-            subject_type="environment",
-            subject_id=repo_id,
-            detail={
-                "name": name,
-                "path": repo_path,
-                "source": repo_source,
-                "project": repo_project,
-                "enabled": enabled,
-                "repository_contract_schema": contract["schema"],
-                "repository_contract_path": contract["contract_path"],
-                "codegraph": codegraph_status,
-            },
-        )
-        return self.get_project_repository(repo_id)
 
     def get_project_repository(self, repo_id_or_name: str) -> ProjectRepository:
-        row = self.store.query_one(
-            "SELECT * FROM project_repositories WHERE id = ? OR name = ?",
-            (repo_id_or_name, repo_id_or_name),
-        )
-        if row is None:
-            raise NotFoundError("project repository not found: %s" % repo_id_or_name)
-        return self._repository_from_row(row)
+        return self.project_repositories.get(repo_id_or_name)
 
     def list_project_repositories(self, enabled: Optional[bool] = None) -> List[ProjectRepository]:
-        if enabled is None:
-            rows = self.store.query_all("SELECT * FROM project_repositories ORDER BY name, id")
-        else:
-            rows = self.store.query_all(
-                "SELECT * FROM project_repositories WHERE enabled = ? ORDER BY name, id",
-                (1 if enabled else 0,),
-            )
-        return [self._repository_from_row(row) for row in rows]
+        return self.project_repositories.list(enabled)
 
     def _repository_contract_for_repo(self, repo: ProjectRepository) -> JsonDict:
-        contract = _load_repository_contract(Path(repo.path).expanduser())
-        if contract["project"] != repo.project:
-            raise ValidationError(
-                "repository runtime contract project %s does not match registered project %s"
-                % (contract["project"], repo.project)
-            )
-        return contract
+        return self.project_repositories.contract_for(repo)
 
 
 
@@ -13895,22 +13796,7 @@ class ControlPlane:
         )
 
     def _repository_from_row(self, row: Any) -> ProjectRepository:
-        return ProjectRepository(
-            row["id"],
-            row["name"],
-            row["path"],
-            row["source"],
-            row["project"],
-            json_loads(row["required_capabilities"], []),
-            bool(row["enabled"]),
-            int(row["poll_interval_seconds"]),
-            row["last_polled_at"],
-            row["last_imported_at"],
-            row["last_error"],
-            json_loads(row["metadata"], {}),
-            row["created_at"],
-            row["updated_at"],
-        )
+        return self.project_repositories.from_row(row)
 
     # Internal helpers
 
