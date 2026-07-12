@@ -152,3 +152,140 @@ def test_publish_agent_reflection_forwards_deep_request():
     streams = cp.agentbus.list_streams(agent_id=target.id) if hasattr(cp.agentbus, "list_streams") else None
     # Fallback assertion via the returned payload shape:
     assert out["count"] == 1 and out["payload"]["schema"] == "mac.agentbus.agent_reflection.v1"
+
+
+# ---------------------------------------------------------------------------
+# Refusal-to-lesson pipeline: new-file finalizer refusals become curated lessons
+# ---------------------------------------------------------------------------
+
+
+def test_curation_prompt_includes_finalizer_refusal_kind_in_signals(monkeypatch):
+    """When a task fails with untracked_new_files_at_finalize, curate_lessons_from_outcome
+    passes finalizer_refusal_kind through to the LLM curation prompt so the curator
+    can emit a targeted lesson about committing new files before finishing."""
+    monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
+    monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
+    monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
+    monkeypatch.setattr(te, "recall_deployment_lessons", lambda task, limit=8: [])
+    captured = {}
+
+    def factory(url, token=""):
+        def call(model, question, context):
+            captured["q"] = question
+            return ("NOTHING", [], 1.0)
+        return call
+
+    import mac.eval_runner as er
+    monkeypatch.setattr(er, "router_model_caller", factory)
+
+    outcome = {
+        "outcome": "failure",
+        "evidence_type": "repo_change",
+        "error_signature": "untracked_new_files_at_finalize",
+        "signals": {
+            "finalizer_refusal_kind": "untracked_new_files",
+            "untracked_files": ["generated.py"],
+        },
+    }
+    te.curate_lessons_from_outcome({"title": "Add feature X", "metadata": {}}, outcome)
+
+    assert "untracked_new_files_at_finalize" in captured["q"], (
+        "curation prompt must include the error_signature so the curator knows why the task failed"
+    )
+    assert "finalizer_refusal_kind" in captured["q"], (
+        "curation prompt must include finalizer_refusal_kind signal from the outcome"
+    )
+    assert "untracked_new_files" in captured["q"], (
+        "curation prompt must include the refusal kind value"
+    )
+
+
+def test_curation_prompt_finalizer_refusal_staged_new_files(monkeypatch):
+    """staged_new_files variant: the curation prompt includes finalizer_refusal_kind=staged_new_files."""
+    monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
+    monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
+    monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
+    monkeypatch.setattr(te, "recall_deployment_lessons", lambda task, limit=8: [])
+    captured = {}
+
+    def factory(url, token=""):
+        def call(model, question, context):
+            captured["q"] = question
+            return ("NOTHING", [], 1.0)
+        return call
+
+    import mac.eval_runner as er
+    monkeypatch.setattr(er, "router_model_caller", factory)
+
+    outcome = {
+        "outcome": "failure",
+        "evidence_type": "repo_change",
+        "error_signature": "untracked_new_files_at_finalize",
+        "signals": {
+            "finalizer_refusal_kind": "staged_new_files",
+            "staged_new_files": ["tests/new_test.py"],
+        },
+    }
+    te.curate_lessons_from_outcome({"title": "Patch tests", "metadata": {}}, outcome)
+
+    assert "staged_new_files" in captured["q"]
+    assert "untracked_new_files_at_finalize" in captured["q"]
+
+
+def test_refusal_to_lesson_end_to_end(monkeypatch, tmp_path):
+    """End-to-end: classify_outcome on a finalizer-refusal evidence file produces
+    an outcome that, when passed to record_curated_lessons, flows the refusal kind
+    into the curation pipeline as a structured signal."""
+    monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
+    monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
+    monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
+    monkeypatch.setattr(te, "recall_deployment_lessons", lambda task, limit=8: [])
+    captured = {}
+
+    def factory(url, token=""):
+        def call(model, question, context):
+            captured["q"] = question
+            return ("Always commit new files before marking a task done.", [], 1.0)
+        return call
+
+    import mac.eval_runner as er
+    monkeypatch.setattr(er, "router_model_caller", factory)
+
+    posted = []
+    monkeypatch.setattr(te, "_hub_post", lambda path, payload: posted.append((path, payload)) or True)
+
+    (tmp_path / "mac-evidence.json").write_text(json.dumps({
+        "evidence_type": "repo_change",
+        "status": "fail",
+        "problems": [
+            "untracked files present at finalize time — agent must commit ALL new files before declaring done: generated.txt"
+        ],
+        "repo": {
+            "pushed": False,
+            "dirty": True,
+            "files_changed": [],
+            "untracked_files": ["generated.txt"],
+            "staged_new_files": [],
+        },
+        "checks": [{"name": "git_finalizer", "returncode": 1, "status": "fail"}],
+    }))
+
+    task = {"id": "t_refusal", "title": "Add codegen output", "project": "mac", "metadata": {}}
+    outcome = te.classify_outcome(tmp_path, task, 0)
+
+    # The classified outcome must carry the refusal kind.
+    assert outcome["error_signature"] == "untracked_new_files_at_finalize"
+    assert outcome["signals"]["finalizer_refusal_kind"] == "untracked_new_files"
+
+    # The outcome feeds into the lesson curation pipeline.
+    n = te.record_curated_lessons(task, outcome)
+    assert n == 1, "one lesson should be recorded for the refusal outcome"
+    assert len(posted) == 1
+    content = json.loads(posted[0][1]["content"])
+    assert content["schema"] == "mac.deployment_learning.v1"
+    assert content["error_signature"] == "Always commit new files before marking a task done."
+
+    # The curation prompt must have included the refusal kind so the curator
+    # had enough context to produce a targeted lesson.
+    assert "finalizer_refusal_kind" in captured["q"]
+    assert "untracked_new_files_at_finalize" in captured["q"]

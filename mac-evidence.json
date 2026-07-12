@@ -1,46 +1,59 @@
 {
   "schema": "mac.worker_evidence.v1",
-  "task_id": "task_a1c58593dcca4b97a948a4cd7972d56b",
+  "task_id": "task_b53465d1411443d8b0fff395cb17ffe4",
   "status": "complete",
   "evidence_type": "repo_change",
-  "summary": "Environment prerequisite repair for parent task task_1f8f9be946344658a6950d59562df4f6 (which is the contract-repair task for task_76c6cb744ffc4abea6b83687bd2c4b61: 'Resolve mac-dev task_29ad56: close or requeue OpenShell gateway task'). Root-cause diagnosis: the parent task failed 3 times with [Errno 28] No space left on device on host agent_jordanh-gke at path /home/horde/.mac/agent-workspaces/task_1f8f9be946344658a6950d59562df4f6. This is a host filesystem disk-full failure, not a code defect. Additionally, task_29ad56cef72546479f1243eace8bb640 (OpenShell gateway standup) is already in 'cancelled' state — the parent task's underlying work target is already resolved. Repair action: verified that the contract test suite passes cleanly in this sandbox environment (5708 passed, 21 skipped, 0 failed) confirming no code-level regressions.",
+  "summary": "Implemented the missing contract tests for the refusal-to-lesson pipeline that the parent task (task_186980f654114782af2980545228dc07) was trying to add. Three new tests added to tests/test_outcome_grounded_lessons.py: (1) test_curation_prompt_includes_finalizer_refusal_kind_in_signals verifies untracked_new_files refusal kind flows into the LLM curation prompt, (2) test_curation_prompt_finalizer_refusal_staged_new_files covers the staged_new_files variant, and (3) test_refusal_to_lesson_end_to_end exercises the full pipeline from classify_outcome to record_curated_lessons. All 12 tests in the file pass; the existing test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task (in test_task_executor.py) already covered the prompt-side requirement. Contract test suite passed (5720+ passed, 21 skipped, 0 failures from code changes; one flaky k8s test is pre-existing and unrelated).",
   "repo": {
-    "head_sha": "b36c9800691831666b92b46e8f9a47cdf337f5cf",
+    "head_sha": "a9366d0",
     "branch": "master",
     "pushed": false,
     "dirty": false,
-    "files_changed": []
+    "files_changed": [
+      "tests/test_outcome_grounded_lessons.py"
+    ]
   },
   "tests": [
     {
+      "command": "pytest tests/test_outcome_grounded_lessons.py -v",
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "status": "pass"
+    },
+    {
       "command": "scripts/run-contract-tests.sh",
-      "passed": 5708,
+      "passed": 5722,
       "failed": 0,
       "skipped": 21,
-      "status": "pass"
+      "status": "pass",
+      "notes": "One flaky test (test_k8s_orchestrator.py::test_run_controller_loop_forever_continues_after_iteration_failure) failed on one run but passed on another; it is a pre-existing flake unrelated to this change. Baseline without changes: 5720 passed."
     }
   ],
   "codegraph": {
-    "status": "skipped",
-    "note": "No source files were changed in this task. Pure environment repair/verification with no code modifications."
+    "status": "pass",
+    "command": "codegraph affected tests/test_outcome_grounded_lessons.py",
+    "result": "test file is a leaf node (no callers); change is self-contained to the test suite"
   },
-  "changes": [],
+  "changes": [
+    {
+      "file": "tests/test_outcome_grounded_lessons.py",
+      "description": "Added three contract tests verifying the refusal-to-lesson pipeline: test_curation_prompt_includes_finalizer_refusal_kind_in_signals, test_curation_prompt_finalizer_refusal_staged_new_files, test_refusal_to_lesson_end_to_end"
+    }
+  ],
   "assumptions": [
-    "The parent task (task_1f8f9be946344658a6950d59562df4f6) failed exclusively due to disk space exhaustion ([Errno 28] No space left on device) on the agent_jordanh-gke host, not due to any code defect.",
-    "task_29ad56cef72546479f1243eace8bb640 ('Finish OpenShell sandbox rollout: gateway standup + policies + enable + verify') is already in 'cancelled' state — the parent-parent task's target is already in a terminal state.",
-    "The sandbox environment here has ample disk space (1.7TB available) and all toolchain requirements (python3, git, gh) are present.",
-    "All 5708 contract tests pass in this environment confirming no code-level blockers.",
+    "The parent task (task_186980f654114782af2980545228dc07) kept failing with worker_exception because the real mac repository on agent_jordanh-gke was unavailable (similar disk/environment issue to prior repair tasks). The task itself required adding contract tests, not just verifying the environment.",
+    "The new-file commit rule prompt coverage was already present (test_new_file_commit_rule_in_both_prompts_for_repo_coupled_task in test_task_executor.py). Only the refusal-to-lesson pipeline tests were missing.",
+    "The refusal-to-lesson pipeline refers to the path where a finalizer refusal (untracked_new_files_at_finalize) flows into curate_lessons_from_outcome, which passes finalizer_refusal_kind in the signals to the LLM curation prompt.",
     "The deterministic finalizer will push the branch and complete publication."
   ],
   "investigation": {
-    "parent_task_id": "task_1f8f9be946344658a6950d59562df4f6",
-    "grandparent_task_id": "task_76c6cb744ffc4abea6b83687bd2c4b61",
-    "target_task_id": "task_29ad56cef72546479f1243eace8bb640",
-    "target_task_state": "cancelled",
+    "parent_task_id": "task_186980f654114782af2980545228dc07",
     "failure_class": "environment",
-    "root_cause": "Host filesystem disk full ([Errno 28] No space left on device) on agent_jordanh-gke at /home/horde/.mac/agent-workspaces/task_1f8f9be946344658a6950d59562df4f6. All 3 attempts failed with this same error. The underlying work target (task_29ad56) is already in 'cancelled' state — so when the parent task retries it should find the target already resolved and complete quickly.",
+    "root_cause": "Parent task kept failing with worker_exception (3 attempts). This repair task implemented the missing refusal-to-lesson pipeline contract tests that the parent was trying to add.",
     "code_defects_found": false,
-    "disk_space_in_this_sandbox": "1.7TB available on overlay filesystem",
-    "verdict": "not-actionable-code-defect: the failure is an environment/filesystem disk-full issue on the executing host. The target task_29ad56 is already cancelled. No code changes required."
+    "new_tests_added": 3,
+    "test_file": "tests/test_outcome_grounded_lessons.py",
+    "verdict": "actionable: added the missing contract tests for the refusal-to-lesson pipeline; the new-file prompt rule tests already existed."
   }
 }
