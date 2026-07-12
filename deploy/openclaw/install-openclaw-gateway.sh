@@ -193,6 +193,29 @@ PY
   fi
 }
 
+rewrite_sandbox_local_url() {
+  # A gateway runs inside OpenShell's private network namespace. Host loopback
+  # therefore points back at the sandbox, not at the MAC service or reverse
+  # tunnel on the supervisor host. OpenShell injects this stable host alias for
+  # exactly this boundary (the repository executor uses the same contract).
+  python3 - "$1" <<'PY'
+import sys
+from urllib.parse import urlsplit, urlunsplit
+
+value = sys.argv[1]
+parsed = urlsplit(value)
+if parsed.hostname not in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}:
+    print(value)
+    raise SystemExit(0)
+port = parsed.port
+host = "host.openshell.internal"
+netloc = host if port is None else "%s:%d" % (host, port)
+if parsed.username or parsed.password:
+    raise SystemExit("sandbox service URLs must not contain userinfo")
+print(urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)))
+PY
+}
+
 source_host_env() {
   # Generated runtime.env is trusted local state and preserves the gateway auth
   # token across idempotent deploys. Fleet config refreshes router settings;
@@ -222,6 +245,8 @@ source_host_env() {
   if [ -z "$MAC_OPENCLAW_CONTROL_URL" ]; then
     MAC_OPENCLAW_CONTROL_URL="${MAC_OPENCLAW_ROUTER_URL%/v1}"
   fi
+  MAC_OPENCLAW_ROUTER_URL="$(rewrite_sandbox_local_url "$MAC_OPENCLAW_ROUTER_URL")"
+  MAC_OPENCLAW_CONTROL_URL="$(rewrite_sandbox_local_url "$MAC_OPENCLAW_CONTROL_URL")"
   MAC_OPENCLAW_ROUTER_API_KEY="${MAC_OPENCLAW_ROUTER_API_KEY:-${MAC_HERMES_GATEWAY_API_KEY:-${MAC_API_TOKEN:-}}}"
   MAC_OPENCLAW_MODEL="${MAC_OPENCLAW_MODEL:-${MAC_HERMES_GATEWAY_MODEL:-${HERMES_INFERENCE_MODEL:-}}}"
   MAC_OPENCLAW_FLEET_NAME="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
@@ -296,6 +321,7 @@ validate_env() {
     MAC_OPENCLAW_AGENT_ID \
     MAC_OPENCLAW_INSTANCE_ID \
     MAC_OPENCLAW_ROUTER_URL \
+    MAC_OPENCLAW_CONTROL_URL \
     MAC_OPENCLAW_ROUTER_API_KEY \
     MAC_OPENCLAW_MODEL; do
     [ -n "${!name:-}" ] || missing+=("$name")
@@ -304,6 +330,10 @@ validate_env() {
   case "$MAC_OPENCLAW_ROUTER_URL" in
     http://*|https://*) ;;
     *) die "MAC_OPENCLAW_ROUTER_URL must be an http(s) URL" ;;
+  esac
+  case "$MAC_OPENCLAW_CONTROL_URL" in
+    http://*|https://*) ;;
+    *) die "MAC_OPENCLAW_CONTROL_URL must be an http(s) URL" ;;
   esac
   if [ -n "$MAC_OPENCLAW_SLACK_BOT_TOKEN" ] || [ -n "$MAC_OPENCLAW_SLACK_APP_TOKEN" ]; then
     local slack_account slack_suffix slack_bot_key slack_app_key slack_bot slack_app
@@ -1100,6 +1130,19 @@ if not {
 if "before_prompt_build" not in hooks:
     raise SystemExit("mac-continuity prompt hook is absent")
 PY
+  # Prove the URL written into the sandbox is actually sandbox-reachable and
+  # that the gateway token is accepted as this agent. A host-side /health
+  # check cannot detect the common 127.0.0.1 namespace mistake.
+  sandbox_command "$openshell_bin" /usr/bin/node --input-type=module --eval '
+    const base = String(process.env.MAC_OPENCLAW_CONTROL_URL || "").replace(/\/$/, "");
+    const agent = String(process.env.MAC_OPENCLAW_AGENT_ID || "");
+    const token = String(process.env.MAC_OPENCLAW_ROUTER_API_KEY || "");
+    const url = `${base}/agentbus/streams?agent_id=${encodeURIComponent(agent)}&limit=1`;
+    const response = await fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+    if (!response.ok) throw new Error(`MAC control-plane probe returned HTTP ${response.status}`);
+    const value = await response.json();
+    if (!Array.isArray(value)) throw new Error("MAC control-plane probe returned a non-list");
+  '
   sandbox_command "$openshell_bin" /usr/local/bin/curiosity verify \
     > "$OPENCLAW_HOST_DIR/curiosity-ledger-status.json"
   sandbox_command "$openshell_bin" /usr/local/bin/curiosity abuse-frame \

@@ -121,6 +121,47 @@ def test_openclaw_policy_is_deny_by_default_and_narrowly_allows_required_service
     assert 'path: "/file/bot*/**"' in text
     assert "host: '*'" not in text
     assert "0.0.0.0/0" not in text
+    for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        assert f"method: {method}" in text
+
+
+def test_prepare_rewrites_host_loopback_to_openshell_alias(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    home.mkdir()
+    _seed_hermes_identity(home)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_hub",
+        "MAC_OPENCLAW_INSTANCE_ID": "hermes_hub",
+        "MAC_OPENCLAW_ROUTER_URL": "http://127.0.0.1:8789/v1",
+        "MAC_OPENCLAW_CONTROL_URL": "http://localhost:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "test-token",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "test",
+    }
+    subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    managed = mac_home / "openclaw" / "managed"
+    runtime = (managed / "runtime.env").read_text(encoding="utf-8")
+    config = (managed / "openclaw.json").read_text(encoding="utf-8")
+    policy = (mac_home / "openclaw" / "openclaw-policy.yaml").read_text(encoding="utf-8")
+    assert "MAC_OPENCLAW_CONTROL_URL=http://host.openshell.internal:8789" in runtime
+    assert "http://host.openshell.internal:8789/v1" in config
+    assert "host: host.openshell.internal" in policy
+    assert "127.0.0.1:8789" not in runtime
+    assert "localhost:8789" not in runtime
 
 
 def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
