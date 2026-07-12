@@ -106,6 +106,29 @@ from pathlib import Path
 configured, account_id, homes_file = sys.argv[1:]
 configured = configured.strip()
 if not configured:
+    # No channel name was provided: resolve this Slack account's home channel
+    # directly from slack_home_channels.json so MAC_OPENCLAW_HOME_CHANNEL is
+    # populated anyway. Otherwise it stays empty on any gateway that never got
+    # an explicit channel name, and home-channel features (e.g. the fleet
+    # conversation mirror) silently no-op.
+    wanted_account = account_id.strip().lower().replace("_", "-")
+    try:
+        rows = json.loads(Path(homes_file).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        rows = []
+    with_id = [
+        row
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, dict)
+        and str(row.get("channel_id") or row.get("chat_id") or "").strip()
+    ]
+    for row in with_id:
+        if str(row.get("name") or "").strip().lower().replace("_", "-") == wanted_account:
+            print("channel:%s" % str(row.get("channel_id") or row.get("chat_id")).strip())
+            raise SystemExit(0)
+    if len(with_id) == 1:
+        print("channel:%s" % str(with_id[0].get("channel_id") or with_id[0].get("chat_id")).strip())
+        raise SystemExit(0)
     print("")
     raise SystemExit(0)
 if re.fullmatch(r"(?:channel|user|conversation):[^\s]+", configured):
