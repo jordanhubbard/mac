@@ -56,6 +56,7 @@ def test_deploy_script_wires_proxyjump():
     assert "--nul" in SCRIPT
     assert 'ssh_target_args "$agent"' in SCRIPT
     assert 'scp_target_args "$agent"' in SCRIPT
+    assert 'scp -O -q -o BatchMode=yes' in SCRIPT
     assert "$SSH_CONN_OPTS" not in SCRIPT
 
 

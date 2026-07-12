@@ -1279,9 +1279,14 @@ deploy_host() {
       --hub-url "$hub_url"
 
   echo "==> ${agent}: copying mac release archive"
-  scp -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$ARCHIVE" "${scp_target}:${remote_archive}"
+  # OpenSSH 9 switched scp to SFTP by default. Minimal fleet containers often
+  # expose the SCP protocol through sshd but intentionally omit an SFTP
+  # subsystem; force the portable legacy SCP wire protocol for both kinds of
+  # host. Authentication, ProxyJump, host-key policy, and destination paths
+  # remain the same.
+  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$ARCHIVE" "${scp_target}:${remote_archive}"
   echo "==> ${agent}: copying fleet registry"
-  scp -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$SANITIZED_FLEET_REGISTRY" "${scp_target}:${remote_registry}"
+  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$SANITIZED_FLEET_REGISTRY" "${scp_target}:${remote_registry}"
 
   echo "==> ${agent}: running one-time deploy"
   local remote_env=() remote_cmd openshell_enabled=0
