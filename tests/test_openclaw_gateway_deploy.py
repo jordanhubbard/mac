@@ -101,6 +101,8 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert 'image_revision" = "$OPENCLAW_IMAGE_REVISION"' in installer
     assert installer.count("/bin/bash --noprofile --norc -c") >= 2
     assert "/usr/local/bin/mac-verify-bash-contract" in installer
+    assert "/usr/local/bin/node --input-type=module" in installer
+    assert "/usr/bin/node --input-type=module" not in installer
     assert "migrate-hermes-continuity.py" in installer
     assert "apply-cron-plan.mjs" in container
     assert "curiosity-sidecar.py /usr/local/bin/curiosity" in container
