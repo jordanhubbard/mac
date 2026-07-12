@@ -1293,6 +1293,80 @@ def test_agentbus_repo_update_refuses_fleet_wide_without_admin():
     }
 
 
+def test_agentbus_reads_bind_requested_agent_to_token_principal():
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("agentbus-auth-host")
+    agent_a = cp.register_agent(machine.id, "a")
+    agent_b = cp.register_agent(machine.id, "b")
+    agent_c = cp.register_agent(machine.id, "c")
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "tok-a": {"scopes": ["agent", "read"], "agent_id": agent_a.id},
+                "tok-b": {"scopes": ["agent", "read"], "agent_id": agent_b.id},
+                "tok-c": {"scopes": ["agent", "read"], "agent_id": agent_c.id},
+                "admin": ["admin"],
+            },
+        )
+    )
+    published = client.post(
+        "/agentbus",
+        headers={"Authorization": "Bearer tok-a"},
+        json={
+            "sender_agent_id": agent_a.id,
+            "recipient_agent_id": agent_b.id,
+            "topic": "peer.message.v1",
+            "payload": {"message": "hello"},
+        },
+    )
+    assert published.status_code == 200, published.text
+    stream_id = published.json()["stream"]["id"]
+
+    # The real recipient can enumerate and read its stream.
+    listed = client.get(
+        "/agentbus/streams",
+        headers={"Authorization": "Bearer tok-b"},
+        params={"agent_id": agent_b.id},
+    )
+    assert listed.status_code == 200
+    assert stream_id in {item["id"] for item in listed.json()}
+    chunks = client.get(
+        f"/agentbus/streams/{stream_id}/chunks",
+        headers={"Authorization": "Bearer tok-b"},
+        params={"agent_id": agent_b.id},
+    )
+    assert chunks.status_code == 200
+
+    # A bound token cannot substitute another fleet identity, even though
+    # that substituted id is a legitimate stream member.
+    assert client.get(
+        "/agentbus/streams",
+        headers={"Authorization": "Bearer tok-c"},
+        params={"agent_id": agent_b.id},
+    ).status_code == 403
+    assert client.get(
+        f"/agentbus/streams/{stream_id}/chunks",
+        headers={"Authorization": "Bearer tok-c"},
+        params={"agent_id": agent_b.id},
+    ).status_code == 403
+    assert client.get(
+        f"/agentbus/streams/{stream_id}/events",
+        headers={"Authorization": "Bearer tok-c"},
+        params={"agent_id": agent_b.id, "timeout_seconds": 0.01},
+    ).status_code == 403
+
+    # Omitting agent_id is fleet-wide enumeration and therefore admin-only.
+    assert client.get(
+        "/agentbus/streams",
+        headers={"Authorization": "Bearer tok-a"},
+    ).status_code == 403
+    assert client.get(
+        "/agentbus/streams",
+        headers={"Authorization": "Bearer admin"},
+    ).status_code == 200
+
+
 def test_evidence_created_by_bound_to_principal():
     """mac-rreh: ``created_by`` on /tasks/{id}/evidence used to be
     self-asserted in the payload. An agent-bound token must not be

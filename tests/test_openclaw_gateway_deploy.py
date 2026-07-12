@@ -144,7 +144,7 @@ def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
       }};
       mod.default.register(api);
       if (!hooks.has("before_prompt_build")) process.exit(2);
-      if (!["mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
+      if (!["mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"].every((name) => tools.has(name))) process.exit(3);
       const result = await hooks.get("before_prompt_build")({{prompt: "what matters?"}});
       if (!result.prependContext.includes("Current mood: warm")) process.exit(4);
       if (!result.prependContext.includes("durable fact")) process.exit(5);
@@ -163,6 +163,134 @@ def test_mac_continuity_plugin_registers_runtime_hook_and_tools() -> None:
         capture_output=True,
         timeout=10,
     )
+
+
+def test_mac_agent_send_uses_authenticated_agentbus_not_openclaw_session_visibility() -> None:
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").as_uri()
+    script = f"""
+      const mod = await import({json.dumps(plugin)});
+      const tools = new Map();
+      const requests = [];
+      globalThis.fetch = async (url, opts = {{}}) => {{
+        const path = new URL(String(url)).pathname;
+        requests.push({{path, method: opts.method || "GET", body: opts.body ? JSON.parse(opts.body) : null}});
+        if (path === "/agents") return {{ok: true, json: async () => ([{{id: "agent_rocky", name: "rocky"}}])}};
+        if (path === "/agentbus") return {{ok: true, json: async () => ({{stream: {{id: "bus_1"}}}})}};
+        throw new Error(`unexpected URL ${{url}}`);
+      }};
+      const api = {{
+        pluginConfig: {{}}, logger: {{warn: () => {{}}, info: () => {{}}}},
+        on: () => {{}}, registerTool: (tool) => tools.set(tool.name, tool),
+      }};
+      mod.default.register(api);
+      const result = await tools.get("mac_agent_send").execute("call", {{
+        recipient: "rocky", message: "coordinate directly", timeoutSeconds: 0,
+      }});
+      const sent = requests.find((item) => item.path === "/agentbus");
+      if (!sent || sent.method !== "POST") process.exit(2);
+      if (sent.body.sender_agent_id !== "agent_natasha") process.exit(3);
+      if (sent.body.recipient_agent_id !== "agent_rocky") process.exit(4);
+      if (sent.body.topic !== "peer.message.v1") process.exit(5);
+      if (sent.body.payload.schema !== "mac.agent.peer_message.v1") process.exit(6);
+      const output = JSON.parse(result.content[0].text);
+      if (output.status !== "queued" || output.stream_id !== "bus_1") process.exit(7);
+    """
+    env = {
+        **os.environ,
+        "MAC_OPENCLAW_AGENT_ID": "agent_natasha",
+        "MAC_OPENCLAW_CONTROL_URL": "http://hub:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "bound-agent-token",
+    }
+    subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+
+def test_mac_peer_bridge_turns_authenticated_inbound_stream_into_correlated_reply(
+    tmp_path: Path,
+) -> None:
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").as_uri()
+    state_dir = tmp_path / "state"
+    agent_dir = tmp_path / "agent"
+    workspace = tmp_path / "workspace"
+    script = f"""
+      const mod = await import({json.dumps(plugin)});
+      let service = null;
+      const posts = [];
+      let runs = 0;
+      const incoming = {{
+        id: "bus_in", sender_agent_id: "agent_rocky", recipient_agent_id: "agent_natasha",
+        topic: "peer.message.v1", status: "closed", created_at: "2026-07-12T00:00:00Z",
+        headers: {{correlation_id: "corr-1"}},
+      }};
+      globalThis.fetch = async (url, opts = {{}}) => {{
+        const parsed = new URL(String(url));
+        if (parsed.pathname === "/agentbus/streams") return {{ok: true, json: async () => [incoming]}};
+        if (parsed.pathname === "/agentbus/streams/bus_in/chunks") return {{ok: true, json: async () => [{{payload: {{
+          schema: "mac.agent.peer_message.v1", correlation_id: "corr-1",
+          from_agent_id: "agent_rocky", to_agent_id: "agent_natasha", message: "Can you review this?",
+        }}}}]}};
+        if (parsed.pathname === "/agentbus" && (opts.method || "GET") === "POST") {{
+          posts.push(JSON.parse(opts.body));
+          return {{ok: true, json: async () => ({{stream: {{id: "bus_reply"}}}})}};
+        }}
+        throw new Error(`unexpected URL ${{url}}`);
+      }};
+      const api = {{
+        pluginConfig: {{peerPollIntervalMs: 250, peerMaxAttempts: 2}},
+        config: {{}},
+        logger: {{warn: () => {{}}, info: () => {{}}}},
+        on: () => {{}}, registerTool: () => {{}}, registerService: (value) => {{service = value;}},
+        runtime: {{
+          config: {{current: () => ({{}})}},
+          agent: {{
+            ensureAgentWorkspace: async () => {{}},
+            resolveAgentDir: () => {json.dumps(str(agent_dir))},
+            resolveAgentWorkspaceDir: () => {json.dumps(str(workspace))},
+            resolveAgentTimeoutMs: () => 1000,
+            runEmbeddedAgent: async (params) => {{
+              runs += 1;
+              if (!params.prompt.includes("Sender: agent_rocky")) process.exit(2);
+              if (!params.prompt.includes("Can you review this?")) process.exit(3);
+              return {{payloads: [{{text: "Yes, send me the branch."}}]}};
+            }},
+          }},
+        }},
+      }};
+      mod.default.register(api);
+      if (!service || service.id !== "mac-agent-peer-bridge") process.exit(4);
+      service.start();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      service.stop();
+      if (runs !== 1) process.exit(5);
+      if (posts.length !== 1) process.exit(6);
+      if (posts[0].topic !== "peer.reply.v1") process.exit(7);
+      if (posts[0].recipient_agent_id !== "agent_rocky") process.exit(8);
+      if (posts[0].payload.correlation_id !== "corr-1") process.exit(9);
+      if (posts[0].payload.reply !== "Yes, send me the branch.") process.exit(10);
+    """
+    env = {
+        **os.environ,
+        "OPENCLAW_STATE_DIR": str(state_dir),
+        "MAC_OPENCLAW_AGENT_ID": "agent_natasha",
+        "MAC_OPENCLAW_CONTROL_URL": "http://hub:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "bound-agent-token",
+    }
+    subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    state = json.loads((state_dir / "mac-continuity" / "peer-bridge.json").read_text())
+    assert state["processed"] == ["bus_in"]
 
 
 def test_mac_image_generate_posts_to_hub_media_router_and_writes_png() -> None:
@@ -334,7 +462,12 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert config["plugins"]["entries"]["mac-continuity"]["config"] == {
         "maxMemories": 5,
         "timeoutMs": 10000,
+        "peerPollIntervalMs": 2000,
+        "peerMaxAttempts": 3,
+        "peerTurnTimeoutMs": 120000,
     }
+    # OpenClaw session visibility applies only within this one gateway. MAC's
+    # authenticated AgentBus bridge owns cross-host fleet communication.
     assert config["tools"]["sessions"]["visibility"] == "agent"
     assert config["gateway"]["auth"]["token"]["id"] == "OPENCLAW_GATEWAY_TOKEN"
     assert all(secret not in config_path.read_text(encoding="utf-8") for secret in secrets)
@@ -536,7 +669,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
         "  sandbox:exec)\n"
         "    case \"$*\" in\n"
         "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {\"slack\": [{\"accountId\": \"offtera\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T123\"}}}, {\"accountId\": \"omgjkh\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T456\"}}}]}, \"channelDefaultAccountId\": {\"slack\": \"offtera\"}}' ;;\n"
-        "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"memory_search\", \"memory_get\", \"memory_store\", \"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"mac_image_generate\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
+            "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"memory_search\", \"memory_get\", \"memory_store\", \"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_fleet_status\", \"mac_agent_send\", \"mac_agent_inbox\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"mac_image_generate\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
         "      *'curiosity verify'*) printf '%s\\n' '{\"valid\": true, \"events\": 0}' ;;\n"
         "      *'curiosity abuse-frame'*) printf '%s\\n' '{\"possible_false_equivalence\": true}' ;;\n"
         "      *'memory status'*) printf '%s\\n' '{\"files\": 3}' ;;\n"

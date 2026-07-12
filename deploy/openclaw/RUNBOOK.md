@@ -55,6 +55,30 @@ agent's current MAC mood plus agent-scoped medium and long memories before each
 turn. Its tools let the agent recall those memories and self-report, read, or
 clear its own mood; bound agent tokens cannot act on a peer.
 
+## Fleet peer communication
+
+Each MAC agent owns a separate OpenClaw gateway and session store. OpenClaw's
+native `sessions_list` and `sessions_send` visibility setting therefore cannot
+provide cross-host communication: `tools.sessions.visibility=all` means all
+sessions in one gateway, not all gateways in the MAC fleet. Broadening it would
+expose local transcripts without solving fleet delivery.
+
+The `mac-continuity` plugin provides the fleet-aware boundary instead:
+
+- `mac_fleet_status` discovers registered peers and their current work.
+- `mac_agent_send` addresses a peer by fleet name or agent id and optionally
+  waits for a correlated response.
+- `mac_agent_inbox` inspects recent authenticated peer messages and replies.
+
+Messages travel over MAC AgentBus using the sender's agent-bound token. The
+recipient plugin polls only streams addressed to its own bound identity, starts
+an isolated OpenClaw peer turn, and returns the result over a correlated reply
+stream. Processed stream ids are persisted under the durable OpenClaw state
+volume and failures are retried a bounded number of times. Slack, Telegram, and
+shared transcript visibility are not involved. Peer messages are authenticated
+inter-agent data, not human authority, and cannot bypass task ownership,
+sandbox, review, or safety rules.
+
 The image also ships `/usr/local/bin/curiosity` and a host wrapper at
 `~/.mac/bin/curiosity`. A six-hour local OpenClaw cron performs the continuous
 curiosity pass. Candidate hypotheses, evidence, counterevidence, provenance,

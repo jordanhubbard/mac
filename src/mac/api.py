@@ -6609,7 +6609,15 @@ def create_app(
         agent_id: Optional[str] = Query(default=None),
         status: Optional[str] = Query(default=None),
         limit: int = Query(default=100),
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> List[Dict[str, Any]]:
+        # The agent id is an authorization boundary, not a caller-controlled
+        # filter. A bound agent may inspect only streams in which it
+        # participates; fleet-wide enumeration remains an admin operation.
+        if agent_id is None:
+            principal.require_admin()
+        else:
+            principal.assert_actor(agent_id)
         return [
             stream.to_dict()
             for stream in cp.list_agentbus_streams(agent_id=agent_id, status=status, limit=limit)
@@ -6631,7 +6639,9 @@ def create_app(
         agent_id: str,
         after_sequence: int = Query(default=0),
         limit: int = Query(default=100),
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> List[Dict[str, Any]]:
+        principal.assert_actor(agent_id)
         return [
             chunk.to_dict()
             for chunk in cp.read_agentbus_chunks(agent_id, stream_id, after_sequence, limit)
@@ -6724,9 +6734,11 @@ def create_app(
         after_sequence: int = Query(default=0),
         timeout_seconds: float = Query(default=30.0),
         poll_interval_seconds: float = Query(default=0.25),
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> StreamingResponse:
         # Authorize before we start streaming so denials surface as proper HTTP
         # errors rather than a half-open response.
+        principal.assert_actor(agent_id)
         cp.assert_agentbus_authorized(agent_id, stream_id)
 
         async def iter_events() -> Any:

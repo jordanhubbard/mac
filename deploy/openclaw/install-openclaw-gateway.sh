@@ -465,7 +465,13 @@ config = {
                     "allowConversationAccess": True,
                     "allowPromptInjection": True,
                 },
-                "config": {"maxMemories": 5, "timeoutMs": 10000},
+                "config": {
+                    "maxMemories": 5,
+                    "timeoutMs": 10000,
+                    "peerPollIntervalMs": 2000,
+                    "peerMaxAttempts": 3,
+                    "peerTurnTimeoutMs": 120000,
+                },
             },
             "slack": {"enabled": "slack" in configured},
             "telegram": {"enabled": "telegram" in configured},
@@ -502,6 +508,10 @@ config = {
             "workspace": "/sandbox/workspace",
         }],
     },
+    # Stock OpenClaw session tools are intentionally local to this gateway.
+    # MAC agents run one gateway per host, so broadening this to `all` would
+    # expose local transcripts without enabling cross-host communication.
+    # The mac-continuity peer bridge provides authenticated fleet-wide A2A.
     "tools": {"sessions": {"visibility": "agent"}},
 }
 config["plugins"]["allow"] = sorted(configured | {"mac-continuity"})
@@ -1082,6 +1092,7 @@ if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled
 if not {
     "memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
     "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear",
+    "mac_fleet_status", "mac_agent_send", "mac_agent_inbox",
     "mac_image_generate",
     "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
 } <= tools:
