@@ -170,7 +170,6 @@ class SSHTransport:
                 "list_dir on %s failed (exit %d): %s"
                 % (target, proc.returncode, proc.stderr.strip())
             )
-        prefix = "$HOME/%s/" % self._sub
         # Normalise: strip the literal "$HOME/.hermes/" prefix that the remote
         # shell expands to the actual home path.  We get the real expanded path,
         # so we strip by the hermes subdir basename only.
@@ -220,7 +219,7 @@ HERMES_SALVAGE_AUDIT_SCHEMA = "mac.hermes_salvage_audit.v1"
 def hermes_salvage_audit(
     agent: str,
     target: str,
-    transport: "SSHTransport",
+    transport: SSHTransport,
     *,
     audited_at: str,
 ) -> Dict[str, Any]:
