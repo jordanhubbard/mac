@@ -1974,6 +1974,10 @@ edges:
             "actor": "operator",
             "summary": "route coverage activity entry",
         },
+        ("PUT", "/v1/agents/{agent_id}/deploy-config"): {
+            "document": {"route_coverage": True},
+            "schema_name": "agent.deploy_config.v1",
+        },
     }
     query_cases: Dict[RouteKey, Dict[str, Any]] = {
         ("POST", "/tasks/{task_id}/claim"): {

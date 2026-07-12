@@ -155,6 +155,7 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("action-events", "list"),
         ("action-events", "stream"),
         # agent sub-commands
+        ("agent", "config"),
         ("agent", "delete"),
         ("agent", "hardware"),
         ("agent", "heartbeat"),
