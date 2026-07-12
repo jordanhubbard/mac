@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import fnmatch
 import hashlib
 import json
 import logging
@@ -36,6 +35,12 @@ from mac.agentbus_control import (
     repo_update_payload,
 )
 from mac.attempt_failure_classifier import classify_attempt_failure
+from mac.repository_contract import (
+    normalize_repo_relative_path as _normalize_repo_relative_path,
+    remote_branch_from_ref as _remote_branch_from_ref,
+    repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
+)
+from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
 from mac.models import (
     Agent,
     AgentProvisioningRequest,
@@ -158,6 +163,7 @@ from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
 from mac.communication_service import CommunicationService
 from mac.crash_service import CrashService
+from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
 from mac.observability_service import ObservabilityService
 from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_identity
 from mac.openshell_service import OpenShellService
@@ -182,18 +188,6 @@ from mac.workflow_service import WorkflowService
 
 def _state_value(state: Any) -> str:
     return state.value if hasattr(state, "value") else str(state)
-
-
-def _configured_qdrant_url(explicit: Optional[str] = None) -> Optional[str]:
-    if explicit:
-        return explicit
-    for name in ("MAC_QDRANT_URL", "QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"):
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
-
-
 
 
 def _manifest_list(value: Any) -> List[Any]:
@@ -277,14 +271,6 @@ def _evidence_artifact_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
-
-
-def _normalize_repo_relative_path(value: Any) -> str:
-    path = str(value or "").strip().replace("\\", "/")
-    path = re.sub(r"/+", "/", path)
-    while path.startswith("./"):
-        path = path[2:]
-    return path.strip("/")
 
 
 def _metadata_path_list(value: Any) -> List[str]:
@@ -379,36 +365,6 @@ def _repository_host_required_commands_from_metadata(metadata: JsonDict) -> List
     ]
 
 
-def _agent_resource_command_names(resources: JsonDict) -> set[str]:
-    names: set[str] = set()
-    for key in ("commands", "command_inventory"):
-        inventory = resources.get(key)
-        if isinstance(inventory, dict):
-            for value in _metadata_string_list(inventory.get("available")):
-                names.add(value)
-            commands = inventory.get("commands")
-            if isinstance(commands, list):
-                for item in commands:
-                    if isinstance(item, str) and item.strip():
-                        names.add(item.strip())
-                    elif isinstance(item, dict):
-                        name = str(item.get("name") or "").strip()
-                        if name:
-                            names.add(name)
-            paths = inventory.get("paths")
-            if isinstance(paths, dict):
-                names.update(str(name).strip() for name in paths if str(name).strip())
-        elif isinstance(inventory, list):
-            for item in inventory:
-                if isinstance(item, str) and item.strip():
-                    names.add(item.strip())
-                elif isinstance(item, dict):
-                    name = str(item.get("name") or "").strip()
-                    if name:
-                        names.add(name)
-    return names
-
-
 def _agent_requires_openshell(agent: Agent) -> bool:
     return openshell_required_for_identity(
         agent_id=agent.id,
@@ -441,16 +397,6 @@ def _required_changed_files_from_metadata(metadata: JsonDict) -> List[str]:
                     seen.add(path)
                     required.append(path)
     return required
-
-
-def _repo_path_satisfies_requirement(changed_path: str, required_path: str) -> bool:
-    changed = _normalize_repo_relative_path(changed_path)
-    required = _normalize_repo_relative_path(required_path)
-    if not changed or not required:
-        return False
-    if any(char in required for char in "*?["):
-        return fnmatch.fnmatchcase(changed, required)
-    return changed == required
 
 
 def _truthy_env(name: str, default: str = "") -> bool:
@@ -678,29 +624,6 @@ def _structured_failure_diagnosis(
 def _safe_slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-._").lower()
     return slug or "repo"
-
-
-def _safe_git_ref(value: str) -> bool:
-    return bool(
-        value
-        and not value.startswith("-")
-        and re.match(r"^[A-Za-z0-9][A-Za-z0-9._/\-]{0,127}$", value)
-    )
-
-
-def _remote_branch_from_ref(remote_ref: str) -> str:
-    ref = str(remote_ref or "").strip()
-    if not ref:
-        return ""
-    for prefix in ("refs/heads/", "heads/"):
-        if ref.startswith(prefix):
-            ref = ref[len(prefix):]
-            break
-    if ref.startswith("origin/"):
-        ref = ref[len("origin/"):]
-    if _safe_git_ref(ref) and not ref.startswith("refs/"):
-        return ref
-    return ""
 
 
 _SCP_GIT_URL_RE = re.compile(r"^(?P<user>[^@]+@)?(?P<host>[^:/]+):(?P<path>.+)$")

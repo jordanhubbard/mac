@@ -34,6 +34,7 @@ from mac.models import (
     utcnow,
 )
 from mac.observability_service import ObservabilityService
+from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
 
 # A provisioner callable receives the just-created request and may
 # either fulfill it synchronously (return an agent_id) or no-op and
@@ -70,36 +71,6 @@ def _request_required_commands(request: AgentProvisioningRequest) -> List[str]:
                 seen.add(command)
                 required.append(command)
     return required
-
-
-def _agent_resource_command_names(resources: JsonDict) -> set[str]:
-    names: set[str] = set()
-    for key in ("commands", "command_inventory"):
-        inventory = resources.get(key)
-        if isinstance(inventory, dict):
-            for value in _metadata_string_list(inventory.get("available")):
-                names.add(value)
-            commands = inventory.get("commands")
-            if isinstance(commands, list):
-                for item in commands:
-                    if isinstance(item, str) and item.strip():
-                        names.add(item.strip())
-                    elif isinstance(item, dict):
-                        name = str(item.get("name") or "").strip()
-                        if name:
-                            names.add(name)
-            paths = inventory.get("paths")
-            if isinstance(paths, dict):
-                names.update(str(name).strip() for name in paths if str(name).strip())
-        elif isinstance(inventory, list):
-            for item in inventory:
-                if isinstance(item, str) and item.strip():
-                    names.add(item.strip())
-                elif isinstance(item, dict):
-                    name = str(item.get("name") or "").strip()
-                    if name:
-                        names.add(name)
-    return names
 
 
 class ProvisioningService:

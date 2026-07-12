@@ -120,7 +120,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("mac-k8s-orchestrator")
 
-    from mac.hermes_adapter import MacApiClient
+    from mac.api_client import MacApiClient
     from mac.k8s.controller import ControllerConfig
     from mac.k8s.k8s_client import K8sJobsClient, load_in_cluster_config
     from mac.k8s.runner import (

@@ -48,6 +48,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from mac import gitops
+from mac.config_coercion import bounded_env_number
 
 GITHUB_INGEST_SCHEMA = "mac.github_issue_ingest.v1"
 
@@ -201,18 +202,7 @@ class GitHubIngestConfig:
         }
 
         def _num(name: str, default: float, low: float, high: float) -> float:
-            raw = str(env.get(name) or "").strip()
-            if not raw:
-                return default
-            try:
-                value = float(raw)
-            except ValueError:
-                errors.append("%s must be numeric" % name)
-                return default
-            if value < low or value > high:
-                errors.append("%s must be between %s and %s" % (name, low, high))
-                return default
-            return value
+            return bounded_env_number(env, name, default, low, high, errors=errors)
 
         interval = _num(
             "MAC_GITHUB_INGEST_INTERVAL_SECONDS",

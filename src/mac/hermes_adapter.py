@@ -4,11 +4,11 @@ import argparse
 import json
 import os
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+
+from mac.api_client import MacApiClient, MacApiError
 
 
 JsonDict = Dict[str, Any]
@@ -18,10 +18,6 @@ MemorySink = Callable[[JsonDict], None]
 
 SECRET_FIELD_HINTS = ("secret", "token", "password", "private_key", "credential")
 SECRET_ARGUMENT_FLAGS = {"--token", "--api-key", "--key", "--secret", "--password"}
-
-
-class MacApiError(RuntimeError):
-    """Raised when the Hermes adapter cannot complete a mac API operation."""
 
 
 def _path_part(value: str) -> str:
@@ -85,57 +81,6 @@ class ConversationTaskInput:
             },
         )
         return metadata
-
-
-class MacApiClient:
-    """Small HTTP client for Hermes-side integrations.
-
-    The optional transport hook is intentionally narrow and exists so tests or
-    in-process gateway adapters can call FastAPI without bypassing the API
-    contract.
-    """
-
-    def __init__(
-        self,
-        base_url: str,
-        token: Optional[str] = None,
-        timeout: float = 10.0,
-        transport: Optional[Transport] = None,
-    ) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.token = token
-        self.timeout = timeout
-        self.transport = transport
-
-    def get(self, path: str) -> Any:
-        return self.request("GET", path, None)
-
-    def post(self, path: str, payload: JsonDict) -> Any:
-        return self.request("POST", path, payload)
-
-    def put(self, path: str, payload: JsonDict) -> Any:
-        return self.request("PUT", path, payload)
-
-    def request(self, method: str, path: str, payload: Optional[JsonDict]) -> Any:
-        if self.transport is not None:
-            return self.transport(method, path, payload)
-        url = self.base_url + (path if path.startswith("/") else "/" + path)
-        body = None if payload is None else json.dumps(payload).encode("utf-8")
-        headers = {"Accept": "application/json"}
-        if payload is not None:
-            headers["Content-Type"] = "application/json"
-        if self.token:
-            headers["Authorization"] = "Bearer %s" % self.token
-        request = urllib.request.Request(url, data=body, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8")
-            raise MacApiError("mac API %s %s failed: %s" % (method, path, detail)) from exc
-        except urllib.error.URLError as exc:
-            raise MacApiError("mac API %s %s failed: %s" % (method, path, exc.reason)) from exc
-        return json.loads(raw) if raw else None
 
 
 def _default_web_url() -> str:

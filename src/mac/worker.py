@@ -4,7 +4,6 @@ import argparse
 import base64
 import copy
 import fcntl
-import fnmatch
 import hashlib
 import json
 import logging
@@ -67,7 +66,12 @@ from mac.fleet_learning import (
     classify_repository_access_failure,
     resolve_git_remote_access,
 )
-from mac.hermes_adapter import MacApiClient, MacApiError
+from mac.api_client import MacApiClient, MacApiError
+from mac.repository_contract import (
+    normalize_repo_relative_path as _normalize_repo_relative_path,
+    remote_branch_from_ref as _remote_branch_from_ref,
+    repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
+)
 from mac.models import metadata_declares_report_deliverable
 from mac.hermes_config_surface import apply_hermes_surface_payload
 from mac.gitops import (
@@ -6627,14 +6631,6 @@ def _manifest_list(value: Any) -> List[Any]:
     return [value]
 
 
-def _normalize_repo_relative_path(value: Any) -> str:
-    path = str(value or "").strip().replace("\\", "/")
-    path = re.sub(r"/+", "/", path)
-    while path.startswith("./"):
-        path = path[2:]
-    return path.strip("/")
-
-
 def _metadata_path_list(value: Any) -> List[str]:
     if isinstance(value, str):
         values = [value]
@@ -6690,16 +6686,6 @@ def _required_changed_files_from_task(task: JsonDict) -> List[str]:
     return required
 
 
-def _repo_path_satisfies_requirement(changed_path: str, required_path: str) -> bool:
-    changed = _normalize_repo_relative_path(changed_path)
-    required = _normalize_repo_relative_path(required_path)
-    if not changed or not required:
-        return False
-    if any(char in required for char in "*?["):
-        return fnmatch.fnmatchcase(changed, required)
-    return changed == required
-
-
 def _worker_required_changed_file_problems(task: JsonDict, manifest: JsonDict) -> List[str]:
     required = _required_changed_files_from_task(task)
     if not required:
@@ -6714,21 +6700,6 @@ def _worker_required_changed_file_problems(task: JsonDict, manifest: JsonDict) -
     if not missing:
         return []
     return ["repo evidence missing required changed files: %s" % ", ".join(missing)]
-
-
-def _remote_branch_from_ref(remote_ref: str) -> str:
-    ref = str(remote_ref or "").strip()
-    if not ref:
-        return ""
-    for prefix in ("refs/heads/", "heads/"):
-        if ref.startswith(prefix):
-            ref = ref[len(prefix):]
-            break
-    if ref.startswith("origin/"):
-        ref = ref[len("origin/"):]
-    if _safe_git_ref(ref) and not ref.startswith("refs/"):
-        return ref
-    return ""
 
 
 def _worker_verification_contract_problems(

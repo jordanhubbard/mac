@@ -523,7 +523,7 @@ def _read_verification_manifest(
     return loaded, None
 
 def _default_mac_client(mac_url: str, token: str) -> Any:
-    from mac.hermes_adapter import MacApiClient
+    from mac.api_client import MacApiClient
 
     return MacApiClient(mac_url, token=token)
 

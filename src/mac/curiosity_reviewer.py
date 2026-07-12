@@ -30,6 +30,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
+from mac.config_coercion import bounded_env_number, parse_timestamp as _parse_ts
+
 CURIOSITY_REVIEWER_SCHEMA = "mac.curiosity_reviewer.v1"
 ADJUDICATION_ORIGIN_TYPE = "curiosity_adjudication"
 
@@ -47,19 +49,6 @@ _ACTIVE_STATES = frozenset(
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _parse_ts(value: Any) -> Optional[datetime]:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        dt = datetime.fromisoformat(text)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
 
 
 def build_adjudication_description(agent_name: str, task_ref: str) -> str:
@@ -117,18 +106,7 @@ class CuriosityReviewerConfig:
         }
 
         def _num(name: str, default: float, low: float, high: float) -> float:
-            raw = str(env.get(name) or "").strip()
-            if not raw:
-                return default
-            try:
-                value = float(raw)
-            except ValueError:
-                errors.append("%s must be numeric" % name)
-                return default
-            if value < low or value > high:
-                errors.append("%s must be between %s and %s" % (name, low, high))
-                return default
-            return value
+            return bounded_env_number(env, name, default, low, high, errors=errors)
 
         interval = _num("MAC_CURIOSITY_REVIEW_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS,
                         MIN_INTERVAL_SECONDS, 7 * 24 * 60 * 60.0)

@@ -202,10 +202,10 @@ def test_manifest_os_error_is_descriptive(
 
 
 def test_default_client_passes_url_and_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mac import hermes_adapter
+    from mac import api_client
 
     monkeypatch.setattr(
-        hermes_adapter, "MacApiClient", lambda url, token: {"url": url, "token": token}
+        api_client, "MacApiClient", lambda url, token: {"url": url, "token": token}
     )
     assert job_executor._default_mac_client("http://mac", "secret") == {
         "url": "http://mac",

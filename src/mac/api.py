@@ -48,6 +48,7 @@ from mac.hermes_config_surface import (
     update_fleet_hermes_surface,
 )
 from mac.hermes_startup import build_hermes_startup_report
+from mac.memory_config import configured_qdrant_url as _configured_qdrant_url
 from mac.models import AmbiguousIdError, AuthorizationError, MACError, NotFoundError, ValidationError, utcnow
 from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
@@ -65,16 +66,6 @@ from mac.services import ControlPlane
 from mac.store import SQLiteStore, StoreError, make_store_from_env
 
 _log = logging.getLogger(__name__)
-
-
-def _configured_qdrant_url(explicit: Optional[str] = None) -> Optional[str]:
-    if explicit:
-        return explicit
-    for name in ("MAC_QDRANT_URL", "QDRANT_URL", "QDRANT_ADDRESS", "QDRANT_FLEET_URL"):
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
 
 
 def _vector_writer_for_memory(

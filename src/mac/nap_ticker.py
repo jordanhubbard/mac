@@ -22,6 +22,8 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
+from mac.config_coercion import bounded_env_number
+
 NAP_TICKER_SCHEMA = "mac.nap_ticker.v1"
 
 MIN_INTERVAL_SECONDS = 60.0
@@ -57,18 +59,7 @@ class NapTickerConfig:
         }
 
         def _num(name: str, default: float, low: float, high: float) -> float:
-            raw = str(env.get(name) or "").strip()
-            if not raw:
-                return default
-            try:
-                value = float(raw)
-            except ValueError:
-                errors.append("%s must be numeric" % name)
-                return default
-            if value < low or value > high:
-                errors.append("%s must be between %s and %s" % (name, low, high))
-                return default
-            return value
+            return bounded_env_number(env, name, default, low, high, errors=errors)
 
         interval = _num("MAC_NAP_TICK_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS,
                         MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)

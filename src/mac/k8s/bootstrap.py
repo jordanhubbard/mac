@@ -596,7 +596,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     cfg = BootstrapConfig.from_env()
     token = _token_from_env()
 
-    from mac.hermes_adapter import MacApiClient
+    from mac.api_client import MacApiClient
     from mac.k8s.k8s_client import load_in_cluster_config
     from kubernetes import client as k8s_client
 
