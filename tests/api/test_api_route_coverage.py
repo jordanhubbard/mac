@@ -1556,6 +1556,10 @@ edges:
             "channel": "slack:CROUTE",
             "reason": "route coverage",
         },
+        ("PUT", "/v1/agents/{agent_id}/deploy-config"): {
+            "document": {"version": "1.0", "deploy_type": "route-coverage"},
+            "schema_name": "mac.agent_deploy_config.v1",
+        },
         ("POST", "/v1/agents/{agent_id}/memory"): {
             "content": "route coverage learning: the hub answers on :8789",
             "record_type": "agent_learning:route_coverage",
