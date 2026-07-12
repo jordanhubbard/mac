@@ -294,7 +294,9 @@
       "src/mac/router_app.py",
       "src/mac/source_convergence_service.py",
       "src/mac/task_executor.py",
-      "src/mac/worker.py"
+      "src/mac/worker.py",
+      "src/mac/worker_reflect.py",
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -367,7 +369,7 @@
     "name": "MAC_AGENT_RECONCILE_RUNTIME_DEPS",
     "retired": false,
     "sources": [
-      "src/mac/worker.py"
+      "src/mac/worker_runtime_deps.py"
     ],
     "type": "bool"
   },
@@ -1206,7 +1208,7 @@
     "name": "MAC_DEBUG_TERMINAL_SESSION_ID",
     "retired": false,
     "sources": [
-      "src/mac/worker.py"
+      "src/mac/worker_debug_terminal.py"
     ],
     "type": "str"
   },
@@ -3593,7 +3595,8 @@
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
       "src/mac/services.py",
-      "src/mac/worker.py"
+      "src/mac/worker.py",
+      "src/mac/worker_runtime_deps.py"
     ],
     "type": "str"
   },
@@ -3999,7 +4002,7 @@
       "src/mac/k8s/runner.py",
       "src/mac/router_app.py",
       "src/mac/task_executor.py",
-      "src/mac/worker.py"
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -4502,7 +4505,7 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "src/mac/acp/backend.py",
-      "src/mac/worker.py"
+      "src/mac/worker_reflect.py"
     ],
     "type": "str"
   },
@@ -5823,7 +5826,7 @@
     "name": "MAC_REFLECT_ENABLED",
     "retired": false,
     "sources": [
-      "src/mac/worker.py"
+      "src/mac/worker_reflect.py"
     ],
     "type": "bool"
   },
@@ -5834,7 +5837,7 @@
     "name": "MAC_REFLECT_TIMEOUT",
     "retired": false,
     "sources": [
-      "src/mac/worker.py"
+      "src/mac/worker_reflect.py"
     ],
     "type": "int"
   },
@@ -7433,7 +7436,7 @@
       "src/mac/k8s/job_executor.py",
       "src/mac/review_finalizer.py",
       "src/mac/task_executor.py",
-      "src/mac/worker.py"
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -7462,7 +7465,7 @@
       "src/mac/k8s/runner.py",
       "src/mac/router_app.py",
       "src/mac/task_executor.py",
-      "src/mac/worker.py"
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -7473,7 +7476,7 @@
     "name": "MAC_TASK_MAX_ITERATIONS",
     "retired": false,
     "sources": [
-      "src/mac/worker.py"
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -7486,7 +7489,7 @@
     "sources": [
       "src/mac/coding_agent.py",
       "src/mac/task_executor.py",
-      "src/mac/worker.py"
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -7522,7 +7525,8 @@
     "retired": false,
     "sources": [
       "src/mac/task_executor.py",
-      "src/mac/worker.py"
+      "src/mac/worker.py",
+      "src/mac/worker_repo_prep.py"
     ],
     "type": "str"
   },
@@ -7570,7 +7574,7 @@
     "retired": false,
     "sources": [
       "src/mac/cli.py",
-      "src/mac/worker.py"
+      "src/mac/worker_repo_prep.py"
     ],
     "type": "str"
   },
@@ -7621,7 +7625,7 @@
       "src/mac/k8s/job_executor.py",
       "src/mac/review_finalizer.py",
       "src/mac/task_executor.py",
-      "src/mac/worker.py"
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -7968,7 +7972,7 @@
       "src/mac/k8s/job_executor.py",
       "src/mac/openshell_runtime.py",
       "src/mac/task_executor.py",
-      "src/mac/worker.py"
+      "src/mac/worker_reflect.py"
     ],
     "type": "str"
   },
