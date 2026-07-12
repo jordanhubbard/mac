@@ -1,0 +1,312 @@
+"""Subprocess execution helpers extracted from worker.py.
+
+Contains:
+  - _terminate_process_tree: recursive process-tree termination utility
+  - SubprocessExecutor: callable executor that runs a subprocess for each task
+
+These are imported back into worker.py and re-exported so callers that import
+from mac.worker see no change.
+"""
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import tempfile
+import threading
+import time
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+from mac.api_client import MacApiError
+
+JsonDict = Dict[str, Any]
+CommandAuditSink = Callable[[JsonDict], None]
+
+
+def _terminate_process_tree(
+    process: subprocess.Popen[Any], *, grace_seconds: float = 1.0
+) -> None:
+    """Terminate *process* and every descendant, including new sessions.
+
+    Executor children are allowed to create their own process groups (the test
+    watchdog does this deliberately), so killing only the executor's process
+    group is insufficient.  ``psutil`` is a runtime dependency and gives us a
+    cross-platform recursive tree walk; the process-group fallback also catches
+    descendants that race between the walk and termination.
+    """
+    try:
+        import psutil
+
+        parent = psutil.Process(process.pid)
+        descendants = parent.children(recursive=True)
+        for child in reversed(descendants):
+            try:
+                child.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        try:
+            parent.terminate()
+        except psutil.NoSuchProcess:
+            pass
+        # Do not let psutil reap the direct child: ``subprocess.Popen`` must do
+        # that itself or CPython can observe ChildProcessError and substitute a
+        # false zero return code.  Waiting on descendants is safe.
+        _, alive = psutil.wait_procs(
+            descendants, timeout=max(0.0, float(grace_seconds))
+        )
+        for item in alive:
+            try:
+                item.kill()
+            except psutil.NoSuchProcess:
+                pass
+    except Exception:  # noqa: BLE001 - process cleanup must retain a fallback.
+        pass
+
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        if process.poll() is None:
+            process.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+class SubprocessExecutor:
+    def __init__(self, argv: List[str], timeout: Optional[float] = None) -> None:
+        if not argv:
+            raise MacApiError("executor command is required")
+        self.argv = argv
+        self.timeout = timeout
+        self.audit_sink: Optional[CommandAuditSink] = None
+        self.audit_context: JsonDict = {}
+        self._process_lock = threading.Lock()
+        self._active_process: Optional[subprocess.Popen[Any]] = None
+        self._cancel_reason = ""
+
+    def has_active_process(self) -> bool:
+        with self._process_lock:
+            return self._active_process is not None
+
+    def cancel_current(self, reason: str = "task assignment cancelled") -> bool:
+        """Cancel the active executor and its complete descendant tree."""
+        with self._process_lock:
+            process = self._active_process
+            if process is None:
+                return False
+            self._cancel_reason = str(reason or "task assignment cancelled")
+        _terminate_process_tree(process)
+        return True
+
+    def __call__(self, task: JsonDict, task_dir: Path) -> Any:
+        # Import helpers lazily to avoid a circular import: worker.py imports
+        # SubprocessExecutor at module load time, and these functions live in
+        # worker.py.  By deferring to call time, both modules are fully
+        # initialised before the first real execution.
+        from mac.worker import (  # noqa: PLC0415
+            WorkerExecution,
+            _audit_safe_argv,
+            _coerce_process_output,
+            _command_audit_id,
+            _load_repository_context,
+            _repository_context_audit_metadata,
+            _repository_context_env,
+            _sha256_text,
+            _summary_from_output,
+            _task_iteration_override,
+            _task_model_override,
+            _utcnow,
+        )
+
+        env = os.environ.copy()
+        # These are task-scoped inputs, not worker defaults.  A long-lived
+        # worker may itself have been launched from an operator shell (or an
+        # older service definition) that carried values from a previous task.
+        # Clear them before resolving the current task so an unpinned task
+        # falls back to the coding agent's configured default and remains
+        # inside that agent credential's model policy.
+        env.pop("MAC_TASK_MODEL", None)
+        env.pop("MAC_TASK_MAX_ITERATIONS", None)
+        repository_context = _load_repository_context(task_dir)
+        env.update(
+            {
+                "MAC_TASK_ID": task["id"],
+                "MAC_TASK_FILE": str(task_dir / "task.json"),
+                "MAC_TASK_WORKSPACE": str(task_dir),
+            }
+        )
+        # Lease id and agent id ride into the child env so LLM completions carry
+        # full route-context attribution (agent/task/lease) to the fleet router.
+        lease_id = str(self.audit_context.get("lease_id") or "").strip()
+        if lease_id:
+            env["MAC_LEASE_ID"] = lease_id
+        agent_id_ctx = str(self.audit_context.get("agent_id") or "").strip()
+        if agent_id_ctx:
+            env["MAC_AGENT_ID"] = agent_id_ctx
+        # Per-task model override (metadata.model / metadata.runtime.model):
+        # coding-CLI argv builders pass it as --model/-m, so a task
+        # that declares a cheaper (or stronger) model gets it without any
+        # fleet-wide config change. llm.route records requested/resolved
+        # model per completion, so the override is visible in observability.
+        model_override = _task_model_override(task, hub_client=getattr(self, "client", None))
+        if model_override:
+            env["MAC_TASK_MODEL"] = model_override
+        iteration_override = _task_iteration_override(task)
+        if iteration_override is not None:
+            env["MAC_TASK_MAX_ITERATIONS"] = str(iteration_override)
+        if repository_context:
+            env.update(_repository_context_env(repository_context))
+        command_id = _command_audit_id()
+        started_at = _utcnow()
+        started_monotonic = time.monotonic()
+        base_record: JsonDict = {
+            "command_id": command_id,
+            "argv": _audit_safe_argv(self.argv),
+            "cwd": str(task_dir),
+            "task_id": self.audit_context.get("task_id") or task.get("id"),
+            "lease_id": self.audit_context.get("lease_id"),
+            "started_at": started_at,
+            "metadata": {
+                "argv_sha256": _sha256_text(json.dumps(self.argv, separators=(",", ":"))),
+                **_repository_context_audit_metadata(repository_context),
+                **_ensure_json_object(self.audit_context.get("metadata")),
+            },
+        }
+        self._emit_audit({**base_record, "phase": "started"})
+        try:
+            # Files, rather than pipes, ensure a descendant that inherited
+            # stdout/stderr cannot keep ``communicate`` blocked after the
+            # declared executor exits.  The executor starts a new session so
+            # timeout/cancellation has an additional process-group fence.
+            with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
+                with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+                    process = subprocess.Popen(
+                        self.argv,
+                        cwd=str(task_dir),
+                        env=env,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        text=True,
+                        start_new_session=True,
+                    )
+                    with self._process_lock:
+                        self._cancel_reason = ""
+                        self._active_process = process
+                    timed_out = False
+                    try:
+                        process.wait(timeout=self.timeout)
+                    except subprocess.TimeoutExpired:
+                        timed_out = True
+                        _terminate_process_tree(process)
+                        process.wait()
+                    finally:
+                        # A successful command may still have background
+                        # descendants.  Retire them before releasing the task.
+                        _terminate_process_tree(process, grace_seconds=0.0)
+                        with self._process_lock:
+                            cancel_reason = self._cancel_reason
+                            self._active_process = None
+                    stdout_file.seek(0)
+                    stderr_file.seek(0)
+                    stdout = stdout_file.read()
+                    stderr = stderr_file.read()
+                    if timed_out:
+                        raise subprocess.TimeoutExpired(
+                            self.argv,
+                            self.timeout or 0.0,
+                            output=stdout,
+                            stderr=stderr,
+                        )
+                    completed = subprocess.CompletedProcess(
+                        self.argv,
+                        int(process.returncode),
+                        stdout,
+                        stderr,
+                    )
+        except subprocess.TimeoutExpired as exc:
+            completed_at = _utcnow()
+            stdout = _coerce_process_output(exc.stdout)
+            stderr = _coerce_process_output(exc.stderr)
+            self._emit_audit(
+                {
+                    **base_record,
+                    "phase": "timeout",
+                    "completed_at": completed_at,
+                    "duration_ms": (time.monotonic() - started_monotonic) * 1000.0,
+                    "stdout_sha256": _sha256_text(stdout),
+                    "stderr_sha256": _sha256_text(stderr),
+                    "stdout_bytes": len(stdout.encode("utf-8")),
+                    "stderr_bytes": len(stderr.encode("utf-8")),
+                    "metadata": {
+                        **base_record["metadata"],
+                        "timeout_seconds": self.timeout,
+                    },
+                }
+            )
+            raise
+        except OSError as exc:
+            completed_at = _utcnow()
+            self._emit_audit(
+                {
+                    **base_record,
+                    "phase": "error",
+                    "completed_at": completed_at,
+                    "duration_ms": (time.monotonic() - started_monotonic) * 1000.0,
+                    "metadata": {**base_record["metadata"], "error": str(exc)},
+                }
+            )
+            raise
+        completed_at = _utcnow()
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        cancelled = bool(cancel_reason)
+        self._emit_audit(
+            {
+                **base_record,
+                "phase": (
+                    "cancelled"
+                    if cancelled
+                    else "completed" if completed.returncode == 0 else "failed"
+                ),
+                "completed_at": completed_at,
+                "duration_ms": (time.monotonic() - started_monotonic) * 1000.0,
+                "returncode": completed.returncode,
+                "stdout_sha256": _sha256_text(stdout),
+                "stderr_sha256": _sha256_text(stderr),
+                "stdout_bytes": len(stdout.encode("utf-8")),
+                "stderr_bytes": len(stderr.encode("utf-8")),
+                "metadata": {
+                    **base_record["metadata"],
+                    **({"cancel_reason": cancel_reason} if cancelled else {}),
+                },
+            }
+        )
+        return WorkerExecution(
+            returncode=completed.returncode,
+            summary=_summary_from_output(completed.returncode, stdout, stderr),
+            stdout=stdout,
+            stderr=stderr,
+            metadata={
+                "executor": _audit_safe_argv(self.argv),
+                "executor_argv_sha256": base_record["metadata"]["argv_sha256"],
+            },
+        )
+
+    def _emit_audit(self, record: JsonDict) -> None:
+        if self.audit_sink is None:
+            return
+        try:
+            self.audit_sink(record)
+        except Exception:
+            pass
+
+
+def _ensure_json_object(value: Any) -> JsonDict:
+    """Return *value* as a dict, falling back to an empty dict."""
+    if isinstance(value, dict):
+        return value
+    return {}
