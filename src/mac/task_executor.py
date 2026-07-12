@@ -92,6 +92,13 @@ from mac.openshell_runtime import (
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
     truthy as _truthy,
 )
+from mac.env_config import (
+    env_bool,
+    env_int,
+    env_str,
+    resolve_env_chain,
+    resolve_hub_agent,
+)
 from mac.review_failure_classifier import (
     FinalizerRefusalKind,
     classify_finalizer_refusal,
@@ -213,10 +220,10 @@ def safe_path_component(value: str) -> str:
 
 
 def local_agent_id() -> str:
-    configured = os.environ.get("MAC_AGENT_ID") or os.environ.get("MAC_WORKER_AGENT_ID")
+    configured = resolve_env_chain("MAC_AGENT_ID", "MAC_WORKER_AGENT_ID")
     if configured:
         return configured
-    name = os.environ.get("MAC_WORKER_AGENT_NAME") or os.uname().nodename.split(".")[0]
+    name = resolve_env_chain("MAC_WORKER_AGENT_NAME") or os.uname().nodename.split(".")[0]
     return "agent_%s" % (safe_path_component(name.lower()).strip("_") or "default")
 
 
@@ -227,13 +234,8 @@ def local_agent_id() -> str:
 
 def _hub_env() -> tuple[str, str]:
     """Return ``(base_url, token)`` from the worker env, or empty strings."""
-    base_url = (os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL") or "").rstrip("/")
-    token = (
-        os.environ.get("MAC_WORKER_TOKEN")
-        or os.environ.get("MAC_TOKEN")
-        or os.environ.get("MAC_API_TOKEN")
-        or ""
-    )
+    base_url = resolve_env_chain("MAC_HUB_URL", "MAC_URL").rstrip("/")
+    token = resolve_env_chain("MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN")
     return base_url, token
 
 
@@ -455,7 +457,7 @@ def _plan_detection_section(task: Dict[str, Any]) -> str:
 
     task_id = str(task.get("id") or "")
     project = str(task.get("project") or "")
-    mac_url = (os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL") or "").rstrip("/")
+    mac_url = resolve_env_chain("MAC_HUB_URL", "MAC_URL").rstrip("/")
     children_endpoint = "%s/tasks/%s/children" % (mac_url, task_id) if mac_url and task_id else "/tasks/{task_id}/children"
 
     return "\n".join([
@@ -903,9 +905,7 @@ def build_planning_prompt(
     mac-evidence.json so the deterministic host can verify coverage.
     """
     task_id = str(task.get("id") or "")
-    mac_url = (
-        os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL") or ""
-    ).rstrip("/")
+    mac_url = resolve_env_chain("MAC_HUB_URL", "MAC_URL").rstrip("/")
     children_endpoint = (
         "%s/tasks/%s/children" % (mac_url, task_id)
         if mac_url and task_id
@@ -1870,22 +1870,10 @@ def curate_lessons_from_outcome(
     MAC_LESSON_CURATION_ENABLED; router endpoint from
     MAC_ROUTER_URL/OPENAI_BASE_URL (the eval runner's seam). Best-effort: any
     failure returns [] and the run's outcome is unaffected."""
-    if str(os.environ.get("MAC_LESSON_CURATION_ENABLED") or "").strip().lower() not in {
-        "1", "true", "yes", "on",
-    }:
+    if not env_bool("MAC_LESSON_CURATION_ENABLED"):
         return []
-    router_url = str(
-        os.environ.get("MAC_ROUTER_URL")
-        or os.environ.get("MAC_ROUTER_INTERNAL_URL")
-        or os.environ.get("OPENAI_BASE_URL")
-        or ""
-    ).strip()
-    model = str(
-        os.environ.get("MAC_LESSON_CURATION_MODEL")
-        or os.environ.get("MAC_TASK_MODEL")
-        or os.environ.get("MAC_HERMES_GATEWAY_MODEL")
-        or ""
-    ).strip()
+    router_url = resolve_env_chain("MAC_ROUTER_URL", "MAC_ROUTER_INTERNAL_URL") or os.environ.get("OPENAI_BASE_URL", "").strip()
+    model = resolve_env_chain("MAC_LESSON_CURATION_MODEL", "MAC_TASK_MODEL", "MAC_HERMES_GATEWAY_MODEL")
     if not router_url or not model:
         return []
     try:
@@ -1907,7 +1895,7 @@ def curate_lessons_from_outcome(
             error_signature=str(outcome.get("error_signature") or "none")[:200],
         )
         caller = router_model_caller(
-            router_url, token=str(os.environ.get("MAC_API_TOKEN") or "")
+            router_url, token=env_str("MAC_API_TOKEN")
         )
         answer, _cites, _ms = caller(model, prompt, "")
     except Exception:  # noqa: BLE001 - curation is advisory.
@@ -2232,7 +2220,7 @@ def _repository_contract_canonical_branch(task: Dict[str, Any]) -> str:
     branch = str(runtime.get("repository_canonical_branch") or "").strip()
     if branch:
         return branch
-    return os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
+    return env_str("MAC_TASK_REPO_DEFAULT_BRANCH")
 
 
 def _repository_publication_remote(task: Dict[str, Any]) -> str:
@@ -2250,11 +2238,11 @@ def _repository_publication_remote(task: Dict[str, Any]) -> str:
         remote = str(runtime.get("repository_canonical_remote_url") or "").strip()
         if remote:
             return remote
-    return os.environ.get("MAC_TASK_CANONICAL_REMOTE", "").strip()
+    return env_str("MAC_TASK_CANONICAL_REMOTE")
 
 
 def _repository_prepared_base(task: Dict[str, Any]) -> str:
-    value = os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
+    value = env_str("MAC_TASK_REPO_BASE_SHA")
     if value:
         return value
     metadata = task.get("metadata") if isinstance(task, dict) else {}
@@ -2263,7 +2251,7 @@ def _repository_prepared_base(task: Dict[str, Any]) -> str:
 
 
 def _repository_task_branch(task: Dict[str, Any], fallback: str = "") -> str:
-    value = os.environ.get("MAC_TASK_REPO_BRANCH", "").strip()
+    value = env_str("MAC_TASK_REPO_BRANCH")
     if value:
         return value
     metadata = task.get("metadata") if isinstance(task, dict) else {}
@@ -2276,7 +2264,7 @@ def _repository_task_branch(task: Dict[str, Any], fallback: str = "") -> str:
 
 
 def _repository_lease_id(task: Dict[str, Any]) -> str:
-    value = os.environ.get("MAC_TASK_REPO_LEASE_ID", "").strip()
+    value = env_str("MAC_TASK_REPO_LEASE_ID")
     if value:
         return value
     metadata = task.get("metadata") if isinstance(task, dict) else {}
@@ -2310,8 +2298,7 @@ def _repository_contract_bootstrap(task: Dict[str, Any]) -> Dict[str, Any]:
 
 def _repository_bootstrap_timeout() -> float:
     raw = (
-        os.environ.get("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT")
-        or os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT")
+        resolve_env_chain("MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT", "MAC_WORKER_REPOSITORY_TEST_TIMEOUT")
         or "1800"
     )
     try:
@@ -2826,7 +2813,7 @@ _FINALIZER_PHASE_DEFAULTS: Dict[str, float] = {
 
 def _finalizer_phase_timeout(phase: str) -> float:
     env_key = "MAC_FINALIZER_%s_TIMEOUT" % phase.upper().replace("-", "_")
-    raw = os.environ.get(env_key, "").strip()
+    raw = env_str(env_key)
     if raw:
         try:
             value = float(raw)
@@ -2838,7 +2825,7 @@ def _finalizer_phase_timeout(phase: str) -> float:
         return _repository_bootstrap_timeout()
     if phase == "contract_tests":
         try:
-            value = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "") or 1800.0)
+            value = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or 1800.0)
             return value if value > 0 else 1800.0
         except ValueError:
             return 1800.0
@@ -3021,7 +3008,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
     publication_target = str(metadata.get("publication_target") or "").strip()
     if not publication_target.startswith("git://"):
         return
-    worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
+    worktree = env_str("MAC_TASK_REPO_WORKTREE")
     if not worktree:
         rt = metadata.get("runtime") if isinstance(metadata.get("runtime"), dict) else {}
         worktree = str(rt.get("repository_worktree") or "").strip()
@@ -3490,11 +3477,10 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         task.get("owner_agent_id")
         or review_context.get("reviewer_agent_id")
         or review_claim.get("reviewer_agent_id")
-        or os.environ.get("MAC_WORKER_AGENT_ID")
-        or os.environ.get("MAC_AGENT_ID")
+        or resolve_env_chain("MAC_WORKER_AGENT_ID", "MAC_AGENT_ID")
         or ""
     ).strip()
-    attestation_key = (os.environ.get("MAC_ATTESTATION_KEY") or "").strip()
+    attestation_key = env_str("MAC_ATTESTATION_KEY")
     if not reviewer_agent_id or not attestation_key:
         return
     executor_evidence_id = str(review_context.get("executor_evidence_id") or "").strip()
@@ -3533,7 +3519,7 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     exec_repo = exec_verification.get("repo") or {}
     exec_head = str(exec_repo.get("head_sha") or "").strip()
     repo_review = bool(exec_head)
-    review_worktree = os.environ.get("MAC_TASK_REPO_WORKTREE", "").strip()
+    review_worktree = env_str("MAC_TASK_REPO_WORKTREE")
     tests = None
     bootstrap = None
     codegraph = None
@@ -3875,7 +3861,7 @@ _FORBIDDEN_OPENSHELL_ENV_PASSTHROUGH = frozenset({"PATH"})
 
 
 def _openshell_enabled() -> bool:
-    return _truthy(os.environ.get("MAC_OPENSHELL_SANDBOX"))
+    return _truthy(env_str("MAC_OPENSHELL_SANDBOX"))
 
 
 _OPENSHELL_HOST_ALIAS_DEFAULT = "host.openshell.internal"
@@ -3886,7 +3872,7 @@ def _openshell_host_alias() -> str:
     """The in-sandbox alias for the host (OpenShell injects this hosts entry).
     A forwarded ``http://127.0.0.1:8789`` is unreachable from inside the sandbox
     (that loopback is the sandbox's own); rewrite it to this alias."""
-    return (os.environ.get("MAC_OPENSHELL_HOST_ALIAS") or "").strip() or _OPENSHELL_HOST_ALIAS_DEFAULT
+    return env_str("MAC_OPENSHELL_HOST_ALIAS") or _OPENSHELL_HOST_ALIAS_DEFAULT
 
 
 def _rewrite_host_local_url(value: str, alias: str) -> str:
@@ -3904,7 +3890,7 @@ def _rewrite_host_local_url(value: str, alias: str) -> str:
 
 def _openshell_environment() -> Dict[str, str]:
     """Environment copied through a private workspace file, never process argv."""
-    names = os.environ.get("MAC_OPENSHELL_ENV_PASSTHROUGH") or _DEFAULT_OPENSHELL_ENV_PASSTHROUGH
+    names = env_str("MAC_OPENSHELL_ENV_PASSTHROUGH") or _DEFAULT_OPENSHELL_ENV_PASSTHROUGH
     alias = _openshell_host_alias()
     values: Dict[str, str] = {}
     seen = set()
@@ -3992,7 +3978,7 @@ def _resolve_openshell_policy() -> str:
     network egress, so an unconfigured deployment fails closed (tasks can't
     reach the hub/gateway) rather than running under an unknown profile.
     """
-    explicit = (os.environ.get("MAC_OPENSHELL_POLICY") or "").strip()
+    explicit = env_str("MAC_OPENSHELL_POLICY")
     if explicit:
         if not Path(explicit).is_file():
             raise FileNotFoundError("MAC_OPENSHELL_POLICY=%r but no such file" % explicit)
@@ -4024,13 +4010,13 @@ _SANDBOX_VERIFICATION_FILE = "mac-sandbox-verification.json"
 
 
 def _openshell_bin() -> str:
-    return (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip() or "openshell"
+    return env_str("MAC_OPENSHELL_BIN") or "openshell"
 
 
 def _sandbox_name() -> str:
     """A unique name for the kept sandbox so the download + delete steps can
     target it. Overridable via MAC_OPENSHELL_SANDBOX_NAME (debug a single run)."""
-    explicit = (os.environ.get("MAC_OPENSHELL_SANDBOX_NAME") or "").strip()
+    explicit = env_str("MAC_OPENSHELL_SANDBOX_NAME")
     if explicit:
         return explicit
     import uuid
@@ -4052,11 +4038,11 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
 
 
 def _sandbox_gc_best_effort() -> None:
-    if not _truthy(os.environ.get("MAC_OPENSHELL_GC")):
+    if not env_bool("MAC_OPENSHELL_GC"):
         return
     try:
         stale_after = float(
-            os.environ.get("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400"
+            env_str("MAC_OPENSHELL_STALE_AFTER_SECONDS") or "86400"
         )
     except ValueError:
         stale_after = 86400.0
@@ -4105,7 +4091,7 @@ def _sandbox_repository_environment(workspace: Path, sandbox_workspace: str) -> 
     mapped_worktree = _sandbox_path_for_workspace_child(
         workspace,
         sandbox_workspace,
-        os.environ.get("MAC_TASK_REPO_WORKTREE", ""),
+        env_str("MAC_TASK_REPO_WORKTREE"),
     )
     if mapped_worktree:
         values["MAC_TASK_REPO_WORKTREE"] = mapped_worktree
@@ -4136,7 +4122,7 @@ def _ensure_landlock_or_fail() -> None:
     Landlock path-confinement is the only piece waived. macOS Docker-based fleet
     nodes therefore set ``MAC_OPENSHELL_ALLOW_NO_LANDLOCK=1`` as the documented
     posture (see ADR 0008 amendment / docs/openshell-sandbox.md)."""
-    if _kernel_has_landlock() or _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")):
+    if _kernel_has_landlock() or env_bool("MAC_OPENSHELL_ALLOW_NO_LANDLOCK"):
         return
     if sys.platform == "darwin":
         raise RuntimeError(
@@ -4807,7 +4793,7 @@ def _openshell_extra_create_argv() -> List[str]:
     environment auth wins the coding-agent selection and makes the file both
     unnecessary and unsafe to copy into a throwaway sandbox.
     """
-    extra = (os.environ.get("MAC_OPENSHELL_CREATE_ARGS") or "").strip()
+    extra = env_str("MAC_OPENSHELL_CREATE_ARGS")
     if not extra:
         return []
     argv = shlex.split(extra)
@@ -4818,8 +4804,8 @@ def _openshell_extra_create_argv() -> List[str]:
         )
     permit_codex_file_auth = (
         not (os.environ.get("OPENAI_API_KEY") or "").strip()
-        and _truthy(os.environ.get("MAC_OPENSHELL_UPLOAD_CODEX_AUTH"))
-        and _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH"))
+        and env_bool("MAC_OPENSHELL_UPLOAD_CODEX_AUTH")
+        and env_bool("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH")
     )
     filtered: List[str] = []
     index = 0
@@ -4862,7 +4848,7 @@ def _build_sandbox_create_argv(
     argv: List[str] = [_openshell_bin(), "sandbox", "create", "--no-auto-providers"]
     argv += ["--policy", _resolve_openshell_policy(), "--name", name]
     argv += _sandbox_label_argv(
-        "task", keep=_truthy(os.environ.get("MAC_OPENSHELL_KEEP"))
+        "task", keep=env_bool("MAC_OPENSHELL_KEEP")
     )
     argv += _openshell_extra_create_argv()
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
@@ -4939,7 +4925,7 @@ def _relative_path_or_none(path: Path, root: Path) -> Optional[Path]:
 def _sandbox_repository_roots(workspace: Path, download_root: Path) -> set[Path]:
     roots: set[Path] = set()
 
-    env_worktree = (os.environ.get("MAC_TASK_REPO_WORKTREE") or "").strip()
+    env_worktree = env_str("MAC_TASK_REPO_WORKTREE")
     if env_worktree:
         rel = _relative_path_or_none(Path(env_worktree), workspace)
         if rel is not None:
@@ -5111,7 +5097,7 @@ def _sandbox_run_repository_verification(
         sys.stderr.write("[executor] WARNING: sandbox repository verification upload failed: %s\n" % msg)
         return False
     try:
-        timeout = float(os.environ.get("MAC_WORKER_REPOSITORY_TEST_TIMEOUT", "1800"))
+        timeout = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or "1800")
     except ValueError:
         timeout = 1800.0
     ok, msg = _sandbox_step(
@@ -5166,7 +5152,7 @@ def _sandbox_delete(name: str) -> bool:
 
 
 def _sandbox_progress_interval() -> float:
-    raw = (os.environ.get("MAC_OPENSHELL_PROGRESS_INTERVAL") or "5").strip()
+    raw = (env_str("MAC_OPENSHELL_PROGRESS_INTERVAL") or "5")
     try:
         return max(0.0, float(raw))
     except ValueError:
@@ -5178,10 +5164,10 @@ def _sandbox_progress_snapshot(
 ) -> Optional[Dict[str, str]]:
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     mapped_repo = _sandbox_path_for_workspace_child(
-        workspace, sub, os.environ.get("MAC_TASK_REPO_WORKTREE", "")
+        workspace, sub, env_str("MAC_TASK_REPO_WORKTREE")
     )
     repo = mapped_repo or ""
-    base = os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
+    base = env_str("MAC_TASK_REPO_BASE_SHA")
     script = "\n".join(
         [
             "set -eu",
@@ -5287,8 +5273,8 @@ class _SandboxProgressMonitor:
             changed_count = 0
         changed = changed_count > 0 or (
             bool(head)
-            and bool(os.environ.get("MAC_TASK_REPO_BASE_SHA"))
-            and head != os.environ.get("MAC_TASK_REPO_BASE_SHA")
+            and bool(env_str("MAC_TASK_REPO_BASE_SHA"))
+            and head != env_str("MAC_TASK_REPO_BASE_SHA")
         )
         self.changed_file_count = changed_count
         self.changed_file_digest = snapshot.get("changed_digest", "")
@@ -5380,7 +5366,7 @@ def _run_sandboxed(
         raise
     runner_completed = False
     harvested = False
-    kept = _truthy(os.environ.get("MAC_OPENSHELL_KEEP"))
+    kept = env_bool("MAC_OPENSHELL_KEEP")
     emit_telemetry(
         "sandbox_started",
         task_id=str(audit_id) if audit_id else None,
@@ -5547,8 +5533,8 @@ def _validated_host_break_glass_authorization(task: Any) -> Optional[Dict[str, A
         "status": "claimed",
         "execution_boundary": "host",
         "task_id": str(task.get("id") or ""),
-        "agent_id": str(os.environ.get("MAC_AGENT_ID") or ""),
-        "lease_id": str(os.environ.get("MAC_LEASE_ID") or ""),
+        "agent_id": env_str("MAC_AGENT_ID"),
+        "lease_id": env_str("MAC_LEASE_ID"),
     }
     mismatches = [
         key
@@ -5593,7 +5579,7 @@ def _prepare_host_break_glass_environment(
     one-shot) and does not mutate host config.
     """
 
-    configured = str(os.environ.get("MAC_BREAK_GLASS_HOST_PATH") or "").strip()
+    configured = env_str("MAC_BREAK_GLASS_HOST_PATH")
     candidates = [
         *(configured.split(os.pathsep) if configured else []),
         str(Path.home() / ".mac" / "bin"),
@@ -5649,7 +5635,7 @@ def _unsandboxed_agent_argv(
         )
         return agent_argv
     default_unsandboxed = "0" if _openshell_required_for_local_agent() else "1"
-    if _truthy(os.environ.get("MAC_ALLOW_UNSANDBOXED_YOLO", default_unsandboxed)):
+    if _truthy(env_str("MAC_ALLOW_UNSANDBOXED_YOLO") or default_unsandboxed):
         _force_child_yolo_env()
         sys.stderr.write(
             "[executor] WARNING: launching an approval-bypassed agent WITHOUT an "
@@ -5721,7 +5707,7 @@ def _coding_agent_auth_is_safe_for_openshell(choice: Any) -> bool:
     if (
         getattr(choice, "agent", "") == "codex"
         and getattr(choice, "auth_source", "") == "~/.codex/auth.json"
-        and not _truthy(os.environ.get("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH"))
+        and not env_bool("MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH")
     ):
         sys.stderr.write(
             "[executor] coding-agent sandbox preflight (codex): skipped "
@@ -5739,7 +5725,7 @@ _SANDBOX_PREFLIGHT_CACHE_LOCK = threading.Lock()
 
 
 def _coding_agent_preflight_timeout() -> float:
-    raw = (os.environ.get("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT") or "").strip()
+    raw = env_str("MAC_CODING_AGENT_PREFLIGHT_TIMEOUT")
     try:
         val = float(raw)
         return val if val > 0 else 180.0
@@ -5976,7 +5962,7 @@ def _coding_agent_sandbox_ok(choice: Any) -> bool:
       * ``trust`` / ``1`` — assume the sandbox image is provisioned; skip the probe.
       * ``off`` / ``0`` — never use a coding agent when sandboxed (fail closed).
     """
-    mode = (os.environ.get("MAC_CODING_AGENT_SANDBOX") or "verify").strip().lower()
+    mode = (env_str("MAC_CODING_AGENT_SANDBOX") or "verify").lower()
     if mode in {"off", "0", "false", "no"}:
         return False
     if mode in {"trust", "1", "true", "yes", "skip"}:
@@ -6050,14 +6036,14 @@ def _executor_backend() -> str:
 
     ACP (ADR 0006) is opt-in via ``MAC_EXECUTOR_BACKEND=acp`` so Hermes stays the
     default until parity; the external agent command is ``MAC_ACP_AGENT_CMD``."""
-    return (os.environ.get("MAC_EXECUTOR_BACKEND") or "hermes").strip().lower()
+    return (env_str("MAC_EXECUTOR_BACKEND") or "hermes").lower()
 
 
 def _acp_agent_argv() -> List[str]:
     """The external ACP agent command (shell-split). Required for backend=acp."""
     import shlex
 
-    return shlex.split((os.environ.get("MAC_ACP_AGENT_CMD") or "").strip())
+    return shlex.split(env_str("MAC_ACP_AGENT_CMD"))
 
 
 def _acp_update_action_event(audit_id: Any, session_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -6334,7 +6320,7 @@ def _invoke_agent(
 def _agent_timeout() -> Optional[float]:
     """Bound a single agent run so a wedged TokenHub turn can't hang the loop
     forever. Default 900s; set MAC_EXECUTOR_AGENT_TIMEOUT=0 to disable."""
-    raw = (os.environ.get("MAC_EXECUTOR_AGENT_TIMEOUT") or "").strip()
+    raw = env_str("MAC_EXECUTOR_AGENT_TIMEOUT")
     if not raw:
         return 900.0
     try:
