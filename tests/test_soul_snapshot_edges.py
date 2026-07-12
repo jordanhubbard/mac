@@ -124,6 +124,7 @@ def test_ssh_transport_list_dir_success(monkeypatch: pytest.MonkeyPatch) -> None
     output = "/home/agent/.hermes/SOUL.md\n/home/agent/.hermes/USER.md\n/home/agent/.hermes/subdir/file.txt\n"
     monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(0, output))
     paths = transport.list_dir("host")
+    assert len(paths) == 3
     assert "SOUL.md" in paths
     assert "USER.md" in paths
     assert "subdir/file.txt" in paths
@@ -149,7 +150,8 @@ def test_hermes_salvage_audit_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["agent"] == "agent_test"
     assert result["target"] == "host"
     assert result["audited_at"] == "2026-01-01T00:00:00Z"
-    assert "SOUL.md" in result["files"]
+    assert set(result["files"]) == {"SOUL.md", "USER.md"}
+    assert result["file_count"] == 2
     assert result["file_count"] == len(result["files"])
     assert result["error"] is None
 
@@ -162,6 +164,8 @@ def test_hermes_salvage_audit_ssh_failure(monkeypatch: pytest.MonkeyPatch) -> No
         "agent_test", "unreachable", transport, audited_at="2026-01-01T00:00:00Z"
     )
     assert result["schema"] == "mac.hermes_salvage_audit.v1"
+    assert result["agent"] == "agent_test"
+    assert result["target"] == "unreachable"
     assert result["files"] == []
     assert result["file_count"] == 0
     assert result["error"] is not None
