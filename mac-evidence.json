@@ -5,17 +5,21 @@
   "status": "complete",
   "summary": "Worker startup implementation verified: re-register clears stale dispatch hold, emits checkout SHA, runs import self-check. Full contract test suite passed (exit code 0). Branch pushed and PR #223 opened.",
   "repo": {
-    "head_sha": "4611fbd1aaa7f1b30c66f4c7c5f6b1b867e13178",
+    "head_sha": "2c9c64895b434d633b1ed1e3f9cde3c6a2af79dc",
     "pushed": true,
     "dirty": false,
-    "files_changed": ["mac-evidence.json"],
+    "files_changed": [
+      "mac-evidence.json"
+    ],
     "branch": "mac/agent_jordanh-gke/task_cf0f0553c6a64b15b120a2d653047a1e-lease_393bd16221d24b5a96",
     "remote_ref": "refs/heads/mac/agent_jordanh-gke/task_cf0f0553c6a64b15b120a2d653047a1e-lease_393bd16221d24b5a96",
     "pr_url": "https://github.com/jordanhubbard/mac/pull/223"
   },
   "codegraph": {
     "init": "39,635 nodes, 129,712 edges",
-    "affected_files": ["src/mac/worker.py"],
+    "affected_files": [
+      "src/mac/worker.py"
+    ],
     "affected_test_files": []
   },
   "tests": {
