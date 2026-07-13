@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 
 import mac.task_executor as te
+from mac import executor_memory as memory
 from mac.services import ControlPlane
 
 
@@ -94,10 +95,10 @@ def test_curation_nothing_and_errors_yield_empty(monkeypatch):
 
 
 def test_record_curated_lessons_posts_learning_records(monkeypatch):
-    monkeypatch.setattr(te, "curate_lessons_from_outcome",
+    monkeypatch.setattr(memory, "curate_lessons_from_outcome",
                         lambda task, outcome: ["use the ppa git", "bootstrap needs --venv-only"])
     posted = []
-    monkeypatch.setattr(te, "_hub_post", lambda path, payload: posted.append((path, payload)) or True)
+    monkeypatch.setattr(memory, "_hub_post", lambda path, payload: posted.append((path, payload)) or True)
     n = te.record_curated_lessons(
         {"id": "task_x", "title": "T", "metadata": {}},
         {"outcome": "failure", "evidence_type": "repo_change", "signals": {"tests": "fail"}},
@@ -116,7 +117,7 @@ def test_curation_prompt_includes_existing_lessons_for_dedup(monkeypatch):
     monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
     monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
     monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
-    monkeypatch.setattr(te, "recall_deployment_lessons",
+    monkeypatch.setattr(memory, "recall_deployment_lessons",
                         lambda task, limit=8: ["pushed=false means the delivery step failed"])
     captured = {}
 
@@ -166,7 +167,7 @@ def test_curation_prompt_includes_finalizer_refusal_kind_in_signals(monkeypatch)
     monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
     monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
     monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
-    monkeypatch.setattr(te, "recall_deployment_lessons", lambda task, limit=8: [])
+    monkeypatch.setattr(memory, "recall_deployment_lessons", lambda task, limit=8: [])
     captured = {}
 
     def factory(url, token=""):
@@ -205,7 +206,7 @@ def test_curation_prompt_finalizer_refusal_staged_new_files(monkeypatch):
     monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
     monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
     monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
-    monkeypatch.setattr(te, "recall_deployment_lessons", lambda task, limit=8: [])
+    monkeypatch.setattr(memory, "recall_deployment_lessons", lambda task, limit=8: [])
     captured = {}
 
     def factory(url, token=""):
@@ -239,7 +240,7 @@ def test_refusal_to_lesson_end_to_end(monkeypatch, tmp_path):
     monkeypatch.setenv("MAC_LESSON_CURATION_ENABLED", "1")
     monkeypatch.setenv("MAC_ROUTER_URL", "http://router.test/v1")
     monkeypatch.setenv("MAC_LESSON_CURATION_MODEL", "m")
-    monkeypatch.setattr(te, "recall_deployment_lessons", lambda task, limit=8: [])
+    monkeypatch.setattr(memory, "recall_deployment_lessons", lambda task, limit=8: [])
     captured = {}
 
     def factory(url, token=""):
@@ -252,7 +253,7 @@ def test_refusal_to_lesson_end_to_end(monkeypatch, tmp_path):
     monkeypatch.setattr(er, "router_model_caller", factory)
 
     posted = []
-    monkeypatch.setattr(te, "_hub_post", lambda path, payload: posted.append((path, payload)) or True)
+    monkeypatch.setattr(memory, "_hub_post", lambda path, payload: posted.append((path, payload)) or True)
 
     (tmp_path / "mac-evidence.json").write_text(json.dumps({
         "evidence_type": "repo_change",

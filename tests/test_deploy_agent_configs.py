@@ -964,9 +964,12 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     assert '"evidence_type": "operator_result",' in executor_module
     assert '"name": "hermes_chat_query"' not in executor_module
     # telemetry path + memory feed (deployment gets smarter over time)
-    assert 'name": "executor.%s"' in executor_module or '"executor.%s"' in executor_module
-    assert "def recall_deployment_lessons(" in executor_module
-    assert "def record_deployment_learning(" in executor_module
+    executor_memory = (ROOT / "src" / "mac" / "executor_memory.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'name": "executor.%s"' in executor_memory or '"executor.%s"' in executor_memory
+    assert "def recall_deployment_lessons(" in executor_memory
+    assert "def record_deployment_learning(" in executor_memory
     # ADR 0001 hu-03: the gateway provider/model override is owned, in-process
     # code (mac.agent_provider) — not runtime string-surgery of an upstream
     # checkout. Verify the owned mechanism survives the TokenHub retirement.

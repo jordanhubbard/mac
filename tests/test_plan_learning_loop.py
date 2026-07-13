@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 import mac.task_executor as te
+from mac import executor_memory as memory
 from mac.task_executor import (
     _PLAN_LEARNING_SCHEMA,
     _format_plan_learning_content,
@@ -180,7 +181,7 @@ class TestBuildPlanLearningRecord:
 class TestRecordPlanOutcome:
     def test_records_learning_from_valid_manifest(self, tmp_path, monkeypatch):
         posted = []
-        monkeypatch.setattr(te, "_hub_post", lambda path, payload: posted.append(payload) or True)
+        monkeypatch.setattr(memory, "_hub_post", lambda path, payload: posted.append(payload) or True)
         task = _task()
         manifest = _plan_manifest(children_count=3)
         (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -193,30 +194,30 @@ class TestRecordPlanOutcome:
         assert content["children_count"] == 3
 
     def test_returns_false_when_no_manifest(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(te, "_hub_post", lambda path, payload: True)
+        monkeypatch.setattr(memory, "_hub_post", lambda path, payload: True)
         assert record_plan_outcome(_task(), tmp_path, wall_clock_ms=0) is False
 
     def test_returns_false_for_non_plan_evidence(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(te, "_hub_post", lambda path, payload: True)
+        monkeypatch.setattr(memory, "_hub_post", lambda path, payload: True)
         (tmp_path / "mac-evidence.json").write_text(
             json.dumps({"evidence_type": "repo_change"}), encoding="utf-8"
         )
         assert record_plan_outcome(_task(), tmp_path, wall_clock_ms=0) is False
 
     def test_returns_false_for_invalid_json(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(te, "_hub_post", lambda path, payload: True)
+        monkeypatch.setattr(memory, "_hub_post", lambda path, payload: True)
         (tmp_path / "mac-evidence.json").write_text("not-json", encoding="utf-8")
         assert record_plan_outcome(_task(), tmp_path, wall_clock_ms=0) is False
 
     def test_returns_false_when_hub_fails(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(te, "_hub_post", lambda path, payload: False)
+        monkeypatch.setattr(memory, "_hub_post", lambda path, payload: False)
         task = _task()
         (tmp_path / "mac-evidence.json").write_text(json.dumps(_plan_manifest()), encoding="utf-8")
         assert record_plan_outcome(task, tmp_path, wall_clock_ms=0) is False
 
     def test_wall_clock_ms_passed_through(self, tmp_path, monkeypatch):
         posted = []
-        monkeypatch.setattr(te, "_hub_post", lambda path, payload: posted.append(payload) or True)
+        monkeypatch.setattr(memory, "_hub_post", lambda path, payload: posted.append(payload) or True)
         (tmp_path / "mac-evidence.json").write_text(json.dumps(_plan_manifest()), encoding="utf-8")
         record_plan_outcome(_task(), tmp_path, wall_clock_ms=42000.0)
         content = json.loads(posted[0]["content"])
@@ -319,19 +320,19 @@ def _make_plan_record_raw(
 
 class TestRecallPlanLessons:
     def test_returns_empty_when_hub_unreachable(self, monkeypatch):
-        monkeypatch.setattr(te, "_hub_get", lambda path: None)
+        monkeypatch.setattr(memory, "_hub_get", lambda path: None)
         task = _task(title="Migrate schema")
         assert recall_plan_lessons(task) == []
 
     def test_returns_empty_when_no_matching_records(self, monkeypatch):
-        monkeypatch.setattr(te, "_hub_get", lambda path: [])
+        monkeypatch.setattr(memory, "_hub_get", lambda path: [])
         task = _task(title="Migrate schema")
         assert recall_plan_lessons(task) == []
 
     def test_surfaces_plan_learning_record(self, monkeypatch):
         raw = _make_plan_record_raw(task_title="Schema migration plan", ordering="leaves first")
         records = [{"content": raw, "record_type": "deployment_learning:mac"}]
-        monkeypatch.setattr(te, "_hub_get", lambda path: records)
+        monkeypatch.setattr(memory, "_hub_get", lambda path: records)
         task = _task(title="Schema migration plan")
         lessons = recall_plan_lessons(task, limit=5)
         assert len(lessons) >= 1
@@ -341,7 +342,7 @@ class TestRecallPlanLessons:
         # A record with deployment_learning schema should be filtered out
         non_plan = json.dumps({"schema": "mac.deployment_learning.v1", "outcome": "success"})
         records = [{"content": non_plan, "record_type": "deployment_learning:mac"}]
-        monkeypatch.setattr(te, "_hub_get", lambda path: records)
+        monkeypatch.setattr(memory, "_hub_get", lambda path: records)
         task = _task(title="Schema migration")
         assert recall_plan_lessons(task) == []
 
@@ -351,7 +352,7 @@ class TestRecallPlanLessons:
             {"content": raw, "record_type": "deployment_learning:mac"},
             {"content": raw, "record_type": "deployment_learning:mac"},
         ]
-        monkeypatch.setattr(te, "_hub_get", lambda path: records)
+        monkeypatch.setattr(memory, "_hub_get", lambda path: records)
         task = _task(title="Big migration task here")
         lessons = recall_plan_lessons(task, limit=5)
         # duplicates should be filtered
@@ -362,13 +363,13 @@ class TestRecallPlanLessons:
             {"content": _make_plan_record_raw(task_title="Plan %d" % i, children_count=i + 1)}
             for i in range(10)
         ]
-        monkeypatch.setattr(te, "_hub_get", lambda path: recs)
+        monkeypatch.setattr(memory, "_hub_get", lambda path: recs)
         task = _task(title="Migration task")
         lessons = recall_plan_lessons(task, limit=2)
         assert len(lessons) <= 2
 
     def test_returns_list_on_invalid_hub_response(self, monkeypatch):
-        monkeypatch.setattr(te, "_hub_get", lambda path: "bad-response")
+        monkeypatch.setattr(memory, "_hub_get", lambda path: "bad-response")
         assert recall_plan_lessons(_task()) == []
 
 
@@ -638,7 +639,7 @@ def test_plan_lesson_recorded_and_recalled_e2e(tmp_path: Path, monkeypatch):
             for r in records
         ]
 
-    monkeypatch.setattr(te, "_hub_get", fake_hub_get)
+    monkeypatch.setattr(memory, "_hub_get", fake_hub_get)
 
     lessons = recall_plan_lessons(subsequent_task, limit=5)
 

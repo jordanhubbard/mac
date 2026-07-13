@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from mac import executor_memory as memory
 from mac import executor_scope as scope
 from mac import task_executor as te
 
@@ -1309,8 +1310,8 @@ def test_main_salvages_evidence_when_agent_run_times_out(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file)); monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
     posts = []
-    monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
-    monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [])
+    monkeypatch.setattr(memory, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
+    monkeypatch.setattr(memory, "_hub_get", lambda path, **kw: [])
 
     def timed_out_runner(argv, cwd, task_id, metadata):
         # agent produced a real deliverable before the trailing turn hung
@@ -1336,8 +1337,8 @@ def test_main_fails_when_timeout_and_no_evidence(tmp_path, monkeypatch):
     ws = tmp_path / "ws"; ws.mkdir()
     monkeypatch.setenv("MAC_TASK_FILE", str(task_file)); monkeypatch.setenv("MAC_TASK_WORKSPACE", str(ws))
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
-    monkeypatch.setattr(te, "_hub_post", lambda *a, **k: True)
-    monkeypatch.setattr(te, "_hub_get", lambda *a, **k: [])
+    monkeypatch.setattr(memory, "_hub_post", lambda *a, **k: True)
+    monkeypatch.setattr(memory, "_hub_get", lambda *a, **k: [])
     # timeout with NO deliverable written → honest failure, not salvaged
     rc = te.main(runner=lambda *a: _FakeResult(124, stderr="agent run timed out"))
     assert rc == 124
@@ -1381,7 +1382,7 @@ def test_recall_deployment_lessons_via_injected_get(monkeypatch):
             },
         ]
 
-    monkeypatch.setattr(te, "_hub_get", fake_get)
+    monkeypatch.setattr(memory, "_hub_get", fake_get)
     lessons = te.recall_deployment_lessons({"title": "Ship X", "project": "demo"})
     assert lessons == ["[success] Ship X (repo_change)"]
     assert "/v1/memory/recall?" in captured["path"]
@@ -1396,7 +1397,7 @@ def test_recall_prior_attempt_only_fires_on_retry(monkeypatch):
         called["n"] += 1
         return []
 
-    monkeypatch.setattr(te, "_hub_get", fake_get)
+    monkeypatch.setattr(memory, "_hub_get", fake_get)
     assert te.recall_prior_attempt_lessons({"id": "task_1", "attempt_count": 1}) == []
     assert called["n"] == 0
 
@@ -1427,7 +1428,7 @@ def test_recall_prior_attempt_surfaces_own_last_outcome(monkeypatch):
             rec("task_ME", "Ship the widget", "failure", "check:tests rc=1", "2026-07-10T02:00:00"),
         ]
 
-    monkeypatch.setattr(te, "_hub_get", fake_get)
+    monkeypatch.setattr(memory, "_hub_get", fake_get)
     lessons = te.recall_prior_attempt_lessons(
         {"id": "task_ME", "project": "demo", "attempt_count": 3}, limit=2
     )
@@ -1470,7 +1471,7 @@ def test_recall_falls_back_to_direct_memory_records(monkeypatch):
             {"record_type": "other", "content": "ignored", "created_at": "2026-05-31T01:00:00Z"},
         ]
 
-    monkeypatch.setattr(te, "_hub_get", fake_get)
+    monkeypatch.setattr(memory, "_hub_get", fake_get)
     lessons = te.recall_deployment_lessons(
         {"title": "Fix router deployment", "project": "demo"}
     )
@@ -1508,7 +1509,7 @@ def test_recall_includes_structured_common_fleet_learning(monkeypatch):
             return []
         return []
 
-    monkeypatch.setattr(te, "_hub_get", fake_get)
+    monkeypatch.setattr(memory, "_hub_get", fake_get)
     lessons = te.recall_deployment_lessons(
         {
             "title": "Review private repository",
@@ -2773,7 +2774,7 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     )
 
     posts = []
-    monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
+    monkeypatch.setattr(memory, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
     prior = {
         "schema": "mac.deployment_learning.v1",
         "project": "demo",
@@ -2782,7 +2783,7 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
         "outcome": "success",
     }
     monkeypatch.setattr(
-        te,
+        memory,
         "_hub_get",
         lambda path, **kw: [{
             "summary": json.dumps(prior),
@@ -2811,8 +2812,8 @@ def test_main_runs_records_telemetry_and_memory(tmp_path, monkeypatch):
     names = {p[1]["name"] for p in telemetry}
     assert {"executor.started", "executor.agent_completed", "executor.finalized"} <= names
     # memory feed recorded a deployment lesson
-    memory = [p for p in posts if p[0] == "/memory"]
-    assert memory and memory[0][1]["record_type"] == "deployment_learning:demo"
+    memory_posts = [p for p in posts if p[0] == "/memory"]
+    assert memory_posts and memory_posts[0][1]["record_type"] == "deployment_learning:demo"
 
 
 # ---------------------------------------------------------------------------
@@ -3596,8 +3597,8 @@ def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
 
     posts = []
-    monkeypatch.setattr(te, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
-    monkeypatch.setattr(te, "_hub_get", lambda path, **kw: [])
+    monkeypatch.setattr(memory, "_hub_post", lambda path, payload, **kw: posts.append((path, payload)) or True)
+    monkeypatch.setattr(memory, "_hub_get", lambda path, **kw: [])
 
     def plan_runner(argv, cwd, task_id, metadata):
         # Agent writes evidence with plan_steps

@@ -9,7 +9,6 @@ executor and its subprocess/finalizer machinery.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
@@ -21,9 +20,13 @@ from mac.executor_hub_io import (
     _hub_put,
     detect_plan_signals,
 )
-
-DEPLOYMENT_LEARNING_PREFIX = "deployment_learning"
-_PLAN_LEARNING_SCHEMA = "mac.plan_learning.v1"
+from mac.executor_memory import (
+    DEPLOYMENT_LEARNING_PREFIX,
+    _PLAN_LEARNING_SCHEMA,
+    _format_plan_learning_content,
+    _plan_family_terms,
+    _task_project,
+)
 
 _SCOPE_LARGE_DESC_WORDS = 200
 _SCOPE_LARGE_DESC_CHARS = 800
@@ -47,50 +50,6 @@ def _nested_dict(root: Dict[str, Any], *path: str) -> Dict[str, Any]:
         node = node.get(key)
     return node if isinstance(node, dict) else {}
 
-
-def _task_project(task: Dict[str, Any]) -> str:
-    return str(task.get("project") or "default")
-
-
-def _plan_family_terms(task: Dict[str, Any]) -> List[str]:
-    """Return a bounded list of distinctive terms for prior-plan recall."""
-    stop = {
-        "a", "an", "the", "and", "or", "for", "of", "to", "in", "on",
-        "at", "by", "as", "is", "be", "do", "it", "its", "with",
-        "add", "fix", "build", "make", "run", "get", "set", "use",
-        "task", "tasks", "from", "into", "this", "that", "each",
-        "all", "new", "old", "can", "not", "has", "have", "are",
-    }
-    title = str(task.get("title") or "")
-    description = str(task.get("description") or "")[:300]
-    raw = re.findall(r"[a-z][a-z0-9_-]{2,}", (title + " " + description).lower())
-    seen: List[str] = []
-    for token in raw:
-        if token not in stop and token not in seen:
-            seen.append(token)
-        if len(seen) >= 4:
-            break
-    return seen
-
-
-def _format_plan_learning_content(raw: str) -> str:
-    """Render a stored plan-learning record as a bounded one-line lesson."""
-    try:
-        data = json.loads(raw)
-    except Exception:
-        return raw.strip()[:300]
-    if not isinstance(data, dict) or data.get("schema") != _PLAN_LEARNING_SCHEMA:
-        return ""
-    title = str(data.get("task_title") or data.get("task_id") or "task")
-    children_count = data.get("children_count", 0)
-    children_titles = data.get("children_titles") or []
-    ordering = str(data.get("ordering_rationale") or "").strip()
-    parts = ["[plan] %s -> %d children" % (title, children_count)]
-    if children_titles:
-        parts.append("titles: %s" % "; ".join(children_titles[:5]))
-    if ordering:
-        parts.append("ordering: %s" % ordering[:120])
-    return ". ".join(parts)[:400]
 
 
 def _lessons_section(lessons: List[str]) -> str:

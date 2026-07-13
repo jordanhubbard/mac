@@ -515,6 +515,7 @@
       "src/mac/dispatch.py",
       "src/mac/eval_runner.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_memory.py",
       "src/mac/fleet_creds.py",
       "src/mac/fleet_env.py",
       "src/mac/fleet_setup.py",
@@ -3334,10 +3335,10 @@
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
+      "src/mac/executor_memory.py",
       "src/mac/hermes_startup.py",
       "src/mac/model_selection.py",
-      "src/mac/router_app.py",
-      "src/mac/task_executor.py"
+      "src/mac/router_app.py"
     ],
     "type": "str"
   },
@@ -4072,7 +4073,7 @@
     "name": "MAC_LESSON_CURATION_ENABLED",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_memory.py"
     ],
     "type": "bool"
   },
@@ -4083,7 +4084,7 @@
     "name": "MAC_LESSON_CURATION_MODEL",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_memory.py"
     ],
     "type": "str"
   },
@@ -6446,7 +6447,7 @@
     "retired": false,
     "sources": [
       "src/mac/eval_runner.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_memory.py"
     ],
     "type": "str"
   },
@@ -6566,7 +6567,7 @@
     "retired": false,
     "sources": [
       "src/mac/eval_runner.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_memory.py"
     ],
     "type": "str"
   },
@@ -7492,7 +7493,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/task_executor.py",
+      "src/mac/executor_memory.py",
       "src/mac/worker_subprocess.py"
     ],
     "type": "str"
