@@ -6,7 +6,7 @@
     "name": "MAC_ACP_AGENT_CMD",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -31,7 +31,7 @@
     "retired": false,
     "sources": [
       "src/mac/acp/permission.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -286,6 +286,7 @@
       "src/mac/evidence_cli.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/hermes_runtime.py",
       "src/mac/journal.py",
       "src/mac/k8s/job_executor.py",
@@ -295,7 +296,6 @@
       "src/mac/openshell_supervisor.py",
       "src/mac/router_app.py",
       "src/mac/source_convergence_service.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py",
       "src/mac/worker_reflect.py",
       "src/mac/worker_subprocess.py"
@@ -474,8 +474,8 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/openshell_supervisor.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/openshell_supervisor.py"
     ],
     "type": "bool"
   },
@@ -517,6 +517,7 @@
       "src/mac/eval_runner.py",
       "src/mac/executor_hub_io.py",
       "src/mac/executor_memory.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/fleet_creds.py",
       "src/mac/fleet_env.py",
       "src/mac/fleet_setup.py",
@@ -528,7 +529,6 @@
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -746,7 +746,7 @@
     "name": "MAC_BREAK_GLASS_HOST_PATH",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -828,7 +828,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -840,7 +840,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -852,7 +852,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -864,7 +864,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -876,7 +876,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -931,7 +931,7 @@
     "name": "MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "int"
   },
@@ -942,7 +942,7 @@
     "name": "MAC_CODING_AGENT_PREFLIGHT_TIMEOUT",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "int"
   },
@@ -953,7 +953,7 @@
     "name": "MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "int"
   },
@@ -964,7 +964,7 @@
     "name": "MAC_CODING_AGENT_SANDBOX",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -1140,7 +1140,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -1152,7 +1152,7 @@
     "retired": false,
     "sources": [
       "src/mac/coding_agent.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -2940,8 +2940,8 @@
     "name": "MAC_EXECUTOR_AGENT_TIMEOUT",
     "retired": false,
     "sources": [
-      "src/mac/services.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/services.py"
     ],
     "type": "int"
   },
@@ -2954,7 +2954,7 @@
     "sources": [
       "src/mac/acp/__init__.py",
       "src/mac/acp/executor.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -3294,8 +3294,8 @@
       "src/mac/_hermes/tools/embedding_tool.py",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
-      "src/mac/hermes_chat_config.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/hermes_chat_config.py"
     ],
     "type": "str"
   },
@@ -3318,9 +3318,9 @@
       "src/mac/_hermes/tools/embedding_tool.py",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
-      "src/mac/hermes_startup.py",
-      "src/mac/task_executor.py"
+      "src/mac/hermes_startup.py"
     ],
     "type": "str"
   },
@@ -3354,9 +3354,9 @@
       "deploy/nemoclaw/docker-compose.yaml",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/hermes_chat_config.py",
-      "src/mac/hermes_startup.py",
-      "src/mac/task_executor.py"
+      "src/mac/hermes_startup.py"
     ],
     "type": "str"
   },
@@ -3735,6 +3735,7 @@
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
       "src/mac/hermes_adapter.py",
       "src/mac/hermes_runtime.py",
@@ -3743,7 +3744,6 @@
       "src/mac/k8s/runner.py",
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -4004,10 +4004,10 @@
     "sources": [
       "src/mac/_hermes/agent/agent_init.py",
       "src/mac/coding_agent.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py",
       "src/mac/router_app.py",
-      "src/mac/task_executor.py",
       "src/mac/worker_subprocess.py"
     ],
     "type": "str"
@@ -5113,7 +5113,7 @@
     "name": "MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
   },
@@ -5125,7 +5125,7 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
   },
@@ -5140,10 +5140,10 @@
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/cli.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/hermes_gateway.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/services.py",
-      "src/mac/task_executor.py"
+      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -5189,7 +5189,7 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -5211,7 +5211,7 @@
     "name": "MAC_OPENSHELL_ENV_PASSTHROUGH",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -5280,8 +5280,8 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/services.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/services.py"
     ],
     "type": "bool"
   },
@@ -5292,7 +5292,7 @@
     "name": "MAC_OPENSHELL_HOST_ALIAS",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -5325,7 +5325,7 @@
     "name": "MAC_OPENSHELL_KEEP",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
   },
@@ -5341,11 +5341,11 @@
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
       "src/mac/acp/permission.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/openshell/default-policy.yaml",
       "src/mac/openshell_service.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/services.py",
-      "src/mac/task_executor.py"
+      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -5356,7 +5356,7 @@
     "name": "MAC_OPENSHELL_PROGRESS_INTERVAL",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "int"
   },
@@ -5413,10 +5413,10 @@
       "deploy/openshell/mac-hermes-policy.yaml",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/openshell/default-policy.yaml",
       "src/mac/openshell_policy.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -5439,7 +5439,7 @@
     "name": "MAC_OPENSHELL_SANDBOX_NAME",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -5451,8 +5451,8 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/services.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/services.py"
     ],
     "type": "int"
   },
@@ -5464,7 +5464,7 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
   },
@@ -5962,7 +5962,7 @@
     "name": "MAC_REPO_BOOTSTRAP_COMMAND",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -5973,7 +5973,7 @@
     "name": "MAC_REPO_BOOTSTRAP_CREATES",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -5984,7 +5984,7 @@
     "name": "MAC_REPO_BOOTSTRAP_SETUP_RAN",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -5995,7 +5995,7 @@
     "name": "MAC_REPO_BOOTSTRAP_SETUP_RETURNCODE",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -6006,7 +6006,7 @@
     "name": "MAC_REPO_BOOTSTRAP_SETUP_STATUS",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -6017,7 +6017,7 @@
     "name": "MAC_REPO_REQUIRED_COMMANDS",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
   },
@@ -6028,7 +6028,7 @@
     "name": "MAC_REPO_TEST_COMMAND",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -6815,7 +6815,7 @@
     "retired": false,
     "sources": [
       "src/mac/_hermes/tools/environments/local.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -6826,7 +6826,7 @@
     "name": "MAC_SANDBOX_NETWORK_CONCURRENCY",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "int"
   },
@@ -6837,7 +6837,7 @@
     "name": "MAC_SANDBOX_NODE_VERSION",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -6849,7 +6849,7 @@
     "retired": false,
     "sources": [
       "src/mac/_hermes/tools/environments/local.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -6860,7 +6860,7 @@
     "name": "MAC_SANDBOX_PNPM_VERSION",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -6871,7 +6871,7 @@
     "name": "MAC_SANDBOX_PYTHON",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -7395,7 +7395,7 @@
     "retired": false,
     "sources": [
       "src/mac/executor_prompt.py",
-      "src/mac/task_executor.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7442,9 +7442,9 @@
     "name": "MAC_TASK_FILE",
     "retired": false,
     "sources": [
+      "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/review_finalizer.py",
-      "src/mac/task_executor.py",
       "src/mac/worker_subprocess.py"
     ],
     "type": "str"
@@ -7470,10 +7470,10 @@
     "sources": [
       "src/mac/_hermes/agent/agent_init.py",
       "src/mac/coding_agent.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py",
       "src/mac/router_app.py",
-      "src/mac/task_executor.py",
       "src/mac/worker_subprocess.py"
     ],
     "type": "str"
@@ -7510,7 +7510,7 @@
     "retired": false,
     "sources": [
       "src/mac/executor_prompt.py",
-      "src/mac/task_executor.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7523,7 +7523,7 @@
     "retired": false,
     "sources": [
       "src/mac/executor_prompt.py",
-      "src/mac/task_executor.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7536,7 +7536,7 @@
     "retired": false,
     "sources": [
       "src/mac/executor_prompt.py",
-      "src/mac/task_executor.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py",
       "src/mac/worker_repo_prep.py"
     ],
@@ -7550,7 +7550,7 @@
     "retired": false,
     "sources": [
       "src/mac/executor_prompt.py",
-      "src/mac/task_executor.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7562,7 +7562,7 @@
     "name": "MAC_TASK_REPO_REMOTE",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7601,10 +7601,10 @@
       "src/mac/backlog_groomer.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/services.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7639,10 +7639,10 @@
     "retired": false,
     "sources": [
       "src/mac/executor_prompt.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/review_finalizer.py",
-      "src/mac/task_executor.py",
       "src/mac/worker_subprocess.py"
     ],
     "type": "str"
@@ -7691,10 +7691,10 @@
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7752,7 +7752,7 @@
     "name": "MAC_TOOLCHAIN_BIN",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -7763,7 +7763,7 @@
     "name": "MAC_TOOLCHAIN_ROOT",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "str"
   },
@@ -7793,6 +7793,7 @@
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
       "src/mac/hermes_adapter.py",
       "src/mac/hermes_runtime.py",
@@ -7801,7 +7802,6 @@
       "src/mac/k8s/orchestrator.py",
       "src/mac/k8s/runner.py",
       "src/mac/openshell_collector.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7993,9 +7993,9 @@
       "src/mac/cli.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/openshell_runtime.py",
-      "src/mac/task_executor.py",
       "src/mac/worker_reflect.py"
     ],
     "type": "str"
@@ -8011,9 +8011,9 @@
       "deploy/mac-crash-observer.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/hermes_runtime.py",
-      "src/mac/openshell_runtime.py",
-      "src/mac/task_executor.py"
+      "src/mac/openshell_runtime.py"
     ],
     "type": "str"
   },
@@ -8217,7 +8217,7 @@
     "retired": false,
     "sources": [
       "src/mac/executor_prompt.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "int"
   },
@@ -8230,7 +8230,7 @@
     "sources": [
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
-      "src/mac/task_executor.py"
+      "src/mac/executor_sandbox.py"
     ],
     "type": "int"
   },
@@ -8302,6 +8302,7 @@
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/executor_hub_io.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
@@ -8312,7 +8313,6 @@
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
