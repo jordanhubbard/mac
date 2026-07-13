@@ -613,3 +613,124 @@ def test_cargo_home_skill_co_occurrence_detects_both_areas():
     assert "mac.task_executor" in repo_names, (
         "expected CARGO_HOME to also route to mac.task_executor; got repo areas: %s" % repo_names
     )
+
+
+# ---------------------------------------------------------------------------
+# Additional edge-case tests for uncovered branches
+# ---------------------------------------------------------------------------
+
+
+def test_non_mapping_record_type_counts_falls_back_to_evidence_list():
+    """When record_type_counts is not a dict, _unique_record_types falls back to evidence list."""
+    cand = _make_candidate(evidence_count=2)
+    # Override record_type_counts with a non-dict value to hit lines 229-230
+    cand["record_type_counts"] = "not-a-dict"
+    report = classify_candidate(cand)
+    # Should still produce a valid report
+    assert report["evidence_count"] == 2
+
+
+def test_unknown_confidence_string_normalised_to_low():
+    """A candidate with an unrecognised confidence value is treated as 'low' (line 318)."""
+    cand = _make_candidate(confidence="low")
+    cand["confidence"] = "bogus_confidence_level"
+    report = classify_candidate(cand)
+    # When no areas match, overall_confidence falls back to 'low'
+    cand_no_signals = {
+        "schema": "mac.dream.v1",
+        "kind": "knowledge_snippet",
+        "scope": "agent",
+        "confidence": "totally_unknown",
+        "summary": "some mundane event",
+        "evidence": [],
+        "record_type_counts": {},
+    }
+    report2 = classify_candidate(cand_no_signals)
+    assert report2["overall_confidence"] == "low"
+
+
+def test_confidence_medium_with_single_area_signal():
+    """Candidate confidence 'medium' with exactly one signal and no evidence → medium via rule 4 (line 257).
+
+    ``_confidence_for`` is only reached when an area pattern fires.  With
+    ev_count=0, signal_count=1, unique_rt=0 the function falls through rules 1-3
+    and must hit line 257 (``candidate_confidence == 'medium'``).
+    """
+    from mac.dream_cycle_classifier import _confidence_for  # noqa: PLC0415
+
+    label, score = _confidence_for(0, 1, "medium", 0)
+    assert label == "medium"
+
+    # Also verify through the full classify pipeline: a 'medium' candidate with
+    # one area signal and empty evidence list lands at 'medium'.
+    cand = {
+        "schema": "mac.dream.v1",
+        "kind": "knowledge_snippet",
+        "scope": "agent",
+        "confidence": "medium",
+        "summary": "terminal_tool encountered a transient issue",
+        "evidence": [],
+        "record_type_counts": {},
+    }
+    report = classify_candidate(cand)
+    assert report["overall_confidence"] == "medium"
+
+
+def test_generic_tool_suppressed_when_also_matched_by_other_area_via_direct_match():
+    """_generic_tool entry in hits is deleted when another area fires (line 277).
+
+    This exercises the branch ``if '_generic_tool' in hits and len(hits) > 1``.
+    The guard at line 271 checks _TOOL_PATTERNS globally; to exercise line 277
+    we call _match_patterns directly with custom patterns where a non-generic
+    pattern fires alongside the generic one.
+    """
+    from mac.dream_cycle_classifier import _match_patterns  # noqa: PLC0415
+
+    # Text matches both the generic 'tool' pattern and a custom specific area.
+    # The guard at 271 only checks _TOOL_PATTERNS, so no specific TOOL_PATTERN fires;
+    # _generic_tool is added. But 'custom_area' also fires -> hits has two entries.
+    # Line 277 then removes _generic_tool, leaving only 'custom_area'.
+    patterns = [
+        (r"\btool\b", "_generic_tool"),
+        (r"\bspecialop\b", "custom_area"),
+    ]
+    hits = _match_patterns("call some tool for specialop", patterns, "tool")
+    area_names = [h["area_name"] for h in hits]
+    assert "tool" not in area_names, (
+        "_generic_tool should have been suppressed by custom_area; got: %s" % area_names
+    )
+    assert "custom_area" in area_names
+
+
+def test_non_string_observations_are_skipped():
+    """Non-string observations don't crash and are silently skipped (branches 199->198)."""
+    cand = _make_candidate(
+        summary="test observation",
+        observations=["valid observation", None, 42, {"nested": "dict"}, "another string"],
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    assert report["schema"] == CLASSIFIER_SCHEMA
+
+
+def test_non_string_query_terms_are_skipped():
+    """Non-string query_terms are silently skipped (branches 207->206)."""
+    cand = _make_candidate(summary="skill_bundle validation")
+    cand["retrieval"] = {"query_terms": ["skill_bundle", None, 123]}
+    report = classify_candidate(cand)
+    assert report["schema"] == CLASSIFIER_SCHEMA
+
+
+def test_non_string_candidate_values_are_skipped():
+    """Non-string summary/kind/scope values are silently skipped (branches 196->194)."""
+    cand = {
+        "schema": "mac.dream.v1",
+        "kind": None,
+        "scope": 42,
+        "confidence": "low",
+        "summary": None,
+        "evidence": [],
+        "record_type_counts": {},
+    }
+    report = classify_candidate(cand)
+    assert report["schema"] == CLASSIFIER_SCHEMA

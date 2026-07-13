@@ -221,3 +221,147 @@ def test_nap_cycle_files_low_confidence_repair_task() -> None:
     ]
     assert len(repair_tasks) == 1
     assert repair_tasks[0].metadata["dream_repair"]["affected"]["tools"]
+
+
+# ---------------------------------------------------------------------------
+# Additional edge-case tests for uncovered branches
+# ---------------------------------------------------------------------------
+
+
+def test_non_mapping_metadata_task_is_skipped_in_fingerprints():
+    """Tasks whose metadata is not a Mapping are skipped (line 160)."""
+    from mac.dream_repair_tasks import _existing_repair_fingerprints  # noqa: PLC0415
+
+    class FakeTaskNonMapping:
+        id = "task-x"
+        metadata = "not-a-mapping"
+
+    class CPWithNonMappingTask:
+        def list_tasks(self):
+            return [FakeTaskNonMapping()]
+
+    result = _existing_repair_fingerprints(CPWithNonMappingTask())
+    assert result == {}
+
+
+def test_dream_repair_origin_type_mismatch_skipped_in_fingerprints():
+    """Tasks with wrong origin type are not counted as existing repairs (line 168)."""
+    from mac.dream_repair_tasks import _existing_repair_fingerprints  # noqa: PLC0415
+
+    class FakeTask:
+        id = "task-y"
+        metadata = {"origin": {"type": "some_other_type", "fingerprint": "fp123"}}
+
+    class CP:
+        def list_tasks(self):
+            return [FakeTask()]
+
+    result = _existing_repair_fingerprints(CP())
+    assert result == {}
+
+
+def test_empty_fingerprint_is_not_stored():
+    """Tasks matching the origin type but with empty fingerprint are ignored (line 170->157)."""
+    from mac.dream_repair_tasks import _existing_repair_fingerprints, DREAM_REPAIR_ORIGIN_TYPE  # noqa: PLC0415
+
+    class FakeTask:
+        id = "task-z"
+        metadata = {"origin": {"type": DREAM_REPAIR_ORIGIN_TYPE, "fingerprint": ""}}
+
+    class CP:
+        def list_tasks(self):
+            return [FakeTask()]
+
+    result = _existing_repair_fingerprints(CP())
+    assert result == {}
+
+
+def test_non_mapping_area_is_skipped_in_affected_labels():
+    """Non-Mapping area entries are skipped (line 188)."""
+    from mac.dream_repair_tasks import _affected_labels  # noqa: PLC0415
+
+    classification = {"areas": ["not-a-mapping", None, 42]}
+    candidate = {}
+    result = _affected_labels(candidate, classification)
+    assert result["skills"] == []
+    assert result["tools"] == []
+
+
+def test_provider_and_repo_area_are_collected_in_affected_labels():
+    """Provider and repo_area area types are captured (lines 197-200)."""
+    from mac.dream_repair_tasks import _affected_labels  # noqa: PLC0415
+
+    classification = {
+        "areas": [
+            {"area_type": "provider", "area_name": "openai"},
+            {"area_type": "repo_area", "area_name": "mac.task_executor"},
+        ]
+    }
+    candidate = {}
+    result = _affected_labels(candidate, classification)
+    assert "openai" in result["providers"]
+    assert "mac.task_executor" in result["repo_areas"]
+
+
+def test_empty_area_name_is_not_added_to_affected_labels():
+    """Area entries with empty/None area_name are skipped (line 192)."""
+    from mac.dream_repair_tasks import _affected_labels  # noqa: PLC0415
+
+    classification = {
+        "areas": [
+            {"area_type": "skill", "area_name": ""},
+            {"area_type": "tool", "area_name": None},
+        ]
+    }
+    candidate = {}
+    result = _affected_labels(candidate, classification)
+    assert result["skills"] == []
+    assert result["tools"] == []
+
+
+def test_non_mapping_evidence_items_are_skipped():
+    """Non-Mapping evidence items in _candidate_evidence are skipped (line 355)."""
+    from mac.dream_repair_tasks import _candidate_evidence  # noqa: PLC0415
+
+    candidate = {
+        "evidence": [
+            "not-a-mapping",
+            None,
+            42,
+            {"memory_id": "mem-1", "record_type": "note", "excerpt": "some detail"},
+            {"memory_id": "mem-2", "record_type": "note"},
+        ]
+    }
+    result = _candidate_evidence(candidate, limit=10)
+    # Only Mapping items survive; non-Mapping items are silently skipped
+    assert len(result) == 2
+    assert result[0]["memory_id"] == "mem-1"
+
+
+def test_truncate_long_title_adds_ellipsis():
+    """Titles longer than 180 chars are truncated with ellipsis (line 435)."""
+    from mac.dream_repair_tasks import _truncate  # noqa: PLC0415
+
+    long_text = "a" * 200
+    result = _truncate(long_text, 180)
+    assert result.endswith("...")
+    assert len(result) == 180
+
+
+def test_truncate_short_title_unchanged():
+    """Titles within the limit are returned unchanged."""
+    from mac.dream_repair_tasks import _truncate  # noqa: PLC0415
+
+    short_text = "short title"
+    assert _truncate(short_text, 180) == short_text
+
+
+def test_append_unique_empty_value_is_not_appended():
+    """_append_unique skips empty strings after cleaning (line 418->exit)."""
+    from mac.dream_repair_tasks import _append_unique  # noqa: PLC0415
+
+    values: list[str] = []
+    _append_unique(values, "")
+    assert values == []
+    _append_unique(values, "   ")
+    assert values == []

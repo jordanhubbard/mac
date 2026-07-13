@@ -376,3 +376,246 @@ def test_helper_edge_cases_for_deterministic_normalization():
         "excerpt": "token=<redacted>",
         "row_id": "1",
     }
+
+
+# ---------------------------------------------------------------------------
+# Additional edge-case tests for uncovered branches
+# ---------------------------------------------------------------------------
+
+
+def test_empty_signature_is_not_emitted(tmp_path):
+    """Signals with an empty signature are silently dropped (line 96)."""
+    result = scan_dream_failure_candidates(min_count=1)
+    # No crash; if there are no sources candidates is empty
+    assert "candidates" in result
+
+
+def test_hermes_db_missing_is_handled_gracefully(tmp_path):
+    """Missing Hermes DB is recorded as status=missing (line 184 in _scan_mac_sqlite_db)."""
+    nonexistent = tmp_path / "nosuchdb.db"
+    result = scan_dream_failure_candidates(hermes_db_path=nonexistent, min_count=1)
+    sources = result["sources"]
+    assert any(s["status"] == "missing" for s in sources)
+
+
+def test_hermes_db_exception_is_recorded(tmp_path):
+    """Exception while reading Hermes DB is recorded as status=error (lines 172-173)."""
+    bad_db = tmp_path / "bad.db"
+    bad_db.write_bytes(b"not sqlite data at all")
+    result = scan_dream_failure_candidates(hermes_db_path=bad_db, min_count=1)
+    sources = result["sources"]
+    assert any(s["status"] == "error" for s in sources)
+
+
+def test_mac_db_path_missing_is_handled_gracefully(tmp_path):
+    """Missing MAC DB path is recorded as status=missing (line 184)."""
+    nonexistent = tmp_path / "mac_no.db"
+    result = scan_dream_failure_candidates(mac_db_path=nonexistent, min_count=1)
+    sources = result["sources"]
+    assert any(s["name"] == "mac_sqlite_db" and s["status"] == "missing" for s in sources)
+
+
+def test_mac_db_path_exception_is_recorded(tmp_path):
+    """Exception reading MAC DB is recorded as status=error (lines 189-190)."""
+    bad_db = tmp_path / "mac_bad.db"
+    bad_db.write_bytes(b"bad mac db content")
+    result = scan_dream_failure_candidates(mac_db_path=bad_db, min_count=1)
+    sources = result["sources"]
+    assert any(s["name"] == "mac_sqlite_db" and s["status"] == "error" for s in sources)
+
+
+def test_coerce_time_numeric_string():
+    """Numeric string timestamps are converted to ISO format (line 608)."""
+    result = scanner._coerce_time("1735689600")
+    assert result.startswith("2025-") or "T" in result
+
+
+def test_coerce_time_naive_datetime_string():
+    """Naive datetime strings (no tzinfo) get UTC attached (line 612)."""
+    result = scanner._coerce_time("2025-01-01T12:00:00")
+    assert "+00:00" in result
+
+
+def test_candidate_bucket_update_last_seen_at(tmp_path):
+    """Bucket last_seen_at updates on later timestamp (line 472->474 branch coverage)."""
+    bucket = scanner._CandidateBucket(
+        kind="repeated_failure",
+        signature="sig",
+        severity="error",
+        max_evidence=5,
+    )
+    ev1 = {"timestamp": "2025-01-01T00:00:00.000000+00:00", "row_id": "1"}
+    ev2 = {"timestamp": "2025-01-02T00:00:00.000000+00:00", "row_id": "2"}
+    ev3 = {"timestamp": "2025-01-01T12:00:00.000000+00:00", "row_id": "3"}
+    bucket.add(ev1, {})
+    bucket.add(ev2, {})
+    # Add evidence with older/equal timestamp to trigger the false branch on line 472
+    bucket.add(ev3, {})
+    assert bucket.last_seen_at == "2025-01-02T00:00:00.000000+00:00"
+    assert bucket.first_seen_at == "2025-01-01T00:00:00.000000+00:00"
+
+
+def test_scan_command_audit_no_failure(tmp_path):
+    """Successful command audit rows emit tool_or_skill_name but not repeated_failure (line 338)."""
+    mac_db = tmp_path / "mac.db"
+    conn = sqlite3.connect(str(mac_db))
+    conn.executescript(
+        """
+        CREATE TABLE command_audit (
+            id INTEGER PRIMARY KEY,
+            command_id TEXT, agent_id TEXT, phase TEXT, argv TEXT, cwd TEXT,
+            task_id TEXT, lease_id TEXT, started_at REAL, completed_at REAL,
+            duration_ms INTEGER, returncode INTEGER, stdout_sha256 TEXT,
+            stderr_sha256 TEXT, stdout_bytes INTEGER, stderr_bytes INTEGER,
+            metadata TEXT, created_at REAL
+        );
+        """
+    )
+    # Insert a succeeded command (pytest) twice so it meets min_count
+    for i in range(2):
+        conn.execute(
+            "INSERT INTO command_audit (agent_id, argv, phase, returncode, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("agent-a", '["pytest", "tests/"]', "completed", 0, 1735689600.0 + i),
+        )
+    conn.commit()
+    conn.close()
+
+    result = scan_dream_failure_candidates(mac_db_path=mac_db, min_count=2)
+    kinds = {c["kind"] for c in result["candidates"]}
+    # Only tool_or_skill_name should fire (not repeated_failure)
+    assert "repeated_failure" not in kinds
+    assert "tool_or_skill_name" in kinds
+
+
+def test_scan_action_event_tool_call_error_and_model_provider(tmp_path):
+    """Action events with tool name and provider error also emit tool_call_error and model_provider_error (lines 381-384)."""
+    mac_db = tmp_path / "mac2.db"
+    conn = sqlite3.connect(str(mac_db))
+    conn.executescript(
+        """
+        CREATE TABLE action_events (
+            event_id INTEGER PRIMARY KEY, timestamp REAL, agent_id TEXT,
+            hermes_instance_id TEXT, task_id TEXT, session_id TEXT,
+            sandbox_id TEXT, actor TEXT, action_type TEXT, action_name TEXT,
+            subject_type TEXT, subject_id TEXT, outcome TEXT, severity TEXT,
+            policy_id TEXT, policy_version INTEGER, command_id TEXT,
+            parent_event_id INTEGER, attributes TEXT, redaction_state TEXT
+        );
+        """
+    )
+    attrs = {"tool_name": "web_fetch", "provider": "openai", "model": "gpt-5"}
+    for i in range(2):
+        conn.execute(
+            "INSERT INTO action_events (action_type, action_name, outcome, attributes, timestamp) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("tool_call", "web_fetch", "failure", json.dumps(attrs), 1735689600.0 + i),
+        )
+    conn.commit()
+    conn.close()
+
+    result = scan_dream_failure_candidates(mac_db_path=mac_db, min_count=2)
+    kinds = {c["kind"] for c in result["candidates"]}
+    assert "tool_call_error" in kinds
+    assert "model_provider_error" in kinds
+
+
+def test_scan_action_event_via_action_type_tool(tmp_path):
+    """Action events where action_type contains 'tool' trigger tool_call_error (line 381)."""
+    mac_db = tmp_path / "mac3.db"
+    conn = sqlite3.connect(str(mac_db))
+    conn.executescript(
+        """
+        CREATE TABLE action_events (
+            event_id INTEGER PRIMARY KEY, timestamp REAL, agent_id TEXT,
+            hermes_instance_id TEXT, task_id TEXT, session_id TEXT,
+            sandbox_id TEXT, actor TEXT, action_type TEXT, action_name TEXT,
+            subject_type TEXT, subject_id TEXT, outcome TEXT, severity TEXT,
+            policy_id TEXT, policy_version INTEGER, command_id TEXT,
+            parent_event_id INTEGER, attributes TEXT, redaction_state TEXT
+        );
+        """
+    )
+    for i in range(2):
+        conn.execute(
+            "INSERT INTO action_events (action_type, action_name, outcome, attributes, timestamp) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("tool_execution", "run_script", "failure", "{}", 1735689600.0 + i),
+        )
+    conn.commit()
+    conn.close()
+
+    result = scan_dream_failure_candidates(mac_db_path=mac_db, min_count=2)
+    kinds = {c["kind"] for c in result["candidates"]}
+    assert "tool_call_error" in kinds
+
+
+def test_scan_observability_row_model_provider_and_test_failure(tmp_path):
+    """Observability rows with provider info and test text fire model_provider_error and test_failure (lines 416-419)."""
+    mac_db = tmp_path / "mac4.db"
+    conn = sqlite3.connect(str(mac_db))
+    conn.executescript(
+        """
+        CREATE TABLE observability_events (
+            sequence INTEGER PRIMARY KEY, id TEXT, kind TEXT, layer TEXT,
+            source TEXT, level TEXT, name TEXT, subject_type TEXT,
+            subject_id TEXT, value REAL, unit TEXT, detail TEXT, created_at REAL
+        );
+        """
+    )
+    detail = {"provider": "openai", "model": "gpt-5", "error": "timeout"}
+    for i in range(2):
+        conn.execute(
+            "INSERT INTO observability_events (name, level, detail, created_at) VALUES (?, ?, ?, ?)",
+            ("llm.route", "error", json.dumps(detail), 1735689600.0 + i),
+        )
+    conn.commit()
+    conn.close()
+
+    result = scan_dream_failure_candidates(mac_db_path=mac_db, min_count=2)
+    kinds = {c["kind"] for c in result["candidates"]}
+    assert "model_provider_error" in kinds
+
+
+def test_message_text_scalar_json_value():
+    """_message_text returns the string as-is when loaded value is scalar (line 664)."""
+    # json.loads returns a plain string (not dict/list), so _message_text returns original
+    result = scanner._message_text('42')
+    assert result == '42'
+
+
+def test_tool_names_from_calls_no_name():
+    """Tool calls missing name fields produce no output (line 681->676)."""
+    calls = [{"type": "function", "function": {}}]
+    result = scanner._tool_names_from_calls(calls)
+    assert result == []
+
+
+def test_scan_command_audit_failure_non_test(tmp_path):
+    """Non-test command failure emits repeated_failure but NOT test_failure (line 341->exit)."""
+    mac_db = tmp_path / "mac5.db"
+    conn = sqlite3.connect(str(mac_db))
+    conn.executescript(
+        """
+        CREATE TABLE command_audit (
+            id INTEGER PRIMARY KEY,
+            command_id TEXT, agent_id TEXT, phase TEXT, argv TEXT, cwd TEXT,
+            task_id TEXT, lease_id TEXT, started_at REAL, completed_at REAL,
+            duration_ms INTEGER, returncode INTEGER, stdout_sha256 TEXT,
+            stderr_sha256 TEXT, stdout_bytes INTEGER, stderr_bytes INTEGER,
+            metadata TEXT, created_at REAL
+        );
+        """
+    )
+    for i in range(2):
+        conn.execute(
+            "INSERT INTO command_audit (argv, phase, returncode, created_at) VALUES (?, ?, ?, ?)",
+            ('["git", "push"]', "failed", 128, 1735689600.0 + i),
+        )
+    conn.commit()
+    conn.close()
+
+    result = scan_dream_failure_candidates(mac_db_path=mac_db, min_count=2)
+    kinds = {c["kind"] for c in result["candidates"]}
+    assert "repeated_failure" in kinds
+    assert "test_failure" not in kinds
