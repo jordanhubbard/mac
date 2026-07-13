@@ -375,3 +375,57 @@ def test_sender_agent_id_requires_explicit_control_identity(monkeypatch):
         cli._sender_agent_id(SimpleNamespace(sender_agent_id=None))
     monkeypatch.setenv("MAC_WORKER_AGENT_ID", "agent_worker")
     assert cli._sender_agent_id(SimpleNamespace(sender_agent_id=None)) == "agent_worker"
+
+
+def test_fleet_soul_audit_happy_path(tmp_path, monkeypatch, capsys):
+    from mac import soul_snapshot
+
+    registry = _registry(tmp_path)
+
+    audit_result = {
+        "schema": "mac.hermes_salvage_audit.v1",
+        "agent": "rocky",
+        "target": "mac@source",
+        "audited_at": "20260101T000000Z",
+        "files": ["SOUL.md", "USER.md"],
+        "file_count": 2,
+        "error": None,
+    }
+    monkeypatch.setattr(soul_snapshot, "hermes_salvage_audit", lambda *_a, **_kw: audit_result)
+
+    result = cli.main(
+        [
+            "fleet",
+            "soul-audit",
+            "--agent",
+            "rocky",
+            "--fleet",
+            "source",
+            "--fleets-config",
+            str(registry),
+        ]
+    )
+    assert result == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["agent"] == "rocky"
+
+
+def test_fleet_soul_audit_unknown_agent_raises(tmp_path, monkeypatch):
+    from mac import soul_snapshot
+
+    registry = _registry(tmp_path)
+
+    with pytest.raises(SystemExit, match="not found in fleet"):
+        cli.main(
+            [
+                "fleet",
+                "soul-audit",
+                "--agent",
+                "no-such-agent",
+                "--fleet",
+                "source",
+                "--fleets-config",
+                str(registry),
+            ]
+        )
