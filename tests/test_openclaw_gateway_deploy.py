@@ -486,6 +486,30 @@ def test_installer_tolerates_empty_generated_json_artifacts() -> None:
     assert "returned invalid JSON" in installer
 
 
+def test_apply_cron_plan_defers_script_backed_jobs() -> None:
+    """task_c8bb46ec: the Hermes->OpenClaw migration silently dropped the
+    pre-run script stage of two-stage jobs (dream-cycle et al). apply-cron-plan
+    only read message/delivery and installed script-backed jobs as ENABLED
+    message-only jobs with a false 'Migrated losslessly' description, so they
+    fired hourly against a prompt referencing a dream log that was never
+    produced. Until the script stage is ported, a job carrying legacy_script
+    must be installed DISABLED and described honestly."""
+    apply = (OPENCLAW_DIR / "apply-cron-plan.mjs").read_text(encoding="utf-8")
+    # The dropped field is now read and drives the guard.
+    assert "job.legacy_script" in apply
+    # Script-backed jobs are forced disabled regardless of job.enabled.
+    assert "const enable = hasScript ? false : Boolean(job.enabled);" in apply
+    # Honest description instead of the lossless claim for script jobs.
+    assert "NOT yet ported to OpenClaw" in apply
+    # The lossless description only applies to genuinely message-only jobs.
+    losslessline = next(
+        line for line in apply.splitlines() if "Migrated losslessly" in line
+    )
+    assert "hasScript" not in losslessline
+    # Surfaces how many jobs were deferred (operator + summary visibility).
+    assert "deferred_script_jobs" in apply
+
+
 def test_headless_agents_have_a_human_voice() -> None:
     """A Slack-less agent must still reach humans (jkh 2026-07-13: GKE runners
     have no Slack presence). mac_notify_human sends through the hub delivery

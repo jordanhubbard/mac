@@ -60,13 +60,30 @@ function deliveryArgs(job) {
   return ["--no-deliver"];
 }
 
+let deferredScriptJobs = 0;
 for (const job of plan.jobs) {
   const name = String(job.name || job.legacy_id || "hermes-job").trim();
+  // A Hermes two-stage job ran a pre-run script on the host and injected its
+  // stdout into the agent prompt under "## Script Output". OpenClaw cron is
+  // message-only and runs in a sandbox without the host script or its data
+  // sources (e.g. the Hermes session DB), so installing such a job here would
+  // fire it hourly against a prompt that references a script output that was
+  // never produced — the exact "cron fires but script output never delivered"
+  // failure. Until the script stage is ported (host-side runner), keep these
+  // jobs disabled and describe them honestly rather than claiming a lossless
+  // migration that silently dropped their first stage.
+  const legacyScript = String(job.legacy_script || "").trim();
+  const hasScript = legacyScript.length > 0;
+  const description = hasScript
+    ? `Hermes cron ${job.legacy_id || name}: pre-run script (${legacyScript}) NOT yet ported to OpenClaw; disabled so it does not fire without its data`
+    : `Migrated losslessly from Hermes cron ${job.legacy_id || name}`;
+  const enable = hasScript ? false : Boolean(job.enabled);
+  if (hasScript) deferredScriptJobs += 1;
   const common = [
     "--name", name,
     "--cron", String(job.cron),
     "--message", String(job.message || ""),
-    "--description", `Migrated losslessly from Hermes cron ${job.legacy_id || name}`,
+    "--description", description,
     "--agent", "main",
     "--session", "isolated",
     "--exact",
@@ -74,10 +91,19 @@ for (const job of plan.jobs) {
   ];
   const existing = byName.get(name);
   if (existing?.id) {
-    openclaw(["cron", "edit", String(existing.id), ...common, job.enabled ? "--enable" : "--disable"]);
+    openclaw(["cron", "edit", String(existing.id), ...common, enable ? "--enable" : "--disable"]);
   } else {
-    openclaw(["cron", "add", ...common, ...(job.enabled ? [] : ["--disabled"]), "--json"]);
+    openclaw(["cron", "add", ...common, ...(enable ? [] : ["--disabled"]), "--json"]);
   }
 }
 
-process.stdout.write(JSON.stringify({schema: plan.schema, applied: plan.jobs.length}) + "\n");
+if (deferredScriptJobs > 0) {
+  console.warn(
+    `apply-cron-plan: ${deferredScriptJobs} script-backed Hermes job(s) installed DISABLED ` +
+    `(pre-run script stage not yet ported to OpenClaw). See task_c8bb46ec.`,
+  );
+}
+
+process.stdout.write(
+  JSON.stringify({schema: plan.schema, applied: plan.jobs.length, deferred_script_jobs: deferredScriptJobs}) + "\n",
+);
