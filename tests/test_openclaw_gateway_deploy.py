@@ -394,8 +394,15 @@ def test_workspace_context_routes_agent_coordination_over_agentbus(
     assert "Silence is the only wrong answer" in context
     # The safety floor survives, reworded as physics (singular "sandbox
     # boundary", "revealing secrets", "physics, not permission").
+    # The COMPLETE floor — Bullwinkle's adversarial review (2026-07-13)
+    # rejected a synthesis that dropped "safety policy" and "review gate";
+    # all five named hard-stops must be present so a future rewrite can't
+    # quietly weaken the floor again.
+    assert "bypass safety policy" in one_line
+    assert "review gate" in one_line
     assert "sandbox boundary" in one_line
-    assert "revealing secrets" in one_line
+    assert "reveal secrets" in one_line
+    assert "destruction unrelated to the task" in one_line
     assert "physics, not permission" in one_line
 
 
