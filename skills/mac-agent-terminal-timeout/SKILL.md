@@ -94,3 +94,44 @@ the contract suite if any fleet-specific identity token is found.
 - [ ] Did the task declare `cargo`, `rustc`, or `rustup` in `toolchain.required_commands`?
       If yes and the toolchain setup shell did not run, the symlink into `MAC_TOOLCHAIN_BIN`
       was never created. Re-run bootstrap or inspect `mac_sandbox_toolchain_setup` output.
+
+## Pitfall: cargo not found even when Rust is installed
+
+**Symptom:** A task with `cargo`, `rustc`, or `rustup` in
+`toolchain.required_commands` fails with `command not found: cargo` (or similar)
+even though Rust is installed on the worker.
+
+**Root cause:** Cargo's binaries live in `~/.cargo/bin` (or `$CARGO_HOME/bin`).
+That directory is intentionally outside `MAC_SANDBOX_BASE_PATH`, so cargo is not
+visible inside the task sandbox by default.
+
+**How it is handled automatically:** `mac_sandbox_toolchain_setup` (injected into
+every task sandbox before agent or test work runs) iterates over
+`toolchain.required_commands`. When it encounters `cargo`, `rustc`, or `rustup`, it
+creates symlinks from `$CARGO_HOME/bin/<binary>` (defaulting to `~/.cargo/bin`)
+into `MAC_TOOLCHAIN_BIN`, then calls `mac_refresh_sandbox_path` so the updated
+`PATH` takes effect. If no local Rust installation exists, it runs the upstream
+`rustup` installer and links the freshly installed binaries into `MAC_TOOLCHAIN_BIN`.
+
+**What can go wrong:**
+
+- `mac_sandbox_toolchain_setup` was never called (e.g., the sandbox shell script
+  was skipped or the task used a raw `terminal()` call without sourcing the setup).
+- `cargo` is not listed in `toolchain.required_commands`, so the symlink step is
+  never triggered.
+- `CARGO_HOME` points to an unexpected location and `~/.cargo/bin/cargo` does not
+  exist; the installer then has no network access to fetch Rust.
+
+**Fix checklist:**
+
+1. Declare `cargo` (or `rustc`/`rustup`) in `toolchain.required_commands` inside
+   the repository's `.mac/project.yaml`. `mac_sandbox_toolchain_setup` runs
+   automatically for every task that uses the repository contract and will symlink
+   the Cargo binaries into `MAC_TOOLCHAIN_BIN`.
+2. If you are running a `terminal()` call manually (outside the normal sandbox
+   boot), source the toolchain setup first or prepend
+   `mac_sandbox_toolchain_setup &&` to the command.
+3. Verify the symlink is present before the failing command:
+   `ls -la $MAC_TOOLCHAIN_BIN/cargo`.
+4. If the binary is still missing, inspect `$MAC_TASK_WORKSPACE/mac-toolchain.log`
+   for errors from the install step.
