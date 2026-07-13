@@ -531,10 +531,13 @@ config = {
                     # Hub-fetch budget for the continuity plugin (peer bridge
                     # polls, cursors, mirror). Gateways that reach the hub over
                     # tailscale DERP relays (GKE pods) see multi-second latency
-                    # spikes that a 10s budget cannot ride out — set 30000 on
-                    # relayed hosts (2026-07-13: pod bridge starved for ~90min
+                    # spikes that a 10s budget cannot ride out — set up to 20000 on
+                    # relayed hosts (OpenClaw's schema max) (2026-07-13: pod bridge starved for ~90min
                     # of relay weather while LAN gateways were unaffected).
-                    "timeoutMs": int(os.environ.get("MAC_OPENCLAW_PLUGIN_TIMEOUT_MS", "10000")),
+                    # OpenClaw's plugin config schema caps timeoutMs at 20000;
+                    # clamp so a relay-headroom override can't produce an
+                    # invalid config that stops the whole plugin from loading.
+                    "timeoutMs": min(20000, max(1000, int(os.environ.get("MAC_OPENCLAW_PLUGIN_TIMEOUT_MS", "10000")))),
                     "peerPollIntervalMs": 2000,
                     "peerMaxAttempts": 3,
                     # Peer/directive turns that do REAL work (fetch a script,
