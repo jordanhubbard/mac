@@ -99,6 +99,16 @@ Store it in a secrets manager. Rotating the key requires re-encrypting all
 secret values; today this is a manual procedure (re-emit every secret with
 the new key).
 
+## Environment variable precedence
+
+MAC resolves each `MAC_*` variable according to a three-level contract:
+
+1. **Process environment wins.** A variable already present in the invoking process environment (e.g. set by the supervisor unit, injected by a secret manager, or exported by the operator shell) is used as-is and is never overridden by the env file.
+2. **Env file supplies defaults.** A variable absent from the process environment receives its value from the operator env file (typically `~/.mac/.env` or the path given by `MAC_ENV_FILE`).
+3. **Env file is the operator default store.** Operators should record stable deployment values — tokens, URLs, feature flags — in the env file. Runtime overrides belong in the process environment and are not written back to the file.
+
+See [env-config-reference.md](env-config-reference.md) for the full variable catalog.
+
 ## Systemd
 
 ```bash

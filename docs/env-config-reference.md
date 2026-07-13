@@ -690,6 +690,14 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_WORKSPACE` | str | consumer-defined | worker | Worker setting: worker workspace. |
 | `MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS` | int | consumer-defined | core | Core setting: workflow advancement reservation seconds. |
 
+## Environment variable precedence
+
+MAC resolves each `MAC_*` variable according to a three-level contract:
+
+1. **Process environment wins.** A variable already present in the invoking process environment (e.g. set by the supervisor unit, injected by a secret manager, or exported by the operator shell) is used as-is and is never overridden by the env file.
+2. **Env file supplies defaults.** A variable absent from the process environment receives its value from the operator env file (typically `~/.mac/.env` or the path given by `MAC_ENV_FILE`).
+3. **Env file is the operator default store.** Operators should record stable deployment values — tokens, URLs, feature flags — in the env file. Runtime overrides belong in the process environment and are not written back to the file.
+
 ## Precedence and retirement
 
 Fallback precedence is left-to-right in `resolve_env_chain`. Fleet-scoped credential keys are resolved before legacy flat keys by their owning subsystem. `MAC_BEADS_BRIDGE_HUB_AGENT` is retained only as a documented retired name and is never consulted by `resolve_hub_agent`.
