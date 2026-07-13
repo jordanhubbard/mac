@@ -2515,7 +2515,23 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
             return True
         return False
 
+    _WORKSPACE_MIN_FREE_BYTES: int = 512 * 1024 * 1024
+
     def _prepare_task_workspace(self, task: JsonDict, lease: JsonDict) -> Path:
+        try:
+            check_path = self.workspace if self.workspace.exists() else self.workspace.parent
+            usage = shutil.disk_usage(check_path)
+            if usage.free < self._WORKSPACE_MIN_FREE_BYTES:
+                free_mb = usage.free // (1024 * 1024)
+                raise OSError(
+                    28,
+                    "Not enough disk space to prepare task workspace "
+                    "(%d MiB free, need %d MiB)"
+                    % (free_mb, self._WORKSPACE_MIN_FREE_BYTES // (1024 * 1024)),
+                    str(self.workspace),
+                )
+        except OSError:
+            raise
         task_dir = self.workspace / _safe_path_component(task["id"])
         task_dir.mkdir(parents=True, exist_ok=True)
         repository_context = self._prepare_repository_worktree(task, lease, task_dir)
