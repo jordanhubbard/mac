@@ -82,7 +82,7 @@ def test_stock_openclaw_artifacts_are_pinned_and_do_not_invoke_nemoclaw() -> Non
     assert "RUN /bin/bash -c" in container
     assert '"npm:@openclaw/slack@${OPENCLAW_SLACK_PLUGIN_VERSION}"' in container
     assert 'OPENCLAW_VERSION="2026.6.11"' in installer
-    assert 'OPENCLAW_IMAGE_REVISION="16"' in installer
+    assert 'OPENCLAW_IMAGE_REVISION="17"' in installer
     assert 'OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"' in installer
     assert "/Applications/Docker.app/Contents/Resources/bin/docker" in installer
     assert 'docker_bin="$(find_docker)"' in installer
@@ -404,6 +404,30 @@ def test_peer_bridge_uses_hub_durable_cursors_and_request_endpoint() -> None:
     assert plugin.count("persistPeerState(api, state)") >= 5
     # Hub state merges once per gateway start.
     assert "hubStateMerged" in plugin
+
+
+def test_every_registered_tool_is_declared_in_the_plugin_manifest() -> None:
+    """OpenClaw rejects undeclared tools at runtime ('plugin must declare
+    contracts.tools') — mac_agent_share and mac_notify_human shipped in
+    index.js but not openclaw.plugin.json and silently never registered
+    (caught live by natasha, 2026-07-13). The test stub api doesn't enforce
+    the manifest, so pin the invariant statically: contracts.tools must be a
+    superset of every name registered in index.js."""
+    import re
+
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    manifest = json.loads(
+        (OPENCLAW_DIR / "plugins" / "mac-continuity" / "openclaw.plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    declared = set(manifest["contracts"]["tools"])
+    registered = set(re.findall(r'registerTool\(\{\s*name: "([^"]+)"', plugin))
+    assert registered, "no registerTool calls found — regex drifted from source"
+    missing = registered - declared
+    assert not missing, "tools registered but not declared in openclaw.plugin.json: %s" % sorted(missing)
 
 
 def test_headless_agents_have_a_human_voice() -> None:

@@ -3,18 +3,66 @@
   "name": "MAC identity and memory continuity",
   "kind": "memory",
   "description": "Injects MAC mood and scoped memory, provides authenticated cross-gateway fleet messaging, evidence-gated curiosity tools, and conversational configuration flags.",
-  "activation": {"onStartup": true},
-  "contracts": {"tools": ["memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear", "mac_fleet_status", "mac_agent_send", "mac_agent_inbox", "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear", "mac_image_generate", "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame"]},
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "memory_search",
+      "memory_get",
+      "memory_store",
+      "mac_memory_recall",
+      "mac_memory_store",
+      "mac_mood_current",
+      "mac_mood_set",
+      "mac_mood_clear",
+      "mac_fleet_status",
+      "mac_agent_send",
+      "mac_notify_human",
+      "mac_agent_share",
+      "mac_agent_inbox",
+      "mac_config_flag_list",
+      "mac_config_flag_set",
+      "mac_config_flag_clear",
+      "mac_image_generate",
+      "curiosity_candidate_submit",
+      "curiosity_candidates_list",
+      "curiosity_abuse_frame"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "maxMemories": {"type": "integer", "minimum": 0, "maximum": 20},
-      "timeoutMs": {"type": "integer", "minimum": 100, "maximum": 20000},
-      "curiosityBin": {"type": "string", "minLength": 1},
-      "peerPollIntervalMs": {"type": "integer", "minimum": 250, "maximum": 60000},
-      "peerMaxAttempts": {"type": "integer", "minimum": 1, "maximum": 10},
-      "peerTurnTimeoutMs": {"type": "integer", "minimum": 5000, "maximum": 300000}
+      "maxMemories": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 20000
+      },
+      "curiosityBin": {
+        "type": "string",
+        "minLength": 1
+      },
+      "peerPollIntervalMs": {
+        "type": "integer",
+        "minimum": 250,
+        "maximum": 60000
+      },
+      "peerMaxAttempts": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10
+      },
+      "peerTurnTimeoutMs": {
+        "type": "integer",
+        "minimum": 5000,
+        "maximum": 300000
+      }
     }
   }
 }

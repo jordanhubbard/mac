@@ -241,6 +241,15 @@ def _data(model: BaseModel) -> Dict[str, Any]:
         return model.model_dump(exclude_unset=True)
     return model.dict(exclude_unset=True)
 
+def _refuse_agent_minted_directives(principal: "TokenPrincipal", topic: Any) -> None:
+    """human.directive.v1 authority IS its operator provenance — an
+    agent-bound token minting one would forge a human voice."""
+    if principal.agent_id and str(topic or "") == "human.directive.v1":
+        raise AuthorizationError(
+            "agent tokens cannot publish human directives (operator provenance required)"
+        )
+
+
 
 AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS = 60.0
 AGENTBUS_MIN_EVENT_POLL_SECONDS = 0.25
@@ -1356,6 +1365,14 @@ class AgentBusRequest(BaseModel):
     task_id: Optional[str] = None
 
 
+class HumanDirectivePublish(BaseModel):
+    target_agent_id: str
+    message: str
+    issued_by: Optional[str] = None
+    wait_seconds: float = 0.0
+    task_id: Optional[str] = None
+
+
 class AgentMemoryStore(BaseModel):
     content: str
     record_type: str = "agent_learning"
@@ -1663,6 +1680,10 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         return "agent"
     if path.startswith("/crash-reports"):
         return "read" if method == "GET" else "admin"
+    if path == "/agentbus/human-directive":
+        # Human directives are operator speech: never mintable via the agent
+        # scope (authority = attested provenance).
+        return "admin"
     if path.startswith("/agentbus"):
         return "agent"
     if path.startswith("/communication"):
@@ -6544,6 +6565,7 @@ def create_app(
     ) -> Dict[str, Any]:
         # mac-kgi5
         principal.assert_actor(body.sender_agent_id)
+        _refuse_agent_minted_directives(principal, body.topic)
         return cp.open_agentbus_stream(**_data(body)).to_dict()
 
     @app.get("/agentbus/streams")
@@ -6607,6 +6629,7 @@ def create_app(
     ) -> Dict[str, Any]:
         # mac-kgi5
         principal.assert_actor(body.sender_agent_id)
+        _refuse_agent_minted_directives(principal, body.topic)
         return cp.publish_agentbus_content(**_data(body))
 
     @app.post("/agentbus/repo-update")
@@ -7396,6 +7419,7 @@ def create_app(
         from mac.agentbus_schemas import error_payload
 
         principal.assert_actor(body.sender_agent_id)
+        _refuse_agent_minted_directives(principal, body.topic)
         correlation_id = (body.correlation_id or "").strip() or new_id("corr")
         payload = dict(body.payload)
         payload.setdefault("correlation_id", correlation_id)
@@ -7457,6 +7481,63 @@ def create_app(
             "request_stream": published["stream"],
             "reply_stream_id": reply_stream_id,
             "reply": reply_payload,
+        }
+
+    @app.post("/agentbus/human-directive")
+    async def publish_human_directive_route(
+        body: HumanDirectivePublish,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """The hub-verified human->agent channel: reaches ANY agent —
+        including Slack-less and ephemeral ones — with provenance the
+        receiver can trust by construction, because this route refuses
+        agent-bound tokens entirely."""
+        if principal.agent_id:
+            raise AuthorizationError(
+                "human directives require an operator token, not an agent token"
+            )
+        from mac.agentbus_schemas import error_payload
+
+        issued_by = (body.issued_by or "").strip() or "human"
+        published = cp.publish_human_directive(
+            body.target_agent_id,
+            body.message,
+            issued_by=issued_by,
+            task_id=body.task_id,
+        )
+        wait_seconds = min(
+            max(0.0, float(body.wait_seconds)), AGENTBUS_MAX_EVENT_TIMEOUT_SECONDS
+        )
+        if wait_seconds <= 0:
+            return {**published, "status": "queued"}
+        correlation_id = published["correlation_id"]
+        persona_id = cp.OPERATOR_PERSONA_AGENT_ID
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            for stream in cp.list_agentbus_streams(agent_id=persona_id, limit=100):
+                if (
+                    stream.recipient_agent_id == persona_id
+                    and stream.topic == "peer.reply.v1"
+                    and str((stream.headers or {}).get("correlation_id") or "")
+                    == correlation_id
+                ):
+                    chunks = cp.read_agentbus_chunks(persona_id, stream.id, limit=100)
+                    if chunks and isinstance(chunks[-1].payload, dict):
+                        return {
+                            **published,
+                            "status": "replied",
+                            "reply": chunks[-1].payload,
+                        }
+            await asyncio.sleep(0.35)
+        return {
+            **published,
+            "status": "timeout",
+            "reply": error_payload(
+                "timeout",
+                "no reply within %.1fs" % wait_seconds,
+                retryable=True,
+                correlation_id=correlation_id,
+            ),
         }
 
     @app.post("/v1/agents/{agent_id}/deregister")

@@ -2324,6 +2324,26 @@ def cmd_agent_resume(args: argparse.Namespace) -> None:
     _print(_plane(args).clear_agent_dispatch_hold(args.agent_id))
 
 
+def cmd_agent_tell(args: argparse.Namespace) -> None:
+    """Hub-verified human directive to ANY agent (no Slack identity needed)."""
+    cp = _plane(args)
+    agent_id = _resolve_agent_id(cp, args.agent)
+    kwargs = {"target_agent_id": agent_id, "message": args.message}
+    if args.issued_by:
+        kwargs["issued_by"] = args.issued_by
+    if args.wait:
+        kwargs["wait_seconds"] = args.wait
+    try:
+        result = cp.publish_human_directive(**kwargs)
+    except TypeError:
+        # Local (in-process) plane: no hub-side wait loop; publish only.
+        kwargs.pop("wait_seconds", None)
+        target = kwargs.pop("target_agent_id")
+        message = kwargs.pop("message")
+        result = cp.publish_human_directive(target, message, **kwargs)
+    _print(result.to_dict() if hasattr(result, "to_dict") else result)
+
+
 def cmd_agent_deregister(args: argparse.Namespace) -> None:
     """Graceful exit for a session/ephemeral agent: optional final message,
     then tombstone with history preserved."""
@@ -5416,6 +5436,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="runtime_environments.digest declaring which build this agent is running",
     )
     _set(cmd_agent_heartbeat, heartbeat)
+
+    agent_tell = agent.add_parser(
+        "tell",
+        help="send a hub-verified HUMAN directive to any agent over AgentBus — "
+        "works for Slack-less agents (GKE runners, ephemeral sessions); the "
+        "receiver can trust its operator provenance by construction",
+    )
+    agent_tell.add_argument("agent", help="agent id or name")
+    agent_tell.add_argument("message")
+    agent_tell.add_argument("--issued-by", help="who is speaking (default: human)")
+    agent_tell.add_argument(
+        "--wait", type=float, help="wait up to N seconds for the agent's reply"
+    )
+    _set(cmd_agent_tell, agent_tell)
 
     agent_deregister = agent.add_parser(
         "deregister",

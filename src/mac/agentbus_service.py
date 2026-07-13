@@ -45,6 +45,15 @@ AGENTBUS_STREAM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}$")
 AGENTBUS_TOPIC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-/:]{0,127}$")
 AGENTBUS_MAX_CHUNK_BYTES = 256 * 1024
 
+# Human directives (the hub-verified human->agent channel): the API layer
+# refuses agent-bound tokens publishing to this topic, so a stream carrying
+# it is PROOF of operator origin — authority as attested provenance, not
+# message content. Directives are fleet-readable so a peer can relay one by
+# citing its stream id and any receiver can verify at the hub.
+HUMAN_DIRECTIVE_TOPIC = "human.directive.v1"
+HUMAN_DIRECTIVE_CONTENT_TYPE = "application/vnd.mac.human-directive+json"
+HUMAN_DIRECTIVE_SCHEMA = "mac.human.directive.v1"
+
 
 def _state_value(state: Any) -> str:
     return state.value if hasattr(state, "value") else str(state)
@@ -586,6 +595,11 @@ class AgentBusService:
         }
 
     def _authorized(self, stream: AgentBusStream, agent_id: str) -> bool:
+        # Human directives are fleet-readable by design: relay-by-citation
+        # only works if any agent can look a cited directive up and see the
+        # hub attests its operator origin.
+        if stream.topic == HUMAN_DIRECTIVE_TOPIC:
+            return True
         if stream.participants:
             return agent_id in stream.participants
         return agent_id in {stream.sender_agent_id, stream.recipient_agent_id}

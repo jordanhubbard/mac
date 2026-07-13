@@ -37,6 +37,7 @@ function settings(api) {
 }
 
 const PEER_MESSAGE_TOPIC = "peer.message.v1";
+const HUMAN_DIRECTIVE_TOPIC = "human.directive.v1";
 const PEER_REPLY_TOPIC = "peer.reply.v1";
 const PEER_MESSAGE_SCHEMA = "mac.agent.peer_message.v1";
 const PEER_REPLY_SCHEMA = "mac.agent.peer_reply.v1";
@@ -461,7 +462,16 @@ async function runPeerTurn(api, stream, payload) {
   const sessionKey = `agent:${localAgentId}:mac-peer:${peerSlug}`;
   const sessionDir = join(agentDir, "sessions");
   mkdirSync(sessionDir, {recursive: true, mode: 0o700});
-  const prompt = [
+  const isHumanDirective = stream?.topic === HUMAN_DIRECTIVE_TOPIC;
+  const prompt = isHumanDirective ? [
+    "HUB-VERIFIED HUMAN DIRECTIVE.",
+    `AgentBus stream: ${stream.id} (topic human.directive.v1)`,
+    `Issued by: ${stream?.headers?.issued_by || "operator"}`,
+    "The hub only accepts this topic from operator-authenticated principals — agent tokens CANNOT mint it. This IS a direct human instruction (jkh's own voice over the bus), with the operator's full authority. The usual safety floor still applies (sandbox/review/secrets/destruction limits).",
+    "Act on it now and reply with your result or plan; your reply returns to the operator over authenticated AgentBus.",
+    "",
+    String(payload.message || "").slice(0, 16000),
+  ].join("\n") : [
     "Authenticated MAC fleet peer message.",
     `Sender: ${stream.sender_agent_id}`,
     `AgentBus stream: ${stream.id}`,
@@ -508,7 +518,7 @@ async function pollPeerMessages(api, state) {
   const incoming = streams
     .filter((stream) =>
       stream?.recipient_agent_id === cfg.agentId &&
-      stream?.topic === PEER_MESSAGE_TOPIC &&
+      (stream?.topic === PEER_MESSAGE_TOPIC || stream?.topic === HUMAN_DIRECTIVE_TOPIC) &&
       stream?.status === "closed" &&
       !stream?.participants &&
       !processed.has(stream.id)
@@ -520,7 +530,8 @@ async function pollPeerMessages(api, state) {
     const correlationId = String(
       payload?.correlation_id || stream?.headers?.correlation_id || stream.id,
     );
-    if (!payload || payload.schema !== PEER_MESSAGE_SCHEMA || typeof payload.message !== "string") {
+    const expectedSchema = stream?.topic === HUMAN_DIRECTIVE_TOPIC ? "mac.human.directive.v1" : PEER_MESSAGE_SCHEMA;
+    if (!payload || payload.schema !== expectedSchema || typeof payload.message !== "string") {
       state.processed.push(stream.id);
       delete state.attempts[stream.id];
       persistPeerState(api, state);

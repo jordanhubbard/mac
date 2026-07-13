@@ -78,6 +78,16 @@ AGENTBUS_SCHEMA_REGISTRY: Dict[str, SchemaSpec] = {
         "required": ["schema"],
         "fields": {"schema": str, "stream_id": str, "sender_agent_id": str},
     },
+    "mac.human.directive.v1": {
+        "required": ["schema", "message"],
+        "fields": {
+            "schema": str,
+            "message": str,
+            "issued_by": str,
+            "correlation_id": str,
+            "to_agent_id": str,
+        },
+    },
 }
 
 # Standard error taxonomy codes for mac.agentbus.error.v1 chunks. Callers can

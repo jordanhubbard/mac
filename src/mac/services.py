@@ -11677,6 +11677,87 @@ class ControlPlane:
             self._require_live_agent(str(sender))
         return self.agentbus.publish(*args, **kwargs)
 
+    # Human directives: the hub-verified human->agent channel. Authority is
+    # attested provenance — the API layer refuses agent-bound tokens on this
+    # topic, so receipt of one IS proof of operator origin. This is how a
+    # human reaches an agent with no chat identity (Slack-less GKE runners,
+    # ephemeral session agents): the mirror image of the delivery outbox.
+
+    OPERATOR_PERSONA_AGENT_ID = "agent_operator"
+
+    def _ensure_operator_persona(self) -> Agent:
+        try:
+            agent = self.get_agent(self.OPERATOR_PERSONA_AGENT_ID)
+            if not agent.deleted_at:
+                return agent
+        except NotFoundError:
+            pass
+        try:
+            machine = self.get_machine("machine_operator_persona")
+        except NotFoundError:
+            machine = self.register_machine(
+                "operator-persona",
+                machine_id="machine_operator_persona",
+                labels={"virtual": True},
+            )
+        return self.register_agent(
+            machine.id,
+            "operator",
+            agent_id=self.OPERATOR_PERSONA_AGENT_ID,
+            resources={"virtual": True, "operator_persona": True},
+        )
+
+    def publish_human_directive(
+        self,
+        target_agent_id: str,
+        message: str,
+        *,
+        issued_by: str = "human",
+        correlation_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+    ) -> JsonDict:
+        from mac.agentbus_service import (
+            HUMAN_DIRECTIVE_CONTENT_TYPE,
+            HUMAN_DIRECTIVE_SCHEMA,
+            HUMAN_DIRECTIVE_TOPIC,
+        )
+
+        body = str(message or "").strip()
+        if not body:
+            raise ValidationError("human directive message is required")
+        target = self._require_live_agent(target_agent_id)
+        persona = self._ensure_operator_persona()
+        corr = (correlation_id or "").strip() or new_id("corr")
+        published = self.agentbus.publish(
+            sender_agent_id=persona.id,
+            recipient_agent_id=target.id,
+            topic=HUMAN_DIRECTIVE_TOPIC,
+            content_type=HUMAN_DIRECTIVE_CONTENT_TYPE,
+            headers={"correlation_id": corr, "issued_by": issued_by},
+            task_id=task_id,
+            payload={
+                "schema": HUMAN_DIRECTIVE_SCHEMA,
+                "message": body[:16000],
+                "issued_by": issued_by,
+                "correlation_id": corr,
+                "to_agent_id": target.id,
+            },
+        )
+        self.record_log(
+            "agentbus.human_directive.published",
+            layer="agentbus",
+            source=issued_by,
+            subject_type="agentbus_stream",
+            subject_id=published["stream"]["id"],
+            detail={"target_agent_id": target.id, "issued_by": issued_by},
+        )
+        return {
+            "schema": "mac.human.directive_publish.v1",
+            "stream": published["stream"],
+            "correlation_id": corr,
+            "target_agent_id": target.id,
+        }
+
     def set_agentbus_consumer_cursor(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.agentbus.set_consumer_cursor(*args, **kwargs)
 

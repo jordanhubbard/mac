@@ -1580,6 +1580,11 @@ edges:
             "payload": {"schema": "mac.agent.peer_message.v1", "message": "route coverage ping"},
             "deadline_seconds": 0,
         },
+        ("POST", "/agentbus/human-directive"): {
+            "target_agent_id": ctx["agent_id"],
+            "message": "route coverage directive",
+            "wait_seconds": 0,
+        },
         ("POST", "/v1/agents/{agent_id}/memory"): {
             "content": "route coverage learning: the hub answers on :8789",
             "record_type": "agent_learning:route_coverage",

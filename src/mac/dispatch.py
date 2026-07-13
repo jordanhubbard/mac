@@ -1411,6 +1411,9 @@ class RemoteDispatch:
     def agentbus_request(self, **kw: Any) -> _Dictish:
         return _Dictish(self._post("/agentbus/request", _drop_none(kw)))
 
+    def publish_human_directive(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/agentbus/human-directive", _drop_none(kw)))
+
     def get_agentbus_consumer_cursor(self, agent_id: str, topic: str) -> _Dictish:
         return _Dictish(
             self._get(
