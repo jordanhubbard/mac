@@ -84,6 +84,37 @@ network_policies:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
 
+  # AgentFS v2: the shared fleet filesystem (hub WebDAV on port 8788, same
+  # host as the router). curl/python/node reach it for GET (read) and PUT
+  # (write, bearer-token-gated by the server). This is the sandbox-era
+  # replacement for the old SMB share — HTTP, no mount, no CAP_SYS_ADMIN.
+  mac_agentfs:
+    name: mac-agentfs
+    endpoints:
+      - host: __MAC_ROUTER_HOST__
+        port: 8788
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/agentfs/**" }
+          - allow: { method: HEAD, path: "/agentfs/**" }
+          - allow: { method: PUT, path: "/agentfs/**" }
+          - allow: { method: DELETE, path: "/agentfs/**" }
+      - host: host.openshell.internal
+        port: 8788
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/agentfs/**" }
+          - allow: { method: HEAD, path: "/agentfs/**" }
+          - allow: { method: PUT, path: "/agentfs/**" }
+          - allow: { method: DELETE, path: "/agentfs/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3 }
+
   slack:
     name: slack
     endpoints:

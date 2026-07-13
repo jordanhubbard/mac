@@ -8,7 +8,7 @@
 set -euo pipefail
 
 OPENCLAW_VERSION="2026.6.11"
-OPENCLAW_IMAGE_REVISION="17"
+OPENCLAW_IMAGE_REVISION="18"
 OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"
 
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
@@ -338,6 +338,12 @@ source_host_env() {
   export MAC_OPENCLAW_GATEWAY_PORT="$GATEWAY_PORT"
   MAC_OPENCLAW_GATEWAY_HOST="${MAC_OPENCLAW_GATEWAY_HOST:-$(hostname -s 2>/dev/null || hostname)}"
   export MAC_OPENCLAW_GATEWAY_HOST OPENCLAW_IMAGE
+  # AgentFS v2: shared-fs URL + write token come from the host env (mac.env),
+  # pointing at the hub's tailnet WebDAV endpoint
+  # (http://<hub-tailnet-ip>:8788/agentfs). Set explicitly per host rather
+  # than derived, to avoid the loopback->openshell rewrite the control URL
+  # undergoes on the hub-local gateway.
+  export MAC_AGENTFS_URL MAC_AGENTFS_WRITE_TOKEN
 }
 
 validate_env() {
@@ -609,6 +615,11 @@ values = {
     "MAC_OPENCLAW_CONTROL_URL": os.environ["MAC_OPENCLAW_CONTROL_URL"],
     "MAC_OPENCLAW_ROUTER_API_KEY": os.environ["MAC_OPENCLAW_ROUTER_API_KEY"],
     "MAC_OPENCLAW_WORKSPACE": "/sandbox/workspace",
+    # AgentFS v2: the shared fleet filesystem (hub WebDAV, tailnet-bound).
+    # Sandboxes and pods reach it over plain HTTP through one egress rule —
+    # no mount, no CAP_SYS_ADMIN.
+    "MAC_AGENTFS_URL": os.environ.get("MAC_AGENTFS_URL", ""),
+    "MAC_AGENTFS_WRITE_TOKEN": os.environ.get("MAC_AGENTFS_WRITE_TOKEN", ""),
     # Home-channel features (the fleet conversation mirror) read this from
     # the node process env; omitting it here regenerates runtime.env without
     # it on reinstall and those features silently no-op.
@@ -810,6 +821,16 @@ anything a human should see — including your final report before an ephemeral
 session ends. Headless and ephemeral fleet agents are expected to report this
 way rather than staying silent; if you finished something a human asked for
 (directly or through the task graph), say so.
+
+### AgentFS: the shared fleet filesystem
+
+Your sandbox is ephemeral — files you write vanish when the session ends, and
+peers cannot see them. AgentFS is the durable shared filesystem every agent
+(and any human on the tailnet, in Finder) can read at the same path. Publish
+a file with mac_fs_put (or write it and note the agentfs path); pick up a
+peer's file with mac_fs_get. Prefer this over message-passing a file when the
+content is durable or large: put it once, then just tell peers the path.
+mac_agent_share automatically spills files over 8MB to AgentFS for you.
 
 ## Modes you can invoke (not your default temperament)
 
@@ -1285,7 +1306,7 @@ if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled
 if not {
     "memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
     "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear",
-    "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_agent_inbox",
+    "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_agent_inbox",
     "mac_image_generate",
     "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
 } <= tools:

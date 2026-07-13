@@ -92,6 +92,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: agentfs url.",
+    "family": "core",
+    "name": "MAC_AGENTFS_URL",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: agentfs write token.",
+    "family": "core",
+    "name": "MAC_AGENTFS_WRITE_TOKEN",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Agent setting: agent attestation key.",
     "family": "agent",
     "name": "MAC_AGENT_ATTESTATION_KEY",
@@ -5753,8 +5775,7 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
-      "src/mac/services.py",
-      "src/mac/webdav_server.py"
+      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -8058,7 +8079,9 @@
     "name": "MAC_WEBDAV_WRITE_TOKEN",
     "retired": false,
     "sources": [
-      "src/mac/deploy_env.py"
+      "deploy/install-webdav-server.sh",
+      "src/mac/deploy_env.py",
+      "src/mac/webdav_server.py"
     ],
     "type": "str"
   },

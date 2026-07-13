@@ -13,6 +13,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ACTIVATION_PROBE_ENABLED` | bool | consumer-defined | core | Core setting: activation probe enabled. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_ATTEMPTS` | int | consumer-defined | core | Core setting: agentbus service result publish attempts. |
 | `MAC_AGENTBUS_SERVICE_RESULT_PUBLISH_RETRY_SECONDS` | int | consumer-defined | core | Core setting: agentbus service result publish retry seconds. |
+| `MAC_AGENTFS_URL` | str | consumer-defined | core | Core setting: agentfs url. |
+| `MAC_AGENTFS_WRITE_TOKEN` | str | consumer-defined | core | Core setting: agentfs write token. |
 | `MAC_AGENT_ATTESTATION_KEY` | str | consumer-defined | agent | Agent setting: agent attestation key. |
 | `MAC_AGENT_COMMAND_EXIT_GRACE_SECONDS` | int | consumer-defined | agent | Agent setting: agent command exit grace seconds. |
 | `MAC_AGENT_FOOTPRINT_REINSTALL` | str | consumer-defined | agent | Agent setting: agent footprint reinstall. |

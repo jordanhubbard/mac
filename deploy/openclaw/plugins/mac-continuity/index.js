@@ -19,6 +19,8 @@ function settings(api) {
   const configured = api.pluginConfig || {};
   return {
     agentId: String(process.env.MAC_OPENCLAW_AGENT_ID || "").trim(),
+    agentfsUrl: String(process.env.MAC_AGENTFS_URL || "").replace(/\/$/, ""),
+    agentfsToken: String(process.env.MAC_AGENTFS_WRITE_TOKEN || ""),
     controlUrl: String(process.env.MAC_OPENCLAW_CONTROL_URL || "").replace(/\/$/, ""),
     token: String(process.env.MAC_OPENCLAW_ROUTER_API_KEY || ""),
     maxMemories: Number.isInteger(configured.maxMemories) ? configured.maxMemories : 5,
@@ -604,12 +606,28 @@ async function shareMediaOverBus(api, recipientIds, filePath, note) {
   const cfg = settings(api);
   const data = readFileSync(filePath);
   if (data.length === 0) throw new Error("cannot share an empty file");
-  if (data.length > MEDIA_MAX_RAW_BYTES) {
-    throw new Error(
-      `file is ${data.length} bytes; in-band bus sharing caps at ${MEDIA_MAX_RAW_BYTES} bytes — publish it as a WebDAV artifact instead (mac agentbus artifact-publish)`,
-    );
-  }
   const filename = sanitizeFilename(filePath);
+  if (data.length > MEDIA_MAX_RAW_BYTES) {
+    // Too big for in-band chunks: spill to AgentFS and share the path
+    // instead. The receiver's turn is told to mac_fs_get it. This keeps
+    // arbitrarily large files shareable without a size cliff.
+    if (!cfg.agentfsUrl || !cfg.agentfsToken) {
+      throw new Error(
+        `file is ${data.length} bytes (over the ${MEDIA_MAX_RAW_BYTES}-byte in-band cap) and AgentFS is not configured to spill it to — configure MAC_AGENTFS_URL/TOKEN or share a smaller file`,
+      );
+    }
+    const remotePath = `shared/${cfg.agentId}/${randomUUID().slice(0, 8)}-${filename}`;
+    await agentfsPut(api, remotePath, data);
+    for (const recipientId of recipientIds) {
+      await publishPeerMessage(
+        api,
+        recipientId,
+        `I shared a large file with you via AgentFS: ${remotePath} (${data.length} bytes, ${mimeForFilename(filename)}).${note ? ` Note: ${note}` : ""} Fetch it with mac_fs_get remote_path="${remotePath}", then act on it.`,
+        randomUUID(),
+      );
+    }
+    return {via: "agentfs", agentfs_path: remotePath, filename, total_bytes: data.length, recipients: recipientIds.length};
+  }
   const mime = mimeForFilename(filename);
   const chunkCount = Math.max(1, Math.ceil(data.length / MEDIA_CHUNK_RAW_BYTES));
   const stream = await hubApi(api, "POST", "/agentbus/streams", {
@@ -732,6 +750,52 @@ async function pollMediaShares(api, state, nameCache) {
         `mac-continuity: media share ${stream.id} attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+}
+
+// AgentFS v2: the shared fleet filesystem over the hub's tailnet WebDAV.
+// One place every agent (and any tailnet human in Finder) sees the same
+// bytes at the same path — survives ephemeral sandboxes, no size cap beyond
+// the server's, no mount privileges.
+function agentfsPathUrl(cfg, remotePath) {
+  const clean = String(remotePath || "").replace(/^\/+/, "").replace(/\.\.(\/|$)/g, "");
+  if (!clean) throw new Error("agentfs path is required");
+  return `${cfg.agentfsUrl}/${clean}`;
+}
+
+async function agentfsPut(api, remotePath, data) {
+  const cfg = settings(api);
+  if (!cfg.agentfsUrl) throw new Error("AgentFS is not configured (MAC_AGENTFS_URL unset)");
+  if (!cfg.agentfsToken) throw new Error("AgentFS write token is not configured");
+  const url = agentfsPathUrl(cfg, remotePath);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  try {
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {Authorization: `Bearer ${cfg.agentfsToken}`, "Content-Type": "application/octet-stream"},
+      body: data,
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`AgentFS PUT ${remotePath} -> HTTP ${response.status}`);
+    return url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function agentfsGet(api, remotePath) {
+  const cfg = settings(api);
+  if (!cfg.agentfsUrl) throw new Error("AgentFS is not configured (MAC_AGENTFS_URL unset)");
+  const url = agentfsPathUrl(cfg, remotePath);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  try {
+    const response = await fetch(url, {signal: controller.signal});
+    if (!response.ok) throw new Error(`AgentFS GET ${remotePath} -> HTTP ${response.status}`);
+    return Buffer.from(await response.arrayBuffer());
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -1018,6 +1082,44 @@ export default {
           target,
           attributed: represented,
         });
+      },
+    });
+
+    api.registerTool({
+      name: "mac_fs_put",
+      description: "Write a file to AgentFS — the shared fleet filesystem every agent (and any tailnet human in Finder) can read at the same path. Survives your ephemeral sandbox. Use this to publish something durable (a script, dataset, result) instead of message-passing it: put it once, then tell peers the agentfs path. Give a local file path to upload, or inline content.",
+      parameters: inputSchema({
+        remote_path: {type: "string", minLength: 1, description: "Destination under agentfs, e.g. demos/fluid_sim.py"},
+        local_path: {type: "string", description: "Local file to upload (inside your sandbox)."},
+        content: {type: "string", description: "Inline text content (alternative to local_path)."},
+      }, ["remote_path"]),
+      async execute(_id, params) {
+        let data;
+        if (params.local_path) data = readFileSync(params.local_path);
+        else if (typeof params.content === "string") data = Buffer.from(params.content, "utf8");
+        else throw new Error("provide local_path or content");
+        const url = await agentfsPut(api, params.remote_path, data);
+        return peerTextResult({status: "stored", agentfs_path: params.remote_path, url, bytes: data.length});
+      },
+    });
+
+    api.registerTool({
+      name: "mac_fs_get",
+      description: "Read a file from AgentFS (the shared fleet filesystem) into your sandbox by its agentfs path. Use this to pick up something a peer published — e.g. a script another agent wrote and told you the path of.",
+      parameters: inputSchema({
+        remote_path: {type: "string", minLength: 1, description: "Path under agentfs to read, e.g. demos/fluid_sim.py"},
+        save_to: {type: "string", description: "Local path to write it to (default: workspace/incoming/<basename>)."},
+      }, ["remote_path"]),
+      async execute(_id, params) {
+        const data = await agentfsGet(api, params.remote_path);
+        const runtime = api.runtime?.agent;
+        const runtimeConfig = api.runtime?.config?.current?.() || api.config || {};
+        const workspaceDir = runtime?.resolveAgentWorkspaceDir?.(runtimeConfig, "main") || "/sandbox/workspace";
+        const base = String(params.remote_path).split("/").pop() || "file";
+        const target = params.save_to || join(workspaceDir, "incoming", base);
+        mkdirSync(dirname(target), {recursive: true, mode: 0o700});
+        writeFileSync(target, data, {mode: 0o600});
+        return peerTextResult({status: "fetched", agentfs_path: params.remote_path, local_path: target, bytes: data.length});
       },
     });
 

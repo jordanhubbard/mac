@@ -19,6 +19,8 @@
       "mac_fleet_status",
       "mac_agent_send",
       "mac_notify_human",
+      "mac_fs_put",
+      "mac_fs_get",
       "mac_agent_share",
       "mac_agent_inbox",
       "mac_config_flag_list",

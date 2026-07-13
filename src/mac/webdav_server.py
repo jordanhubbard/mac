@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hmac
 import mimetypes
 import os
 import shutil
@@ -35,11 +36,18 @@ class WebDAVServer(ThreadingHTTPServer):
         root: Path,
         public_prefix: str,
         max_upload_bytes: int,
+        write_token: str = "",
     ) -> None:
         super().__init__(server_address, handler_class)
         self.root = root.resolve()
         self.public_prefix = _normalize_prefix(public_prefix)
         self.max_upload_bytes = max_upload_bytes
+        # AgentFS v2 (shared fleet filesystem): when a write token is set,
+        # PUT/MKCOL/DELETE are enabled for callers presenting it. Reads stay
+        # open to whoever can reach the (tailnet-bound) socket, matching the
+        # old SMB share's "open to the tailnet, closed to the internet"
+        # posture. Empty token = legacy read-only public-artifact server.
+        self.write_token = str(write_token or "")
 
 
 class WebDAVHandler(BaseHTTPRequestHandler):
@@ -143,23 +151,95 @@ class WebDAVHandler(BaseHTTPRequestHandler):
             with target.open("rb") as fh:
                 shutil.copyfileobj(fh, self.wfile)
 
+    def _writes_authorized(self) -> bool:
+        token = self.server.write_token
+        if not token:
+            self._send_status(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                "HTTP writes are disabled on this server (no write token configured).",
+            )
+            return False
+        header = self.headers.get("Authorization", "")
+        presented = header[7:] if header.startswith("Bearer ") else ""
+        if not hmac.compare_digest(presented, token):
+            self._send_status(
+                HTTPStatus.UNAUTHORIZED,
+                "AgentFS writes require Authorization: Bearer <write token>.",
+            )
+            return False
+        return True
+
     def do_PUT(self) -> None:  # noqa: N802
-        self._send_status(
-            HTTPStatus.METHOD_NOT_ALLOWED,
-            "HTTP writes are disabled; publish by writing to MAC_PUBLISH_DIR on the hub.",
-        )
+        if not self._writes_authorized():
+            return
+        target = self._target_path()
+        if target is None:
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_status(HTTPStatus.BAD_REQUEST, "invalid Content-Length")
+            return
+        if length < 0 or length > self.server.max_upload_bytes:
+            self._send_status(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                "upload exceeds %d bytes" % self.server.max_upload_bytes,
+            )
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a temp sibling then atomically rename so a concurrent
+        # reader never sees a half-written file.
+        tmp = target.with_name(".%s.partial" % target.name)
+        remaining = length
+        try:
+            with tmp.open("wb") as fh:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    remaining -= len(chunk)
+            if remaining != 0:
+                tmp.unlink(missing_ok=True)
+                self._send_status(HTTPStatus.BAD_REQUEST, "truncated upload")
+                return
+            os.replace(tmp, target)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            self._send_status(HTTPStatus.INTERNAL_SERVER_ERROR, "write failed: %s" % exc)
+            return
+        self._send_status(HTTPStatus.CREATED, "stored %d bytes" % length)
 
     def do_MKCOL(self) -> None:  # noqa: N802
-        self._send_status(
-            HTTPStatus.METHOD_NOT_ALLOWED,
-            "HTTP writes are disabled; publish by writing to MAC_PUBLISH_DIR on the hub.",
-        )
+        if not self._writes_authorized():
+            return
+        parsed = urllib.parse.urlsplit(self.path)
+        request_path = urllib.parse.unquote(parsed.path)
+        prefix = self.server.public_prefix
+        if not request_path.startswith(prefix):
+            self._send_status(HTTPStatus.NOT_FOUND)
+            return
+        relative = request_path[len(prefix):].strip("/")
+        candidate = (self.server.root / relative).resolve()
+        try:
+            candidate.relative_to(self.server.root)
+        except ValueError:
+            self._send_status(HTTPStatus.FORBIDDEN, "path escapes agentfs root")
+            return
+        candidate.mkdir(parents=True, exist_ok=True)
+        self._send_status(HTTPStatus.CREATED, "collection created")
 
     def do_DELETE(self) -> None:  # noqa: N802
-        self._send_status(
-            HTTPStatus.METHOD_NOT_ALLOWED,
-            "HTTP deletes are disabled; delete publish records through MAC/AgentBus.",
-        )
+        if not self._writes_authorized():
+            return
+        target = self._target_path()
+        if target is None:
+            return
+        if target.is_file():
+            target.unlink()
+            self._send_status(HTTPStatus.NO_CONTENT)
+        else:
+            self._send_status(HTTPStatus.NOT_FOUND)
 
     def do_PROPFIND(self) -> None:  # noqa: N802
         target = self._target_path()
@@ -210,6 +290,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         root=root,
         public_prefix=args.public_prefix,
         max_upload_bytes=args.max_upload_bytes,
+        write_token=os.environ.get("MAC_WEBDAV_WRITE_TOKEN", ""),
     )
     print(
         "mac-webdav-server listening on %s:%d root=%s prefix=%s"
