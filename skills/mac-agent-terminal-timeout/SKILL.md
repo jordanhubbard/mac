@@ -4,11 +4,11 @@ description: >
   Use when a MAC fleet agent task fails with a terminal:timeout tool_error, or
   when running long-lived MAC-repo operations (contract tests, bootstrap,
   codegraph init/sync, large git operations) to avoid timing out mid-task.
-version: 1.0.0
+version: 1.1.0
 platforms: [linux, macos, wsl2]
 metadata:
   hermes:
-    tags: [mac, fleet, timeout, terminal, contract-tests, reliability]
+    tags: [mac, fleet, timeout, terminal, contract-tests, reliability, rust, cargo, toolchain]
     related_skills: [setup-mac-fleet]
 ---
 
