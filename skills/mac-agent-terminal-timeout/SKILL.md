@@ -85,3 +85,12 @@ the contract suite if any fleet-specific identity token is found.
 - [ ] Is the operation in the long-lived category above?
 - [ ] Did the previous attempt add a skill/doc with operator identity tokens?
       Check with: `grep -rn "agent_\|worker[0-9]" skills/ docs/`
+- [ ] Does the failure mention `CARGO_HOME`, `cargo/bin`, `rustup`, or `rust-toolchain`?
+      These indicate a Rust toolchain provisioning gap — `cargo` lives in `~/.cargo/bin`,
+      which is outside `MAC_SANDBOX_BASE_PATH`. The task executor symlinks it into
+      `MAC_TOOLCHAIN_BIN` on demand; if that step failed or was skipped, `cargo`
+      will not be found even on agents with Rust installed.
+      Verify with: `echo $CARGO_HOME; ls ${CARGO_HOME:-$HOME/.cargo}/bin/cargo 2>/dev/null`
+- [ ] Did the task declare `cargo`, `rustc`, or `rustup` in `toolchain.required_commands`?
+      If yes and the toolchain setup shell did not run, the symlink into `MAC_TOOLCHAIN_BIN`
+      was never created. Re-run bootstrap or inspect `mac_sandbox_toolchain_setup` output.
