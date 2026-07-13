@@ -874,19 +874,30 @@ migrate_continuity() {
     --report "$MIGRATION_DIR/last-run.json" >/dev/null || migration_status=$?
   fi
   [ "$migration_status" -eq 0 ] || die "Hermes/OpenClaw continuity migration failed; see $MIGRATION_DIR/last-run.json"
-  if [ -f "$MIGRATION_DIR/cron-plan.json" ]; then
-    cp -f "$MIGRATION_DIR/cron-plan.json" "$MANAGED_DIR/cron-plan.json"
-  else
+  # An empty or missing migrator output both mean "no jobs to carry" — a
+  # zero-byte cron-plan.json (seen on the GKE pod) must not crash prepare.
+  if [ ! -s "$MIGRATION_DIR/cron-plan.json" ]; then
     printf '%s\n' '{"schema":"mac.openclaw_cron_migration.v1","jobs":[]}' \
       > "$MANAGED_DIR/cron-plan.json"
+  else
+    cp -f "$MIGRATION_DIR/cron-plan.json" "$MANAGED_DIR/cron-plan.json"
   fi
   python3 - "$MANAGED_DIR/cron-plan.json" <<'PY'
 import json
 import sys
 
 path = sys.argv[1]
-with open(path, encoding="utf-8") as handle:
-    plan = json.load(handle)
+# Tolerate an empty/corrupt generated artifact: fall back to an empty plan
+# rather than aborting the whole install (task_9ebbb783).
+try:
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read().strip()
+    plan = json.loads(text) if text else {}
+except (OSError, ValueError):
+    plan = {}
+if not isinstance(plan, dict):
+    plan = {}
+plan.setdefault("schema", "mac.openclaw_cron_migration.v1")
 jobs = plan.setdefault("jobs", [])
 name = "MAC continuous curiosity review"
 managed = {
@@ -1290,8 +1301,18 @@ PY
 import json
 import sys
 
+# An EMPTY plugin-status here means the sandbox hasn't surfaced the plugin
+# yet (the transient right after sandbox replacement) — a real not-ready
+# signal, so fail with a clear retryable message (the caller retries after a
+# short sleep) instead of a raw JSONDecodeError traceback.
 with open(sys.argv[1], encoding="utf-8") as handle:
-    value = json.load(handle)
+    raw = handle.read().strip()
+if not raw:
+    raise SystemExit("plugin inspection returned no data (sandbox still warming up); retry")
+try:
+    value = json.loads(raw)
+except ValueError as exc:
+    raise SystemExit("plugin inspection returned invalid JSON (%s); retry" % exc)
 plugin = value.get("plugin") or {}
 tools = set(plugin.get("toolNames") or [])
 hooks = set(plugin.get("hookNames") or [])

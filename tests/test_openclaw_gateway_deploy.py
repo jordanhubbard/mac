@@ -450,6 +450,22 @@ def test_every_registered_tool_is_declared_in_the_plugin_manifest() -> None:
     )
 
 
+def test_installer_tolerates_empty_generated_json_artifacts() -> None:
+    """task_9ebbb783: a zero-byte cron-plan.json crashed prepare on the GKE
+    pod ('Expecting value: line 1 column 1'). The cron-plan reader must fall
+    back to an empty plan on empty/invalid JSON; the verify plugin-status
+    reader must emit a clear retryable message (not a raw traceback) when the
+    sandbox is still warming up."""
+    installer = INSTALLER.read_text(encoding="utf-8")
+    # Empty file treated as 'no jobs' (the -s test replaces the missing-only
+    # branch), and the python reader defaults to {} on empty/invalid.
+    assert 'if [ ! -s "$MIGRATION_DIR/cron-plan.json" ]; then' in installer
+    assert "plan = json.loads(text) if text else {}" in installer
+    # Verify reader surfaces a retryable message instead of JSONDecodeError.
+    assert "sandbox still warming up); retry" in installer
+    assert "returned invalid JSON" in installer
+
+
 def test_headless_agents_have_a_human_voice() -> None:
     """A Slack-less agent must still reach humans (jkh 2026-07-13: GKE runners
     have no Slack presence). mac_notify_human sends through the hub delivery
