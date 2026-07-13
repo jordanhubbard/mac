@@ -922,7 +922,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         "timeoutMs": 10000,
         "peerPollIntervalMs": 2000,
         "peerMaxAttempts": 3,
-        "peerTurnTimeoutMs": 120000,
+        "peerTurnTimeoutMs": 300000,
     }
     # OpenClaw session visibility applies only within this one gateway. MAC's
     # authenticated AgentBus bridge owns cross-host fleet communication.
