@@ -430,3 +430,92 @@ def test_audit_full_scenario(tmp_path):
     assert "notes.md" in ns_paths
     assert "config.yaml" not in ns_paths
     assert "skills" not in ns_paths
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: empty cron dir, source field values, dict schedule variants
+# ---------------------------------------------------------------------------
+
+
+def test_audit_cron_dir_exists_but_no_jobs_file(tmp_path):
+    home = make_home(tmp_path)
+    (home / "cron").mkdir()
+
+    report = audit_hermes_home(home)
+    assert report["cron_jobs"] == []
+    assert report["cron_error"] is None
+
+
+def test_audit_script_source_field_reflects_scan_dir(tmp_path):
+    home = make_home(tmp_path)
+    (home / "scripts").mkdir()
+    script = home / "scripts" / "util.py"
+    script.write_text("# util", encoding="utf-8")
+
+    report = audit_hermes_home(home)
+    entry = next(e for e in report["scripts"] if e["path"] == "scripts/util.py")
+    assert entry["source"] == "scripts"
+
+
+def test_audit_script_source_hooks(tmp_path):
+    home = make_home(tmp_path)
+    (home / "hooks").mkdir()
+    hook = home / "hooks" / "post-run.sh"
+    hook.write_text("#!/bin/sh\nexit 0", encoding="utf-8")
+    hook.chmod(0o755)
+
+    report = audit_hermes_home(home)
+    entry = next(e for e in report["scripts"] if "hooks" in e["path"])
+    assert entry["source"] == "hooks"
+
+
+def test_audit_cron_dict_schedule_expression_key(tmp_path):
+    home = make_home(tmp_path)
+    write_jobs(home, [
+        {"id": "s1", "name": "expr-job",
+         "schedule": {"type": "cron", "expression": "0 6 * * 1"},
+         "command": "weekly.sh", "enabled": True},
+    ])
+
+    report = audit_hermes_home(home)
+    j = report["cron_jobs"][0]
+    assert j["schedule"] is not None
+    assert "cron" in j["schedule"]
+
+
+def test_audit_cron_dict_schedule_cron_key(tmp_path):
+    home = make_home(tmp_path)
+    write_jobs(home, [
+        {"id": "s2", "name": "cron-key-job",
+         "schedule": {"type": "interval", "cron": "*/5 * * * *"},
+         "command": "ping.sh", "enabled": True},
+    ])
+
+    report = audit_hermes_home(home)
+    j = report["cron_jobs"][0]
+    assert j["schedule"] is not None
+    assert "interval" in j["schedule"]
+
+
+def test_audit_cron_task_field_used_as_command(tmp_path):
+    home = make_home(tmp_path)
+    write_jobs(home, [
+        {"id": "t1", "schedule": "* * * * *", "task": "do something", "enabled": True},
+    ])
+
+    report = audit_hermes_home(home)
+    j = report["cron_jobs"][0]
+    assert j["command"] == "do something"
+
+
+def test_audit_script_extension_none_for_executable_no_ext(tmp_path):
+    home = make_home(tmp_path)
+    (home / "bin").mkdir()
+    exe = home / "bin" / "runner"
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
+
+    report = audit_hermes_home(home)
+    entry = next(e for e in report["scripts"] if e["path"] == "bin/runner")
+    assert entry["extension"] is None
+    assert entry["executable"] is True
