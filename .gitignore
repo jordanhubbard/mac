@@ -4,6 +4,7 @@ __pycache__/
 .coverage.*
 coverage.xml
 coverage.json
+coverage-*.json
 htmlcov/
 .test-portfolio/
 .venv/
