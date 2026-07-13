@@ -727,10 +727,13 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
             )
             try:
                 task_dir = self._prepare_task_workspace(task, lease)
-            except RuntimeError as _prep_exc:
-                _step = "fetch_rebase" if any(
-                    kw in str(_prep_exc) for kw in ("fetch", "rebase", "clone")
-                ) else "worktree_preparation"
+            except (RuntimeError, OSError) as _prep_exc:
+                if isinstance(_prep_exc, OSError):
+                    _step = "disk_io"
+                elif any(kw in str(_prep_exc) for kw in ("fetch", "rebase", "clone", "checkout")):
+                    _step = "fetch_rebase"
+                else:
+                    _step = "worktree_preparation"
                 _wt_dir = self.workspace / _safe_path_component(task_id)
                 _wt_dir.mkdir(parents=True, exist_ok=True)
                 def _noop_dispatch(_action, _ctx):
@@ -776,7 +779,15 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
                     execution=execution,
                 )
             _bootstrap_meta = (execution.metadata.get("bootstrap") or {})
-            if not execution.succeeded and isinstance(_bootstrap_meta, dict) and _bootstrap_meta.get("returncode"):
+            _boot_failed = (
+                isinstance(_bootstrap_meta, dict)
+                and (
+                    (_bootstrap_meta.get("returncode") not in (None, 0))
+                    or bool(_bootstrap_meta.get("error"))
+                    or bool(_bootstrap_meta.get("status"))
+                )
+            )
+            if not execution.succeeded and _boot_failed:
                 _boot_info = "bootstrap failed: %s" % (_bootstrap_meta.get("error") or _bootstrap_meta.get("status") or "unknown")
                 def _noop_dispatch_b(_action, _ctx):
                     pass
@@ -3683,7 +3694,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
                 parsed = json.loads(raw)
                 if isinstance(parsed, list):
                     existing = [e for e in parsed if isinstance(e, dict)]
-            existing.append({"step": step, "choice": choice, "result": result_detail})
+            existing.append({"step": step, "choice": choice, "result": result_detail, "ts": _utcnow()})
             log_path.write_text(
                 json.dumps(existing, indent=2) + "\n",
                 encoding="utf-8",
