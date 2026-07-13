@@ -40,6 +40,8 @@ from mac.agentbus_control import (
     HERMES_CONFIG_APPLY_RESULT_TOPIC,
     HERMES_CONFIG_APPLY_SCHEMA,
     HERMES_CONFIG_APPLY_TOPIC,
+    PEER_MESSAGE_CONTENT_TYPE,
+    PEER_MESSAGE_TOPIC,
     REFLECT_REQUEST_CONTENT_TYPE,
     REFLECT_REQUEST_TOPIC,
     REFLECT_RESULT_CONTENT_TYPE,
@@ -102,6 +104,8 @@ from mac.worker_debug_terminal import (
     DebugTerminalSession,
 )
 from mac.worker_reflect import ReflectMixin
+from mac.worker_directable import DirectableMixin
+from mac.agentbus_service import HUMAN_DIRECTIVE_TOPIC
 from mac.worker_repo_prep import RepoPrepMixin
 import mac.harness_recovery_reflex as _hrr
 from mac.worker_runtime_deps import (
@@ -474,7 +478,7 @@ def register_worker(
 # fresh or stale node converges to the right versions on demand WITHOUT waiting
 # for a redeploy. Add fleet-wide runtime deps here; keep them pinned.
 
-class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixin):
+class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, RepoPrepMixin, RuntimeDepsMixin):
     """Small worker harness for mac-owned tasks.
 
     This is intentionally narrower than ACC's deployed worker. It proves the
@@ -555,6 +559,12 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
         self._delivery_drain_lock = threading.Lock()
         self._delivery_drain_stop: Optional[threading.Event] = None
         self._delivery_drain_thread: Optional[threading.Thread] = None
+        # Directable peer/directive turns (task_c6f02f06, MAC_WORKER_DIRECTABLE):
+        # run off the poll thread so a 120s turn cannot starve heartbeats. The
+        # in-flight set stops a second thread being spawned for the same stream
+        # while its turn is still running (state is only marked on success).
+        self._directable_state_lock = threading.Lock()
+        self._directable_inflight: set[str] = set()
         try:
             self.delivery_drain_interval_seconds = float(
                 os.environ.get("MAC_WORKER_DELIVERY_DRAIN_SECONDS", "20") or 20
@@ -1784,8 +1794,76 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
                 processed.append(stream_id)
                 self._save_agentbus_control_state(processed)
                 continue
+            # Directable peer/directive handling (task_c6f02f06). Default OFF:
+            # when MAC_WORKER_DIRECTABLE is unset these branches are not entered
+            # and behavior is byte-for-byte unchanged. GROUP peer streams
+            # (participants set) are skipped in Phase 0 (1:1 only). The turn runs
+            # off the poll thread and only marks the stream processed after its
+            # reply publishes, so a crash re-tries.
+            if _env_bool("MAC_WORKER_DIRECTABLE", False):
+                if (
+                    topic == PEER_MESSAGE_TOPIC
+                    and content_type == PEER_MESSAGE_CONTENT_TYPE
+                    and not stream.get("participants")
+                ):
+                    self._dispatch_directable_turn(
+                        stream, self._handle_peer_message_stream
+                    )
+                    continue
+                if topic == HUMAN_DIRECTIVE_TOPIC:
+                    self._dispatch_directable_turn(
+                        stream, self._handle_human_directive_stream
+                    )
+                    continue
             continue
         return None
+
+    def _dispatch_directable_turn(
+        self, stream: JsonDict, handler: Callable[[JsonDict], JsonDict]
+    ) -> None:
+        """Run a directable peer/directive turn on a background thread.
+
+        A turn may take up to MAC_DIRECTABLE_TIMEOUT (120s default); running it
+        inline in the poll loop would starve heartbeats and task claiming
+        (mirrors the _start_delivery_drain_thread precedent). The handler both
+        runs the turn and publishes the reply; only after it returns do we mark
+        the stream processed, so a crash before the reply re-tries. An in-flight
+        guard prevents a second thread for the same stream while the first runs.
+        """
+        stream_id = str(stream.get("id") or "")
+        if not stream_id:
+            return
+        with self._directable_state_lock:
+            if stream_id in self._directable_inflight:
+                return
+            self._directable_inflight.add(stream_id)
+
+        def _run() -> None:
+            try:
+                handler(stream)
+                self._mark_directable_processed(stream_id)
+            except Exception as exc:  # noqa: BLE001 - never crash the worker.
+                self._observe_log(
+                    "worker.agentbus.directable.dispatch_error",
+                    level="warning",
+                    detail={"stream_id": stream_id, "error": str(exc)},
+                )
+            finally:
+                with self._directable_state_lock:
+                    self._directable_inflight.discard(stream_id)
+
+        thread = threading.Thread(
+            target=_run, name="directable-turn-%s" % stream_id[:16], daemon=True
+        )
+        thread.start()
+
+    def _mark_directable_processed(self, stream_id: str) -> None:
+        """Append *stream_id* to the persisted control state under a lock."""
+        with self._directable_state_lock:
+            processed = self._load_agentbus_control_state()
+            if stream_id not in processed:
+                processed.append(stream_id)
+            self._save_agentbus_control_state(processed)
 
     def _handle_hermes_config_apply_stream(self, stream: JsonDict) -> JsonDict:
         stream_id = str(stream.get("id") or "")

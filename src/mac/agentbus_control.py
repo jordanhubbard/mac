@@ -48,6 +48,17 @@ REFLECT_RESULT_SCHEMA = "mac.agentbus.reflect_result.v1"
 REFLECT_RESULT_TOPIC = "mac.reflect.result.v1"
 REFLECT_RESULT_CONTENT_TYPE = "application/vnd.mac.reflect-result+json"
 
+# Agent-to-agent peer messaging (task_c6f02f06, worker-directable Phase 0).
+# These strings match src/mac/api.py (AgentBusPeerMessage defaults) and the
+# schema names enforced in src/mac/agentbus_schemas.py — keep them in sync.
+PEER_MESSAGE_TOPIC = "peer.message.v1"
+PEER_MESSAGE_SCHEMA = "mac.agent.peer_message.v1"
+PEER_MESSAGE_CONTENT_TYPE = "application/vnd.mac.agent-peer+json"
+
+PEER_REPLY_TOPIC = "peer.reply.v1"
+PEER_REPLY_SCHEMA = "mac.agent.peer_reply.v1"
+PEER_REPLY_CONTENT_TYPE = "application/vnd.mac.agent-peer-reply+json"
+
 CONTROL_STREAM_TYPES = {
     (REPO_UPDATE_TOPIC, REPO_UPDATE_CONTENT_TYPE),
     (REFLECT_REQUEST_TOPIC, REFLECT_REQUEST_CONTENT_TYPE),
@@ -256,6 +267,35 @@ def reflect_result_payload(
         "response": response,
         "word_count": int(word_count),
     }
+
+
+def peer_reply_payload(
+    *,
+    from_agent_id: str,
+    to_agent_id: str,
+    reply: str,
+    status: str = "ok",
+    correlation_id: Optional[str] = None,
+    in_reply_to: Optional[str] = None,
+) -> JsonDict:
+    """Build a peer.reply.v1 payload (mac.agent.peer_reply.v1).
+
+    Mirrors the shape produced by the OpenClaw mac-continuity plugin's
+    publishPeerReply so consumers see an identical wire contract regardless of
+    which side (gateway plugin or directable worker) produced the reply.
+    """
+    payload: JsonDict = {
+        "schema": PEER_REPLY_SCHEMA,
+        "from_agent_id": from_agent_id,
+        "to_agent_id": to_agent_id,
+        "status": status,
+        "reply": str(reply or "")[:32000],
+    }
+    if correlation_id:
+        payload["correlation_id"] = correlation_id
+    if in_reply_to:
+        payload["in_reply_to"] = in_reply_to
+    return payload
 
 
 def debug_terminal_open_payload(
