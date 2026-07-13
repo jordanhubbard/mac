@@ -1,0 +1,1 @@
+{"schema": "mac.fleet_scripts_audit.v1", "host": "jordanh-gke", "audit_date": "2026-07-12", "hermes_dir": "~/.hermes", "files_present": ["config.yaml"], "scripts": [], "cron_jobs": [], "hooks": [], "non_standard_files": [], "keepers": [], "verdict": "clean"}
