@@ -274,3 +274,85 @@ def test_status_reflects_last_report(cp):
     # status() returns a copy, not a live reference to internal state.
     status["last_report"]["napped_count"] = 999
     assert ticker.status()["last_report"]["napped_count"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# MAC_NAP_TICK_INTERVAL_SECONDS=0 as a clean disable signal
+# --------------------------------------------------------------------------- #
+
+
+def test_interval_zero_disables_cleanly():
+    """Interval=0 is a no-error opt-out; does not require MAC_NAP_TICK_ENABLED."""
+    cfg = NapTickerConfig.from_env({"MAC_NAP_TICK_INTERVAL_SECONDS": "0"})
+    assert cfg.enabled is False
+    assert cfg.active is False
+    assert cfg.configuration_error == ""
+
+
+def test_interval_zero_overrides_enabled_flag():
+    """MAC_NAP_TICK_INTERVAL_SECONDS=0 wins even if MAC_NAP_TICK_ENABLED=1."""
+    cfg = NapTickerConfig.from_env({
+        "MAC_NAP_TICK_ENABLED": "1",
+        "MAC_NAP_TICK_INTERVAL_SECONDS": "0",
+    })
+    assert cfg.enabled is False
+    assert cfg.active is False
+    assert cfg.configuration_error == ""
+
+
+def test_interval_zero_ticker_does_not_start(cp):
+    """A ticker built from an interval=0 config never starts a thread."""
+    cfg = NapTickerConfig.from_env({"MAC_NAP_TICK_INTERVAL_SECONDS": "0"})
+    ticker = NapTicker(cp, cfg)
+    assert ticker.start() is False
+    assert ticker.status()["thread_alive"] is False
+
+
+def test_interval_zero_preserves_defaults():
+    """When interval=0, returned config has all other defaults intact."""
+    cfg = NapTickerConfig.from_env({"MAC_NAP_TICK_INTERVAL_SECONDS": "0"})
+    assert cfg.interval_seconds == DEFAULT_INTERVAL_SECONDS
+    assert cfg.max_agents_per_tick == DEFAULT_MAX_AGENTS_PER_TICK
+
+
+# --------------------------------------------------------------------------- #
+# Positive interval self-enables without MAC_NAP_TICK_ENABLED
+# --------------------------------------------------------------------------- #
+
+
+def test_positive_interval_self_enables():
+    """Setting MAC_NAP_TICK_INTERVAL_SECONDS to a positive value enables the ticker."""
+    cfg = NapTickerConfig.from_env({"MAC_NAP_TICK_INTERVAL_SECONDS": "300"})
+    assert cfg.enabled is True
+    assert cfg.active is True
+    assert cfg.interval_seconds == 300.0
+    assert cfg.configuration_error == ""
+
+
+def test_positive_interval_without_enabled_flag_runs_once(cp):
+    """run_once works when self-enabled via interval without MAC_NAP_TICK_ENABLED."""
+    agent = _due_agent(cp)
+    cfg = NapTickerConfig.from_env({"MAC_NAP_TICK_INTERVAL_SECONDS": "300"})
+    ticker = NapTicker(cp, cfg)
+    report = ticker.run_once()
+    assert report["status"] == "ok"
+    assert report["napped_count"] == 1
+    entry = report["agents"][0]
+    assert entry["agent_id"] == agent.id
+    assert entry["napped"] is True
+
+
+def test_positive_interval_with_invalid_value_does_not_self_enable():
+    """An out-of-range positive interval produces an error and does not self-enable."""
+    cfg = NapTickerConfig.from_env({"MAC_NAP_TICK_INTERVAL_SECONDS": "1"})
+    assert cfg.enabled is False
+    assert cfg.active is False
+    assert "MAC_NAP_TICK_INTERVAL_SECONDS must be between" in cfg.configuration_error
+
+
+def test_legacy_enabled_flag_still_works_without_interval():
+    """MAC_NAP_TICK_ENABLED=1 alone still enables when interval is unset."""
+    cfg = NapTickerConfig.from_env({"MAC_NAP_TICK_ENABLED": "1"})
+    assert cfg.enabled is True
+    assert cfg.active is True
+    assert cfg.interval_seconds == DEFAULT_INTERVAL_SECONDS

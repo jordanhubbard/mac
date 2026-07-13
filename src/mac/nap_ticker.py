@@ -54,7 +54,19 @@ class NapTickerConfig:
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "NapTickerConfig":
         env = os.environ if environ is None else environ
         errors: List[str] = []
-        enabled = str(env.get("MAC_NAP_TICK_ENABLED") or "").strip().lower() in {
+
+        # MAC_NAP_TICK_INTERVAL_SECONDS=0 is a clean opt-out: disable with no
+        # configuration error. Any positive value self-enables the ticker so
+        # neither MAC_NAP_TICK_ENABLED nor a second env line is required.  The
+        # legacy MAC_NAP_TICK_ENABLED flag is still honoured when the interval
+        # variable is absent, preserving backwards compatibility.
+        raw_interval = str(env.get("MAC_NAP_TICK_INTERVAL_SECONDS") or "").strip()
+        if raw_interval == "0":
+            return cls(enabled=False, configuration_error="")
+
+        interval_set = bool(raw_interval)
+
+        enabled_flag = str(env.get("MAC_NAP_TICK_ENABLED") or "").strip().lower() in {
             "1", "true", "yes", "on",
         }
 
@@ -67,6 +79,9 @@ class NapTickerConfig:
                              DEFAULT_INITIAL_DELAY_SECONDS, 0.0, 60 * 60.0)
         max_agents = int(_num("MAC_NAP_TICK_MAX_AGENTS_PER_TICK",
                               DEFAULT_MAX_AGENTS_PER_TICK, 1, 100))
+        # A positive interval value implicitly enables the ticker so operators
+        # need only one env var.  Explicit MAC_NAP_TICK_ENABLED=1 also works.
+        enabled = enabled_flag or (interval_set and not errors)
         return cls(
             enabled=enabled,
             interval_seconds=interval,
