@@ -383,8 +383,10 @@ def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
     assert "--rotate-invalid-attestation-key" in script
     # loop-01: the reviewer prompt that asks for a signed review_verdict moved
     # into the extracted mac.task_executor module.
-    executor_module = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
-    assert "evidence_type=review_verdict" in executor_module
+    executor_prompt = (ROOT / "src" / "mac" / "executor_prompt.py").read_text(
+        encoding="utf-8"
+    )
+    assert "evidence_type=review_verdict" in executor_prompt
 
 
 def test_fleet_deploy_bootstraps_hub_fleet_record(tmp_path):
@@ -954,15 +956,18 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     assert "raise SystemExit(main())" in script
     assert "mac-task-executor" in script
     executor_module = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
+    executor_finalizer = (ROOT / "src" / "mac" / "executor_finalizer.py").read_text(
+        encoding="utf-8"
+    )
     assert "def _hermes_argv(" not in executor_module
     assert '"hermes_cli.main", "chat"' not in executor_module
     assert '"coding-agent-required"' in executor_module
-    assert "def write_fallback_evidence_manifest(" in executor_module
+    assert "def write_fallback_evidence_manifest(" in executor_finalizer
     # autonomy-loop fix (preserved through the extraction): the fallback must
     # never fabricate verified completion — UNVERIFIED operator_result only,
     # never a fake repo_change/test and never a synthetic passing check.
-    assert '"evidence_type": "operator_result",' in executor_module
-    assert '"name": "hermes_chat_query"' not in executor_module
+    assert '"evidence_type": "operator_result",' in executor_finalizer
+    assert '"name": "hermes_chat_query"' not in executor_finalizer
     # telemetry path + memory feed (deployment gets smarter over time)
     executor_memory = (ROOT / "src" / "mac" / "executor_memory.py").read_text(
         encoding="utf-8"
@@ -2212,8 +2217,7 @@ def test_openshell_bootstrap_supports_noninteractive_macos_path():
 
 
 def test_executor_prompt_includes_repository_runtime_contract():
-    # loop-01: the executor (and its prompts) live in mac.task_executor now.
-    script = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
+    script = (ROOT / "src" / "mac" / "executor_prompt.py").read_text(encoding="utf-8")
 
     assert "def repository_contract_section(task: Dict[str, Any]) -> str:" in script
     assert "Repository runtime contract:" in script
@@ -2232,7 +2236,7 @@ def test_executor_prompt_includes_repository_runtime_contract():
 
 
 def test_reviewer_prompt_includes_verdict_contract():
-    script = (ROOT / "src" / "mac" / "task_executor.py").read_text(encoding="utf-8")
+    script = (ROOT / "src" / "mac" / "executor_prompt.py").read_text(encoding="utf-8")
 
     assert "MAC_TASK_REPO_WORKTREE" in script
     assert "local review checkout" in script

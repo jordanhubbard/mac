@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 
 from mac import executor_memory as memory
+from mac import executor_finalizer as finalizer
+from mac import executor_prompt as prompt
 from mac import executor_scope as scope
 from mac import task_executor as te
 
@@ -3786,7 +3788,7 @@ def test_record_recovery_learnings_posts_per_entry(tmp_path, monkeypatch):
     (tmp_path / "harness-recovery-log.json").write_text(json.dumps(recovery_entries))
 
     calls = []
-    monkeypatch.setattr(te, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True)
+    monkeypatch.setattr(finalizer, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True)
 
     task = {"id": "t1", "project": "demo"}
     outcome = {"evidence_type": "repo_change", "outcome": "success", "signals": {}, "error_signature": ""}
@@ -3803,7 +3805,7 @@ def test_record_recovery_learnings_posts_per_entry(tmp_path, monkeypatch):
 def test_record_recovery_learnings_no_log_no_calls(tmp_path, monkeypatch):
     """When recovery log is absent, no learning calls are made."""
     calls = []
-    monkeypatch.setattr(te, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True)
+    monkeypatch.setattr(finalizer, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True)
 
     task = {"id": "t1", "project": "demo"}
     outcome = {"evidence_type": "repo_change", "outcome": "success", "signals": {}, "error_signature": ""}
@@ -3816,7 +3818,7 @@ def test_record_recovery_learnings_empty_log_no_calls(tmp_path, monkeypatch):
     """Empty recovery log → no learning calls."""
     (tmp_path / "harness-recovery-log.json").write_text("[]")
     calls = []
-    monkeypatch.setattr(te, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True)
+    monkeypatch.setattr(finalizer, "record_deployment_learning", lambda task, outcome: calls.append(outcome) or True)
 
     task = {"id": "t1", "project": "demo"}
     outcome = {"evidence_type": "repo_change", "outcome": "failure", "signals": {}, "error_signature": "test failed"}
@@ -3841,7 +3843,7 @@ def test_record_recovery_learnings_tolerates_individual_errors(tmp_path, monkeyp
             raise RuntimeError("transient hub error")
         return True
 
-    monkeypatch.setattr(te, "record_deployment_learning", boom_first)
+    monkeypatch.setattr(finalizer, "record_deployment_learning", boom_first)
 
     task = {"id": "t1", "project": "demo"}
     outcome = {"evidence_type": "repo_change", "outcome": "success", "signals": {}, "error_signature": ""}
@@ -4141,7 +4143,9 @@ def test_finalizer_phase_context_persists_active_and_timeout_state(tmp_path, mon
     events = []
     partial = []
     monkeypatch.setattr(
-        te, "emit_telemetry", lambda event, **detail: events.append((event, detail)) or True
+        finalizer,
+        "emit_telemetry",
+        lambda event, **detail: events.append((event, detail)) or True,
     )
 
     with pytest.raises(subprocess.TimeoutExpired):
@@ -4178,7 +4182,9 @@ def test_git_finalizer_emits_all_phase_lifecycle_events(tmp_path, monkeypatch):
     monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
     events = []
     monkeypatch.setattr(
-        te, "emit_telemetry", lambda event, **detail: events.append((event, detail)) or True
+        finalizer,
+        "emit_telemetry",
+        lambda event, **detail: events.append((event, detail)) or True,
     )
     task = {
         "id": "task_phase_lifecycle",

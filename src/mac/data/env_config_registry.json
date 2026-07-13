@@ -284,6 +284,7 @@
       "src/mac/coding_agent.py",
       "src/mac/deploy_env.py",
       "src/mac/evidence_cli.py",
+      "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
       "src/mac/hermes_runtime.py",
       "src/mac/journal.py",
@@ -582,8 +583,8 @@
     "name": "MAC_ATTESTATION_KEY",
     "retired": false,
     "sources": [
+      "src/mac/executor_finalizer.py",
       "src/mac/k8s/job_executor.py",
-      "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -5410,6 +5411,8 @@
       "deploy/deploy-mac-fleet.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
+      "src/mac/executor_finalizer.py",
+      "src/mac/executor_prompt.py",
       "src/mac/openshell/default-policy.yaml",
       "src/mac/openshell_policy.py",
       "src/mac/openshell_supervisor.py",
@@ -7391,6 +7394,7 @@
     "name": "MAC_TASK_CANONICAL_REMOTE",
     "retired": false,
     "sources": [
+      "src/mac/executor_prompt.py",
       "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
@@ -7505,6 +7509,7 @@
     "name": "MAC_TASK_REPO_BASE_SHA",
     "retired": false,
     "sources": [
+      "src/mac/executor_prompt.py",
       "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
@@ -7517,6 +7522,7 @@
     "name": "MAC_TASK_REPO_BRANCH",
     "retired": false,
     "sources": [
+      "src/mac/executor_prompt.py",
       "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
@@ -7529,6 +7535,7 @@
     "name": "MAC_TASK_REPO_DEFAULT_BRANCH",
     "retired": false,
     "sources": [
+      "src/mac/executor_prompt.py",
       "src/mac/task_executor.py",
       "src/mac/worker.py",
       "src/mac/worker_repo_prep.py"
@@ -7542,6 +7549,7 @@
     "name": "MAC_TASK_REPO_LEASE_ID",
     "retired": false,
     "sources": [
+      "src/mac/executor_prompt.py",
       "src/mac/task_executor.py",
       "src/mac/worker.py"
     ],
@@ -7566,7 +7574,7 @@
     "name": "MAC_TASK_REPO_SOURCE",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py",
+      "src/mac/executor_prompt.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7591,6 +7599,8 @@
     "retired": false,
     "sources": [
       "src/mac/backlog_groomer.py",
+      "src/mac/executor_finalizer.py",
+      "src/mac/executor_prompt.py",
       "src/mac/executor_scope.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/services.py",
@@ -7628,6 +7638,7 @@
     "name": "MAC_TASK_WORKSPACE",
     "retired": false,
     "sources": [
+      "src/mac/executor_prompt.py",
       "src/mac/executor_scope.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/review_finalizer.py",
@@ -7666,7 +7677,7 @@
     "name": "MAC_TEST_STALL_TIMEOUT",
     "retired": false,
     "sources": [
-      "src/mac/task_executor.py"
+      "src/mac/executor_prompt.py"
     ],
     "type": "int"
   },
@@ -7980,6 +7991,7 @@
       "deploy/systemd/mac-fleet-context.service",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
+      "src/mac/executor_finalizer.py",
       "src/mac/executor_hub_io.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/openshell_runtime.py",
@@ -8204,6 +8216,7 @@
     "name": "MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/executor_prompt.py",
       "src/mac/task_executor.py"
     ],
     "type": "int"
@@ -8215,6 +8228,8 @@
     "name": "MAC_WORKER_REPOSITORY_TEST_TIMEOUT",
     "retired": false,
     "sources": [
+      "src/mac/executor_finalizer.py",
+      "src/mac/executor_prompt.py",
       "src/mac/task_executor.py"
     ],
     "type": "int"
