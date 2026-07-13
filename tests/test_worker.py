@@ -3551,3 +3551,117 @@ def test_worker_advertises_all_willing_when_no_service_roles(tmp_path: Path, mon
     worker._sync_service_claims()
     routes_ops = {r["op"] for r in cp.get_agent(registered["id"]).resources.get("media_routes", [])}
     assert routes_ops == {"image.generate", "audio.tts"}  # all willing (unmanaged)
+
+
+def test_command_inventory_finds_cargo_on_path(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Regression: cargo is still discovered via PATH when it is present there."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    cargo = bin_dir / "cargo"
+    cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    cargo.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    commands = _detect_command_inventory()
+
+    assert "cargo" in commands["available"], "cargo must appear in available when it is on PATH"
+    assert commands["paths"]["cargo"] == str(cargo)
+
+
+def test_dispatch_gate_blocks_agent_without_cargo_for_cargo_task():
+    """An agent whose command inventory lacks cargo cannot claim a task that
+    requires cargo in toolchain_requirements.required_commands."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("worker-host")
+    # Register an agent with python but WITHOUT cargo in its command inventory.
+    cp.register_agent(
+        machine.id,
+        "no-cargo-worker",
+        capabilities=["python"],
+        resources={
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "git", "gh"],
+                "paths": {},
+                "truncated": False,
+            }
+        },
+    )
+    # Create a repository task that requires cargo in its toolchain.
+    cargo_task_metadata = {
+        "origin": {
+            "type": "direct_task",
+            "repository_contract": {
+                "schema": "mac.repository_contract.v1",
+                "project": "rust-project",
+                "platforms": ["darwin", "linux"],
+                "toolchain": {"required_commands": ["cargo"]},
+                "bootstrap": {"command": "cargo build"},
+                "test": {"command": "cargo test"},
+                "evidence": {"required": ["tests"]},
+            },
+        }
+    }
+    cp.create_task(
+        "Rust build task",
+        required_capabilities=["python"],
+        metadata=cargo_task_metadata,
+    )
+
+    assignment = cp.dispatch_once()
+
+    assert assignment is None, (
+        "An agent without cargo in its command inventory must not be dispatched "
+        "a task that requires cargo"
+    )
+
+
+def test_dispatch_gate_allows_agent_with_cargo_for_cargo_task():
+    """An agent whose command inventory includes cargo can be dispatched a task
+    that requires cargo in toolchain_requirements.required_commands."""
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("worker-host")
+    # Register an agent WITH cargo in its command inventory.
+    cp.register_agent(
+        machine.id,
+        "cargo-worker",
+        capabilities=["python"],
+        resources={
+            "commands": {
+                "schema": "mac.command_inventory.v1",
+                "available": ["python3", "git", "gh", "cargo"],
+                "paths": {"cargo": "/home/user/.cargo/bin/cargo"},
+                "truncated": False,
+            }
+        },
+    )
+    cargo_task_metadata = {
+        "origin": {
+            "type": "direct_task",
+            "repository_contract": {
+                "schema": "mac.repository_contract.v1",
+                "project": "rust-project",
+                "platforms": ["darwin", "linux"],
+                "toolchain": {"required_commands": ["cargo"]},
+                "bootstrap": {"command": "cargo build"},
+                "test": {"command": "cargo test"},
+                "evidence": {"required": ["tests"]},
+            },
+        }
+    }
+    task = cp.create_task(
+        "Rust build task",
+        required_capabilities=["python"],
+        metadata=cargo_task_metadata,
+    )
+
+    assignment = cp.dispatch_once()
+
+    assert assignment is not None, (
+        "An agent with cargo in its command inventory must be eligible for a "
+        "task that requires cargo"
+    )
+    assert assignment["task"]["id"] == task.id
