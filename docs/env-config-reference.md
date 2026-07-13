@@ -248,6 +248,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_WORKER_MODE` | str | consumer-defined | deployment | Deployment setting: deploy worker mode. |
 | `MAC_DEPLOY_WORKER_REQUIRED_METADATA` | bool | consumer-defined | deployment | Deployment setting: deploy worker required metadata. |
 | `MAC_DEPLOY_WORKER_REQUIRE_CANARY` | bool | consumer-defined | deployment | Deployment setting: deploy worker require canary. |
+| `MAC_DIRECTABLE_TIMEOUT` | int | consumer-defined | core | Core setting: directable timeout. |
 | `MAC_DISPATCH_PRIORITY_AGING_SECONDS` | int | consumer-defined | core | Core setting: dispatch priority aging seconds. |
 | `MAC_EVIDENCE_ARTIFACT_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact max bytes. |
 | `MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact total max bytes. |
@@ -297,6 +298,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HERMES_RUNTIME_CONTEXT_FILE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context file. |
 | `MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context markdown. |
 | `MAC_HERMES_RUNTIME_CONTEXT_REQUIRED` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes runtime context required. |
+| `MAC_HERMES_SCRIPTS_DIR` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes scripts dir. |
 | `MAC_HERMES_SLACK_API_BASE` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes slack api base. |
 | `MAC_HERMES_SLACK_HOME_CHANNELS_JSON` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes slack home channels json. |
 | `MAC_HERMES_SLACK_HOME_CHANNEL_NAME` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes slack home channel name. |
@@ -419,6 +421,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_ROUTER_URL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router url. |
 | `MAC_OPENCLAW_SANDBOX` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox. |
 | `MAC_OPENCLAW_SANDBOX_NAME` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox name. |
+| `MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script job output dir. |
+| `MAC_OPENCLAW_SCRIPT_RUNNER_SRC` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script runner src. |
 | `MAC_OPENCLAW_SKIP_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw skip image. |
 | `MAC_OPENCLAW_SLACK_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack account id. |
 | `MAC_OPENCLAW_SLACK_ACCOUNT_IDS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack account ids. |
@@ -678,6 +682,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_COMMAND_INVENTORY_MAX` | int | consumer-defined | worker | Worker setting: worker command inventory max. |
 | `MAC_WORKER_COMMAND_PROBES` | str | consumer-defined | worker | Worker setting: worker command probes. |
 | `MAC_WORKER_DELIVERY_DRAIN_SECONDS` | int | consumer-defined | worker | Worker setting: worker delivery drain seconds. |
+| `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
 | `MAC_WORKER_EXECUTOR` | str | consumer-defined | worker | Worker setting: worker executor. |
 | `MAC_WORKER_HEARTBEAT_INTERVAL` | int | consumer-defined | worker | Worker setting: worker heartbeat interval. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | str | consumer-defined | worker | Worker setting: worker hermes instance id. |

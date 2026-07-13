@@ -319,6 +319,7 @@
       "src/mac/router_app.py",
       "src/mac/source_convergence_service.py",
       "src/mac/worker.py",
+      "src/mac/worker_directable.py",
       "src/mac/worker_reflect.py",
       "src/mac/worker_subprocess.py"
     ],
@@ -2964,6 +2965,18 @@
   },
   {
     "default": null,
+    "description": "Core setting: directable timeout.",
+    "family": "core",
+    "name": "MAC_DIRECTABLE_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py",
+      "src/mac/worker_directable.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: dispatch priority aging seconds.",
     "family": "core",
     "name": "MAC_DISPATCH_PRIORITY_AGING_SECONDS",
@@ -3607,6 +3620,18 @@
       "src/mac/hermes_startup.py"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Hermes Runtime setting: hermes scripts dir.",
+    "family": "hermes-runtime",
+    "name": "MAC_HERMES_SCRIPTS_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/run-script-cron-job.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -4620,7 +4645,10 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/run-script-cron-job.py",
       "src/mac/acp/backend.py",
+      "src/mac/worker_directable.py",
       "src/mac/worker_reflect.py"
     ],
     "type": "str"
@@ -4937,6 +4965,8 @@
     "name": "MAC_OPENCLAW_MESSAGE_BIN",
     "retired": false,
     "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/run-script-cron-job.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -5086,6 +5116,29 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw script job output dir.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/run-script-cron-job.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw script runner src.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_SCRIPT_RUNNER_SRC",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw skip image.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_SKIP_IMAGE",
@@ -5104,6 +5157,7 @@
     "sources": [
       "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openclaw/run-script-cron-job.py",
       "scripts/mac-fetch-openclaw-secrets.py",
       "src/mac/deploy_env.py"
     ],
@@ -8143,6 +8197,7 @@
       "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/openshell_runtime.py",
+      "src/mac/worker_directable.py",
       "src/mac/worker_reflect.py"
     ],
     "type": "str"
@@ -8255,6 +8310,18 @@
       "src/mac/worker.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker directable.",
+    "family": "worker",
+    "name": "MAC_WORKER_DIRECTABLE",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py",
+      "src/mac/worker_directable.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,
