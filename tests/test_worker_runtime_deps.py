@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from mac.worker import REQUIRED_RUNTIME_PIP, MacWorker
+from mac.worker_runtime_deps import REQUIRED_RUNTIME_PIP, RuntimeDepsMixin
 
 
 class _DummyLock:
@@ -19,9 +19,9 @@ class _DummyLock:
         pass
 
 
-def _worker() -> MacWorker:
-    """A bare MacWorker with the heavy/side-effecting bits stubbed."""
-    w = object.__new__(MacWorker)
+def _worker() -> RuntimeDepsMixin:
+    """A bare extracted mixin with the heavy/side-effecting bits stubbed."""
+    w = object.__new__(RuntimeDepsMixin)
     w._agent_venv_python = lambda: "python3"
     w._install_lock = lambda: _DummyLock()
     w._update_footprint = lambda *a, **k: None
@@ -45,7 +45,7 @@ def _worker() -> MacWorker:
     ],
 )
 def test_pip_spec_satisfied(spec, installed, expected):
-    assert MacWorker._pip_spec_satisfied(spec, installed) is expected
+    assert RuntimeDepsMixin._pip_spec_satisfied(spec, installed) is expected
 
 
 # -- ensure_pip installs only the deltas ------------------------------------

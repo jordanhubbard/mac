@@ -7541,6 +7541,9 @@ class ControlPlane:
         prior state, and why. Recovery counterpart to :meth:`reopen_task`.
         """
         task = self.get_task(task_id)
+        # get_task accepts unambiguous display prefixes, but every mutation and
+        # foreign-keyed audit row must use the canonical full identifier.
+        task_id = task.id
         if task.state == TaskState.COMPLETED.value:
             return task
         now = utcnow()

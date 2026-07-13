@@ -10770,6 +10770,21 @@ def test_force_complete_overrides_review_gate_for_stranded_task(cp):
     assert hist[-1].detail.get("from_state") == TaskState.FAILED.value
 
 
+def test_force_complete_normalizes_unambiguous_task_prefix(cp):
+    task = cp.create_task("done out of band through short id")
+    cp.transition_task(task.id, TaskState.BLOCKED.value, "dispatcher", {"reason": "stranded"})
+
+    completed = cp.force_complete_task(
+        task.id[:13], "operator", reason="verified canonical commit"
+    )
+
+    assert completed.id == task.id
+    assert completed.state == TaskState.COMPLETED.value
+    event = cp.task_history(task.id)[-1]
+    assert event.event_type == "task.force_completed"
+    assert event.detail["reason"] == "verified canonical commit"
+
+
 # ---------------------------------------------------------------------------
 # mac-kg8y: Rollout promotion / rollback must atomically deploy to environment
 # ---------------------------------------------------------------------------
