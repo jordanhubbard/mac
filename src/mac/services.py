@@ -11761,6 +11761,57 @@ class ControlPlane:
             "target_agent_id": target.id,
         }
 
+    def verify_human_directive(self, stream_id: str) -> JsonDict:
+        """Confirm a cited stream is a genuine operator-minted human directive.
+
+        Closes the relay-by-citation gap Natasha hit (2026-07-13): AGENTS.md
+        tells agents to relay authority by citing a directive stream id and
+        letting the receiver verify at the hub — but there was no way to
+        verify. A directive is genuine iff its topic is human.directive.v1
+        AND its sender is the reserved operator persona; the API layer refuses
+        agent tokens minting that topic, so those two facts together are proof
+        of operator origin. Any agent may call this (directives are
+        fleet-readable), which is exactly what relay-by-citation needs.
+        """
+        from mac.agentbus_service import HUMAN_DIRECTIVE_TOPIC
+
+        try:
+            stream = self.get_agentbus_stream(stream_id)
+        except NotFoundError:
+            return {
+                "schema": "mac.human.directive_verification.v1",
+                "stream_id": stream_id,
+                "verified": False,
+                "reason": "no such stream",
+            }
+        genuine = (
+            stream.topic == HUMAN_DIRECTIVE_TOPIC
+            and stream.sender_agent_id == self.OPERATOR_PERSONA_AGENT_ID
+        )
+        if not genuine:
+            return {
+                "schema": "mac.human.directive_verification.v1",
+                "stream_id": stream_id,
+                "verified": False,
+                "reason": "stream is not an operator-minted human directive",
+            }
+        payload = None
+        chunks = self.read_agentbus_chunks(
+            self.OPERATOR_PERSONA_AGENT_ID, stream_id, limit=1
+        )
+        if chunks and isinstance(chunks[0].payload, dict):
+            payload = chunks[0].payload
+        headers = stream.headers or {}
+        return {
+            "schema": "mac.human.directive_verification.v1",
+            "stream_id": stream_id,
+            "verified": True,
+            "issued_by": str(headers.get("issued_by") or "human"),
+            "target_agent_id": stream.recipient_agent_id,
+            "message": str((payload or {}).get("message") or ""),
+            "created_at": stream.created_at,
+        }
+
     def set_agentbus_consumer_cursor(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.agentbus.set_consumer_cursor(*args, **kwargs)
 

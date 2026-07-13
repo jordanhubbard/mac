@@ -7413,6 +7413,15 @@ def create_app(
             agent_id, schema=schema_name, **values
         )
 
+    @app.get("/agentbus/streams/{stream_id}/directive-verification")
+    def verify_human_directive_route(
+        stream_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Any authenticated agent can verify a cited directive stream is a
+        genuine operator-minted human directive (relay-by-citation)."""
+        return cp.verify_human_directive(stream_id)
+
     @app.get("/v1/agents/{agent_id}/agentbus-cursor")
     def get_agentbus_cursor(
         agent_id: str,

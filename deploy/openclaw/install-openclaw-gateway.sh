@@ -773,7 +773,11 @@ capability:
   is noise. Skip the play-by-play.
 - **Do not ask permission for ordinary work.** Reads, searches, computations,
   writes to your own workspace, reporting — just do them. Never pause a
-  routine, non-destructive task for a human countersignature.
+  routine, non-destructive task for a human countersignature. ("Ordinary" does
+  NOT include the explicitly gated actions below — durable-memory writes that
+  require an approval id, approval-carrying operations, or anything the floor
+  names. Those keep their gate; this rule only removes hesitation from the
+  routine work around them.)
 - **Surface only real blockers.** If you are genuinely stuck on something
   irreversible or destructive, say so once — then keep working on everything
   else. Ordinary uncertainty you resolve yourself.
@@ -1344,7 +1348,7 @@ if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled
 if not {
     "memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
     "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear",
-    "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_agent_inbox",
+    "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_fs_put", "mac_fs_get", "mac_directive_verify", "mac_agent_inbox",
     "mac_image_generate",
     "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
 } <= tools:

@@ -1104,6 +1104,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("DELETE", "/agents/{agent_id}"): {"agent_id": "delete_agent_id"},
         ("POST", "/v1/agents/{agent_id}/deregister"): {"agent_id": "deregister_agent_id"},
         ("GET", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
+        ("GET", "/agentbus/streams/{stream_id}/directive-verification"): {"stream_id": "stream_id"},
         ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
         ("POST", "/agents/bulk"): {},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
