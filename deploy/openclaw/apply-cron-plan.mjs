@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Idempotently translate a host-generated Hermes cron plan into OpenClaw jobs.
 
-import {readFileSync} from "node:fs";
+import {readFileSync, writeFileSync} from "node:fs";
+import {dirname, join} from "node:path";
 import {spawnSync} from "node:child_process";
 
 const planPath = process.argv[2];
@@ -61,6 +62,13 @@ function deliveryArgs(job) {
 }
 
 let deferredScriptJobs = 0;
+// Script-backed jobs are installed DISABLED here (they cannot run their host
+// pre-run script inside the sandbox). We ALSO emit a host-runner spec for each
+// so the two-stage flow can be restored on the HOST, where the scripts and the
+// Hermes session DB live. install-openclaw-gateway.sh installs the runner
+// (mac-cron-script-runner = run-script-cron-job.py) and schedules these jobs
+// via the host supervisor (launchd/systemd). See task_c8bb46ec.
+const hostScriptJobs = [];
 for (const job of plan.jobs) {
   const name = String(job.name || job.legacy_id || "hermes-job").trim();
   // A Hermes two-stage job ran a pre-run script on the host and injected its
@@ -78,7 +86,22 @@ for (const job of plan.jobs) {
     ? `Hermes cron ${job.legacy_id || name}: pre-run script (${legacyScript}) NOT yet ported to OpenClaw; disabled so it does not fire without its data`
     : `Migrated losslessly from Hermes cron ${job.legacy_id || name}`;
   const enable = hasScript ? false : Boolean(job.enabled);
-  if (hasScript) deferredScriptJobs += 1;
+  if (hasScript) {
+    deferredScriptJobs += 1;
+    // Restore this two-stage job host-side: carry the fields the host runner
+    // needs (name, cron, script, message, delivery/origin) so it can run the
+    // pre-run script, inject its stdout under "## Script Output", and deliver.
+    hostScriptJobs.push({
+      name,
+      cron: String(job.cron),
+      legacy_script: legacyScript,
+      message: String(job.message || ""),
+      delivery: job.delivery ?? null,
+      origin: job.origin ?? null,
+      legacy_id: job.legacy_id ?? null,
+      enabled: Boolean(job.enabled),
+    });
+  }
   const common = [
     "--name", name,
     "--cron", String(job.cron),
@@ -97,13 +120,42 @@ for (const job of plan.jobs) {
   }
 }
 
+// Emit the host-runner spec next to the plan so the installer can restore the
+// disabled script-backed jobs on the host. Writing must never crash cron
+// installation, so failures are logged and swallowed.
+let hostScriptJobsPath = null;
+try {
+  hostScriptJobsPath = join(dirname(planPath), "host-script-jobs.json");
+  writeFileSync(
+    hostScriptJobsPath,
+    JSON.stringify(
+      {
+        schema: "mac.openclaw_host_script_jobs.v1",
+        generated_from: planPath,
+        jobs: hostScriptJobs,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+} catch (error) {
+  console.warn(`apply-cron-plan: could not write host-script-jobs.json: ${error?.message || error}`);
+  hostScriptJobsPath = null;
+}
+
 if (deferredScriptJobs > 0) {
   console.warn(
     `apply-cron-plan: ${deferredScriptJobs} script-backed Hermes job(s) installed DISABLED ` +
-    `(pre-run script stage not yet ported to OpenClaw). See task_c8bb46ec.`,
+    `(pre-run script runs host-side via mac-cron-script-runner; spec at ${hostScriptJobsPath}). ` +
+    `See task_c8bb46ec.`,
   );
 }
 
 process.stdout.write(
-  JSON.stringify({schema: plan.schema, applied: plan.jobs.length, deferred_script_jobs: deferredScriptJobs}) + "\n",
+  JSON.stringify({
+    schema: plan.schema,
+    applied: plan.jobs.length,
+    deferred_script_jobs: deferredScriptJobs,
+    host_script_jobs: hostScriptJobs.length,
+  }) + "\n",
 );

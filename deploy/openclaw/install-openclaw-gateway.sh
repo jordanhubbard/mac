@@ -1213,6 +1213,226 @@ PY
   log "replaced stale sandbox (version=$version image_revision=${image_revision:-missing}) after owner-only state backup at $stamp"
 }
 
+schedule_launchd_script_job() {
+  # launchd StartCalendarInterval with only Minute => hourly at that minute;
+  # add Hour for a specific daily time. Idempotent: the plist is rewritten and
+  # re-bootstrapped on every install.
+  local fleet="$1" slug="$2" name="$3" minute="$4" hour="$5" runner="$6" \
+    specs="$7" scripts_dir="$8" output_dir="$9"
+  local label="com.${fleet}.openclaw-script-${slug}"
+  local plist="$HOME/Library/LaunchAgents/${label}.plist"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  local cal="  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Minute</key><integer>${minute}</integer>"
+  if [ -n "$hour" ]; then
+    cal="$cal
+    <key>Hour</key><integer>${hour}</integer>"
+  fi
+  cal="$cal
+  </dict>"
+  cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>python3</string>
+    <string>${runner}</string>
+    <string>--jobs-file</string>
+    <string>${specs}</string>
+    <string>--name</string>
+    <string>${name}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MAC_OPENCLAW_AGENT_BIN</key><string>${AGENT_WRAPPER_PATH}</string>
+    <key>MAC_OPENCLAW_MESSAGE_BIN</key><string>${MESSAGE_WRAPPER_PATH}</string>
+    <key>MAC_HERMES_SCRIPTS_DIR</key><string>${scripts_dir}</string>
+    <key>MAC_OPENCLAW_SLACK_ACCOUNT_ID</key><string>${MAC_OPENCLAW_SLACK_ACCOUNT_ID}</string>
+    <key>MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR</key><string>${output_dir}</string>
+  </dict>
+${cal}
+  <key>StandardOutPath</key><string>${output_dir}/${slug}.log</string>
+  <key>StandardErrorPath</key><string>${output_dir}/${slug}.log</string>
+</dict>
+</plist>
+EOF
+  if command -v plutil >/dev/null 2>&1; then
+    plutil -lint "$plist" >/dev/null || true
+  fi
+  local uid
+  uid="$(id -u)"
+  launchctl bootout "gui/$uid/${label}" >/dev/null 2>&1 || true
+  launchctl enable "gui/$uid/${label}" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$uid" "$plist" >/dev/null 2>&1 \
+    || launchctl kickstart -k "gui/$uid/${label}" >/dev/null 2>&1 || true
+  log "scheduled host script job '$name' via launchd ($label)"
+}
+
+schedule_systemd_script_job() {
+  # A systemd --user oneshot service driven by a timer. OnCalendar with '*' in
+  # the hour position => hourly at that minute; a fixed hour => daily. The unit
+  # files are rewritten every install so scheduling stays idempotent.
+  local fleet="$1" slug="$2" name="$3" minute="$4" hour="$5" runner="$6" \
+    specs="$7" scripts_dir="$8" output_dir="$9"
+  local unit="${fleet}-openclaw-script-${slug}"
+  local udir="$HOME/.config/systemd/user"
+  mkdir -p "$udir"
+  local oncal
+  if [ -n "$hour" ]; then
+    oncal="*-*-* ${hour}:${minute}:00"
+  else
+    oncal="*-*-* *:${minute}:00"
+  fi
+  cat > "$udir/${unit}.service" <<EOF
+[Unit]
+Description=MAC OpenClaw host two-stage cron job (${name})
+
+[Service]
+Type=oneshot
+Environment=MAC_OPENCLAW_AGENT_BIN=${AGENT_WRAPPER_PATH}
+Environment=MAC_OPENCLAW_MESSAGE_BIN=${MESSAGE_WRAPPER_PATH}
+Environment=MAC_HERMES_SCRIPTS_DIR=${scripts_dir}
+Environment=MAC_OPENCLAW_SLACK_ACCOUNT_ID=${MAC_OPENCLAW_SLACK_ACCOUNT_ID}
+Environment=MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR=${output_dir}
+ExecStart=/usr/bin/env python3 ${runner} --jobs-file ${specs} --name "${name}"
+EOF
+  cat > "$udir/${unit}.timer" <<EOF
+[Unit]
+Description=Schedule MAC OpenClaw host two-stage cron job (${name})
+
+[Timer]
+OnCalendar=${oncal}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  systemctl --user enable --now "${unit}.timer" >/dev/null 2>&1 || true
+  log "scheduled host script job '$name' via systemd --user (${unit}.timer)"
+}
+
+install_host_script_runner() {
+  # Restore Hermes two-stage (script-backed) cron jobs on the HOST, where the
+  # pre-run scripts (~/.hermes/scripts/*.py) and the Hermes session DB live.
+  # apply-cron-plan.mjs installs those jobs DISABLED inside the sandbox and
+  # emits an equivalent host-script-jobs.json; the sandbox filesystem is not
+  # readable from here, so we derive the same spec from the HOST copy of the
+  # plan and schedule the host runner to reproduce the two-stage flow. Hosts
+  # with no ~/.hermes/scripts still install cleanly — the runner emits an
+  # explicit "(script <name> unavailable)" note instead of a phantom reference.
+  local runner_src="${MAC_OPENCLAW_SCRIPT_RUNNER_SRC:-$(dirname "$0")/run-script-cron-job.py}"
+  local runner_dst="$MAC_HOME/bin/mac-cron-script-runner"
+  if [ ! -f "$runner_src" ]; then
+    log "host script runner source not found ($runner_src); skipping two-stage restore"
+    return 0
+  fi
+  mkdir -p "$MAC_HOME/bin"
+  cp -f "$runner_src" "$runner_dst"
+  chmod 0700 "$runner_dst"
+
+  local specs="$OPENCLAW_HOST_DIR/host-script-jobs.json"
+  local tsv
+  tsv="$(mktemp "${TMPDIR:-/tmp}/mac-host-script-jobs.XXXXXX")"
+  python3 - "$MANAGED_DIR/cron-plan.json" "$specs" >"$tsv" <<'PY'
+import json
+import os
+import re
+import sys
+
+plan_path, specs_path = sys.argv[1], sys.argv[2]
+try:
+    with open(plan_path, encoding="utf-8") as handle:
+        plan = json.load(handle)
+except (OSError, ValueError):
+    plan = {}
+jobs = plan.get("jobs") if isinstance(plan, dict) else None
+if not isinstance(jobs, list):
+    jobs = []
+out = []
+for job in jobs:
+    if not isinstance(job, dict):
+        continue
+    script = str(job.get("legacy_script") or "").strip()
+    if not script:
+        continue
+    out.append(
+        {
+            "name": str(job.get("name") or job.get("legacy_id") or "hermes-job").strip(),
+            "cron": str(job.get("cron") or ""),
+            "legacy_script": script,
+            "message": str(job.get("message") or ""),
+            "delivery": job.get("delivery"),
+            "origin": job.get("origin"),
+            "legacy_id": job.get("legacy_id"),
+            "enabled": bool(job.get("enabled", True)),
+        }
+    )
+with open(specs_path, "w", encoding="utf-8") as handle:
+    json.dump({"schema": "mac.openclaw_host_script_jobs.v1", "jobs": out}, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+os.chmod(specs_path, 0o600)
+for job in out:
+    fields = job["cron"].split()
+    minute = fields[0] if fields and fields[0].isdigit() else "0"
+    hour = fields[1] if len(fields) > 1 and fields[1].isdigit() else ""
+    slug = re.sub(r"[^a-z0-9]+", "-", job["name"].lower()).strip("-") or "job"
+    sys.stdout.write("\t".join([slug, job["name"], minute, hour]) + "\n")
+PY
+
+  if [ ! -s "$tsv" ]; then
+    rm -f "$tsv"
+    log "no script-backed Hermes cron jobs to restore host-side"
+    return 0
+  fi
+
+  if truthy "$DRY_RUN"; then
+    log "DRY-RUN: host script runner installed at $runner_dst; would schedule jobs from $specs"
+    rm -f "$tsv"
+    return 0
+  fi
+
+  local fleet="$MAC_OPENCLAW_FLEET_NAME"
+  local supervisor="${MAC_OPENCLAW_SUPERVISOR:-auto}"
+  if [ "$supervisor" = auto ]; then
+    if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+      supervisor=systemd
+    elif [ "$(uname -s)" = Darwin ]; then
+      supervisor=launchd
+    else
+      supervisor=supervisord
+    fi
+  fi
+
+  local scripts_dir="${MAC_HERMES_SCRIPTS_DIR:-${HERMES_HOME:-$HOME/.hermes}/scripts}"
+  local output_dir="$OPENCLAW_HOST_DIR/script-jobs/output"
+  mkdir -p "$output_dir"
+  chmod 0700 "$output_dir" 2>/dev/null || true
+
+  local slug name minute hour
+  while IFS="$(printf '\t')" read -r slug name minute hour; do
+    [ -n "$slug" ] || continue
+    case "$supervisor" in
+      launchd)
+        schedule_launchd_script_job "$fleet" "$slug" "$name" "$minute" "$hour" \
+          "$runner_dst" "$specs" "$scripts_dir" "$output_dir" ;;
+      systemd)
+        schedule_systemd_script_job "$fleet" "$slug" "$name" "$minute" "$hour" \
+          "$runner_dst" "$specs" "$scripts_dir" "$output_dir" ;;
+      *)
+        log "supervisor $supervisor has no host script-job scheduler; runner at $runner_dst (invoke manually)" ;;
+    esac
+  done < "$tsv"
+  rm -f "$tsv"
+  log "restored host-side two-stage script cron jobs ($supervisor)"
+}
+
 prepare() {
   source_host_env
   validate_env
@@ -1236,6 +1456,7 @@ prepare() {
     backup_and_delete_stale_sandbox "$openshell_bin"
   fi
   write_host_wrapper "$openshell_bin"
+  install_host_script_runner
   printf '%s\n' "$OPENCLAW_IMAGE" > "$OPENCLAW_HOST_DIR/image-ref"
   chmod 0600 "$OPENCLAW_HOST_DIR/image-ref"
   log "prepared stock OpenClaw $OPENCLAW_VERSION for sandbox $SANDBOX_NAME"
