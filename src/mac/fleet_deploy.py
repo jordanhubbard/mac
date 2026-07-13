@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Mapping, Optional
@@ -206,9 +208,6 @@ def write_owner_only_file(path: Path, text: str, *, encoding: str = "utf-8") -> 
     state.  The temporary file is created in the same directory as *path* to
     ensure ``os.replace`` is always within a single filesystem.
     """
-    import os
-    import tempfile
-
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=".%s." % path.name, dir=str(path.parent))
