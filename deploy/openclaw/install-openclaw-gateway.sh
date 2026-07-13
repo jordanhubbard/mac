@@ -555,6 +555,10 @@ config = {
         "defaults": {
             "model": {"primary": provider_model},
             "workspace": "/sandbox/workspace",
+            # Agent-turn LLM budget. The stock default timed out jordanh-gke's
+            # first hub-verified directive turn mid-benchmark (2026-07-13):
+            # pod->hub router latency plus a long turn needs headroom.
+            "timeoutSeconds": int(os.environ.get("MAC_OPENCLAW_AGENT_TIMEOUT_SECONDS", "300")),
         },
         "list": [{
             "id": "main",

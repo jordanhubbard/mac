@@ -4608,6 +4608,17 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw agent timeout seconds.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_AGENT_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw bootstrap token.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_BOOTSTRAP_TOKEN",

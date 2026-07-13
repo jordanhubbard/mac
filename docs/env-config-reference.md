@@ -377,6 +377,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OBSERVABILITY_VERBOSE_POLL` | bool | consumer-defined | core | Core setting: observability verbose poll. |
 | `MAC_OPENCLAW_AGENT_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw agent bin. |
 | `MAC_OPENCLAW_AGENT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw agent id. |
+| `MAC_OPENCLAW_AGENT_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw agent timeout seconds. |
 | `MAC_OPENCLAW_BOOTSTRAP_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw bootstrap token. |
 | `MAC_OPENCLAW_BUILD_CONTEXT` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw build context. |
 | `MAC_OPENCLAW_CANARY_OK` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw canary ok. |
