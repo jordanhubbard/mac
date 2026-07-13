@@ -3438,11 +3438,16 @@ def create_app(
         cp = ControlPlane(SQLiteStore(db_path))
     else:
         cp = ControlPlane(make_store_from_env())
-    tokens: Dict[str, TokenPrincipal] = (
-        _normalize_auth_tokens(auth_tokens)
-        if auth_tokens is not None
-        else _load_auth_tokens_from_env()
-    )
+    # When the caller injects a control_plane or db_path directly (embedded/test
+    # mode) and does not supply explicit auth_tokens, default to no-auth so the
+    # injected instance behaves hermetically.  Production ``create_app()``
+    # (no control_plane, no db_path) always loads tokens from the environment.
+    if auth_tokens is not None:
+        tokens: Dict[str, TokenPrincipal] = _normalize_auth_tokens(auth_tokens)
+    elif control_plane is not None or db_path is not None:
+        tokens = {}
+    else:
+        tokens = _load_auth_tokens_from_env()
     # Production factory invocations (``create_app()``) merge the hub-local,
     # hashed client registry on every request.  Tests and embedded callers that
     # inject a control plane stay hermetic unless they explicitly pass a path.
