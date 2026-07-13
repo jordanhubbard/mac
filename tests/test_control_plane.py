@@ -8048,6 +8048,153 @@ def test_tick_exhausted_executor_failed_creates_environment_repair_task(cp):
     assert task.id in exhausted_ids
 
 
+
+def test_tick_exhausted_worker_exception_creates_environment_repair_task(cp):
+    task = cp.create_task(
+        "exhausted worker_exception attempt",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "worker_exception", "failure": "worker_exception"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value
+    assert waiting.metadata["failure_class"] == "environment"
+    assert len(waiting.dependencies) == 1
+    repair = cp.get_task(waiting.dependencies[0])
+    assert repair.metadata["origin"]["type"] == "environment_prerequisite"
+    assert repair.metadata["origin"]["parent_task_id"] == task.id
+    assert waiting.metadata["environment_repair_task_id"] == repair.id
+    assert "contract_repair_task_id" not in waiting.metadata
+    exhausted_ids = [item["id"] for item in result["auto_retry_exhausted"]]
+    assert task.id in exhausted_ids
+
+
+def test_tick_exhausted_environment_failure_resets_attempt_count_to_zero(cp):
+    task = cp.create_task(
+        "exhausted environment failure resets attempt count",
+        required_capabilities=["python"],
+        max_attempts=2,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "worker_exception"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (2, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value
+    assert int(waiting.attempt_count or 0) == 0
+
+
+def test_tick_exhausted_environment_failure_transition_detail_and_metadata(cp):
+    task = cp.create_task(
+        "exhausted environment failure detail check",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "heartbeat_offline"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value
+    assert waiting.metadata.get("contract_repair_status") == "waiting"
+    assert waiting.metadata.get("failure_class") == "environment"
+    assert waiting.metadata.get("environment_repair_task_id"), "repair task id should be set"
+    history = cp.task_history(task.id)
+    waiting_events = [
+        e for e in history
+        if e.to_state == TaskState.WAITING.value
+    ]
+    assert waiting_events, "Expected a history event transitioning to waiting"
+
+
+def test_tick_exhausted_environment_repair_task_title_and_description(cp):
+    task = cp.create_task(
+        "my important task needing repair",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "worker_exception"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    repair_id = waiting.metadata["environment_repair_task_id"]
+    repair = cp.get_task(repair_id)
+    assert "my important task needing repair" in repair.title
+    assert task.id in repair.description
+    assert "environment" in repair.description.lower() or "prerequisite" in repair.description.lower()
+
+
+def test_tick_exhausted_environment_repair_task_idempotent(cp):
+    task = cp.create_task(
+        "exhausted environment repair idempotency",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "worker_exception"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+    first_waiting = cp.get_task(task.id)
+    first_repair_id = first_waiting.metadata["environment_repair_task_id"]
+    first_deps = list(first_waiting.dependencies)
+
+    # Simulate a second tick by manually re-running the exhausted transition
+    # The repair task should already be recorded; no second repair should be created
+    cp.tick(limit=0)
+
+    second_waiting = cp.get_task(task.id)
+    assert second_waiting.metadata["environment_repair_task_id"] == first_repair_id
+    assert set(second_waiting.dependencies) == set(first_deps)
+
+
 def test_claim_exhausted_attempt_records_failure_class(cp):
     agent = register_agent(cp, capabilities=["python"])
     task = cp.create_task(

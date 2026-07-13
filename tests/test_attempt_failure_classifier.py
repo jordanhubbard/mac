@@ -109,3 +109,104 @@ def test_attempt_failure_classifier_executor_failed_in_mixed_history():
 
     assert result.failure_class == "environment"
     assert result.salvage.get("pushed_branch") == "mac/agent/task"
+
+
+def test_attempt_failure_classifier_classifies_worker_exception_as_environment():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "worker_exception",
+                    "failure": "worker_exception",
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "environment"
+
+
+def test_attempt_failure_classifier_classifies_network_error_as_environment():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "agent went offline",
+                    "error": "network connection refused",
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "environment"
+
+
+def test_attempt_failure_classifier_classifies_rate_limit_as_environment():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "error": "rate limit exceeded, please retry",
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "environment"
+
+
+def test_attempt_failure_classifier_classifies_command_not_found_as_environment():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "error": "command not found: python3",
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "environment"
+
+
+def test_attempt_failure_classifier_classifies_authentication_failed_as_environment():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "worker_exception",
+                    "error": "authentication failed: could not clone repository",
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "environment"
+
+
+def test_attempt_failure_classifier_scope_preempts_environment():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "worker_exception",
+                    "problems": ["agent run timed out"],
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "scope"
+
+
+def test_attempt_failure_classifier_empty_history_classifies_as_work():
+    result = classify_attempt_failure([])
+
+    assert result.failure_class == "work"
+    assert result.salvage == {}
