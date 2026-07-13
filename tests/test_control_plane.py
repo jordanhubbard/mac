@@ -8126,7 +8126,7 @@ def test_tick_exhausted_environment_failure_transition_detail_and_metadata(cp):
 
     waiting = cp.get_task(task.id)
     assert waiting.state == TaskState.WAITING.value
-    assert waiting.metadata.get("contract_repair_status") == "waiting"
+    assert "contract_repair_status" not in waiting.metadata, "contract_repair_status must not be set for environment failures"
     assert waiting.metadata.get("failure_class") == "environment"
     assert waiting.metadata.get("environment_repair_task_id"), "repair task id should be set"
     history = cp.task_history(task.id)
@@ -8221,6 +8221,65 @@ def test_claim_exhausted_attempt_records_failure_class(cp):
     assert len(failed.dependencies) == 1
     repair = cp.get_task(failed.dependencies[0])
     assert repair.metadata["origin"]["type"] == "contract_prerequisite"
+
+
+def test_tick_exhausted_contract_failure_sets_contract_repair_status_waiting(cp):
+    """contract_repair_status=waiting is set on contract failure path."""
+    task = cp.create_task(
+        "exhausted contract failure repair status",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "verification_contract_failed"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value
+    assert waiting.metadata.get("contract_repair_status") == "waiting", (
+        "contract_repair_status must be 'waiting' on contract failure path"
+    )
+    assert waiting.metadata.get("contract_repair_task_id"), "contract_repair_task_id must be set"
+    assert "environment_repair_task_id" not in waiting.metadata
+
+
+def test_tick_exhausted_environment_failure_does_not_set_contract_repair_status(cp):
+    """contract_repair_status must not be set on the environment failure path."""
+    task = cp.create_task(
+        "exhausted environment failure no contract_repair_status",
+        required_capabilities=["python"],
+        max_attempts=1,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "worker_exception", "failure": "worker_exception"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value
+    assert waiting.metadata.get("failure_class") == "environment"
+    assert "contract_repair_status" not in waiting.metadata, (
+        "contract_repair_status must not be set on environment failure path"
+    )
+    assert waiting.metadata.get("environment_repair_task_id"), "environment_repair_task_id must be set"
+    assert "contract_repair_task_id" not in waiting.metadata
 
 
 @pytest.mark.parametrize(
