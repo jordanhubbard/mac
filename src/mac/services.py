@@ -14483,7 +14483,8 @@ class ControlPlane:
                 )
                 repair_id = repair.id
                 metadata[repair_metadata_key] = repair_id
-                metadata["contract_repair_status"] = "waiting"
+                if contract_failure:
+                    metadata["contract_repair_status"] = "waiting"
                 self.update_task(
                     task.id,
                     dependencies=[*task.dependencies, repair_id],
