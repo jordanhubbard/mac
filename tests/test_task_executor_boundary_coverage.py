@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from mac import executor_scope as scope
 from mac import task_executor as te
 
 
@@ -228,7 +229,7 @@ def test_auto_decompose_rejects_malformed_and_normalizes_children(monkeypatch, t
         )
     )
     monkeypatch.setattr(
-        te,
+        scope,
         "_hub_post_child_tasks",
         lambda task_id, children: captured.update(task_id=task_id, children=children) or {},
     )

@@ -13,12 +13,9 @@ nothing here spawns Hermes or hits a network.
 from __future__ import annotations
 
 import json
-import subprocess
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import pytest
-
+from mac import executor_scope as scope
 from mac import task_executor as te
 
 
@@ -258,7 +255,7 @@ def test_hub_put_sends_put_method(monkeypatch):
 
 def test_record_scope_estimate_merges_metadata(monkeypatch):
     puts: List[Dict] = []
-    monkeypatch.setattr(te, "_hub_put", lambda path, payload, **kw: puts.append({"path": path, "payload": payload}) or True)
+    monkeypatch.setattr(scope, "_hub_put", lambda path, payload, **kw: puts.append({"path": path, "payload": payload}) or True)
 
     estimate = {"schema": "mac.scope_estimate.v1", "size": "small", "estimated_units": 1, "signals": [], "rationale": "small"}
     existing = {"execution_contract": {"evidence_type": "repo_change"}}
@@ -276,7 +273,7 @@ def test_record_scope_estimate_merges_metadata(monkeypatch):
 
 def test_record_scope_estimate_no_task_id(monkeypatch):
     puts: List[Dict] = []
-    monkeypatch.setattr(te, "_hub_put", lambda path, payload, **kw: puts.append(1) or True)
+    monkeypatch.setattr(scope, "_hub_put", lambda path, payload, **kw: puts.append(1) or True)
     result = te.record_scope_estimate("", {"size": "small"})
     assert result is False
     assert not puts
@@ -284,7 +281,7 @@ def test_record_scope_estimate_no_task_id(monkeypatch):
 
 def test_record_scope_estimate_none_existing(monkeypatch):
     puts: List[Dict] = []
-    monkeypatch.setattr(te, "_hub_put", lambda path, payload, **kw: puts.append({"payload": payload}) or True)
+    monkeypatch.setattr(scope, "_hub_put", lambda path, payload, **kw: puts.append({"payload": payload}) or True)
     estimate = {"schema": "mac.scope_estimate.v1", "size": "large", "estimated_units": 2, "signals": [], "rationale": "x"}
     te.record_scope_estimate("t1", estimate, None)
     merged = puts[0]["payload"]["metadata"]
@@ -297,7 +294,7 @@ def test_record_scope_estimate_none_existing(monkeypatch):
 
 
 def test_maybe_preflight_returns_estimate_on_first_attempt(monkeypatch):
-    monkeypatch.setattr(te, "record_scope_estimate", lambda *a, **kw: True)
+    monkeypatch.setattr(scope, "record_scope_estimate", lambda *a, **kw: True)
     task = _task(attempt_count=1)
     result = te.maybe_preflight_scope_estimate(task)
     assert result is not None
@@ -306,14 +303,14 @@ def test_maybe_preflight_returns_estimate_on_first_attempt(monkeypatch):
 
 
 def test_maybe_preflight_returns_none_on_second_attempt(monkeypatch):
-    monkeypatch.setattr(te, "record_scope_estimate", lambda *a, **kw: True)
+    monkeypatch.setattr(scope, "record_scope_estimate", lambda *a, **kw: True)
     task = _task(attempt_count=2)
     result = te.maybe_preflight_scope_estimate(task)
     assert result is None
 
 
 def test_maybe_preflight_returns_none_when_already_estimated(monkeypatch):
-    monkeypatch.setattr(te, "record_scope_estimate", lambda *a, **kw: True)
+    monkeypatch.setattr(scope, "record_scope_estimate", lambda *a, **kw: True)
     task = _task(attempt_count=1, metadata={"scope_estimate": {"size": "small"}})
     result = te.maybe_preflight_scope_estimate(task)
     assert result is None
@@ -322,7 +319,7 @@ def test_maybe_preflight_returns_none_when_already_estimated(monkeypatch):
 def test_maybe_preflight_calls_record(monkeypatch):
     recorded: List[Dict] = []
     monkeypatch.setattr(
-        te,
+        scope,
         "record_scope_estimate",
         lambda task_id, estimate, existing=None: recorded.append(
             {"task_id": task_id, "estimate": estimate, "existing": existing}
@@ -533,14 +530,14 @@ def test_recall_scope_lessons_returns_empty_no_hub(monkeypatch):
 
 def test_recall_scope_lessons_returns_empty_hub_unreachable(monkeypatch):
     """Hub returns None (unreachable) → empty list."""
-    monkeypatch.setattr(te, "_hub_get", lambda path: None)
+    monkeypatch.setattr(scope, "_hub_get", lambda path: None)
     result = te.recall_scope_lessons(_task(title="Migrate schema"))
     assert result == []
 
 
 def test_recall_scope_lessons_returns_empty_no_records(monkeypatch):
     """Hub returns empty list → empty list."""
-    monkeypatch.setattr(te, "_hub_get", lambda path: [])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [])
     result = te.recall_scope_lessons(_task(title="Migrate schema"))
     assert result == []
 
@@ -548,7 +545,7 @@ def test_recall_scope_lessons_returns_empty_no_records(monkeypatch):
 def test_recall_scope_lessons_filters_non_plan_records(monkeypatch):
     """Non-plan records in hub response are filtered out."""
     bad_content = json.dumps({"schema": "mac.deployment_learning.v1"})
-    monkeypatch.setattr(te, "_hub_get", lambda path: [{"content": bad_content}])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [{"content": bad_content}])
     result = te.recall_scope_lessons(_task())
     assert result == []
 
@@ -556,7 +553,7 @@ def test_recall_scope_lessons_filters_non_plan_records(monkeypatch):
 def test_recall_scope_lessons_returns_plan_records(monkeypatch):
     """Valid plan_learning.v1 records are returned."""
     record = _make_plan_learning_record("task_plan_001")
-    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [record])
     result = te.recall_scope_lessons(_task(title="Migrate schema"))
     assert len(result) == 1
     data = json.loads(result[0]["content"])
@@ -566,7 +563,7 @@ def test_recall_scope_lessons_returns_plan_records(monkeypatch):
 def test_recall_scope_lessons_deduplicates_by_task_id(monkeypatch):
     """Records with identical task_id are deduplicated."""
     record = _make_plan_learning_record("task_dup")
-    monkeypatch.setattr(te, "_hub_get", lambda path: [record, record])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [record, record])
     result = te.recall_scope_lessons(_task())
     assert len(result) == 1
 
@@ -574,7 +571,7 @@ def test_recall_scope_lessons_deduplicates_by_task_id(monkeypatch):
 def test_recall_scope_lessons_respects_limit(monkeypatch):
     """limit= parameter caps the number of returned records."""
     records = [_make_plan_learning_record("task_%d" % i) for i in range(10)]
-    monkeypatch.setattr(te, "_hub_get", lambda path: records)
+    monkeypatch.setattr(scope, "_hub_get", lambda path: records)
     result = te.recall_scope_lessons(_task(), limit=3)
     assert len(result) <= 3
 
@@ -586,7 +583,7 @@ def test_recall_scope_lessons_respects_limit(monkeypatch):
 
 def test_compute_scope_estimate_no_regression_hub_unreachable(monkeypatch):
     """Hub unreachable → output identical to pure-textual estimate."""
-    monkeypatch.setattr(te, "recall_scope_lessons", lambda task, **kw: [])
+    monkeypatch.setattr(scope, "recall_scope_lessons", lambda task, **kw: [])
     task = _task(description=" ".join(["word"] * 250))
     result = te.compute_scope_estimate(task)
     assert result["schema"] == "mac.scope_estimate.v1"
@@ -598,7 +595,7 @@ def test_compute_scope_estimate_no_regression_raises(monkeypatch):
     """recall_scope_lessons raising → silently falls back to textual-only."""
     def boom(task, **kw):
         raise RuntimeError("hub exploded")
-    monkeypatch.setattr(te, "recall_scope_lessons", boom)
+    monkeypatch.setattr(scope, "recall_scope_lessons", boom)
     task = _task(title="Fix a small bug", description="Short fix.")
     result = te.compute_scope_estimate(task)
     assert result["schema"] == "mac.scope_estimate.v1"
@@ -608,7 +605,7 @@ def test_compute_scope_estimate_no_regression_raises(monkeypatch):
 def test_compute_scope_estimate_memory_signal_appears(monkeypatch):
     """One prior decomposition lesson → memory:prior_decomposition in signals."""
     record = _make_plan_learning_record("task_prior_42")
-    monkeypatch.setattr(te, "recall_scope_lessons", lambda task, **kw: [record])
+    monkeypatch.setattr(scope, "recall_scope_lessons", lambda task, **kw: [record])
     task = _task(title="Fix a small bug", description="Short fix.")
     result = te.compute_scope_estimate(task)
     assert any("memory:prior_decomposition" in s for s in result["signals"])
@@ -618,7 +615,7 @@ def test_compute_scope_estimate_memory_signal_appears(monkeypatch):
 def test_compute_scope_estimate_memory_signal_flips_size(monkeypatch):
     """One textual large-signal + one memory hit → size='large'."""
     record = _make_plan_learning_record("task_flip")
-    monkeypatch.setattr(te, "recall_scope_lessons", lambda task, **kw: [record])
+    monkeypatch.setattr(scope, "recall_scope_lessons", lambda task, **kw: [record])
     # _repo_task gives one textual large-signal (repo_required_cmds)
     task = _repo_task()
     result = te.compute_scope_estimate(task)
@@ -636,7 +633,7 @@ def test_compute_scope_estimate_calls_recall_scope_lessons(monkeypatch):
         calls.append(task)
         return []
 
-    monkeypatch.setattr(te, "recall_scope_lessons", fake_recall)
+    monkeypatch.setattr(scope, "recall_scope_lessons", fake_recall)
     task = _task()
     te.compute_scope_estimate(task)
     assert len(calls) == 1
@@ -677,14 +674,14 @@ def test_compute_scope_signals_json_decoded_string_skipped():
 
 def test_recall_scope_lessons_non_dict_hub_record_skipped(monkeypatch):
     """Non-dict entries in the hub response list are silently skipped."""
-    monkeypatch.setattr(te, "_hub_get", lambda path: ["not-a-dict", 42, None])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: ["not-a-dict", 42, None])
     result = te.recall_scope_lessons(_task())
     assert result == []
 
 
 def test_recall_scope_lessons_invalid_json_in_hub_record_skipped(monkeypatch):
     """Records whose content field is invalid JSON are silently skipped."""
-    monkeypatch.setattr(te, "_hub_get", lambda path: [{"content": "bad-json!!"}])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [{"content": "bad-json!!"}])
     result = te.recall_scope_lessons(_task())
     assert result == []
 
@@ -701,7 +698,7 @@ def test_recall_scope_lessons_break_on_limit_across_terms(monkeypatch):
             _make_plan_learning_record("task_y%d" % call_count[0]),
         ]
 
-    monkeypatch.setattr(te, "_hub_get", fake_hub_get)
+    monkeypatch.setattr(scope, "_hub_get", fake_hub_get)
     # Use a task with multiple family terms so the loop would iterate multiple times
     task = _task(title="schema migrate deploy pipeline workflow")
     result = te.recall_scope_lessons(task, limit=2)
@@ -717,7 +714,7 @@ def test_recall_scope_lessons_break_on_limit_across_terms(monkeypatch):
 def test_recall_scope_lessons_returns_id_field(monkeypatch):
     """Each returned dict has an 'id' field equal to the task_id from content."""
     record = _make_plan_learning_record("task_id_check_001")
-    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [record])
     result = te.recall_scope_lessons(_task(title="Migrate schema"))
     assert len(result) == 1
     assert result[0]["id"] == "task_id_check_001"
@@ -726,7 +723,7 @@ def test_recall_scope_lessons_returns_id_field(monkeypatch):
 def test_recall_scope_lessons_returns_rendered_field(monkeypatch):
     """Each returned dict has a non-empty 'rendered' string field."""
     record = _make_plan_learning_record("task_rendered_001")
-    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [record])
     result = te.recall_scope_lessons(_task(title="Migrate schema"))
     assert len(result) == 1
     assert isinstance(result[0]["rendered"], str)
@@ -736,7 +733,7 @@ def test_recall_scope_lessons_returns_rendered_field(monkeypatch):
 def test_recall_scope_lessons_rendered_contains_plan_info(monkeypatch):
     """The 'rendered' field summarises the plan_learning record content."""
     record = _make_plan_learning_record("task_rendered_info_001")
-    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [record])
     result = te.recall_scope_lessons(_task(title="Migrate schema"))
     assert len(result) == 1
     # _format_plan_learning_content produces '[plan] ...' prefix
@@ -746,7 +743,7 @@ def test_recall_scope_lessons_rendered_contains_plan_info(monkeypatch):
 def test_recall_scope_lessons_preserves_content_field(monkeypatch):
     """The original 'content' field is preserved alongside 'id' and 'rendered'."""
     record = _make_plan_learning_record("task_content_compat_001")
-    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [record])
     result = te.recall_scope_lessons(_task(title="Migrate schema"))
     assert len(result) == 1
     # Backward compat: callers that read 'content' still work
@@ -758,7 +755,7 @@ def test_recall_scope_lessons_id_empty_when_task_id_absent(monkeypatch):
     """'id' is '' when the content record has no task_id key."""
     content = json.dumps({"schema": "mac.plan_learning.v1"})
     record = {"content": content, "record_type": "deployment_learning:mac"}
-    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [record])
     result = te.recall_scope_lessons(_task())
     # task_id is None/missing → id should be ''
     assert len(result) == 1
@@ -770,7 +767,6 @@ def test_recall_scope_lessons_no_side_effects_no_scope_estimate_call(monkeypatch
     calls: List = []
     monkeypatch.setattr(te, "compute_scope_estimate", lambda t: calls.append(t) or {})
     record = _make_plan_learning_record("task_side_effect_001")
-    monkeypatch.setattr(te, "_hub_get", lambda path: [record])
+    monkeypatch.setattr(scope, "_hub_get", lambda path: [record])
     te.recall_scope_lessons(_task(title="Migrate schema"))
     assert calls == [], "recall_scope_lessons must not call compute_scope_estimate"
-

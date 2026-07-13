@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from mac import executor_scope as scope
 from mac import task_executor as te
 
 
@@ -3494,7 +3495,7 @@ def test_maybe_auto_decompose_posts_children_when_hub_present(tmp_path, monkeypa
         captured["children"] = children
         return {"parent_task_id": task_id, "children": [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}]}
 
-    monkeypatch.setattr(te, "_hub_post_child_tasks", fake_post_children)
+    monkeypatch.setattr(scope, "_hub_post_child_tasks", fake_post_children)
 
     result = te.maybe_auto_decompose(tmp_path, task)
     assert result is True
@@ -3523,7 +3524,7 @@ def test_maybe_auto_decompose_preserves_symbolic_dependency_graph(tmp_path, monk
     (tmp_path / "mac-evidence.json").write_text(json.dumps(manifest))
     captured = {}
     monkeypatch.setattr(
-        te,
+        scope,
         "_hub_post_child_tasks",
         lambda task_id, children: captured.update(children=children) or {"ok": True},
     )
@@ -3552,7 +3553,7 @@ def test_maybe_auto_decompose_skips_steps_without_title(tmp_path, monkeypatch):
     task = {"id": "task_xyz", "title": "Plan task"}
 
     captured = {}
-    monkeypatch.setattr(te, "_hub_post_child_tasks", lambda tid, ch: captured.update({"ch": ch}) or {"ok": True})
+    monkeypatch.setattr(scope, "_hub_post_child_tasks", lambda tid, ch: captured.update({"ch": ch}) or {"ok": True})
 
     result = te.maybe_auto_decompose(tmp_path, task)
     assert result is True
@@ -3620,7 +3621,7 @@ def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
         captured_children["children"] = children
         return {"ok": True}
 
-    monkeypatch.setattr(te, "_hub_post_child_tasks", fake_post_children)
+    monkeypatch.setattr(scope, "_hub_post_child_tasks", fake_post_children)
 
     rc = te.main(runner=plan_runner)
     assert rc == 0
