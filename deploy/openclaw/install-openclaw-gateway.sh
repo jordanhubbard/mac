@@ -1041,7 +1041,13 @@ EOF
   chmod 0700 "$CURIOSITY_WRAPPER_PATH"
 }
 
-build_image() {
+resolve_image_reference() {
+  # The runnable image tag is a content hash of the build inputs, not the
+  # human revision alias at the top of this file. Resolve it BEFORE anything
+  # records OPENCLAW_IMAGE (runtime.env, agent-config.yaml, the hub
+  # self-report) so provenance always names the tag the gateway actually
+  # runs — previously those files advertised mac.<revision> while the
+  # launcher ran mac.<hash>.
   local manifest revision
   manifest="$(mktemp)"
   for path in deploy/openclaw/OpenClaw.Containerfile deploy/openclaw/apply-cron-plan.mjs deploy/openclaw/curiosity-sidecar.py deploy/openclaw/plugins/mac-continuity/index.js deploy/openclaw/plugins/mac-continuity/openclaw.plugin.json deploy/verify-bash-contract.sh; do
@@ -1051,6 +1057,10 @@ build_image() {
   rm -f "$manifest"
   OPENCLAW_IMAGE_REVISION="$revision"
   OPENCLAW_IMAGE="localhost/mac-openclaw:${OPENCLAW_VERSION}-mac.${OPENCLAW_IMAGE_REVISION}"
+}
+
+build_image() {
+  resolve_image_reference
   if truthy "$DRY_RUN" && ! truthy "$SKIP_IMAGE"; then
     log "DRY-RUN: docker build --pull -t $OPENCLAW_IMAGE -f $CONTAINERFILE $BUILD_CONTEXT"
     return
@@ -1144,6 +1154,7 @@ prepare() {
   # post-cutover exclusivity check succeeds.
   rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"
   prepare_directories
+  resolve_image_reference
   write_config
   write_runtime_env
   write_agent_config_summary
@@ -1260,7 +1271,7 @@ if not plugin.get("imported") or plugin.get("status") not in {"loaded", "enabled
 if not {
     "memory_search", "memory_get", "memory_store", "mac_memory_recall", "mac_memory_store", "mac_mood_current", "mac_mood_set", "mac_mood_clear",
     "mac_config_flag_list", "mac_config_flag_set", "mac_config_flag_clear",
-    "mac_fleet_status", "mac_agent_send", "mac_agent_inbox",
+    "mac_fleet_status", "mac_agent_send", "mac_agent_share", "mac_notify_human", "mac_agent_inbox",
     "mac_image_generate",
     "curiosity_candidate_submit", "curiosity_candidates_list", "curiosity_abuse_frame",
 } <= tools:

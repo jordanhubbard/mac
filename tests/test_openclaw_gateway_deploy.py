@@ -424,10 +424,30 @@ def test_every_registered_tool_is_declared_in_the_plugin_manifest() -> None:
         )
     )
     declared = set(manifest["contracts"]["tools"])
-    registered = set(re.findall(r'registerTool\(\{\s*name: "([^"]+)"', plugin))
+    names = re.findall(r'registerTool\(\{\s*name: "([^"]+)"', plugin)
+    registered = set(names)
     assert registered, "no registerTool calls found — regex drifted from source"
+    # The regex must account for EVERY registration: a single-quoted or
+    # variable-named registerTool would otherwise vanish silently while the
+    # test stayed green on the remainder.
+    assert len(names) == plugin.count("registerTool("), (
+        "registerTool call count (%d) != extracted names (%d) — a registration "
+        "uses a spelling this test cannot see; normalize it or update the regex"
+        % (plugin.count("registerTool("), len(names))
+    )
     missing = registered - declared
     assert not missing, "tools registered but not declared in openclaw.plugin.json: %s" % sorted(missing)
+    # The DEPLOYMENT gate must also cover every tool, or a manifest regression
+    # deploys 'successfully' again: extract the required-tools set from the
+    # installer's live plugin inspection and require it to be complete.
+    installer = INSTALLER.read_text(encoding="utf-8")
+    gate_block = installer.split("} <= tools:", 1)[0].rsplit("if not {", 1)[1]
+    gated = set(re.findall(r'"([^"]+)"', gate_block))
+    unguarded = registered - gated
+    assert not unguarded, (
+        "tools missing from the installer's live verify gate (deploy would "
+        "report success without them): %s" % sorted(unguarded)
+    )
 
 
 def test_headless_agents_have_a_human_voice() -> None:
@@ -1108,7 +1128,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
             "    case \"$*\" in\n"
             "      *'OPENCLAW_CONTROL_PROBE_OK'*) printf '%s\\n' 'OPENCLAW_CONTROL_PROBE_OK' ;;\n"
             "      *'channels status'*) printf '%s\\n' '{\"channelAccounts\": {\"slack\": [{\"accountId\": \"offtera\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T123\"}}}, {\"accountId\": \"omgjkh\", \"enabled\": true, \"configured\": true, \"probe\": {\"ok\": true, \"team\": {\"id\": \"T456\"}}}]}, \"channelDefaultAccountId\": {\"slack\": \"offtera\"}}' ;;\n"
-            "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"memory_search\", \"memory_get\", \"memory_store\", \"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_fleet_status\", \"mac_agent_send\", \"mac_agent_inbox\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"mac_image_generate\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
+            "      *'plugins inspect mac-continuity'*) printf '%s\\n' '{\"plugin\": {\"imported\": true, \"status\": \"loaded\", \"toolNames\": [\"memory_search\", \"memory_get\", \"memory_store\", \"mac_memory_recall\", \"mac_memory_store\", \"mac_mood_current\", \"mac_mood_set\", \"mac_mood_clear\", \"mac_fleet_status\", \"mac_agent_send\", \"mac_agent_share\", \"mac_notify_human\", \"mac_agent_inbox\", \"mac_config_flag_list\", \"mac_config_flag_set\", \"mac_config_flag_clear\", \"mac_image_generate\", \"curiosity_candidate_submit\", \"curiosity_candidates_list\", \"curiosity_abuse_frame\"], \"hookNames\": [\"before_prompt_build\"]}}' ;;\n"
         "      *'curiosity verify'*) printf '%s\\n' '{\"valid\": true, \"events\": 0}' ;;\n"
         "      *'curiosity abuse-frame'*) printf '%s\\n' '{\"possible_false_equivalence\": true}' ;;\n"
         "      *'memory status'*) printf '%s\\n' '{\"files\": 3}' ;;\n"
