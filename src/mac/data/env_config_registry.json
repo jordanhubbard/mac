@@ -2411,6 +2411,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy reconcile max retries.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RECONCILE_MAX_RETRIES",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy repository ref reconciler grace days.",
     "family": "deployment",
     "name": "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
@@ -2828,7 +2839,7 @@
       "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
-    "type": "bool"
+    "type": "int"
   },
   {
     "default": null,
@@ -8010,7 +8021,7 @@
       "src/mac/deploy_env.py",
       "src/mac/webdav_server.py"
     ],
-    "type": "bool"
+    "type": "int"
   },
   {
     "default": null,

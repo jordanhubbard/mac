@@ -202,6 +202,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_QDRANT_MEMORY_LIMIT` | int | consumer-defined | deployment | Deployment setting: deploy qdrant memory limit. |
 | `MAC_DEPLOY_QDRANT_PORT` | int | consumer-defined | deployment | Deployment setting: deploy qdrant port. |
 | `MAC_DEPLOY_QDRANT_URL` | str | consumer-defined | deployment | Deployment setting: deploy qdrant url. |
+| `MAC_DEPLOY_RECONCILE_MAX_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy reconcile max retries. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | str | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler grace days. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler initial delay seconds. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler interval seconds. |
@@ -236,7 +237,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_WEBDAV_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy webdav bind addr. |
 | `MAC_DEPLOY_WEBDAV_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy webdav enabled. |
 | `MAC_DEPLOY_WEBDAV_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy webdav install. |
-| `MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES` | bool | consumer-defined | deployment | Deployment setting: deploy webdav max upload bytes. |
+| `MAC_DEPLOY_WEBDAV_MAX_UPLOAD_BYTES` | int | consumer-defined | deployment | Deployment setting: deploy webdav max upload bytes. |
 | `MAC_DEPLOY_WEBDAV_PORT` | int | consumer-defined | deployment | Deployment setting: deploy webdav port. |
 | `MAC_DEPLOY_WEBDAV_PUBLIC_PATH` | str | consumer-defined | deployment | Deployment setting: deploy webdav public path. |
 | `MAC_DEPLOY_WEBDAV_PUBLIC_URL` | str | consumer-defined | deployment | Deployment setting: deploy webdav public url. |
@@ -659,7 +660,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_VENV` | str | consumer-defined | core | Core setting: venv. |
 | `MAC_VERSION` | str | consumer-defined | core | Core setting: version. |
 | `MAC_WEBDAV_BIND_ADDR` | str | consumer-defined | webdav-publish | Webdav Publish setting: webdav bind addr. |
-| `MAC_WEBDAV_MAX_UPLOAD_BYTES` | bool | consumer-defined | webdav-publish | Webdav Publish setting: webdav max upload bytes. |
+| `MAC_WEBDAV_MAX_UPLOAD_BYTES` | int | consumer-defined | webdav-publish | Webdav Publish setting: webdav max upload bytes. |
 | `MAC_WEBDAV_PORT` | int | consumer-defined | webdav-publish | Webdav Publish setting: webdav port. |
 | `MAC_WEBDAV_PUBLIC_PATH` | str | consumer-defined | webdav-publish | Webdav Publish setting: webdav public path. |
 | `MAC_WEBDAV_PUBLIC_URL` | str | consumer-defined | webdav-publish | Webdav Publish setting: webdav public url. |

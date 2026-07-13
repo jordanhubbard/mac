@@ -66,7 +66,7 @@ INT_SUFFIXES = (
     "_SECONDS", "_PORT", "_LIMIT", "_BYTES", "_DIM", "_ATTEMPTS",
     "_THRESHOLD", "_SIZE", "_MAX", "_TIMEOUT", "_INTERVAL",
     "_CONCURRENCY", "_TTL", "_FLOOR", "_AGE",
-    "_COUNT",
+    "_COUNT", "_RETRIES",
 )
 RETIRED = {"MAC_BEADS_BRIDGE_HUB_AGENT"}
 
@@ -79,10 +79,10 @@ def family_for(name: str) -> str:
 
 
 def type_for(name: str) -> str:
-    if any(marker in name for marker in BOOL_MARKERS) or name.endswith(BOOL_SUFFIXES):
-        return "bool"
     if name.endswith(INT_SUFFIXES):
         return "int"
+    if any(marker in name for marker in BOOL_MARKERS) or name.endswith(BOOL_SUFFIXES):
+        return "bool"
     return "str"
 
 

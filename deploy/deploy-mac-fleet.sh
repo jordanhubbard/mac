@@ -1022,8 +1022,16 @@ reconcile_remote_deploy() {
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-    "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") bash -s" <<'REMOTE'
+  local _max_retries="${MAC_DEPLOY_RECONCILE_MAX_RETRIES:-3}"
+  local _attempt _sleep_interval
+  for _attempt in $(seq 1 "$_max_retries"); do
+    if [ "$_attempt" -gt 1 ]; then
+      _sleep_interval=$((2 ** (_attempt - 1)))
+      echo "==> ${agent}: reconcile_remote_deploy attempt ${_attempt}/${_max_retries} (sleeping ${_sleep_interval}s after previous failure)"
+      sleep "$_sleep_interval"
+    fi
+    if ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
+      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") bash -s" <<'REMOTE'
 set -euo pipefail
 agent="${MAC_DEPLOY_AGENT:?}"
 deploy_ts="${MAC_DEPLOY_TS:?}"
@@ -1084,6 +1092,13 @@ PY
 # valid reconciliation target for it.
 echo "remote reconciliation succeeded for $agent"
 REMOTE
+    then
+      return 0
+    fi
+    echo "==> ${agent}: reconcile_remote_deploy attempt ${_attempt}/${_max_retries} failed" >&2
+  done
+  echo "==> ${agent}: reconcile_remote_deploy failed after ${_max_retries} attempt(s)" >&2
+  return 1
 }
 
 # Optional, opt-in: run the OpenShell sandbox-enforcement bootstrap on the node
