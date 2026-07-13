@@ -101,7 +101,12 @@ class WebDAVHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(HTTPStatus.NO_CONTENT.value)
-        self.send_header("Allow", "OPTIONS, GET, HEAD, PROPFIND")
+        # Advertise write verbs when a token is configured so Finder mounts
+        # the share read-write rather than read-only.
+        if self.server.write_token:
+            self.send_header("Allow", "OPTIONS, GET, HEAD, PROPFIND, PUT, DELETE, MKCOL")
+        else:
+            self.send_header("Allow", "OPTIONS, GET, HEAD, PROPFIND")
         self.send_header("DAV", "1")
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -241,27 +246,68 @@ class WebDAVHandler(BaseHTTPRequestHandler):
         else:
             self._send_status(HTTPStatus.NOT_FOUND)
 
-    def do_PROPFIND(self) -> None:  # noqa: N802
-        target = self._target_path()
-        if target is None:
-            return
-        exists = target.exists()
-        href = urllib.parse.quote(urllib.parse.urlsplit(self.path).path)
-        content_length = target.stat().st_size if exists and target.is_file() else 0
-        status = "HTTP/1.1 200 OK" if exists else "HTTP/1.1 404 Not Found"
-        body = (
-            '<?xml version="1.0" encoding="utf-8"?>'
-            '<D:multistatus xmlns:D="DAV:">'
+    def _propfind_response(self, href: str, target: Path) -> str:
+        is_dir = target.is_dir()
+        resourcetype = "<D:collection/>" if is_dir else ""
+        length = 0 if is_dir else target.stat().st_size
+        modified = self.date_time_string(target.stat().st_mtime)
+        return (
             "<D:response>"
             f"<D:href>{href}</D:href>"
             "<D:propstat>"
             "<D:prop>"
-            f"<D:getcontentlength>{content_length}</D:getcontentlength>"
+            f"<D:resourcetype>{resourcetype}</D:resourcetype>"
+            f"<D:getcontentlength>{length}</D:getcontentlength>"
+            f"<D:getlastmodified>{modified}</D:getlastmodified>"
             "</D:prop>"
-            f"<D:status>{status}</D:status>"
+            "<D:status>HTTP/1.1 200 OK</D:status>"
             "</D:propstat>"
             "</D:response>"
-            "</D:multistatus>"
+        )
+
+    def do_PROPFIND(self) -> None:  # noqa: N802
+        # Directory-aware PROPFIND so Finder (and any WebDAV client) can mount
+        # and browse the share. Depth: 1 lists a collection's children.
+        parsed = urllib.parse.urlsplit(self.path)
+        request_path = urllib.parse.unquote(parsed.path)
+        prefix = self.server.public_prefix
+        if not request_path.startswith(prefix):
+            self._send_status(HTTPStatus.NOT_FOUND)
+            return
+        relative = request_path[len(prefix):].strip("/")
+        target = (self.server.root / relative).resolve() if relative else self.server.root
+        try:
+            target.relative_to(self.server.root)
+        except ValueError:
+            self._send_status(HTTPStatus.FORBIDDEN, "path escapes agentfs root")
+            return
+        if not target.exists():
+            body = (
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<D:multistatus xmlns:D="DAV:"><D:response>'
+                f"<D:href>{urllib.parse.quote(request_path)}</D:href>"
+                "<D:status>HTTP/1.1 404 Not Found</D:status>"
+                "</D:response></D:multistatus>"
+            ).encode("utf-8")
+            self.send_response(207)
+            self.send_header("Content-Type", 'application/xml; charset="utf-8"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        base_href = urllib.parse.quote(request_path)
+        depth = self.headers.get("Depth", "1")
+        responses = [self._propfind_response(base_href, target)]
+        if depth != "0" and target.is_dir():
+            base = base_href if base_href.endswith("/") else base_href + "/"
+            for child in sorted(target.iterdir()):
+                if child.name.startswith("."):
+                    continue  # hide .partial temp files and dotfiles
+                child_href = base + urllib.parse.quote(child.name) + ("/" if child.is_dir() else "")
+                responses.append(self._propfind_response(child_href, child))
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<D:multistatus xmlns:D="DAV:">' + "".join(responses) + "</D:multistatus>"
         ).encode("utf-8")
         self.send_response(207)
         self.send_header("Content-Type", 'application/xml; charset="utf-8"')

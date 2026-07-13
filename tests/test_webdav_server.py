@@ -170,6 +170,51 @@ def test_agentfs_mode_allows_token_authed_writes_reads_stay_open(tmp_path):
         thread.join(timeout=5)
 
 
+def test_propfind_lists_directories_so_finder_can_browse(tmp_path):
+    """Finder mounts a WebDAV share by PROPFIND-ing collections; the old
+    server 403'd every directory path. A collection must return a 207 with a
+    D:collection resourcetype and its children (jkh 2026-07-13: watch files
+    populate in Finder)."""
+    root = tmp_path / "agentfs"
+    (root / "demos").mkdir(parents=True)
+    (root / "demos" / "fluid_sim.py").write_text("print('sim')\n", encoding="utf-8")
+    (root / "readme.txt").write_text("hi\n", encoding="utf-8")
+    server = WebDAVServer(
+        ("127.0.0.1", 0),
+        WebDAVHandler,
+        root=root,
+        public_prefix="/agentfs/",
+        max_upload_bytes=1024,
+        write_token="t",
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = "http://127.0.0.1:%d" % server.server_address[1]
+    try:
+        # Root collection lists its children (Depth: 1 default).
+        with urllib.request.urlopen(  # noqa: S310
+            urllib.request.Request(base + "/agentfs/", method="PROPFIND"), timeout=5
+        ) as resp:
+            assert resp.status == 207
+            body = resp.read().decode()
+        assert "<D:collection/>" in body
+        assert "demos" in body and "readme.txt" in body
+        # A subdirectory browses too.
+        with urllib.request.urlopen(  # noqa: S310
+            urllib.request.Request(base + "/agentfs/demos/", method="PROPFIND"), timeout=5
+        ) as resp:
+            assert b"fluid_sim.py" in resp.read()
+        # OPTIONS advertises write verbs when a token is set (read-write mount).
+        with urllib.request.urlopen(  # noqa: S310
+            urllib.request.Request(base + "/agentfs/", method="OPTIONS"), timeout=5
+        ) as resp:
+            assert "PUT" in resp.headers["Allow"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_webdav_main_closes_server_on_normal_and_interrupted_exit(tmp_path, monkeypatch, capsys):
     from mac import webdav_server as module
 
