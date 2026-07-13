@@ -403,3 +403,112 @@ def test_execute_full_success_result_version_matches_plan() -> None:
     plan = build_staged_rollout_plan("edge-2026.7", _targets("c1"))
     result = execute_staged_rollout(plan, deploy_fn=_always_ok)
     assert result.version == "edge-2026.7"
+
+
+# ---------------------------------------------------------------------------
+# execute_staged_rollout – canary-only plan
+# ---------------------------------------------------------------------------
+
+
+def test_execute_canary_only_plan_all_succeed() -> None:
+    """A plan where canary_count == len(targets) has no promote steps."""
+    plan = build_staged_rollout_plan("v1", _targets("c1", "c2"), canary_count=2)
+    assert plan.promote_steps == []
+    result = execute_staged_rollout(plan, deploy_fn=_always_ok, health_fn=_always_ok)
+    assert result.ok
+    assert set(result.succeeded) == {"c1", "c2"}
+    assert result.skipped == []
+    assert result.failed == []
+
+
+def test_execute_canary_only_plan_simulate() -> None:
+    """Simulate mode works correctly for canary-only plans."""
+    plan = build_staged_rollout_plan("v2", _targets("c1"), canary_count=1)
+    assert plan.promote_steps == []
+    result = execute_staged_rollout(plan, deploy_fn=_always_ok, simulate=True)
+    assert result.ok
+    assert result.succeeded == ["c1"]
+
+
+def test_execute_canary_only_plan_health_failure() -> None:
+    """Health check failure in canary-only plan skips no promote but marks failed."""
+    plan = build_staged_rollout_plan("v1", _targets("c1", "c2"), canary_count=2)
+    result = execute_staged_rollout(plan, deploy_fn=_always_ok, health_fn=_always_fail)
+    assert "c1" in result.failed
+    assert "c2" in result.skipped
+    assert not result.ok
+
+
+# ---------------------------------------------------------------------------
+# execute_staged_rollout – mixed success/failure ordering
+# ---------------------------------------------------------------------------
+
+
+def test_execute_mixed_success_first_promote_fails_second_skipped() -> None:
+    """Among promote steps, failure at first skips subsequent ones."""
+    plan = build_staged_rollout_plan("v1", _targets("c1", "p1", "p2", "p3"), canary_count=1)
+    fail_nodes = {"p1"}
+
+    def deploy_fn(step: RolloutPlanStep) -> bool:
+        return step.node_id not in fail_nodes
+
+    result = execute_staged_rollout(plan, deploy_fn=deploy_fn)
+    assert "c1" in result.succeeded
+    assert "p1" in result.failed
+    assert set(result.skipped) == {"p2", "p3"}
+    assert not result.ok
+
+
+def test_execute_mixed_success_canary_succeeds_first_promote_fails() -> None:
+    """Canary succeeds but first promote node fails; remaining promote skipped."""
+    plan = build_staged_rollout_plan("v1", _targets("c1", "p1", "p2"), canary_count=1)
+    fail_nodes = {"p1"}
+
+    def deploy_fn(step: RolloutPlanStep) -> bool:
+        return step.node_id not in fail_nodes
+
+    result = execute_staged_rollout(plan, deploy_fn=deploy_fn, health_fn=_always_ok)
+    assert result.succeeded == ["c1"]
+    assert result.failed == ["p1"]
+    assert result.skipped == ["p2"]
+    assert not result.ok
+
+
+# ---------------------------------------------------------------------------
+# RolloutResult – accumulation
+# ---------------------------------------------------------------------------
+
+
+def test_rollout_result_accumulation_succeeded_list_ordered() -> None:
+    """Succeeded nodes are accumulated in rollout execution order."""
+    plan = build_staged_rollout_plan("v1", _targets("c1", "p1", "p2"), canary_count=1)
+    result = execute_staged_rollout(plan, deploy_fn=_always_ok)
+    assert result.succeeded == ["c1", "p1", "p2"]
+
+
+def test_rollout_result_accumulation_failed_and_skipped() -> None:
+    """Failed node is recorded first, then skipped nodes accumulate in order."""
+    plan = build_staged_rollout_plan("v1", _targets("c1", "p1", "p2", "p3"), canary_count=1)
+    fail_nodes = {"p1"}
+
+    def deploy_fn(step: RolloutPlanStep) -> bool:
+        return step.node_id not in fail_nodes
+
+    result = execute_staged_rollout(plan, deploy_fn=deploy_fn)
+    assert result.failed == ["p1"]
+    assert result.skipped == ["p2", "p3"]
+
+
+def test_rollout_result_accumulation_version_preserved_throughout() -> None:
+    """Version attribute on RolloutResult matches plan version after execution."""
+    plan = build_staged_rollout_plan("fleet-v9.0", _targets("c1", "p1", "p2"), canary_count=1)
+    result = execute_staged_rollout(plan, deploy_fn=_always_ok)
+    assert result.version == "fleet-v9.0"
+
+
+def test_rollout_result_accumulation_empty_failed_means_ok() -> None:
+    """RolloutResult.ok reflects the emptiness of the failed list post-execution."""
+    plan = build_staged_rollout_plan("v1", _targets("c1", "p1"), canary_count=1)
+    result = execute_staged_rollout(plan, deploy_fn=_always_ok)
+    assert result.failed == []
+    assert result.ok is True
