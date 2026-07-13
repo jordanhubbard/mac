@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.parse
 from datetime import timedelta
 from pathlib import Path
@@ -25,12 +26,14 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from mac.agentbus_control import (
     AGENT_REFLECTION_CONTENT_TYPE,
     AGENT_REFLECTION_TOPIC,
-    REPO_UPDATE_CONTENT_TYPE,
-    REPO_UPDATE_TOPIC,
-    agent_reflection_payload,
     REFLECT_REQUEST_CONTENT_TYPE,
     REFLECT_REQUEST_SCHEMA,
     REFLECT_REQUEST_TOPIC,
+    REFLECT_RESULT_CONTENT_TYPE,
+    REFLECT_RESULT_TOPIC,
+    REPO_UPDATE_CONTENT_TYPE,
+    REPO_UPDATE_TOPIC,
+    agent_reflection_payload,
     reflect_request_payload,
     repo_update_payload,
 )
@@ -11737,13 +11740,15 @@ class ControlPlane:
         *,
         recipient_agent_id: Optional[str] = None,
         request_id: Optional[str] = None,
+        reflect_timeout: float = 30.0,
     ) -> JsonDict:
         agent = self.get_agent(agent_id)
         recipient_id = recipient_agent_id or agent.id
         self.get_agent(recipient_id)
+        effective_request_id = request_id or ""
         payload = agent_reflection_payload(
             agent=agent.to_dict(),
-            request_id=request_id,
+            request_id=effective_request_id,
         )
         published = self.publish_agentbus_content(
             sender_agent_id=agent.id,
@@ -11752,12 +11757,9 @@ class ControlPlane:
             topic=AGENT_REFLECTION_TOPIC,
             payload=payload,
         )
-        # The inventory above is hub-side bookkeeping — the AGENT's runtime was
-        # never consulted, which made "reflection" a misnomer (the live test
-        # returned a template that failed the ground-truth check). Also forward
-        # a deep reflect request TO the target agent: its worker runs the query
-        # through its own runtime (soul/memory loaded) and publishes the
-        # narrative back to the requester as a second stream.
+        # Send a runtime reflect request to the target agent over the AgentBus.
+        # The agent worker processes this request through its own runtime and
+        # publishes a REFLECT_RESULT_TOPIC response back to the requester.
         deep_query = (
             "Reflection request: in under 250 words describe (1) who you are "
             "per your soul/memory, (2) custom scripts, cron jobs, or local "
@@ -11772,11 +11774,49 @@ class ControlPlane:
             topic=REFLECT_REQUEST_TOPIC,
             payload={
                 "schema": REFLECT_REQUEST_SCHEMA,
-                "request_id": request_id or "",
+                "request_id": effective_request_id,
                 "sender_agent_id": recipient_id,
                 "query": deep_query,
             },
         )
+        # Wait (with a bounded timeout) for the matching reflect result from
+        # the target agent.  The result arrives as a REFLECT_RESULT_TOPIC
+        # stream published FROM agent.id TO recipient_id.  When reflect_timeout
+        # is 0 (or negative) we skip the wait entirely so tests and callers
+        # that do not need the live narrative can avoid the blocking poll.
+        narrative: Optional[str] = None
+        if reflect_timeout > 0:
+            deadline = time.monotonic() + reflect_timeout
+            poll_interval = 0.1
+            while time.monotonic() < deadline:
+                try:
+                    streams = self.list_agentbus_streams(agent_id=recipient_id)
+                    for stream in streams:
+                        if stream.topic != REFLECT_RESULT_TOPIC:
+                            continue
+                        if stream.sender_agent_id != agent.id:
+                            continue
+                        chunks = self.read_agentbus_chunks(recipient_id, stream.id)
+                        for chunk in chunks:
+                            chunk_payload = chunk.payload or {}
+                            if not isinstance(chunk_payload, dict):
+                                continue
+                            # Match by request_id when one was supplied.
+                            if effective_request_id:
+                                if chunk_payload.get("request_id") != effective_request_id:
+                                    continue
+                            response = chunk_payload.get("response")
+                            if isinstance(response, str) and response:
+                                narrative = response
+                                break
+                        if narrative is not None:
+                            break
+                except Exception:  # noqa: BLE001 - polling must not crash the caller
+                    pass
+                if narrative is not None:
+                    break
+                time.sleep(poll_interval)
+        payload["reflection"] = narrative
         return {
             "schema": "mac.agentbus.agent_reflection_publish.v1",
             "deep_request_stream": deep["stream"],

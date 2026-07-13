@@ -16,6 +16,9 @@ from mac.agentbus_control import (
     AGENT_REFLECTION_CONTENT_TYPE,
     AGENT_REFLECTION_SCHEMA,
     AGENT_REFLECTION_TOPIC,
+    REFLECT_RESULT_CONTENT_TYPE,
+    REFLECT_RESULT_TOPIC,
+    reflect_result_payload,
 )
 from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.fleet_learning import (
@@ -10058,10 +10061,12 @@ def test_agent_reflection_publishes_runtime_description_over_agentbus(cp):
         running_digest=runtime.digest,
     )
 
+    # reflect_timeout=0 skips the blocking poll so no live agent worker is needed.
     published = cp.publish_agent_reflection(
         sender.id,
         recipient_agent_id=recipient.id,
         request_id="rid-42",
+        reflect_timeout=0,
     )
 
     assert published["schema"] == "mac.agentbus.agent_reflection_publish.v1"
@@ -10069,6 +10074,8 @@ def test_agent_reflection_publishes_runtime_description_over_agentbus(cp):
     assert published["recipient_agent_id"] == recipient.id
     assert published["count"] == 1
     assert published["payload"]["request_id"] == "rid-42"
+    # No agent worker responded, so reflection falls back to None.
+    assert published["payload"]["reflection"] is None
     stream = published["streams"][0]
     assert stream["topic"] == AGENT_REFLECTION_TOPIC
     assert stream["content_type"] == AGENT_REFLECTION_CONTENT_TYPE
@@ -10083,6 +10090,129 @@ def test_agent_reflection_publishes_runtime_description_over_agentbus(cp):
     assert payload["agent"]["status"] == AgentStatus.BUSY.value
     assert payload["agent"]["health_status"] == HealthStatus.DEGRADED.value
     assert payload["agent"]["running_digest"] == runtime.digest
+    # A reflect request stream must also have been sent to the agent.
+    assert "deep_request_stream" in published
+
+
+def test_agent_reflection_includes_runtime_narrative_on_success(cp):
+    """Success path: a pre-seeded reflect result is picked up within the timeout."""
+    sender = register_agent(cp, "reflector-success", ["python"])
+    recipient = register_agent(cp, "operator-success", ["review"])
+
+    narrative_text = "I am agent reflector-success. I have soul files at ~/.mac/soul."
+
+    # Simulate the agent worker response: publish a REFLECT_RESULT_TOPIC stream
+    # from sender to recipient before calling publish_agent_reflection.
+    cp.publish_agentbus_content(
+        sender_agent_id=sender.id,
+        recipient_agent_id=recipient.id,
+        content_type=REFLECT_RESULT_CONTENT_TYPE,
+        topic=REFLECT_RESULT_TOPIC,
+        payload=reflect_result_payload(
+            request_id="rid-success",
+            agent_id=sender.id,
+            response=narrative_text,
+            word_count=len(narrative_text.split()),
+        ),
+    )
+
+    # reflect_timeout=5 allows the poll loop to find the pre-seeded result.
+    published = cp.publish_agent_reflection(
+        sender.id,
+        recipient_agent_id=recipient.id,
+        request_id="rid-success",
+        reflect_timeout=5,
+    )
+
+    assert published["schema"] == "mac.agentbus.agent_reflection_publish.v1"
+    assert published["agent_id"] == sender.id
+    assert published["payload"]["reflection"] == narrative_text
+    assert published["payload"]["agent_id"] == sender.id
+
+
+def test_agent_reflection_timeout_falls_back_gracefully(cp):
+    """Timeout path: no agent worker responds; reflection falls back to None."""
+    sender = register_agent(cp, "reflector-timeout", ["python"])
+    recipient = register_agent(cp, "operator-timeout", ["review"])
+
+    published = cp.publish_agent_reflection(
+        sender.id,
+        recipient_agent_id=recipient.id,
+        request_id="rid-timeout",
+        reflect_timeout=0,
+    )
+
+    assert published["schema"] == "mac.agentbus.agent_reflection_publish.v1"
+    assert published["payload"]["reflection"] is None
+    # The structured inventory is still intact.
+    assert published["payload"]["agent_id"] == sender.id
+    assert published["payload"]["agent"]["name"] == "reflector-timeout"
+
+
+def test_agent_reflection_request_id_matching(cp):
+    """request_id matching: only the result with the correct request_id is used."""
+    sender = register_agent(cp, "reflector-rid", ["python"])
+    recipient = register_agent(cp, "operator-rid", ["review"])
+
+    # Publish a result for a different request_id first (should be ignored).
+    cp.publish_agentbus_content(
+        sender_agent_id=sender.id,
+        recipient_agent_id=recipient.id,
+        content_type=REFLECT_RESULT_CONTENT_TYPE,
+        topic=REFLECT_RESULT_TOPIC,
+        payload=reflect_result_payload(
+            request_id="rid-other",
+            agent_id=sender.id,
+            response="wrong narrative",
+            word_count=2,
+        ),
+    )
+
+    # Publish the correct result.
+    cp.publish_agentbus_content(
+        sender_agent_id=sender.id,
+        recipient_agent_id=recipient.id,
+        content_type=REFLECT_RESULT_CONTENT_TYPE,
+        topic=REFLECT_RESULT_TOPIC,
+        payload=reflect_result_payload(
+            request_id="rid-correct",
+            agent_id=sender.id,
+            response="correct narrative text here",
+            word_count=4,
+        ),
+    )
+
+    published = cp.publish_agent_reflection(
+        sender.id,
+        recipient_agent_id=recipient.id,
+        request_id="rid-correct",
+        reflect_timeout=5,
+    )
+
+    assert published["payload"]["reflection"] == "correct narrative text here"
+
+
+def test_agent_reflection_recipient_behavior(cp):
+    """Recipient behavior: published stream is readable by the recipient agent."""
+    sender = register_agent(cp, "reflector-recip", ["python"])
+    recipient = register_agent(cp, "operator-recip", ["review"])
+
+    published = cp.publish_agent_reflection(
+        sender.id,
+        recipient_agent_id=recipient.id,
+        reflect_timeout=0,
+    )
+
+    stream = published["streams"][0]
+    # The recipient can read the reflection stream.
+    chunks = cp.read_agentbus_chunks(recipient.id, stream["id"])
+    assert len(chunks) == 1
+    assert chunks[0].payload["agent_id"] == sender.id
+    # The reflect request was sent to the sender (target agent).
+    deep_stream = published["deep_request_stream"]
+    deep_chunks = cp.read_agentbus_chunks(sender.id, deep_stream["id"])
+    assert len(deep_chunks) == 1
+    assert deep_chunks[0].payload["sender_agent_id"] == recipient.id
 
 
 def test_agentbus_artifact_publish_crud_records_and_broadcasts(cp, monkeypatch):
