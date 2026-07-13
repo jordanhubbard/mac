@@ -1636,6 +1636,9 @@ class ControlPlane:
     def delete_human(self, human_id: str) -> bool:
         return self.humans.delete_human(human_id)
 
+    def resolve_identity_chain(self, anchor: str) -> Human:
+        return self.humans.resolve_identity_chain(anchor)
+
     def register_persona(self, *args: Any, **kwargs: Any) -> Persona:
         return self.identity.register_persona(*args, **kwargs)
 

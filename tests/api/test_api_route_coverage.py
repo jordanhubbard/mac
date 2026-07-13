@@ -211,6 +211,17 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
         )
     )
     ctx["persona_id"] = persona["id"]
+    human = _ok(
+        client.post(
+            "/humans",
+            json={"username": "route-coverage-human", "email": "route@example.test", "groups": ["ops"]},
+        )
+    )
+    ctx["human_id"] = human["id"]
+    ctx["delete_human_id"] = _ok(
+        client.post("/humans", json={"username": "route-delete-human"})
+    )["id"]
+
     hermes = _ok(
         client.post(
             "/hermes-instances",
@@ -1146,6 +1157,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/communication/deliveries/{delivery_id}/fail"): {
             "delivery_id": "fail_human_delivery_id"
         },
+        ("DELETE", "/humans/{human_id}"): {"human_id": "delete_human_id"},
         ("DELETE", "/secrets/{name}"): {"name": "delete_secret_name"},
         ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
         ("POST", "/optimizer/policies/{policy_id}/promote"): {"policy_id": "sci_policy_id"},
@@ -1197,6 +1209,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "secret_id": ctx["secret_id"],
         "session_id": ctx["terminal_session_id"],
         "stream_id": ctx["stream_id"],
+        "human_id": ctx["human_id"],
         "task_id": ctx["task_id"],
         "thread_id": ctx["thread_id"],
         "workflow_id": ctx["workflow_id"],
@@ -1255,6 +1268,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"q": "route coverage dream", "limit": 1, "min_confidence": "low"}
         elif path_template == "/tasks/search":
             kwargs["params"] = {"q": "route coverage"}
+        elif path_template == "/humans/resolve":
+            kwargs["params"] = {"anchor": "route-coverage-human"}
         return RequestCase(path, kwargs, expected)
 
     if method == "DELETE":
@@ -1265,6 +1280,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
+        ("POST", "/humans"): {"username": "route-human-case"},
         ("POST", "/tenants"): {"name": "Route Coverage Tenant Case"},
         ("POST", "/users"): {"tenant_id": ctx["tenant_id"], "handle": "operator-case"},
         ("POST", "/personas"): {

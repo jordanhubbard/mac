@@ -544,6 +544,15 @@ class PersonaRegister(BaseModel):
     persona_id: Optional[str] = None
 
 
+class HumanRegister(BaseModel):
+    username: str
+    email: Optional[str] = None
+    github_login: Optional[str] = None
+    display_name: Optional[str] = None
+    groups: Optional[List[str]] = None
+    human_id: Optional[str] = None
+
+
 class HermesInstanceRegister(BaseModel):
     tenant_id: str
     name: str
@@ -4394,6 +4403,31 @@ def create_app(
     @app.get("/personas")
     def list_personas(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
         return [persona.to_dict() for persona in cp.list_personas(tenant_id)]
+
+    @app.post("/humans")
+    def register_human(
+        body: HumanRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.register_human(**_data(body)).to_dict()
+
+    @app.get("/humans")
+    def list_humans(group: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [human.to_dict() for human in cp.list_humans(group=group)]
+
+    @app.get("/humans/resolve")
+    def resolve_human(anchor: str = Query()) -> Dict[str, Any]:
+        return cp.resolve_identity_chain(anchor).to_dict()
+
+    @app.get("/humans/{human_id}")
+    def get_human(human_id: str) -> Dict[str, Any]:
+        return cp.get_human(human_id).to_dict()
+
+    @app.delete("/humans/{human_id}")
+    def delete_human(human_id: str) -> Dict[str, Any]:
+        cp.delete_human(human_id)
+        return {"deleted": human_id}
 
     @app.post("/hermes-instances")
     def register_hermes_instance(
