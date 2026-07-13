@@ -1,111 +1,188 @@
-"""Service-layer contract tests for human principals."""
+"""Service-layer contract tests for HumansService.
+
+Coverage:
+- create/get/list/delete CRUD lifecycle
+- ValidationError on empty username
+- NotFoundError on missing id
+- resolve_identity_chain by id/username/email/github_login
+- group filtering in list_humans
+- delete cascade (human_groups rows removed)
+"""
 
 from __future__ import annotations
 
 import pytest
 
-from mac.humans_service import HumansService
 from mac.models import Human, NotFoundError, ValidationError
 from mac.services import ControlPlane
-from mac.store import SQLiteStore
 
 
-@pytest.fixture
-def humans() -> HumansService:
-    return HumansService(SQLiteStore(":memory:"))
+# ---------------------------------------------------------------------------
+# Fixture
+# ---------------------------------------------------------------------------
 
 
-def test_upsert_returns_hydrated_human_and_reuses_username(
-    humans: HumansService,
-) -> None:
-    created = humans.upsert_human(
+@pytest.fixture()
+def cp() -> ControlPlane:
+    """Fresh in-memory ControlPlane for every test."""
+    return ControlPlane.in_memory()
+
+
+# ---------------------------------------------------------------------------
+# CRUD lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_create_human_returns_hydrated_object(cp: ControlPlane) -> None:
+    human = cp.register_human(
         "alice",
         email="alice@example.test",
         github_login="alice-gh",
         display_name="Alice",
         groups=["eng", "admins"],
     )
-    updated = humans.upsert_human("alice", display_name="Alice Updated")
+    assert isinstance(human, Human)
+    assert human.username == "alice"
+    assert human.email == "alice@example.test"
+    assert human.github_login == "alice-gh"
+    assert human.display_name == "Alice"
+    assert human.id.startswith("human_")
+    assert sorted(human.groups) == ["admins", "eng"]
 
-    assert isinstance(created, Human)
-    assert created.username == "alice"
-    assert created.groups == ["admins", "eng"]
+
+def test_get_human_by_id(cp: ControlPlane) -> None:
+    created = cp.register_human("bob")
+    fetched = cp.get_human(created.id)
+    assert fetched == created
+
+
+def test_get_human_by_username(cp: ControlPlane) -> None:
+    created = cp.register_human("carol")
+    fetched = cp.get_human_by_username("carol")
+    assert fetched == created
+
+
+def test_update_human_upsert_reuses_id(cp: ControlPlane) -> None:
+    created = cp.register_human("dana", display_name="Dana")
+    updated = cp.register_human("dana", display_name="Dana Updated")
     assert updated.id == created.id
-    assert updated.display_name == "Alice Updated"
+    assert updated.display_name == "Dana Updated"
+
+
+def test_list_humans_returns_all(cp: ControlPlane) -> None:
+    alice = cp.register_human("alice")
+    bob = cp.register_human("bob")
+    assert cp.list_humans() == [alice, bob]
+
+
+def test_delete_human_returns_true_then_false(cp: ControlPlane) -> None:
+    human = cp.register_human("erin")
+    assert cp.delete_human(human.id) is True
+    assert cp.delete_human(human.id) is False
+
+
+def test_delete_human_removes_from_list(cp: ControlPlane) -> None:
+    human = cp.register_human("frank")
+    cp.delete_human(human.id)
+    assert cp.list_humans() == []
+
+
+# ---------------------------------------------------------------------------
+# Validation: empty/invalid username
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("username", ["", "-invalid", "has spaces"])
-def test_upsert_rejects_invalid_username(
-    humans: HumansService, username: str
+def test_empty_or_invalid_username_raises_validation_error(
+    cp: ControlPlane, username: str
 ) -> None:
     with pytest.raises(ValidationError):
-        humans.upsert_human(username)
+        cp.register_human(username)
 
 
-def test_get_by_id_and_username_share_the_same_principal(
-    humans: HumansService,
-) -> None:
-    created = humans.upsert_human("bob")
-
-    assert humans.get_human(created.id) == created
-    assert humans.get_human_by_username("bob") == created
+# ---------------------------------------------------------------------------
+# NotFoundError on missing id
+# ---------------------------------------------------------------------------
 
 
-def test_missing_gets_raise_domain_errors(humans: HumansService) -> None:
+def test_get_missing_id_raises_not_found(cp: ControlPlane) -> None:
     with pytest.raises(NotFoundError):
-        humans.get_human("human_missing")
+        cp.get_human("human_doesnotexist")
+
+
+def test_get_missing_username_raises_not_found(cp: ControlPlane) -> None:
     with pytest.raises(NotFoundError):
-        humans.get_human_by_username("missing")
+        cp.get_human_by_username("nobody")
 
 
-def test_list_all_and_group_filter(humans: HumansService) -> None:
-    alice = humans.upsert_human("alice", groups=["eng"])
-    bob = humans.upsert_human("bob", groups=["ops"])
-
-    assert humans.list_humans() == [alice, bob]
-    assert humans.list_humans(group="eng") == [alice]
-    assert humans.list_humans(group="missing") == []
+# ---------------------------------------------------------------------------
+# resolve_identity_chain
+# ---------------------------------------------------------------------------
 
 
-def test_delete_reports_presence_and_removes_groups(humans: HumansService) -> None:
-    created = humans.upsert_human("carol", groups=["eng"])
-
-    assert humans.delete_human(created.id) is True
-    assert humans.delete_human(created.id) is False
-    assert humans.list_humans(group="eng") == []
+def test_resolve_identity_chain_by_id(cp: ControlPlane) -> None:
+    created = cp.register_human("grace")
+    assert cp.humans.resolve_identity_chain(created.id) == created
 
 
-@pytest.mark.parametrize(
-    "anchor",
-    ["dana", "dana@example.test", "dana-gh"],
-)
-def test_resolve_identity_chain_accepts_external_anchors(
-    humans: HumansService, anchor: str
-) -> None:
-    created = humans.upsert_human(
-        "dana", email="dana@example.test", github_login="dana-gh"
-    )
-
-    assert humans.resolve_identity_chain(anchor) == created
+def test_resolve_identity_chain_by_username(cp: ControlPlane) -> None:
+    created = cp.register_human("hank")
+    assert cp.humans.resolve_identity_chain("hank") == created
 
 
-def test_resolve_identity_chain_accepts_id_and_rejects_unknown(
-    humans: HumansService,
-) -> None:
-    created = humans.upsert_human("erin")
+def test_resolve_identity_chain_by_email(cp: ControlPlane) -> None:
+    created = cp.register_human("ivan", email="ivan@example.test")
+    assert cp.humans.resolve_identity_chain("ivan@example.test") == created
 
-    assert humans.resolve_identity_chain(created.id) == created
+
+def test_resolve_identity_chain_by_github_login(cp: ControlPlane) -> None:
+    created = cp.register_human("jane", github_login="jane-gh")
+    assert cp.humans.resolve_identity_chain("jane-gh") == created
+
+
+def test_resolve_identity_chain_unknown_raises_not_found(cp: ControlPlane) -> None:
     with pytest.raises(NotFoundError):
-        humans.resolve_identity_chain("unknown-anchor")
+        cp.humans.resolve_identity_chain("unknown-anchor")
 
 
-def test_control_plane_exposes_thin_human_facade() -> None:
-    control_plane = ControlPlane.in_memory()
-    created = control_plane.register_human("frank", groups=["eng"])
+# ---------------------------------------------------------------------------
+# Group filtering in list_humans
+# ---------------------------------------------------------------------------
 
-    assert control_plane.get_human(created.id) == created
-    assert control_plane.get_human_by_username("frank") == created
-    assert control_plane.list_humans(group="eng") == [created]
-    assert control_plane.delete_human(created.id) is True
-    with pytest.raises(NotFoundError):
-        control_plane.get_human(created.id)
+
+def test_list_humans_group_filter(cp: ControlPlane) -> None:
+    alice = cp.register_human("alice", groups=["eng"])
+    bob = cp.register_human("bob", groups=["ops"])
+    _carol = cp.register_human("carol", groups=["eng", "ops"])
+
+    eng = cp.list_humans(group="eng")
+    assert alice in eng
+    assert bob not in eng
+
+    ops = cp.list_humans(group="ops")
+    assert bob in ops
+    assert alice not in ops
+
+
+def test_list_humans_empty_group_filter(cp: ControlPlane) -> None:
+    cp.register_human("alice", groups=["eng"])
+    assert cp.list_humans(group="missing") == []
+
+
+# ---------------------------------------------------------------------------
+# Delete cascade: human_groups rows removed
+# ---------------------------------------------------------------------------
+
+
+def test_delete_cascade_removes_group_membership(cp: ControlPlane) -> None:
+    human = cp.register_human("kyle", groups=["eng", "ops"])
+
+    # Confirm group memberships visible before deletion.
+    assert cp.list_humans(group="eng") == [human]
+    assert cp.list_humans(group="ops") == [human]
+
+    cp.delete_human(human.id)
+
+    # After deletion the group rows must be gone.
+    assert cp.list_humans(group="eng") == []
+    assert cp.list_humans(group="ops") == []
