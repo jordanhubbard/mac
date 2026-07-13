@@ -4933,6 +4933,17 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw peer turn timeout ms.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_PEER_TURN_TIMEOUT_MS",
+    "retired": false,
+    "sources": [
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw policy template.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_POLICY_TEMPLATE",

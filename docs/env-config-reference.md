@@ -406,6 +406,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_MESSAGE_BIN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw message bin. |
 | `MAC_OPENCLAW_MIRROR_MODEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw mirror model. |
 | `MAC_OPENCLAW_MODEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw model. |
+| `MAC_OPENCLAW_PEER_TURN_TIMEOUT_MS` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw peer turn timeout ms. |
 | `MAC_OPENCLAW_POLICY_TEMPLATE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw policy template. |
 | `MAC_OPENCLAW_PUBLIC_IDENTITY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw public identity. |
 | `MAC_OPENCLAW_REPRESENTATION_MODE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw representation mode. |

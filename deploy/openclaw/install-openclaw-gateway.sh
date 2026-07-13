@@ -525,7 +525,11 @@ config = {
                     "timeoutMs": 10000,
                     "peerPollIntervalMs": 2000,
                     "peerMaxAttempts": 3,
-                    "peerTurnTimeoutMs": 120000,
+                    # Peer/directive turns that do REAL work (fetch a script,
+                    # run a benchmark) need more than the old 120s: the first
+                    # hub-verified directive to jordanh-gke was killed mid-work
+                    # at this cap (2026-07-13). The plugin clamps to <=300000.
+                    "peerTurnTimeoutMs": int(os.environ.get("MAC_OPENCLAW_PEER_TURN_TIMEOUT_MS", "300000")),
                 },
             },
             "slack": {"enabled": "slack" in configured},
