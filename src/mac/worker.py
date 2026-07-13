@@ -103,6 +103,7 @@ from mac.worker_debug_terminal import (
 )
 from mac.worker_reflect import ReflectMixin
 from mac.worker_repo_prep import RepoPrepMixin
+import mac.harness_recovery_reflex as _hrr
 from mac.worker_runtime_deps import (
     REQUIRED_RUNTIME_PIP,
     RuntimeDepsMixin,
@@ -711,6 +712,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
         """
         task_id = task["id"]
         task_dir: Optional[Path] = None
+        attempt_state: JsonDict = {"recovery_count": 0, "recovery_log": []}
         self._observe_log(
             "worker.task_claimed",
             subject_type="task",
@@ -723,7 +725,31 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
                 % (quote(task_id, safe=""), urlencode({"agent_id": self.agent_id})),
                 {},
             )
-            task_dir = self._prepare_task_workspace(task, lease)
+            try:
+                task_dir = self._prepare_task_workspace(task, lease)
+            except RuntimeError as _prep_exc:
+                _step = "fetch_rebase" if any(
+                    kw in str(_prep_exc) for kw in ("fetch", "rebase", "clone")
+                ) else "worktree_preparation"
+                _wt_dir = self.workspace / _safe_path_component(task_id)
+                _wt_dir.mkdir(parents=True, exist_ok=True)
+                def _noop_dispatch(_action, _ctx):
+                    pass
+                _recovered, _choice, _msg = _hrr.try_recovery(
+                    attempt_state,
+                    str(_prep_exc),
+                    _noop_dispatch,
+                    lambda _s, _c, _r: self._emit_recovery_observability(
+                        task_id, _s, _c, _r
+                    ),
+                )
+                self._append_harness_recovery_log(
+                    _wt_dir, _step, _choice, _msg
+                )
+                if _recovered:
+                    task_dir = self._prepare_task_workspace(task, lease)
+                else:
+                    raise
             started = time.monotonic()
             execution = self._execute_with_lease_renewal(task, lease, task_dir)
             duration_ms = (time.monotonic() - started) * 1000.0
@@ -749,7 +775,26 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
                     "assignment no longer current after executor completed",
                     execution=execution,
                 )
-            evidence = self._record_execution(task_id, task_dir, execution)
+            _bootstrap_meta = (execution.metadata.get("bootstrap") or {})
+            if not execution.succeeded and isinstance(_bootstrap_meta, dict) and _bootstrap_meta.get("returncode"):
+                _boot_info = "bootstrap failed: %s" % (_bootstrap_meta.get("error") or _bootstrap_meta.get("status") or "unknown")
+                def _noop_dispatch_b(_action, _ctx):
+                    pass
+                _b_recovered, _b_choice, _b_msg = _hrr.try_recovery(
+                    attempt_state,
+                    _boot_info,
+                    _noop_dispatch_b,
+                    lambda _s, _c, _r: self._emit_recovery_observability(
+                        task_id, _s, _c, _r
+                    ),
+                )
+                self._append_harness_recovery_log(
+                    task_dir, "bootstrap", _b_choice, _b_msg
+                )
+                if _b_recovered:
+                    started = time.monotonic()
+                    execution = self._execute_with_lease_renewal(task, lease, task_dir)
+            evidence = self._record_execution(task_id, task_dir, execution, attempt_state=attempt_state)
             if execution.succeeded:
                 submission_problems = self._execution_submission_problems(task_dir, evidence)
                 if submission_problems:
@@ -2590,6 +2635,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
         task_id: str,
         task_dir: Path,
         execution: WorkerExecution,
+        attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
         (task_dir / "stdout.txt").write_text(execution.stdout, encoding="utf-8")
         (task_dir / "stderr.txt").write_text(execution.stderr, encoding="utf-8")
@@ -2598,6 +2644,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
                 task_id,
                 task_dir,
                 execution,
+                attempt_state=attempt_state,
             )
         metadata = self._execution_metadata(task_dir, execution)
         result_path = task_dir / "worker-result.json"
@@ -2732,6 +2779,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
         task_id: str,
         task_dir: Path,
         execution: WorkerExecution,
+        attempt_state: Optional[JsonDict] = None,
     ) -> bool:
         context = _load_repository_context(task_dir)
         if not context:
@@ -2785,6 +2833,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
                 task_dir,
                 execution,
                 context,
+                attempt_state=attempt_state,
             )
         except Exception as exc:  # noqa: BLE001 - evidence must record finalizer failures.
             manifest = {
@@ -2819,6 +2868,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
         task_dir: Path,
         execution: WorkerExecution,
         context: JsonDict,
+        attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
         task = _task_payload_from_workspace(task_dir)
         worktree = Path(str(context.get("repository_worktree") or "")).expanduser()
@@ -2928,7 +2978,42 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
                 )
                 pushed = publication.ok and publication.remote_verified
                 if not pushed:
-                    problems.append("repository publication blocked: %s" % publication.error)
+                    _push_fail_info = "repository publication blocked: %s" % publication.error
+                    if attempt_state is not None:
+                        def _noop_dispatch_p(_action, _ctx):
+                            pass
+                        _p_recovered, _p_choice, _p_msg = _hrr.try_recovery(
+                            attempt_state,
+                            _push_fail_info,
+                            _noop_dispatch_p,
+                            lambda _s, _c, _r: self._emit_recovery_observability(
+                                task_id, _s, _c, _r
+                            ),
+                        )
+                        self._append_harness_recovery_log(
+                            task_dir, "retry_push", _p_choice, _p_msg
+                        )
+                        if _p_recovered:
+                            publication = guarded_push(publication_target)
+                            display = (
+                                publication.target.remote_display
+                                if publication.target is not None
+                                else repo["push_remote"]
+                            )
+                            repo["push_remote"] = display
+                            if publication.canonical_tip_sha:
+                                repo["base_sha"] = publication.canonical_tip_sha
+                            repo["freshness"] = publication.evidence()
+                            push_item = _process_check_item(
+                                "guarded git push",
+                                0 if publication.ok and publication.remote_verified else 1,
+                                command="guarded git push %s HEAD:refs/heads/%s" % (display, branch),
+                                stdout=publication.push_stdout,
+                                stderr=publication.push_stderr or publication.error,
+                            )
+                            pushed = publication.ok and publication.remote_verified
+                    if not pushed:
+                        problems.append("repository publication blocked: %s" % publication.error)
             else:
                 problems.append("repository publication target invalid: %s" % target_error)
         else:
@@ -3568,6 +3653,58 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, RepoPrepMixin, RuntimeDepsMixi
         try:
             self.client.post(path, payload)
         except Exception:
+            pass
+
+    def _emit_recovery_observability(
+        self,
+        task_id: str,
+        step: str,
+        choice: str,
+        result_detail: str,
+    ) -> None:
+        """Emit a structured observability event for a harness recovery action.
+
+        Called before dispatching each remediation so the hub and fleet
+        operators can observe recovery attempts in the task event log.
+        """
+        self._observe_log(
+            "worker.harness.recovery",
+            level="info",
+            subject_type="task",
+            subject_id=task_id,
+            detail={
+                "step": step,
+                "choice": choice,
+                "result": result_detail,
+            },
+        )
+
+    def _append_harness_recovery_log(
+        self,
+        task_dir: Path,
+        step: str,
+        choice: str,
+        result_detail: str,
+    ) -> None:
+        """Append one recovery entry to harness-recovery-log.json in task_dir.
+
+        The file is written/extended on each invocation so cross-process
+        evidence survives partial failures.
+        """
+        log_path = task_dir / "harness-recovery-log.json"
+        try:
+            existing: List[JsonDict] = []
+            if log_path.exists():
+                raw = log_path.read_text(encoding="utf-8")
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    existing = [e for e in parsed if isinstance(e, dict)]
+            existing.append({"step": step, "choice": choice, "result": result_detail})
+            log_path.write_text(
+                json.dumps(existing, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except Exception:  # noqa: BLE001 - harness log is best-effort evidence
             pass
 
 
