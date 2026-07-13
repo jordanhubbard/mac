@@ -78,6 +78,7 @@ from mac.models import (
     HealthStatus,
     HistoryEvent,
     HermesInstance,
+    Human,
     IntegrationFinding,
     IntegrationObservation,
     JsonDict,
@@ -159,6 +160,7 @@ from mac.fleet_learning import (
     task_repository_remote,
 )
 from mac.identity_service import IdentityService
+from mac.humans_service import HumansService
 from mac.memory_service import MemoryService
 from mac.messaging_service import MessagingService
 from mac.notifier_service import NotifierService
@@ -1152,6 +1154,7 @@ class ControlPlane:
         self._task_outbox_drain_lock = threading.Lock()
         self.reconciliation = ReconciliationCoordinator(self.store)
         self.identity = IdentityService(self.store)
+        self.humans = HumansService(self.store)
         self.action_events = ActionEventService(self.store)
         self.observability = ObservabilityService(
             self.store,
@@ -1614,6 +1617,21 @@ class ControlPlane:
 
     def list_users(self, *args: Any, **kwargs: Any) -> List[User]:
         return self.identity.list_users(*args, **kwargs)
+
+    def register_human(self, *args: Any, **kwargs: Any) -> Human:
+        return self.humans.upsert_human(*args, **kwargs)
+
+    def get_human(self, human_id: str) -> Human:
+        return self.humans.get_human(human_id)
+
+    def get_human_by_username(self, username: str) -> Human:
+        return self.humans.get_human_by_username(username)
+
+    def list_humans(self, *args: Any, **kwargs: Any) -> List[Human]:
+        return self.humans.list_humans(*args, **kwargs)
+
+    def delete_human(self, human_id: str) -> bool:
+        return self.humans.delete_human(human_id)
 
     def register_persona(self, *args: Any, **kwargs: Any) -> Persona:
         return self.identity.register_persona(*args, **kwargs)
