@@ -1023,3 +1023,765 @@ class TestControlPlaneIntegration:
         fetched = cp.notifiers.get_channel(ch.id)
         assert fetched.target["agent_id"] == "agent_xyz"
         assert fetched.metadata["owner"] == "ops-team"
+
+
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# 11. OpenClaw outbox delivery path (_enqueue_openclaw_delivery)
+# ---------------------------------------------------------------------------
+
+
+def _register_infra(cp, hermes_id: str, platform: str = "slack", external_id: str = "channel:C001"):
+    """Register the full stack (tenant, persona, hermes instance, binding) and return
+    (tenant, instance, binding).  The hermes instance_id will equal *hermes_id*."""
+    tenant = cp.register_tenant("tenant-%s" % hermes_id)
+    persona = cp.register_persona(
+        tenant.id,
+        "Bot-%s" % hermes_id,
+        "hermes://%s/soul" % hermes_id,
+        "hermes://%s/mem" % hermes_id,
+    )
+    instance = cp.register_hermes_instance(tenant.id, hermes_id, persona_id=persona.id)
+    binding = cp.register_platform_binding(
+        tenant.id, instance.id, platform, external_id, display_name="bot-%s" % hermes_id
+    )
+    return tenant, instance, binding
+
+
+def _make_openclaw_notifier(
+    cp,
+    *,
+    sent_ids=None,
+    logged=None,
+    resolve_result=None,
+    enqueue_raises=None,
+):
+    """Build a NotifierService with all three openclaw callbacks present."""
+    sent_ids = [] if sent_ids is None else sent_ids
+    logged = [] if logged is None else logged
+
+    if resolve_result is None:
+        resolve_result = {"identity": {"id": "identity_001", "name": "ops-bot"}}
+
+    def _list_comm_ids(enabled=True):
+        from mac.models import CommunicationIdentity
+        return [
+            CommunicationIdentity(
+                id="identity_001",
+                name="ops-bot",
+                display_name="Ops Bot",
+                description="",
+                is_default=True,
+                enabled=True,
+                metadata={},
+                created_at=utcnow(),
+                updated_at=utcnow(),
+            )
+        ]
+
+    def _resolve(agent_id):
+        return resolve_result
+
+    def _enqueue(target, body, **kwargs):
+        if enqueue_raises:
+            raise enqueue_raises
+        from mac.models import HumanMessageDelivery
+        delivery = HumanMessageDelivery(
+            id=new_id("delivery"),
+            identity_id=kwargs.get("identity_id", "identity_001"),
+            account_id=None,
+            channel=kwargs.get("channel"),
+            target=target,
+            body=body,
+            origin_agent_id=kwargs.get("origin_agent_id"),
+            task_id=kwargs.get("task_id"),
+            idempotency_key=kwargs.get("idempotency_key", ""),
+            status="pending",
+            attempt_count=0,
+            max_attempts=3,
+            delivery_agent_id=None,
+            delivery_lease_id=None,
+            leased_until=None,
+            provider_message_id=None,
+            last_error=None,
+            metadata=kwargs.get("metadata", {}),
+            created_at=utcnow(),
+            updated_at=utcnow(),
+            delivered_at=None,
+        )
+        sent_ids.append(delivery.id)
+        return delivery
+
+    def _capture_log(name, **kwargs):
+        logged.append({"name": name, **kwargs})
+
+    sent_msgs: List[AgentMessage] = []
+
+    def _send_message(sender, recipient, mtype, payload):
+        msg = AgentMessage(
+            id=new_id("msg"),
+            sender_agent_id=sender,
+            recipient_agent_id=recipient,
+            task_id=None,
+            message_type=mtype,
+            payload=payload,
+            status="pending",
+            created_at=utcnow(),
+            delivered_at=None,
+        )
+        sent_msgs.append(msg)
+        return msg
+
+    from mac.notifier_service import NotifierService as NS
+    return NS(
+        cp.store,
+        list_agents=cp.list_agents,
+        get_agent=cp.get_agent,
+        list_platform_bindings=cp.identity.list_platform_bindings,
+        get_platform_binding=cp.identity.get_platform_binding,
+        send_message=_send_message,
+        record_log=_capture_log,
+        enqueue_human_message=_enqueue,
+        resolve_agent_representation=_resolve,
+        list_communication_identities=_list_comm_ids,
+    ), logged, sent_ids
+
+
+class TestOpenClawOutboxDelivery:
+    """Tests for _enqueue_openclaw_delivery and the openclaw branch in _deliver_notification."""
+
+    def test_slack_channel_routed_via_openclaw(self, cp):
+        """Slack-type channel target invokes _enqueue_human_message, not send_message."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
+        _, instance, binding = _register_infra(cp, "ocsl-1", "slack", "channel:C001")
+        machine = cp.register_machine("host-ocsl-1")
+        agent = cp.register_agent(machine.id, "ocsl-agent-1", hermes_instance_id=instance.id)
+        notifiers.configure_channel(
+            "slack-ch",
+            "slack",
+            target={"agent_id": agent.id, "external_id": binding.external_id},
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+        assert len(sent_ids) == 1
+
+    def test_telegram_channel_routed_via_openclaw(self, cp):
+        """Telegram-type channel target invokes the openclaw enqueue path."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
+        _, instance, binding = _register_infra(cp, "octg-1", "telegram", "tg_chat_123")
+        machine = cp.register_machine("host-octg-1")
+        agent = cp.register_agent(machine.id, "octg-agent-1", hermes_instance_id=instance.id)
+        notifiers.configure_channel(
+            "tg-ch",
+            "telegram",
+            target={"agent_id": agent.id, "external_id": "tg_chat_123"},
+        )
+        _make_notification(cp, channels=["telegram"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+        assert len(sent_ids) == 1
+
+    def test_representation_unavailable_logs_and_skips(self, cp):
+        """When resolve returns no identity, log representation_unavailable and skip."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(
+            cp,
+            resolve_result={"identity": {}},
+        )
+        _, instance, binding = _register_infra(cp, "ocru-1", "slack", "channel:C002")
+        machine = cp.register_machine("host-ocru-1")
+        agent = cp.register_agent(machine.id, "ocru-agent-1", hermes_instance_id=instance.id)
+        notifiers.configure_channel(
+            "slack-repr",
+            "slack",
+            target={"agent_id": agent.id, "external_id": binding.external_id},
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["skipped"] == 1
+        assert any(e["name"] == "notifier.representation_unavailable" for e in logged)
+
+    def test_channel_target_missing_logs_when_no_external_id(self, cp):
+        """When external_id is absent in target, log channel_target_missing and skip."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
+        _, instance, binding = _register_infra(cp, "octm-1", "slack", "channel:C003")
+        machine = cp.register_machine("host-octm-1")
+        agent = cp.register_agent(machine.id, "octm-agent-1", hermes_instance_id=instance.id)
+        notifiers.configure_channel(
+            "slack-noext",
+            "slack",
+            target={"agent_id": agent.id},  # no external_id
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["skipped"] == 1
+        assert any(e["name"] == "notifier.channel_target_missing" for e in logged)
+
+    def test_openclaw_enqueue_failed_logs_on_exception(self, cp):
+        """When _enqueue_human_message raises, log openclaw_enqueue_failed."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(
+            cp,
+            enqueue_raises=RuntimeError("delivery backend down"),
+        )
+        _, instance, binding = _register_infra(cp, "ocef-1", "slack", "channel:C004")
+        machine = cp.register_machine("host-ocef-1")
+        agent = cp.register_agent(machine.id, "ocef-agent-1", hermes_instance_id=instance.id)
+        notifiers.configure_channel(
+            "slack-fail",
+            "slack",
+            target={"agent_id": agent.id, "external_id": binding.external_id},
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["skipped"] == 1
+        assert any(e["name"] == "notifier.openclaw_enqueue_failed" for e in logged)
+
+    def test_enqueue_openclaw_non_slack_telegram_returns_none(self, cp):
+        """_enqueue_openclaw_delivery returns None for unsupported channel types."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
+        notification = _make_notification(cp, channels=["hermes"])
+        result = notifiers._enqueue_openclaw_delivery(
+            notification,
+            {"channel_type": "hermes", "external_id": "some-id"},
+            "agent_001",
+        )
+        assert result is None
+
+    def test_slack_external_id_plain_gets_channel_prefix(self, cp):
+        """A raw Slack channel ID without a prefix gets 'channel:' prepended."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
+        _, instance, binding = _register_infra(cp, "ocpfx-1", "slack", "C005RAWID")
+        machine = cp.register_machine("host-ocpfx-1")
+        agent = cp.register_agent(machine.id, "ocpfx-agent-1", hermes_instance_id=instance.id)
+        notifiers.configure_channel(
+            "slack-raw",
+            "slack",
+            target={"agent_id": agent.id, "external_id": "C005RAWID"},
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+
+    def test_slack_external_id_with_user_prefix_preserved(self, cp):
+        """Slack external_id with 'user:' prefix is passed through unchanged."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
+        _, instance, binding = _register_infra(cp, "ocupfx-1", "slack", "user:U006")
+        machine = cp.register_machine("host-ocupfx-1")
+        agent = cp.register_agent(machine.id, "ocupfx-agent-1", hermes_instance_id=instance.id)
+        notifiers.configure_channel(
+            "slack-user",
+            "slack",
+            target={"agent_id": agent.id, "external_id": "user:U006"},
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+
+    def test_openclaw_delivery_id_recorded_in_message_ids(self, cp):
+        """The delivery id from enqueue_human_message is recorded in message_ids."""
+        notifiers, logged, sent_ids = _make_openclaw_notifier(cp)
+        _, instance, binding = _register_infra(cp, "ocid-1", "slack", "channel:C007")
+        machine = cp.register_machine("host-ocid-1")
+        agent = cp.register_agent(machine.id, "ocid-agent-1", hermes_instance_id=instance.id)
+        notifiers.configure_channel(
+            "slack-id",
+            "slack",
+            target={"agent_id": agent.id, "external_id": binding.external_id},
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+        assert len(sent_ids) == 1
+        assert sent_ids[0] in result["results"][0]["message_ids"]
+
+
+# ---------------------------------------------------------------------------
+# 12. Concurrent-claim race in _claim_notification
+# ---------------------------------------------------------------------------
+
+
+class TestClaimNotificationRace:
+    """Test the False-return branch when two callers race on the same notification."""
+
+    def _make_plain_notifiers(self, cp):
+        return NotifierService(
+            cp.store,
+            list_agents=cp.list_agents,
+            get_agent=cp.get_agent,
+            list_platform_bindings=cp.identity.list_platform_bindings,
+            get_platform_binding=cp.identity.get_platform_binding,
+            send_message=MagicMock(return_value=MagicMock()),
+            record_log=MagicMock(),
+        )
+
+    def test_first_claim_returns_true(self, cp):
+        """Claiming a fresh pending notification returns True."""
+        notifiers = self._make_plain_notifiers(cp)
+        notification = _make_notification(cp)
+        assert notifiers._claim_notification(notification.id) is True
+
+    def test_second_claim_returns_false_when_first_wins(self, cp):
+        """A second immediate claim on an already-delivering notification returns False."""
+        notifiers = self._make_plain_notifiers(cp)
+        notification = _make_notification(cp)
+        assert notifiers._claim_notification(notification.id) is True
+        # Status is now 'delivering' and timestamp is not stale — claim fails.
+        assert notifiers._claim_notification(notification.id) is False
+
+    def test_claim_returns_false_for_nonexistent_id(self, cp):
+        """Claiming a notification that does not exist returns False."""
+        notifiers = self._make_plain_notifiers(cp)
+        assert notifiers._claim_notification("notification_does_not_exist") is False
+
+    def test_deliver_pending_skips_already_claimed_notification(self, cp):
+        """When a notification has been pre-claimed, deliver_pending skips it."""
+        sent: List[AgentMessage] = []
+
+        def _mock_send(sender, recipient, mtype, payload):
+            msg = AgentMessage(
+                id=new_id("msg"),
+                sender_agent_id=sender,
+                recipient_agent_id=recipient,
+                task_id=None,
+                message_type=mtype,
+                payload=payload,
+                status="pending",
+                created_at=utcnow(),
+                delivered_at=None,
+            )
+            sent.append(msg)
+            return msg
+
+        notifiers = NotifierService(
+            cp.store,
+            list_agents=cp.list_agents,
+            get_agent=cp.get_agent,
+            list_platform_bindings=cp.identity.list_platform_bindings,
+            get_platform_binding=cp.identity.get_platform_binding,
+            send_message=_mock_send,
+            record_log=MagicMock(),
+        )
+        agent = _make_agent(cp)
+        notifiers.configure_channel("ch-race", "hermes", target={"agent_id": agent.id})
+        notification = _make_notification(cp, channels=["hermes"])
+
+        # Simulate: another worker already claimed this notification
+        assert notifiers._claim_notification(notification.id) is True
+
+        # deliver_pending should find rowcount=0 and skip without sending
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 0
+        assert result["skipped"] == 0
+        assert result["failed"] == 0
+        assert len(sent) == 0
+
+
+# ---------------------------------------------------------------------------
+# 13. _targets_for_channel sub-path coverage
+# ---------------------------------------------------------------------------
+
+
+def _make_notifiers_plain(cp):
+    """Return a NotifierService without openclaw extras (uses send_message path)."""
+    sent: List[AgentMessage] = []
+
+    def _mock_send(sender, recipient, mtype, payload):
+        msg = AgentMessage(
+            id=new_id("msg"),
+            sender_agent_id=sender,
+            recipient_agent_id=recipient,
+            task_id=None,
+            message_type=mtype,
+            payload=payload,
+            status="pending",
+            created_at=utcnow(),
+            delivered_at=None,
+        )
+        sent.append(msg)
+        return msg
+
+    notifiers = NotifierService(
+        cp.store,
+        list_agents=cp.list_agents,
+        get_agent=cp.get_agent,
+        list_platform_bindings=cp.identity.list_platform_bindings,
+        get_platform_binding=cp.identity.get_platform_binding,
+        send_message=_mock_send,
+        record_log=MagicMock(),
+    )
+    return notifiers, sent
+
+
+def _setup_platform_infra(cp, label: str, platform: str = "slack"):
+    """Register a full stack and return (tenant, instance, agent, binding)."""
+    tenant = cp.register_tenant("t-%s" % label)
+    persona = cp.register_persona(
+        tenant.id, "Bot-%s" % label,
+        "hermes://%s/soul" % label,
+        "hermes://%s/mem" % label,
+    )
+    instance = cp.register_hermes_instance(tenant.id, "hinst-%s" % label, persona_id=persona.id)
+    machine = cp.register_machine("host-%s" % label)
+    agent = cp.register_agent(machine.id, "agent-%s" % label, hermes_instance_id=instance.id)
+    binding = cp.register_platform_binding(
+        tenant.id, instance.id, platform, "ext-%s" % label, display_name="bot-%s" % label
+    )
+    return tenant, instance, agent, binding
+
+
+class TestTargetsForChannelSubPaths:
+    """Cover platform_binding_id, hermes_instance_id, and implicit-platform branches."""
+
+    def test_platform_binding_id_target_resolves_agents(self, cp):
+        """Channel configured with platform_binding_id returns bound agents as targets."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, agent, binding = _setup_platform_infra(cp, "bid1", "slack")
+        notifiers.configure_channel(
+            "binding-ch",
+            "slack",
+            target={"platform_binding_id": binding.id},
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+        assert sent[0].recipient_agent_id == agent.id
+
+    def test_hermes_instance_id_target_resolves_agents(self, cp):
+        """Channel configured with hermes_instance_id resolves all associated agents."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, agent, binding = _setup_platform_infra(cp, "hid1")
+        notifiers.configure_channel(
+            "hid-ch",
+            "hermes",
+            target={"hermes_instance_id": instance.id},
+        )
+        _make_notification(cp, channels=["hermes"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+        assert sent[0].recipient_agent_id == agent.id
+
+    def test_slack_channel_type_implicit_platform_routing(self, cp):
+        """Slack channel with no agent_id/binding uses channel_type as implicit platform."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, agent, binding = _setup_platform_infra(cp, "sl-implicit", "slack")
+        notifiers.configure_channel(
+            "slack-implicit",
+            "slack",
+            target={},
+        )
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+        assert sent[0].recipient_agent_id == agent.id
+
+    def test_telegram_channel_type_implicit_platform_routing(self, cp):
+        """Telegram channel with no agent_id/binding uses channel_type as implicit platform."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, agent, binding = _setup_platform_infra(cp, "tg-implicit", "telegram")
+        notifiers.configure_channel(
+            "tg-implicit",
+            "telegram",
+            target={},
+        )
+        _make_notification(cp, channels=["telegram"])
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+        assert sent[0].recipient_agent_id == agent.id
+
+    def test_hermes_channel_with_empty_target_returns_no_targets(self, cp):
+        """A hermes channel with no routing info returns no configured targets."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        notifiers.configure_channel("hermes-empty", "hermes", target={})
+        _make_notification(cp, channels=["hermes"])
+        result = notifiers.deliver_pending()
+        # No configured targets and no platform bindings → auto-hermes falls back to empty
+        assert result["skipped"] == 1
+        assert len(sent) == 0
+
+    def test_platform_binding_id_sets_platform_and_external_id(self, cp):
+        """When routing via platform_binding_id, platform and external_id are propagated."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, agent, binding = _setup_platform_infra(cp, "bid2", "slack")
+        notifiers.configure_channel(
+            "binding-ch2",
+            "slack",
+            target={"platform_binding_id": binding.id},
+        )
+        _make_notification(cp, channels=["slack"])
+        notifiers.deliver_pending()
+        assert len(sent) == 1
+        target_in_payload = sent[0].payload.get("target", {})
+        assert target_in_payload.get("platform") == "slack"
+
+
+# ---------------------------------------------------------------------------
+# 14. Additional gap-closing tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeliverPendingClaimRaceSkip:
+    """Line 209: the continue branch when _claim_notification returns False inside deliver_pending."""
+
+    def test_deliver_pending_skips_when_claim_returns_false(self, cp):
+        """Patch _claim_notification to return False so the continue branch is exercised."""
+        sent: List[AgentMessage] = []
+
+        def _mock_send(sender, recipient, mtype, payload):
+            msg = AgentMessage(
+                id=new_id("msg"),
+                sender_agent_id=sender,
+                recipient_agent_id=recipient,
+                task_id=None,
+                message_type=mtype,
+                payload=payload,
+                status="pending",
+                created_at=utcnow(),
+                delivered_at=None,
+            )
+            sent.append(msg)
+            return msg
+
+        notifiers = NotifierService(
+            cp.store,
+            list_agents=cp.list_agents,
+            get_agent=cp.get_agent,
+            list_platform_bindings=cp.identity.list_platform_bindings,
+            get_platform_binding=cp.identity.get_platform_binding,
+            send_message=_mock_send,
+            record_log=MagicMock(),
+        )
+        agent = _make_agent(cp)
+        notifiers.configure_channel("ch-claimrace", "hermes", target={"agent_id": agent.id})
+        _make_notification(cp, channels=["hermes"])
+
+        # Patch _claim_notification to always return False
+        with patch.object(notifiers, "_claim_notification", return_value=False):
+            result = notifiers.deliver_pending()
+
+        assert result["delivered"] == 0
+        assert result["skipped"] == 0
+        assert result["failed"] == 0
+        assert len(sent) == 0
+
+
+class TestDeliverNotificationNoAgentIdSkip:
+    """Line 300: the continue branch when a target has no agent_id."""
+
+    def test_target_without_agent_id_is_skipped(self, cp):
+        """A target dict with no agent_id is silently skipped in _deliver_notification."""
+        logged: List[dict] = []
+        notifiers, _, sent_ids = _make_openclaw_notifier(cp, logged=logged)
+
+        notification = _make_notification(cp, channels=["hermes"])
+        # Inject a target with no agent_id directly via _deliver_notification
+        # We do this by configuring a channel, then monkeypatching _configured_targets.
+        original_configured_targets = notifiers._configured_targets
+
+        def _patched_targets(notif):
+            # Return a target missing the agent_id field
+            return [{"channel_type": "hermes", "no_agent_here": True}]
+
+        with patch.object(notifiers, "_configured_targets", side_effect=_patched_targets):
+            with patch.object(notifiers, "_auto_hermes_targets", return_value=[]):
+                message_ids = notifiers._deliver_notification(notification)
+
+        assert message_ids == []
+
+
+class TestConfiguredTargetsChannelMismatch:
+    """Line 435: the continue branch in _configured_targets when channel_type not in notification.channels."""
+
+    def test_channel_type_mismatch_skips_configured_channel(self, cp):
+        """A 'telegram' channel is skipped when the notification targets only 'slack'.
+
+        The condition is:
+            channel.channel_type not in notification.channels
+            AND 'hermes' not in notification.channels
+        So we need notification.channels=['slack'] and channel.channel_type='telegram'.
+        """
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, agent, binding = _setup_platform_infra(cp, "chanmatch", "telegram")
+        notifiers.configure_channel(
+            "tg-mismatch",
+            "telegram",
+            target={"agent_id": agent.id, "external_id": "tg_ext_001"},
+        )
+        # Notification targets 'slack' only; telegram channel should be skipped (line 435 continue)
+        _make_notification(cp, channels=["slack"])
+        result = notifiers.deliver_pending()
+        # Telegram channel skipped, auto-hermes not triggered (no 'hermes' in channels)
+        # → no targets → skipped
+        assert result["skipped"] == 1
+        assert len(sent) == 0
+
+class TestAutoHermesTargetsActorPath:
+    """Lines 477-482, 489: _auto_hermes_targets actor and NotFoundError branches."""
+
+    def test_auto_hermes_actor_with_hermes_id_routes_to_platform_targets(self, cp):
+        """When notification.metadata.actor is set to an agent with a hermes_instance_id,
+        _auto_hermes_targets returns the platform-specific targets for that instance."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, agent, binding = _setup_platform_infra(cp, "actorhid", "slack")
+
+        # Use metadata actor pointing to the agent with a hermes instance
+        _make_notification(
+            cp,
+            channels=["hermes"],
+            metadata={"actor": agent.id},
+        )
+        result = notifiers.deliver_pending()
+        # The auto-hermes path with actor → platform_targets_for_hermes → returns targets
+        assert result["delivered"] == 1
+        assert sent[0].recipient_agent_id == agent.id
+
+    def test_auto_hermes_actor_notfound_falls_back_to_all_platforms(self, cp):
+        """When the actor in metadata is not found, fall back to all platform bindings."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        _, instance, agent, binding = _setup_platform_infra(cp, "actornf", "slack")
+
+        _make_notification(
+            cp,
+            channels=["hermes"],
+            metadata={"actor": "agent_does_not_exist"},
+        )
+        result = notifiers.deliver_pending()
+        # Falls back to _platform_targets("slack") + _platform_targets("telegram")
+        assert result["delivered"] == 1
+        assert sent[0].recipient_agent_id == agent.id
+
+    def test_auto_hermes_actor_with_no_hermes_id_falls_back(self, cp):
+        """When actor exists but has no hermes_instance_id, fall back to all platforms."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        # Set up a slack binding so the fallback can find something
+        _, instance, agent_with_binding, binding = _setup_platform_infra(cp, "actornhid", "slack")
+
+        # Create a separate agent without a hermes_instance_id
+        machine2 = cp.register_machine("host-nohid")
+        agent_no_hid = cp.register_agent(machine2.id, "agent-nohid")
+
+        _make_notification(
+            cp,
+            channels=["hermes"],
+            metadata={"actor": agent_no_hid.id},
+        )
+        result = notifiers.deliver_pending()
+        # agent_no_hid has no hermes_instance_id → falls through to all-platform fallback
+        assert result["delivered"] == 1
+
+
+class TestPlatformTargetsForHermes:
+    """Lines 505-522: _platform_targets_for_hermes function."""
+
+    def test_platform_targets_for_hermes_returns_slack_and_telegram(self, cp):
+        """_platform_targets_for_hermes returns entries for both slack and telegram bindings."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        tenant = cp.register_tenant("t-ptfh")
+        persona = cp.register_persona(
+            tenant.id, "BotPTFH", "hermes://ptfh/soul", "hermes://ptfh/mem"
+        )
+        instance = cp.register_hermes_instance(tenant.id, "hinst-ptfh", persona_id=persona.id)
+        machine = cp.register_machine("host-ptfh")
+        agent = cp.register_agent(machine.id, "agent-ptfh", hermes_instance_id=instance.id)
+
+        # Register both slack and telegram bindings for the same hermes instance
+        cp.register_platform_binding(
+            tenant.id, instance.id, "slack", "channel:PTFHSLACK", display_name="slack-ptfh"
+        )
+        cp.register_platform_binding(
+            tenant.id, instance.id, "telegram", "tg_ptfh_chat", display_name="tg-ptfh"
+        )
+
+        targets = notifiers._platform_targets_for_hermes(instance.id)
+        assert len(targets) == 2
+        platforms = {t["platform"] for t in targets}
+        assert platforms == {"slack", "telegram"}
+
+    def test_platform_targets_for_hermes_excludes_hermes_platform(self, cp):
+        """_platform_targets_for_hermes only returns slack/telegram, not hermes bindings."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        # Nothing registered → empty
+        targets = notifiers._platform_targets_for_hermes("nonexistent-hermes-instance")
+        assert targets == []
+
+    def test_auto_hermes_actor_uses_platform_targets_for_hermes_path(self, cp):
+        """When actor has hermes_instance_id, _platform_targets_for_hermes is invoked."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        tenant = cp.register_tenant("t-ptfh2")
+        persona = cp.register_persona(
+            tenant.id, "BotPTFH2", "hermes://ptfh2/soul", "hermes://ptfh2/mem"
+        )
+        instance = cp.register_hermes_instance(tenant.id, "hinst-ptfh2", persona_id=persona.id)
+        machine = cp.register_machine("host-ptfh2")
+        agent = cp.register_agent(machine.id, "agent-ptfh2", hermes_instance_id=instance.id)
+        cp.register_platform_binding(
+            tenant.id, instance.id, "slack", "channel:PTFH2SL", display_name="sl-ptfh2"
+        )
+
+        # Notification with actor set → _auto_hermes_targets → _platform_targets_for_hermes
+        _make_notification(cp, channels=["hermes"], metadata={"actor": agent.id})
+        result = notifiers.deliver_pending()
+        assert result["delivered"] == 1
+        assert sent[0].recipient_agent_id == agent.id
+
+
+class TestPlatformTargetsForHermesFilters:
+    """Cover the filtering branches inside _platform_targets_for_hermes (lines 508, 510)."""
+
+    def test_bindings_from_other_hermes_instance_are_excluded(self, cp):
+        """Bindings whose hermes_instance_id does not match are skipped (line 508 branch)."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        # Register two separate hermes instances
+        tenant = cp.register_tenant("t-ptfhfilt")
+        persona = cp.register_persona(
+            tenant.id, "BotFilt", "hermes://filtA/soul", "hermes://filtA/mem"
+        )
+        instanceA = cp.register_hermes_instance(tenant.id, "hinst-filtA", persona_id=persona.id)
+        personaB = cp.register_persona(
+            tenant.id, "BotFiltB", "hermes://filtB/soul", "hermes://filtB/mem"
+        )
+        instanceB = cp.register_hermes_instance(tenant.id, "hinst-filtB", persona_id=personaB.id)
+        machine = cp.register_machine("host-filtA")
+        agentA = cp.register_agent(machine.id, "agent-filtA", hermes_instance_id=instanceA.id)
+
+        # Register a slack binding on instanceA and instanceB
+        cp.register_platform_binding(
+            tenant.id, instanceA.id, "slack", "channel:FILTA", display_name="slack-filtA"
+        )
+        cp.register_platform_binding(
+            tenant.id, instanceB.id, "slack", "channel:FILTB", display_name="slack-filtB"
+        )
+
+        # Query _platform_targets_for_hermes for instanceA — should only return instanceA binding
+        targets = notifiers._platform_targets_for_hermes(instanceA.id)
+        assert len(targets) == 1
+        assert targets[0]["platform_binding_id"] is not None
+        # Ensure binding for instanceB is excluded
+        external_ids = {t["external_id"] for t in targets}
+        assert "channel:FILTA" in external_ids
+        assert "channel:FILTB" not in external_ids
+
+    def test_non_slack_telegram_bindings_are_excluded(self, cp):
+        """Bindings with platform other than slack/telegram are skipped (line 510 branch)."""
+        notifiers, sent = _make_notifiers_plain(cp)
+        tenant = cp.register_tenant("t-ptfhother")
+        persona = cp.register_persona(
+            tenant.id, "BotOther", "hermes://other/soul", "hermes://other/mem"
+        )
+        instance = cp.register_hermes_instance(tenant.id, "hinst-other", persona_id=persona.id)
+        machine = cp.register_machine("host-other")
+        agent = cp.register_agent(machine.id, "agent-other", hermes_instance_id=instance.id)
+
+        # Register both a slack binding and a "discord" binding (not in {"slack","telegram"})
+        cp.register_platform_binding(
+            tenant.id, instance.id, "slack", "channel:OTHER", display_name="slack-other"
+        )
+        cp.register_platform_binding(
+            tenant.id, instance.id, "discord", "discord_guild_123", display_name="discord-other"
+        )
+
+        targets = notifiers._platform_targets_for_hermes(instance.id)
+        # Only the slack binding should be returned; the discord binding triggers line 510 continue
+        assert len(targets) == 1
+        assert targets[0]["platform"] == "slack"
