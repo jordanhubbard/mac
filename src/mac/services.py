@@ -8616,11 +8616,23 @@ class ControlPlane:
     def _expire_lease_row(self, row: Any) -> Optional[Task]:
         lease = self._lease_from_row(row)
         task = self.get_task(lease.task_id)
-        next_state = (
-            TaskState.FAILED.value
-            if task.attempt_count >= task.max_attempts
-            else TaskState.OPEN.value
-        )
+        is_exhausted = task.attempt_count >= task.max_attempts
+        # When the lease expires and the task has exhausted its retry budget,
+        # call _exhausted_attempt_terminal_transition before the guarded
+        # transaction.  This stamps failure_class on the task metadata,
+        # creates an environment/contract repair task when appropriate, and
+        # returns the real target state (FAILED, WAITING, or CANCELLED).
+        # The call must precede the transaction because FAILED→WAITING is not
+        # a valid post-hoc state transition.
+        if is_exhausted:
+            target_state, exhausted_detail = self._exhausted_attempt_terminal_transition(
+                task,
+                {"lease_id": lease.id, "agent_id": lease.agent_id},
+            )
+            transition_history_detail = exhausted_detail
+        else:
+            target_state = TaskState.OPEN.value
+            transition_history_detail = {"lease_id": lease.id, "agent_id": lease.agent_id}
         timestamp = utcnow()
         with self.store.transaction() as conn:
             # Guard both updates so another replica renewing/reclaiming the
@@ -8650,8 +8662,8 @@ class ControlPlane:
                 WHERE id = ? AND lease_id = ?
                 """,
                 (
-                    next_state,
-                    next_state,
+                    target_state,
+                    target_state,
                     TaskState.FAILED.value,
                     timestamp,
                     timestamp,
@@ -8680,8 +8692,8 @@ class ControlPlane:
                 "task.lease_expired",
                 "dispatcher",
                 task.state,
-                next_state,
-                {"lease_id": lease.id, "agent_id": lease.agent_id},
+                target_state,
+                transition_history_detail,
                 conn=conn,
             )
         recovered = self.get_task(task.id)

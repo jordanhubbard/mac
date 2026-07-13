@@ -8736,6 +8736,76 @@ def test_expire_leases_does_not_clobber_a_reclaimed_task(cp):
     assert refreshed.lease_id == lease_b.id
 
 
+
+def test_expire_leases_exhausted_task_stamps_failure_class(cp):
+    """mac-9be4b64: when a lease expires and the task has exhausted its retry
+    budget, the terminal FAILED transition must stamp failure_class on the task
+    metadata and include it in the lease_expired history event detail.  Before
+    this fix the _expire_lease_row path hard-coded the target state to FAILED
+    without calling _exhausted_attempt_terminal_transition, leaving
+    failure_class unset.
+    """
+    worker = register_agent(cp, "w", ["python"])
+    task = cp.create_task("work", required_capabilities=["python"], max_attempts=1)
+    _, lease = cp.claim_task(task.id, worker.id, lease_seconds=-1)
+
+    recovered = cp.expire_leases(now=utcnow())
+
+    assert len(recovered) == 1
+    failed = cp.get_task(task.id)
+    assert failed.state == TaskState.FAILED.value
+    assert "failure_class" in failed.metadata, (
+        "failure_class must be stamped on metadata when lease expires with exhausted budget"
+    )
+    expiry_event = next(
+        e for e in cp.task_history(task.id) if e.event_type == "task.lease_expired"
+    )
+    assert "failure_class" in expiry_event.detail, (
+        "failure_class must appear in the task.lease_expired history event detail"
+    )
+
+
+def test_expire_leases_exhausted_environment_failure_creates_repair_task(cp):
+    """mac-9be4b64: when a lease expires on an exhausted task whose failure
+    history indicates an environment failure, _expire_lease_row must create a
+    repair task and move the parent to WAITING (not FAILED), matching the
+    behaviour already implemented for the BLOCKED-attempt auto-retry path.
+    """
+    worker = register_agent(cp, "w2", ["python"])
+    task = cp.create_task("env work", required_capabilities=["python"], max_attempts=1)
+    _, lease = cp.claim_task(task.id, worker.id, lease_seconds=-1)
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "heartbeat_offline"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = 1 WHERE id = ?",
+        (task.id,),
+    )
+    cp.store.execute(
+        "UPDATE leases SET status = ?, expires_at = ? WHERE id = ?",
+        (LeaseStatus.ACTIVE.value, "2000-01-01T00:00:00+00:00", lease.id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = ?, lease_id = ?, owner_agent_id = ?, leased_until = ? WHERE id = ?",
+        (TaskState.RUNNING.value, lease.id, worker.id, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.expire_leases(now=utcnow())
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value, (
+        "exhausted environment failure via lease expiry must produce WAITING state, not FAILED"
+    )
+    assert waiting.metadata.get("failure_class") == "environment"
+    assert len(waiting.dependencies) == 1
+    repair = cp.get_task(waiting.dependencies[0])
+    assert repair.metadata["origin"]["type"] == "environment_prerequisite"
+    assert repair.metadata["origin"]["parent_task_id"] == task.id
+
+
 def test_unique_active_lease_per_task_enforced_at_db_layer(cp):
     """mac-x5el: the partial UNIQUE index on leases (task_id WHERE
     status='active') must block a buggy second INSERT that would
