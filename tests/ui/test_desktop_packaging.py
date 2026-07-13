@@ -32,9 +32,9 @@ def test_desktop_package_declares_electron_packaging_targets():
     ]
     assert package["build"]["extraResources"] == [
         {
-            "from": "../src/mac/ui",
+            "from": "../ide/dist",
             "to": "ui",
-            "filter": ["index.html", "app.js", "dashboard_api.js", "styles.css"],
+            "filter": ["index.html", "assets/**"],
         }
     ]
     assert package["build"]["mac"]["target"] == ["dmg", "zip"]

@@ -2,7 +2,7 @@
   "name": "mac-control-plane-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Electron shell for the MAC control plane dashboard.",
+  "description": "Electron shell for the MAC Fleet Workbench IDE.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -35,13 +35,11 @@
     ],
     "extraResources": [
       {
-        "from": "../src/mac/ui",
+        "from": "../ide/dist",
         "to": "ui",
         "filter": [
           "index.html",
-          "app.js",
-          "dashboard_api.js",
-          "styles.css"
+          "assets/**"
         ]
       }
     ],

@@ -84,10 +84,9 @@ npm run package
 ```
 
 `npm run package` and `make ide-package` create a static web bundle, not a
-native Electron app. `desktop/package.json` `extraResources` currently copies
-from `../src/mac/ui` (the legacy SPA path); updating it to reference the
-`ide/dist` Vite build output is a tracked follow-up item (see the "Next" section
-below).
+native Electron app. `desktop/package.json` `extraResources` copies from
+`../ide/dist` (this package's Vite build output), replacing the legacy
+`../src/mac/ui` SPA path.
 
 ## Verify
 
@@ -119,4 +118,4 @@ decision that follows this increment.
 - Upgrade Mac's A2A 0.3 surface to A2A 1.0 streaming and remote peer discovery.
 - Decide OpenVSCode Server versus Theia before adopting a standard extension
   host, workspace filesystem, source control, and full terminal.
-- Point the desktop package at the canonical workbench artifact.
+- Adopt a standard extension host (OpenVSCode Server or Theia) for workspace filesystem, source control, and full terminal.

@@ -1,8 +1,9 @@
-# MAC Control Plane Desktop
+# MAC Fleet Workbench Desktop
 
-This is an optional Electron shell for the MAC dashboard. It keeps the Python
-project Node-free at the repository root while providing a desktop build target
-for users who should not have to understand SSH tunnels or fleet topology.
+This is an optional Electron shell for the MAC Fleet Workbench IDE. It keeps
+the Python project Node-free at the repository root while providing a desktop
+build target for users who should not have to understand SSH tunnels or fleet
+topology.
 
 ## Build
 
@@ -25,6 +26,13 @@ From the repository root:
 
 ```bash
 make desktop-install
+make desktop-package
+```
+
+Before packaging, build the Fleet Workbench IDE so that `ide/dist` is present:
+
+```bash
+make build-gui       # produces ide/dist/
 make desktop-package
 ```
 
@@ -74,15 +82,17 @@ MAC_DESKTOP_API_TOKEN=... \
 npm start
 ```
 
-The main process opens a local HTTP proxy and loads the existing `/ui`
-dashboard shell from the packaged app resources. API requests from that shell
-are proxied to the selected fleet. API credentials and SSH commands remain in
+The main process opens a local HTTP proxy and loads the Fleet Workbench IDE
+(`ide/dist`) from the packaged app resources. The workbench is a React +
+TypeScript Vite build that wraps the live task graph, agent context, A2A
+interoperability, and streamed operations. API requests from the workbench are
+proxied to the selected fleet. API credentials and SSH commands remain in
 Electron main; the renderer only sees the `window.macDashboard` bridge.
 
 The dashboard's URL field is a testing fallback. Normal fleet connections
 should be selected from the target dropdown.
 
-The packaged UI also exposes `Fleet hub` and `Bearer token` controls in the
+The packaged IDE also exposes `Fleet hub` and `Bearer token` controls in the
 top bar. Token values from `~/.mac/.env` stay in Electron main; the renderer
 only receives token-source labels such as `Hub token (HUB)` or `Manual
 bearer token`.

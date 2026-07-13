@@ -575,6 +575,8 @@ function uiRootCandidates() {
   return [
     process.env.MAC_DESKTOP_UI_ROOT || "",
     process.resourcesPath ? path.join(process.resourcesPath, "ui") : "",
+    path.resolve(__dirname, "..", "ide", "dist"),
+    path.resolve(process.cwd(), "..", "ide", "dist"),
     path.resolve(__dirname, "..", "src", "mac", "ui"),
     path.resolve(process.cwd(), "..", "src", "mac", "ui"),
   ].filter(Boolean);
