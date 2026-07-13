@@ -522,7 +522,13 @@ config = {
                 },
                 "config": {
                     "maxMemories": 5,
-                    "timeoutMs": 10000,
+                    # Hub-fetch budget for the continuity plugin (peer bridge
+                    # polls, cursors, mirror). Gateways that reach the hub over
+                    # tailscale DERP relays (GKE pods) see multi-second latency
+                    # spikes that a 10s budget cannot ride out — set 30000 on
+                    # relayed hosts (2026-07-13: pod bridge starved for ~90min
+                    # of relay weather while LAN gateways were unaffected).
+                    "timeoutMs": int(os.environ.get("MAC_OPENCLAW_PLUGIN_TIMEOUT_MS", "10000")),
                     "peerPollIntervalMs": 2000,
                     "peerMaxAttempts": 3,
                     # Peer/directive turns that do REAL work (fetch a script,
