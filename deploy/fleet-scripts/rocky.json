@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "stage": "post-deploy",
+  "generated_at": "<ISO-8601-timestamp>",
+  "agent": "<agent-name>",
+  "os_kind": "linux",
+  "deploy": {
+    "timestamp": "<ISO-8601-timestamp>",
+    "mac_git_rev": "<git-sha>",
+    "mac_git_url": "https://github.com/<org>/<repo>.git",
+    "mac_git_branch": "main",
+    "log": "~/.mac/logs/deploy-<timestamp>.log",
+    "hermes_slack_home_channel_name": "<slack-channel>",
+    "hermes_gateway_model": "<model-name>",
+    "hermes_gateway_provider": "<provider-name>",
+    "hermes_gateway_base_url_configured": true,
+    "hub_url": "http://<hub-host>:8789",
+    "control_bind_host": "0.0.0.0",
+    "worker_mode": "worker",
+    "worker_capabilities": ["general"],
+    "worker_allowed_projects": [],
+    "worker_required_metadata_configured": false
+  }
+}
