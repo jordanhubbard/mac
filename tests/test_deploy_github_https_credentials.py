@@ -9,7 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _function() -> str:
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = (
+        (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+        + "\n"
+        + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    )
     start = script.index("configure_github_https_credentials()")
     end = script.index("\n# On a brand-new spoke", start)
     return script[start:end]
@@ -76,5 +80,9 @@ def test_setup_failure_is_nonfatal(tmp_path: Path) -> None:
 
 
 def test_deploy_configures_https_after_ssh_review_key() -> None:
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = (
+        (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+        + "\n"
+        + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    )
     assert "install_github_review_key\nconfigure_github_https_credentials\n" in script

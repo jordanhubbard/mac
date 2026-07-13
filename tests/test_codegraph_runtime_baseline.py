@@ -40,7 +40,11 @@ def test_codegraph_is_documented_as_agent_runtime_baseline():
 
 
 def test_codegraph_presence_and_behavior_have_basic_runtime_coverage():
-    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    deploy = (
+        (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+        + "\n"
+        + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    )
     containerfile = (
         ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
     ).read_text(encoding="utf-8")

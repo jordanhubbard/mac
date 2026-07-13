@@ -14,6 +14,7 @@ INSTALLER = OPENCLAW_DIR / "install-openclaw-gateway.sh"
 CONTAINERFILE = OPENCLAW_DIR / "OpenClaw.Containerfile"
 POLICY = OPENCLAW_DIR / "openclaw-policy.yaml"
 DEPLOY = ROOT / "deploy" / "deploy-mac-fleet.sh"
+NODE_INSTALL_SCRIPT = ROOT / "deploy" / "fleet-node-install.sh"
 FLEET_CONFIG = ROOT / "deploy" / "fleet" / "config.yaml"
 SYSTEMD_UNIT = ROOT / "deploy" / "systemd" / "mac-openclaw-gateway.service"
 
@@ -1163,7 +1164,7 @@ def test_verify_waits_for_new_sandbox_and_gateway_health(tmp_path: Path) -> None
 
 def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     config = FLEET_CONFIG.read_text(encoding="utf-8")
-    deploy = DEPLOY.read_text(encoding="utf-8")
+    deploy = DEPLOY.read_text(encoding="utf-8") + "\n" + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     unit = SYSTEMD_UNIT.read_text(encoding="utf-8")
     assert "gateway_impl: openclaw" in config
     assert "openclaw)\n      install_linux_openclaw_service" in deploy

@@ -86,7 +86,11 @@ def test_observer_spool_is_mode_0600_and_replayed(monkeypatch, tmp_path):
 
 
 def test_every_deployment_supervisor_uses_external_crash_observer():
-    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    deploy = (
+        (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+        + "\n"
+        + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    )
     assert "ulimit -c unlimited" in deploy
     assert "export PYTHONFAULTHANDLER=1" in deploy
     for supervisor in ("systemd", "supervisord", "launchd"):

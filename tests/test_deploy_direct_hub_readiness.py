@@ -9,10 +9,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = ROOT / "deploy" / "deploy-mac-fleet.sh"
+NODE_INSTALL_SCRIPT = ROOT / "deploy" / "fleet-node-install.sh"
 
 
 def _script() -> str:
-    return DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    return (
+        DEPLOY_SCRIPT.read_text(encoding="utf-8")
+        + "\n"
+        + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    )
 
 
 def _function(name: str) -> str:

@@ -25,7 +25,11 @@ def test_multimodal_skill_present_and_well_formed():
 
 
 def test_fleet_skills_installed_for_every_agent():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = (
+        (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+        + "\n"
+        + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    )
     fn = script.split("install_fleet_skills() {", 1)[1].split("\ninstall_omniverse_gpu_skills() {", 1)[0]
     # fleet-wide: must NOT be GPU-gated, copies the deploy/skills/fleet assets
     assert "nvidia-smi" not in fn

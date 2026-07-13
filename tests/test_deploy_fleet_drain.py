@@ -3,10 +3,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = ROOT / "deploy" / "deploy-mac-fleet.sh"
+NODE_INSTALL_SCRIPT = ROOT / "deploy" / "fleet-node-install.sh"
 
 
 def script_text():
-    return DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    return (
+        DEPLOY_SCRIPT.read_text(encoding="utf-8")
+        + "\n"
+        + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    )
 
 
 def test_deploy_drains_worker_before_stopping_services():
@@ -76,14 +81,20 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
 
 
 def test_remote_deploy_payload_is_materialized_before_execution():
-    text = script_text()
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
 
-    assert "Feeding the body directly to ``bash -s`` lets" in text
-    assert 'payload="$(mktemp "${TMPDIR:-/tmp}/mac-deploy.XXXXXX")"' in text
-    assert 'cat > "$payload"' in text
-    assert 'bash "$payload"' in text
-    assert 'remote_cmd="${remote_env[*]} bash -c $(shell_quote "$remote_payload_runner")"' in text
-    assert '${remote_env[*]} bash -s' not in text
+    # The deploy body is now a standalone script (fleet-node-install.sh) copied
+    # to the remote node via scp and executed there, so stdin is never the
+    # deployment source stream.
+    assert "fleet-node-install.sh" in deploy
+    assert "scp" in deploy
+    assert "remote_node_script" in deploy
+    # The node install script must begin with set -euo pipefail.
+    assert node.splitlines()[1] == "set -euo pipefail"
+    # The old stdin-based payload approach must no longer be present.
+    assert 'payload="$(mktemp "${TMPDIR:-/tmp}/mac-deploy.XXXXXX")"' not in deploy
+    assert '${remote_env[*]} bash -s' not in deploy
 
 
 def test_supervisord_rotates_each_gateway_implementation_log_before_classification():

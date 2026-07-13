@@ -11,7 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _function_source() -> str:
-    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    deploy = (
+        (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+        + "\n"
+        + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    )
     start = deploy.index("remove_managed_github_review_key_config()")
     end = deploy.index("# On a brand-new spoke", start)
     return deploy[start:end]

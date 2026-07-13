@@ -121,7 +121,7 @@
     "name": "MAC_AGENT_FOOTPRINT_REINSTALL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -143,7 +143,7 @@
     "name": "MAC_AGENT_GEN_AUDIO_MODELS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -156,7 +156,7 @@
     "name": "MAC_AGENT_GEN_AUDIO_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -181,7 +181,7 @@
     "name": "MAC_AGENT_GEN_HF_HOME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -193,7 +193,7 @@
     "name": "MAC_AGENT_GEN_HOST",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -206,7 +206,7 @@
     "name": "MAC_AGENT_GEN_MODEL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/local_gen_catalog.py",
       "src/mac/worker.py"
@@ -220,7 +220,7 @@
     "name": "MAC_AGENT_GEN_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -244,7 +244,7 @@
     "name": "MAC_AGENT_GEN_VIDEO_MODELS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -257,7 +257,7 @@
     "name": "MAC_AGENT_GEN_VIDEO_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -270,7 +270,7 @@
     "name": "MAC_AGENT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py",
@@ -309,7 +309,7 @@
     "name": "MAC_AGENT_LAUNCHD_LABEL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -334,7 +334,7 @@
     "name": "MAC_AGENT_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py",
       "src/mac/journal.py",
@@ -349,7 +349,7 @@
     "name": "MAC_AGENT_PLIST_BACKUP",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -393,7 +393,7 @@
     "name": "MAC_AGENT_SERVICE_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -416,7 +416,7 @@
     "name": "MAC_AGENT_STARTUP_SELF_TEST",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -428,7 +428,7 @@
     "name": "MAC_AGENT_STARTUP_SELF_TEST_REPORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -439,7 +439,7 @@
     "name": "MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "int"
@@ -451,7 +451,7 @@
     "name": "MAC_AGENT_UNIT_BACKUP",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -498,6 +498,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/embedding_tool.py",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
@@ -720,7 +721,7 @@
     "name": "MAC_BIND_HOST",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/k8s/mac-api/deployment.yaml",
       "src/mac/api.py",
       "src/mac/deploy_env.py",
@@ -1181,7 +1182,7 @@
     "name": "MAC_DB",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/systemd/mac-fleet-context.service",
       "deploy/systemd/mac.service",
       "src/mac/cli.py",
@@ -1245,7 +1246,8 @@
     "name": "MAC_DEPLOY_AGENT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1340,7 +1342,8 @@
     "name": "MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1387,7 +1390,8 @@
     "name": "MAC_DEPLOY_ALLOW_DEGRADED_SERVICES",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -1409,7 +1413,7 @@
     "name": "MAC_DEPLOY_API_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -1420,7 +1424,8 @@
     "name": "MAC_DEPLOY_ARCHIVE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1431,7 +1436,7 @@
     "name": "MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -1442,7 +1447,8 @@
     "name": "MAC_DEPLOY_CONFIGURED_AGENT_IDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1453,7 +1459,8 @@
     "name": "MAC_DEPLOY_CONTROL_BIND_HOST",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1464,7 +1471,8 @@
     "name": "MAC_DEPLOY_CONTROL_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -1486,7 +1494,8 @@
     "name": "MAC_DEPLOY_DEFER_AGENT_RESTART",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1497,7 +1506,8 @@
     "name": "MAC_DEPLOY_DEFER_CLEAR_DRAIN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1508,7 +1518,8 @@
     "name": "MAC_DEPLOY_DIRECT_HUB",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1519,7 +1530,8 @@
     "name": "MAC_DEPLOY_DRAIN_MODE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1530,7 +1542,8 @@
     "name": "MAC_DEPLOY_DRAIN_POLL_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -1541,7 +1554,8 @@
     "name": "MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -1565,7 +1579,8 @@
     "name": "MAC_DEPLOY_FIRECRAWL_BIND_ADDR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1576,7 +1591,8 @@
     "name": "MAC_DEPLOY_FIRECRAWL_INSTALL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -1587,7 +1603,8 @@
     "name": "MAC_DEPLOY_FIRECRAWL_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -1598,7 +1615,8 @@
     "name": "MAC_DEPLOY_FIRECRAWL_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1638,7 +1656,8 @@
     "name": "MAC_DEPLOY_FLEET_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1660,7 +1679,8 @@
     "name": "MAC_DEPLOY_FLEET_REGISTRY_FILE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1685,6 +1705,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/fleet_env.py"
     ],
     "type": "str"
@@ -1696,7 +1717,8 @@
     "name": "MAC_DEPLOY_GIT_BRANCH",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1707,7 +1729,8 @@
     "name": "MAC_DEPLOY_GIT_REV",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1718,7 +1741,8 @@
     "name": "MAC_DEPLOY_GIT_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1729,7 +1753,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_DNS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1740,7 +1765,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_FLEET_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1751,7 +1777,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_HEALTH_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1762,7 +1789,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_IP_PREFIX",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1773,7 +1801,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_LOGIN_SERVER",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1784,7 +1813,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_MANAGE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -1795,7 +1825,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -1807,6 +1838,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/fleet/config.yaml",
       "scripts/setup-fleet.py",
       "src/mac/fleet_setup.py"
@@ -1820,7 +1852,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_ENV",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1831,7 +1864,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_SOURCE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1842,7 +1876,8 @@
     "name": "MAC_DEPLOY_HEADSCALE_PUBLIC_ADDR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1853,7 +1888,8 @@
     "name": "MAC_DEPLOY_HERMES_GATEWAY_BASE_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1864,7 +1900,7 @@
     "name": "MAC_DEPLOY_HERMES_GATEWAY_IMPL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -1876,7 +1912,8 @@
     "name": "MAC_DEPLOY_HERMES_GATEWAY_MODEL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1887,7 +1924,8 @@
     "name": "MAC_DEPLOY_HERMES_GATEWAY_PROVIDER",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1898,7 +1936,8 @@
     "name": "MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1909,7 +1948,8 @@
     "name": "MAC_DEPLOY_HERMES_SURFACE_B64",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1946,6 +1986,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "scripts/setup-fleet.py",
       "src/mac/fleet_env.py",
       "src/mac/fleet_setup.py",
@@ -1960,7 +2001,8 @@
     "name": "MAC_DEPLOY_HUB_TUNNEL_PUBKEY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1971,7 +2013,8 @@
     "name": "MAC_DEPLOY_HUB_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2005,7 +2048,8 @@
     "name": "MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2016,7 +2060,8 @@
     "name": "MAC_DEPLOY_NETWORK_INSTALL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -2028,6 +2073,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2149,7 +2195,8 @@
     "name": "MAC_DEPLOY_OPENCLAW_LIVE_CANARY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2160,7 +2207,7 @@
     "name": "MAC_DEPLOY_OPENCLAW_PUBLIC_IDENTITY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2172,7 +2219,7 @@
     "name": "MAC_DEPLOY_OPENCLAW_REPRESENTATION_MODE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2184,7 +2231,7 @@
     "name": "MAC_DEPLOY_OPENCLAW_REPRESENTED_BY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2196,7 +2243,7 @@
     "name": "MAC_DEPLOY_OPENCLAW_SLACK_ACCOUNT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2207,7 +2254,7 @@
     "name": "MAC_DEPLOY_OPENCLAW_TELEGRAM_ACCOUNT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2251,7 +2298,8 @@
     "name": "MAC_DEPLOY_OS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2262,7 +2310,8 @@
     "name": "MAC_DEPLOY_QDRANT_BIND_ADDR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2273,7 +2322,8 @@
     "name": "MAC_DEPLOY_QDRANT_DATA_DIR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2284,7 +2334,8 @@
     "name": "MAC_DEPLOY_QDRANT_IMAGE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2295,7 +2346,8 @@
     "name": "MAC_DEPLOY_QDRANT_INSTALL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -2306,7 +2358,8 @@
     "name": "MAC_DEPLOY_QDRANT_MEMORY_LIMIT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -2317,7 +2370,8 @@
     "name": "MAC_DEPLOY_QDRANT_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -2328,7 +2382,8 @@
     "name": "MAC_DEPLOY_QDRANT_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2432,6 +2487,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2478,6 +2534,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2547,6 +2604,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "scripts/setup-fleet.py",
       "src/mac/fleet_setup.py"
     ],
@@ -2570,7 +2628,8 @@
     "name": "MAC_DEPLOY_SUPERVISOR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2581,7 +2640,7 @@
     "name": "MAC_DEPLOY_SUPERVISOR_CONF_DIR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
       "deploy/install-qdrant-service.sh",
@@ -2598,6 +2657,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/fleet/config.yaml",
       "deploy/install-tailscale.sh",
       "scripts/setup-fleet.py",
@@ -2613,7 +2673,8 @@
     "name": "MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2624,7 +2685,8 @@
     "name": "MAC_DEPLOY_TARGET",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2691,7 +2753,8 @@
     "name": "MAC_DEPLOY_TS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2702,7 +2765,8 @@
     "name": "MAC_DEPLOY_WEBDAV_BIND_ADDR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2714,6 +2778,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "bool"
@@ -2725,7 +2790,8 @@
     "name": "MAC_DEPLOY_WEBDAV_INSTALL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -2737,6 +2803,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "bool"
@@ -2748,7 +2815,8 @@
     "name": "MAC_DEPLOY_WEBDAV_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -2759,7 +2827,8 @@
     "name": "MAC_DEPLOY_WEBDAV_PUBLIC_PATH",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2770,7 +2839,7 @@
     "name": "MAC_DEPLOY_WEBDAV_PUBLIC_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2782,7 +2851,8 @@
     "name": "MAC_DEPLOY_WEBDAV_ROOT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2794,6 +2864,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2805,7 +2876,8 @@
     "name": "MAC_DEPLOY_WORKER_ALLOWED_PROJECTS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2816,7 +2888,8 @@
     "name": "MAC_DEPLOY_WORKER_CAPABILITIES",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2827,7 +2900,8 @@
     "name": "MAC_DEPLOY_WORKER_MODE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -2838,7 +2912,8 @@
     "name": "MAC_DEPLOY_WORKER_REQUIRED_METADATA",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -2849,7 +2924,8 @@
     "name": "MAC_DEPLOY_WORKER_REQUIRE_CANARY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -3095,7 +3171,7 @@
     "name": "MAC_FLEET_TENANT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/worker.py"
@@ -3109,7 +3185,7 @@
     "name": "MAC_FORCE_ACC_MIGRATION",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -3120,7 +3196,7 @@
     "name": "MAC_GEN_AUDIO_SERVICE_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -3131,7 +3207,7 @@
     "name": "MAC_GEN_SERVICE_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -3142,7 +3218,7 @@
     "name": "MAC_GEN_VIDEO_SERVICE_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -3209,7 +3285,7 @@
     "name": "MAC_HERMES_AGENT_DIR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
     ],
@@ -3278,7 +3354,7 @@
     "name": "MAC_HERMES_GATEWAY_API_KEY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/plugins/image_gen/mac-hub/__init__.py",
       "deploy/hermes/overlay/plugins/image_gen/mac-hub/plugin.yaml",
       "deploy/hermes/overlay/plugins/image_gen/nvidia/__init__.py",
@@ -3306,7 +3382,7 @@
     "name": "MAC_HERMES_GATEWAY_BASE_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/plugins/image_gen/mac-hub/__init__.py",
       "deploy/hermes/overlay/plugins/image_gen/nvidia/__init__.py",
       "deploy/hermes/overlay/tools/embedding_tool.py",
@@ -3331,7 +3407,7 @@
     "name": "MAC_HERMES_GATEWAY_MODEL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/agent_provider.py",
@@ -3350,7 +3426,7 @@
     "name": "MAC_HERMES_GATEWAY_PROVIDER",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
@@ -3400,7 +3476,7 @@
     "name": "MAC_HERMES_INSTANCE_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/_hermes/agent/agent_init.py",
@@ -3431,7 +3507,7 @@
     "name": "MAC_HERMES_PERSONA_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/worker.py"
@@ -3445,7 +3521,7 @@
     "name": "MAC_HERMES_PYTHON",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh"
     ],
     "type": "str"
@@ -3457,7 +3533,7 @@
     "name": "MAC_HERMES_RUNTIME_CONTEXT_FILE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py"
@@ -3471,7 +3547,7 @@
     "name": "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-fleet-context-service.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
@@ -3528,7 +3604,7 @@
     "name": "MAC_HERMES_SLACK_HOME_CHANNEL_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/sync-hermes-home-channels.py",
       "src/mac/deploy_env.py",
@@ -3555,7 +3631,7 @@
     "name": "MAC_HERMES_SYNC_SLACK_HOME_CHANNELS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/sync-hermes-home-channels.py",
       "src/mac/deploy_env.py"
     ],
@@ -3582,6 +3658,7 @@
     "sources": [
       "deploy/agent-resource-health.sh",
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
       "deploy/install-qdrant-service.sh",
@@ -3648,7 +3725,7 @@
     "name": "MAC_HUB_REVIEWER_AGENT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
@@ -3661,7 +3738,7 @@
     "name": "MAC_HUB_REVIEWER_AGENT_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
@@ -3674,7 +3751,7 @@
     "name": "MAC_HUB_REVIEWER_AUTO_REGISTER",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
@@ -3687,7 +3764,7 @@
     "name": "MAC_HUB_REVIEWER_MACHINE_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/services.py"
     ],
@@ -3723,7 +3800,7 @@
     "name": "MAC_HUB_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/mac-crash-observer.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
@@ -3991,7 +4068,7 @@
     "name": "MAC_LAUNCHD_LABEL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -4213,7 +4290,7 @@
     "name": "MAC_MEMORY_TOPOLOGY_FILE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
     ],
@@ -4509,7 +4586,7 @@
     "name": "MAC_OPENCLAW_AGENT_BIN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/acp/backend.py",
       "src/mac/worker_reflect.py"
     ],
@@ -4522,7 +4599,7 @@
     "name": "MAC_OPENCLAW_AGENT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/curiosity-sidecar.py",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/self_healing.py"
@@ -4615,7 +4692,7 @@
     "name": "MAC_OPENCLAW_CREDENTIALS_FILE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py"
     ],
     "type": "str"
@@ -4704,7 +4781,7 @@
     "name": "MAC_OPENCLAW_FLEET_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -4804,7 +4881,7 @@
     "name": "MAC_OPENCLAW_LIVE_CANARY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -4838,7 +4915,7 @@
     "name": "MAC_OPENCLAW_MODEL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -4861,7 +4938,7 @@
     "name": "MAC_OPENCLAW_PUBLIC_IDENTITY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "src/mac/deploy_env.py",
@@ -4876,7 +4953,7 @@
     "name": "MAC_OPENCLAW_REPRESENTATION_MODE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/deploy_env.py"
     ],
@@ -4889,7 +4966,7 @@
     "name": "MAC_OPENCLAW_REPRESENTED_BY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/deploy_env.py"
     ],
@@ -4914,7 +4991,7 @@
     "name": "MAC_OPENCLAW_ROUTER_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -4959,7 +5036,7 @@
     "name": "MAC_OPENCLAW_SLACK_ACCOUNT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "src/mac/deploy_env.py"
@@ -5018,7 +5095,7 @@
     "name": "MAC_OPENCLAW_STARTUP_OK",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
   },
@@ -5029,7 +5106,7 @@
     "name": "MAC_OPENCLAW_SUPERVISOR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
@@ -5041,7 +5118,7 @@
     "name": "MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "src/mac/deploy_env.py"
@@ -5136,7 +5213,7 @@
     "name": "MAC_OPENSHELL_BIN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/cli.py",
@@ -5187,7 +5264,7 @@
     "name": "MAC_OPENSHELL_CREATE_ARGS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/executor_sandbox.py"
     ],
@@ -5408,7 +5485,7 @@
     "name": "MAC_OPENSHELL_SANDBOX",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
       "src/mac/executor_finalizer.py",
@@ -5487,7 +5564,7 @@
     "name": "MAC_PLIST_BACKUP",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -5564,7 +5641,7 @@
     "name": "MAC_PORT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
       "src/mac/deploy_env.py"
@@ -5699,7 +5776,7 @@
     "name": "MAC_PUBLISH_WEBDAV_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/install-webdav-server.sh",
       "src/mac/_hermes/tools/fleet_tool.py",
@@ -5716,7 +5793,8 @@
     "name": "MAC_PYTHON",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -5738,7 +5816,7 @@
     "name": "MAC_QDRANT_MEMORY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
@@ -5750,7 +5828,7 @@
     "name": "MAC_QDRANT_MEMORY_ROLE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-qdrant-service.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
@@ -6062,7 +6140,7 @@
     "name": "MAC_REQUIRE_FIRECRAWL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "bool"
@@ -6086,7 +6164,7 @@
     "name": "MAC_REQUIRE_QDRANT_MEMORY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-qdrant-service.sh",
       "src/mac/deploy_env.py"
     ],
@@ -6112,7 +6190,7 @@
     "retired": false,
     "sources": [
       "deploy/agent-resource-health.sh",
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "int"
   },
@@ -6123,7 +6201,7 @@
     "name": "MAC_REVIEW_HUB_VERIFY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/services.py",
       "src/mac/worker.py"
@@ -6286,7 +6364,7 @@
     "name": "MAC_ROUTER_AUDIO_KEY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/router_app.py"
     ],
@@ -6399,7 +6477,7 @@
     "name": "MAC_ROUTER_IMAGE_KEY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/media_routing.py",
       "src/mac/router_app.py"
@@ -6497,6 +6575,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "scripts/setup-fleet.py",
       "src/mac/api.py",
       "src/mac/deploy_env.py",
@@ -6582,7 +6661,7 @@
     "name": "MAC_ROUTER_VIDEO_KEY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/router_app.py"
     ],
@@ -7040,7 +7119,7 @@
     "name": "MAC_SECRET_VAULT_TOKEN",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py"
     ],
@@ -7053,7 +7132,7 @@
     "name": "MAC_SECRET_VAULT_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py"
     ],
@@ -7200,7 +7279,7 @@
     "name": "MAC_SERVICE_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -7211,7 +7290,7 @@
     "name": "MAC_SERVICE_NOFILE_LIMIT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh"
     ],
     "type": "int"
@@ -7235,7 +7314,7 @@
     "name": "MAC_SHARED_SERVICES_MANAGER_AGENT",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/env_config.py",
       "src/mac/hermes_startup.py",
@@ -7272,7 +7351,7 @@
     "name": "MAC_SRC",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/nemoclaw/install-nemoclaw-pilot.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
@@ -7333,7 +7412,7 @@
     "name": "MAC_SUPERVISORD_CONF_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -7344,7 +7423,7 @@
     "name": "MAC_SUPERVISORD_PROG",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -7371,7 +7450,7 @@
     "name": "MAC_TAILSCALE_HOSTNAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-tailscale.sh"
     ],
     "type": "str"
@@ -7383,7 +7462,7 @@
     "name": "MAC_TAILSCALE_IP",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-tailscale.sh"
     ],
     "type": "str"
@@ -7775,7 +7854,7 @@
     "name": "MAC_UNIT_BACKUP",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -7912,7 +7991,7 @@
     "name": "MAC_WEBDAV_PUBLIC_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/install-webdav-server.sh",
       "src/mac/_hermes/tools/fleet_tool.py",
@@ -7957,7 +8036,7 @@
     "name": "MAC_WEB_SEARCH_PROVIDER",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-firecrawl-gateway.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
@@ -7971,7 +8050,7 @@
     "name": "MAC_WEB_SEARCH_URL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/install-firecrawl-gateway.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_adapter.py",
@@ -7986,7 +8065,7 @@
     "name": "MAC_WORKER_AGENT_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/mac-crash-observer.py",
       "deploy/systemd/mac-fleet-context.service",
@@ -8008,7 +8087,7 @@
     "name": "MAC_WORKER_AGENT_NAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/mac-crash-observer.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_hub_io.py",
@@ -8025,7 +8104,7 @@
     "name": "MAC_WORKER_ALLOWED_PROJECTS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -8049,7 +8128,7 @@
     "name": "MAC_WORKER_CAPABILITIES",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -8117,7 +8196,7 @@
     "name": "MAC_WORKER_EXECUTOR",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -8129,7 +8208,7 @@
     "name": "MAC_WORKER_HEARTBEAT_INTERVAL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "int"
@@ -8141,7 +8220,7 @@
     "name": "MAC_WORKER_HERMES_INSTANCE_ID",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
@@ -8157,7 +8236,7 @@
     "name": "MAC_WORKER_HOSTNAME",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
     ],
@@ -8170,7 +8249,7 @@
     "name": "MAC_WORKER_LEASE_SECONDS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "int"
@@ -8182,7 +8261,7 @@
     "name": "MAC_WORKER_MODE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -8205,7 +8284,7 @@
     "name": "MAC_WORKER_POLL_INTERVAL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "int"
@@ -8242,7 +8321,7 @@
     "name": "MAC_WORKER_REQUIRED_METADATA",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -8255,7 +8334,7 @@
     "name": "MAC_WORKER_REQUIRE_CANARY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -8268,7 +8347,7 @@
     "name": "MAC_WORKER_RESOURCES",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -8280,7 +8359,7 @@
     "name": "MAC_WORKER_RESOURCES_FILE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -8293,6 +8372,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/k8s/mac-runner/deployment.yaml",
@@ -8325,7 +8405,7 @@
     "name": "MAC_WORKER_WORKSPACE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"

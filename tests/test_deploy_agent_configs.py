@@ -47,7 +47,9 @@ def load_sample_fleet_config():
 
 
 def deploy_script_text():
-    return (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    node = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    return deploy + "\n" + node
 
 
 def fleet_config_query_source() -> str:
@@ -260,7 +262,7 @@ def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
     # The Hermes runtime reads ~/.hermes/.env + config.yaml (not mac.env) for its
     # chat provider; the deploy must sync those from mac.env or agents dial the
     # retired TokenHub :8090 / send a stale bearer (403) and self-test degrades.
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     assert "sync_hermes_chat_config()" in script
     assert "-m mac.hermes_chat_config" in script
     assert '--mac-env "$ENV_FILE"' in script
@@ -272,18 +274,18 @@ def test_fleet_deploy_exports_python_bin_to_remote():
     # PYTHON_BIN is used in the remote-executed deploy (e.g. install_github_review_key),
     # so it must be in the `export` list shipped to the remote env — like PY — or the
     # remote aborts under `set -u` with "PYTHON_BIN: unbound variable".
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     export_line = next(
         (ln for ln in script.splitlines() if ln.startswith("export AGENT FLEET_NAME")),
         "",
     )
     assert "PYTHON_BIN" in export_line.split(), "PYTHON_BIN must be exported to the remote deploy env"
-    # Export alone is insufficient: the remote payload (the `bash -s` heredoc) must
-    # also ASSIGN it — `resolve_python_bin` only runs in the local driver. Isolate the
-    # one-time-deploy payload and require a PYTHON_BIN assignment within it.
-    payload = script.split('"$remote_cmd" <<\'REMOTE\'', 1)[-1].split("\nREMOTE\n", 1)[0]
+    # Export alone is insufficient: the remote payload (fleet-node-install.sh) must
+    # also ASSIGN it — `resolve_python_bin` only runs in the local driver.
+    payload = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     assert re.search(r"^\s*PYTHON_BIN=", payload, re.MULTILINE), \
-        "remote payload must ASSIGN PYTHON_BIN (e.g. PYTHON_BIN=\"$PY\"), not just export it"
+        'remote payload must ASSIGN PYTHON_BIN (e.g. PYTHON_BIN="$PY"), not just export it'
+
 
 
 def test_sample_fleet_config_is_generic_and_externalized():
@@ -293,6 +295,7 @@ def test_sample_fleet_config_is_generic_and_externalized():
         [
             (ROOT / "deploy" / "fleet" / "config.yaml").read_text(encoding="utf-8"),
             (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8"),
+            (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8"),
             (ROOT / "deploy" / "systemd" / "mac.env.example").read_text(encoding="utf-8"),
             (ROOT / "scripts" / "setup-fleet.py").read_text(encoding="utf-8"),
         ]
@@ -331,7 +334,7 @@ def test_sample_fleet_config_supports_home_channel_and_model_diversity():
 
 
 def test_fleet_agent_configs_enable_review_capability_by_default():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     cfg = load_sample_fleet_config()
     expected = (
         "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
@@ -376,7 +379,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
 
 
 def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
 
     assert '--attestation-key-env "$HOME/.mac/mac.env"' in script
     assert "--rotate-missing-attestation-key" in script
@@ -390,7 +393,7 @@ def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
 
 
 def test_fleet_deploy_bootstraps_hub_fleet_record(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
 
     values = build_mac_env(
         {},
@@ -416,7 +419,7 @@ def test_fleet_deploy_bootstraps_hub_fleet_record(tmp_path):
 
 
 def test_fleet_deploy_distributes_registry_and_reconciles_configured_membership():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
 
     assert "fleet_config_query sanitized-registry" in script
     assert "MAC_DEPLOY_FLEET_REGISTRY_FILE" in script
@@ -427,7 +430,7 @@ def test_fleet_deploy_distributes_registry_and_reconciles_configured_membership(
 
 
 def test_fleet_deploy_drain_agent_lookup_uses_file_for_large_json_payload():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     agent_id_for_drain = script.split("agent_id_for_drain() {", 1)[1].split(
         "wait_for_agent_active_leases() {", 1
     )[0]
@@ -441,7 +444,7 @@ def test_fleet_deploy_drain_agent_lookup_uses_file_for_large_json_payload():
 
 
 def test_fleet_deploy_installs_github_cli_for_workers():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
 
     assert "install_github_cli()" in script
     assert 'install_github_cli' in script.split('mv "$SRC_DIR.new" "$SRC_DIR"', 1)[1].split(
@@ -453,7 +456,7 @@ def test_fleet_deploy_installs_github_cli_for_workers():
 
 
 def test_fleet_deploy_never_forces_an_unverified_github_review_key():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
 
     assert "github_ssh_auth_succeeds()" in script
     assert "ssh-keygen -y -f \"$candidate_file\"" in script
@@ -473,7 +476,7 @@ def test_fleet_deploy_never_forces_an_unverified_github_review_key():
 
 
 def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     install_window = script.split('mv "$SRC_DIR.new" "$SRC_DIR"', 1)[1].split(
         'log "creating/updating mac environment file"', 1
     )[0]
@@ -506,7 +509,7 @@ def _isolated_codegraph_resolver(script: str, tmp_path: Path) -> str:
 
 
 def test_codegraph_installer_function_links_installed_binary(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     curl = bin_dir / "curl"
@@ -566,7 +569,7 @@ SH
 
 
 def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     curl = bin_dir / "curl"
@@ -608,7 +611,7 @@ def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
 
 
 def test_codegraph_init_function_skips_archive_source_without_git_worktree(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     codegraph = bin_dir / "codegraph"
@@ -652,7 +655,7 @@ def test_codegraph_init_function_skips_archive_source_without_git_worktree(tmp_p
 
 
 def test_fleet_deploy_does_not_print_worker_token_in_systemd_status():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     agent_service = script.split("install_linux_agent_service() {", 1)[1].split(
         "install_darwin_service() {", 1
     )[0]
@@ -664,7 +667,7 @@ def test_fleet_deploy_does_not_print_worker_token_in_systemd_status():
 
 
 def test_darwin_service_wrappers_raise_file_descriptor_limit():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     gateway_wrapper = script.split("install_hermes_gateway_wrapper() {", 1)[1].split(
         "install_mac_agent_wrapper() {", 1
     )[0]
@@ -678,7 +681,7 @@ def test_darwin_service_wrappers_raise_file_descriptor_limit():
 
 
 def test_fleet_deploy_applies_hermes_patch_set():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     quench_patch = ROOT / "deploy" / "hermes" / "disable-shutdown-chat-notices.patch"
     runtime_patch = ROOT / "deploy" / "hermes" / "mac-runtime-context-prompt.patch"
 
@@ -708,7 +711,7 @@ def test_fleet_deploy_applies_hermes_patch_set():
 
 
 def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     qdrant_installer = (ROOT / "deploy" / "install-qdrant-service.sh").read_text(
         encoding="utf-8"
     )
@@ -819,7 +822,7 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
 
 
 def test_fleet_deploy_configures_firecrawl_for_hermes_and_worker_capabilities(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     generated_env = build_mac_env({}, deploy_env_config(tmp_path), environ={})
 
     assert "firecrawl = merge_dicts" in script
@@ -846,7 +849,7 @@ def test_fleet_deploy_configures_firecrawl_for_hermes_and_worker_capabilities(tm
 
 
 def test_fleet_deploy_linux_control_plane_uses_service_wrapper():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     linux_service = script.split("install_linux_service() {", 1)[1].split(
         "install_supervisord_service() {", 1
     )[0]
@@ -860,7 +863,7 @@ def test_fleet_deploy_linux_control_plane_uses_service_wrapper():
 
 
 def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     hub_env = build_mac_env(
         {},
         deploy_env_config(tmp_path, agent="hub-a", hub_agent="hub-a"),
@@ -887,7 +890,7 @@ def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
 
 
 def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     startup = (ROOT / "src" / "mac" / "hermes_startup.py").read_text(encoding="utf-8")
     gateway_wrapper = script.split("install_hermes_gateway_wrapper() {", 1)[1].split(
         "install_mac_agent_wrapper() {", 1
@@ -998,7 +1001,7 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
     # key. main() sets MAC_DEPLOY_ALLOW_DEGRADED_SERVICES=1 for that first deploy;
     # the remote validators MUST honor it (warn + proceed) instead of hard-exiting,
     # or the deploy dies before main()'s post-deploy tunnel-reconnect path runs.
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     qdrant_validator = script.split("validate_qdrant_endpoint() {", 1)[1].split("\n}", 1)[0]
     firecrawl_validator = script.split("validate_firecrawl_endpoint() {", 1)[1].split("\n}", 1)[0]
     for validator in (qdrant_validator, firecrawl_validator):
@@ -1205,7 +1208,7 @@ def test_env_writer_hub_without_providers_fails_fast(tmp_path):
 
 
 def test_direct_fleet_deploy_loads_authoritative_env_before_defaults():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
 
     assert 'DEPLOY_ENV_FILE="${MAC_DEPLOY_ENV_FILE:-$HOME/.mac/.env}"' in script
     # The env-file load now goes through load_env_file_with_caller_precedence so
@@ -1221,7 +1224,7 @@ def test_direct_fleet_deploy_loads_authoritative_env_before_defaults():
 
 
 def test_router_topology_preflight_runs_before_remote_mutation():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     main_body = script.split("main() {", 1)[1].split("\n}\n\nmain", 1)[0]
 
     assert "validate_router_topology_spec()" in script
@@ -1231,7 +1234,7 @@ def test_router_topology_preflight_runs_before_remote_mutation():
 
 
 def test_agent_service_reads_worker_token_from_environment_not_process_argv():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
         "\n}\n", 1
     )[0]
@@ -1242,7 +1245,7 @@ def test_agent_service_reads_worker_token_from_environment_not_process_argv():
 
 def _extract_bash_fn(name):
     import re as _re
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     m = _re.search(r"\n%s\(\) \{\n(.*?)\n\}\n" % _re.escape(name), script, _re.S)
     assert m, "function %s not found" % name
     return "%s() {\n%s\n}\n" % (name, m.group(1))
@@ -1308,7 +1311,7 @@ def test_scrub_spoke_provider_secrets_is_noop_on_hub(tmp_path):
 
 
 def test_scrub_called_for_all_service_flows():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     # Each supervisor flow conditionally escrows on the hub, then always scrubs
     # spoke provider state and syncs messaging against the selected hub.
     assert len(re.findall(r"(?m)^\s+escrow_router_provider_keys$", script)) == 3
@@ -1319,7 +1322,7 @@ def test_scrub_called_for_all_service_flows():
 def test_deploy_host_blanks_provider_keys_for_spokes():
     # Stream B: deploy_host must NOT ship upstream provider keys to spokes (only
     # the hub keeps them). It blanks them before building the remote SSH command.
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     deploy_host = script.split("deploy_host() {", 1)[1].split("\nmain() {", 1)[0]
     assert 'router_backend_lc="$(printf' in deploy_host
     condition = 'if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then'
@@ -1333,7 +1336,7 @@ def test_hub_escrows_router_provider_keys_into_vault():
     # Stream B (B2): the hub escrows each router provider's upstream key into its
     # encrypted vault under the secret:<name> the provider spec references, so the
     # router resolves it from secure storage — keys never plaintext-spread to spokes.
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     assert "escrow_router_provider_keys() {" in script
     fn = script.split("escrow_router_provider_keys() {", 1)[1].split(
         "\nsync_messaging_config() {", 1
@@ -1369,7 +1372,7 @@ def test_network_none_spoke_uses_tunnel_forwarded_service_ports():
     # gketun-02: a network=none spoke without a proven direct route reaches hub
     # Qdrant/Firecrawl via the reverse tunnel's localhost forwards. A reachable
     # direct private route must retain its configured service URLs instead.
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     start = script.index('if [ "$NETWORK_PROVIDER" = "none" ]')
     block = script[start : start + 180]
     assert '[ "$DEPLOY_DIRECT_HUB" != "1" ]' in block
@@ -1398,7 +1401,7 @@ def test_omniverse_gpu_skills_installed_only_on_gpu_nodes():
     ):
         assert expected in skills, f"{expected} missing from vendored skills asset"
 
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     fn = script.split("install_omniverse_gpu_skills() {", 1)[1].split("\ninitialize_hermes_home() {", 1)[0]
     assert "nvidia-smi -L" in fn  # GPU gate
     assert 'deploy/skills/omniverse-skills.tar.gz' in fn
@@ -1411,7 +1414,7 @@ def test_reverse_tunnel_program_keeps_retrying_until_key_authorized():
     # gketun-01: install_reverse_tunnel_on_hub runs before the spoke authorizes the
     # hub key, so the tunnel program must keep retrying instead of going FATAL after
     # the default 3 attempts.
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     fn = script.split("install_reverse_tunnel_on_hub() {", 1)[1].split("\nuses_direct_mesh_hub", 1)[0]
     assert "startretries=1000" in fn
 
@@ -1452,7 +1455,7 @@ def test_setup_fleet_build_router_provider_spec():
 
 
 def test_fleet_deploy_uses_home_scoped_registry_not_legacy_site_config():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
 
     assert "$HOME/.mac/fleets.yaml" in script
     assert "MAC_DEPLOY_FLEETS_CONFIG" in script
@@ -1462,7 +1465,7 @@ def test_fleet_deploy_uses_home_scoped_registry_not_legacy_site_config():
 
 
 def test_agent_startup_self_test_rejects_unsafe_openshell_create_args():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     selftest = script.split('cat > "$selftest" <<', 1)[1].split(
         'cat > "$executor" <<', 1
     )[0]
@@ -1480,7 +1483,7 @@ def test_agent_startup_self_test_rejects_unsafe_openshell_create_args():
 
 
 def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     sample = (ROOT / "deploy" / "fleet" / "config.yaml").read_text(encoding="utf-8")
     legacy_args = [
         str(tmp_path / "mac.env"),
@@ -1671,7 +1674,7 @@ def test_setup_fleet_wizard_writes_fleet_registry_and_env(tmp_path):
     assert "MAC_ROUTER_PROVIDERS=openai=https://api.openai.com/v1,1,key=secret:openai-upstream" in env
     assert "OPENAI_API_KEY=sk-test" in env
     assert "MAC_DEPLOY_ROUTER_BACKEND=" not in env and "MAC_DEPLOY_ROUTER_PROVIDERS=" not in env
-    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    deploy = deploy_script_text()
     assert 'fleet_scoped_env MAC_ROUTER_BACKEND' in deploy
     assert 'fleet_scoped_env MAC_ROUTER_PROVIDERS' in deploy
     assert "MAC_API_TOKEN" not in env
@@ -1972,7 +1975,7 @@ def test_setup_entrypoints_are_python_driven_and_make_exposed():
     script = (ROOT / "setup.sh").read_text(encoding="utf-8")
     setup_py = (ROOT / "setup.py").read_text(encoding="utf-8")
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    deploy = deploy_script_text()
 
     assert script.startswith("#!/bin/sh")
     assert "exec \"$PYTHON\" \"$ROOT/setup.py\" \"$@\"" in script
@@ -2138,18 +2141,20 @@ def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests
 
 
 def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
-    script = deploy_script_text()
-    ssh_invocation = script.split(
-        'remote_cmd="${remote_env[*]} bash -c $(shell_quote "$remote_payload_runner")"', 1
-    )[1].split(
-        '"$remote_cmd" <<', 1
+    # The one-time deploy now uses scp + ssh (no heredoc); verify the ssh
+    # invocation uses `if ssh` (not `if ! ssh`) and the host-side reconciliation
+    # logic is present after it.
+    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    # Extract the ssh invocation section between remote_cmd= and openshell check.
+    ssh_section = deploy.split("local remote_cmd", 1)[1].split(
+        'if [ "$openshell_enabled" = "1" ]', 1
     )[0]
-    deploy_host_tail = script.split('if ssh -A -o BatchMode=yes', 1)[1].split(
+    deploy_host_tail = deploy.split('if ssh -A -o BatchMode=yes', 1)[1].split(
         'if [ "$openshell_enabled" = "1" ]', 1
     )[0]
 
-    assert "if ssh -A -o BatchMode=yes" in ssh_invocation
-    assert "if ! ssh -A -o BatchMode=yes" not in ssh_invocation
+    assert "if ssh -A -o BatchMode=yes" in ssh_section
+    assert "if ! ssh -A -o BatchMode=yes" not in ssh_section
     assert 'echo "==> ${agent}: validating remote post-deploy manifest"' in deploy_host_tail
     assert 'if ! reconcile_remote_deploy "$agent" "$target"; then' in deploy_host_tail
     assert "remote deploy returned success but post manifest validation failed" in deploy_host_tail
@@ -2157,7 +2162,7 @@ def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
 
 
 def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     classifier = script.split("classify_gateway_logs() {", 1)[1].split(
         "verify_hub_registration() {", 1
     )[0]
@@ -2170,7 +2175,7 @@ def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():
 
 
 def test_launchd_worker_wrapper_marks_agent_offline_on_controlled_shutdown():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
         'cat > "$executor" <<', 1
     )[0]
@@ -2182,7 +2187,7 @@ def test_launchd_worker_wrapper_marks_agent_offline_on_controlled_shutdown():
 
 
 def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     generated_env = build_mac_env({}, deploy_env_config(tmp_path), environ={})
     wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
         'cat > "$executor" <<', 1
@@ -2275,7 +2280,7 @@ def test_source_install_pins_exact_rev_not_ff_only():
     $DEPLOY_REV via fetch+reset. `git merge --ff-only $DEPLOY_REV` aborts with
     "Not possible to fast-forward" when origin/<branch> advanced past the
     operator's local HEAD mid-session, leaving the spoke half-deployed."""
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     assert 'reset --hard --quiet "$DEPLOY_REV"' in script
     # the ff-only merge *command* must be gone (a comment mentioning it is fine)
     assert 'merge --ff-only "$DEPLOY_REV"' not in script
@@ -2286,7 +2291,7 @@ def test_media_key_escrow_has_no_chat_key_fallback():
     chat key; the deploy escrow must source only the per-modality var and never
     fall back to NVIDIA_API_KEY — escrowing the chat key under e.g. nvidia-image
     yields a runtime 401 from NVIDIA's genai API instead of a clean disabled."""
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     assert '("image", "MAC_ROUTER_IMAGE_KEY", "NVIDIA_IMAGE_API_KEY")' in script
     # the old chat-key fallback must be gone
     assert 'os.environ.get("NVIDIA_API_KEY") or ""' not in script.split("media_status", 1)[-1]
@@ -2316,7 +2321,7 @@ def test_build_mac_env_passes_through_local_gen_advertisement(tmp_path):
 
 
 def test_deploy_passes_local_gen_env_to_agent():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     assert 'add_remote_env MAC_DEPLOY_AGENT_GEN_MODEL' in script
     assert 'add_remote_env MAC_DEPLOY_AGENT_GEN_BASE_URL' in script
 
@@ -2324,7 +2329,7 @@ def test_deploy_passes_local_gen_env_to_agent():
 def test_deploy_installs_gpu_gen_server_service():
     """Part A: a GPU-gated, systemd, durable mac-gen-server service is installed
     by the deploy (replacing the hand-launched nohup) and gated like Omniverse."""
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     # function defined + invoked after the supervisor dispatch
     assert "install_gpu_gen_server() {" in script
     assert "install_gpu_gen_server || true" in script
@@ -2350,7 +2355,7 @@ def test_deploy_installs_gpu_gen_server_service():
 def test_deploy_installs_audio_and_video_gen_units():
     """Part B1b: the deploy installs audio (:8190) + video (:8191) gen servers as
     GPU-gated systemd units alongside image, and carries their model lists."""
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     assert 'MAC_GEN_AUDIO_SERVICE_NAME="${FLEET_NAME}-gen-audio-server.service"' in script
     assert 'MAC_GEN_VIDEO_SERVICE_NAME="${FLEET_NAME}-gen-video-server.service"' in script
     assert "_install_gen_unit() {" in script
@@ -2367,7 +2372,7 @@ def test_deploy_rehydrates_agent_footprint():
     """Part C3: the deploy pulls the agent's installed_packages footprint from
     the hub and re-installs it (pip into the venv, npm into the local prefix),
     idempotent + non-fatal, and puts node_modules/.bin on the agent PATH."""
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     assert "install_agent_footprint() {" in script
     assert "install_agent_footprint || true" in script
     # reads the per-agent footprint endpoint + re-installs both managers
@@ -2390,7 +2395,7 @@ def test_build_mac_env_passes_through_gh_token(tmp_path):
     assert values["GH_TOKEN"] == "ghp_test123"
     bare = build_mac_env({}, deploy_env_config(tmp_path, fleet_name="gke2"), environ={})
     assert "GH_TOKEN" not in bare
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
     assert "add_remote_env MAC_DEPLOY_GH_TOKEN" in script
 
 
@@ -2438,7 +2443,7 @@ def test_hub_env_includes_all_option_c_env_vars(tmp_path):
 
 
 def test_fleet_deploy_forwards_repository_ref_reconciler_overrides():
-    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    script = deploy_script_text()
 
     for name in (
         "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE",
