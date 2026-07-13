@@ -172,6 +172,12 @@ _REPO_AREA_PATTERNS: List[Tuple[str, str]] = [
     (r"\bscripts/\w+", "scripts"),
     # Generic import path
     (r"\bmac\._hermes\b", "mac._hermes"),
+    # Rust/Cargo toolchain — CARGO_HOME gap: failures here route to mac.task_executor
+    # which owns the cargo/rustup provisioning and PATH symlink logic.
+    (r"\bCARGO_HOME\b", "mac.task_executor"),
+    (r"\bcargo[_/]?bin\b", "mac.task_executor"),
+    (r"\brustup\b", "mac.task_executor"),
+    (r"\brust[_-]?toolchain\b", "mac.task_executor"),
 ]
 
 

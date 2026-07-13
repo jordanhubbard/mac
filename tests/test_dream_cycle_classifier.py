@@ -537,3 +537,79 @@ def test_generic_tool_suppressed_when_specific_tool_present():
     assert "tool" not in area_names and "_generic_tool" not in area_names, (
         "generic tool should be suppressed when specific tool present; got: %s" % area_names
     )
+
+
+# ---------------------------------------------------------------------------
+# CARGO_HOME / Rust toolchain patterns (skill pitfall gap)
+# ---------------------------------------------------------------------------
+
+
+def test_cargo_home_routes_to_task_executor():
+    """CARGO_HOME in a failure summary should route to mac.task_executor repo area."""
+    cand = _make_candidate(
+        summary="cargo provisioning failed: CARGO_HOME not on PATH in sandbox",
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    repo_areas = [a for a in report["areas"] if a["area_type"] == "repo_area"]
+    names = {a["area_name"] for a in repo_areas}
+    assert "mac.task_executor" in names, (
+        "expected CARGO_HOME signal to route to mac.task_executor, got: %s" % names
+    )
+
+
+def test_rustup_routes_to_task_executor():
+    """rustup mention in failure text should route to mac.task_executor."""
+    cand = _make_candidate(
+        summary="rustup install failed during toolchain provisioning step",
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    repo_areas = [a for a in report["areas"] if a["area_type"] == "repo_area"]
+    names = {a["area_name"] for a in repo_areas}
+    assert "mac.task_executor" in names, (
+        "expected rustup signal to route to mac.task_executor, got: %s" % names
+    )
+
+
+def test_cargo_bin_path_routes_to_task_executor():
+    """A reference to cargo/bin in a stack trace routes to mac.task_executor."""
+    cand = _make_candidate(
+        summary="command not found: checked cargo/bin but symlink missing from MAC_TOOLCHAIN_BIN",
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    repo_areas = [a for a in report["areas"] if a["area_type"] == "repo_area"]
+    names = {a["area_name"] for a in repo_areas}
+    assert "mac.task_executor" in names, (
+        "expected cargo/bin signal to route to mac.task_executor, got: %s" % names
+    )
+
+
+def test_rust_toolchain_routes_to_task_executor():
+    """rust-toolchain keyword routes to mac.task_executor."""
+    cand = _make_candidate(
+        summary="rust-toolchain override file not found; falling back to stable",
+        evidence_count=1,
+    )
+    report = classify_candidate(cand)
+    repo_areas = [a for a in report["areas"] if a["area_type"] == "repo_area"]
+    names = {a["area_name"] for a in repo_areas}
+    assert "mac.task_executor" in names, (
+        "expected rust-toolchain signal to route to mac.task_executor, got: %s" % names
+    )
+
+
+def test_cargo_home_skill_co_occurrence_detects_both_areas():
+    """A finding with both a skill reference and CARGO_HOME should surface both areas."""
+    cand = _make_candidate(
+        summary="skill_bundle invocation failed: CARGO_HOME not symlinked into sandbox PATH",
+        evidence_count=2,
+    )
+    report = classify_candidate(cand)
+    area_types = {a["area_type"] for a in report["areas"]}
+    assert "skill" in area_types, "expected skill area from skill_bundle mention"
+    repo_names = {a["area_name"] for a in report["areas"] if a["area_type"] == "repo_area"}
+    assert "mac.task_executor" in repo_names, (
+        "expected CARGO_HOME to also route to mac.task_executor; got repo areas: %s" % repo_names
+    )
