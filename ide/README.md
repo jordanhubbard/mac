@@ -84,10 +84,10 @@ npm run package
 ```
 
 `npm run package` and `make ide-package` create a static web bundle, not a
-native Electron app. The Electron desktop wrapper is still tracked as follow-up
-work; `desktop/package.json` currently copies from `../src/mac/ui` (the legacy
-SPA path) and will be updated to reference the `ide/dist` Vite build output once
-the Electron integration is completed.
+native Electron app. `desktop/package.json` `extraResources` currently copies
+from `../src/mac/ui` (the legacy SPA path); updating it to reference the
+`ide/dist` Vite build output is a tracked follow-up item (see the "Next" section
+below).
 
 ## Verify
 
