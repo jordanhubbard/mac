@@ -177,3 +177,23 @@ def test_ssh_transport_list_dir_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     transport = snapshot.SSHTransport()
     monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(0, ""))
     assert transport.list_dir("host") == []
+
+
+def test_ssh_transport_list_dir_skips_blank_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    """list_dir silently skips empty/blank lines in find output (line 181 branch)."""
+    transport = snapshot.SSHTransport()
+    # Include a blank line and a whitespace-only line mixed with real paths
+    output = "/home/agent/.hermes/SOUL.md\n\n  \n/home/agent/.hermes/USER.md\n"
+    monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(0, output))
+    paths = transport.list_dir("host")
+    assert paths == ["SOUL.md", "USER.md"]
+
+
+def test_ssh_transport_list_dir_passthrough_without_hermes_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """list_dir passes through a path unchanged when the .hermes/ prefix is absent (line 187 branch)."""
+    transport = snapshot.SSHTransport()
+    # A path that does not contain the '.hermes/' substring at all
+    output = "/some/other/path/file.txt\n"
+    monkeypatch.setattr(snapshot.subprocess, "run", lambda *a, **kw: _result(0, output))
+    paths = transport.list_dir("host")
+    assert paths == ["/some/other/path/file.txt"]
