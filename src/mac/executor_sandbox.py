@@ -3027,8 +3027,16 @@ def _run_executor(
     # Planning-phase flag — determined after the scope estimate below.
     _is_planning = False
     if is_review:
-        prompt = build_review_prompt(task, task_workspace, review_context)
-        lessons: List[str] = []
+        # Memory feed (in): recall prior deployment lessons (and this task's own
+        # prior-attempt outcomes) so the reviewer works with the fleet's
+        # hindsight, mirroring the task-execution path. Best-effort — never
+        # blocks the run.
+        prior_attempt = recall_prior_attempt_lessons(task)
+        project_lessons = recall_deployment_lessons(task)
+        lessons: List[str] = prior_attempt + [
+            lesson for lesson in project_lessons if lesson not in prior_attempt
+        ]
+        prompt = build_review_prompt(task, task_workspace, review_context, lessons)
     else:
         # Memory feed (in): recall prior deployment lessons so the agent works
         # with the fleet's hindsight. Best-effort — never blocks the run. On a

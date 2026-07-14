@@ -773,7 +773,7 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
     return "\n\n".join(parts)
 
 
-def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_context: Dict[str, Any]) -> str:
+def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_context: Dict[str, Any], lessons: Optional[List[str]] = None) -> str:
     parts = [
             "You are running as a MAC fleet reviewer. Review the executor's work independently.",
             "Use the workspace files as the source of truth. Preserve secrets and do not print bearer tokens.",
@@ -813,6 +813,11 @@ def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_conte
                 "evidence-aware protocol)."
                 % (assignment.get("experiment_id"), assignment.get("arm")),
             )
+    lessons_section = _lessons_section(lessons or [])
+    if lessons_section:
+        # Append recalled lessons near the end, before the final summary
+        # instruction, mirroring build_task_prompt.
+        parts.insert(-1, lessons_section)
     return "\n\n".join(parts)
 
 
