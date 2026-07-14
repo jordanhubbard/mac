@@ -32,6 +32,10 @@ dist/
 # conflicted on it and failed the merge gate. Keep it out of the tree.
 mac-evidence.json
 
+# Stray developer audit/scratch notes at the repo root are per-run artifacts,
+# not product content, so keep them out of the tree.
+/audit-findings.txt
+
 # CodeGraph indexes are local generated state.
 .codegraph/
 
