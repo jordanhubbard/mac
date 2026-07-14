@@ -22,6 +22,7 @@ import termios
 import tempfile
 import threading
 import time
+import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -940,13 +941,41 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         except Exception as exc:
             if not self._assignment_is_current(task_id, lease["id"]):
                 return self._stale_result(task_id, lease, str(exc))
+            # A bare ``worker_exception`` transition used to carry only
+            # ``error=str(exc)`` -- none of the keys ``_diagnostic_output_tail``
+            # scans (stdout/stderr/output/*_tail), so the hub recorded an empty
+            # ``output_tail`` with "transition supplied no ... field" and every
+            # retry blocked with no actionable diagnostics. Preserve the
+            # traceback tail as a durable execution/evidence artifact and surface
+            # it (plus the exception type and evidence id) on the transition so
+            # the failure is diagnosable from the task history alone.
+            exc_type = type(exc).__name__
+            tb_text = traceback.format_exc()
             self._observe_log(
                 "worker.execution.exception",
                 level="error",
                 subject_type="task",
                 subject_id=task_id,
-                detail={"error": str(exc)},
+                detail={"error": str(exc), "exception_type": exc_type},
             )
+            evidence: Optional[JsonDict] = None
+            if task_dir is not None:
+                try:
+                    exc_execution = WorkerExecution(
+                        1,
+                        "worker raised %s: %s" % (exc_type, exc),
+                        stdout="",
+                        stderr=tb_text,
+                        metadata={
+                            "worker_exception": True,
+                            "exception_type": exc_type,
+                        },
+                    )
+                    evidence = self._record_execution(
+                        task_id, task_dir, exc_execution
+                    )
+                except Exception:  # noqa: BLE001 - evidence capture is best-effort
+                    evidence = None
             try:
                 self.client.post(
                     "/tasks/%s/transition" % quote(task_id, safe=""),
@@ -957,6 +986,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                             "reason": "worker_exception",
                             "manual_repair_required": True,
                             "error": str(exc),
+                            "exception_type": exc_type,
+                            "output_tail": tb_text,
+                            "evidence_id": evidence.get("id") if evidence else None,
                         },
                     },
                 )

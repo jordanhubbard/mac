@@ -3665,3 +3665,63 @@ def test_dispatch_gate_allows_agent_with_cargo_for_cargo_task():
         "task that requires cargo"
     )
     assert assignment["task"]["id"] == task.id
+
+
+def test_worker_exception_records_diagnostics_and_output_tail(tmp_path: Path):
+    """A non-timeout executor crash must leave a diagnosable failure trail.
+
+    Regression: the generic ``except Exception`` handler in
+    ``execute_assignment`` used to post a blocked transition carrying only
+    ``error=str(exc)``. ``_diagnostic_output_tail`` scans stdout/stderr/output/
+    *_tail keys, none of which were present, so every ``worker_exception``
+    retry recorded an empty ``output_tail`` with "transition supplied no ...
+    field" and blocked with no actionable diagnostics. The handler now captures
+    the traceback as durable evidence and surfaces it (plus the exception type
+    and evidence id) on the transition detail.
+    """
+    from mac.services import _diagnostic_output_tail
+
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    task = cp.create_task(
+        "executor crashes with a python exception",
+        required_capabilities=["python"],
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def _crashing_executor(_task: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
+        raise RuntimeError("boom: unhandled executor failure")
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspaces",
+        _crashing_executor,
+        attestation_key=cp._agent_attestation_key(agent.id),
+    )
+
+    with pytest.raises(RuntimeError, match="boom: unhandled executor failure"):
+        worker.run_once()
+
+    history = cp.task_history(task.id)
+    blocked = [
+        item
+        for item in history
+        if item.event_type == "task.transitioned"
+        and item.to_state == TaskState.BLOCKED.value
+    ][-1]
+    assert blocked.detail["reason"] == "worker_exception"
+    assert blocked.detail["exception_type"] == "RuntimeError"
+    assert "boom: unhandled executor failure" in blocked.detail["output_tail"]
+    assert "Traceback" in blocked.detail["output_tail"]
+
+    # The hub's diagnosis must now find a real output tail instead of the
+    # "no ... field" placeholder.
+    output_tail, unavailable = _diagnostic_output_tail(blocked.detail)
+    assert unavailable == ""
+    assert "boom: unhandled executor failure" in output_tail
+
+    # A durable evidence artifact was recorded and referenced on the transition.
+    evidence = cp.list_evidence(task.id)
+    assert evidence, "worker exception must record durable evidence"
+    assert blocked.detail.get("evidence_id") == evidence[-1].id
