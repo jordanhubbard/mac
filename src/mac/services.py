@@ -7527,7 +7527,67 @@ class ControlPlane:
         if drain_outbox:
             self.drain_task_transition_outbox(task_id=task_id, limit=20)
         transitioned = self.get_task(task_id)
+        if target in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
+            self._fail_waiting_dependents_of(task_id, target, actor)
         return transitioned
+
+    def _fail_waiting_dependents_of(self, dep_id: str, dep_state: str, actor: str) -> None:
+        """Propagate a terminal (FAILED/CANCELLED) prerequisite to its WAITING
+        dependents so a dead prerequisite cannot wedge them forever.
+
+        A task leaves WAITING only when EVERY dependency is COMPLETED
+        (``_dependencies_satisfied``). A dependency that goes FAILED or CANCELLED
+        can never complete, so before this its dependents were stuck permanently
+        and INVISIBLY — the likely cause of the 1400+ live WAITING tasks, and the
+        repair-recursion guard now deliberately creates exactly such failures.
+        Dead-letter each affected dependent with a clear reason instead: it
+        becomes visible in the FAILED dead-letter view and an operator can
+        ``reopen`` it if the prerequisite was superseded rather than truly
+        failed. Recurses naturally — each FAILED transition re-enters this method
+        for that task's own dependents. Best-effort: never breaks the triggering
+        transition.
+        """
+        try:
+            rows = self.store.query_all(
+                "SELECT id FROM tasks WHERE state = ? AND dependencies LIKE ?",
+                (TaskState.WAITING.value, "%" + dep_id + "%"),
+            )
+        except Exception:  # noqa: BLE001 - propagation must not break the transition
+            return
+        for row in rows or []:
+            dependent_id = row["id"]
+            try:
+                dependent = self.get_task(dependent_id)
+            except NotFoundError:
+                continue
+            # LIKE is a substring match — confirm a real dependency edge, and
+            # that the dependent is still WAITING (a concurrent transition may
+            # have moved it).
+            if dep_id not in dependent.dependencies:
+                continue
+            if dependent.state != TaskState.WAITING.value:
+                continue
+            try:
+                self.transition_task(
+                    dependent_id,
+                    TaskState.FAILED.value,
+                    "dependency-propagation",
+                    {
+                        "reason": "dependency_terminated",
+                        "failed_dependency": dep_id,
+                        "dependency_state": dep_state,
+                        "manual_repair_required": True,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - one dependent must not stop the rest
+                try:
+                    self.record_log(
+                        "task.dependency_propagation_failed",
+                        level="warning",
+                        detail={"dependent": dependent_id, "dependency": dep_id, "error": str(exc)},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
     def reopen_task(
         self,
@@ -15999,12 +16059,37 @@ class ControlPlane:
                 "problems": ["verification.signed_by does not match a known agent with an attestation key"],
             }
         if not verify_verification_manifest_signature(signer_key, manifest, signature):
-            return {
-                "valid": False,
-                "reason": "signature_invalid",
-                "evidence_type": evidence_type,
-                "problems": ["verification.signature does not verify against signed_by's attestation key"],
-            }
+            # Key-rotation tolerance (mac-s2vz, extended): if the signer was
+            # re-keyed AFTER this evidence was signed (e.g. a gateway redeploy
+            # rotated the executor's key mid-review — the exact 2026-07-14
+            # incident), verify against the retained previous key. Without this
+            # the ALREADY-BOUND review_target evidence is rejected every sweep
+            # tick and the task parks in waiting_for_verifiable_evidence forever.
+            # Mirrors the fallback already in _find_review_verdict_evidence.
+            rotated_ok = False
+            rotation_row = self.store.query_one(
+                "SELECT attestation_key_rotated_at FROM agents WHERE id = ?",
+                (signed_by,),
+            )
+            rotated_at = rotation_row["attestation_key_rotated_at"] if rotation_row else None
+            if rotated_at and getattr(evidence, "created_at", None):
+                try:
+                    predates = parse_time(rotated_at) > parse_time(evidence.created_at)
+                except ValueError:
+                    predates = False
+                if predates:
+                    prev_key = self._agent_attestation_prev_key(signed_by)
+                    if prev_key is not None:
+                        rotated_ok = verify_verification_manifest_signature(
+                            prev_key, manifest, signature
+                        )
+            if not rotated_ok:
+                return {
+                    "valid": False,
+                    "reason": "signature_invalid",
+                    "evidence_type": evidence_type,
+                    "problems": ["verification.signature does not verify against signed_by's attestation key"],
+                }
         type_problems = self._verification_type_problems(task, manifest, evidence_type)
         if type_problems:
             # Option C — deferred test gate: when hub verify is enabled and the

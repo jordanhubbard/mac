@@ -6913,6 +6913,33 @@ def test_attestation_single_rotation_verifies_double_rotation_errors(cp):
         "expected clear rotation error after the prev key is gone, got: %s" % problems2
 
 
+def test_executor_evidence_verifies_via_prev_key_after_rotation(cp):
+    """Companion to _find_review_verdict_evidence's fallback: the EXECUTOR-side
+    signature check (_assess_default_review_evidence) must also tolerate a
+    single key rotation, else already-bound evidence is rejected every review
+    sweep and the task parks in waiting_for_verifiable_evidence forever (the
+    2026-07-14 incident, on the executor side)."""
+    worker = register_agent(cp, "w", ["python"])
+    task = cp.create_task("t", required_capabilities=["python"])
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    meta = verified_repo_metadata(cp, worker.id)          # signed under key1
+    evidence = cp.add_evidence(task.id, "test", "artifact://t", "ok", worker.id, metadata=meta)
+
+    # Baseline: valid before any rotation.
+    assert cp._assess_default_review_evidence(task, evidence)["valid"] is True
+
+    # A single rotation retains the previous key -> evidence still verifies.
+    cp.rotate_agent_attestation_key(worker.id)
+    assert cp._assess_default_review_evidence(task, evidence)["valid"] is True, \
+        "executor evidence must verify via the retained previous key after one rotation"
+
+    # A second rotation drops the previous key -> now genuinely unverifiable.
+    cp.rotate_agent_attestation_key(worker.id)
+    result = cp._assess_default_review_evidence(task, evidence)
+    assert result["valid"] is False and result["reason"] == "signature_invalid"
+
+
 def test_rollout_complete_rescue_returns_to_paused(cp):
     """mac-24f4: RESCUING used to be a one-way trap. ``complete_rescue``
     returns the rollout to PAUSED so the operator can re-gate the
