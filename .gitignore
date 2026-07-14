@@ -32,6 +32,36 @@ dist/
 # conflicted on it and failed the merge gate. Keep it out of the tree.
 mac-evidence.json
 
+# Sibling per-run executor/worker/review artifacts (written into each task
+# workspace by src/mac/worker.py, src/mac/executor_finalizer.py,
+# src/mac/executor_prompt.py, and src/mac/executor_sandbox.py). Like
+# mac-evidence.json above, these are per-run operational state, NOT product
+# content: the hub ingests them from the task workspace, never from git.
+# Committing them makes every task branch modify the same repo-root files, so
+# every publication merge conflicts on them and fails the merge gate. Patterns
+# are root-anchored (leading /) so legitimate product files elsewhere under
+# src/ or tests/ are never masked.
+/review-independent-findings.json
+/review-independent-findings.previous.json
+/review-independent-draft-evidence.json
+/review-protocol.json
+/review-result.json
+/executor-evidence.json
+/executor-evidence-preserved.json
+/executor-task.json
+/executor-policy.txt
+/finalizer-progress.json
+/harness-recovery-log.json
+/mac-sandbox-verification.json
+/openshell-salvage.json
+/preserved-executor-worktree.json
+/worker-result.json
+/environment-contract.json
+/environment-delta.json
+/.mac-executor-policy.txt
+/.mac-agentbus-control.json
+/.mac-withheld-executor-evidence.json
+
 # Stray developer audit/scratch notes at the repo root are per-run artifacts,
 # not product content, so keep them out of the tree.
 /audit-findings.txt
