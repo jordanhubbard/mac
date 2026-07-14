@@ -50,6 +50,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_API_TOKENS` | str | consumer-defined | api-auth | Api Auth setting: api tokens. |
 | `MAC_API_TOKEN__JORDANH_HUB` | str | consumer-defined | api-auth | Api Auth setting: api token  jordanh hub. |
 | `MAC_API_URL` | str | consumer-defined | api-auth | Api Auth setting: api url. |
+| `MAC_ATTESTATION_HEAL_MIN_SECONDS` | int | consumer-defined | core | Core setting: attestation heal min seconds. |
 | `MAC_ATTESTATION_KEY` | str | consumer-defined | core | Core setting: attestation key. |
 | `MAC_ATTESTATION_KEY_ENV` | str | consumer-defined | core | Core setting: attestation key env. |
 | `MAC_AUTO_REGISTER_FLEET` | bool | consumer-defined | core | Core setting: auto register fleet. |

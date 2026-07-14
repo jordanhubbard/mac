@@ -505,6 +505,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self_update_repo: Optional[Path] = None,
         agentbus_control_state_path: Optional[Path] = None,
         attestation_key: Optional[str] = None,
+        attestation_key_env_path: Optional[Path] = None,
         status_update_sink: Optional[StatusUpdateSink] = None,
     ) -> None:
         if not agent_id:
@@ -524,6 +525,12 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # and refuse to publish. The CLI surfaces this in deploy via
         # MAC_ATTESTATION_KEY.
         self.attestation_key = attestation_key or os.environ.get("MAC_ATTESTATION_KEY")
+        # Where a healed/rotated key is persisted so the NEXT process start
+        # inherits it (mirrors the startup --attestation-key-env behavior).
+        self.attestation_key_env_path = attestation_key_env_path
+        # Rate-limit self-heal rotations: one per window, so a non-key cause of
+        # signature rejections can never drive a rotation loop.
+        self._last_attestation_heal_at = 0.0
         self.poll_interval_seconds = float(poll_interval_seconds)
         self.allowed_projects = list(allowed_projects or [])
         self.required_metadata = dict(required_metadata or {})
@@ -858,19 +865,36 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                         evidence=evidence,
                         error="; ".join(submission_problems[:4]),
                     )
-                reviewed_task = self.client.post(
-                    "/tasks/%s/submit-for-review?%s"
-                    % (
-                        quote(task_id, safe=""),
-                        urlencode(
-                            {
-                                "agent_id": self.agent_id,
-                                "advance_default_workflow": "true",
-                            }
-                        ),
+                submit_path = "/tasks/%s/submit-for-review?%s" % (
+                    quote(task_id, safe=""),
+                    urlencode(
+                        {
+                            "agent_id": self.agent_id,
+                            "advance_default_workflow": "true",
+                        }
                     ),
-                    {},
                 )
+                try:
+                    reviewed_task = self.client.post(submit_path, {})
+                except MacApiError as exc:
+                    # Attestation-key desync self-heal (2026-07-14 churn root
+                    # cause): a hub-side rotation while this process runs (e.g.
+                    # a gateway deploy re-keying the agent) leaves the worker
+                    # signing every manifest with a stale key — each finished
+                    # task is then rejected here, blocks, retries the SAME
+                    # deterministic failure, and dies at max attempts. On the
+                    # signature rejection: re-validate our key with the hub,
+                    # rotate+persist if stale, re-sign/re-record the evidence,
+                    # and retry the submit once.
+                    if (
+                        "signature does not verify" not in str(exc)
+                        or not self._heal_attestation_key()
+                    ):
+                        raise
+                    evidence = self._record_execution(
+                        task_id, task_dir, execution, attempt_state=attempt_state
+                    )
+                    reviewed_task = self.client.post(submit_path, {})
                 return WorkerRunResult(
                     status="submitted_for_review",
                     task=reviewed_task,
@@ -3484,6 +3508,69 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         signed["signed_by"] = self.agent_id
         signed["signature"] = sign_verification_manifest(self.attestation_key, signed)
         return signed
+
+    def _heal_attestation_key(self) -> bool:
+        """Recover from a hub-side attestation-key rotation under a live worker.
+
+        Observed 2026-07-14: a gateway deploy rotated an agent's key while its
+        worker process kept running — the worker signed every manifest with the
+        stale in-memory key for 22h, so every finished task was rejected at
+        submit-for-review ("signature does not verify"), blocked, retried the
+        same deterministic failure, and died at max attempts. Startup-only key
+        validation cannot catch a mid-run rotation, so this heals it in-place:
+        verify the current key against the hub; when it no longer matches,
+        rotate, adopt, and persist the new key (env file + process env).
+
+        Returns True only when a stale key was actually replaced (the caller
+        may then re-sign and retry once). Rate-limited so a rejection with a
+        different cause can never drive a rotation loop. Never raises.
+        """
+        if not self.attestation_key:
+            return False
+        now = time.monotonic()
+        min_interval = _env_float("MAC_ATTESTATION_HEAL_MIN_SECONDS", 60.0)
+        if self._last_attestation_heal_at and now - self._last_attestation_heal_at < min_interval:
+            return False
+        self._last_attestation_heal_at = now
+        try:
+            if _attestation_key_matches_hub(self.client, self.agent_id, self.attestation_key):
+                # Key is fine — the signature rejection has another cause;
+                # do not rotate (that would invalidate a good key).
+                return False
+            rotated = self.client.post(
+                "/agents/%s/attestation-key/rotate" % quote(self.agent_id, safe=""),
+                {},
+            )
+            new_key = str(rotated["attestation_key"])
+        except Exception as exc:  # noqa: BLE001 - healing is best-effort.
+            self._observe_log(
+                "worker.attestation.heal_failed",
+                level="error",
+                detail={"agent_id": self.agent_id, "error": str(exc)},
+            )
+            return False
+        self.attestation_key = new_key
+        os.environ["MAC_ATTESTATION_KEY"] = new_key
+        if self.attestation_key_env_path is not None:
+            try:
+                _write_env_value(
+                    self.attestation_key_env_path, "MAC_ATTESTATION_KEY", new_key
+                )
+            except OSError as exc:
+                self._observe_log(
+                    "worker.attestation.heal_persist_failed",
+                    level="warning",
+                    detail={"agent_id": self.agent_id, "error": str(exc)},
+                )
+        self._observe_log(
+            "worker.attestation.key_healed",
+            level="warning",
+            detail={
+                "agent_id": self.agent_id,
+                "reason": "hub-side rotation detected under a live worker; key rotated, adopted, persisted",
+            },
+        )
+        return True
 
     def _load_verification_manifest(self, task_dir: Path) -> JsonDict:
         manifest_path = task_dir / "mac-evidence.json"
@@ -6254,6 +6341,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if args.self_update_repo
             else None,
             attestation_key=attestation_key,
+            attestation_key_env_path=attestation_env_path,
         )
         if args.loop:
             results = worker.run_forever(max_iterations=args.max_iterations)

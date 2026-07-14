@@ -14663,6 +14663,19 @@ class ControlPlane:
             for event in recent_history
         )
         repairable_prerequisite = contract_failure or failure_class == "environment"
+        # Recursion base case (2026-07-14 churn root cause): a repair task that
+        # itself exhausts its attempts must NOT spawn a repair-of-repair. Without
+        # this guard every deterministic infra failure (e.g. a stale attestation
+        # key) grew an unbounded chain — "Repair prerequisites: Repair
+        # prerequisites: ..." — with each level burning a full attempt budget on
+        # the identical failure (observed: 175 of 267 new tasks in 12h were
+        # repair tasks; 5 completions). A failed repair task dead-letters so its
+        # parent's failure surfaces for real diagnosis instead of multiplying.
+        origin = ensure_json_object(ensure_json_object(task.metadata).get("origin"))
+        if str(origin.get("type") or "").endswith("_prerequisite"):
+            transition_detail["reason"] = "repair_task_exhausted_no_recursion"
+            transition_detail["manual_repair_required"] = True
+            return TaskState.FAILED.value, transition_detail
         if repairable_prerequisite:
             # Classification is persisted immediately above. Reload before
             # adding dependency metadata so update_task cannot overwrite the

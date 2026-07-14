@@ -602,6 +602,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: attestation heal min seconds.",
+    "family": "core",
+    "name": "MAC_ATTESTATION_HEAL_MIN_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: attestation key.",
     "family": "core",
     "name": "MAC_ATTESTATION_KEY",
