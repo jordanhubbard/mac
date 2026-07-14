@@ -2982,6 +2982,41 @@ def _manifest_is_complete(task_workspace: Path) -> bool:
     return True
 
 
+def finalize_with_new_file_recovery(task_workspace, task, task_id) -> None:
+    """Run the git finalizer, recovering a new-file-only refusal in place.
+
+    The finalizer refuses to auto-commit NEW files the agent created,
+    preserving the worktree + original evidence instead of publishing.
+    task_e2ce62d9 implemented the recovery (stage/commit/push the preserved
+    new files) but never WIRED it, so every "Implement X" task creating new
+    files burned all its attempts: the work was done, then discarded as
+    verification_contract_failed (observed live 2026-07-14 — an agent wrote
+    fleet_node_install.py three times and lost it three times). This completes
+    the loop: attempt the recovery — it fail-closes with
+    RepositoryRecoveryError unless the refusal really was new-file-only — then
+    re-run the finalizer so the recovered commit produces clean, publishable
+    evidence. The adversarial review gate still reviews the full diff (new
+    files included) before anything lands.
+    """
+    from mac.repository_recovery import RepositoryRecoveryError
+
+    run_deterministic_git_finalizer(task_workspace, task)
+    try:
+        recovery = recover_from_new_file_refusal(task_workspace, task)
+    except RepositoryRecoveryError:
+        return  # not a new-file-only refusal (or nothing preserved)
+    except Exception as exc:  # noqa: BLE001 - recovery must not mask the run
+        sys.stderr.write("new-file recovery failed: %s\n" % exc)
+        return
+    emit_telemetry(
+        "new_file_refusal_recovered",
+        task_id=task_id,
+        level="warning",
+        recovered_files=len((recovery or {}).get("recovered_files") or []),
+    )
+    run_deterministic_git_finalizer(task_workspace, task)
+
+
 def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
     task_file = Path(os.environ["MAC_TASK_FILE"])
     task_workspace = Path(os.environ["MAC_TASK_WORKSPACE"])
@@ -3260,7 +3295,7 @@ def _run_executor(
                 except Exception:  # noqa: BLE001
                     pass
             else:
-                run_deterministic_git_finalizer(task_workspace, task)
+                finalize_with_new_file_recovery(task_workspace, task, task_id)
         except Exception as exc:  # noqa: BLE001
             sys.stderr.write("git finalizer failed: %s\n" % exc)
     elif not blind_protocol_failed:
