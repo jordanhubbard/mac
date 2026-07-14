@@ -16,6 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
+# Exported plan schema identifier. Mirrors the ``mac.<module>.vN``
+# convention used by adjacent fleet modules (e.g. ``SETUP_SPEC_SCHEMA``
+# in fleet_setup.py). Consumers pin plan compatibility against this value.
+ROLLOUT_PLAN_SCHEMA = "mac.openclaw_fleet_rollout.v1"
+
 
 # ---------------------------------------------------------------------------
 # Data types
