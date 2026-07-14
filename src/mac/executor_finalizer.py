@@ -101,6 +101,7 @@ from mac.review_failure_classifier import (
     FinalizerRefusalKind,
     classify_finalizer_refusal,
 )
+from mac.repository_recovery import RepositoryRecoveryError
 
 PRESERVED_EXECUTOR_WORKTREE_FILENAME = "preserved-executor-worktree.json"
 PRESERVED_EXECUTOR_EVIDENCE_FILENAME = "executor-evidence-preserved.json"
@@ -165,6 +166,172 @@ def load_preserved_executor_state(workspace: Path) -> PreservedExecutorState:
         summary=str(snapshot_raw.get("summary") or ""),
         executor_evidence=evidence_raw,
     )
+
+
+NEW_FILE_RECOVERY_SCHEMA = "mac.new_file_recovery.v1"
+
+
+def recover_from_new_file_refusal(
+    task_workspace,
+    task: Dict[str, Any],
+    *,
+    git_runner: Optional[Callable[..., Any]] = None,
+    push_runner: Optional[Callable[[Any], Any]] = None,
+) -> Dict[str, Any]:
+    """Recover a task refused solely for leaving new files uncommitted.
+
+    A new-file finalizer refusal preserves the verified worktree and the
+    original executor evidence instead of dropping the agent's work. This
+    service reconstitutes that work into a publishable commit:
+
+    1. Load the preserved executor state (fails closed when it is unusable).
+    2. Confirm — via :func:`classify_finalizer_refusal` on the preserved
+       refusal manifest — that the refusal really was a new-file refusal.
+    3. ``git add`` every preserved new file (untracked + staged-but-uncommitted).
+    4. Commit them with provenance metadata (task id + recovery reason).
+    5. Sync with canonical and attempt a guarded push through the existing
+       gitops infrastructure.
+    6. Return a structured ``mac.new_file_recovery.v1`` result.
+
+    The ``git_runner`` and ``push_runner`` seams are injectable so the logic is
+    unit-testable without a live git worktree or remote. ``git_runner`` defaults
+    to :func:`_git` and is called as ``git_runner(args, cwd)``; ``push_runner``
+    defaults to :func:`guarded_push` and is called as ``push_runner(target)``.
+
+    Raises
+    ------
+    RepositoryRecoveryError
+        When the preserved state is missing/unusable, the refusal was not a
+        new-file refusal, no new files can be recovered, or the commit/push
+        fails.
+    """
+    workspace = Path(task_workspace)
+    run_git = git_runner if git_runner is not None else _git
+    publisher = push_runner if push_runner is not None else guarded_push
+
+    try:
+        preserved = load_preserved_executor_state(workspace)
+    except PreservationMissing as exc:
+        raise RepositoryRecoveryError(
+            "preserved executor state is unusable: %s" % exc
+        ) from exc
+
+    refusal_manifest = _read_executor_evidence_payload(workspace)
+    repo_section = refusal_manifest.get("repo")
+    if not isinstance(repo_section, dict):
+        repo_section = {}
+    checks_section = refusal_manifest.get("checks")
+    if not isinstance(checks_section, list):
+        checks_section = []
+    refusal_kind = classify_finalizer_refusal(refusal_manifest, repo_section, checks_section)
+    if refusal_kind not in (
+        FinalizerRefusalKind.untracked_new_files,
+        FinalizerRefusalKind.staged_new_files,
+    ):
+        raise RepositoryRecoveryError(
+            "preserved refusal is not a new-file refusal: %s" % refusal_kind.value
+        )
+
+    worktree = preserved.worktree_path
+    if not worktree or not worktree.is_dir():
+        raise RepositoryRecoveryError(
+            "preserved worktree is missing: %s" % worktree
+        )
+
+    new_files = sorted(
+        {
+            path
+            for path in (*preserved.untracked_files, *preserved.staged_new_files)
+            if str(path).strip()
+        }
+    )
+    if not new_files:
+        raise RepositoryRecoveryError("preserved state lists no new files to recover")
+
+    recovered_files: List[str] = []
+    for path in new_files:
+        added = run_git(["add", "--", path], worktree)
+        if getattr(added, "returncode", 1) != 0:
+            raise RepositoryRecoveryError(
+                "could not stage preserved new file: %s" % path
+            )
+        recovered_files.append(path)
+
+    staged = run_git(["diff", "--cached", "--quiet"], worktree)
+    if getattr(staged, "returncode", 0) != 1:
+        raise RepositoryRecoveryError("recovery produced no staged repository change")
+
+    task_id = str(task.get("id") or preserved.executor_evidence.get("task", {}).get("id") or "").strip()
+    if not task_id:
+        raise RepositoryRecoveryError("preserved task has no id")
+    title = str(task.get("title") or task_id).strip()
+    commit = run_git(
+        [
+            "-c",
+            "user.email=mac-recovery@nvidia.com",
+            "-c",
+            "user.name=MAC recovery",
+            "commit",
+            "-m",
+            "Recover MAC task %s: %s" % (task_id, title[:100]),
+            "-m",
+            "MAC-Recovery-Reason: new-file-finalizer-refusal\nMAC-Recovery-Kind: %s"
+            % refusal_kind.value,
+        ],
+        worktree,
+    )
+    if getattr(commit, "returncode", 1) != 0:
+        detail = (getattr(commit, "stderr", "") or getattr(commit, "stdout", "") or "").strip()
+        raise RepositoryRecoveryError("recovery commit failed: %s" % detail)
+
+    canonical_remote = _repository_publication_remote(task)
+    canonical_branch = _repository_contract_canonical_branch(task)
+    prepared_base_sha = preserved.base_sha or _repository_prepared_base(task)
+    lease_id = _repository_lease_id(task)
+    destination_branch = preserved.task_branch or _repository_task_branch(task)
+
+    try:
+        sync = sync_worktree_with_canonical(worktree, canonical_remote, canonical_branch)
+        if str(sync.get("status") or "") not in {"fresh", "rebased"}:
+            raise RepositoryRecoveryError(
+                "recovery could not synchronize with canonical branch: %s"
+                % (sync.get("reason") or sync.get("status"))
+            )
+        if not lease_id:
+            raise RepositoryRecoveryError(
+                "repository context is missing repository_lease_id"
+            )
+        target = resolve_canonical_publication_target(
+            worktree=worktree,
+            canonical_remote=canonical_remote,
+            canonical_branch=canonical_branch,
+            destination_branch=destination_branch,
+            prepared_base_sha=prepared_base_sha,
+            isolation_key="new-file-recovery-%s-%s" % (task_id, lease_id),
+        )
+        publication = publisher(target)
+    except (OSError, ValueError) as exc:
+        raise RepositoryRecoveryError(
+            "guarded recovery push could not be prepared: %s" % exc
+        ) from exc
+
+    if not getattr(publication, "ok", False) or not getattr(publication, "remote_verified", False):
+        raise RepositoryRecoveryError(
+            "guarded recovery push failed: %s" % (getattr(publication, "error", "") or "unknown error")
+        )
+
+    return {
+        "schema": NEW_FILE_RECOVERY_SCHEMA,
+        "status": "complete",
+        "task_id": task_id,
+        "refusal_kind": refusal_kind.value,
+        "recovered_files": recovered_files,
+        "recovery_head_sha": getattr(publication, "head_sha", ""),
+        "canonical_tip_sha": getattr(publication, "canonical_tip_sha", ""),
+        "remote_ref": "refs/heads/%s" % destination_branch if destination_branch else "",
+        "remote_verified": bool(getattr(publication, "remote_verified", False)),
+        "error": None,
+    }
 
 
 # ---------------------------------------------------------------------------

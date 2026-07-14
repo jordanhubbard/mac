@@ -222,6 +222,7 @@ from mac.executor_finalizer import (  # noqa: E402,F401 - compatibility re-expor
     _write_git_finalizer_refusal_manifest,
     _write_partial_finalizer_evidence,
     load_preserved_executor_state,
+    recover_from_new_file_refusal,
     run_deterministic_git_finalizer,
     run_deterministic_review_verdict,
     write_fallback_evidence_manifest,
