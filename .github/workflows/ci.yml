@@ -10,6 +10,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  dead-code:
+    name: Dead-code contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Dead-code contract (vulture >=90%, _hermes excluded, allowlisted)
+        run: scripts/dead-code-check.sh
+
   sanity:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

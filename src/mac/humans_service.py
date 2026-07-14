@@ -15,7 +15,6 @@ from typing import Any, List, Optional
 
 from mac.models import (
     Human,
-    HumanGroup,
     NotFoundError,
     ValidationError,
     json_loads,
