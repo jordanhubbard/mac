@@ -6863,12 +6863,16 @@ def test_claim_task_enforces_tenant_policy_as_explicit_chokepoint(cp):
         cp.claim_task(task.id, worker.id)
 
 
-def test_attestation_key_rotation_produces_clear_recovery_error(cp):
-    """mac-s2vz: when a reviewer signs a verdict and then their
-    attestation key is rotated, the publication-time check used to
-    fail with a generic 'signature does not verify' message. The fix
-    records the rotation timestamp and surfaces a clear 'key was
-    rotated; re-sign required' error instead."""
+def test_attestation_single_rotation_verifies_double_rotation_errors(cp):
+    """mac-s2vz followup: a SINGLE attestation-key rotation (e.g. an agent
+    re-keyed after a redeploy) must NOT invalidate a verdict signed beforehand
+    — the retained previous key verifies it, so review publication proceeds.
+    Only once the previous key is ALSO gone (a second rotation) does the clear
+    'key was rotated; re-sign required' recovery error surface.
+
+    Regression guard for the fleet-completion bottleneck where routine re-keys
+    permanently wedged in-flight reviews under a 'signed under rotated key'
+    publish failure."""
     worker = register_agent(cp, "w", ["python"])
     reviewer = register_agent(cp, "r", ["review"])
     task = cp.create_task("t", required_capabilities=["python"])
@@ -6882,17 +6886,31 @@ def test_attestation_key_rotation_produces_clear_recovery_error(cp):
     review = cp.request_review(task.id, reviewer.id)
     from tests.conftest import submit_review_verdict
     verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
-    # Rotate the reviewer's key (e.g. lost-key recovery).
+
+    # A single rotation retains the previous key: the pre-rotation verdict
+    # still verifies (against the key active at signing time), so there is NO
+    # signature/rotation problem — publication is no longer wedged.
     cp.rotate_agent_attestation_key(reviewer.id)
     _verdict, problems = cp._find_review_verdict_evidence(
-        task.id,
-        reviewer.id,
+        task.id, reviewer.id,
         executor_evidence_id=evidence.id,
         verdict_evidence_id=verdict_id,
         not_before=review.created_at,
     )
-    assert any("rotated" in p for p in problems), \
-        "expected clear rotation error in problems, got: %s" % problems
+    assert not any("rotated" in p or "does not verify" in p for p in problems), \
+        "a single rotation must not invalidate a pre-rotation verdict; got: %s" % problems
+
+    # A second rotation drops the previous key: the verdict is now genuinely
+    # unrecoverable and the clear recovery error surfaces.
+    cp.rotate_agent_attestation_key(reviewer.id)
+    _verdict2, problems2 = cp._find_review_verdict_evidence(
+        task.id, reviewer.id,
+        executor_evidence_id=evidence.id,
+        verdict_evidence_id=verdict_id,
+        not_before=review.created_at,
+    )
+    assert any("rotated" in p for p in problems2), \
+        "expected clear rotation error after the prev key is gone, got: %s" % problems2
 
 
 def test_rollout_complete_rescue_returns_to_paused(cp):

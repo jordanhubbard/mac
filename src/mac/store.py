@@ -2017,6 +2017,16 @@ class SQLiteStore:
         self._ensure_column(
             "agents", "attestation_key_rotated_at", "attestation_key_rotated_at TEXT"
         )
+        # mac-s2vz followup: retain the immediately-previous attestation key so a
+        # routine rotation (e.g. a re-keyed agent after a redeploy) does not
+        # permanently invalidate in-flight verdicts signed under the prior key.
+        # The verifier checks a signature against the key that was active at
+        # signing time (evidence.created_at <= rotated_at -> try the prev key).
+        self._ensure_column(
+            "agents",
+            "attestation_key_prev_ciphertext",
+            "attestation_key_prev_ciphertext TEXT",
+        )
         # mac-1oi4: capture who asked for an agent so fulfill can refuse
         # a self-fulfill (the same actor approving its own request).
         self._ensure_column(

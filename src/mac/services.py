@@ -9524,6 +9524,24 @@ class ControlPlane:
         except Exception:  # noqa: BLE001 - corrupt or rotated key shouldn't crash review
             return None
 
+    def _agent_attestation_prev_key(self, agent_id: str) -> Optional[str]:
+        """Decrypted HMAC key that was active BEFORE the most recent rotation,
+        or None if the agent has never rotated (or the column predates it).
+
+        Used to verify a verdict signed under the prior key before a routine
+        rotation, so a re-key does not invalidate already-signed evidence
+        (mac-s2vz followup)."""
+        row = self.store.query_one(
+            "SELECT attestation_key_prev_ciphertext FROM agents WHERE id = ?",
+            (agent_id,),
+        )
+        if row is None or not row["attestation_key_prev_ciphertext"]:
+            return None
+        try:
+            return self.secrets._decrypt(row["attestation_key_prev_ciphertext"])
+        except Exception:  # noqa: BLE001 - a corrupt prev key shouldn't crash review
+            return None
+
     def rotate_agent_attestation_key(self, agent_id: str) -> str:
         """Rotate and return the cleartext HMAC key for one agent.
 
@@ -9539,10 +9557,16 @@ class ControlPlane:
         self.get_agent(agent_id)
         key = _generate_attestation_key()
         now = utcnow()
+        # Retain the current key as the previous key BEFORE overwriting it, so
+        # verdicts signed under it prior to this rotation can still be verified
+        # against the key that was active at signing time (mac-s2vz followup).
         self.store.execute(
             """
             UPDATE agents
-            SET attestation_key_ciphertext = ?, attestation_key_rotated_at = ?, updated_at = ?
+            SET attestation_key_prev_ciphertext = attestation_key_ciphertext,
+                attestation_key_ciphertext = ?,
+                attestation_key_rotated_at = ?,
+                updated_at = ?
             WHERE id = ?
             """,
             (self.secrets._encrypt(key), now, now, agent_id),
@@ -16969,29 +16993,52 @@ class ControlPlane:
                 problems.append("verdict %s signer has no attestation key" % evidence.id)
                 continue
             if not verify_verification_manifest_signature(key, manifest, signature):
-                # mac-s2vz: if the signer's key was rotated AFTER this
-                # evidence was created, surface a clear "key rotated"
-                # error with recovery guidance instead of the generic
-                # "signature does not verify" message.
+                # The signature does not verify against the signer's CURRENT
+                # key. Before failing, check whether the key was rotated AFTER
+                # this evidence was signed; if so, verify against the retained
+                # previous key (the key active at signing time). A routine
+                # re-key (e.g. an agent re-keyed after a redeploy) must not
+                # invalidate a verdict that was validly signed beforehand
+                # (mac-s2vz followup).
                 rotation_row = self.store.query_one(
                     "SELECT attestation_key_rotated_at FROM agents WHERE id = ?",
                     (signed_by,),
                 )
                 rotated_at = rotation_row["attestation_key_rotated_at"] if rotation_row else None
+                predates_rotation = False
                 if rotated_at and evidence.created_at:
                     try:
-                        if parse_time(rotated_at) > parse_time(evidence.created_at):
-                            problems.append(
-                                "verdict %s signed under rotated attestation key "
-                                "(rotated_at=%s, evidence created_at=%s); "
-                                "the reviewer must re-sign with the current key"
-                                % (evidence.id, rotated_at, evidence.created_at)
-                            )
-                            continue
+                        predates_rotation = parse_time(rotated_at) > parse_time(
+                            evidence.created_at
+                        )
                     except ValueError:
-                        pass
-                problems.append("verdict %s signature does not verify" % evidence.id)
-                continue
+                        predates_rotation = False
+                prev_ok = False
+                if predates_rotation:
+                    prev_key = self._agent_attestation_prev_key(signed_by)
+                    if prev_key is not None:
+                        prev_ok = verify_verification_manifest_signature(
+                            prev_key, manifest, signature
+                        )
+                if not prev_ok:
+                    if predates_rotation:
+                        # Rotated, and the retained previous key is absent
+                        # (rotation predates key retention) or also fails:
+                        # surface the clear key-rotation error + guidance.
+                        problems.append(
+                            "verdict %s signed under rotated attestation key "
+                            "(rotated_at=%s, evidence created_at=%s); "
+                            "the reviewer must re-sign with the current key"
+                            % (evidence.id, rotated_at, evidence.created_at)
+                        )
+                    else:
+                        problems.append(
+                            "verdict %s signature does not verify" % evidence.id
+                        )
+                    continue
+                # prev_ok: the signature verifies against the key that was
+                # active at signing time — accept and fall through to the
+                # remaining verdict checks below.
             executor_evidence = self.get_evidence(executor_evidence_id)
             executor_manifest = executor_evidence.metadata.get("verification") or {}
             if not isinstance(executor_manifest, dict):
