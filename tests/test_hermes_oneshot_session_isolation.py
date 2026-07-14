@@ -184,17 +184,18 @@ class TestOneshotCallPathAnalysis:
 
         assert aiagent_calls, "No AIAgent() call found in oneshot.py — file structure changed"
 
-        # For each AIAgent call, check that skip_memory is absent
+        # Contract (post-fix): every AIAgent() call in oneshot._run_agent()
+        # passes skip_memory=True and skip_context_files=True so one-shot runs
+        # do not inherit persistent memory / context files.
         for call in aiagent_calls:
             kwarg_names = {kw.arg for kw in call.keywords}
-            # Characterization: these flags are MISSING — this is the bug.
-            assert "skip_memory" not in kwarg_names, (
-                "skip_memory= was added to AIAgent() in oneshot.py — "
-                "regression may be fixed. Update this characterization test."
+            assert "skip_memory" in kwarg_names, (
+                "skip_memory= is missing from AIAgent() in oneshot.py — "
+                "the one-shot isolation fix has regressed."
             )
-            assert "skip_context_files" not in kwarg_names, (
-                "skip_context_files= was added to AIAgent() in oneshot.py — "
-                "regression may be fixed. Update this characterization test."
+            assert "skip_context_files" in kwarg_names, (
+                "skip_context_files= is missing from AIAgent() in oneshot.py — "
+                "the one-shot isolation fix has regressed."
             )
 
     def test_interactive_cli_has_skip_memory_flag_but_oneshot_does_not(self):
@@ -218,12 +219,13 @@ class TestOneshotCallPathAnalysis:
                 "cli.py no longer references skip_memory — check the fix"
             )
 
-        # Oneshot path: oneshot.py does NOT pass skip_memory
+        # Oneshot path: oneshot.py now also passes skip_memory (fix applied).
         oneshot_path = Path(vendor_dir) / "hermes_cli" / "oneshot.py"
         if oneshot_path.exists():
             oneshot_source = oneshot_path.read_text(encoding="utf-8")
-            assert "skip_memory" not in oneshot_source, (
-                "skip_memory was added to oneshot.py — regression may be fixed"
+            assert "skip_memory" in oneshot_source, (
+                "skip_memory is missing from oneshot.py — "
+                "the one-shot isolation fix has regressed"
             )
 
     def test_session_db_in_oneshot_uses_persistent_home(self):
@@ -333,17 +335,17 @@ class TestOneshotMemoryInheritance:
         if not captured_kwargs:
             pytest.skip("AIAgent.__init__ was not called")
 
-        # Characterization: skip_memory is NOT set (or is False/default)
-        # — this is the regression.
-        skip_memory_val = captured_kwargs.get("skip_memory", False)
-        assert skip_memory_val is False or skip_memory_val is None, (
-            f"skip_memory={skip_memory_val!r} was passed — regression may be fixed. "
-            "Update this characterization test."
+        # Contract (post-fix): _run_agent() constructs AIAgent with
+        # skip_memory=True and skip_context_files=True.
+        skip_memory_val = captured_kwargs.get("skip_memory")
+        assert skip_memory_val is True, (
+            f"skip_memory={skip_memory_val!r} — expected True; "
+            "the one-shot isolation fix has regressed."
         )
-        skip_ctx_val = captured_kwargs.get("skip_context_files", False)
-        assert skip_ctx_val is False or skip_ctx_val is None, (
-            f"skip_context_files={skip_ctx_val!r} was passed — regression may be fixed. "
-            "Update this characterization test."
+        skip_ctx_val = captured_kwargs.get("skip_context_files")
+        assert skip_ctx_val is True, (
+            f"skip_context_files={skip_ctx_val!r} — expected True; "
+            "the one-shot isolation fix has regressed."
         )
 
     def test_memory_store_load_from_disk_reads_hermes_home(
