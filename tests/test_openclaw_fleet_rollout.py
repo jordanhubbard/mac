@@ -512,3 +512,34 @@ def test_rollout_result_accumulation_empty_failed_means_ok() -> None:
     result = execute_staged_rollout(plan, deploy_fn=_always_ok)
     assert result.failed == []
     assert result.ok is True
+
+
+# ---------------------------------------------------------------------------
+# Module contract (audit regression guard)
+# ---------------------------------------------------------------------------
+
+
+def test_module_exposes_required_public_symbols() -> None:
+    """The deliverable must expose the five symbols its consumers depend on.
+
+    Guards the openclaw_fleet_rollout module contract that parent rollout
+    tooling relies on: the two builder/executor callables and the three
+    data-class types. A missing or renamed symbol should fail here.
+    """
+    import mac.openclaw_fleet_rollout as module
+
+    required = (
+        "RolloutPlan",
+        "RolloutPlanStep",
+        "RolloutResult",
+        "build_staged_rollout_plan",
+        "execute_staged_rollout",
+    )
+    missing = [name for name in required if not hasattr(module, name)]
+    assert not missing, f"missing public symbols: {missing}"
+
+    assert callable(build_staged_rollout_plan)
+    assert callable(execute_staged_rollout)
+    assert isinstance(RolloutPlan, type)
+    assert isinstance(RolloutPlanStep, type)
+    assert isinstance(RolloutResult, type)
