@@ -217,6 +217,8 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
             json={"username": "route-coverage-human", "email": "route@example.test", "groups": ["ops"]},
         )
     )
+    # /humans route coverage seeds: `human_id` backs GET /humans/{human_id}
+    # and `delete_human_id` backs DELETE /humans/{human_id} (see _path_for).
     ctx["human_id"] = human["id"]
     ctx["delete_human_id"] = _ok(
         client.post("/humans", json={"username": "route-delete-human"})
@@ -1158,6 +1160,8 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("POST", "/communication/deliveries/{delivery_id}/fail"): {
             "delivery_id": "fail_human_delivery_id"
         },
+        # DELETE /humans/{human_id} targets a dedicated seed row so it does
+        # not remove the human_id row used by GET /humans/{human_id}.
         ("DELETE", "/humans/{human_id}"): {"human_id": "delete_human_id"},
         ("DELETE", "/secrets/{name}"): {"name": "delete_secret_name"},
         ("GET", "/optimizer/policies/{policy_id}"): {"policy_id": "sci_policy_id"},
@@ -1270,6 +1274,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         elif path_template == "/tasks/search":
             kwargs["params"] = {"q": "route coverage"}
         elif path_template == "/humans/resolve":
+            # GET /humans/resolve requires the `anchor` query param.
             kwargs["params"] = {"anchor": "route-coverage-human"}
         return RequestCase(path, kwargs, expected)
 
@@ -1281,6 +1286,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
+        # POST /humans (register_human) body case.
         ("POST", "/humans"): {"username": "route-human-case"},
         ("POST", "/tenants"): {"name": "Route Coverage Tenant Case"},
         ("POST", "/users"): {"tenant_id": ctx["tenant_id"], "handle": "operator-case"},
