@@ -1119,11 +1119,26 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         )
         next_renewal = time.monotonic() + interval_seconds
         while not stop.wait(cancellation_poll_seconds):
-            if (
-                isinstance(self.executor, SubprocessExecutor)
-                and self.executor.has_active_process()
-                and not self._assignment_is_current(task_id, lease_id)
-            ):
+            try:
+                assignment_lost = (
+                    isinstance(self.executor, SubprocessExecutor)
+                    and self.executor.has_active_process()
+                    and not self._assignment_is_current(task_id, lease_id)
+                )
+            except Exception as exc:  # noqa: BLE001 - the assignment check makes
+                # an HTTP call; a transient (or unexpected) error there must NOT
+                # escape and kill this renewal thread — that silently loses the
+                # lease and wedges the task (observed 2026-07-14 on a hub blip).
+                # Fail safe ("still ours"), log loudly, and keep renewing.
+                self._observe_log(
+                    "worker.lease_renew.assignment_check_error",
+                    level="warning",
+                    subject_type="task",
+                    subject_id=task_id,
+                    detail={"agent_id": self.agent_id, "lease_id": lease_id, "error": str(exc)},
+                )
+                assignment_lost = False
+            if assignment_lost:
                 reason = "task assignment is no longer current"
                 cancelled = self.executor.cancel_current(reason)
                 self._observe_log(

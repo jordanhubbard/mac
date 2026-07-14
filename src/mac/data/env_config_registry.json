@@ -1220,6 +1220,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: dead code min confidence.",
+    "family": "core",
+    "name": "MAC_DEAD_CODE_MIN_CONFIDENCE",
+    "retired": false,
+    "sources": [
+      "scripts/dead-code-check.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: debug terminal enabled.",
     "family": "core",
     "name": "MAC_DEBUG_TERMINAL_ENABLED",

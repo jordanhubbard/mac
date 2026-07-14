@@ -102,6 +102,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CURSOR_MODEL` | str | consumer-defined | core | Core setting: cursor model. |
 | `MAC_DATABASE_URL` | str | consumer-defined | core | Core setting: database url. |
 | `MAC_DB` | str | consumer-defined | core | Core setting: db. |
+| `MAC_DEAD_CODE_MIN_CONFIDENCE` | str | consumer-defined | core | Core setting: dead code min confidence. |
 | `MAC_DEBUG_TERMINAL_ENABLED` | bool | consumer-defined | core | Core setting: debug terminal enabled. |
 | `MAC_DEBUG_TERMINAL_SESSION_ID` | str | consumer-defined | core | Core setting: debug terminal session id. |
 | `MAC_DEFAULT_PUBLICATION_TARGET` | str | consumer-defined | core | Core setting: default publication target. |
