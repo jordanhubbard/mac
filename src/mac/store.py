@@ -838,20 +838,24 @@ class SQLiteStore:
                     attributes TEXT NOT NULL,
                     redaction_state TEXT NOT NULL
                 );
+                -- AMANALAP: action_events is the highest-write table in the
+                -- system.  Each secondary index is another B-tree written on
+                -- every insert (the write amplification that, with unbounded
+                -- growth, wedged the hub).  Retention now bounds the table, so
+                -- the rare admin/dashboard filters (agent/session/sandbox/
+                -- policy/type) can scan a small window instead of each paying a
+                -- permanent write-amplification tax.  Keep only the two indexes
+                -- that serve common queries: time-window (+ORDER BY) and
+                -- per-task drill-down.  Drop the other five from existing DBs.
                 CREATE INDEX IF NOT EXISTS idx_action_events_timestamp
                     ON action_events (timestamp, event_id);
-                CREATE INDEX IF NOT EXISTS idx_action_events_agent_timestamp
-                    ON action_events (agent_id, timestamp);
                 CREATE INDEX IF NOT EXISTS idx_action_events_task_timestamp
                     ON action_events (task_id, timestamp);
-                CREATE INDEX IF NOT EXISTS idx_action_events_session_timestamp
-                    ON action_events (session_id, timestamp);
-                CREATE INDEX IF NOT EXISTS idx_action_events_sandbox_timestamp
-                    ON action_events (sandbox_id, timestamp);
-                CREATE INDEX IF NOT EXISTS idx_action_events_policy_timestamp
-                    ON action_events (policy_id, policy_version, timestamp);
-                CREATE INDEX IF NOT EXISTS idx_action_events_type_outcome
-                    ON action_events (action_type, outcome, timestamp);
+                DROP INDEX IF EXISTS idx_action_events_agent_timestamp;
+                DROP INDEX IF EXISTS idx_action_events_session_timestamp;
+                DROP INDEX IF EXISTS idx_action_events_sandbox_timestamp;
+                DROP INDEX IF EXISTS idx_action_events_policy_timestamp;
+                DROP INDEX IF EXISTS idx_action_events_type_outcome;
 
                 CREATE TABLE IF NOT EXISTS openshell_policies (
                     id TEXT PRIMARY KEY,

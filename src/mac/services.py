@@ -175,7 +175,7 @@ from mac.openshell_runtime import SANDBOX_BASE_PATH, openshell_required_for_iden
 from mac.openshell_service import OpenShellService
 from mac.provisioning_service import ProvisioningService
 from mac.project_repository_service import ProjectRepositoryService
-from mac.retention_service import RetentionService
+from mac.retention_service import RetentionPolicy, RetentionService
 from mac.service_role_service import ServiceRoleService
 from mac.source_convergence_service import SourceConvergenceService
 from mac.review_service import (
@@ -1175,6 +1175,7 @@ class ControlPlane:
             self.store,
             observability_recorder=self._retention_obs_recorder,
         )
+        self._configure_default_retention_policies()
         self.openshell = OpenShellService(self.store, get_agent=self.get_agent)
         self.agentbus = AgentBusService(self.store, self.observability)
         self.source_convergence = SourceConvergenceService(self)
@@ -6205,6 +6206,79 @@ class ControlPlane:
 
     def retention_list_policies(self) -> List[JsonDict]:
         return self.retention.list_policies()
+
+    # Retention: default policies + bounded tick drainer ------------------
+    #
+    # RetentionService is preserve-by-default (every class disabled until an
+    # operator sets a policy).  That safety default is exactly why the hub DB
+    # grew unbounded to 16GB: the high-volume telemetry classes (action_events,
+    # observability_events) were never given an enabled policy and nothing ever
+    # called prune_all.  We now configure size-bounding policies at startup
+    # (env-tunable, hub-scoped) and drain them from the dispatcher tick so the
+    # DB can never again grow without bound.  Only the two disposable telemetry
+    # classes are enabled here — the task ledger (tasks/task_history/evidence)
+    # is deliberately left preserve-by-default.
+    _RETENTION_TICK_CLASSES = ("action_events", "observability_events")
+
+    def _configure_default_retention_policies(self) -> None:
+        if os.environ.get("MAC_RETENTION_TICK_ENABLED", "1").strip() not in {"1", "true", "yes", "on"}:
+            return
+        days = _env_int("MAC_RETENTION_TELEMETRY_DAYS", 7, minimum=1)
+        batch = _env_int("MAC_RETENTION_BATCH_SIZE", 2000, minimum=1)
+        max_age_seconds = days * 86400
+        for record_class in self._RETENTION_TICK_CLASSES:
+            try:
+                self.retention.set_policy(
+                    RetentionPolicy(
+                        record_class,
+                        enabled=True,
+                        max_age_seconds=max_age_seconds,
+                        batch_size=batch,
+                        provenance={
+                            "source": "control_plane.default_retention",
+                            "reason": "bound telemetry growth (hub-db-bloat)",
+                        },
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - policy config must never block startup.
+                self.record_log(
+                    "retention.policy_config_failed",
+                    layer="control_plane",
+                    source="retention",
+                    level="error",
+                    detail={"record_class": record_class, "error": str(exc)[:300]},
+                )
+
+    def retention_prune_tick(self, *, max_batches: Optional[int] = None) -> JsonDict:
+        """Drain a bounded number of retention batches for enabled telemetry
+        classes.  Each prune() call deletes at most policy.batch_size rows; we
+        loop up to ``max_batches`` times per class (or until a batch is not
+        capped) so a single tick does bounded work while a large backlog drains
+        over successive ticks."""
+        if max_batches is None:
+            max_batches = _env_int("MAC_RETENTION_MAX_BATCHES_PER_TICK", 25, minimum=1)
+        else:
+            try:
+                max_batches = max(1, int(max_batches))
+            except (TypeError, ValueError):
+                raise ValidationError("max_batches must be a positive integer")
+        summary: JsonDict = {"deleted": {}, "batches": {}}
+        for record_class in self._RETENTION_TICK_CLASSES:
+            policy = self.retention.get_policy(record_class)
+            if not policy.enabled:
+                continue
+            deleted = 0
+            batches = 0
+            for _ in range(max_batches):
+                report = self.retention.prune(record_class, actor="dispatcher.tick")
+                deleted += int(report.deleted_rows)
+                batches += 1
+                if not report.batch_capped or report.deleted_rows == 0:
+                    break
+            if deleted:
+                summary["deleted"][record_class] = deleted
+                summary["batches"][record_class] = batches
+        return summary
 
     # OpenShell policies / action events --------------------------------
 
@@ -11669,6 +11743,17 @@ class ControlPlane:
                 level="error",
                 detail={"error": str(exc)[:500]},
             )
+        try:
+            retention_pruned = self.retention_prune_tick()
+        except Exception as exc:  # noqa: BLE001 - retention must never stop dispatch.
+            retention_pruned = {"errors": [{"error": str(exc)[:500]}]}
+            self.record_log(
+                "retention.prune_tick_failed",
+                layer="control_plane",
+                source="dispatcher.tick",
+                level="error",
+                detail={"error": str(exc)[:500]},
+            )
         assignments = (
             self._dispatch_batch_impl(
                 lease_seconds=lease_seconds,
@@ -11687,6 +11772,7 @@ class ControlPlane:
             "review_workflows": review_workflows,
             "source_convergence": source_convergence,
             "crash_repairs": crash_repairs,
+            "retention_pruned": retention_pruned,
             "auto_reopened": [
                 task.to_dict() for task in auto_retry_page["tasks"]
             ],

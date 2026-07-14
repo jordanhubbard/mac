@@ -6337,6 +6337,50 @@
   },
   {
     "default": null,
+    "description": "Core setting: retention batch size.",
+    "family": "core",
+    "name": "MAC_RETENTION_BATCH_SIZE",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: retention max batches per tick.",
+    "family": "core",
+    "name": "MAC_RETENTION_MAX_BATCHES_PER_TICK",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: retention telemetry days.",
+    "family": "core",
+    "name": "MAC_RETENTION_TELEMETRY_DAYS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: retention tick enabled.",
+    "family": "core",
+    "name": "MAC_RETENTION_TICK_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Review setting: review hub verify.",
     "family": "review",
     "name": "MAC_REVIEW_HUB_VERIFY",

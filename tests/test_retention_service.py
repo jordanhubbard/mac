@@ -252,8 +252,11 @@ class TestRetentionPolicies:
         assert pol.enabled is False
 
     def test_set_policy_via_control_plane_list(self, cp):
-        policies = cp.retention_list_policies()
-        assert all(p["enabled"] is False for p in policies)
+        # ControlPlane enables the two high-volume telemetry classes by default
+        # (bound the mac.db growth that wedged the hub); everything else stays
+        # preserve-by-default.
+        enabled = {p["record_class"] for p in cp.retention_list_policies() if p["enabled"]}
+        assert enabled == {"action_events", "observability_events"}
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +670,13 @@ class TestControlPlaneFacade:
         assert isinstance(reports, list)
         assert len(reports) == len(RECORD_CLASS_CONFIG)
 
-    def test_retention_list_policies_returns_all_disabled(self, cp):
+    def test_retention_list_policies_enables_only_telemetry_classes(self, cp):
         policies = cp.retention_list_policies()
-        assert all(p["enabled"] is False for p in policies)
+        enabled = {p["record_class"] for p in policies if p["enabled"]}
+        assert enabled == {"action_events", "observability_events"}
+        # the task-ledger-adjacent classes must remain preserve-by-default
+        assert all(
+            p["enabled"] is False
+            for p in policies
+            if p["record_class"] not in {"action_events", "observability_events"}
+        )

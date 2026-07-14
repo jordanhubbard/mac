@@ -522,6 +522,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | core | Core setting: require qdrant memory. |
 | `MAC_REQUIRE_TOKENHUB` | bool | consumer-defined | core | Core setting: require tokenhub. |
 | `MAC_RESOURCE_HEALTH_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: resource health interval seconds. |
+| `MAC_RETENTION_BATCH_SIZE` | int | consumer-defined | core | Core setting: retention batch size. |
+| `MAC_RETENTION_MAX_BATCHES_PER_TICK` | str | consumer-defined | core | Core setting: retention max batches per tick. |
+| `MAC_RETENTION_TELEMETRY_DAYS` | str | consumer-defined | core | Core setting: retention telemetry days. |
+| `MAC_RETENTION_TICK_ENABLED` | bool | consumer-defined | core | Core setting: retention tick enabled. |
 | `MAC_REVIEW_HUB_VERIFY` | str | consumer-defined | review | Review setting: review hub verify. |
 | `MAC_REVIEW_ID` | str | consumer-defined | review | Review setting: review id. |
 | `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | int | consumer-defined | review | Review setting: review nudge max attempts. |
