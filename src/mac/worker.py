@@ -105,6 +105,7 @@ from mac.worker_debug_terminal import (
 )
 from mac.worker_reflect import ReflectMixin
 from mac.worker_directable import DirectableMixin
+from mac.worker_workspace_gc import WorkspaceGCMixin
 from mac.agentbus_service import HUMAN_DIRECTIVE_TOPIC
 from mac.worker_repo_prep import RepoPrepMixin
 import mac.harness_recovery_reflex as _hrr
@@ -478,7 +479,7 @@ def register_worker(
 # fresh or stale node converges to the right versions on demand WITHOUT waiting
 # for a redeploy. Add fleet-wide runtime deps here; keep them pinned.
 
-class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, RepoPrepMixin, RuntimeDepsMixin):
+class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMixin, RepoPrepMixin, RuntimeDepsMixin):
     """Small worker harness for mac-owned tasks.
 
     This is intentionally narrower than ACC's deployed worker. It proves the
@@ -552,6 +553,12 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, RepoPrepMixin
         self._coding_route_report: JsonDict = {}
         self._coding_route_report_dirty = True
         self._last_coding_route_probe_at = 0.0
+        # Workspace GC (task_02ebb6c4): prune completed-task worktrees on every
+        # worker so an unbounded backlog never fills the disk and silently
+        # breaks the coding-route probe. Runs off the poll thread.
+        self._workspace_gc_lock = threading.Lock()
+        self._workspace_gc_thread: Optional[threading.Thread] = None
+        self._last_workspace_gc_at = 0.0
         self._last_gateway_lease_renew_at = 0.0
         self._last_dispatch_hold_reason: Optional[str] = None
         self.debug_terminal_enabled = _env_bool("MAC_DEBUG_TERMINAL_ENABLED", True)
@@ -673,6 +680,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, RepoPrepMixin
                 error=control_result.get("summary"),
             )
         self._heartbeat()
+        self._maybe_start_workspace_gc()
         self._maybe_sync_service_claims()
         self._maintain_openclaw_gateway_leases()
         self._process_human_delivery_outbox()

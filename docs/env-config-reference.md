@@ -699,6 +699,12 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_RESOURCES_FILE` | str | consumer-defined | worker | Worker setting: worker resources file. |
 | `MAC_WORKER_TOKEN` | str | consumer-defined | worker | Worker setting: worker token. |
 | `MAC_WORKER_WORKSPACE` | str | consumer-defined | worker | Worker setting: worker workspace. |
+| `MAC_WORKER_WORKSPACE_GC_ENABLED` | bool | consumer-defined | worker | Worker setting: worker workspace gc enabled. |
+| `MAC_WORKER_WORKSPACE_GC_HIGH_WATER_GB` | str | consumer-defined | worker | Worker setting: worker workspace gc high water gb. |
+| `MAC_WORKER_WORKSPACE_GC_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker workspace gc interval seconds. |
+| `MAC_WORKER_WORKSPACE_GC_KEEP_RECENT` | bool | consumer-defined | worker | Worker setting: worker workspace gc keep recent. |
+| `MAC_WORKER_WORKSPACE_GC_MAX_AGE_HOURS` | str | consumer-defined | worker | Worker setting: worker workspace gc max age hours. |
+| `MAC_WORKER_WORKSPACE_GC_MIN_FREE_GB` | str | consumer-defined | worker | Worker setting: worker workspace gc min free gb. |
 | `MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS` | int | consumer-defined | core | Core setting: workflow advancement reservation seconds. |
 
 ## Environment variable precedence

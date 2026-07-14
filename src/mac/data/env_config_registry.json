@@ -8546,6 +8546,72 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker workspace gc enabled.",
+    "family": "worker",
+    "name": "MAC_WORKER_WORKSPACE_GC_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/worker_workspace_gc.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker workspace gc high water gb.",
+    "family": "worker",
+    "name": "MAC_WORKER_WORKSPACE_GC_HIGH_WATER_GB",
+    "retired": false,
+    "sources": [
+      "src/mac/worker_workspace_gc.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker workspace gc interval seconds.",
+    "family": "worker",
+    "name": "MAC_WORKER_WORKSPACE_GC_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/worker_workspace_gc.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker workspace gc keep recent.",
+    "family": "worker",
+    "name": "MAC_WORKER_WORKSPACE_GC_KEEP_RECENT",
+    "retired": false,
+    "sources": [
+      "src/mac/worker_workspace_gc.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker workspace gc max age hours.",
+    "family": "worker",
+    "name": "MAC_WORKER_WORKSPACE_GC_MAX_AGE_HOURS",
+    "retired": false,
+    "sources": [
+      "src/mac/worker_workspace_gc.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker workspace gc min free gb.",
+    "family": "worker",
+    "name": "MAC_WORKER_WORKSPACE_GC_MIN_FREE_GB",
+    "retired": false,
+    "sources": [
+      "src/mac/worker_workspace_gc.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: workflow advancement reservation seconds.",
     "family": "core",
     "name": "MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS",
