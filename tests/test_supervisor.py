@@ -230,3 +230,51 @@ def test_ops_channel_health_unauth_and_restart_requires_token():
 def test_supervisor_disabled_returns_immediately():
     cfg = SupervisorConfig(enabled=False, auth_token="t")
     assert Supervisor(cfg).run() == 0
+
+
+def test_post_alert_posts_json_and_survives_a_dead_endpoint():
+    import json as _json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from mac.supervisor import post_alert
+
+    received = {}
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            received.update(_json.loads(self.rfile.read(n)))
+            self.send_response(200); self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.handle_request, daemon=True); t.start()
+    assert post_alert("http://127.0.0.1:%d/hook" % port, {"event": "supervisor.restart"}) is True
+    assert received.get("event") == "supervisor.restart"
+    srv.server_close()
+    # dead endpoint -> False, never raises (must not disturb the watchdog)
+    assert post_alert("http://127.0.0.1:%d/hook" % port, {"x": 1}, timeout=1.0) is False
+
+
+def test_observe_escalates_to_webhook_on_restart(monkeypatch):
+    import mac.supervisor as sup
+    posted = []
+    monkeypatch.setattr(sup, "post_alert", lambda url, payload, **k: posted.append((url, payload)) or True)
+    s = sup.Supervisor(sup.SupervisorConfig(auth_token="t", alert_webhook="http://ops/hook", enabled=False))
+    s._observe("supervisor.restart", "warning", {"label": "com.mac.control-plane"})
+    s._observe("supervisor.recovered", "info", {})   # info must NOT alert
+    assert len(posted) == 1
+    url, payload = posted[0]
+    assert url == "http://ops/hook"
+    assert payload["event"] == "supervisor.restart" and payload["source"] == "mac.supervisor"
+
+
+def test_no_webhook_configured_is_silent(monkeypatch):
+    import mac.supervisor as sup
+    posted = []
+    monkeypatch.setattr(sup, "post_alert", lambda *a, **k: posted.append(a) or True)
+    s = sup.Supervisor(sup.SupervisorConfig(auth_token="t", enabled=False))  # no webhook
+    s._observe("supervisor.flap_ceiling", "critical", {})
+    assert posted == []

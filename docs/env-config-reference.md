@@ -635,6 +635,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_STATE_TO_A2A` | str | consumer-defined | core | Core setting: state to a2a. |
 | `MAC_SUPERVISORD_CONF_NAME` | str | consumer-defined | core | Core setting: supervisord conf name. |
 | `MAC_SUPERVISORD_PROG` | str | consumer-defined | core | Core setting: supervisord prog. |
+| `MAC_SUPERVISOR_ALERT_WEBHOOK` | str | consumer-defined | core | Core setting: supervisor alert webhook. |
 | `MAC_SUPERVISOR_DISABLED` | str | consumer-defined | core | Core setting: supervisor disabled. |
 | `MAC_SUPERVISOR_FAILURE_THRESHOLD` | int | consumer-defined | core | Core setting: supervisor failure threshold. |
 | `MAC_SUPERVISOR_FLAP_WINDOW_SECONDS` | int | consumer-defined | core | Core setting: supervisor flap window seconds. |

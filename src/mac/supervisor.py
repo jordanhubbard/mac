@@ -110,6 +110,11 @@ class SupervisorConfig:
     max_restarts_per_window: int = 5
     restart_command: Tuple[str, ...] = ()
     auth_token: str = ""
+    # Escalation: a generic HTTP endpoint (e.g. a Slack incoming webhook or an
+    # ops alert ingest) that a restart/flap event is POSTed to. Deliberately
+    # INDEPENDENT of the hub — the supervisor's whole job is to survive the hub
+    # being down, so it must not depend on the hub to report that the hub is down.
+    alert_webhook: str = ""
     enabled: bool = True
     configuration_error: str = ""
 
@@ -146,6 +151,7 @@ class SupervisorConfig:
                 env, "MAC_SUPERVISOR_MAX_RESTARTS_PER_WINDOW", 5, low=1, high=100),
             restart_command=restart_command,
             auth_token=token,
+            alert_webhook=str(env.get("MAC_SUPERVISOR_ALERT_WEBHOOK") or "").strip(),
             enabled=not _truthy(env.get("MAC_SUPERVISOR_DISABLED")),
             configuration_error="; ".join(errors),
         )
@@ -159,6 +165,22 @@ def http_health_probe(url: str, timeout: float) -> bool:
     """
     req = urllib.request.Request(url, method="GET")
     try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return False
+
+
+def post_alert(webhook: str, payload: Dict[str, object], timeout: float = 8.0) -> bool:
+    """Best-effort POST of a JSON alert to an operator webhook (Slack incoming
+    webhook / ops ingest). Never raises — a failed alert must never disturb the
+    watchdog loop. Returns True on a 2xx."""
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            webhook, data=data, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
@@ -405,6 +427,16 @@ class Supervisor:
     def _observe(self, event: str, level: str, detail: Dict[str, object]) -> None:
         line = json.dumps({"event": event, "level": level, **detail})
         (_log.warning if level in {"warning", "error", "critical"} else _log.info)(line)
+        # Escalate crash/restart/flap events to the operator alert webhook so a
+        # human is actually told — not just the log. Best-effort; never blocks.
+        if self.config.alert_webhook and level in {"warning", "error", "critical"}:
+            post_alert(self.config.alert_webhook, {
+                "source": "mac.supervisor",
+                "label": self.config.label,
+                "event": event,
+                "level": level,
+                **detail,
+            })
 
     def _serve_ops(self) -> None:
         if not self.config.auth_token:

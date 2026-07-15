@@ -794,6 +794,7 @@
     "name": "MAC_CHAT_GATEWAY_IMPL",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -7671,6 +7672,17 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: supervisor alert webhook.",
+    "family": "core",
+    "name": "MAC_SUPERVISOR_ALERT_WEBHOOK",
+    "retired": false,
+    "sources": [
+      "src/mac/supervisor.py"
     ],
     "type": "str"
   },
