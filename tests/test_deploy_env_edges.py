@@ -166,6 +166,20 @@ def test_openclaw_worker_advertisement_uses_verified_runtime_file(tmp_path) -> N
     assert "MAC_WORKER_RESOURCES_FILE" not in rollback
 
 
+def test_gateway_impl_none_is_a_pure_worker_no_openclaw(tmp_path) -> None:
+    # Worker/gateway decoupling: gateway_impl=none => MAC_CHAT_GATEWAY_IMPL=none,
+    # no OpenClaw advertisement/resources at all. The startup self-test keys off
+    # MAC_CHAT_GATEWAY_IMPL, so a none worker skips every OpenClaw check and can
+    # start with no gateway installed.
+    cfg = _cfg(tmp_path)
+    worker = deploy_env.build_mac_env(
+        {}, cfg, environ={"HERMES_GATEWAY_IMPL": "none"},
+    )
+    assert worker["MAC_CHAT_GATEWAY_IMPL"] == "none"
+    assert "MAC_WORKER_RESOURCES_FILE" not in worker
+    assert not any(k.startswith("MAC_OPENCLAW_") for k in worker)
+
+
 def test_repository_ref_reconciler_defaults_to_daily_prune_on_hub_only(tmp_path):
     hub = deploy_env.build_mac_env({}, _cfg(tmp_path), environ={})
     assert hub["MAC_CONTROL_PLANE_ROLE"] == "hub"

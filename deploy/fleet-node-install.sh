@@ -3834,6 +3834,13 @@ install_linux_nemoclaw_service() {
 }
 
 install_hermes_gateway_wrapper() {
+  # Worker/gateway decoupling: a pure worker (gateway_impl=none) runs no chat
+  # gateway at all — only the mac-agent worker. Skip installing the Hermes
+  # gateway wrapper so the node is a clean executor, not a conversational agent.
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "none" ]; then
+    log "gateway_impl=none: pure worker; skipping Hermes gateway wrapper install"
+    return 0
+  fi
   local wrapper="$MAC_HOME/bin/hermes-gateway"
   mkdir -p "$MAC_HOME/bin"
   cat > "$wrapper" <<'EOF'
@@ -4174,29 +4181,40 @@ for key, value in {
         problems.append(f"missing required identity env {key}")
 checks["identity_env"] = not any(problem.startswith("missing required identity env") for problem in problems)
 
-try:
-    resources = json.loads(resources_path.read_text(encoding="utf-8"))
-except Exception as exc:
-    resources = {}
-    problems.append(
-        f"OpenClaw service advertisement unreadable at {resources_path}: {safe_error(exc)}"
-    )
+# Worker/gateway decoupling: the OpenClaw runtime/ownership advertisement and the
+# openclaw-agent self-test only apply when this agent actually runs an OpenClaw
+# chat gateway. A pure worker (MAC_CHAT_GATEWAY_IMPL != "openclaw") has no gateway,
+# so these checks are skipped — otherwise a gateway-less worker could never pass
+# its startup self-test and would refuse to start (the whole point of a worker is
+# to claim and execute tasks, which needs no gateway).
+openclaw_required = os.environ.get("MAC_CHAT_GATEWAY_IMPL", "").strip().lower() == "openclaw"
+if not openclaw_required:
+    checks["openclaw_runtime"] = True
+    checks["openclaw_agent"] = True
+else:
+    try:
+        resources = json.loads(resources_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        resources = {}
+        problems.append(
+            f"OpenClaw service advertisement unreadable at {resources_path}: {safe_error(exc)}"
+        )
 
-runtime = resources.get("openclaw_runtime") if isinstance(resources, dict) else None
-ownership = resources.get("gateway_ownership") if isinstance(resources, dict) else None
-if not isinstance(runtime, dict) or runtime.get("implementation") != "openclaw":
-    problems.append("OpenClaw runtime advertisement is missing or has the wrong implementation")
-elif runtime.get("verified") is not True:
-    problems.append("OpenClaw runtime advertisement is not verified")
-elif runtime.get("exclusive_service_owner") is not True:
-    problems.append("OpenClaw runtime lacks exclusive service-ownership proof")
-elif not isinstance(runtime.get("confinement"), dict) or runtime["confinement"].get("provider") != "openshell":
-    problems.append("OpenClaw runtime is not advertised inside OpenShell")
-if not isinstance(ownership, dict) or ownership.get("exclusive") is not True:
-    problems.append("OpenClaw gateway ownership proof is missing")
-checks["openclaw_runtime"] = not any(
-    problem.startswith("OpenClaw") for problem in problems
-)
+    runtime = resources.get("openclaw_runtime") if isinstance(resources, dict) else None
+    ownership = resources.get("gateway_ownership") if isinstance(resources, dict) else None
+    if not isinstance(runtime, dict) or runtime.get("implementation") != "openclaw":
+        problems.append("OpenClaw runtime advertisement is missing or has the wrong implementation")
+    elif runtime.get("verified") is not True:
+        problems.append("OpenClaw runtime advertisement is not verified")
+    elif runtime.get("exclusive_service_owner") is not True:
+        problems.append("OpenClaw runtime lacks exclusive service-ownership proof")
+    elif not isinstance(runtime.get("confinement"), dict) or runtime["confinement"].get("provider") != "openshell":
+        problems.append("OpenClaw runtime is not advertised inside OpenShell")
+    if not isinstance(ownership, dict) or ownership.get("exclusive") is not True:
+        problems.append("OpenClaw gateway ownership proof is missing")
+    checks["openclaw_runtime"] = not any(
+        problem.startswith("OpenClaw") for problem in problems
+    )
 
 
 if not truthy(qdrant_required_flag):
@@ -4227,62 +4245,63 @@ elif firecrawl_url:
         problems.append(f"Firecrawl web search endpoint is unreachable: {error}")
     checks["firecrawl_web_search"] = ok
 
-try:
-    openclaw_config = json.loads(openclaw_config_path.read_text(encoding="utf-8"))
-    provider = openclaw_config["models"]["providers"]["mac-router"]
-    primary_model = openclaw_config["agents"]["defaults"]["model"]["primary"]
-    runtime_provider = {
-        "provider": "mac-router",
-        "source": "openclaw_config",
-        "model": str(primary_model).removeprefix("mac-router/"),
-        "protocol": provider.get("api"),
-    }
-except Exception as exc:
-    runtime_provider = {"error": safe_error(exc)}
-    problems.append(f"OpenClaw model configuration is unreadable: {safe_error(exc)}")
+if openclaw_required:
+    try:
+        openclaw_config = json.loads(openclaw_config_path.read_text(encoding="utf-8"))
+        provider = openclaw_config["models"]["providers"]["mac-router"]
+        primary_model = openclaw_config["agents"]["defaults"]["model"]["primary"]
+        runtime_provider = {
+            "provider": "mac-router",
+            "source": "openclaw_config",
+            "model": str(primary_model).removeprefix("mac-router/"),
+            "protocol": provider.get("api"),
+        }
+    except Exception as exc:
+        runtime_provider = {"error": safe_error(exc)}
+        problems.append(f"OpenClaw model configuration is unreadable: {safe_error(exc)}")
 
-prompt = "Respond exactly MAC_OPENCLAW_STARTUP_OK"
-try:
-    completed = subprocess.run(
-        [
-            str(openclaw_agent_bin),
-            "--agent",
-            "main",
-            "--message",
-            prompt,
-            "--session-id",
-            f"mac-openclaw-startup-self-test-{agent_id}-{int(time.time())}",
-            "--json",
-        ],
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-        env={**os.environ, "MAC_AGENT_ID": agent_id},
-    )
-    agent_returncode = completed.returncode
-    raw_agent_output = (completed.stdout or "") + "\n" + (completed.stderr or "")
-    agent_output = tail(raw_agent_output)
-    if "MAC_OPENCLAW_STARTUP_OK" in raw_agent_output:
-        # OpenClaw may report a non-zero CLI status after a gateway scope
-        # upgrade request while successfully completing the model turn via
-        # its embedded fallback runner.  The sentinel proves the execution
-        # contract; only a missing sentinel is a hard self-test failure.
-        checks["openclaw_agent"] = True
-    elif completed.returncode != 0:
+    prompt = "Respond exactly MAC_OPENCLAW_STARTUP_OK"
+    try:
+        completed = subprocess.run(
+            [
+                str(openclaw_agent_bin),
+                "--agent",
+                "main",
+                "--message",
+                prompt,
+                "--session-id",
+                f"mac-openclaw-startup-self-test-{agent_id}-{int(time.time())}",
+                "--json",
+            ],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            env={**os.environ, "MAC_AGENT_ID": agent_id},
+        )
+        agent_returncode = completed.returncode
+        raw_agent_output = (completed.stdout or "") + "\n" + (completed.stderr or "")
+        agent_output = tail(raw_agent_output)
+        if "MAC_OPENCLAW_STARTUP_OK" in raw_agent_output:
+            # OpenClaw may report a non-zero CLI status after a gateway scope
+            # upgrade request while successfully completing the model turn via
+            # its embedded fallback runner.  The sentinel proves the execution
+            # contract; only a missing sentinel is a hard self-test failure.
+            checks["openclaw_agent"] = True
+        elif completed.returncode != 0:
+            openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
+            problems.append(f"OpenClaw agent self-test exited {completed.returncode}")
+        else:
+            problems.append("OpenClaw agent self-test did not return its sentinel")
+            checks["openclaw_agent"] = False
+    except subprocess.TimeoutExpired as exc:
+        agent_returncode = None
+        agent_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
         openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-        problems.append(f"OpenClaw agent self-test exited {completed.returncode}")
-    else:
-        problems.append("OpenClaw agent self-test did not return its sentinel")
-        checks["openclaw_agent"] = False
-except subprocess.TimeoutExpired as exc:
-    agent_returncode = None
-    agent_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
-    openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-    problems.append(f"OpenClaw agent self-test timed out after {timeout}s")
-except Exception as exc:
-    agent_returncode = None
-    problems.append(f"OpenClaw agent self-test failed to execute: {safe_error(exc)}")
+        problems.append(f"OpenClaw agent self-test timed out after {timeout}s")
+    except Exception as exc:
+        agent_returncode = None
+        problems.append(f"OpenClaw agent self-test failed to execute: {safe_error(exc)}")
 
 blocking_problems = list(problems)
 status = "passed"
