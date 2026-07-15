@@ -58,6 +58,13 @@ mac-evidence.json
 /worker-result.json
 /environment-contract.json
 /environment-delta.json
+/repository-worktree.json
+/recovery-evidence.json
+/recovery-test.stdout.txt
+/recovery-test.stderr.txt
+/stdout.txt
+/stderr.txt
+/.mac-agentbus-control-pending-repo-update.json
 /.mac-executor-policy.txt
 /.mac-agentbus-control.json
 /.mac-withheld-executor-evidence.json
