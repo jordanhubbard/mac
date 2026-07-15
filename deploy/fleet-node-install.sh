@@ -232,7 +232,28 @@ PY
       return
     fi
   done
-  log "ERROR: no Python >= 3.11 found (mac requires-python >=3.11)"
+  # No host Python >= 3.11. Rather than depend on whatever the host/base image
+  # happens to ship (host Python bleeding through — a generic Ubuntu pod is 3.10),
+  # provision a PINNED interpreter with uv, the same host-independent approach CI
+  # uses (`uv python install`). uv is a static binary needing no Python to bootstrap,
+  # so this works on a bare base image. Matches the production Dockerfile (3.12.x).
+  local uv_bin managed
+  uv_bin="$(command -v uv 2>/dev/null || true)"
+  if [ -z "$uv_bin" ] && command -v curl >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh >/dev/null 2>&1 || true
+    uv_bin="$(command -v uv 2>/dev/null || true)"
+    [ -n "$uv_bin" ] || { [ -x "$HOME/.local/bin/uv" ] && uv_bin="$HOME/.local/bin/uv"; }
+  fi
+  if [ -n "$uv_bin" ]; then
+    log "no host Python >= 3.11; provisioning a pinned interpreter with uv ($uv_bin)"
+    "$uv_bin" python install 3.12 >/dev/null 2>&1 || true
+    managed="$("$uv_bin" python find 3.12 2>/dev/null || true)"
+    if [ -n "$managed" ] && [ -x "$managed" ]; then
+      printf '%s\n' "$managed"
+      return
+    fi
+  fi
+  log "ERROR: no Python >= 3.11 found and uv provisioning failed (mac requires-python >=3.11)"
   exit 1
 }
 

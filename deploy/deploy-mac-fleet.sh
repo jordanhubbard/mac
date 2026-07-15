@@ -1320,13 +1320,20 @@ deploy_host() {
   # OpenClaw workspace already exists; otherwise it asks an established fleet
   # agent for a distinct, roster-aware personality and installs the validated
   # proposal before the remote transaction starts.
-  MAC_OPENCLAW_BOOTSTRAP_TOKEN="$hub_token" \
-  PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PYTHON_BIN" "$ROOT/scripts/provision-openclaw-personality.py" \
-      --config "$FLEET_REGISTRY_CONFIG" \
-      --fleet "$HUB_SELECTOR" \
-      --agent "$agent" \
-      --hub-url "$hub_url"
+  # OpenClaw persona provisioning is only meaningful for conversational
+  # (gateway) nodes; a pure worker needs no persona. It must never abort the
+  # worker deploy — a mentor being unavailable or the persona step failing
+  # (e.g. openclaw-agent rejecting a multi-line --message) leaves the worker
+  # perfectly able to claim and execute tasks. So it is best-effort/non-fatal.
+  if ! MAC_OPENCLAW_BOOTSTRAP_TOKEN="$hub_token" \
+    PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON_BIN" "$ROOT/scripts/provision-openclaw-personality.py" \
+        --config "$FLEET_REGISTRY_CONFIG" \
+        --fleet "$HUB_SELECTOR" \
+        --agent "$agent" \
+        --hub-url "$hub_url"; then
+    echo "==> ${agent}: OpenClaw persona provisioning skipped (non-fatal) — a worker does not require a persona"
+  fi
 
   echo "==> ${agent}: copying mac release archive"
   # OpenSSH 9 switched scp to SFTP by default. Minimal fleet containers often
