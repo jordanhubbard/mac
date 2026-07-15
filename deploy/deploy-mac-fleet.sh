@@ -999,14 +999,49 @@ print("%s__%s" % (key, suffix) if suffix else key)
 PY
 }
 
+# Resolve a secret from the MAC secrets store (encrypted-at-rest, access-audited)
+# via the hub's POST /secrets/{name}/resolve endpoint. Prints the value or
+# nothing. The hub token is read DIRECTLY from env (never via the vault) to avoid
+# recursion when the token itself is looked up. Silent on any failure so the
+# vault is a pure fallback that never breaks an env-only deploy.
+resolve_secret_from_store() {
+  # MUST always return 0 (it is called in `val="$(...)"` under set -euo
+  # pipefail — a non-zero return would kill the whole deploy). A miss just
+  # prints nothing.
+  local name="$1" fleet="$2" hub token scoped_token body
+  hub="${MAC_API_URL:-${MAC_URL:-${MAC_HUB_URL:-}}}"
+  scoped_token="$(fleet_scoped_name MAC_API_TOKEN "$fleet")"
+  token="${!scoped_token:-${MAC_API_TOKEN:-}}"
+  if [ -z "$hub" ] || [ -z "$token" ] || ! command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+  body="$(curl -fsS --max-time 15 -X POST -H "Authorization: Bearer ${token}" \
+    "${hub%/}/secrets/${name}/resolve" 2>/dev/null || true)"
+  [ -n "$body" ] || return 0
+  printf '%s' "$body" | "$PYTHON_BIN" -c 'import sys,json
+try: sys.stdout.write(str(json.load(sys.stdin).get("value","")))
+except Exception: pass' 2>/dev/null || true
+  return 0
+}
+
+# Deploy secret resolution, in precedence order:
+#   1. fleet-scoped env var (NAME__FLEET)   2. bare env var (NAME)
+#   3. MAC secrets store, fleet-scoped name  4. MAC secrets store, bare name
+# Env wins for back-compat; the vault is the single encrypted source of truth
+# for anything not in env, so deploy secrets no longer require plaintext ~/.mac/.env.
 fleet_scoped_env() {
-  local key="$1" fleet="$2" scoped
+  local key="$1" fleet="$2" scoped val
   scoped="$(fleet_scoped_name "$key" "$fleet")"
   if [ -n "${!scoped+x}" ]; then
-    printf '%s' "${!scoped}"
+    printf '%s' "${!scoped}"; return
   elif [ -n "${!key+x}" ]; then
-    printf '%s' "${!key}"
+    printf '%s' "${!key}"; return
   fi
+  val="$(resolve_secret_from_store "$scoped" "$fleet")"
+  [ -n "$val" ] && { printf '%s' "$val"; return 0; }
+  val="$(resolve_secret_from_store "$key" "$fleet")"
+  [ -n "$val" ] && printf '%s' "$val"
+  return 0
 }
 
 make_archive() {
@@ -1637,6 +1672,57 @@ worker_agent="${TUNNEL_WORKER_AGENT:?}"
 tunnel_host="${TUNNEL_HOST:?}"
 tunnel_user="${TUNNEL_USER:-horde}"
 fleet_name="${TUNNEL_FLEET_NAME:-mac}"
+if [ "$(uname -s)" = "Darwin" ]; then
+  # macOS hub: run the reverse tunnel as a system LaunchDaemon (headless, no GUI
+  # session required — mirrors com.mac.control-plane). macOS has neither systemd
+  # nor supervisord, so without this branch the deploy died writing
+  # /etc/supervisor/conf.d on the Mac hub and no GKE pod could be provisioned.
+  ssh_bin="$(command -v ssh)"
+  label="com.${fleet_name}.tunnel-${worker_agent}"
+  plist="/Library/LaunchDaemons/${label}.plist"
+  hub_user="$(whoami)"
+  mkdir -p "$HOME/.mac/logs"
+  sudo tee "$plist" > /dev/null <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>UserName</key><string>${hub_user}</string>
+  <key>EnvironmentVariables</key><dict><key>HOME</key><string>${HOME}</string></dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${ssh_bin}</string>
+    <string>-N</string>
+    <string>-o</string><string>BatchMode=yes</string>
+    <string>-o</string><string>StrictHostKeyChecking=no</string>
+    <string>-o</string><string>UserKnownHostsFile=/dev/null</string>
+    <string>-o</string><string>ServerAliveInterval=30</string>
+    <string>-o</string><string>ServerAliveCountMax=3</string>
+    <string>-o</string><string>ExitOnForwardFailure=yes</string>
+    <string>-i</string><string>${HOME}/.ssh/mac_tunnel_id</string>
+    <string>-R</string><string>127.0.0.1:18789:127.0.0.1:8789</string>
+    <string>-R</string><string>127.0.0.1:18090:127.0.0.1:8090</string>
+    <string>-R</string><string>127.0.0.1:16333:127.0.0.1:6333</string>
+    <string>-R</string><string>127.0.0.1:13002:127.0.0.1:3002</string>
+    <string>${tunnel_user}@${tunnel_host}</string>
+  </array>
+  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>${HOME}/.mac/logs/tunnel-${worker_agent}.log</string>
+  <key>StandardErrorPath</key><string>${HOME}/.mac/logs/tunnel-${worker_agent}.log</string>
+</dict>
+</plist>
+PLIST
+  sudo chown root:wheel "$plist" 2>/dev/null || true
+  sudo chmod 644 "$plist" 2>/dev/null || true
+  sudo launchctl bootout "system/${label}" >/dev/null 2>&1 || true
+  sudo launchctl bootstrap system "$plist" >/dev/null 2>&1 || true
+  sudo launchctl enable "system/${label}" >/dev/null 2>&1 || true
+  sudo launchctl kickstart -k "system/${label}" >/dev/null 2>&1 || true
+  exit 0
+fi
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   service="${fleet_name}-tunnel-${worker_agent}.service"
   ssh_bin="$(command -v ssh)"
