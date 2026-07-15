@@ -877,7 +877,13 @@ def build_mac_env(
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "prune")
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS", "86400")
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS", "300")
-        values.setdefault("MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS", "7")
+        # Agent-created task branches (mac/agent_*/task_*) are the ONLY refs the
+        # reconciler manages, and they are ephemeral: once merged, the content is
+        # in main and there is no reason to keep the branch. So prune-on-merge
+        # (grace 0). A grace window would only matter for human PR branches tied
+        # to a ticket, which the reconciler never touches. Failed branches are
+        # quarantined (kept) regardless, so 0 never deletes unmerged work.
+        values.setdefault("MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS", "0")
     else:
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
     values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")

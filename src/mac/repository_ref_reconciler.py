@@ -119,7 +119,10 @@ class RepositoryRefReconcilerConfig:
         grace_days = _number(
             env,
             "MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
-            7.0,
+            # Prune agent task-branches on merge (grace 0). They are ephemeral and
+            # the only refs this reconciler manages; a grace window would only
+            # matter for human ticket-linked PR branches, which it never touches.
+            0.0,
             0.0,
             365.0,
             errors,
