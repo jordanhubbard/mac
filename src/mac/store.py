@@ -2054,6 +2054,18 @@ class SQLiteStore:
         # row so AgentBus streams/events/deliveries survive with real
         # identities instead of cascading away with the agent.
         self._ensure_column("agents", "deleted_at", "deleted_at TEXT")
+        # Partial index so list_agents (WHERE deleted_at IS NULL ORDER BY
+        # name, id) is an index-only scan over the handful of LIVE agents.
+        # Decommissioned/ephemeral agents are tombstoned, never purged, so the
+        # agents table grows without bound; without this index the query full-
+        # scans every tombstone + filesorts — ~1s for 8 live agents (the
+        # /agents latency bug). The partial predicate matches the query's WHERE
+        # exactly and stays tiny regardless of tombstone count. Emitted here
+        # (not in the CREATE TABLE DDL) because deleted_at is a migration column.
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agents_live_name "
+            "ON agents (name, id) WHERE deleted_at IS NULL"
+        )
         # task_588b67fd: group streams — JSON member list; NULL keeps the
         # legacy sender/recipient pair semantics.
         self._ensure_column("agentbus_streams", "participants", "participants TEXT")
