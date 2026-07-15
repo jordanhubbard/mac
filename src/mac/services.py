@@ -9597,7 +9597,16 @@ class ControlPlane:
                     updated_at = excluded.updated_at,
                     last_seen_at = excluded.last_seen_at,
                     hermes_instance_id = excluded.hermes_instance_id,
-                    attestation_key_ciphertext = excluded.attestation_key_ciphertext
+                    attestation_key_ciphertext = excluded.attestation_key_ciphertext,
+                    -- Resurrect a tombstoned agent: a live re-registration means
+                    -- the identity is back (e.g. a recreated pod re-deploying),
+                    -- so clear the tombstone and the decommission dispatch hold.
+                    -- `agents.*` is the pre-update row, so non-deleted agents keep
+                    -- any operator-set hold; only a decommissioned one is cleared.
+                    deleted_at = NULL,
+                    dispatch_hold = CASE WHEN agents.deleted_at IS NOT NULL THEN 0 ELSE agents.dispatch_hold END,
+                    dispatch_hold_reason = CASE WHEN agents.deleted_at IS NOT NULL THEN NULL ELSE agents.dispatch_hold_reason END,
+                    dispatch_hold_at = CASE WHEN agents.deleted_at IS NOT NULL THEN NULL ELSE agents.dispatch_hold_at END
                 """,
                 (
                     aid,
