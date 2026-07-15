@@ -246,9 +246,13 @@ PY
   fi
   if [ -n "$uv_bin" ]; then
     log "no host Python >= 3.11; provisioning a pinned interpreter with uv ($uv_bin)"
-    "$uv_bin" python install 3.12 >/dev/null 2>&1 || true
+    # NOT masked with `|| true`: a failed/partial download must not be treated as
+    # success (uv python find can return the would-be path before the binary is
+    # fully written). Verify the interpreter actually RUNS at >=3.11 rather than
+    # trusting `-x` on a possibly-incomplete file.
+    "$uv_bin" python install 3.12 >/dev/null 2>&1
     managed="$("$uv_bin" python find 3.12 2>/dev/null || true)"
-    if [ -n "$managed" ] && [ -x "$managed" ]; then
+    if [ -n "$managed" ] && "$managed" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
       printf '%s\n' "$managed"
       return
     fi
