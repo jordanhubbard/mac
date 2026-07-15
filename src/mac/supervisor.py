@@ -189,7 +189,7 @@ class WatchdogState:
     escalated: bool = False
     restart_times: Deque[float] = field(default_factory=deque)
 
-    def snapshot(self, *, wall: float, mono: float) -> Dict[str, object]:
+    def snapshot(self, *, mono: float) -> Dict[str, object]:
         def _ago(mono_ts: Optional[float]) -> Optional[float]:
             return None if mono_ts is None else round(mono - mono_ts, 2)
         return {
@@ -343,7 +343,7 @@ class _OpsHandler(BaseHTTPRequestHandler):
                 "supervisor": "ok",
                 "supervised": self.watchdog.config.label,
                 "watchdog": self.watchdog.state.snapshot(
-                    wall=time.time(), mono=_now()),
+                    mono=_now()),
             })
             return
         self._send(404, {"error": "not found"})
