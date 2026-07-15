@@ -553,3 +553,124 @@ class TestNoRecoveryOnSubmissionProblems:
         assert recovery_calls == [], (
             "try_recovery was unexpectedly called: %r" % recovery_calls
         )
+
+
+class TestRecoveryOnNonStandardPrepFailure:
+    """Workspace preparation is an environment-prerequisite step. A prep
+    failure that is NOT a ``RuntimeError``/``OSError`` (e.g. a git
+    ``CalledProcessError``, a ``MacApiError`` from the fetch/rebase round-trip,
+    or a ``KeyError`` from malformed task metadata) must still be routed
+    through ``try_recovery`` instead of skipping recovery and wedging the
+    assignment into a bare ``worker_exception`` -> blocked loop.
+    """
+
+    def _make_worker(self, tmp_path):
+        from mac.api import create_app
+        from mac.services import ControlPlane
+        from mac.worker import MacWorker, WorkerExecution
+        from mac.hermes_adapter import MacApiClient, MacApiError
+        from fastapi.testclient import TestClient
+
+        cp = ControlPlane.in_memory()
+        app = create_app(control_plane=cp, auth_tokens={})
+        http = TestClient(app, raise_server_exceptions=True)
+
+        def transport(method, path, payload):
+            req = getattr(http, method.lower())
+            kw = {}
+            if payload is not None:
+                kw["json"] = payload
+            r = req(path, **kw)
+            if r.status_code >= 400:
+                raise MacApiError(r.text)
+            return r.json() if r.content else None
+
+        client = MacApiClient("http://mac.test", transport=transport)
+        machine = cp.register_machine("prep-host")
+        agent = cp.register_agent(machine.id, "prep-worker", capabilities=[])
+        worker = MacWorker(
+            client,
+            agent.id,
+            tmp_path,
+            lambda task, task_dir: WorkerExecution(returncode=0, summary="ok"),
+            lease_seconds=30,
+        )
+        cp.create_task("Prep failure task")
+        assignment = cp.dispatch_once()
+        assert assignment is not None
+        return worker, assignment
+
+    def test_non_oserror_prep_failure_routes_through_recovery(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("MAC_RECOVERY_REFLEX_ENABLED", "1")
+        worker, assignment = self._make_worker(tmp_path)
+
+        # A prep failure that is neither RuntimeError nor OSError. Before the
+        # fix this escaped the recovery handler entirely.
+        def boom(task, lease):
+            raise KeyError("repository_base_sha")
+
+        monkeypatch.setattr(worker, "_prepare_task_workspace", boom)
+
+        recovery_calls: List[tuple] = []
+
+        def spy_try_recovery(*args, **kwargs):
+            recovery_calls.append(args)
+            return False, "escalate", "cannot recover"
+
+        monkeypatch.setattr(hrr, "try_recovery", spy_try_recovery)
+
+        # An unrecovered prep failure re-raises out of execute_assignment (by
+        # design) AFTER the worker records diagnostics and posts the blocked
+        # transition. Capture the re-raise so we can assert on both effects.
+        task_id = assignment["task"]["id"]
+        with pytest.raises(KeyError):
+            worker.execute_assignment(
+                assignment["task"], assignment["lease"]
+            )
+
+        # try_recovery MUST have been consulted for the prep failure.
+        assert len(recovery_calls) == 1, (
+            "try_recovery was not invoked for a non-OSError prep failure: %r"
+            % recovery_calls
+        )
+        # The task is blocked with a diagnosable worker_exception (traceback in
+        # output_tail), not a silent, output-less wedge.
+        task = worker.client.get("/tasks/%s" % task_id)["task"]
+        assert task["state"] == "blocked"
+        detail = task["metadata"]["activity"][-1]["detail"]
+        assert detail["failure"] == "worker_exception"
+        assert detail.get("output_tail")
+        assert not detail.get("output_tail_unavailable_reason")
+
+    def test_recovered_prep_failure_retries_preparation(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("MAC_RECOVERY_REFLEX_ENABLED", "1")
+        worker, assignment = self._make_worker(tmp_path)
+
+        calls = {"n": 0}
+        real_prepare = worker._prepare_task_workspace
+
+        def flaky_prepare(task, lease):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise KeyError("transient prep glitch")
+            return real_prepare(task, lease)
+
+        monkeypatch.setattr(worker, "_prepare_task_workspace", flaky_prepare)
+
+        def spy_try_recovery(*args, **kwargs):
+            return True, "retry", "recovered"
+
+        monkeypatch.setattr(hrr, "try_recovery", spy_try_recovery)
+
+        result = worker.execute_assignment(
+            assignment["task"], assignment["lease"]
+        )
+
+        # Preparation was retried after a successful recovery decision.
+        assert calls["n"] == 2
+        # The task proceeds past prep (no longer wedged on the prep failure).
+        assert result.status != "no_task"

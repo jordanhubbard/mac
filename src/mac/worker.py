@@ -753,7 +753,20 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
             try:
                 task_dir = self._prepare_task_workspace(task, lease)
-            except (RuntimeError, OSError) as _prep_exc:
+            except Exception as _prep_exc:
+                # Workspace preparation is an environment-prerequisite step:
+                # it fetches/rebases the canonical repo and lays out the task
+                # worktree. Historically only ``RuntimeError``/``OSError`` were
+                # routed through the harness-recovery reflex, so any OTHER
+                # exception (a git ``subprocess.CalledProcessError``, a
+                # ``MacApiError`` from the fetch/rebase API round-trip, a
+                # ``KeyError``/``TypeError`` from malformed task metadata) skipped
+                # just-in-time recovery entirely and wedged the assignment into a
+                # bare ``worker_exception`` -> blocked loop with no remediation
+                # (observed live: three consecutive environment-class failures on
+                # a dream-repair prerequisite, all with empty diagnostics). Triage
+                # every prep failure through the reflex; the unrecovered branch
+                # re-raises so the outer handler still captures the traceback.
                 if isinstance(_prep_exc, OSError):
                     _step = "disk_io"
                 elif any(kw in str(_prep_exc) for kw in ("fetch", "rebase", "clone", "checkout")):
