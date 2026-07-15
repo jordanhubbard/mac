@@ -594,6 +594,7 @@
     "name": "MAC_API_URL",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/cli.py",
       "src/mac/dispatch.py",
@@ -3884,6 +3885,7 @@
     "name": "MAC_HUB_URL",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/mac-crash-observer.py",
@@ -8264,6 +8266,7 @@
     "name": "MAC_URL",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py",
