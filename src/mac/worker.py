@@ -3373,6 +3373,17 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             if not worktree.exists():
                 problems.append("repository worktree is missing: %s" % worktree)
             else:
+                # New-file handoff: the sandboxed coding agent commonly leaves
+                # intended new source/test files untracked (OpenShell returns
+                # repository content, not an authoritative Git index). Stage and
+                # commit the complete synchronized change here -- BEFORE the
+                # dirty gate -- so those new files follow the same contract as
+                # edits instead of tripping "uncommitted changes" and wasting an
+                # attempt on an otherwise-successful task.
+                task_id = str(task_payload.get("id") or "").strip()
+                self._commit_dirty_repository_worktree(
+                    task_id, task_payload, worktree, problems
+                )
                 dirty = _run_git(worktree, ["status", "--porcelain"])
                 if dirty.returncode != 0:
                     problems.append(
@@ -3383,10 +3394,62 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     problems.append("repository worktree has uncommitted changes")
                 head = _run_git(worktree, ["rev-parse", "HEAD"])
                 repo = manifest.get("repo") if isinstance(manifest.get("repo"), dict) else {}
+                worktree_head = head.stdout.strip() if head.returncode == 0 else ""
                 manifest_head = str(repo.get("head_sha") or "").strip() if isinstance(repo, dict) else ""
-                if head.returncode == 0 and manifest_head and head.stdout.strip() != manifest_head:
+                # Auto-committing new files advances HEAD past the SHA the agent
+                # recorded. Reconcile the manifest with the freshly committed
+                # HEAD (on disk and in memory) so the head_sha equality check
+                # stays coherent rather than failing on our own commit.
+                if (
+                    worktree_head
+                    and manifest_head
+                    and worktree_head != manifest_head
+                    and isinstance(repo, dict)
+                ):
+                    self._reconcile_manifest_head(
+                        task_dir, evidence, repo, worktree_head
+                    )
+                    manifest_head = worktree_head
+                if worktree_head and manifest_head and worktree_head != manifest_head:
                     problems.append("verification.repo.head_sha does not match worktree HEAD")
         return problems
+
+    def _reconcile_manifest_head(
+        self,
+        task_dir: Path,
+        evidence: JsonDict,
+        repo: JsonDict,
+        head_sha: str,
+    ) -> None:
+        """Point the evidence manifest at ``head_sha`` after the finalizer
+        auto-committed new files.
+
+        The worker stages/commits intended new files before the dirty gate, so
+        HEAD advances past the SHA the agent recorded. Update the in-memory
+        manifest and the on-disk ``mac-evidence.json`` so downstream checks and
+        the host finalizer read a coherent, freshly committed head_sha. The disk
+        write is best-effort: the in-memory manifest is authoritative for this
+        gate.
+        """
+        repo["head_sha"] = head_sha
+        repo["dirty"] = False
+        manifest_path = task_dir / "mac-evidence.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return
+        if not isinstance(manifest, dict):
+            return
+        manifest_repo = manifest.get("repo")
+        if isinstance(manifest_repo, dict):
+            manifest_repo["head_sha"] = head_sha
+            manifest_repo["dirty"] = False
+        try:
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+            )
+        except OSError:
+            pass
 
     def _record_review_execution(
         self,

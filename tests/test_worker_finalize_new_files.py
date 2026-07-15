@@ -1,0 +1,131 @@
+"""Regression: the success-path dirty gate must stage/commit untracked new
+files BEFORE checking cleanliness, so a task that leaves intended new source or
+test files does not waste an attempt on a "repository worktree has uncommitted
+changes" refusal (task_1965d289821d45dd86af10b52123e298)."""
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from typing import Any, Dict
+
+from mac import worker
+from mac.worker import MacWorker
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def _init_worktree(root: Path) -> Path:
+    repo = root / "worktree"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "existing.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    return repo
+
+
+def _write_context(task_dir: Path, worktree: Path) -> None:
+    (task_dir / "repository-worktree.json").write_text(
+        json.dumps(
+            {
+                "repository_worktree": str(worktree),
+                "repository_branch": "master",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_task(task_dir: Path, task_id: str) -> None:
+    (task_dir / "task.json").write_text(
+        json.dumps({"task": {"id": task_id, "title": "add a new module"}}),
+        encoding="utf-8",
+    )
+
+
+def _manifest(head_sha: str) -> Dict[str, Any]:
+    return {
+        "schema": worker.VERIFICATION_SCHEMA,
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "signed_by": "agent-test",
+        "signature": "sig",
+        "repo": {"head_sha": head_sha, "dirty": False},
+        "verification": {
+            "schema": worker.VERIFICATION_SCHEMA,
+            "status": "complete",
+            "evidence_type": "repo_change",
+            "signed_by": "agent-test",
+            "signature": "sig",
+            "repo": {"head_sha": head_sha, "dirty": False},
+        },
+    }
+
+
+def _make_worker(tmp_path: Path) -> MacWorker:
+    return MacWorker.__new__(MacWorker)  # type: ignore[call-arg]
+
+
+def test_untracked_new_files_are_committed_before_dirty_gate(tmp_path: Path):
+    worktree = _init_worktree(tmp_path)
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    task_id = "task_newfile"
+    _write_task(task_dir, task_id)
+    _write_context(task_dir, worktree)
+
+    base_head = _git(worktree, "rev-parse", "HEAD")
+    # The agent left an intended NEW file untracked in the worktree.
+    (worktree / "new_module.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    manifest = _manifest(base_head)
+    (task_dir / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+    w = _make_worker(tmp_path)
+    evidence = {"metadata": {"verification": manifest["verification"]}}
+    problems = w._execution_submission_problems(task_dir, evidence)
+
+    assert "repository worktree has uncommitted changes" not in problems
+    assert not any("head_sha does not match" in p for p in problems)
+    # The untracked file was committed and the worktree is now clean.
+    assert _git(worktree, "status", "--porcelain") == ""
+    new_head = _git(worktree, "rev-parse", "HEAD")
+    assert new_head != base_head
+    tracked = _git(worktree, "ls-files")
+    assert "new_module.py" in tracked
+    # The evidence manifest on disk was reconciled to the freshly committed HEAD.
+    on_disk = json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert on_disk["repo"]["head_sha"] == new_head
+
+
+def test_clean_worktree_is_not_touched(tmp_path: Path):
+    worktree = _init_worktree(tmp_path)
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    _write_task(task_dir, "task_clean")
+    _write_context(task_dir, worktree)
+
+    head = _git(worktree, "rev-parse", "HEAD")
+    manifest = _manifest(head)
+    (task_dir / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+    w = _make_worker(tmp_path)
+    evidence = {"metadata": {"verification": manifest["verification"]}}
+    problems = w._execution_submission_problems(task_dir, evidence)
+
+    assert "repository worktree has uncommitted changes" not in problems
+    assert _git(worktree, "rev-parse", "HEAD") == head
