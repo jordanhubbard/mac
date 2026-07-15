@@ -1083,6 +1083,7 @@
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/ledger_backup.py",
+      "src/mac/ledger_backup_scheduler.py",
       "src/mac/store.py",
       "src/mac/worker.py"
     ],
@@ -1224,6 +1225,7 @@
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
       "src/mac/ledger_backup.py",
+      "src/mac/ledger_backup_scheduler.py",
       "src/mac/router_service.py",
       "src/mac/store.py",
       "src/mac/worker.py"
@@ -3754,6 +3756,7 @@
       "src/mac/api.py",
       "src/mac/client_principals.py",
       "src/mac/hermes_runtime.py",
+      "src/mac/ledger_backup_scheduler.py",
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
       "src/mac/services.py",
@@ -4172,14 +4175,70 @@
   },
   {
     "default": null,
+    "description": "Core setting: ledger backup db.",
+    "family": "core",
+    "name": "MAC_LEDGER_BACKUP_DB",
+    "retired": false,
+    "sources": [
+      "src/mac/ledger_backup_scheduler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: ledger backup dir.",
     "family": "core",
     "name": "MAC_LEDGER_BACKUP_DIR",
     "retired": false,
     "sources": [
-      "src/mac/ledger_backup.py"
+      "src/mac/ledger_backup.py",
+      "src/mac/ledger_backup_scheduler.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: ledger backup enabled.",
+    "family": "core",
+    "name": "MAC_LEDGER_BACKUP_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/ledger_backup_scheduler.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: ledger backup initial delay seconds.",
+    "family": "core",
+    "name": "MAC_LEDGER_BACKUP_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/ledger_backup_scheduler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: ledger backup interval seconds.",
+    "family": "core",
+    "name": "MAC_LEDGER_BACKUP_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/ledger_backup_scheduler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: ledger backup keep last.",
+    "family": "core",
+    "name": "MAC_LEDGER_BACKUP_KEEP_LAST",
+    "retired": false,
+    "sources": [
+      "src/mac/ledger_backup_scheduler.py"
+    ],
+    "type": "bool"
   },
   {
     "default": null,

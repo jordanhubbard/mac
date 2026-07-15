@@ -340,7 +340,12 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_JOURNAL_PATH` | str | consumer-defined | core | Core setting: journal path. |
 | `MAC_LAUNCHD_LABEL` | str | consumer-defined | core | Core setting: launchd label. |
 | `MAC_LEASE_ID` | str | consumer-defined | core | Core setting: lease id. |
+| `MAC_LEDGER_BACKUP_DB` | str | consumer-defined | core | Core setting: ledger backup db. |
 | `MAC_LEDGER_BACKUP_DIR` | str | consumer-defined | core | Core setting: ledger backup dir. |
+| `MAC_LEDGER_BACKUP_ENABLED` | bool | consumer-defined | core | Core setting: ledger backup enabled. |
+| `MAC_LEDGER_BACKUP_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: ledger backup initial delay seconds. |
+| `MAC_LEDGER_BACKUP_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: ledger backup interval seconds. |
+| `MAC_LEDGER_BACKUP_KEEP_LAST` | bool | consumer-defined | core | Core setting: ledger backup keep last. |
 | `MAC_LEDGER_BACKUP_SYNC_CMD` | str | consumer-defined | core | Core setting: ledger backup sync cmd. |
 | `MAC_LEDGER_SNAPSHOT_MANIFEST` | str | consumer-defined | core | Core setting: ledger snapshot manifest. |
 | `MAC_LEDGER_SNAPSHOT_PATH` | str | consumer-defined | core | Core setting: ledger snapshot path. |

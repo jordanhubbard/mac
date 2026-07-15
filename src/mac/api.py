@@ -54,6 +54,7 @@ from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
 from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
+from mac.ledger_backup_scheduler import LedgerBackupConfig, LedgerBackupScheduler
 from mac.nap_ticker import NapTicker, NapTickerConfig
 from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
@@ -3573,6 +3574,11 @@ def create_app(
     # quarantines). Violations become fleet tasks; fixes that don't hold are
     # re-filed with escalation. No-op unless MAC_SELF_HEAL_ENABLED.
     self_healing_sentinel = SelfHealingSentinel(cp, SelfHealingConfig.from_env())
+    # mac-ledger-backup: scheduled verified snapshots of the hub ledger, shipped
+    # off-box, so a lost hub node does not mean a lost fleet (the SPOF exposed
+    # when the hub node dropped off the network). Default-ON for authoritative
+    # hubs; no-op on clients or with MAC_LEDGER_BACKUP_ENABLED=0.
+    ledger_backup_scheduler = LedgerBackupScheduler(cp, LedgerBackupConfig.from_env())
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -3584,9 +3590,11 @@ def create_app(
         nap_ticker.start()
         curiosity_reviewer.start()
         self_healing_sentinel.start()
+        ledger_backup_scheduler.start()
         try:
             yield
         finally:
+            ledger_backup_scheduler.stop()
             self_healing_sentinel.stop()
             curiosity_reviewer.stop()
             nap_ticker.stop()
