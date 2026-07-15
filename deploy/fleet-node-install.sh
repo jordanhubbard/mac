@@ -3646,11 +3646,19 @@ sync_messaging_config() {
   # connection-refused). Runs before the gateway (re)start so the gateway picks
   # up the resolved home channel. Idempotent for spokes (they read the hub API).
   reload_mac_env
-  fetch_slack_secrets_from_vault
-  reload_mac_env
-  if [ "${HERMES_GATEWAY_IMPL:-hermes}" != "openclaw" ]; then
-    sync_hermes_slack_identity_env
-    sync_hermes_home_channels
+  # A pure worker (gateway_impl=none) has no chat gateway, so it needs no Slack
+  # secrets, identity, or home-channel data at all. Skip the whole Hermes/Slack
+  # block — otherwise the home-channel sync fails on a gateway-less node and
+  # aborts the worker deploy (the != "openclaw" guard wrongly included "none").
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "none" ]; then
+    log "gateway_impl=none: pure worker; skipping Hermes/Slack gateway setup"
+  else
+    fetch_slack_secrets_from_vault
+    reload_mac_env
+    if [ "${HERMES_GATEWAY_IMPL:-hermes}" != "openclaw" ]; then
+      sync_hermes_slack_identity_env
+      sync_hermes_home_channels
+    fi
   fi
 }
 
