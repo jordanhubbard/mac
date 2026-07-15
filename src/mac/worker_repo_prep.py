@@ -34,6 +34,29 @@ from mac.repository_contract import (
 JsonDict = Dict[str, Any]
 
 
+# git emits these when a write fails because the filesystem is full. The
+# message text is stable across git versions (it surfaces the underlying
+# ``ENOSPC``/``errno 28`` from the OS), so a substring match is sufficient and
+# does not depend on locale-translated errno strings.
+_DISK_FULL_MARKERS = (
+    "no space left on device",
+    "errno 28",
+    "enospc",
+)
+
+
+def _is_disk_full_error(text: str) -> bool:
+    """Return True when *text* looks like a filesystem-full failure.
+
+    ``git worktree add`` (and the ref-lock writes it performs) fail hard with
+    these markers when the worker host disk is exhausted. Recognising them lets
+    the caller reclaim stale workspaces just-in-time and retry instead of
+    wedging the task into a permanent ``worker_exception``.
+    """
+    low = (text or "").lower()
+    return any(marker in low for marker in _DISK_FULL_MARKERS)
+
+
 class RepoPrepMixin:
     """Mixin that provides repository-worktree preparation to MacWorker.
 
@@ -377,13 +400,32 @@ class RepoPrepMixin:
             # "already exists" even though the on-disk directory is gone.
             _run_git(source_root, ["worktree", "prune"])
 
-            add = _run_git(
-                source_root,
+            def _add_worktree():
                 # -B (not -b): the branch may survive from a reclaimed
                 # interrupted run of this same lease; force-reset it to the
                 # fresh base rather than failing on "branch already exists".
-                ["worktree", "add", "-B", branch, str(worktree_dir), base_sha],
-            )
+                return _run_git(
+                    source_root,
+                    ["worktree", "add", "-B", branch, str(worktree_dir), base_sha],
+                )
+
+            add = _add_worktree()
+            if add.returncode != 0 and _is_disk_full_error(add.stderr or add.stdout or ""):
+                # The worker host disk is full, so git could not write the
+                # checkout or its ref lock. Historically this raised a bare
+                # RuntimeError that the poll loop reported as a generic
+                # ``worker_exception`` and re-blocked forever WITHOUT ever
+                # freeing space (observed live across three attempts of a
+                # dream-repair task). Reclaim stale completed-task workspaces
+                # just-in-time (the same free-space-aware sweep the periodic
+                # GC uses) and retry once before giving up.
+                freed = self._reclaim_disk_for_worktree(
+                    task_id=str(task.get("id") or ""),
+                    worktree_dir=worktree_dir,
+                )
+                if freed:
+                    _run_git(source_root, ["worktree", "prune"])
+                    add = _add_worktree()
             if add.returncode != 0:
                 raise RuntimeError(
                     "could not create repository task worktree: %s"
@@ -420,6 +462,39 @@ class RepoPrepMixin:
             except Exception:  # noqa: BLE001
                 pass
             lock_fh.close()
+
+    def _reclaim_disk_for_worktree(self, *, task_id: str, worktree_dir: Path) -> bool:
+        """Free workspace disk just-in-time after a full-disk worktree failure.
+
+        Delegates to the free-space-aware ``WorkspaceGCMixin`` sweep when it is
+        available (MacWorker mixes both in), which prunes completed-task
+        workspaces while protecting the active task and the most-recent window.
+        Returns True when a reclaim was attempted so the caller can retry the
+        worktree add. Best-effort and never raises: a reclaim failure must not
+        mask the original disk-full error.
+        """
+        gc_once = getattr(self, "_gc_workspaces_once", None)
+        if not callable(gc_once):
+            return False
+        try:
+            result = gc_once()
+        except Exception as exc:  # noqa: BLE001 - reclaim is best-effort.
+            self._observe_log(
+                "worker.repository.disk_reclaim_failed",
+                level="warning",
+                subject_type="task",
+                subject_id=task_id,
+                detail={"worktree": str(worktree_dir), "error": str(exc)},
+            )
+            return True
+        self._observe_log(
+            "worker.repository.disk_reclaim_attempted",
+            level="warning",
+            subject_type="task",
+            subject_id=task_id,
+            detail={"worktree": str(worktree_dir), "gc": result},
+        )
+        return True
 
     def _resolve_repository_source_path(self, origin: JsonDict) -> Path:
         from mac.worker import (  # noqa: PLC0415

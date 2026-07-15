@@ -101,3 +101,58 @@ def test_repository_access_learning_failure_is_best_effort(tmp_path) -> None:
         error="denied",
     ) is None
     assert worker.logs[-1][0] == "worker.repository_access_learning.failed"
+
+
+def test_is_disk_full_error_detects_git_enospc_markers() -> None:
+    from mac.worker_repo_prep import _is_disk_full_error
+
+    assert _is_disk_full_error(
+        "fatal: cannot create directory at 'src': No space left on device"
+    )
+    assert _is_disk_full_error("error: write failed (errno 28)")
+    assert _is_disk_full_error("ENOSPC while writing pack")
+    # Unrelated failures must not trigger a spurious reclaim + retry.
+    assert not _is_disk_full_error(
+        "fatal: 'branch' already exists"
+    )
+    assert not _is_disk_full_error("")
+
+
+def test_reclaim_disk_for_worktree_invokes_gc_when_available(tmp_path) -> None:
+    worker = _Worker(tmp_path)
+    calls = []
+
+    def _fake_gc():
+        calls.append(True)
+        return {"status": "ok", "removed": 3}
+
+    worker._gc_workspaces_once = _fake_gc  # type: ignore[attr-defined]
+    reclaimed = worker._reclaim_disk_for_worktree(
+        task_id="task_1", worktree_dir=tmp_path / "repo-lease"
+    )
+    assert reclaimed is True
+    assert calls == [True]
+    assert worker.logs[-1][0] == "worker.repository.disk_reclaim_attempted"
+
+
+def test_reclaim_disk_for_worktree_noops_without_gc(tmp_path) -> None:
+    worker = _Worker(tmp_path)
+    # No _gc_workspaces_once attribute -> nothing to reclaim, no retry signalled.
+    assert worker._reclaim_disk_for_worktree(
+        task_id="task_1", worktree_dir=tmp_path / "repo-lease"
+    ) is False
+
+
+def test_reclaim_disk_for_worktree_is_best_effort_on_gc_error(tmp_path) -> None:
+    worker = _Worker(tmp_path)
+
+    def _boom():
+        raise RuntimeError("gc failed")
+
+    worker._gc_workspaces_once = _boom  # type: ignore[attr-defined]
+    # A GC failure must not mask the original disk-full error, but still
+    # signals a retry attempt so the caller re-runs the worktree add once.
+    assert worker._reclaim_disk_for_worktree(
+        task_id="task_1", worktree_dir=tmp_path / "repo-lease"
+    ) is True
+    assert worker.logs[-1][0] == "worker.repository.disk_reclaim_failed"
