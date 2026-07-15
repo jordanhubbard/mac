@@ -245,3 +245,50 @@ def test_main_handles_selection_error(selector, monkeypatch, capsys):
     assert document["mode"] == "full"
     assert document["reason"] == "selection_error"
     assert "git exploded" in document["error"]
+
+
+# --- Explicit task-contract scenario coverage (named examples) ---
+
+
+def test_makefile_broad_path_forces_full(selector):
+    # Scenario (2): Makefile is an explicit broad path.
+    result = selector.select(["Makefile"])
+    assert result["mode"] == "full"
+    assert result["reason"] == "test_or_shared_runtime_infrastructure_changed"
+    assert "Makefile" in result["broad_files"]
+    assert result["tests"] == []
+
+
+def test_scripts_prefix_broad_path_forces_full(selector):
+    # Scenario (3): any scripts/ prefixed path is broad -> full.
+    result = selector.select(["scripts/foo.py"])
+    assert result["mode"] == "full"
+    assert result["reason"] == "test_or_shared_runtime_infrastructure_changed"
+    assert "scripts/foo.py" in result["broad_files"]
+
+
+def test_src_change_maps_to_matching_test(selector):
+    # Scenario (5): a src/mac/<stem>.py change with a real matching
+    # tests/test_<stem>.py sibling yields a focused scope listing that test.
+    result = selector.select(["src/mac/agent_command.py"])
+    assert result["mode"] == "focused"
+    assert "tests/test_agent_command.py" in result["tests"]
+
+
+def test_cli_changed_file_feeds_specific_files(selector, capsys):
+    # Scenario (8): --changed-file supplies the exact selection input.
+    rc = selector.main(["--changed-file", "docs/readme.md"])
+    assert rc == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["changed_files"] == ["docs/readme.md"]
+    assert document["mode"] == "focused"
+    assert document["reason"] == "non_code_change"
+
+
+def test_cli_tests_only_prints_one_path_per_line(selector, capsys):
+    # Scenario (7): --tests-only emits one selected test path per line.
+    rc = selector.main(["--changed-file", "src/mac/agent_command.py", "--tests-only"])
+    assert rc == 0
+    out_lines = capsys.readouterr().out.splitlines()
+    assert "tests/test_agent_command.py" in out_lines
+    assert all(line.strip() == line and line for line in out_lines)
