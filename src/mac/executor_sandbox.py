@@ -2378,6 +2378,23 @@ def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> st
     # transient: retry with backoff rather than treating the route as broken.
     if "429" in text or "rate limit" in text or "too many requests" in text:
         return "rate_limited"
+    # Provider-side server faults (5xx / gateway errors). Like throttling these
+    # are transient and route-independent: the endpoint, credentials, and model
+    # are all correct, the upstream just failed this call. Steer an automated
+    # retry with backoff instead of collapsing into the opaque ``probe_failed``.
+    # Checked before the generic ``404``/``not found`` protocol test below so a
+    # "502 bad gateway" is not mis-reported as an endpoint/protocol mismatch.
+    if (
+        "500" in text
+        or "502" in text
+        or "503" in text
+        or "504" in text
+        or "internal server error" in text
+        or "bad gateway" in text
+        or "service unavailable" in text
+        or "gateway timeout" in text
+    ):
+        return "provider_server_error"
     if "connection refused" in text or "failed to connect" in text:
         return "endpoint_unreachable"
     if "401" in text or "403" in text or "unauthorized" in text or "forbidden" in text:
