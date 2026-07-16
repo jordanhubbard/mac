@@ -1710,6 +1710,72 @@ def test_git_finalizer_commits_and_pushes_new_source_files(
     assert _git(tmp_path, "ls-remote", str(origin), "refs/heads/task/untracked").stdout.strip()
 
 
+def test_git_finalizer_clean_preserves_new_source_over_gitignored_artifact(
+    tmp_path, monkeypatch
+):
+    """Parity guard: the host finalizer stages+commits a new untracked SOURCE
+    file BEFORE the ``git clean -Xdf`` cleanup phase, so the source survives
+    into the published commit while a gitignored build artifact is purged.
+
+    This locks the ordering that keeps ``git clean -Xdf`` from ever deleting an
+    intended new source/test file (it only removes ignored artifacts, and the
+    new file is already committed by the time cleanup runs).
+    """
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / ".gitignore").write_text("build/\n", encoding="utf-8")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+    _git(work, "push", "origin", "main")
+    _git(work, "checkout", "-b", "task/clean-preserves")
+
+    # Intended new SOURCE file left untracked by the sandbox handoff.
+    (work / "new_source.py").write_text("print('keep me')\n", encoding="utf-8")
+    # Gitignored build artifact that MUST be removed by `git clean -Xdf`.
+    (work / "build").mkdir()
+    (work / "build" / "artifact.o").write_text("stale-object\n", encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _install_fake_codegraph(tmp_path, monkeypatch)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(work))
+    task = {
+        "id": "t-clean-preserves",
+        "metadata": {
+            "publication_target": "git://main",
+            "origin": {
+                "repository_contract": {
+                    "canonical_remote_url": origin.as_uri(),
+                    "test": {"command": "true"},
+                },
+            },
+        },
+    }
+
+    te.run_deterministic_git_finalizer(ws, task)
+
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "complete"
+    assert manifest["repo"]["pushed"] is True
+    assert manifest["repo"]["dirty"] is False
+    # New source file was committed (survived cleanup) and published.
+    assert "new_source.py" in manifest["repo"]["files_changed"]
+    assert _git(work, "show", "HEAD:new_source.py").stdout == "print('keep me')\n"
+    assert (work / "new_source.py").exists()
+    # Gitignored artifact was purged by `git clean -Xdf` and never committed.
+    assert not (work / "build" / "artifact.o").exists()
+    assert _git(work, "status", "--porcelain").stdout == ""
+    assert _git(
+        tmp_path, "ls-remote", str(origin), "refs/heads/task/clean-preserves"
+    ).stdout.strip()
+
+
 def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, monkeypatch):
     origin = tmp_path / "origin.git"
     canonical = tmp_path / "canonical.git"
