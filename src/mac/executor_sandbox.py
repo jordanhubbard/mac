@@ -2362,13 +2362,46 @@ def _coding_agent_preflight_ttl(verified: bool) -> float:
 
 
 def _classify_coding_agent_preflight_failure(returncode: int, output: str) -> str:
+    """Map a failed coding-agent preflight probe onto an actionable class.
+
+    The classes are ordered from most specific to most generic so a caller can
+    react without re-parsing the raw probe output. ``probe_failed`` is the
+    catch-all of last resort; every marker added here strictly narrows what
+    would otherwise collapse into it, which is what makes a failed run
+    diagnosable (see the ``rc=1, class=probe_failed`` fleet failures that
+    carried no recovery signal).
+    """
     text = (output or "").lower()
     if returncode in {124, 137} or "timed out" in text or "timeout" in text:
         return "timeout"
+    # Provider throttling. A 429 (or an explicit rate-limit message) is
+    # transient: retry with backoff rather than treating the route as broken.
+    if "429" in text or "rate limit" in text or "too many requests" in text:
+        return "rate_limited"
     if "connection refused" in text or "failed to connect" in text:
         return "endpoint_unreachable"
     if "401" in text or "403" in text or "unauthorized" in text or "forbidden" in text:
         return "authentication_failed"
+    # The coding-agent CLI (or the shell wrapper) is absent from the sandbox
+    # image. This must be checked before the ``not found`` protocol test below,
+    # otherwise a missing binary is mis-reported as an endpoint mismatch and the
+    # operator repairs the wrong layer.
+    if (
+        "command not found" in text
+        or "no such file or directory" in text
+        or "executable file not found" in text
+        or ": not found" in text
+    ):
+        return "agent_binary_missing"
+    # The OpenShell sandbox itself could not be created/uploaded, so the probe
+    # never reached the coding agent. This is an infrastructure fault, not a
+    # coding-agent route fault.
+    if (
+        "sandbox create" in text
+        or "openshell" in text
+        or "failed to create sandbox" in text
+    ):
+        return "sandbox_unavailable"
     if "404" in text or "not found" in text or "unsupported" in text:
         return "endpoint_protocol_mismatch"
     if returncode == 0:
