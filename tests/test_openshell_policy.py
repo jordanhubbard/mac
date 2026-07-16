@@ -96,6 +96,11 @@ def test_real_operator_template_renders(tmp_path):
         for endpoint in doc["network_policies"]["python_packages"]["endpoints"]
     }
     assert {"pypi.org", "files.pythonhosted.org"} <= package_hosts
+    github_bins = {
+        binary["path"]
+        for binary in doc["network_policies"]["github"]["binaries"]
+    }
+    assert {"/usr/bin/gh", "/usr/local/bin/gh"} <= github_bins
     # operator policy is best_effort (OpenShell egress-proxy incompatibility with
     # hard_requirement); the executor's Landlock precheck recovers fail-closed.
     assert doc["landlock"]["compatibility"] == "best_effort"

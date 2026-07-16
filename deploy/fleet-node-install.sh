@@ -720,6 +720,13 @@ install_github_review_key() {
 
 configure_github_https_credentials() {
   local gh_bin
+  # The operator streams the deployment credential as MAC_DEPLOY_GH_TOKEN so
+  # it never appears in the SSH command argv.  Promote it only inside this
+  # one-use installer process; build_mac_env() later persists the same value as
+  # GH_TOKEN for the worker service and private OpenShell environment.
+  if [ -z "${GH_TOKEN:-}" ] && [ -n "${MAC_DEPLOY_GH_TOKEN:-}" ]; then
+    export GH_TOKEN="$MAC_DEPLOY_GH_TOKEN"
+  fi
   if [ -z "${GH_TOKEN:-}" ]; then
     if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
       log "ERROR: GH_TOKEN absent on a node that requires GitHub repository credentials"

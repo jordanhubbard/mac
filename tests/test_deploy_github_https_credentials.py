@@ -19,7 +19,12 @@ def _function() -> str:
     return script[start:end]
 
 
-def _run(tmp_path: Path, token: str = "token", gh_exit: int = 0):
+def _run(
+    tmp_path: Path,
+    token: str = "token",
+    gh_exit: int = 0,
+    deploy_token: str = "",
+):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
     calls = tmp_path / "calls"
@@ -34,6 +39,10 @@ def _run(tmp_path: Path, token: str = "token", gh_exit: int = 0):
         env["GH_TOKEN"] = token
     else:
         env.pop("GH_TOKEN", None)
+    if deploy_token:
+        env["MAC_DEPLOY_GH_TOKEN"] = deploy_token
+    else:
+        env.pop("MAC_DEPLOY_GH_TOKEN", None)
     result = subprocess.run(
         [
             "bash",
@@ -60,6 +69,21 @@ def test_configures_gh_as_scoped_https_credential_helper(tmp_path: Path) -> None
         "github.com",
     ]
     assert "credential helper configured" in result.stdout
+
+
+def test_promotes_secret_stream_deploy_token_before_required_preflight(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run(tmp_path, token="", deploy_token="streamed-token")
+    assert result.returncode == 0
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "auth",
+        "setup-git",
+        "--hostname",
+        "github.com",
+    ]
+    assert "credential verified" in result.stdout
+    assert "streamed-token" not in result.stdout + result.stderr
 
 
 def test_skips_without_token_and_never_logs_secret(tmp_path: Path) -> None:

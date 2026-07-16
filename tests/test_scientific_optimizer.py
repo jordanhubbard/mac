@@ -755,8 +755,17 @@ def test_assignment_exclusions_and_active_blind_policy() -> None:
             "excluded_%d" % index, "demo", metadata
         )
         assert assignment is None
+    # Pick a task that is provably outside the experiment sample. Experiment
+    # ids are random, so a fixed task id still has a real 1% chance of being
+    # sampled and made this regression test flaky.
+    unsampled_task_id = next(
+        task_id
+        for task_id in ("not-sampled-%d" % index for index in range(100))
+        if _stable_point(experiment["id"], task_id, "sample", "experiment")
+        >= 0.01
+    )
     _applied, assignment = optimizer.prepare_task_assignment(
-        "almost-certainly-not-sampled",
+        unsampled_task_id,
         "demo",
         {"execution_contract": {"type": "repository"}},
     )

@@ -162,6 +162,9 @@ network_policies:
     binaries:
       - { path: /usr/bin/git }
       - { path: /usr/bin/gh }
+      # The pinned mac-hermes image installs GitHub CLI here. Keep /usr/bin/gh
+      # for distro-packaged host/runtime variants.
+      - { path: /usr/local/bin/gh }
       - { path: /usr/lib/git-core/git-remote-https }
       - { path: /usr/bin/curl }
 
