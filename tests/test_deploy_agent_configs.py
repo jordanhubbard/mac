@@ -903,13 +903,15 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     # only its identity-scoped credentials file; the Hermes files are touched
     # only on the explicit rollback implementation.
     assert "sync_messaging_config()" in script
+    # A pure worker (gateway_impl=none) skips the Slack/Hermes block entirely,
+    # so the secret fetch + identity/home-channel sync live in the else branch
+    # of the gateway_impl guard.
     assert (
-        "  reload_mac_env\n"
-        "  fetch_slack_secrets_from_vault\n"
-        "  reload_mac_env\n"
-        '  if [ "${HERMES_GATEWAY_IMPL:-hermes}" != "openclaw" ]; then\n'
-        "    sync_hermes_slack_identity_env\n"
-        "    sync_hermes_home_channels"
+        "    fetch_slack_secrets_from_vault\n"
+        "    reload_mac_env\n"
+        '    if [ "${HERMES_GATEWAY_IMPL:-hermes}" != "openclaw" ]; then\n'
+        "      sync_hermes_slack_identity_env\n"
+        "      sync_hermes_home_channels"
     ) in script
     assert "fetch_slack_secrets_from_vault()" in script
     assert "scripts/mac-fetch-slack-secrets.py" in script
