@@ -13,7 +13,18 @@ import argparse
 import ast
 import json
 import re
+import sys
 from pathlib import Path
+
+# The fleet-scoped credential contract is authored in mac.fleet_env; import
+# its data so this doc can never drift from the code.  Add ``src`` to the
+# import path so the generator stays runnable from a bare checkout, and keep
+# the import side-effect-free (fleet_env never reads the environment on
+# import).
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+from mac.fleet_env import FLEET_SCOPED_VARS, scoped_var  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "src/mac/data/env_config_registry.json"
@@ -150,6 +161,65 @@ def build_records() -> list[dict[str, object]]:
     return records
 
 
+def fleet_scoped_precedence_lines() -> list[str]:
+    """Render the fleet-scoped credential precedence section.
+
+    Every fact here is sourced from :mod:`mac.fleet_env` (the base variable
+    set and the scoped-name construction) so the operator doc can never drift
+    from the resolver in ``src/mac/fleet_env.py``.
+    """
+    example_fleet = "example-fleet"
+    lines = [
+        "## Fleet-scoped credential precedence",
+        "",
+        "Credential-bearing variables that would otherwise collide when one "
+        "workstation joins more than one fleet are resolved by "
+        "`mac.fleet_env.resolve`, which understands a *scoped* form in addition "
+        "to the legacy flat name.",
+        "",
+        "### Scoped naming rule",
+        "",
+        "Each fleet-scoped variable has the form `BASE_NAME__<FLEET>`, where "
+        "`<FLEET>` is the active fleet name normalized to an env-var suffix: "
+        "uppercased, with every run of non-alphanumeric characters replaced by "
+        "a single `_` and leading/trailing `_` stripped. For example, fleet "
+        "`%s` yields suffix `%s`, so `MAC_API_TOKEN` scopes to "
+        "`%s`." % (
+            example_fleet,
+            scoped_var("X", example_fleet).split("__", 1)[1],
+            scoped_var("MAC_API_TOKEN", example_fleet),
+        ),
+        "",
+        "### Resolution order",
+        "",
+        "For a fleet-scoped base variable, `resolve` looks up values in this "
+        "order and returns the first that is set:",
+        "",
+        "1. **Scoped form wins.** `BASE_NAME__<FLEET>`, where the fleet comes "
+        "from the explicit `fleet` argument (e.g. CLI `--fleet`) or, when that "
+        "is absent, the `MAC_FLEET` environment variable.",
+        "2. **Legacy flat form.** `BASE_NAME`, used only when no scoped value is "
+        "present (or no active fleet is known).",
+        "",
+        "When a fleet-scoped variable is read via its legacy flat name, "
+        "`resolve` emits a one-time deprecation warning per `(variable, fleet)` "
+        "and points operators at the scoped form. Run "
+        "`mac config migrate-env-namespace` to append scoped variants of the "
+        "flat credentials in your env file and retire the collision.",
+        "",
+        "### Fleet-scoped base variables",
+        "",
+        "| Base variable | Example scoped form |",
+        "| --- | --- |",
+    ]
+    for name in sorted(FLEET_SCOPED_VARS):
+        lines.append(
+            "| `%s` | `%s` |" % (name, scoped_var(name, example_fleet))
+        )
+    lines.append("")
+    return lines
+
+
 def render_reference(records: list[dict[str, object]]) -> str:
     lines = [
         "# MAC environment configuration reference",
@@ -182,6 +252,11 @@ def render_reference(records: list[dict[str, object]]) -> str:
             "2. **Env file supplies defaults.** A variable absent from the process environment receives its value from the operator env file (typically `~/.mac/.env` or the path given by `MAC_ENV_FILE`).",
             "3. **Env file is the operator default store.** Operators should record stable deployment values — tokens, URLs, feature flags — in the env file. Runtime overrides belong in the process environment and are not written back to the file.",
             "",
+        ]
+    )
+    lines.extend(fleet_scoped_precedence_lines())
+    lines.extend(
+        [
             "## Precedence and retirement",
             "",
             "Fallback precedence is left-to-right in `resolve_env_chain`. Fleet-scoped credential keys are resolved before legacy flat keys by their owning subsystem. `MAC_BEADS_BRIDGE_HUB_AGENT` is retained only as a documented retired name and is never consulted by `resolve_hub_agent`.",

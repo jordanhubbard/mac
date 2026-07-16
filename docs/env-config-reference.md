@@ -741,6 +741,35 @@ MAC resolves each `MAC_*` variable according to a three-level contract:
 2. **Env file supplies defaults.** A variable absent from the process environment receives its value from the operator env file (typically `~/.mac/.env` or the path given by `MAC_ENV_FILE`).
 3. **Env file is the operator default store.** Operators should record stable deployment values — tokens, URLs, feature flags — in the env file. Runtime overrides belong in the process environment and are not written back to the file.
 
+## Fleet-scoped credential precedence
+
+Credential-bearing variables that would otherwise collide when one workstation joins more than one fleet are resolved by `mac.fleet_env.resolve`, which understands a *scoped* form in addition to the legacy flat name.
+
+### Scoped naming rule
+
+Each fleet-scoped variable has the form `BASE_NAME__<FLEET>`, where `<FLEET>` is the active fleet name normalized to an env-var suffix: uppercased, with every run of non-alphanumeric characters replaced by a single `_` and leading/trailing `_` stripped. For example, fleet `example-fleet` yields suffix `EXAMPLE_FLEET`, so `MAC_API_TOKEN` scopes to `MAC_API_TOKEN__EXAMPLE_FLEET`.
+
+### Resolution order
+
+For a fleet-scoped base variable, `resolve` looks up values in this order and returns the first that is set:
+
+1. **Scoped form wins.** `BASE_NAME__<FLEET>`, where the fleet comes from the explicit `fleet` argument (e.g. CLI `--fleet`) or, when that is absent, the `MAC_FLEET` environment variable.
+2. **Legacy flat form.** `BASE_NAME`, used only when no scoped value is present (or no active fleet is known).
+
+When a fleet-scoped variable is read via its legacy flat name, `resolve` emits a one-time deprecation warning per `(variable, fleet)` and points operators at the scoped form. Run `mac config migrate-env-namespace` to append scoped variants of the flat credentials in your env file and retire the collision.
+
+### Fleet-scoped base variables
+
+| Base variable | Example scoped form |
+| --- | --- |
+| `MAC_API_TOKEN` | `MAC_API_TOKEN__EXAMPLE_FLEET` |
+| `MAC_API_TOKENS` | `MAC_API_TOKENS__EXAMPLE_FLEET` |
+| `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64` | `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64__EXAMPLE_FLEET` |
+| `MAC_DEPLOY_HUB_TOKEN` | `MAC_DEPLOY_HUB_TOKEN__EXAMPLE_FLEET` |
+| `MAC_DEPLOY_TAILSCALE_AUTH_KEY` | `MAC_DEPLOY_TAILSCALE_AUTH_KEY__EXAMPLE_FLEET` |
+| `MAC_DEPLOY_TOKENHUB_API_KEY` | `MAC_DEPLOY_TOKENHUB_API_KEY__EXAMPLE_FLEET` |
+| `MAC_WORKER_TOKEN` | `MAC_WORKER_TOKEN__EXAMPLE_FLEET` |
+
 ## Precedence and retirement
 
 Fallback precedence is left-to-right in `resolve_env_chain`. Fleet-scoped credential keys are resolved before legacy flat keys by their owning subsystem. `MAC_BEADS_BRIDGE_HUB_AGENT` is retained only as a documented retired name and is never consulted by `resolve_hub_agent`.
