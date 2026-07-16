@@ -90,3 +90,68 @@ def test_generated_registry_and_reference_are_current():
         check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def _load_env_config_generator():
+    """Import the hyphenated generator script as a module for direct testing."""
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "generate-env-config-registry.py"
+    spec = importlib.util.spec_from_file_location("env_config_generator", script)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_render_reference_documents_fleet_scoped_precedence():
+    generator = _load_env_config_generator()
+    reference = generator.render_reference([])
+
+    # Fleet-scoped precedence section is present.
+    assert "## Fleet-scoped credential precedence" in reference
+    # Scoped naming rule: BASE_NAME__<FLEET>.
+    assert "### Scoped naming rule" in reference
+    assert "BASE_NAME__<FLEET>" in reference
+    # Fleet-name normalization behavior is described.
+    assert "normalized to an env-var suffix" in reference
+    assert "uppercased" in reference
+    # Scoped-wins-then-legacy-flat resolution order.
+    assert "### Resolution order" in reference
+    scoped_idx = reference.index("Scoped form wins.")
+    legacy_idx = reference.index("Legacy flat form.")
+    assert scoped_idx < legacy_idx
+    # Deprecation / migration note.
+    assert "deprecation warning" in reference
+    assert "mac config migrate-env-namespace" in reference
+
+
+def test_render_reference_lists_every_fleet_scoped_base_variable():
+    from mac.fleet_env import FLEET_SCOPED_VARS
+
+    generator = _load_env_config_generator()
+    reference = generator.render_reference([])
+    for base_name in FLEET_SCOPED_VARS:
+        assert base_name in reference, base_name
+
+
+def test_generated_reference_file_documents_fleet_scoped_vars():
+    """The freshly generated docs must carry the fleet-scoped contract (drift guard)."""
+    from mac.fleet_env import FLEET_SCOPED_VARS
+
+    root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [sys.executable, "scripts/generate-env-config-registry.py", "--check"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    reference = (root / "docs" / "env-config-reference.md").read_text(encoding="utf-8")
+    assert "## Fleet-scoped credential precedence" in reference
+    assert "BASE_NAME__<FLEET>" in reference
+    for base_name in FLEET_SCOPED_VARS:
+        assert base_name in reference, base_name
