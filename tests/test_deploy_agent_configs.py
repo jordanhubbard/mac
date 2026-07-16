@@ -2454,3 +2454,122 @@ def test_fleet_deploy_forwards_repository_ref_reconciler_overrides():
         "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
     ):
         assert 'add_remote_env %s "${%s:-}"' % (name, name) in script
+
+
+def _startup_self_test_source() -> str:
+    """Extract the embedded mac-agent-startup-self-test Python (the inner PY heredoc)."""
+    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    match = re.search(
+        r"exec \"\$selftest_python\" - <<'PY'\n(?P<source>.*?)\nPY\n",
+        script,
+        re.DOTALL,
+    )
+    assert match, "self-test PY heredoc not found in fleet-node-install.sh"
+    return match.group(1)
+
+
+def _run_startup_self_test(tmp_path, monkeypatch, *, install_gateway):
+    """Exec the startup self-test in-process with reachable shared services stubbed.
+
+    ``install_gateway`` controls whether the OpenClaw gateway artifacts
+    (service-advertisement.json + openclaw-agent binary) exist on disk; both
+    scenarios advertise MAC_CHAT_GATEWAY_IMPL=openclaw. Returns (exit_code, report).
+    """
+    import urllib.request
+    import subprocess as _subprocess
+
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    (mac_home / "openclaw" / "managed").mkdir(parents=True, exist_ok=True)
+    (mac_home / "bin").mkdir(parents=True, exist_ok=True)
+    (mac_home / "logs").mkdir(parents=True, exist_ok=True)
+    report_path = mac_home / "logs" / "mac-agent-startup-self-test.json"
+
+    if install_gateway:
+        # A genuinely gateway-serving node: artifacts present but broken (the
+        # advertisement is missing its runtime/ownership proof), so it must fail hard.
+        (mac_home / "openclaw" / "service-advertisement.json").write_text(
+            json.dumps({"openclaw_runtime": {}, "gateway_ownership": {}}), encoding="utf-8"
+        )
+        agent_bin = mac_home / "bin" / "openclaw-agent"
+        agent_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        agent_bin.chmod(0o755)
+
+    env = {
+        "MAC_CHAT_GATEWAY_IMPL": "openclaw",
+        "MAC_WORKER_AGENT_NAME": "worker1",
+        "MAC_AGENT_ID": "agent_worker1",
+        "MAC_HERMES_INSTANCE_ID": "hermes-1",
+        "MAC_HERMES_PERSONA_ID": "persona-1",
+        "MAC_FLEET_TENANT_ID": "tenant-1",
+        "MAC_REQUIRE_QDRANT_MEMORY": "1",
+        "QDRANT_URL": "http://qdrant.local:6333",
+        "MAC_REQUIRE_FIRECRAWL": "1",
+        "FIRECRAWL_API_URL": "http://firecrawl.local:3002",
+        "MAC_AGENT_STARTUP_SELF_TEST_REPORT": str(report_path),
+    }
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, *args, **kwargs):
+            return b"{}"
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _Resp())
+    # No openclaw-agent invocation should ever run for a gateway-less worker; for
+    # the installed case the runtime advertisement already fails before the binary.
+    monkeypatch.setattr(
+        _subprocess,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("openclaw-agent must not run")),
+    )
+
+    namespace = {
+        "__name__": "__mac_selftest__",
+        "os": __import__("os"),
+    }
+    saved_environ = dict(os.environ)
+    os.environ.clear()
+    os.environ.update(env)
+    exit_code = 0
+    try:
+        exec(compile(_startup_self_test_source(), "<selftest>", "exec"), namespace)
+    except SystemExit as exc:
+        exit_code = exc.code or 0
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_environ)
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    return exit_code, report
+
+
+def test_gatewayless_worker_does_not_hard_crash_on_missing_openclaw_gateway(tmp_path, monkeypatch):
+    # Regression for crash_b24c6ac41f854074b6ea49cabbc24090: a pure worker with
+    # MAC_CHAT_GATEWAY_IMPL=openclaw but no installed gateway (missing
+    # service-advertisement.json + openclaw-agent) must degrade, not exit 1.
+    exit_code, report = _run_startup_self_test(tmp_path, monkeypatch, install_gateway=False)
+    assert exit_code == 0, report["blocking_problems"]
+    assert report["status"] == "degraded"
+    assert report["blocking_problems"] == []
+    assert report["openclaw_gateway"]["impl_advertised"] is True
+    assert report["openclaw_gateway"]["installed"] is False
+    assert report["openclaw_gateway"]["serves_gateway"] is False
+    assert any(p.startswith("OpenClaw") for p in report["non_blocking_problems"])
+
+
+def test_gateway_serving_node_still_fails_hard_when_gateway_broken(tmp_path, monkeypatch):
+    # A node that actually installed the gateway artifacts but whose advertisement
+    # is broken must still fail hard (exit 1) — the decoupling relief is only for
+    # gateway-less workers.
+    exit_code, report = _run_startup_self_test(tmp_path, monkeypatch, install_gateway=True)
+    assert exit_code == 1
+    assert report["status"] == "failed"
+    assert report["openclaw_gateway"]["installed"] is True
+    assert report["openclaw_gateway"]["serves_gateway"] is True
+    assert any(p.startswith("OpenClaw") for p in report["blocking_problems"])

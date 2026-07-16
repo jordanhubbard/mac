@@ -4220,7 +4220,26 @@ checks["identity_env"] = not any(problem.startswith("missing required identity e
 # so these checks are skipped — otherwise a gateway-less worker could never pass
 # its startup self-test and would refuse to start (the whole point of a worker is
 # to claim and execute tasks, which needs no gateway).
+#
+# MAC_CHAT_GATEWAY_IMPL is set fleet-wide from the deploy-time gateway
+# implementation, so it is also "openclaw" on pure workers that never install or
+# serve the gateway.  A node only actually serves the gateway when its gateway
+# artifacts are installed on disk: the verified service-advertisement.json AND the
+# openclaw-agent binary.  When the impl advertises openclaw but those artifacts are
+# absent, this node is a gateway-less worker and its OpenClaw readiness deficiency
+# must be reported as degraded (non-blocking) instead of hard-crashing the worker.
+# A node that HAS the gateway installed but broken still fails hard.
 openclaw_required = os.environ.get("MAC_CHAT_GATEWAY_IMPL", "").strip().lower() == "openclaw"
+openclaw_gateway_installed = resources_path.is_file() and openclaw_agent_bin.is_file()
+openclaw_serves_gateway = openclaw_required and openclaw_gateway_installed
+openclaw_problems: list[str] = []
+
+
+def add_openclaw_problem(message: str) -> None:
+    problems.append(message)
+    openclaw_problems.append(message)
+
+
 if not openclaw_required:
     checks["openclaw_runtime"] = True
     checks["openclaw_agent"] = True
@@ -4229,22 +4248,22 @@ else:
         resources = json.loads(resources_path.read_text(encoding="utf-8"))
     except Exception as exc:
         resources = {}
-        problems.append(
+        add_openclaw_problem(
             f"OpenClaw service advertisement unreadable at {resources_path}: {safe_error(exc)}"
         )
 
     runtime = resources.get("openclaw_runtime") if isinstance(resources, dict) else None
     ownership = resources.get("gateway_ownership") if isinstance(resources, dict) else None
     if not isinstance(runtime, dict) or runtime.get("implementation") != "openclaw":
-        problems.append("OpenClaw runtime advertisement is missing or has the wrong implementation")
+        add_openclaw_problem("OpenClaw runtime advertisement is missing or has the wrong implementation")
     elif runtime.get("verified") is not True:
-        problems.append("OpenClaw runtime advertisement is not verified")
+        add_openclaw_problem("OpenClaw runtime advertisement is not verified")
     elif runtime.get("exclusive_service_owner") is not True:
-        problems.append("OpenClaw runtime lacks exclusive service-ownership proof")
+        add_openclaw_problem("OpenClaw runtime lacks exclusive service-ownership proof")
     elif not isinstance(runtime.get("confinement"), dict) or runtime["confinement"].get("provider") != "openshell":
-        problems.append("OpenClaw runtime is not advertised inside OpenShell")
+        add_openclaw_problem("OpenClaw runtime is not advertised inside OpenShell")
     if not isinstance(ownership, dict) or ownership.get("exclusive") is not True:
-        problems.append("OpenClaw gateway ownership proof is missing")
+        add_openclaw_problem("OpenClaw gateway ownership proof is missing")
     checks["openclaw_runtime"] = not any(
         problem.startswith("OpenClaw") for problem in problems
     )
@@ -4291,7 +4310,7 @@ if openclaw_required:
         }
     except Exception as exc:
         runtime_provider = {"error": safe_error(exc)}
-        problems.append(f"OpenClaw model configuration is unreadable: {safe_error(exc)}")
+        add_openclaw_problem(f"OpenClaw model configuration is unreadable: {safe_error(exc)}")
 
     prompt = "Respond exactly MAC_OPENCLAW_STARTUP_OK"
     try:
@@ -4323,23 +4342,35 @@ if openclaw_required:
             checks["openclaw_agent"] = True
         elif completed.returncode != 0:
             openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-            problems.append(f"OpenClaw agent self-test exited {completed.returncode}")
+            add_openclaw_problem(f"OpenClaw agent self-test exited {completed.returncode}")
         else:
-            problems.append("OpenClaw agent self-test did not return its sentinel")
+            add_openclaw_problem("OpenClaw agent self-test did not return its sentinel")
             checks["openclaw_agent"] = False
     except subprocess.TimeoutExpired as exc:
         agent_returncode = None
         agent_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
         openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-        problems.append(f"OpenClaw agent self-test timed out after {timeout}s")
+        add_openclaw_problem(f"OpenClaw agent self-test timed out after {timeout}s")
     except Exception as exc:
         agent_returncode = None
-        problems.append(f"OpenClaw agent self-test failed to execute: {safe_error(exc)}")
+        add_openclaw_problem(f"OpenClaw agent self-test failed to execute: {safe_error(exc)}")
 
-blocking_problems = list(problems)
+# A gateway-less worker (impl advertises openclaw but the gateway artifacts are
+# not installed on this node) must not hard-crash on OpenClaw readiness gaps: the
+# worker/gateway decoupling contract says such a node can still claim and execute
+# tasks.  Its OpenClaw problems are therefore non-blocking (degraded) while every
+# other problem — and any OpenClaw failure on a node that actually serves the
+# gateway — stays blocking.
+if openclaw_serves_gateway:
+    non_blocking_problems: list[str] = []
+else:
+    non_blocking_problems = list(openclaw_problems)
+blocking_problems = [problem for problem in problems if problem not in non_blocking_problems]
 status = "passed"
-if problems:
-    status = "failed" if blocking_problems else "degraded"
+if blocking_problems:
+    status = "failed"
+elif problems:
+    status = "degraded"
 
 report = {
     "schema": "mac.agent_startup_self_test.v1",
@@ -4370,8 +4401,14 @@ report = {
     "agent_returncode": agent_returncode,
     "agent_output_tail": agent_output,
     "openclaw_failure_class": openclaw_failure_class,
+    "openclaw_gateway": {
+        "impl_advertised": openclaw_required,
+        "installed": openclaw_gateway_installed,
+        "serves_gateway": openclaw_serves_gateway,
+    },
     "problems": problems,
     "blocking_problems": blocking_problems,
+    "non_blocking_problems": non_blocking_problems,
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -4395,6 +4432,9 @@ if hub_url and token and agent_id:
     try:
         urllib.request.urlopen(req, timeout=10).read()
     except (OSError, urllib.error.URLError) as exc:
+        # HTTPError (e.g. HTTP 400) is a URLError subclass, so a rejected heartbeat
+        # is logged but never propagates or changes the self-test exit code: only
+        # blocking_problems decide whether the worker starts.
         print(f"agent startup self-test: failed to report heartbeat: {safe_error(exc)}", file=sys.stderr)
 
 if problems:
