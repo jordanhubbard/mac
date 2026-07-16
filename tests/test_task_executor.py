@@ -23,6 +23,7 @@ from mac import executor_finalizer as finalizer
 from mac import executor_prompt as prompt
 from mac import executor_scope as scope
 from mac import task_executor as te
+from mac.repository_recovery import RepositoryRecoveryError
 
 
 class _FakeResult:
@@ -4153,6 +4154,212 @@ def test_write_git_finalizer_refusal_manifest_includes_kind_staged(tmp_path, mon
 def test_load_preserved_executor_state_missing_snapshot_raises(tmp_path):
     with pytest.raises(te.PreservationMissing):
         te.load_preserved_executor_state(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# recover_from_new_file_refusal
+# ---------------------------------------------------------------------------
+
+
+class _FakePublication:
+    """Stand-in for a guarded_push result used by recovery tests."""
+
+    def __init__(self, *, ok=True, remote_verified=True, head_sha="rec-head",
+                 canonical_tip_sha="canon-tip", error=None):
+        self.ok = ok
+        self.remote_verified = remote_verified
+        self.head_sha = head_sha
+        self.canonical_tip_sha = canonical_tip_sha
+        self.error = error
+
+
+def _prepare_new_file_refusal(tmp_path, monkeypatch, *, task_id="t-recover",
+                              untracked=("leaked.py",), staged=()):
+    """Build a preserved new-file refusal (snapshot + evidence + manifest).
+
+    Returns ``(workspace, worktree, task)``.  The worktree is a real git repo
+    with the "new" files present but uncommitted so recovery can stage them.
+    """
+    monkeypatch.setenv("MAC_TASK_REPO_BASE_SHA", "base-recover")
+    monkeypatch.setenv("MAC_TASK_REPO_BRANCH", "task-recover")
+    monkeypatch.setenv("MAC_TASK_REPO_LEASE_ID", "lease-recover")
+
+    work = tmp_path / "work"
+    _git(tmp_path, "init", str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+
+    status_lines = []
+    for path in untracked:
+        (work / path).write_text("new untracked\n", encoding="utf-8")
+        status_lines.append("?? %s" % path)
+    for path in staged:
+        (work / path).write_text("new staged\n", encoding="utf-8")
+        _git(work, "add", "--", path)
+        status_lines.append("A  %s" % path)
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    task = {"id": task_id, "title": "Recover generated files", "metadata": {}}
+    original_evidence = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "summary": "executor produced verified files",
+        "tests": [{"name": "unit", "status": "pass"}],
+    }
+    (ws / "mac-evidence.json").write_text(json.dumps(original_evidence), encoding="utf-8")
+
+    if untracked:
+        message = (
+            "untracked files present at finalize time — agent must commit ALL "
+            "new files before declaring done: " + ", ".join(untracked)
+        )
+    else:
+        message = (
+            "new files staged at finalize time — agent must commit ALL new "
+            "files before declaring done: " + ", ".join(staged)
+        )
+    te._write_git_finalizer_refusal_manifest(
+        ws, task, work, message,
+        status_stdout="\n".join(status_lines) + "\n",
+        untracked_paths=list(untracked),
+        staged_new_paths=list(staged),
+    )
+    return ws, work, task
+
+
+def test_recover_from_new_file_refusal_missing_state_fails_closed(tmp_path):
+    """No preserved state -> RepositoryRecoveryError, never a silent success."""
+    ws = tmp_path / "empty-ws"
+    ws.mkdir()
+    with pytest.raises(RepositoryRecoveryError) as excinfo:
+        te.recover_from_new_file_refusal(ws, {"id": "t"})
+    assert "preserved executor state is unusable" in str(excinfo.value)
+
+
+def test_recover_from_new_file_refusal_rejects_non_new_file_refusal(tmp_path, monkeypatch):
+    """A refusal that is not a new-file refusal must not be recovered."""
+    ws, _work, task = _prepare_new_file_refusal(tmp_path, monkeypatch)
+    # Rewrite the manifest so classification no longer sees a new-file refusal.
+    manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
+    manifest["problems"] = ["contract tests failed"]
+    manifest["finalizer_refusal_kind"] = "clean"
+    manifest["repo"]["dirty"] = False
+    manifest["checks"] = []
+    (ws / "mac-evidence.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(RepositoryRecoveryError) as excinfo:
+        te.recover_from_new_file_refusal(ws, task)
+    assert "not a new-file refusal" in str(excinfo.value)
+
+
+def test_recover_from_new_file_refusal_requires_new_files(tmp_path, monkeypatch):
+    """Preserved state that lists no new files aborts before touching git."""
+    ws, _work, task = _prepare_new_file_refusal(tmp_path, monkeypatch)
+    snapshot = json.loads(
+        (ws / finalizer.PRESERVED_EXECUTOR_WORKTREE_FILENAME).read_text(encoding="utf-8")
+    )
+    snapshot["untracked_files"] = []
+    snapshot["staged_new_files"] = []
+    (ws / finalizer.PRESERVED_EXECUTOR_WORKTREE_FILENAME).write_text(
+        json.dumps(snapshot), encoding="utf-8"
+    )
+
+    calls = []
+    with pytest.raises(RepositoryRecoveryError) as excinfo:
+        te.recover_from_new_file_refusal(
+            ws, task,
+            git_runner=lambda args, cwd: calls.append(args) or _FakeResult(0),
+            push_runner=lambda target: _FakePublication(),
+        )
+    assert "lists no new files" in str(excinfo.value)
+    assert calls == []  # aborted before any git invocation
+
+
+def test_recover_from_new_file_refusal_commits_and_publishes(tmp_path, monkeypatch):
+    """Happy path: stage preserved files, commit, sync, push, and report."""
+    ws, work, task = _prepare_new_file_refusal(tmp_path, monkeypatch)
+
+    sync_calls = []
+    monkeypatch.setattr(
+        finalizer, "sync_worktree_with_canonical",
+        lambda worktree, remote, branch: sync_calls.append((worktree, remote, branch))
+        or {"status": "rebased"},
+    )
+    target_kwargs = {}
+    monkeypatch.setattr(
+        finalizer, "resolve_canonical_publication_target",
+        lambda **kw: target_kwargs.update(kw) or "TARGET",
+    )
+    push_targets = []
+    result = te.recover_from_new_file_refusal(
+        ws, task,
+        push_runner=lambda target: push_targets.append(target) or _FakePublication(),
+    )
+
+    assert result["schema"] == finalizer.NEW_FILE_RECOVERY_SCHEMA
+    assert result["status"] == "complete"
+    assert result["task_id"] == "t-recover"
+    assert result["refusal_kind"] == "untracked_new_files"
+    assert result["recovered_files"] == ["leaked.py"]
+    assert result["recovery_head_sha"] == "rec-head"
+    assert result["remote_ref"] == "refs/heads/task-recover"
+    assert result["remote_verified"] is True
+    assert result["error"] is None
+
+    # The recovered file was actually committed in the real worktree.
+    log = _git(work, "log", "-1", "--pretty=%s%n%b")
+    assert "Recover MAC task t-recover" in log.stdout
+    assert "MAC-Recovery-Reason: new-file-finalizer-refusal" in log.stdout
+    committed = _git(work, "show", "--name-only", "--pretty=format:", "HEAD")
+    assert "leaked.py" in committed.stdout
+
+    assert sync_calls and sync_calls[0][0] == work
+    assert push_targets == ["TARGET"]
+    assert target_kwargs["prepared_base_sha"] == "base-recover"
+    assert "new-file-recovery-t-recover-lease-recover" == target_kwargs["isolation_key"]
+
+
+def test_recover_from_new_file_refusal_aborts_when_canonical_stale(tmp_path, monkeypatch):
+    """A non-fresh/non-rebased canonical sync aborts before pushing."""
+    ws, _work, task = _prepare_new_file_refusal(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        finalizer, "sync_worktree_with_canonical",
+        lambda worktree, remote, branch: {"status": "diverged", "reason": "behind canonical"},
+    )
+    pushed = []
+    with pytest.raises(RepositoryRecoveryError) as excinfo:
+        te.recover_from_new_file_refusal(
+            ws, task, push_runner=lambda target: pushed.append(target) or _FakePublication(),
+        )
+    assert "could not synchronize with canonical" in str(excinfo.value)
+    assert pushed == []  # never attempted the push
+
+
+def test_recover_from_new_file_refusal_reports_push_failure(tmp_path, monkeypatch):
+    """An unverified push result surfaces as a recovery error."""
+    ws, _work, task = _prepare_new_file_refusal(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        finalizer, "sync_worktree_with_canonical",
+        lambda worktree, remote, branch: {"status": "fresh"},
+    )
+    monkeypatch.setattr(
+        finalizer, "resolve_canonical_publication_target",
+        lambda **kw: "TARGET",
+    )
+    with pytest.raises(RepositoryRecoveryError) as excinfo:
+        te.recover_from_new_file_refusal(
+            ws, task,
+            push_runner=lambda target: _FakePublication(
+                ok=False, remote_verified=False, error="remote rejected"),
+        )
+    assert "guarded recovery push failed" in str(excinfo.value)
+    assert "remote rejected" in str(excinfo.value)
 
 
 def test_finalizer_phase_timeout_supports_per_phase_override(monkeypatch):
