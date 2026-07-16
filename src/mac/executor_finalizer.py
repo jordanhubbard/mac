@@ -1146,6 +1146,31 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "reason": "bootstrap/tests failed",
         }
     all_ok = pushed and bootstrap_ok and tests_ok and codegraph_ok and clean and freshness_ok
+    integration_target = publication.target if publication is not None else publication_target
+    integrated_on_canonical = bool(
+        all_ok
+        and integration_target is not None
+        and integration_target.destination_branch == integration_target.canonical_branch
+    )
+    canonical_integration = {
+        "schema": "mac.canonical_integration.v1",
+        "status": "pass" if integrated_on_canonical else "fail",
+        "canonical_ref": (
+            "refs/heads/%s" % integration_target.canonical_branch
+            if integration_target is not None
+            else ""
+        ),
+        # guarded_push verifies the destination ref after push.  When that
+        # destination is canonical, its verified SHA is the durable completion
+        # proof rather than the pre-push freshness tip.
+        "canonical_tip_sha": head_sha if integrated_on_canonical else "",
+        "head_sha": head_sha,
+        "remote_verified": bool(
+            integrated_on_canonical
+            and publication is not None
+            and publication.remote_verified
+        ),
+    }
     manifest = {
         "schema": "mac.worker_evidence.v1",
         "status": "complete",
@@ -1162,6 +1187,7 @@ def run_deterministic_git_finalizer(task_workspace: Path, task: Dict[str, Any]) 
             "freshness": (publication or freshness).evidence(),
             "canonical_sync": canonical_sync,
         },
+        "canonical_integration": canonical_integration,
         "codegraph": codegraph,
         # mac-wjy3: verification.tests is the CANONICAL list of test-result
         # objects. The strict evidence validator rejects a bare dict (treats it

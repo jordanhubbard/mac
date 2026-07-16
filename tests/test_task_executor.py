@@ -1819,6 +1819,8 @@ def test_git_finalizer_pushes_to_canonical_remote_when_origin_differs(tmp_path, 
     assert "recovery" not in manifest
     assert manifest["repo"]["push_remote"] == canonical.as_uri()
     assert manifest["push"]["remote"] == canonical.as_uri()
+    assert manifest["canonical_integration"]["status"] == "fail"
+    assert manifest["canonical_integration"]["remote_verified"] is False
     assert (
         _git(tmp_path, "ls-remote", str(canonical), "refs/heads/task/canonical")
         .stdout.strip()

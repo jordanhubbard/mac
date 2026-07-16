@@ -1272,6 +1272,7 @@ class ControlPlane:
             find_verdict_evidence=self._find_review_verdict_evidence,
             reviewer_eligibility_check=self._reviewer_assignment_problem,
             reviewer_fallback_check=self._reviewer_independence_fallback_reason,
+            completion_proof_check=self._require_canonical_integration_proof,
             drain_task_transition_outbox=self.drain_task_transition_outbox,
         )
         self.agent_state = AgentStateService(
@@ -7578,6 +7579,8 @@ class ControlPlane:
             review_ready_evidence = self._require_review_ready(task)
         if target == TaskState.COMPLETED.value and not self.reviews.completion_authorized(task_id):
             raise ValidationError("task completion requires approved review and evidence")
+        if target == TaskState.COMPLETED.value:
+            self._require_canonical_integration_proof(task)
         now = utcnow()
         updated_metadata: Optional[JsonDict] = None
         candidate_metadata = ensure_json_object(task.metadata)
@@ -7903,6 +7906,7 @@ class ControlPlane:
         task_id = task.id
         if task.state == TaskState.COMPLETED.value:
             return task
+        self._require_canonical_integration_proof(task)
         now = utcnow()
         detail: Dict[str, Any] = {"via": "operator_force_complete", "from_state": task.state}
         if reason:
@@ -7957,6 +7961,63 @@ class ControlPlane:
             )
         self.drain_task_transition_outbox(task_id=task_id, limit=20)
         return self.get_task(task_id)
+
+    @staticmethod
+    def _repository_contract_for_task(task: Task) -> JsonDict:
+        """Return the repository contract carried by a repository task."""
+        metadata = ensure_json_object(task.metadata)
+        execution = ensure_json_object(metadata.get("execution_contract"))
+        origin = ensure_json_object(metadata.get("origin"))
+        contract = ensure_json_object(execution.get("repository_contract"))
+        if not contract:
+            contract = ensure_json_object(origin.get("repository_contract"))
+        if str(execution.get("type") or "").strip().lower() != "repository":
+            return {}
+        return contract
+
+    def _require_canonical_integration_proof(self, task: Task) -> None:
+        """Refuse repository completion until a guarded canonical push is durable.
+
+        An approved review proves that an executor attempt was acceptable; it
+        does not prove that the reviewed ref survived parallel integration.
+        The deterministic finalizer records ``canonical_integration`` only
+        after its guarded push has verified the canonical branch remotely.
+        Require that record on both ordinary and operator completion paths.
+        """
+        contract = self._repository_contract_for_task(task)
+        if not contract:
+            return
+        canonical_branch = str(contract.get("canonical_branch") or "main").strip()
+        canonical_ref = "refs/heads/%s" % canonical_branch
+        for evidence in reversed(self.list_evidence(task.id)):
+            metadata = ensure_json_object(evidence.metadata)
+            manifest = ensure_json_object(metadata.get("verification")) or metadata
+            repo = ensure_json_object(manifest.get("repo"))
+            integration = ensure_json_object(manifest.get("canonical_integration"))
+            head_sha = str(repo.get("head_sha") or "").strip()
+            proof_sha = str(
+                integration.get("canonical_tip_sha") or integration.get("head_sha") or ""
+            ).strip()
+            reviewed_sha = str(integration.get("reviewed_head_sha") or "").strip()
+            proof_carries_reviewed_head = (
+                _GIT_SHA_RE.match(reviewed_sha)
+                and reviewed_sha == head_sha
+                and integration.get("contains_reviewed_head") is True
+            )
+            if (
+                str(integration.get("status") or "").strip().lower() in {"pass", "passed"}
+                and integration.get("remote_verified") is True
+                and str(integration.get("canonical_ref") or "").strip() == canonical_ref
+                and _GIT_SHA_RE.match(head_sha)
+                and _GIT_SHA_RE.match(proof_sha)
+                and (head_sha == proof_sha or proof_carries_reviewed_head)
+            ):
+                return
+        raise ValidationError(
+            "repository task completion requires durable canonical integration proof "
+            "(canonical_integration.status=pass, remote_verified=true, and a "
+            "matching canonical branch SHA)"
+        )
 
     def claim_task(
         self,
@@ -12690,6 +12751,13 @@ class ControlPlane:
                 str(target),
                 str(evidence_id),
             )
+            if git_publication is not None:
+                self._record_canonical_integration_proof(
+                    str(task_id),
+                    str(evidence_id),
+                    str(kwargs.get("created_by") if "created_by" in kwargs else args[2]),
+                    git_publication,
+                )
         publication = self.reviews.publish_task(*args, **kwargs)
         if git_publication is not None:
             self.record_log(
@@ -12718,6 +12786,63 @@ class ControlPlane:
                     "workflow runtime failed to advance after publish_task"
                 )
         return publication
+
+    def _record_canonical_integration_proof(
+        self,
+        task_id: str,
+        evidence_id: str,
+        created_by: str,
+        publication: JsonDict,
+    ) -> None:
+        """Persist the post-merge canonical tip before marking a task complete.
+
+        A successful publication is the integration event for ``git://main``.
+        Its source evidence describes the reviewed task ref, whereas its final
+        main SHA can be a merge commit.  Store both facts in a separate,
+        immutable ledger record; completion then consumes that durable proof
+        instead of treating the pre-merge task branch as canonical.
+        """
+        task = self.get_task(task_id)
+        contract = self._repository_contract_for_task(task)
+        if not contract:
+            return
+        final_sha = str(publication.get("final_sha") or "").strip()
+        reviewed_sha = str(publication.get("head_sha") or "").strip()
+        if not (_GIT_SHA_RE.match(final_sha) and _GIT_SHA_RE.match(reviewed_sha)):
+            raise ValidationError("git publication did not return canonical integration SHAs")
+        canonical_branch = str(contract.get("canonical_branch") or "main").strip()
+        source = self.get_evidence(evidence_id)
+        source_metadata = ensure_json_object(source.metadata)
+        source_manifest = ensure_json_object(source_metadata.get("verification")) or source_metadata
+        source_repo = ensure_json_object(source_manifest.get("repo"))
+        manifest = {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "repo_change",
+            "repo": {
+                **source_repo,
+                "head_sha": reviewed_sha,
+                "pushed": True,
+            },
+            "canonical_integration": {
+                "schema": "mac.canonical_integration.v1",
+                "status": "pass",
+                "canonical_ref": "refs/heads/%s" % canonical_branch,
+                "canonical_tip_sha": final_sha,
+                "reviewed_head_sha": reviewed_sha,
+                "contains_reviewed_head": True,
+                "remote_verified": True,
+                "publication_mode": str(publication.get("publication_mode") or ""),
+            },
+        }
+        self.add_evidence(
+            task_id,
+            "test",
+            "ledger://canonical-integration/%s/%s" % (task_id, final_sha),
+            "Canonical branch integration verified at %s" % final_sha,
+            created_by,
+            metadata={"verification": manifest},
+        )
 
     def _publish_git_target_if_needed(
         self,

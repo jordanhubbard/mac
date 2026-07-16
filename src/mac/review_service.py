@@ -260,6 +260,7 @@ class ReviewService:
         find_verdict_evidence: Optional[Callable[..., Any]] = None,
         reviewer_eligibility_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
         reviewer_fallback_check: Optional[Callable[[Task, Agent], Optional[str]]] = None,
+        completion_proof_check: Optional[Callable[[Task], None]] = None,
         drain_task_transition_outbox: Optional[Callable[..., Any]] = None,
     ) -> None:
         self.store = store
@@ -278,6 +279,7 @@ class ReviewService:
         self._find_verdict_evidence = find_verdict_evidence
         self._reviewer_eligibility_check = reviewer_eligibility_check
         self._reviewer_fallback_check = reviewer_fallback_check
+        self._completion_proof_check = completion_proof_check
         self._drain_task_transition_outbox = drain_task_transition_outbox
         # Compatibility alias for integrations that temporarily disabled the
         # older independence-only hook.  It now points at the complete shared
@@ -672,6 +674,8 @@ class ReviewService:
             raise TransitionError("task must be in review before publication")
         if not self.completion_authorized(task_id):
             raise ValidationError("publication requires approved review and evidence")
+        if self._completion_proof_check is not None:
+            self._completion_proof_check(task)
         content_hash = None
         requires_pub_evidence = self.task_requires_publication_evidence(task)
         if requires_pub_evidence and evidence_id is None:

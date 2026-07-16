@@ -5687,6 +5687,23 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     assert published[0].detail["publication_mode"] == "merge_commit"
     assert published[0].detail["head_sha"] == task_head
     assert published[0].detail["final_sha"] == final_head
+    proofs = [
+        item.metadata["verification"]["canonical_integration"]
+        for item in cp.list_evidence(task.id)
+        if item.metadata.get("verification", {}).get("canonical_integration")
+    ]
+    assert proofs == [
+        {
+            "schema": "mac.canonical_integration.v1",
+            "status": "pass",
+            "canonical_ref": "refs/heads/main",
+            "canonical_tip_sha": final_head,
+            "reviewed_head_sha": task_head,
+            "contains_reviewed_head": True,
+            "remote_verified": True,
+            "publication_mode": "merge_commit",
+        }
+    ]
 
 
 def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):
@@ -11281,6 +11298,65 @@ def test_force_complete_normalizes_unambiguous_task_prefix(cp):
     event = cp.task_history(task.id)[-1]
     assert event.event_type == "task.force_completed"
     assert event.detail["reason"] == "verified canonical commit"
+
+
+def test_repository_completion_requires_durable_canonical_integration(cp, monkeypatch):
+    metadata = {
+        "execution_contract": {
+            "type": "repository",
+            "repository_contract": {"canonical_branch": "main"},
+        }
+    }
+    task = cp.create_task("repository completion proof", metadata=metadata)
+
+    with pytest.raises(ValidationError, match="canonical integration proof"):
+        cp.force_complete_task(task.id, "operator", reason="reviewed")
+
+    head_sha = "a" * 40
+    cp.add_evidence(
+        task.id,
+        "test",
+        "git://example/repo#%s" % head_sha,
+        "canonical integration verified",
+        "operator",
+        metadata={
+            "verification": {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "repo_change",
+                "repo": {"head_sha": head_sha},
+                "canonical_integration": {
+                    "schema": "mac.canonical_integration.v1",
+                    "status": "pass",
+                    "canonical_ref": "refs/heads/main",
+                    "canonical_tip_sha": head_sha,
+                    "head_sha": head_sha,
+                    "remote_verified": True,
+                },
+            }
+        },
+    )
+
+    completed = cp.force_complete_task(task.id, "operator", reason="integrated")
+    assert completed.state == TaskState.COMPLETED.value
+
+    second = cp.create_task("published repository proof", metadata=metadata)
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.REVIEWING.value, second.id),
+    )
+    monkeypatch.setattr(cp.reviews, "completion_authorized", lambda _task_id: True)
+    monkeypatch.setattr(cp, "_validate_publication_evidence", lambda *_args: None)
+    with pytest.raises(ValidationError, match="canonical integration proof"):
+        cp.publish_task(second.id, "git://example/main", "reviewer")
+
+    third = cp.create_task("transition repository proof", metadata=metadata)
+    cp.store.execute(
+        "UPDATE tasks SET state = ? WHERE id = ?",
+        (TaskState.REVIEWING.value, third.id),
+    )
+    with pytest.raises(ValidationError, match="canonical integration proof"):
+        cp.transition_task(third.id, TaskState.COMPLETED.value, "reviewer")
 
 
 # ---------------------------------------------------------------------------
