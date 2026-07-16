@@ -256,10 +256,162 @@ def _repo_claim(
     }
 
 
+def _approved_review_chains(
+    evidence_by_id: Mapping[str, Mapping[str, Any]],
+    reviews: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return structurally valid approved review-to-executor links.
+
+    Review rows point at the reviewer's verdict evidence.  The verdict in turn
+    names the executor evidence it reviewed.  Keeping that indirection intact
+    is what prevents a rejected or superseded executor attempt from becoming
+    completion proof merely because its commit happens to be on ``main``.
+    """
+
+    chains: List[Dict[str, Any]] = []
+    for review in reviews:
+        if _text(review.get("status")).lower() != "approved":
+            continue
+        review_id = _text(review.get("id"))
+        verdict_evidence_id = _text(review.get("evidence_id"))
+        verdict_evidence = evidence_by_id.get(verdict_evidence_id)
+        if verdict_evidence is None:
+            continue
+        metadata = _mapping(verdict_evidence.get("metadata"))
+        verification = _mapping(metadata.get("verification"))
+        if _text(verification.get("evidence_type")).lower() != "review_verdict":
+            continue
+        verdict = _text(verification.get("verdict")).lower()
+        semantic_verdict = _text(verification.get("semantic_verdict")).lower()
+        if verdict != "approved" or semantic_verdict not in {"", "approved"}:
+            continue
+        executor_evidence_id = _text(verification.get("reviewed_evidence_id"))
+        executor_evidence = evidence_by_id.get(executor_evidence_id)
+        if not executor_evidence_id or executor_evidence is None:
+            continue
+        executor_verification = _mapping(
+            _mapping(executor_evidence.get("metadata")).get("verification")
+        )
+        if _text(executor_verification.get("evidence_type")).lower() == "review_verdict":
+            continue
+        chains.append(
+            {
+                "review_id": review_id or None,
+                "verdict_evidence_id": verdict_evidence_id,
+                "executor_evidence_id": executor_evidence_id,
+            }
+        )
+    return chains
+
+
+def _publication_resolution(
+    detail: Mapping[str, Any],
+    evidence_by_id: Mapping[str, Mapping[str, Any]],
+    reviews: Sequence[Mapping[str, Any]],
+    publications: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve the one executor attempt authorized by active publication.
+
+    The publication is the authority, not evidence creation order.  Standard
+    publications directly name executor evidence.  Publication-artifact
+    policies name a separate publication evidence row, so their executor is
+    recovered through the task's immutable review target (or the sole valid
+    approved review chain for legacy rows).
+    """
+
+    active = [
+        item for item in publications if _text(item.get("status")).lower() == "published"
+    ]
+    base: Dict[str, Any] = {
+        "status": "not_published",
+        "publication_id": None,
+        "publication_target": None,
+        "publication_evidence_id": None,
+        "executor_evidence_id": None,
+        "review_id": None,
+        "verdict_evidence_id": None,
+        "problems": [],
+    }
+    if not active:
+        return base
+    if len(active) != 1:
+        base.update(
+            {
+                "status": "invalid",
+                "problems": ["multiple_active_publications"],
+            }
+        )
+        return base
+
+    publication = active[0]
+    publication_id = _text(publication.get("id"))
+    publication_evidence_id = _text(publication.get("evidence_id"))
+    base.update(
+        {
+            "status": "invalid",
+            "publication_id": publication_id or None,
+            "publication_target": _text(publication.get("target")) or None,
+            "publication_evidence_id": publication_evidence_id or None,
+        }
+    )
+    if not publication_evidence_id:
+        base["problems"] = ["publication_missing_evidence_id"]
+        return base
+    publication_evidence = evidence_by_id.get(publication_evidence_id)
+    if publication_evidence is None:
+        base["problems"] = ["publication_evidence_missing"]
+        return base
+
+    chains = _approved_review_chains(evidence_by_id, reviews)
+    direct = [
+        chain
+        for chain in chains
+        if _text(chain.get("executor_evidence_id")) == publication_evidence_id
+    ]
+    selected: Optional[Dict[str, Any]] = direct[-1] if direct else None
+    if selected is None and _text(publication_evidence.get("kind")).lower() == "publication":
+        task = _mapping(detail.get("task"))
+        review_target = _mapping(_mapping(task.get("metadata")).get("review_target"))
+        target_evidence_id = _text(review_target.get("executor_evidence_id"))
+        targeted = [
+            chain
+            for chain in chains
+            if target_evidence_id
+            and _text(chain.get("executor_evidence_id")) == target_evidence_id
+        ]
+        if targeted:
+            selected = targeted[-1]
+        elif len(chains) == 1:
+            # Compatibility for publication-artifact rows created before the
+            # immutable review_target was persisted.  A single approved chain
+            # is unambiguous; multiple chains fail closed.
+            selected = chains[0]
+    if selected is None:
+        base["problems"] = ["publication_has_no_matching_approved_review"]
+        return base
+
+    base.update(
+        {
+            "status": "resolved",
+            "executor_evidence_id": selected["executor_evidence_id"],
+            "review_id": selected["review_id"],
+            "verdict_evidence_id": selected["verdict_evidence_id"],
+            "problems": [],
+        }
+    )
+    return base
+
+
 def _evidence_audit(detail: Mapping[str, Any]) -> Dict[str, Any]:
     evidence = _items(detail.get("evidence"))
     reviews = _items(detail.get("reviews"))
     publications = _items(detail.get("publications"))
+    evidence_by_id = {
+        _text(item.get("id")): item for item in evidence if _text(item.get("id"))
+    }
+    publication_resolution = _publication_resolution(
+        detail, evidence_by_id, reviews, publications
+    )
     published_evidence_ids = {
         _text(item.get("evidence_id"))
         for item in publications
@@ -384,6 +536,19 @@ def _evidence_audit(detail: Mapping[str, Any]) -> Dict[str, Any]:
             }
         )
 
+    authoritative_evidence_id = _text(
+        publication_resolution.get("executor_evidence_id")
+    )
+    for claim in repo_claims:
+        claim["authoritative"] = bool(
+            authoritative_evidence_id
+            and _text(claim.get("evidence_id")) == authoritative_evidence_id
+            and _text(claim.get("source")) == "evidence.verification.repo"
+        )
+        claim["superseded"] = bool(
+            authoritative_evidence_id and not claim["authoritative"]
+        )
+
     return {
         "count": len(evidence),
         "kinds": dict(sorted(kinds.items())),
@@ -405,6 +570,7 @@ def _evidence_audit(detail: Mapping[str, Any]) -> Dict[str, Any]:
             )
         ),
         "published_evidence_ids": sorted(published_evidence_ids),
+        "publication_resolution": publication_resolution,
         "adjudications": adjudications,
         "repo_claims": repo_claims,
     }
@@ -857,7 +1023,15 @@ def _assessment(
     )
 
     if state == "completed":
-        if operational_completion_verified:
+        publication_resolution = _mapping(evidence.get("publication_resolution"))
+        if (
+            publication_resolution.get("publication_id")
+            and _text(publication_resolution.get("status")) != "resolved"
+        ):
+            findings.append("completed_publication_chain_invalid")
+            verdict = "contradiction"
+            action = "repair_publication_evidence_or_reopen"
+        elif operational_completion_verified:
             pass
         elif applicability == "applicable" and not integrated:
             findings.append("completed_repository_work_not_proven_on_canonical_branch")
@@ -1127,12 +1301,21 @@ def build_task_ledger_audit(
                 for claim in verified_claims
             ):
                 verified_claims.append(attributed)
+        publication_resolution = _mapping(evidence.get("publication_resolution"))
+        has_active_publication = bool(publication_resolution.get("publication_id"))
+        if has_active_publication:
+            integration_candidates = [
+                claim for claim in verified_claims if claim.get("authoritative") is True
+            ]
+        else:
+            integration_candidates = verified_claims
         integration_claim = next(
             (
                 claim
                 for claim in sorted(
-                    verified_claims,
+                    integration_candidates,
                     key=lambda item: (
+                        item.get("authoritative") is not True,
                         _text(item.get("attribution_status"))
                         not in {
                             "task_id_in_commit_message",
@@ -1165,6 +1348,7 @@ def build_task_ledger_audit(
             if selected_snapshot
             else "no registered repository matched task",
             "candidate_count": len(verified_claims),
+            "authoritative_candidate_count": len(integration_candidates),
             "unattributed_canonical_candidate_count": sum(
                 _text(claim.get("integration_status"))
                 in {"ancestor_unattributed", "patch_equivalent_unattributed"}

@@ -102,8 +102,11 @@ def _history(task_id: str, state: str, detail: dict | None = None) -> list[dict]
     return events
 
 
-def _repo_evidence(task_id: str, sha: str, *, published: bool = True) -> tuple[list[dict], list[dict]]:
+def _repo_evidence(
+    task_id: str, sha: str, *, published: bool = True
+) -> tuple[list[dict], list[dict], list[dict]]:
     evidence_id = "ev_%s" % task_id
+    verdict_id = "ev_verdict_%s" % task_id
     evidence = [
         {
             "id": evidence_id,
@@ -130,6 +133,38 @@ def _repo_evidence(task_id: str, sha: str, *, published: bool = True) -> tuple[l
             "created_at": "2026-01-01T00:00:01+00:00",
         }
     ]
+    reviews: list[dict] = []
+    if published:
+        evidence.append(
+            {
+                "id": verdict_id,
+                "task_id": task_id,
+                "kind": "review",
+                "metadata": {
+                    "verification": {
+                        "schema": "mac.worker_evidence.v1",
+                        "status": "complete",
+                        "evidence_type": "review_verdict",
+                        "verdict": "approved",
+                        "semantic_verdict": "approved",
+                        "reviewed_evidence_id": evidence_id,
+                    }
+                },
+                "created_by": "reviewer",
+                "created_at": "2026-01-01T00:00:02+00:00",
+            }
+        )
+        reviews.append(
+            {
+                "id": "review_%s" % task_id,
+                "task_id": task_id,
+                "reviewer_agent_id": "reviewer",
+                "status": "approved",
+                "evidence_id": verdict_id,
+                "created_at": "2026-01-01T00:00:01+00:00",
+                "completed_at": "2026-01-01T00:00:02+00:00",
+            }
+        )
     publications = (
         [
             {
@@ -145,15 +180,22 @@ def _repo_evidence(task_id: str, sha: str, *, published: bool = True) -> tuple[l
         if published
         else []
     )
-    return evidence, publications
+    return evidence, publications, reviews
 
 
-def _detail(task: dict, *, history: list[dict] | None = None, evidence=None, publications=None) -> dict:
+def _detail(
+    task: dict,
+    *,
+    history: list[dict] | None = None,
+    evidence=None,
+    reviews=None,
+    publications=None,
+) -> dict:
     return {
         "task": task,
         "history": history if history is not None else _history(task["id"], task["state"]),
         "evidence": evidence or [],
-        "reviews": [],
+        "reviews": reviews or [],
         "publications": publications or [],
     }
 
@@ -188,13 +230,27 @@ def test_completed_repository_task_requires_canonical_ancestry(tmp_path):
     repo, landed, unmerged = _repo(tmp_path)
     landed_task = _task("task_" + "1" * 32, "completed", metadata=_repo_task_metadata())
     unmerged_task = _task("task_" + "2" * 32, "completed", metadata=_repo_task_metadata())
-    landed_evidence, landed_publications = _repo_evidence(landed_task["id"], landed)
-    unmerged_evidence, unmerged_publications = _repo_evidence(unmerged_task["id"], unmerged)
+    landed_evidence, landed_publications, landed_reviews = _repo_evidence(
+        landed_task["id"], landed
+    )
+    unmerged_evidence, unmerged_publications, unmerged_reviews = _repo_evidence(
+        unmerged_task["id"], unmerged
+    )
 
     report = build_task_ledger_audit(
         [
-            _detail(landed_task, evidence=landed_evidence, publications=landed_publications),
-            _detail(unmerged_task, evidence=unmerged_evidence, publications=unmerged_publications),
+            _detail(
+                landed_task,
+                evidence=landed_evidence,
+                reviews=landed_reviews,
+                publications=landed_publications,
+            ),
+            _detail(
+                unmerged_task,
+                evidence=unmerged_evidence,
+                reviews=unmerged_reviews,
+                publications=unmerged_publications,
+            ),
         ],
         [_registered_repo(repo)],
     )
@@ -207,10 +263,256 @@ def test_completed_repository_task_requires_canonical_ancestry(tmp_path):
     assert rows[unmerged_task["id"]]["assessment"]["verdict"] == "contradiction"
 
 
+def test_publication_selects_winning_evidence_and_ignores_rejected_attempt(tmp_path):
+    repo, landed, rejected_head = _repo(tmp_path)
+    task = _task("task_" + "0" * 32, "completed", metadata=_repo_task_metadata())
+    evidence, publications, reviews = _repo_evidence(task["id"], landed)
+    task["metadata"]["latest_review_claim"] = {
+        # A stale projection must not override the immutable evidence row even
+        # when it repeats the winning evidence id.
+        "executor_evidence_id": publications[0]["evidence_id"],
+        "repository_head_sha": rejected_head,
+        "repository_files_changed": ["unmerged.txt"],
+    }
+    rejected_evidence_id = "ev_rejected_attempt"
+    rejected_verdict_id = "ev_rejected_verdict"
+    evidence[0:0] = [
+        {
+            "id": rejected_evidence_id,
+            "task_id": task["id"],
+            "kind": "test",
+            "metadata": {
+                "verification": {
+                    "schema": "mac.worker_evidence.v1",
+                    "status": "complete",
+                    "evidence_type": "repo_change",
+                    "repo": {
+                        "head_sha": rejected_head,
+                        "pushed": True,
+                        "dirty": False,
+                        "files_changed": ["unmerged.txt"],
+                    },
+                }
+            },
+        },
+        {
+            "id": rejected_verdict_id,
+            "task_id": task["id"],
+            "kind": "review",
+            "metadata": {
+                "verification": {
+                    "schema": "mac.worker_evidence.v1",
+                    "status": "complete",
+                    "evidence_type": "review_verdict",
+                    "verdict": "rejected",
+                    "semantic_verdict": "rejected",
+                    "reviewed_evidence_id": rejected_evidence_id,
+                }
+            },
+        },
+    ]
+    reviews.insert(
+        0,
+        {
+            "id": "review_rejected",
+            "task_id": task["id"],
+            "status": "rejected",
+            "evidence_id": rejected_verdict_id,
+        },
+    )
+
+    report = build_task_ledger_audit(
+        [
+            _detail(
+                task,
+                evidence=evidence,
+                reviews=reviews,
+                publications=publications,
+            )
+        ],
+        [_registered_repo(repo)],
+    )
+    row = report["tasks"][0]
+
+    resolution = row["evidence"]["publication_resolution"]
+    assert resolution["status"] == "resolved"
+    assert resolution["executor_evidence_id"] == publications[0]["evidence_id"]
+    assert row["repository"]["proof_sha"] == landed
+    claims = row["repository"]["claims"]
+    assert next(
+        claim
+        for claim in claims
+        if claim["evidence_id"] == rejected_evidence_id
+    )["superseded"] is True
+    winning_claims = [
+        claim
+        for claim in claims
+        if claim["evidence_id"] == publications[0]["evidence_id"]
+    ]
+    assert any(claim["authoritative"] is True for claim in winning_claims)
+    assert next(
+        claim
+        for claim in winning_claims
+        if claim["source"] == "task.metadata.latest_review_claim"
+    )["superseded"] is True
+    assert row["assessment"]["verdict"] == "verified"
+
+
+def test_publication_does_not_let_older_integrated_attempt_mask_winner(tmp_path):
+    repo, older_integrated, winning_unmerged = _repo(tmp_path)
+    task = _task("task_" + "9" * 32, "completed", metadata=_repo_task_metadata())
+    evidence, publications, reviews = _repo_evidence(task["id"], winning_unmerged)
+    older_id = "ev_older_integrated"
+    older_verdict_id = "ev_older_approved_verdict"
+    evidence[0:0] = [
+        {
+            "id": older_id,
+            "task_id": task["id"],
+            "kind": "test",
+            "metadata": {
+                "verification": {
+                    "schema": "mac.worker_evidence.v1",
+                    "status": "complete",
+                    "evidence_type": "repo_change",
+                    "repo": {
+                        "head_sha": older_integrated,
+                        "pushed": True,
+                        "dirty": False,
+                        "files_changed": ["landed.txt"],
+                    },
+                }
+            },
+        },
+        {
+            "id": older_verdict_id,
+            "task_id": task["id"],
+            "kind": "review",
+            "metadata": {
+                "verification": {
+                    "schema": "mac.worker_evidence.v1",
+                    "status": "complete",
+                    "evidence_type": "review_verdict",
+                    "verdict": "approved",
+                    "semantic_verdict": "approved",
+                    "reviewed_evidence_id": older_id,
+                }
+            },
+        },
+    ]
+    reviews.insert(
+        0,
+        {
+            "id": "review_older_approved",
+            "task_id": task["id"],
+            "status": "approved",
+            "evidence_id": older_verdict_id,
+        },
+    )
+
+    report = build_task_ledger_audit(
+        [
+            _detail(
+                task,
+                evidence=evidence,
+                reviews=reviews,
+                publications=publications,
+            )
+        ],
+        [_registered_repo(repo)],
+    )
+    row = report["tasks"][0]
+
+    assert row["evidence"]["publication_resolution"]["executor_evidence_id"] == publications[0]["evidence_id"]
+    assert row["repository"]["proof_sha"] is None
+    assert row["repository"]["integration_status"] == "not_integrated"
+    assert row["assessment"]["verdict"] == "contradiction"
+
+
+def test_publication_review_mismatch_fails_closed(tmp_path):
+    repo, landed, stale_head = _repo(tmp_path)
+    task = _task("task_" + "7" * 32, "completed", metadata=_repo_task_metadata())
+    evidence, publications, reviews = _repo_evidence(task["id"], landed)
+    stale_id = "ev_stale_review_target"
+    evidence.insert(
+        0,
+        {
+            "id": stale_id,
+            "task_id": task["id"],
+            "kind": "test",
+            "metadata": {
+                "verification": {
+                    "schema": "mac.worker_evidence.v1",
+                    "status": "complete",
+                    "evidence_type": "repo_change",
+                    "repo": {"head_sha": stale_head, "pushed": True, "dirty": False},
+                }
+            },
+        },
+    )
+    verdict_id = reviews[0]["evidence_id"]
+    verdict = next(item for item in evidence if item["id"] == verdict_id)
+    verdict["metadata"]["verification"]["reviewed_evidence_id"] = stale_id
+
+    report = build_task_ledger_audit(
+        [
+            _detail(
+                task,
+                evidence=evidence,
+                reviews=reviews,
+                publications=publications,
+            )
+        ],
+        [_registered_repo(repo)],
+    )
+    row = report["tasks"][0]
+
+    assert row["evidence"]["publication_resolution"] == {
+        "status": "invalid",
+        "publication_id": publications[0]["id"],
+        "publication_target": "git://main",
+        "publication_evidence_id": publications[0]["evidence_id"],
+        "executor_evidence_id": None,
+        "review_id": None,
+        "verdict_evidence_id": None,
+        "problems": ["publication_has_no_matching_approved_review"],
+    }
+    assert row["repository"]["proof_sha"] is None
+    assert row["assessment"]["findings"] == ["completed_publication_chain_invalid"]
+
+
+def test_winning_publication_survives_canonical_cherry_pick(tmp_path):
+    repo, _landed, reviewed_head = _repo(tmp_path)
+    _git(repo, "cherry-pick", reviewed_head)
+    rewritten_tip = _git(repo, "rev-parse", "HEAD")
+    assert rewritten_tip != reviewed_head
+    _git(repo, "update-ref", "refs/remotes/origin/main", rewritten_tip)
+    task = _task("task_" + "6" * 32, "completed", metadata=_repo_task_metadata())
+    evidence, publications, reviews = _repo_evidence(task["id"], reviewed_head)
+
+    report = build_task_ledger_audit(
+        [
+            _detail(
+                task,
+                evidence=evidence,
+                reviews=reviews,
+                publications=publications,
+            )
+        ],
+        [_registered_repo(repo)],
+    )
+    row = report["tasks"][0]
+
+    assert row["repository"]["integration_status"] == "patch_equivalent"
+    assert row["repository"]["proof_sha"] == reviewed_head
+    assert row["assessment"]["verdict"] == "verified"
+
+
 def test_cancelled_entry_reason_ignores_later_self_transition_and_checks_replacement(tmp_path):
     repo, landed, _unmerged = _repo(tmp_path)
     replacement = _task("task_" + "3" * 32, "completed", metadata=_repo_task_metadata())
-    replacement_evidence, replacement_publications = _repo_evidence(replacement["id"], landed)
+    replacement_evidence, replacement_publications, replacement_reviews = _repo_evidence(
+        replacement["id"], landed
+    )
     cancelled = _task("task_" + "4" * 32, "cancelled")
     cancelled["metadata"] = {
         "repository_ref_lifecycle": {"replacement_task_id": replacement["id"]}
@@ -243,6 +545,7 @@ def test_cancelled_entry_reason_ignores_later_self_transition_and_checks_replace
             _detail(
                 replacement,
                 evidence=replacement_evidence,
+                reviews=replacement_reviews,
                 publications=replacement_publications,
             ),
         ],
@@ -259,7 +562,7 @@ def test_cancelled_entry_reason_ignores_later_self_transition_and_checks_replace
 def test_failed_but_merged_and_stranded_blocked_tasks_are_contradictions(tmp_path):
     repo, landed, _unmerged = _repo(tmp_path)
     failed = _task("task_" + "5" * 32, "failed", metadata=_repo_task_metadata())
-    failed_evidence, _ = _repo_evidence(failed["id"], landed, published=False)
+    failed_evidence, _, _ = _repo_evidence(failed["id"], landed, published=False)
     failed_repo = failed_evidence[0]["metadata"]["verification"]["repo"]
     failed_repo["base_sha"] = _git(repo, "rev-parse", "%s^" % landed)
     failed_repo["files_changed"] = ["landed.txt"]
