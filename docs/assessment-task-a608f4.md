@@ -101,3 +101,15 @@ dream finding.**
 
 Both are cosmetic; neither changes selection outcomes and neither is required to
 "repair" the reported pattern.
+
+## Closure (repair node)
+
+The dream finding is closed as NOT actionable: `scripts/select-sanity-tests.py`
+is a correctly functioning, fail-closed selector with machine-readable
+diagnostics, so no production correctness change is warranted. To pin the
+intended fail-closed behavior and close the single observational gap noted
+above, `tests/test_select_sanity_tests.py` now asserts that the focused
+`direct_codegraph_and_canary_scope` branch reports `codegraph_problem is None`
+when CodeGraph is healthy and propagates the CodeGraph failure code when
+CodeGraph is degraded. This locks in that a degraded CodeGraph is surfaced, not
+swallowed, while the selector still emits a canary-backed focused scope.

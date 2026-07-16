@@ -113,6 +113,26 @@ def test_code_change_focused_scope_includes_canaries(selector, monkeypatch):
     for canary in selector.CANARIES:
         assert canary in result["tests"]
     assert result["tests"] == sorted(result["tests"])
+    assert result["codegraph_problem"] is None
+
+
+def test_focused_scope_propagates_codegraph_problem(selector, monkeypatch):
+    # A degraded CodeGraph must not silently vanish: even when a focused scope
+    # is still produced from module-mapped tests, the selector fails closed by
+    # recording the CodeGraph failure in codegraph_problem for diagnostics.
+    monkeypatch.setattr(
+        selector, "_module_test_candidates", lambda path: ["tests/test_mapped.py"]
+    )
+    monkeypatch.setattr(
+        selector,
+        "_codegraph_affected",
+        lambda changed: ([], "codegraph_affected_failed"),
+    )
+    monkeypatch.setattr(selector.Path, "is_file", lambda self: True)
+    result = selector.select(["src/mac/thing.py"])
+    assert result["mode"] == "focused"
+    assert result["reason"] == "direct_codegraph_and_canary_scope"
+    assert result["codegraph_problem"] == "codegraph_affected_failed"
 
 
 def test_codegraph_affected_unavailable(selector, monkeypatch):
