@@ -190,7 +190,7 @@ bash -n deploy/deploy-mac-fleet.sh
 bash -n deploy/install-qdrant-service.sh
 bash -n deploy/install-tailscale.sh
 bash -n deploy/install-headscale.sh
-uv run pytest tests/test_deploy_agent_configs.py tests/test_hermes_startup.py
+.venv/bin/python -m pytest tests/test_deploy_agent_configs.py tests/test_hermes_startup.py
 ```
 
 When touching the K8s-native (image-based container) path, also validate the
