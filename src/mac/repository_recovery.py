@@ -41,6 +41,19 @@ _ALLOWED_REFUSAL_PREFIXES = (
     "repository finalizer had local errors; refusing to push",
 )
 
+# A stalled finalizer wrote finalizer-progress.json but never reached the
+# terminal "complete"/"pass" status: the deterministic host process was
+# interrupted (timeout, cancellation, or crash) after harvesting verified work
+# but before the guarded push confirmed a remote ref. These are the progress
+# statuses that mark such an interrupted, non-published run — anything else is
+# either a healthy completion or an unrecognized shape we refuse to touch.
+_STALLED_FINALIZER_STATUSES = (
+    "running",
+    "timeout",
+    "cancelled",
+    "fail",
+)
+
 
 class RepositoryRecoveryError(RuntimeError):
     """Preserved work is not safe or complete enough to recover."""
@@ -448,6 +461,305 @@ def recover_finalizer_worktree(
         "codegraph": codegraph,
     }
     (root / "recovery-evidence.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return result
+
+
+def _finalizer_progress(root: Path) -> JsonDict:
+    path = root / "finalizer-progress.json"
+    if not path.exists():
+        return {}
+    return _load_object(path)
+
+
+def inspect_stalled_finalizer_recovery(
+    workspace: Path | str,
+    *,
+    approved_new_files: Iterable[str] = (),
+) -> JsonDict:
+    """Validate a stalled deterministic finalizer and return a recovery plan.
+
+    Unlike :func:`inspect_finalizer_recovery`, which handles a finalizer that ran
+    to completion but *refused* to publish uncommitted new files, this path
+    handles a finalizer that was *interrupted* (timeout, cancellation, or crash)
+    after harvesting verified work but before confirming a remote ref.  The
+    signal is a ``finalizer-progress.json`` stuck in a non-terminal status paired
+    with a partial ``mac-evidence.json`` manifest, and a worktree whose HEAD still
+    matches the preserved evidence.  The inspection never mutates the worktree.
+    """
+
+    root = Path(workspace).expanduser().resolve()
+    task = _task_payload(root)
+    context = _load_object(root / "repository-worktree.json")
+    manifest = _load_object(root / "mac-evidence.json")
+    progress = _finalizer_progress(root)
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        raise RepositoryRecoveryError("preserved task has no id")
+
+    if not progress:
+        raise RepositoryRecoveryError(
+            "no finalizer-progress.json — not a stalled-finalizer case"
+        )
+    progress_status = str(progress.get("status") or "").strip().lower()
+    if progress_status == "pass" or progress_status == "complete":
+        raise RepositoryRecoveryError(
+            "finalizer progress reports completion — nothing to recover"
+        )
+    if progress_status not in _STALLED_FINALIZER_STATUSES:
+        raise RepositoryRecoveryError(
+            "unrecognized finalizer progress status: %r" % (progress.get("status"),)
+        )
+    if str(progress.get("task_id") or "").strip() not in {"", task_id}:
+        raise RepositoryRecoveryError("finalizer progress belongs to a different task")
+
+    if manifest.get("schema") != "mac.worker_evidence.v1":
+        raise RepositoryRecoveryError("preserved manifest has the wrong schema")
+    interrupted = manifest.get("finalizer_interrupted")
+    if not isinstance(interrupted, Mapping):
+        raise RepositoryRecoveryError(
+            "manifest lacks a finalizer_interrupted marker — not a stalled finalizer"
+        )
+    if manifest.get("partial") is not True:
+        raise RepositoryRecoveryError("stalled-finalizer manifest must be partial")
+
+    test_command = _test_command(task)
+    if not test_command:
+        raise RepositoryRecoveryError("repository contract test command is missing")
+
+    repo = manifest.get("repo")
+    if not isinstance(repo, Mapping):
+        raise RepositoryRecoveryError("manifest lacks a repository anchor")
+    if repo.get("pushed") is True:
+        raise RepositoryRecoveryError("manifest reports the work was already published")
+
+    worktree = Path(str(context.get("repository_worktree") or "")).expanduser().resolve()
+    if not worktree.is_dir():
+        raise RepositoryRecoveryError(
+            "preserved repository worktree is missing: %s" % worktree
+        )
+    head_sha = _git_stdout(worktree, ["rev-parse", "HEAD"])
+    manifest_head = str(repo.get("head_sha") or "").strip()
+    if manifest_head:
+        if len(manifest_head) != _SHA_LENGTH or head_sha != manifest_head:
+            raise RepositoryRecoveryError(
+                "preserved worktree HEAD no longer matches finalizer evidence"
+            )
+
+    base_sha = str(
+        context.get("repository_base_sha") or repo.get("base_sha") or ""
+    ).strip()
+    if len(base_sha) != _SHA_LENGTH:
+        raise RepositoryRecoveryError("preserved base sha is missing or malformed")
+
+    changed, new_files = _porcelain_paths(worktree)
+    committed = [
+        line
+        for line in _git_stdout(
+            worktree, ["diff", "--name-only", "%s..HEAD" % base_sha]
+        ).splitlines()
+        if line.strip()
+    ]
+    if not changed and not committed:
+        raise RepositoryRecoveryError(
+            "worktree carries no recoverable work relative to the prepared base"
+        )
+
+    approved = sorted({_safe_relative_path(path) for path in approved_new_files})
+    if new_files and approved and approved != new_files:
+        raise RepositoryRecoveryError(
+            "approved new files must exactly match the preserved set; expected %s, got %s"
+            % (new_files, approved)
+        )
+
+    return {
+        "schema": "mac.repository_stalled_finalizer_recovery_plan.v1",
+        "eligible": True,
+        "task_id": task_id,
+        "workspace": str(root),
+        "worktree": str(worktree),
+        "branch": str(context.get("repository_branch") or "").strip(),
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "canonical_remote": _canonical_remote(task, context),
+        "canonical_branch": _canonical_branch(task, context),
+        "test_command": test_command,
+        "progress_status": progress_status,
+        "progress_phase": str(progress.get("phase") or "").strip(),
+        "changed_files": changed,
+        "committed_files": committed,
+        "new_files": new_files,
+        "approved_new_files": approved,
+        "original_manifest_sha256": _sha256(root / "mac-evidence.json"),
+    }
+
+
+def recover_stalled_finalizer(
+    workspace: Path | str,
+    *,
+    original_evidence_id: str,
+    approved_new_files: Iterable[str] = (),
+    execute: bool = False,
+    test_runner: Callable[[str, Path], subprocess.CompletedProcess[str]] = _default_test_runner,
+    codegraph_runner: Callable[[Path, Sequence[str]], JsonDict] = run_codegraph_audit,
+    canonical_syncer: Callable[[Path, str, str], JsonDict] = sync_worktree_with_canonical,
+    publisher: Callable[[Any], Any] = guarded_push,
+) -> JsonDict:
+    """Resume a stalled finalizer; dry-run unless ``execute`` is true.
+
+    Stages tracked changes and every approved new file, commits any pending work
+    with stalled-finalizer provenance, rebases onto the canonical branch, reruns
+    the contract test and CodeGraph audit, and performs the shared guarded push.
+    """
+
+    plan = inspect_stalled_finalizer_recovery(
+        workspace,
+        approved_new_files=approved_new_files,
+    )
+    if not execute:
+        return plan
+
+    evidence_id = str(original_evidence_id or "").strip()
+    if not evidence_id:
+        raise RepositoryRecoveryError("--evidence-id is required with --execute")
+
+    branch = str(plan["branch"] or "").strip()
+    base_sha = str(plan["base_sha"] or "").strip()
+    remote = str(plan["canonical_remote"] or "").strip()
+    canonical_branch = str(plan["canonical_branch"] or "").strip()
+    if not branch or not base_sha or not remote or not canonical_branch:
+        raise RepositoryRecoveryError(
+            "repository context is incomplete for guarded publication"
+        )
+
+    worktree = Path(plan["worktree"])
+    approved = plan["approved_new_files"]
+    if plan["new_files"] and not approved:
+        raise RepositoryRecoveryError(
+            "--execute requires every new file via --approve-new-file"
+        )
+
+    add_tracked = _run_git(worktree, ["add", "-u"])
+    if add_tracked.returncode != 0:
+        raise RepositoryRecoveryError("could not stage tracked recovery changes")
+    for path in approved:
+        add_new = _run_git(worktree, ["add", "--", path])
+        if add_new.returncode != 0:
+            raise RepositoryRecoveryError("could not stage approved new file: %s" % path)
+    _, remaining_new = _porcelain_paths(worktree)
+    unapproved_new = sorted(set(remaining_new) - set(approved))
+    if unapproved_new:
+        raise RepositoryRecoveryError(
+            "unapproved new files remain after staging: %s" % unapproved_new
+        )
+
+    task_id = str(plan["task_id"])
+    task = _task_payload(Path(plan["workspace"]))
+    title = str(task.get("title") or task_id).strip()
+    staged = _run_git(worktree, ["diff", "--cached", "--quiet"])
+    if staged.returncode == 1:
+        commit = _run_git(
+            worktree,
+            [
+                "-c",
+                "user.email=mac-recovery@nvidia.com",
+                "-c",
+                "user.name=MAC recovery",
+                "commit",
+                "-m",
+                "Recover MAC task %s: %s" % (task_id, title[:100]),
+                "-m",
+                "MAC-Original-Evidence: %s\nMAC-Recovery-Reason: stalled-finalizer"
+                % evidence_id,
+            ],
+        )
+        if commit.returncode != 0:
+            raise RepositoryRecoveryError(
+                "recovery commit failed: %s" % (commit.stderr or commit.stdout).strip()
+            )
+    elif staged.returncode != 0:
+        raise RepositoryRecoveryError("could not inspect staged recovery changes")
+
+    if _git_stdout(worktree, ["rev-list", "--count", "%s..HEAD" % base_sha]) == "0":
+        raise RepositoryRecoveryError(
+            "no committed work ahead of the prepared base after staging"
+        )
+
+    sync = canonical_syncer(worktree, remote, canonical_branch)
+    if str(sync.get("status") or "") not in {"fresh", "rebased"}:
+        raise RepositoryRecoveryError(
+            "recovery could not synchronize with canonical branch: %s"
+            % (sync.get("reason") or sync.get("status"))
+        )
+    canonical_tip = str(sync.get("canonical_tip") or "").strip()
+    if not canonical_tip:
+        raise RepositoryRecoveryError("canonical synchronization did not return a tip")
+
+    test = test_runner(str(plan["test_command"]), worktree)
+    root = Path(plan["workspace"])
+    (root / "stalled-recovery-test.stdout.txt").write_text(
+        test.stdout or "", encoding="utf-8"
+    )
+    (root / "stalled-recovery-test.stderr.txt").write_text(
+        test.stderr or "", encoding="utf-8"
+    )
+    if test.returncode != 0:
+        raise RepositoryRecoveryError(
+            "recovery contract test failed with returncode %d" % test.returncode
+        )
+
+    changed = [
+        line
+        for line in _git_stdout(
+            worktree, ["diff", "--name-only", "%s..HEAD" % canonical_tip]
+        ).splitlines()
+        if line.strip()
+    ]
+    codegraph = codegraph_runner(worktree, changed)
+    codegraph_problems = codegraph_audit_manifest_problems(
+        {"codegraph": codegraph, "repo": {"files_changed": changed}}
+    )
+    if codegraph_problems:
+        raise RepositoryRecoveryError(
+            "recovery CodeGraph audit failed: %s" % "; ".join(codegraph_problems)
+        )
+
+    target = resolve_canonical_publication_target(
+        worktree=worktree,
+        canonical_remote=remote,
+        canonical_branch=canonical_branch,
+        destination_branch=branch,
+        prepared_base_sha=base_sha,
+        isolation_key="stalled-recovery-%s-%s" % (task_id, evidence_id),
+    )
+    publication = publisher(target)
+    if not publication.ok or not publication.remote_verified:
+        raise RepositoryRecoveryError(
+            "guarded recovery push failed: %s" % publication.error
+        )
+
+    result: JsonDict = {
+        **plan,
+        "schema": "mac.repository_stalled_finalizer_recovery.v1",
+        "status": "complete",
+        "original_evidence_id": evidence_id,
+        "recovery_head_sha": publication.head_sha,
+        "canonical_tip_sha": publication.canonical_tip_sha,
+        "remote_ref": "refs/heads/%s" % branch,
+        "remote_verified": publication.remote_verified,
+        "changed_files": changed,
+        "test": {
+            "command": plan["test_command"],
+            "returncode": test.returncode,
+            "stdout_sha256": _sha256(root / "stalled-recovery-test.stdout.txt"),
+            "stderr_sha256": _sha256(root / "stalled-recovery-test.stderr.txt"),
+        },
+        "codegraph": codegraph,
+    }
+    (root / "stalled-recovery-evidence.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )

@@ -8,6 +8,7 @@ Subcommands covered:
   - task start   <task_id> <agent_id>
   - task reopen  <task_id> [--reason] [--actor]
   - task recover-finalizer <workspace> [--approve-new-file ...] [--execute]
+  - task recover-stalled-finalizer <workspace> [--approve-new-file ...] [--execute]
   - task release <task_id> [--actor]
   - task break-glass <task_id> <agent_id> --reason ...
   - task break-glass-list <task_id>
@@ -163,6 +164,59 @@ def test_task_recover_finalizer_forwards_explicit_recovery_contract(
         "workspace": str(workspace),
         "approved": ["src/new.py", "tests/test_new.py"],
         "evidence_id": "ev_original",
+        "execute": True,
+    }
+
+
+def test_task_recover_stalled_finalizer_forwards_recovery_contract(
+    tmp_path, monkeypatch
+):
+    seen = {}
+
+    def fake_recover(
+        workspace,
+        *,
+        approved_new_files,
+        original_evidence_id,
+        execute,
+    ):
+        seen.update(
+            {
+                "workspace": workspace,
+                "approved": approved_new_files,
+                "evidence_id": original_evidence_id,
+                "execute": execute,
+            }
+        )
+        return {
+            "schema": "mac.repository_stalled_finalizer_recovery_plan.v1",
+            "eligible": True,
+        }
+
+    monkeypatch.setattr(
+        "mac.repository_recovery.recover_stalled_finalizer",
+        fake_recover,
+    )
+    workspace = tmp_path / "preserved-task"
+
+    rc, result = _run(
+        tmp_path,
+        "task",
+        "recover-stalled-finalizer",
+        str(workspace),
+        "--approve-new-file",
+        "src/new.py",
+        "--evidence-id",
+        "ev_stalled",
+        "--execute",
+    )
+
+    assert rc == 0
+    assert result["eligible"] is True
+    assert seen == {
+        "workspace": str(workspace),
+        "approved": ["src/new.py"],
+        "evidence_id": "ev_stalled",
         "execute": True,
     }
 

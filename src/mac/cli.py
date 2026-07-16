@@ -1789,6 +1789,26 @@ def cmd_task_recover_finalizer(args: argparse.Namespace) -> None:
     _print(result)
 
 
+def cmd_task_recover_stalled_finalizer(args: argparse.Namespace) -> None:
+    """Resume a deterministic finalizer that stalled after harvesting verified work."""
+
+    from mac.repository_recovery import (
+        RepositoryRecoveryError,
+        recover_stalled_finalizer,
+    )
+
+    try:
+        result = recover_stalled_finalizer(
+            args.workspace,
+            approved_new_files=args.approve_new_file or [],
+            original_evidence_id=args.evidence_id or "",
+            execute=bool(args.execute),
+        )
+    except RepositoryRecoveryError as exc:
+        raise MACError(str(exc)) from exc
+    _print(result)
+
+
 def cmd_task_force_complete(args: argparse.Namespace) -> None:
     # Operator override: mark a task COMPLETED regardless of state/review, for
     # reconciling work done out-of-band or recovering a stranded terminal task.
@@ -4989,6 +5009,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="commit, revalidate, and push; omit for a read-only recovery plan",
     )
     _set(cmd_task_recover_finalizer, recover_finalizer)
+
+    recover_stalled = task.add_parser(
+        "recover-stalled-finalizer",
+        help="resume a deterministic finalizer that stalled (timeout/cancel/crash) after harvesting verified work",
+    )
+    recover_stalled.add_argument(
+        "workspace",
+        help="preserved agent task workspace containing task.json, repository-worktree.json, and finalizer-progress.json",
+    )
+    recover_stalled.add_argument(
+        "--approve-new-file",
+        action="append",
+        default=[],
+        help="exact intended new path; repeat for every uncommitted new file",
+    )
+    recover_stalled.add_argument(
+        "--evidence-id",
+        help="original executor evidence id recorded in recovery provenance",
+    )
+    recover_stalled.add_argument(
+        "--execute",
+        action="store_true",
+        help="commit, revalidate, and push; omit for a read-only recovery plan",
+    )
+    _set(cmd_task_recover_stalled_finalizer, recover_stalled)
 
     force_complete = task.add_parser(
         "force-complete",

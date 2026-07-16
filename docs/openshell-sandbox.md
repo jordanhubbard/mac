@@ -214,6 +214,22 @@ provenance, rebases, reruns both gates, and uses the shared guarded push. It
 never invokes the executor/model again and does not weaken ordinary unattended
 finalization.
 
+A separate failure mode is a finalizer that harvested verified work but was
+itself interrupted — a timeout, cancellation, or crash after the contract-test
+and CodeGraph gates passed but before the guarded push confirmed a remote ref.
+The interrupted run leaves a partial `mac-evidence.json` (with a
+`finalizer_interrupted` marker) and a `finalizer-progress.json` stuck in a
+non-terminal status. Resume it the same way:
+
+```bash
+mac task recover-stalled-finalizer /path/to/task-workspace --json
+```
+
+Add `--approve-new-file PATH` only for any new files the stalled finalizer left
+uncommitted, provide the original `--evidence-id`, and add `--execute`. MAC
+revalidates the preserved HEAD, commits any pending work with stalled-finalizer
+provenance, rebases, reruns both gates, and performs the shared guarded push.
+
 For a coding agent to pass the preflight, the deployment must ensure, **inside
 the sandbox**:
 
