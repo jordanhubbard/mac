@@ -129,3 +129,82 @@ def test_clean_worktree_is_not_touched(tmp_path: Path):
 
     assert "repository worktree has uncommitted changes" not in problems
     assert _git(worktree, "rev-parse", "HEAD") == head
+
+
+def test_modified_tracked_files_are_committed_before_dirty_gate(tmp_path: Path):
+    """`git add -A` must also stage/commit MODIFIED tracked files, not just new
+    untracked ones, so an edit-only task does not trip the dirty gate either."""
+    worktree = _init_worktree(tmp_path)
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    _write_task(task_dir, "task_modified")
+    _write_context(task_dir, worktree)
+
+    base_head = _git(worktree, "rev-parse", "HEAD")
+    # The agent modified an existing tracked file but left it uncommitted.
+    (worktree / "existing.txt").write_text("edited\n", encoding="utf-8")
+
+    manifest = _manifest(base_head)
+    (task_dir / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+    w = _make_worker(tmp_path)
+    evidence = {"metadata": {"verification": manifest["verification"]}}
+    problems = w._execution_submission_problems(task_dir, evidence)
+
+    assert "repository worktree has uncommitted changes" not in problems
+    assert not any("head_sha does not match" in p for p in problems)
+    assert _git(worktree, "status", "--porcelain") == ""
+    new_head = _git(worktree, "rev-parse", "HEAD")
+    assert new_head != base_head
+    on_disk = json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert on_disk["repo"]["head_sha"] == new_head
+
+
+def test_commit_dirty_worktree_records_task_local_identity(tmp_path: Path):
+    """The finalizer commit must carry a stable task-local commit identity so
+    the auto-commit is attributable and does not depend on ambient git config."""
+    worktree = _init_worktree(tmp_path)
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    _write_task(task_dir, "task_identity")
+    _write_context(task_dir, worktree)
+
+    (worktree / "new_module.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    w = _make_worker(tmp_path)
+    problems: list[str] = []
+    w._commit_dirty_repository_worktree(
+        "task_identity", {"id": "task_identity", "title": "add a new module"}, worktree, problems
+    )
+
+    assert problems == []
+    author_name = _git(worktree, "log", "-1", "--format=%an")
+    author_email = _git(worktree, "log", "-1", "--format=%ae")
+    assert author_name == "MAC fleet"
+    assert author_email == "mac-fleet@nvidia.com"
+    subject = _git(worktree, "log", "-1", "--format=%s")
+    assert "task_identity" in subject
+
+
+def test_commit_dirty_worktree_is_idempotent_noop_when_clean(tmp_path: Path):
+    """Calling the committer twice must not create an empty second commit."""
+    worktree = _init_worktree(tmp_path)
+    (worktree / "new_module.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    w = _make_worker(tmp_path)
+    problems: list[str] = []
+    w._commit_dirty_repository_worktree(
+        "task_noop", {"id": "task_noop", "title": "x"}, worktree, problems
+    )
+    head_after_first = _git(worktree, "rev-parse", "HEAD")
+
+    # Second invocation on a now-clean worktree is a no-op.
+    w._commit_dirty_repository_worktree(
+        "task_noop", {"id": "task_noop", "title": "x"}, worktree, problems
+    )
+    head_after_second = _git(worktree, "rev-parse", "HEAD")
+
+    assert problems == []
+    assert head_after_first == head_after_second
