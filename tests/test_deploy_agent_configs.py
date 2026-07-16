@@ -862,6 +862,34 @@ def test_fleet_deploy_linux_control_plane_uses_service_wrapper():
     assert "ExecStart=$VENV/bin/uvicorn" not in linux_service
 
 
+def test_supervisord_pure_worker_has_no_gateway_program_or_restart():
+    script = deploy_script_text()
+    supervisor = script.split("install_supervisord_service() {", 1)[1].split(
+        "install_darwin_service() {", 1
+    )[0]
+
+    assert (
+        '  elif [ "${HERMES_GATEWAY_IMPL:-hermes}" = "none" ]; then\n'
+        '    # A pure worker must not retain or start either chat-gateway program.  An\n'
+        '    # empty block also lets ``supervisorctl update`` remove stale gateway\n'
+        '    # programs from a node that was converted from a conversational role.\n'
+        '    active_gateway_program=""\n'
+        '    gateway_program=""'
+    ) in supervisor
+    assert (
+        '  if [ -n "$active_gateway_program" ]; then\n'
+        '    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then\n'
+        '      prepare_openclaw_gateway\n'
+        '    fi\n'
+        '    run_supervisorctl restart "$active_gateway_program"'
+    ) in supervisor
+    assert (
+        '    log "gateway_impl=none: pure worker; skipping gateway program '
+        'install/restart"'
+    ) in supervisor
+    assert 'run_supervisorctl status "$AGENT_SUPERVISORD_PROG"' in supervisor
+
+
 def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
     script = deploy_script_text()
     hub_env = build_mac_env(

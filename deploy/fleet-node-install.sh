@@ -4623,6 +4623,12 @@ stopwaitsecs=90
 stdout_logfile=$LOG_DIR/openclaw-gateway.log
 stderr_logfile=$LOG_DIR/openclaw-gateway.log
 environment=HOME=\"$HOME\""
+  elif [ "${HERMES_GATEWAY_IMPL:-hermes}" = "none" ]; then
+    # A pure worker must not retain or start either chat-gateway program.  An
+    # empty block also lets ``supervisorctl update`` remove stale gateway
+    # programs from a node that was converted from a conversational role.
+    active_gateway_program=""
+    gateway_program=""
   else
     active_gateway_program="$HERMES_SUPERVISORD_PROG"
     gateway_program="[program:$HERMES_SUPERVISORD_PROG]
@@ -4726,11 +4732,15 @@ EOF
   fi
   scrub_spoke_provider_secrets
   sync_messaging_config
-  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
-    prepare_openclaw_gateway
+  if [ -n "$active_gateway_program" ]; then
+    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+      prepare_openclaw_gateway
+    fi
+    run_supervisorctl restart "$active_gateway_program" >/dev/null 2>&1 || run_supervisorctl start "$active_gateway_program" >/dev/null
+    sleep 5
+  else
+    log "gateway_impl=none: pure worker; skipping gateway program install/restart"
   fi
-  run_supervisorctl restart "$active_gateway_program" >/dev/null 2>&1 || run_supervisorctl start "$active_gateway_program" >/dev/null
-  sleep 5
   if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
     if ! verify_openclaw_gateway; then
       log "ERROR: stock OpenClaw verification failed under supervisord; restoring Hermes gateway"
@@ -4756,9 +4766,17 @@ EOF
     run_supervisorctl restart "$AGENT_SUPERVISORD_PROG" >/dev/null 2>&1 || run_supervisorctl start "$AGENT_SUPERVISORD_PROG" >/dev/null
     sleep 3
     if control_plane_enabled; then
-      run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+      if [ -n "$active_gateway_program" ]; then
+        run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+      else
+        run_supervisorctl status "$MAC_SUPERVISORD_PROG" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+      fi
     else
-      run_supervisorctl status "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+      if [ -n "$active_gateway_program" ]; then
+        run_supervisorctl status "$active_gateway_program" "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+      else
+        run_supervisorctl status "$AGENT_SUPERVISORD_PROG" > "$LOG_DIR/supervisord-services.txt" || true
+      fi
     fi
   fi
   printf 'supervisord restarted at %s\n' "$restart_since" >> "$LOG_DIR/supervisord-services.txt"
