@@ -17,6 +17,14 @@ DREAM_REPAIR_TASKS_SCHEMA = "mac.dream_repair_tasks.v1"
 DREAM_REPAIR_TASK_SCHEMA = "mac.dream_repair_task.v1"
 DREAM_REPAIR_ORIGIN_TYPE = "dream_low_confidence_repair"
 
+# Candidate kinds that are pure name inventory rather than a failure signal.
+# The scanner emits ``tool_or_skill_name`` at ``severity="info"`` for every
+# skill/tool *name mention* (see ``src/mac/dream_scanner.py``); it never carries
+# a failure excerpt or root signal. Its affected labels are still recovered from
+# ``signature``/``dimensions``, so without this guard the ``low + affected`` gate
+# below would mint a repair task with nothing to act on. Skip these outright.
+DREAM_INVENTORY_ONLY_KINDS = frozenset({"tool_or_skill_name"})
+
 # Per-invocation cap on how many DISTINCT new tasks a single scan may mint.
 # Fingerprint dedup only stops re-filing the SAME finding; a single tick with
 # many distinct low-confidence findings could otherwise create an unbounded
@@ -98,6 +106,12 @@ def file_low_confidence_repair_tasks(
             "overall_confidence": classification.get("overall_confidence"),
             "affected": affected,
         }
+        if _is_inventory_only_candidate(candidate, classification):
+            item["status"] = "skipped"
+            item["reason"] = "inventory_only_kind"
+            report["skipped_count"] += 1
+            report["tasks"].append(item)
+            continue
         if classification.get("overall_confidence") != "low":
             item["status"] = "skipped"
             item["reason"] = "confidence_not_low"
@@ -197,6 +211,28 @@ def _existing_repair_fingerprints(control_plane: Any) -> dict[str, Any]:
         if fingerprint:
             known[fingerprint] = getattr(task, "id", None)
     return known
+
+
+def _is_inventory_only_candidate(
+    candidate: Mapping[str, Any],
+    classification: Mapping[str, Any],
+) -> bool:
+    """Return True for info-only name-inventory candidates with no failure signal.
+
+    ``tool_or_skill_name`` candidates are emitted by the scanner purely to record
+    that a skill/tool name appeared in session text; they never carry a failure
+    excerpt or root signal and are always ``severity="info"``. Filing a repair
+    task for them produces a follow-up with nothing to act on, so they are
+    skipped before the ``low + affected`` gate.
+    """
+
+    kind = str(candidate.get("kind") or classification.get("kind") or "").strip()
+    if kind not in DREAM_INVENTORY_ONLY_KINDS:
+        return False
+    severity = str(candidate.get("severity") or "").strip().lower()
+    # Guard on severity too, so a future non-info emit of this kind (one that
+    # does carry a real signal) is not silently suppressed.
+    return severity in ("", "info")
 
 
 def _affected_labels(
@@ -494,6 +530,7 @@ __all__ = [
     "DREAM_REPAIR_ORIGIN_TYPE",
     "DREAM_REPAIR_TASKS_SCHEMA",
     "DREAM_REPAIR_TASK_SCHEMA",
+    "DREAM_INVENTORY_ONLY_KINDS",
     "file_low_confidence_repair_tasks",
     "repair_fingerprint",
     "DEFAULT_MAX_TASKS_PER_CYCLE",

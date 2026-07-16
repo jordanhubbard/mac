@@ -455,3 +455,58 @@ def test_dedup_does_not_consume_budget() -> None:
     assert second["deduped_count"] == 1
     assert second["created_count"] == 1
     assert second["capped_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Inventory-only (tool_or_skill_name) findings must not mint repair tasks
+# ---------------------------------------------------------------------------
+
+
+def test_skips_info_only_tool_or_skill_name_candidate() -> None:
+    """An info-severity name-inventory finding is skipped before the low+affected gate.
+
+    The scanner emits ``tool_or_skill_name`` at ``severity="info"`` purely to
+    record that a skill name appeared in session text. Its affected labels are
+    still recoverable from ``signature``/``dimensions``, so without the gate the
+    ``low + affected`` filter would file a repair task with nothing to act on.
+    """
+    cp = FakeControlPlane()
+    candidate = _candidate(
+        kind="tool_or_skill_name",
+        severity="info",
+        summary="skill referenced: codex",
+        signature="skill:codex",
+        confidence="low",
+        confidence_score=0.35,
+        evidence=[{"excerpt": "skill referenced: codex"}],
+        dimensions={"skills": [{"name": "codex", "count": 1}]},
+    )
+
+    report = file_low_confidence_repair_tasks(cp, [candidate])
+
+    assert report["created_count"] == 0
+    assert report["skipped_count"] == 1
+    assert report["tasks"][0]["reason"] == "inventory_only_kind"
+    # The label is still recovered for the report, but no task is created.
+    assert "codex" in report["tasks"][0]["affected"]["skills"]
+    assert cp.created == []
+
+
+def test_inventory_only_gate_does_not_suppress_non_info_severity() -> None:
+    """A future non-info emit of the same kind (a real signal) is still filed."""
+    cp = FakeControlPlane()
+    candidate = _candidate(
+        kind="tool_or_skill_name",
+        severity="error",
+        summary="skill codex failed during validation",
+        signature="skill:codex",
+        confidence="low",
+        confidence_score=0.35,
+        evidence=[{"excerpt": "skill codex failed during validation"}],
+        dimensions={"skills": [{"name": "codex", "count": 1}]},
+    )
+
+    report = file_low_confidence_repair_tasks(cp, [candidate])
+
+    assert report["created_count"] == 1
+    assert report["tasks"][0].get("reason") != "inventory_only_kind"
