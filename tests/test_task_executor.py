@@ -4249,3 +4249,67 @@ def test_git_finalizer_emits_all_phase_lifecycle_events(tmp_path, monkeypatch):
     assert any(event == "finalizer_completed" for event, _ in events)
     manifest = json.loads((ws / "mac-evidence.json").read_text(encoding="utf-8"))
     assert manifest["repo"]["pushed"] is True
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed startup (main() before the run begins)
+# ---------------------------------------------------------------------------
+
+
+def test_main_startup_missing_env_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.delenv("MAC_TASK_FILE", raising=False)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.setenv("MAC_TASK_WORKSPACE", str(workspace))
+
+    events = []
+    monkeypatch.setattr(te, "emit_telemetry", lambda event, **d: events.append((event, d)))
+
+    rc = te.main()
+    assert rc == 1
+    assert any(event == "executor_startup_failed" for event, _ in events)
+    manifest = json.loads((workspace / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest["schema"] == "mac.worker_evidence.v1"
+    assert manifest["status"] == "complete"
+    assert manifest["evidence_type"] == "operator_result"
+    assert "startup failed" in manifest["summary"].lower()
+
+
+def test_main_startup_invalid_json_fails_closed_with_task_id(tmp_path, monkeypatch):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    task_file = tmp_path / "task.json"
+    task_file.write_text("{ not valid json", encoding="utf-8")
+    monkeypatch.setenv("MAC_TASK_FILE", str(task_file))
+    monkeypatch.setenv("MAC_TASK_WORKSPACE", str(workspace))
+
+    events = []
+    monkeypatch.setattr(te, "emit_telemetry", lambda event, **d: events.append((event, d)))
+
+    rc = te.main()
+    assert rc == 1
+    assert any(event == "executor_startup_failed" for event, _ in events)
+
+
+def test_main_startup_does_not_clobber_existing_manifest(tmp_path, monkeypatch):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    existing = {"schema": "mac.worker_evidence.v1", "status": "complete", "evidence_type": "repo_change"}
+    (workspace / "mac-evidence.json").write_text(json.dumps(existing), encoding="utf-8")
+    monkeypatch.delenv("MAC_TASK_FILE", raising=False)
+    monkeypatch.setenv("MAC_TASK_WORKSPACE", str(workspace))
+    monkeypatch.setattr(te, "emit_telemetry", lambda event, **d: None)
+
+    rc = te.main()
+    assert rc == 1
+    manifest = json.loads((workspace / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert manifest == existing
+
+
+def test_main_startup_unresolvable_workspace_still_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.delenv("MAC_TASK_FILE", raising=False)
+    monkeypatch.delenv("MAC_TASK_WORKSPACE", raising=False)
+    monkeypatch.setattr(te, "emit_telemetry", lambda event, **d: None)
+
+    rc = te.main()
+    assert rc == 1

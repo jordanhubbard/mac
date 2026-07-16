@@ -3017,15 +3017,67 @@ def finalize_with_new_file_recovery(task_workspace, task, task_id) -> None:
     run_deterministic_git_finalizer(task_workspace, task)
 
 
+def _write_startup_failclose_evidence(task_workspace: Path, task_id: Any, detail: str) -> None:
+    """Best-effort fail-closed evidence when startup dies before the run begins.
+
+    Never clobbers an existing manifest and never fabricates a passing test or
+    repo_change — records only the observed startup failure.
+    """
+    path = task_workspace / "mac-evidence.json"
+    if path.exists():
+        return
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "operator_result",
+        "task_id": task_id,
+        "summary": "Executor startup failed before the agent run began: %s" % detail,
+    }
+    task_workspace.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
-    task_file = Path(os.environ["MAC_TASK_FILE"])
-    task_workspace = Path(os.environ["MAC_TASK_WORKSPACE"])
-    task_payload = json.loads(task_file.read_text(encoding="utf-8"))
-    task = task_payload.get("task", task_payload)
-    metadata = task.get("metadata") if isinstance(task, dict) else {}
-    review_context = metadata.get("review_context") if isinstance(metadata, dict) else None
-    is_review = isinstance(review_context, dict)
-    task_id = task.get("id") if isinstance(task, dict) else None
+    try:
+        task_file = Path(os.environ["MAC_TASK_FILE"])
+        task_workspace = Path(os.environ["MAC_TASK_WORKSPACE"])
+        task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+        task = task_payload.get("task", task_payload)
+        metadata = task.get("metadata") if isinstance(task, dict) else {}
+        review_context = metadata.get("review_context") if isinstance(metadata, dict) else None
+        is_review = isinstance(review_context, dict)
+        task_id = task.get("id") if isinstance(task, dict) else None
+    except Exception as exc:  # noqa: BLE001 - startup must fail closed, not open
+        detail = "%s: %s" % (type(exc).__name__, exc)
+        resolved_task_id: Optional[str] = None
+        try:
+            raw = os.environ.get("MAC_TASK_FILE")
+            if raw:
+                payload = json.loads(Path(raw).read_text(encoding="utf-8"))
+                inner = payload.get("task", payload) if isinstance(payload, dict) else None
+                if isinstance(inner, dict):
+                    resolved_task_id = inner.get("id")
+        except Exception:  # noqa: BLE001 - best-effort task_id resolution only
+            resolved_task_id = None
+        try:
+            emit_telemetry(
+                "executor_startup_failed",
+                task_id=resolved_task_id,
+                level="warning",
+                detail=detail,
+            )
+        except Exception:  # noqa: BLE001 - telemetry must never mask the error
+            pass
+        workspace_raw = os.environ.get("MAC_TASK_WORKSPACE")
+        if workspace_raw:
+            try:
+                _write_startup_failclose_evidence(
+                    Path(workspace_raw), resolved_task_id, detail
+                )
+            except Exception:  # noqa: BLE001 - evidence write must never re-raise
+                pass
+        sys.stderr.write("[executor] startup failed: %s\n" % detail)
+        return 1
 
     # NeMo Relay: open an Agent scope for this executor run (no-op when
     # relay is absent or MAC_RELAY_OBSERVABILITY != '1').
