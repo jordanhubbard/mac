@@ -6087,10 +6087,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("MAC_URL") or os.environ.get("MAC_HUB_URL") or "http://127.0.0.1:8000",
     )
     # Token resolution honors --fleet (or MAC_FLEET) so machines in
-    # multiple fleets don't collide on a single MAC_API_TOKEN. See
+    # multiple fleets don't collide on a single MAC_API_TOKEN. Resolution
+    # is deferred to main() once --fleet is known: baking a fleet-blind
+    # flat token into the parser default would let a legacy flat
+    # MAC_WORKER_TOKEN win over the correct scoped MAC_WORKER_TOKEN__<FLEET>
+    # (and fire the mac-g55y deprecation warning at parse time). See
     # mac.fleet_env (mac-g55y).
-    from mac.fleet_env import resolve_first as _resolve_token
-
     parser.add_argument(
         "--fleet",
         default=os.environ.get("MAC_FLEET"),
@@ -6098,7 +6100,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--token",
-        default=_resolve_token(["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"]),
+        default=None,
     )
     parser.add_argument("--agent-id", default=os.environ.get("MAC_AGENT_ID"))
     parser.add_argument(
@@ -6242,10 +6244,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    # Re-resolve token using --fleet if it wasn't already supplied; this
-    # lets `--fleet rocky` pick MAC_API_TOKEN__ROCKY without requiring
-    # MAC_FLEET to be exported separately (mac-g55y).
-    if args.token is None and args.fleet:
+    # Resolve the token fleet-aware now that --fleet (or MAC_FLEET) is
+    # known. An explicit --token still wins; otherwise the fleet-scoped
+    # MAC_*__<FLEET> form takes precedence over the legacy flat form, and
+    # the mac-g55y deprecation warning only fires when we actually fall
+    # back to the flat form.
+    if args.token is None:
         from mac.fleet_env import resolve_first as _rt
 
         args.token = _rt(["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"], fleet=args.fleet)

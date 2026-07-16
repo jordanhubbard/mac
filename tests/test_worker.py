@@ -105,7 +105,17 @@ def test_mac_worker_cli_defaults_to_deployed_hub_env(monkeypatch):
     args = build_parser().parse_args(["--register", "--heartbeat-only"])
 
     assert args.url == "http://hub.example.internal:8789"
-    assert args.token == "worker-token"
+    # Token resolution is deferred to main() so a fleet-scoped value can win
+    # over the legacy flat form (mac-g55y); the parser leaves it unset.
+    assert args.token is None
+    from mac.fleet_env import resolve_first
+
+    assert (
+        resolve_first(
+            ["MAC_TOKEN", "MAC_WORKER_TOKEN", "MAC_API_TOKEN"], fleet=args.fleet
+        )
+        == "worker-token"
+    )
     assert args.hermes_instance_id == "hermes_rocky"
 
 
