@@ -3993,7 +3993,19 @@ CURL
 trap mark_worker_offline TERM INT
 
 if [ "${MAC_AGENT_STARTUP_SELF_TEST:-1}" != "0" ]; then
-  "$HOME/.mac/bin/mac-agent-startup-self-test"
+  # The self-test declares its verdict through its exit code: 0 = passed or
+  # degraded (non-blocking), 1 = a genuine blocking misconfiguration.  Guard the
+  # unguarded invocation so 'set -e' only kills mac-agent-service on a real
+  # blocking verdict; any other non-zero exit (a transient probe blip that the
+  # self-test itself already downgrades, or an internal self-test fault) leaves
+  # the worker degraded but running instead of crash-looping the service.
+  selftest_rc=0
+  "$HOME/.mac/bin/mac-agent-startup-self-test" || selftest_rc=$?
+  if [ "$selftest_rc" -eq 1 ]; then
+    exit 1
+  elif [ "$selftest_rc" -ne 0 ]; then
+    echo "mac-agent-service: startup self-test exited $selftest_rc; continuing degraded" >&2
+  fi
 fi
 
 common=(
@@ -4120,17 +4132,50 @@ def safe_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-def probe_http(path_base: str, suffix: str, headers: dict[str, str] | None = None) -> tuple[bool, str]:
+def is_transient_timeout(exc: BaseException) -> bool:
+    # A read/connect timeout during a shared-service probe is a transient hub
+    # blip, not a misconfiguration: socket timeouts surface as ``TimeoutError``
+    # (an ``OSError`` subclass) directly or wrapped inside ``URLError.reason``.
+    candidate: BaseException | None = exc
+    if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, BaseException):
+        candidate = exc.reason
+    if isinstance(candidate, TimeoutError):
+        return True
+    text = str(candidate).lower()
+    return "timed out" in text or "timeout" in text
+
+
+def probe_http(
+    path_base: str,
+    suffix: str,
+    headers: dict[str, str] | None = None,
+    *,
+    attempts: int = 3,
+    backoff: float = 1.5,
+) -> tuple[bool, str, bool]:
+    # Returns (ok, error, timed_out). ``timed_out`` is True only when every
+    # bounded retry exhausted on a transient timeout, letting the caller class a
+    # persistent shared-service timeout as degraded rather than a hard block.
     if not path_base:
-        return False, "endpoint is not configured"
+        return False, "endpoint is not configured", False
     url = path_base.rstrip("/") + suffix
     request = urllib.request.Request(url, headers=headers or {})
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            response.read(1_048_576)
-        return True, ""
-    except (OSError, urllib.error.URLError) as exc:
-        return False, safe_error(exc)
+    last_error = ""
+    last_timed_out = False
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                response.read(1_048_576)
+            return True, "", False
+        except (OSError, urllib.error.URLError) as exc:
+            last_error = safe_error(exc)
+            last_timed_out = is_transient_timeout(exc)
+            # Only retry transient timeouts; a refused connection or bad status
+            # is deterministic and retrying just delays the verdict.
+            if not last_timed_out or attempt >= max(1, attempts):
+                break
+            time.sleep(backoff * attempt)
+    return False, last_error, last_timed_out
 
 
 def classify_openclaw_agent_failure(output: str) -> str:
@@ -4263,6 +4308,10 @@ openclaw_required = os.environ.get("MAC_CHAT_GATEWAY_IMPL", "").strip().lower() 
 openclaw_gateway_installed = resources_path.is_file() and openclaw_agent_bin.is_file()
 openclaw_serves_gateway = openclaw_required and openclaw_gateway_installed
 openclaw_problems: list[str] = []
+# Persistent-but-transient shared-service timeouts (Qdrant/Firecrawl/hub) are
+# recorded here so they degrade the node instead of blocking startup, mirroring
+# the OpenClaw gateway-decoupling degraded pattern below.
+transient_problems: list[str] = []
 
 
 def add_openclaw_problem(message: str) -> None:
@@ -4309,9 +4358,12 @@ if qdrant_key:
 if qdrant_required and not qdrant_url:
     problems.append("QDRANT_URL is required but not configured")
 elif qdrant_url:
-    ok, error = probe_http(qdrant_url, "/collections", qdrant_headers)
+    ok, error, timed_out = probe_http(qdrant_url, "/collections", qdrant_headers)
     if not ok:
-        problems.append(f"Qdrant shared memory endpoint is unreachable: {error}")
+        message = f"Qdrant shared memory endpoint is unreachable: {error}"
+        problems.append(message)
+        if timed_out:
+            transient_problems.append(message)
     checks["qdrant_shared_memory"] = ok
 
 if not truthy(firecrawl_required_flag):
@@ -4322,9 +4374,12 @@ if firecrawl_key and firecrawl_key.lower() != "none":
 if firecrawl_required and not firecrawl_url:
     problems.append("FIRECRAWL_API_URL is required but not configured")
 elif firecrawl_url:
-    ok, error = probe_http(firecrawl_url, "/health", firecrawl_headers)
+    ok, error, timed_out = probe_http(firecrawl_url, "/health", firecrawl_headers)
     if not ok:
-        problems.append(f"Firecrawl web search endpoint is unreachable: {error}")
+        message = f"Firecrawl web search endpoint is unreachable: {error}"
+        problems.append(message)
+        if timed_out:
+            transient_problems.append(message)
     checks["firecrawl_web_search"] = ok
 
 if openclaw_required:
@@ -4395,6 +4450,11 @@ if openclaw_serves_gateway:
     non_blocking_problems: list[str] = []
 else:
     non_blocking_problems = list(openclaw_problems)
+# A shared-service (or hub) probe that only ever timed out is a transient hub
+# blip after bounded retries, so it degrades the node instead of blocking start.
+for problem in transient_problems:
+    if problem not in non_blocking_problems:
+        non_blocking_problems.append(problem)
 blocking_problems = [problem for problem in problems if problem not in non_blocking_problems]
 status = "passed"
 if blocking_problems:
@@ -4439,6 +4499,7 @@ report = {
     "problems": problems,
     "blocking_problems": blocking_problems,
     "non_blocking_problems": non_blocking_problems,
+    "transient_problems": transient_problems,
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

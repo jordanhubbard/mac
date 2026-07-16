@@ -6471,6 +6471,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     except MacApiError as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, indent=2, sort_keys=True))
         return 1
+    except (TimeoutError, ConnectionError) as exc:
+        # A bare socket timeout / connection error can still surface from paths
+        # that bypass MacApiClient's wrapper (e.g. the --heartbeat-only startup
+        # path or an ad-hoc transport). Left unwrapped it escapes the MacApiError
+        # guard and, under the service wrapper's ``set -e``, crash-loops
+        # mac-agent-service on a transient hub blip. Treat it as a recoverable
+        # error exit instead of an unhandled traceback.
+        print(
+            json.dumps(
+                {"status": "error", "error": "transient transport error: %s" % exc},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1
     return 0
 
 
