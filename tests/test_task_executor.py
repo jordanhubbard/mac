@@ -23,6 +23,7 @@ from mac import executor_finalizer as finalizer
 from mac import executor_prompt as prompt
 from mac import executor_scope as scope
 from mac import task_executor as te
+from mac import executor_sandbox  # canonical module; `te` is its alias
 from mac.repository_recovery import RepositoryRecoveryError
 
 
@@ -4361,6 +4362,217 @@ def test_recover_from_new_file_refusal_reports_push_failure(tmp_path, monkeypatc
     assert "guarded recovery push failed" in str(excinfo.value)
     assert "remote rejected" in str(excinfo.value)
 
+
+
+# ---------------------------------------------------------------------------
+# recover_from_new_file_refusal — module contract via `import mac.executor_sandbox`
+#
+# The task contract requires these tests to reach the function through the
+# canonical ``mac.executor_sandbox`` module (``task_executor`` is only a thin
+# alias).  They exercise the injectable git/push seams so no live remote or
+# real gitops infrastructure is required.
+# ---------------------------------------------------------------------------
+
+def _seed_recovery_worktree_via_sandbox(tmp_path, monkeypatch, *, task_id,
+                                        untracked=(), staged=()):
+    """Build a preserved new-file refusal using the sandbox module's helpers.
+
+    Returns ``(workspace, worktree, task)``.  The worktree is a real git repo
+    whose "new" files are present but uncommitted so recovery can stage them.
+    """
+    monkeypatch.setenv("MAC_TASK_REPO_BASE_SHA", "base-sandbox")
+    monkeypatch.setenv("MAC_TASK_REPO_BRANCH", "task-sandbox")
+    monkeypatch.setenv("MAC_TASK_REPO_LEASE_ID", "lease-sandbox")
+
+    work = tmp_path / "work"
+    _git(tmp_path, "init", str(work))
+    _git(work, "config", "user.email", "t@t")
+    _git(work, "config", "user.name", "t")
+    (work / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", "init")
+    _git(work, "branch", "-M", "main")
+
+    status_lines = []
+    for path in untracked:
+        (work / path).write_text("new untracked\n", encoding="utf-8")
+        status_lines.append("?? %s" % path)
+    for path in staged:
+        (work / path).write_text("new staged\n", encoding="utf-8")
+        _git(work, "add", "--", path)
+        status_lines.append("A  %s" % path)
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    task = {"id": task_id, "title": "Recover generated files", "metadata": {}}
+    original_evidence = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "repo_change",
+        "summary": "executor produced verified files",
+        "tests": [{"name": "unit", "status": "pass"}],
+    }
+    (ws / "mac-evidence.json").write_text(
+        json.dumps(original_evidence), encoding="utf-8"
+    )
+
+    executor_sandbox._write_git_finalizer_refusal_manifest(
+        ws, task, work,
+        "new files present at finalize time — agent must commit ALL new files",
+        status_stdout="\n".join(status_lines) + "\n",
+        untracked_paths=list(untracked),
+        staged_new_paths=list(staged),
+    )
+    return ws, work, task
+
+
+def _patch_recovery_publication(monkeypatch, *, sync_status="rebased"):
+    """Stub the canonical-sync + publication-target seams for happy paths."""
+    monkeypatch.setattr(
+        finalizer, "sync_worktree_with_canonical",
+        lambda worktree, remote, branch: {"status": sync_status},
+    )
+    monkeypatch.setattr(
+        finalizer, "resolve_canonical_publication_target",
+        lambda **kw: "TARGET",
+    )
+
+
+def test_recover_from_new_file_refusal_is_accessible_on_sandbox_module():
+    """Contract (6): the function is reachable via ``executor_sandbox``."""
+    assert hasattr(executor_sandbox, "recover_from_new_file_refusal")
+    assert callable(executor_sandbox.recover_from_new_file_refusal)
+    # ``task_executor`` is only an alias of the same module object.
+    assert executor_sandbox.recover_from_new_file_refusal is (
+        te.recover_from_new_file_refusal
+    )
+
+
+def test_recover_from_new_file_refusal_sandbox_untracked_happy_path(
+    tmp_path, monkeypatch
+):
+    """Contract (1): untracked new files are committed, pushed, and reported."""
+    ws, work, task = _seed_recovery_worktree_via_sandbox(
+        tmp_path, monkeypatch, task_id="t-untracked",
+        untracked=("generated.py",),
+    )
+    _patch_recovery_publication(monkeypatch)
+    pushed = []
+
+    result = executor_sandbox.recover_from_new_file_refusal(
+        ws, task,
+        push_runner=lambda target: pushed.append(target)
+        or _FakePublication(head_sha="untracked-head"),
+    )
+
+    assert result["schema"] == finalizer.NEW_FILE_RECOVERY_SCHEMA
+    assert result["status"] == "complete"
+    assert result["task_id"] == "t-untracked"
+    assert result["refusal_kind"] == "untracked_new_files"
+    assert result["recovered_files"] == ["generated.py"]
+    assert result["recovery_head_sha"] == "untracked-head"
+    assert result["remote_verified"] is True
+    assert result["error"] is None
+    assert pushed == ["TARGET"]
+
+    # The preserved file was really committed in the worktree.
+    committed = _git(work, "show", "--name-only", "--pretty=format:", "HEAD")
+    assert "generated.py" in committed.stdout
+
+
+def test_recover_from_new_file_refusal_sandbox_staged_only_happy_path(
+    tmp_path, monkeypatch
+):
+    """Contract (2): staged-but-uncommitted new files recover cleanly."""
+    ws, work, task = _seed_recovery_worktree_via_sandbox(
+        tmp_path, monkeypatch, task_id="t-staged",
+        staged=("staged_only.py",),
+    )
+    _patch_recovery_publication(monkeypatch, sync_status="fresh")
+
+    result = executor_sandbox.recover_from_new_file_refusal(
+        ws, task,
+        push_runner=lambda target: _FakePublication(head_sha="staged-head"),
+    )
+
+    assert result["status"] == "complete"
+    assert result["task_id"] == "t-staged"
+    assert result["refusal_kind"] == "staged_new_files"
+    assert result["recovered_files"] == ["staged_only.py"]
+    assert result["recovery_head_sha"] == "staged-head"
+    assert result["remote_verified"] is True
+
+    committed = _git(work, "show", "--name-only", "--pretty=format:", "HEAD")
+    assert "staged_only.py" in committed.stdout
+
+
+def test_recover_from_new_file_refusal_sandbox_missing_state_fails_closed(
+    tmp_path,
+):
+    """Contract (3): no preserved snapshot -> fails closed on the missing state.
+
+    The service wraps the underlying :class:`PreservationMissing` in a
+    :class:`RepositoryRecoveryError` and chains it as ``__cause__`` so the
+    original failure remains visible.
+    """
+    ws = tmp_path / "empty-ws"
+    ws.mkdir()
+    with pytest.raises(RepositoryRecoveryError) as excinfo:
+        executor_sandbox.recover_from_new_file_refusal(ws, {"id": "t"})
+    assert "preserved executor state is unusable" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, executor_sandbox.PreservationMissing)
+
+
+def test_recover_from_new_file_refusal_sandbox_commit_failure_raises(
+    tmp_path, monkeypatch
+):
+    """Contract (4): a failing git runner surfaces a RepositoryRecoveryError."""
+    ws, _work, task = _seed_recovery_worktree_via_sandbox(
+        tmp_path, monkeypatch, task_id="t-git-fail",
+        untracked=("generated.py",),
+    )
+
+    calls = []
+
+    def failing_git(args, cwd):
+        calls.append(list(args))
+        # Fail the commit; allow add + the staged-change probe to look normal.
+        if args and args[-1] != "generated.py" and "commit" in args:
+            return _FakeResult(1, stderr="commit exploded")
+        if args[:2] == ["diff", "--cached"]:
+            return _FakeResult(1)  # returncode 1 == there IS a staged change
+        return _FakeResult(0)
+
+    with pytest.raises(RepositoryRecoveryError) as excinfo:
+        executor_sandbox.recover_from_new_file_refusal(
+            ws, task,
+            git_runner=failing_git,
+            push_runner=lambda target: _FakePublication(),
+        )
+    assert "recovery commit failed" in str(excinfo.value)
+    assert "commit exploded" in str(excinfo.value)
+    # The staging add ran before the commit blew up.
+    assert ["add", "--", "generated.py"] in calls
+
+
+def test_recover_from_new_file_refusal_sandbox_push_failure_raises(
+    tmp_path, monkeypatch
+):
+    """Contract (5): a failing push runner surfaces a RepositoryRecoveryError."""
+    ws, _work, task = _seed_recovery_worktree_via_sandbox(
+        tmp_path, monkeypatch, task_id="t-push-fail",
+        untracked=("generated.py",),
+    )
+    _patch_recovery_publication(monkeypatch, sync_status="fresh")
+
+    with pytest.raises(RepositoryRecoveryError) as excinfo:
+        executor_sandbox.recover_from_new_file_refusal(
+            ws, task,
+            push_runner=lambda target: _FakePublication(
+                ok=False, remote_verified=False, error="remote rejected push"),
+        )
+    assert "guarded recovery push failed" in str(excinfo.value)
+    assert "remote rejected push" in str(excinfo.value)
 
 def test_finalizer_phase_timeout_supports_per_phase_override(monkeypatch):
     monkeypatch.setenv("MAC_FINALIZER_GUARDED_PUSH_TIMEOUT", "42.5")
