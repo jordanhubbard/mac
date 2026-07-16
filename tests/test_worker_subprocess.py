@@ -166,3 +166,65 @@ def test_executor_does_not_duplicate_existing_cargo_dir(tmp_path, monkeypatch) -
 
     entries = result.stdout.strip().split(os.pathsep)
     assert entries.count(str(cargo_bin)) == 1
+
+
+def test_executor_injects_home_cargo_dir_when_cargo_home_unset(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("CARGO_HOME", raising=False)
+    home = tmp_path / "home"
+    cargo_bin = home / ".cargo" / "bin"
+    cargo_bin.mkdir(parents=True)
+    monkeypatch.setattr(
+        "mac.worker_subprocess.Path.home", classmethod(lambda cls: home)
+    )
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    executor = SubprocessExecutor(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ['PATH'])",
+        ],
+        timeout=10,
+    )
+
+    result = executor({"id": "task_home_cargo", "metadata": {}}, tmp_path)
+
+    entries = result.stdout.strip().split(os.pathsep)
+    assert entries[0] == str(cargo_bin)
+    assert entries[-2:] == ["/usr/bin", "/bin"]
+
+
+def test_executor_does_not_inject_nonexistent_cargo_dir(tmp_path, monkeypatch) -> None:
+    # CARGO_HOME and Path.home() both point at directories whose cargo bin/ does
+    # not exist on disk, so no cargo dir may be injected into the child PATH.
+    cargo_home = tmp_path / "missing-cargo"
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setattr(
+        "mac.worker_subprocess.Path.home",
+        classmethod(lambda cls: tmp_path / "unused-home"),
+    )
+    # Isolate the child PATH from host system dirs (e.g. /usr/local/bin) that are
+    # also cargo candidates, so this assertion is host-independent.
+    sentinel = tmp_path / "orig-path"
+    sentinel.mkdir()
+    monkeypatch.setenv("PATH", str(sentinel))
+
+    executor = SubprocessExecutor(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ['PATH'])",
+        ],
+        timeout=10,
+    )
+
+    result = executor({"id": "task_missing_cargo", "metadata": {}}, tmp_path)
+
+    entries = result.stdout.strip().split(os.pathsep)
+    # The non-existent cargo candidate must be absent from the child PATH.
+    assert str(cargo_home / "bin") not in entries
+    assert str(tmp_path / "unused-home" / ".cargo" / "bin") not in entries
+    # The original PATH entry is preserved.
+    assert str(sentinel) in entries
