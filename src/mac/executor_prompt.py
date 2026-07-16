@@ -347,6 +347,9 @@ def classify_outcome(task_workspace: Path, task: Dict[str, Any], returncode: int
         "tests": tests_state,
         "checks_pass": checks_pass if checks else None,
     }
+    # Surface the exact new files that were left uncommitted so the curated
+    # lesson can tell the next agent to `git add -A` and commit ALL new files
+    # up front instead of wasting an attempt on the same new-file refusal.
     new_file_refusal = _is_untracked_new_files_refusal(manifest, repo, checks)
     if new_file_refusal:
         signals["untracked_files"] = _string_list(repo.get("untracked_files"))
@@ -392,6 +395,11 @@ def _is_untracked_new_files_refusal(
     Delegates to :func:`classify_finalizer_refusal` so the two stay in sync.
     The existing boolean contract is preserved: any non-``clean`` kind counts
     as a refusal.
+
+    A ``True`` here maps to the ``untracked_new_files_at_finalize`` error
+    signature, which feeds the outcome-grounded lesson that instructs the
+    next agent to run ``git add -A`` and commit ALL new files up front —
+    leaving NO untracked or staged-new files — before declaring done.
     """
     return classify_finalizer_refusal(manifest, repo, checks) is not FinalizerRefusalKind.clean
 

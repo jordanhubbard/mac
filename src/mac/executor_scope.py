@@ -35,10 +35,14 @@ _SCOPE_LARGE_REPO_CMDS = 3
 MAC_TASK_SUMMARY_BEGIN = "=== MAC TASK SUMMARY ==="
 MAC_TASK_SUMMARY_END = "=== END MAC TASK SUMMARY ==="
 NEW_FILE_COMMIT_RULE = (
-    "New-file handoff: leave every intended source and test file in the repository "
-    "worktree and keep generated artifacts covered by .gitignore. The deterministic "
-    "host finalizer stages and commits the complete repository change, including new "
-    "files, because sandbox Git index and commit state are not authoritative."
+    "New-file handoff: before you declare the task done, run `git add -A` and commit "
+    "EVERY intended new source and test file in the worktree — leave NO untracked or "
+    "staged-but-uncommitted new files behind, and keep generated artifacts covered by "
+    ".gitignore. Committing all new files up front is the agent's responsibility; do "
+    "not rely on a later pass to notice them. The deterministic host finalizer also "
+    "stages and commits the complete repository change as a backstop, because sandbox "
+    "Git index and commit state are not authoritative, but leaving new files uncommitted "
+    "wastes an attempt and must be avoided."
 )
 
 
