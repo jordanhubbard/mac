@@ -329,6 +329,10 @@ mac fleet soul-audit --fleet "$FLEET" --agent "$AGENT"
 
 - [ ] Registry sets `supervisor: supervisord`, `worker.mode: loop`, and
       `hermes.gateway_impl: none`.
+- [ ] `worker.openshell_required` is explicitly true or the pure-worker default
+      is visible in the generated deploy spec. Deploy automatically runs the
+      OpenShell bootstrap with `--enable --fail-closed`; it does not assume a
+      binary under ephemeral `~/.local` survived a pod replacement.
 - [ ] The route uses the declared bastion, strict known hosts, explicit identity,
       and in-cluster target. Never infer pod DNS from the agent name.
 - [ ] Direct mesh reachability to the hub does not wait for an unnecessary
@@ -390,6 +394,7 @@ mac repo refs audit --repo .
 | Reviews stop publishing after rotation | verdict signed under previous key | Verify against the one retained previous key; after a second rotation, re-review. |
 | Lease renewal silently stops after hub timeout | unwrapped transport error | Treat transient OSError/timeout as recoverable and guard every background loop. |
 | Pure worker deploy asks for Slack/persona/gateway | role coupling | Set and honor `gateway_impl=none`; skip all chat setup and checks. |
+| Fresh pure worker reports every coding route failed and `openshell` is absent | ephemeral runtime prerequisite missing | Treat `gateway_impl=none` as OpenShell-required, bootstrap it during deploy, keep the worker drained on failure, then repeat the sandbox sentinel. |
 | Fresh pod rejects Python requirement | base-image Python bleed-through | Use the deployer's pinned `uv` interpreter. |
 | `supervisorctl` returns permission errors | root-only supervisord socket | Use the supported passwordless `sudo supervisorctl` path. |
 | Qdrant panics spawning threads | PID cap too low on high-core host | Raise `QDRANT_PIDS_LIMIT`, redeploy, and require HTTP 200 readiness. |
@@ -412,6 +417,7 @@ incident or durable fix rather than copied one by one.
 | Attestation churn and publication wedge | task history from the completion-stall incident | `62021be`, `f0715ee` |
 | Transient hub failures killing workers | completion-stall incident history | `2f4cb20` |
 | Pure-worker/chat-gateway coupling | fresh-worker provisioning failures | `86ab73d`, `a99d121` |
+| Fresh pure-worker OpenShell missing after pod replacement | second canary-worker route-verification failure during the 2026-07-16 rollout | role-derived OpenShell bootstrap in fleet deploy |
 | Old host Python and fatal optional persona | fresh-worker provisioning failures | `37ac857` |
 | Vault projection and macOS reverse tunnel | new-worker deploy failures | `412f8a1` |
 | OpenShell hub-local egress | continuity/peer-bridge failure | `c914e3e` |

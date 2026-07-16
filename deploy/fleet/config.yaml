@@ -49,6 +49,10 @@ defaults:
     telegram_account_id: default
   worker:
     mode: heartbeat
+    # Optional override. gateway_impl=none pure workers default to true so a
+    # fresh pod bootstraps OpenShell instead of depending on stale ~/.local
+    # state. Conversational nodes default to false unless set explicitly.
+    # openshell_required: true
     capabilities:
       - ops
       - python

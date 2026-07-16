@@ -2337,6 +2337,7 @@
     "name": "MAC_DEPLOY_OPENSHELL_REQUIRED",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "bool"

@@ -62,3 +62,29 @@ the wrong identity or services to a host.
 Targets use `user@host` or `user@host:port`. Keep credentials out of this
 file: use identity-file references and environment/secret references rather
 than private-key bytes or tokens.
+
+## Worker confinement
+
+`worker.openshell_required` controls whether fleet deploy must bootstrap and
+fail-close the OpenShell task runtime on that node. It is optional. A pure
+worker with `hermes.gateway_impl: none` defaults to `true`; conversational
+nodes default to `false` unless the field is explicitly enabled.
+
+```yaml
+agents:
+  worker-1:
+    target: operator@worker-1.example.net
+    os: linux
+    supervisor: supervisord
+    hermes:
+      gateway_impl: none
+    worker:
+      mode: loop
+      openshell_required: true
+```
+
+Required nodes automatically run the idempotent OpenShell bootstrap with
+enforcement and fail-closed execution during every deploy. This is deliberate
+for ephemeral pods: `~/.mac` may survive while `~/.local/bin/openshell` does
+not. The deploy must rebuild missing runtime prerequisites rather than accept a
+heartbeat from a worker that cannot execute a sandboxed coding route.

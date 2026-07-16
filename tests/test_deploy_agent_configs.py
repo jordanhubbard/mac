@@ -2191,6 +2191,70 @@ def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
     assert 'echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"' in deploy_host_tail
 
 
+def test_pure_worker_deploy_requires_and_bootstraps_openshell(tmp_path):
+    base = {
+        "sample": True,
+        "fleet_name": "example",
+        "hub_agent": "hub",
+        "hub_url": "http://hub.example:8789",
+        "agents": [],
+    }
+    registry = {
+        "version": 1,
+        "fleets": {
+            "hub": {
+                "sample": False,
+                "fleet_name": "test",
+                "hub_agent": "hub",
+                "hub_url": "http://hub.example:8789",
+                "agents": {
+                    "hub": {
+                        "target": "operator@hub.example",
+                        "os": "linux",
+                        "hermes": {"gateway_impl": "openclaw"},
+                    },
+                    "worker-1": {
+                        "target": "operator@worker.example",
+                        "os": "linux",
+                        "supervisor": "supervisord",
+                        "hermes": {"gateway_impl": "none"},
+                        "worker": {"mode": "loop"},
+                    },
+                },
+            }
+        },
+    }
+    base_path = tmp_path / "base.yaml"
+    registry_path = tmp_path / "fleets.yaml"
+    base_path.write_text(yaml.safe_dump(base), encoding="utf-8")
+    registry_path.write_text(yaml.safe_dump(registry), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            fleet_config_query_source(),
+            "specs",
+            str(base_path),
+            str(registry_path),
+            "hub",
+            "worker-1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().split("|")[-1] == "1"
+
+    deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    assert 'add_remote_env MAC_DEPLOY_OPENSHELL_REQUIRED "$openshell_required"' in deploy
+    assert 'run_openshell_bootstrap "$agent" "$target" "$effective_openshell_args"' in deploy
+    assert '*" --enable "*' in deploy
+    assert '*" --fail-closed "*' in deploy
+
+
 def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():
     script = deploy_script_text()
     classifier = script.split("classify_gateway_logs() {", 1)[1].split(

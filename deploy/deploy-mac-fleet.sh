@@ -923,6 +923,15 @@ for name in selected:
         text_field(webdav.get("root")),
         webdav_public_path,
         hermes_surface_payload(hermes),
+        # Pure workers are code executors and therefore require the confined
+        # OpenShell runtime by default.  Conversational nodes remain opt-in,
+        # while an explicit worker.openshell_required value wins for either
+        # role.  Carry this in the deploy spec so a fresh/ephemeral node cannot
+        # inherit an enabled policy but miss the CLI and gateway binaries.
+        bool_field(
+            worker.get("openshell_required"),
+            text_field(hermes.get("gateway_impl") or "hermes") == "none",
+        ),
     ]
     require_no_pipe(fields)
     print("|".join(fields))
@@ -1136,28 +1145,22 @@ REMOTE
   return 1
 }
 
-# Optional, opt-in: run the OpenShell sandbox-enforcement bootstrap on the node
-# after a successful deploy (the source sync already placed the script + the
-# multi-arch Containerfile under $MAC_HOME/src/mac/deploy/openshell). Default OFF
-# so existing deploys are unchanged. Enable with MAC_DEPLOY_OPENSHELL=1; pass
-# flags via MAC_DEPLOY_OPENSHELL_ARGS (e.g. "--enable" then, once a real task
-# validates, "--enable --fail-closed"). Default (no args) sets everything up but
-# does NOT flip enforcement. An opted-in bootstrap is part of the deployment
-# transaction: failure leaves the worker stopped and drained instead of exposing
-# a half-configured executor to the dispatcher.
+# Optional or role-required OpenShell sandbox-enforcement bootstrap. Run it
+# after a successful deploy when explicitly requested or the node role requires it. Pure
+# ``gateway_impl=none`` workers require it by default; fleet config may also set
+# ``worker.openshell_required`` explicitly. Required nodes always receive
+# ``--enable --fail-closed`` in addition to any caller flags. Conversational
+# nodes remain opt-in through MAC_DEPLOY_OPENSHELL=1. A bootstrap failure leaves
+# the worker stopped and drained instead of exposing an unconfined executor.
 run_openshell_bootstrap() {
-  local agent="$1" target="$2" ssh_parts=() ssh_args=() ssh_target last_index
-  case "$(printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" | tr 'A-Z' 'a-z')" in
-    1|true|yes|on) ;;
-    *) return 0 ;;
-  esac
+  local agent="$1" target="$2" bootstrap_args="${3:-}" ssh_parts=() ssh_args=() ssh_target last_index
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  echo "==> ${agent}: OpenShell bootstrap (MAC_DEPLOY_OPENSHELL=1, args='${MAC_DEPLOY_OPENSHELL_ARGS:-}')"
+  echo "==> ${agent}: OpenShell bootstrap (args='${bootstrap_args}')"
   ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-    "MAC_DEPLOY_OPENSHELL_ARGS=$(shell_quote "${MAC_DEPLOY_OPENSHELL_ARGS:-}") bash -s" <<'REMOTE'
+    "MAC_DEPLOY_OPENSHELL_ARGS=$(shell_quote "$bootstrap_args") bash -s" <<'REMOTE'
 set -euo pipefail
 mac_home="${MAC_HOME:-$HOME/.mac}"
 bs="$mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh"
@@ -1272,8 +1275,8 @@ validate_router_topology_spec() {
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
-  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 <<<"$spec"
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required <<<"$spec"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
   nvidia_base_url="$(fleet_scoped_env NVIDIA_BASE_URL "$agent")"
@@ -1346,9 +1349,25 @@ deploy_host() {
   scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$SANITIZED_FLEET_REGISTRY" "${scp_target}:${remote_registry}"
 
   echo "==> ${agent}: running one-time deploy"
-  local remote_env=() remote_cmd openshell_enabled=0
+  local remote_env=() remote_cmd openshell_enabled=0 effective_openshell_args="${MAC_DEPLOY_OPENSHELL_ARGS:-}"
   case "$(printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" | tr 'A-Z' 'a-z')" in
     1|true|yes|on) openshell_enabled=1 ;;
+  esac
+  case "$(printf '%s' "$openshell_required" | tr 'A-Z' 'a-z')" in
+    1|true|yes|on)
+      openshell_enabled=1
+      # Required workers may not accidentally turn a bootstrap into setup-only
+      # mode.  Add both enforcement flags unless the caller already supplied
+      # them; other caller flags (for example --skip-image) are preserved.
+      case " $effective_openshell_args " in
+        *" --enable "*) ;;
+        *) effective_openshell_args="${effective_openshell_args:+$effective_openshell_args }--enable" ;;
+      esac
+      case " $effective_openshell_args " in
+        *" --fail-closed "*) ;;
+        *) effective_openshell_args="${effective_openshell_args:+$effective_openshell_args }--fail-closed" ;;
+      esac
+      ;;
   esac
   add_remote_env() { remote_env+=("$1=$(shell_quote "$2")"); }
   add_remote_env MAC_DEPLOY_AGENT "$agent"
@@ -1374,6 +1393,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_WORKER_ALLOWED_PROJECTS "$worker_allowed_projects"
   add_remote_env MAC_DEPLOY_WORKER_REQUIRED_METADATA "$worker_required_metadata"
   add_remote_env MAC_DEPLOY_WORKER_REQUIRE_CANARY "$worker_require_canary"
+  add_remote_env MAC_DEPLOY_OPENSHELL_REQUIRED "$openshell_required"
   add_remote_env MAC_DEPLOY_SUPERVISOR "$supervisor"
   add_remote_env MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT "$shared_services_manager"
   add_remote_env MAC_DEPLOY_QDRANT_URL "$qdrant_url"
@@ -1515,7 +1535,7 @@ deploy_host() {
   if [ "$openshell_enabled" = "1" ]; then
     echo "==> ${agent}: keeping mac-agent stopped while OpenShell validates"
     set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop
-    if run_openshell_bootstrap "$agent" "$target"; then
+    if run_openshell_bootstrap "$agent" "$target" "$effective_openshell_args"; then
       set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart
     else
       echo "==> ${agent}: ERROR: OpenShell bootstrap failed; mac-agent remains stopped and drained" >&2
