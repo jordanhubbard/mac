@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
 import pytest
 
 from mac.api_client import MacApiError
-from mac.worker_subprocess import SubprocessExecutor, _ensure_json_object
+from mac.worker_subprocess import (
+    SubprocessExecutor,
+    _cargo_path_dirs,
+    _ensure_json_object,
+)
 
 
 def test_executor_requires_a_command() -> None:
@@ -73,3 +78,91 @@ def test_audit_failures_do_not_mask_task_execution() -> None:
     executor._emit_audit({"phase": "started"})
     assert _ensure_json_object({"ok": True}) == {"ok": True}
     assert _ensure_json_object("not-json") == {}
+
+
+def test_cargo_path_dirs_only_returns_existing_dirs(tmp_path, monkeypatch) -> None:
+    cargo_home = tmp_path / "cargo"
+    (cargo_home / "bin").mkdir(parents=True)
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+
+    dirs = _cargo_path_dirs()
+
+    assert dirs[0] == str(cargo_home / "bin")
+    # Nonexistent system dirs must not be returned.
+    assert all(os.path.isdir(entry) for entry in dirs)
+
+
+def test_cargo_path_dirs_falls_back_to_home_cargo(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("CARGO_HOME", raising=False)
+    home = tmp_path / "home"
+    (home / ".cargo" / "bin").mkdir(parents=True)
+    monkeypatch.setattr("mac.worker_subprocess.Path.home", classmethod(lambda cls: home))
+
+    dirs = _cargo_path_dirs()
+
+    assert str(home / ".cargo" / "bin") in dirs
+
+
+def test_cargo_path_dirs_respects_cargo_home(tmp_path, monkeypatch) -> None:
+    cargo_home = tmp_path / "custom-cargo"
+    (cargo_home / "bin").mkdir(parents=True)
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setattr(
+        "mac.worker_subprocess.Path.home",
+        classmethod(lambda cls: tmp_path / "unused-home"),
+    )
+
+    dirs = _cargo_path_dirs()
+
+    assert str(cargo_home / "bin") in dirs
+    assert str(tmp_path / "unused-home" / ".cargo" / "bin") not in dirs
+
+
+def test_executor_prepends_cargo_dirs_to_child_path(tmp_path, monkeypatch) -> None:
+    cargo_home = tmp_path / "cargo"
+    cargo_bin = cargo_home / "bin"
+    cargo_bin.mkdir(parents=True)
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    original_environ_path = os.environ["PATH"]
+
+    executor = SubprocessExecutor(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ['PATH'])",
+        ],
+        timeout=10,
+    )
+
+    result = executor({"id": "task_path", "metadata": {}}, tmp_path)
+
+    child_path = result.stdout.strip()
+    entries = child_path.split(os.pathsep)
+    assert entries[0] == str(cargo_bin)
+    # Existing entries and their order are preserved after the injected dirs.
+    assert entries[-2:] == ["/usr/bin", "/bin"]
+    # os.environ itself must not be mutated.
+    assert os.environ["PATH"] == original_environ_path
+
+
+def test_executor_does_not_duplicate_existing_cargo_dir(tmp_path, monkeypatch) -> None:
+    cargo_home = tmp_path / "cargo"
+    cargo_bin = cargo_home / "bin"
+    cargo_bin.mkdir(parents=True)
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setenv("PATH", f"{cargo_bin}:/usr/bin:/bin")
+
+    executor = SubprocessExecutor(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ['PATH'])",
+        ],
+        timeout=10,
+    )
+
+    result = executor({"id": "task_path_dup", "metadata": {}}, tmp_path)
+
+    entries = result.stdout.strip().split(os.pathsep)
+    assert entries.count(str(cargo_bin)) == 1

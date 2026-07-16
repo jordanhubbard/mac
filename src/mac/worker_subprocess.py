@@ -76,6 +76,37 @@ def _terminate_process_tree(
         pass
 
 
+def _cargo_path_dirs() -> List[str]:
+    """Return existing Rust/cargo tool bin directories, in priority order.
+
+    launchd and other non-login-shell workers often run with a narrow PATH that
+    excludes ``~/.cargo/bin``, so coding-agent children cannot find
+    ``cargo``/``rustc``/``rustup`` even though the worker's own command
+    inventory detects them.  This mirrors the ``_RUST_TOOL_CANDIDATES`` probe in
+    worker.py: ``$CARGO_HOME/bin`` (falling back to ``~/.cargo/bin``),
+    ``/usr/local/bin``, and ``/opt/homebrew/bin``.  Only directories that exist
+    on disk are returned, and duplicates are dropped while preserving order.
+    """
+    cargo_home = os.environ.get("CARGO_HOME")
+    cargo_bin = (
+        Path(cargo_home) / "bin" if cargo_home else Path.home() / ".cargo" / "bin"
+    )
+    candidates = [cargo_bin, Path("/usr/local/bin"), Path("/opt/homebrew/bin")]
+    dirs: List[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        text = str(candidate)
+        if text in seen:
+            continue
+        seen.add(text)
+        try:
+            if candidate.is_dir():
+                dirs.append(text)
+        except OSError:
+            continue
+    return dirs
+
+
 class SubprocessExecutor:
     def __init__(self, argv: List[str], timeout: Optional[float] = None) -> None:
         if not argv:
@@ -131,6 +162,22 @@ class SubprocessExecutor:
         # inside that agent credential's model policy.
         env.pop("MAC_TASK_MODEL", None)
         env.pop("MAC_TASK_MAX_ITERATIONS", None)
+        # Ensure Rust/cargo tool bin dirs are on the child PATH.  A
+        # launchd/non-login-shell worker often runs with a narrow PATH that
+        # excludes ~/.cargo/bin, so coding-agent children cannot find
+        # cargo/rustc/rustup even though the worker's command inventory detects
+        # them.  Prepend any existing-and-not-already-present cargo bin dir to
+        # the child env's PATH, preserving the current entries and their order
+        # after the injected dirs.  This is process-local: os.environ is never
+        # mutated.
+        current_path = env.get("PATH", "")
+        existing_entries = current_path.split(os.pathsep) if current_path else []
+        injected: List[str] = []
+        for cargo_dir in _cargo_path_dirs():
+            if cargo_dir not in existing_entries and cargo_dir not in injected:
+                injected.append(cargo_dir)
+        if injected:
+            env["PATH"] = os.pathsep.join(injected + existing_entries)
         repository_context = _load_repository_context(task_dir)
         env.update(
             {
