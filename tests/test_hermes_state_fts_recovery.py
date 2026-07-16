@@ -69,12 +69,25 @@ def test_classifier_distinguishes_fresh_create_from_orphan():
     assert f("messages_fts", "no such table: messages_fts") is False
     # Missing/lost shadow tables and corruption are recoverable orphans.
     assert f("messages_fts", "no such table: main.messages_fts_data") is True
+    assert f("messages_fts", "no such table: messages_fts_idx") is True
+    assert f("messages_fts", "no such table: messages_fts_docsize") is True
+    assert f("messages_fts", "no such table: messages_fts_content") is True
+    assert f("messages_fts", "no such table: messages_fts_config") is True
     assert f("messages_fts", "vtable constructor failed: messages_fts") is True
     assert f("messages_fts", "malformed database schema (messages_fts)") is True
     assert f("messages_fts", "database disk image is malformed") is True
+    # The trigram index shares the same recovery classifier.
+    assert (
+        f("messages_fts_trigram", "no such table: messages_fts_trigram_data")
+        is True
+    )
     # Non-orphan operational failures must not be treated as recoverable.
     assert f("messages_fts", "database or disk is full") is False
     assert f("messages_fts", "some unrelated error") is False
+    assert f("messages_fts", "disk I/O error") is False
+    assert f("messages_fts", "no such table: messages") is False
+    # Case-insensitive: the bare-vtable fresh-create case is never an orphan.
+    assert f("messages_fts", "no such table: MESSAGES_FTS") is False
 
 
 def test_orphaned_messages_fts_is_recovered(tmp_path):
@@ -140,6 +153,75 @@ def test_recovery_backfills_existing_messages(tmp_path):
             "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'uniquetokenxyz'"
         ).fetchall()
         assert len(rows) == 1
+    finally:
+        recovered._conn.close()
+
+
+def _drop_single_shadow_table(db_path, base: str, suffix: str) -> None:
+    """Delete just one shadow table's declaration, leaving the rest and the
+    virtual-table declaration behind. Dropping ``_data`` (or ``_config``) is
+    enough for the vtable constructor to fail on load — a partial orphan that
+    is distinct from losing every shadow table at once."""
+    raw = sqlite3.connect(str(db_path))
+    try:
+        raw.execute("PRAGMA writable_schema=ON")
+        raw.execute(
+            "DELETE FROM sqlite_master WHERE name = ?", (base + suffix,)
+        )
+        raw.execute("PRAGMA writable_schema=OFF")
+        raw.commit()
+    finally:
+        raw.close()
+
+
+def test_partial_orphan_missing_data_shadow_is_recovered(tmp_path):
+    SessionDB = _session_db_cls()
+    db_path = tmp_path / "state.db"
+
+    db = SessionDB(db_path)
+    db._conn.execute(
+        "INSERT INTO sessions (id, source, started_at) VALUES ('s', 't', 0)"
+    )
+    db._conn.execute(
+        "INSERT INTO messages (session_id, role, content, timestamp) "
+        "VALUES ('s', 'user', 'partialtoken', 1)"
+    )
+    db._conn.commit()
+    db._conn.close()
+
+    # Lose only the _data shadow table; the vtable + other shadows survive.
+    _drop_single_shadow_table(db_path, "messages_fts", "_data")
+    _assert_orphaned(db_path, "messages_fts")
+
+    recovered = SessionDB(db_path)
+    try:
+        assert recovered._fts_enabled
+        rows = recovered._conn.execute(
+            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'partialtoken'"
+        ).fetchall()
+        assert len(rows) == 1
+    finally:
+        recovered._conn.close()
+
+
+def test_both_indexes_orphaned_recover_together(tmp_path):
+    SessionDB = _session_db_cls()
+    db_path = tmp_path / "state.db"
+
+    SessionDB(db_path)._conn.close()
+
+    _orphan_fts_shadow_tables(db_path, "messages_fts")
+    _orphan_fts_shadow_tables(db_path, "messages_fts_trigram")
+    _assert_orphaned(db_path, "messages_fts")
+    _assert_orphaned(db_path, "messages_fts_trigram")
+
+    recovered = SessionDB(db_path)
+    try:
+        assert recovered._fts_enabled
+        recovered._conn.execute("SELECT * FROM messages_fts LIMIT 0").fetchall()
+        recovered._conn.execute(
+            "SELECT * FROM messages_fts_trigram LIMIT 0"
+        ).fetchall()
     finally:
         recovered._conn.close()
 
