@@ -3012,6 +3012,40 @@ def test_agent_argv_sandboxed_fails_closed_when_not_verified(tmp_path, monkeypat
     assert "claude not verified inside the OpenShell sandbox" in joined
 
 
+def test_agent_argv_sandboxed_falls_through_failed_claude_to_codex(
+    tmp_path, monkeypatch
+):
+    from mac import coding_agent as ca
+
+    choices = [
+        ca.CodingAgentChoice(agent="claude", available=True, binary="/b/claude"),
+        ca.CodingAgentChoice(agent="codex", available=True, binary="/b/codex"),
+    ]
+    attempted = []
+
+    def resolve_for_test(*, accept=None):
+        assert accept is not None
+        for candidate in choices:
+            if accept(candidate):
+                return candidate
+        return ca.CodingAgentChoice(agent="", available=False)
+
+    monkeypatch.setattr(ca, "resolve_coding_agent", resolve_for_test)
+    monkeypatch.setattr(
+        te,
+        "_coding_agent_sandbox_ok",
+        lambda candidate: (
+            attempted.append(candidate.agent) or candidate.agent == "codex"
+        ),
+    )
+
+    argv = te._agent_argv("do it", tmp_path, confined=True)
+
+    assert attempted == ["claude", "codex"]
+    assert argv[0] == "codex"
+    assert argv[-1] == "do it"
+
+
 def test_agent_argv_attributes_runner_choice_to_review_task(tmp_path, monkeypatch):
     from mac import coding_agent as ca
 

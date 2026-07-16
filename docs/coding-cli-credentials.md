@@ -48,6 +48,12 @@ classified failure reason.
 target the wrong wire protocol or a dead endpoint. `mac fleet creds-status`
 therefore reports `ROUTE UNAVAILABLE (...)` separately from `NEEDS SYNC`.
 
+Configured CLIs are verified in priority order until one succeeds. A failed
+higher-priority route remains visible in the per-CLI report but does not shadow
+a working fallback. An explicit `MAC_CODING_AGENT=<cli>` pin is different: it
+restricts verification to that CLI and fails closed if the pinned route does
+not work.
+
 ## Roaming workstations
 
 You can only be interactive in one place at a time, and that place holds

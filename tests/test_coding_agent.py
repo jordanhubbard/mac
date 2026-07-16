@@ -98,6 +98,41 @@ def test_priority_claude_beats_codex_and_cursor(tmp_path):
     assert choice.agent == "claude"
 
 
+def test_verification_falls_through_failed_claude_to_codex(tmp_path):
+    seen = []
+    choice = resolve_coding_agent(
+        env={"ANTHROPIC_API_KEY": "anthropic", "OPENAI_API_KEY": "openai"},
+        home=tmp_path,
+        which=_which("claude", "codex"),
+        accept=lambda candidate: (
+            seen.append(candidate.agent) or candidate.agent == "codex"
+        ),
+    )
+
+    assert seen == ["claude", "codex"]
+    assert choice.agent == "codex"
+    assert choice.available is True
+    assert any("claude: route verification failed" in line for line in choice.rationale)
+
+
+def test_verification_does_not_fall_through_explicit_agent_pin(tmp_path):
+    seen = []
+    choice = resolve_coding_agent(
+        env={
+            "MAC_CODING_AGENT": "claude",
+            "ANTHROPIC_API_KEY": "anthropic",
+            "OPENAI_API_KEY": "openai",
+        },
+        home=tmp_path,
+        which=_which("claude", "codex"),
+        accept=lambda candidate: seen.append(candidate.agent) or False,
+    )
+
+    assert seen == ["claude"]
+    assert choice.available is False
+    assert choice.agent == ""
+
+
 def test_codex_chosen_when_claude_unauthed(tmp_path):
     # claude installed but unauthed; codex authed -> codex wins.
     (tmp_path / ".codex").mkdir()

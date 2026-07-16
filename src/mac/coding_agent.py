@@ -10,7 +10,9 @@ decides, from the same environment the executor runs in, *which* coding agent
 non-interactively. When none qualifies the executor fails closed so work cannot
 silently move to an unverified or retired runtime.
 
-Detection (priority order claude -> codex -> cursor; first qualifying wins):
+Detection uses priority order claude -> codex -> cursor.  The first qualifying
+route wins unless a caller supplies an end-to-end verifier; verified resolution
+falls through configured routes until one actually works.
 
 * **claude**: ``claude`` on PATH *and* (``ANTHROPIC_API_KEY`` set *or*
   ``~/.claude.json`` carries a non-empty ``primary_key``).
@@ -453,6 +455,7 @@ def resolve_coding_agent(
     env: Optional[Mapping[str, str]] = None,
     home: Optional[Path] = None,
     which: Optional[Callable[[str], Optional[str]]] = None,
+    accept: Optional[Callable[[CodingAgentChoice], bool]] = None,
 ) -> CodingAgentChoice:
     """Resolve which coding-agent CLI to prefer, or none (fail closed).
 
@@ -460,6 +463,12 @@ def resolve_coding_agent(
     live process environment, ``Path.home()`` and the same service-augmented
     lookup used by :func:`detect_all`. Selection and heartbeat inventory must
     not disagree merely because a supervisor starts with a minimal PATH.
+
+    When ``accept`` is supplied, every configured candidate is passed to it in
+    priority order and selection continues after a rejection.  This keeps a
+    broken higher-priority route from shadowing a working fallback.  An explicit
+    :data:`FORCE_ENV` pin remains strict because it limits the candidate set to
+    that one agent.
     """
     env = os.environ if env is None else env
     home = Path.home() if home is None else home
@@ -488,9 +497,27 @@ def resolve_coding_agent(
         available, binary, auth_source, reason = _DETECTORS[agent](env, home, which)
         rationale.append(reason)
         if available:
-            return _choice(agent, True, binary, auth_source, rationale, env)
+            choice = _choice(agent, True, binary, auth_source, rationale, env)
+            if accept is None:
+                return choice
+            try:
+                accepted = bool(accept(choice))
+            except Exception as exc:  # noqa: BLE001
+                # One broken route must not shadow configured peers.
+                rationale.append(
+                    "%s: verifier raised %s; trying next configured agent"
+                    % (agent, exc.__class__.__name__)
+                )
+                continue
+            if accepted:
+                return choice
+            rationale.append(
+                "%s: route verification failed; trying next configured agent" % agent
+            )
 
-    rationale.append("no coding agent available/authed; executor will fail closed")
+    rationale.append(
+        "no acceptable coding agent available/authed; executor will fail closed"
+    )
     return _choice("", False, "", "", rationale, env)
 
 

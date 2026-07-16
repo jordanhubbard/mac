@@ -3129,7 +3129,13 @@ def test_worker_publishes_matching_sandbox_route_verification(
         "returncode": 0,
         "failure_class": "",
     }
-    monkeypatch.setattr(coding_agent, "resolve_coding_agent", lambda: choice)
+    def resolve_for_test(*, accept=None):
+        assert accept is not None
+        if accept(choice):
+            return choice
+        return coding_agent.CodingAgentChoice(agent="", available=False)
+
+    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
     monkeypatch.setattr(
         task_executor,
         "coding_agent_sandbox_verification",
@@ -3161,6 +3167,103 @@ def test_worker_publishes_matching_sandbox_route_verification(
     assert codex["verified"] is True
     assert codex["provider"] == "mac-router"
     assert codex["protocol"] == "responses"
+    assert "secret-not-reported" not in json.dumps(resources)
+
+
+def test_worker_falls_through_failed_claude_and_publishes_verified_codex(
+    tmp_path: Path,
+    monkeypatch,
+):
+    from mac import coding_agent, task_executor
+
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    api = MacApiClient("http://mac.test", transport=api_transport(client))
+    machine = cp.register_machine("worker-host")
+    agent = cp.register_agent(machine.id, "worker", resources={})
+    choices = [
+        coding_agent.CodingAgentChoice(
+            agent="claude",
+            available=True,
+            binary="/usr/local/bin/claude",
+            auth_source="ANTHROPIC_API_KEY",
+            provider="anthropic",
+            protocol="anthropic-messages",
+            auth_kind="api_key",
+            endpoint="https://api.anthropic.com",
+        ),
+        coding_agent.CodingAgentChoice(
+            agent="codex",
+            available=True,
+            binary="/usr/local/bin/codex",
+            auth_source="OPENAI_API_KEY",
+            provider="openai",
+            protocol="responses",
+            auth_kind="bearer_env",
+            endpoint="https://api.openai.com/v1",
+        ),
+    ]
+    attempted = []
+
+    def resolve_for_test(*, accept=None):
+        assert accept is not None
+        for candidate in choices:
+            if accept(candidate):
+                return candidate
+        return coding_agent.CodingAgentChoice(agent="", available=False)
+
+    def verify_for_test(candidate):
+        attempted.append(candidate.agent)
+        return {
+            **candidate.observable(),
+            "schema": "mac.coding_agent.verification.v1",
+            "agent": candidate.agent,
+            "route_fingerprint": candidate.route_fingerprint(),
+            "verified": candidate.agent == "codex",
+            "checked_at": "2026-07-16T00:00:00+00:00",
+            "failure_class": "" if candidate.agent == "codex" else "probe_failed",
+        }
+
+    monkeypatch.setattr(coding_agent, "resolve_coding_agent", resolve_for_test)
+    monkeypatch.setattr(
+        task_executor,
+        "coding_agent_sandbox_verification",
+        verify_for_test,
+    )
+    monkeypatch.setattr(
+        coding_agent,
+        "_DETECTORS",
+        {
+            **coding_agent._DETECTORS,
+            "claude": lambda *_args: (
+                True,
+                choices[0].binary,
+                choices[0].auth_source,
+                "claude: configured for test",
+            ),
+            "codex": lambda *_args: (
+                True,
+                choices[1].binary,
+                choices[1].auth_source,
+                "codex: configured for test",
+            ),
+        },
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-not-reported")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-not-reported")
+
+    worker = MacWorker(api, agent.id, tmp_path, lambda _t, _d: WorkerExecution(0, "ok"))
+    worker._probe_coding_route()
+    resources = worker._maybe_command_inventory_resources()
+
+    clis = resources["coding_clis"]["clis"]
+    assert attempted == ["claude", "codex"]
+    assert clis["claude"]["verification_status"] == "failed"
+    assert clis["claude"]["verification"]["failure_class"] == "probe_failed"
+    assert clis["codex"]["verification_status"] == "verified"
+    assert clis["codex"]["verified"] is True
+    assert worker._coding_route_report["agent"] == "codex"
+    assert worker._coding_route_report["verified"] is True
     assert "secret-not-reported" not in json.dumps(resources)
 
 

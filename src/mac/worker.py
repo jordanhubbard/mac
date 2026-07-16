@@ -336,9 +336,19 @@ def _resources_with_command_inventory(
 
         verification_by_agent: JsonDict = {}
         if isinstance(coding_verification, dict):
-            verified_agent = str(coding_verification.get("agent") or "")
-            if verified_agent:
-                verification_by_agent[verified_agent] = coding_verification
+            reports = coding_verification.get("reports")
+            if isinstance(reports, dict):
+                for report in reports.values():
+                    if not isinstance(report, dict):
+                        continue
+                    checked_agent = str(report.get("agent") or "")
+                    if checked_agent:
+                        verification_by_agent[checked_agent] = report
+            else:
+                # Backward compatibility with the original single-route report.
+                checked_agent = str(coding_verification.get("agent") or "")
+                if checked_agent:
+                    verification_by_agent[checked_agent] = coding_verification
         merged["coding_clis"] = {
             "schema": "mac.coding_clis.v2",
             "refreshed_at": _utcnow(),
@@ -3868,29 +3878,54 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             thread.start()
 
     def _probe_coding_route(self) -> None:
+        reports: JsonDict = {}
         try:
             from mac.coding_agent import resolve_coding_agent
             from mac.task_executor import coding_agent_sandbox_verification
 
-            choice = resolve_coding_agent()
-            if choice.available:
-                report = coding_agent_sandbox_verification(choice)
+            def _verify(choice: Any) -> bool:
+                try:
+                    checked = dict(coding_agent_sandbox_verification(choice))
+                except Exception as exc:  # noqa: BLE001
+                    # Continue to the next configured route after a probe crash.
+                    checked = {
+                        **choice.observable(),
+                        "schema": "mac.coding_agent.verification.v1",
+                        "agent": choice.agent,
+                        "route_fingerprint": choice.route_fingerprint(),
+                        "verified": False,
+                        "checked_at": _utcnow(),
+                        "failure_class": "probe_exception",
+                        "detail": exc.__class__.__name__,
+                    }
+                reports[choice.agent] = checked
+                return checked.get("verified") is True
+
+            choice = resolve_coding_agent(accept=_verify)
+            verified = bool(choice.available)
+            if verified:
+                failure_class = ""
+            elif reports:
+                failure_class = "all_routes_failed"
             else:
-                report = {
-                    "schema": "mac.coding_agent.verification.v1",
-                    "agent": "",
-                    "verified": False,
-                    "checked_at": _utcnow(),
-                    "failure_class": "not_configured",
-                }
+                failure_class = "not_configured"
+            report = {
+                "schema": "mac.coding_agent.verifications.v1",
+                "agent": choice.agent if verified else "",
+                "verified": verified,
+                "checked_at": _utcnow(),
+                "failure_class": failure_class,
+                "reports": reports,
+            }
         except Exception as exc:  # noqa: BLE001 - verification failure is a route hold, not worker death.
             report = {
-                "schema": "mac.coding_agent.verification.v1",
+                "schema": "mac.coding_agent.verifications.v1",
                 "agent": "",
                 "verified": False,
                 "checked_at": _utcnow(),
                 "failure_class": "probe_exception",
                 "detail": exc.__class__.__name__,
+                "reports": reports,
             }
         with self._coding_route_probe_lock:
             self._coding_route_report = dict(report)

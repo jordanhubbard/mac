@@ -2608,14 +2608,28 @@ def _agent_argv(prompt: str, workspace: Path, *, confined: bool, task: Any = Non
     from . import coding_agent as _ca
 
     task_id = str(task.get("id") or "").strip() if isinstance(task, dict) else ""
-    choice = _ca.resolve_coding_agent()
+    verified_fingerprints = set()
+
+    def _accept_sandbox_route(candidate: Any) -> bool:
+        accepted = _coding_agent_sandbox_ok(candidate)
+        if accepted:
+            verified_fingerprints.add(candidate.route_fingerprint())
+        return accepted
+
+    choice = _ca.resolve_coding_agent(
+        accept=_accept_sandbox_route if confined else None,
+    )
     rationale = list(choice.rationale)
     if not choice.available:
         reason = "no host coding agent is available/authenticated"
         rationale.append(reason)
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
         return _coding_agent_required_failure_argv(reason)
-    if confined and not _coding_agent_sandbox_ok(choice):
+    if (
+        confined
+        and choice.route_fingerprint() not in verified_fingerprints
+        and not _coding_agent_sandbox_ok(choice)
+    ):
         reason = "%s not verified inside the OpenShell sandbox" % choice.agent
         rationale.append(reason)
         _record_runner_choice("coding-agent-required", rationale, task_id=task_id)
