@@ -1,8 +1,8 @@
 """Regression tests: FTS5 orphan-schema recovery in vendored hermes_state.
 
-Background: ``SessionDB._init_schema()`` probes each FTS5 virtual table with a
-``SELECT ... LIMIT 0`` and, on ``no such table``, creates it fresh. But an FTS5
-virtual table can survive in ``sqlite_master`` while its backing shadow tables
+Background: ``SessionDB._init_schema()`` probes each FTS5 virtual table and, on
+``no such table``, creates it fresh. But an FTS5 virtual table can survive in
+``sqlite_master`` while its backing shadow tables
 (``messages_fts_data`` / ``_idx`` / ``_docsize`` / ``_config``) are lost or
 corrupted — an "orphan schema". The probe then raises ``vtable constructor
 failed`` (a bare ``sqlite3.DatabaseError``, not ``no such table``), which used
@@ -57,7 +57,12 @@ def _assert_orphaned(db_path, table: str) -> None:
     chk = sqlite3.connect(str(db_path))
     try:
         with pytest.raises(sqlite3.DatabaseError):
-            chk.execute("SELECT * FROM %s LIMIT 0" % table).fetchall()
+            # LIMIT 0 is metadata-only on some SQLite builds and can miss a
+            # single lost shadow table. The FTS5 integrity command must touch
+            # the complete index and therefore proves the fixture is orphaned.
+            chk.execute(
+                "INSERT INTO %s(%s) VALUES('integrity-check')" % (table, table)
+            )
     finally:
         chk.close()
 

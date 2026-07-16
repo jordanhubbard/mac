@@ -2,7 +2,7 @@ diff --git a/hermes_state.py b/hermes_state.py
 index 771ded9..c7c6f33 100644
 --- a/hermes_state.py
 +++ b/hermes_state.py
-@@ -722,48 +722,206 @@ class SessionDB:
+@@ -722,48 +722,215 @@ class SessionDB:
              pass  # Index already exists
  
          # FTS5 setup (separate because CREATE VIRTUAL TABLE can't be in executescript with IF NOT EXISTS reliably)
@@ -35,11 +35,12 @@ index 771ded9..c7c6f33 100644
 +
 +    # An orphaned FTS schema is a virtual table whose declaration survived but
 +    # whose backing shadow tables (``<name>_data``/``_idx``/``_docsize``/
-+    # ``_config``) were lost or corrupted. A plain probe then raises something
-+    # other than "no such table: <the vtable itself>", so the fresh-create path
-+    # never runs and Hermes startup aborts on a DB that is otherwise fine. Such
-+    # errors are recoverable: drop the orphaned vtable + shadow tables +
-+    # triggers, recreate from the canonical DDL, and backfill.
++    # ``_config``) were lost or corrupted. A real FTS integrity probe then
++    # raises something other than "no such table: <the vtable itself>". A
++    # metadata-only ``SELECT ... LIMIT 0`` is insufficient here: some SQLite
++    # builds optimize it without opening every shadow table. Such errors are
++    # recoverable: drop the orphaned vtable + shadow tables + triggers, recreate
++    # from the canonical DDL, and backfill.
 +    @staticmethod
 +    def _is_fts_orphan_error(table: str, message: str) -> bool:
 +        """True when *message* indicates an orphaned/corrupt FTS shadow schema.
@@ -183,6 +184,14 @@ index 771ded9..c7c6f33 100644
 -        except sqlite3.OperationalError as exc:
 -            if "no such table" not in str(exc).lower():
 +            cursor.execute("SELECT * FROM %s LIMIT 0" % table)
++            # Force FTS5 to read and validate its shadow tables.  In particular,
++            # macOS SQLite can satisfy LIMIT 0 from schema metadata even when a
++            # shadow table such as ``<table>_data`` is missing.  The documented
++            # FTS5 integrity command is read-only with respect to indexed rows
++            # and reliably surfaces that partial-orphan state.
++            cursor.execute(
++                "INSERT INTO %s(%s) VALUES('integrity-check')" % (table, table)
++            )
 +            return True
 +        except sqlite3.DatabaseError as exc:
 +            # Probe the widest recoverable class: a missing top-level vtable
