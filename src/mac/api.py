@@ -4609,10 +4609,12 @@ def create_app(
     def audit_tasks(
         project: Optional[str] = Query(default=None),
         verify_git: bool = Query(default=True),
+        offset: int = Query(default=0, ge=0),
+        limit: Optional[int] = Query(default=None, ge=1, le=500),
     ) -> Dict[str, Any]:
         """Point-in-time, read-only reconciliation of all task states."""
 
-        return cp.task_ledger_audit(project=project, verify_git=verify_git)
+        return cp.task_ledger_audit(project=project, verify_git=verify_git, offset=offset, limit=limit)
 
     @app.get("/tasks/{task_id}")
     def get_task(

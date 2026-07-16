@@ -379,12 +379,16 @@ class RemoteDispatch:
         *,
         project: Optional[str] = None,
         verify_git: bool = True,
+        offset: int = 0,
+        limit: Optional[int] = None,
     ) -> _Dictish:
         return _Dictish(
             self._get(
                 "/tasks/audit",
                 project=project,
                 verify_git=verify_git,
+                offset=offset,
+                limit=limit,
             )
         )
 

@@ -625,25 +625,40 @@ def _repository_applicability(
     return "not_applicable"
 
 
-def _run_git(path: Path, args: Sequence[str], timeout: int) -> subprocess.CompletedProcess[str]:
+def _run_git(
+    path: Path,
+    args: Sequence[str],
+    timeout: int,
+    cache: Optional[Dict[Tuple[str, Tuple[str, ...]], subprocess.CompletedProcess[str]]] = None,
+) -> subprocess.CompletedProcess[str]:
+    key = (str(path), tuple(args))
+    if cache is not None and key in cache:
+        return cache[key]
     try:
-        return subprocess.run(
+        result = subprocess.run(
             ["git", "-C", str(path), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return subprocess.CompletedProcess(
+        result = subprocess.CompletedProcess(
             ["git", "-C", str(path), *args], 1, stdout="", stderr=str(exc)
         )
+    if cache is not None:
+        cache[key] = result
+    return result
 
 
-def _canonical_tip(path: Path, timeout: int) -> Tuple[str, str, str]:
+def _canonical_tip(
+    path: Path,
+    timeout: int,
+    cache: Optional[Dict[Tuple[str, Tuple[str, ...]], subprocess.CompletedProcess[str]]] = None,
+) -> Tuple[str, str, str]:
     candidates = ("refs/remotes/origin/main", "refs/remotes/origin/master", "HEAD")
     errors: List[str] = []
     for ref in candidates:
-        result = _run_git(path, ["rev-parse", "%s^{commit}" % ref], timeout)
+        result = _run_git(path, ["rev-parse", "%s^{commit}" % ref], timeout, cache)
         sha = _text(result.stdout)
         if result.returncode == 0 and _SHA_RE.fullmatch(sha):
             return sha, ref, ""
@@ -652,7 +667,13 @@ def _canonical_tip(path: Path, timeout: int) -> Tuple[str, str, str]:
     return "", "", "; ".join(errors[-2:]) or "canonical ref is unavailable"
 
 
-def _repository_snapshot(repo: Mapping[str, Any], *, verify_git: bool, timeout: int) -> Dict[str, Any]:
+def _repository_snapshot(
+    repo: Mapping[str, Any],
+    *,
+    verify_git: bool,
+    timeout: int,
+    cache: Optional[Dict[Tuple[str, Tuple[str, ...]], subprocess.CompletedProcess[str]]] = None,
+) -> Dict[str, Any]:
     path = Path(_text(repo.get("path"))).expanduser()
     contract = _repository_contract(repo)
     result: Dict[str, Any] = {
@@ -672,7 +693,7 @@ def _repository_snapshot(repo: Mapping[str, Any], *, verify_git: bool, timeout: 
     if not path.is_dir():
         result["error"] = "registered repository path does not exist"
         return result
-    tip, ref, error = _canonical_tip(path, timeout)
+    tip, ref, error = _canonical_tip(path, timeout, cache)
     result["canonical_tip"] = tip or None
     result["canonical_ref"] = ref or None
     result["error"] = error or None
@@ -684,6 +705,7 @@ def _git_claim_status(
     claim: Mapping[str, Any],
     task_id: str,
     timeout: int,
+    cache: Optional[Dict[Tuple[str, Tuple[str, ...]], subprocess.CompletedProcess[str]]] = None,
 ) -> Dict[str, Any]:
     result = dict(claim)
     path = Path(_text(snapshot.get("path"))).expanduser()
@@ -702,12 +724,12 @@ def _git_claim_status(
     if not path.is_dir() or not tip:
         result["verification_error"] = _text(snapshot.get("error")) or "canonical tip unavailable"
         return result
-    present = _run_git(path, ["cat-file", "-e", "%s^{commit}" % sha], timeout)
+    present = _run_git(path, ["cat-file", "-e", "%s^{commit}" % sha], timeout, cache)
     if present.returncode != 0:
         result["verification_error"] = "commit is not present in registered checkout"
         return result
     result["commit_present"] = True
-    message = _run_git(path, ["show", "-s", "--format=%B", sha], timeout)
+    message = _run_git(path, ["show", "-s", "--format=%B", sha], timeout, cache)
     commit_message = _text(message.stdout)
     result["commit_subject"] = commit_message.splitlines()[0] if commit_message else None
     message_attribution = _task_commit_attribution(commit_message, task_id)
@@ -724,18 +746,18 @@ def _git_claim_status(
             _SHA_RE.fullmatch(base_sha)
             and base_sha != sha
             and claimed_files
-            and _run_git(path, ["cat-file", "-e", "%s^{commit}" % base_sha], timeout).returncode
+            and _run_git(path, ["cat-file", "-e", "%s^{commit}" % base_sha], timeout, cache).returncode
             == 0
         ):
             changed = _run_git(
-                path, ["diff", "--name-only", "%s..%s" % (base_sha, sha)], timeout
+                path, ["diff", "--name-only", "%s..%s" % (base_sha, sha)], timeout, cache
             )
             actual_files = {
                 _text(item) for item in changed.stdout.splitlines() if _text(item)
             }
             if changed.returncode == 0 and claimed_files.issubset(actual_files):
                 result["attribution_status"] = "manifest_diff_matches_claimed_files"
-    ancestor = _run_git(path, ["merge-base", "--is-ancestor", sha, tip], timeout)
+    ancestor = _run_git(path, ["merge-base", "--is-ancestor", sha, tip], timeout, cache)
     if ancestor.returncode == 0:
         result["ancestor_of_canonical"] = True
         result["integration_status"] = (
@@ -748,10 +770,10 @@ def _git_claim_status(
     # Preserve proof across squash/cherry-pick publication.  ``git cherry`` is
     # meaningful for a normal single-parent commit; merge commits remain
     # unverified unless their exact SHA is reachable from the canonical tip.
-    parents = _run_git(path, ["rev-list", "--parents", "-n", "1", sha], timeout)
+    parents = _run_git(path, ["rev-list", "--parents", "-n", "1", sha], timeout, cache)
     parts = _text(parents.stdout).split()
     if parents.returncode == 0 and len(parts) == 2:
-        cherry = _run_git(path, ["cherry", tip, sha, parts[1]], timeout)
+        cherry = _run_git(path, ["cherry", tip, sha, parts[1]], timeout, cache)
         line = _text(cherry.stdout).splitlines()
         if cherry.returncode == 0 and line and line[0].startswith("-"):
             result["patch_equivalent_to_canonical"] = True
@@ -766,7 +788,8 @@ def _git_claim_status(
 
 
 def _canonical_task_commit_claim(
-    snapshot: Mapping[str, Any], task_id: str, task_title: str, timeout: int
+    snapshot: Mapping[str, Any], task_id: str, task_title: str, timeout: int,
+    cache: Optional[Dict[Tuple[str, Tuple[str, ...]], subprocess.CompletedProcess[str]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Find a task-attributed commit that is already on the canonical ref.
 
@@ -805,7 +828,7 @@ def _canonical_task_commit_claim(
                 "-n",
                 "1",
             ],
-            timeout,
+            timeout, cache,
         )
         line = _text(result.stdout).splitlines()
         if result.returncode != 0 or not line:
@@ -1214,6 +1237,8 @@ def build_task_ledger_audit(
     project: Optional[str] = None,
     verify_git: bool = True,
     git_timeout_seconds: int = 10,
+    all_tasks: Optional[Sequence[Mapping[str, Any]]] = None,
+    pagination: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Audit every supplied task detail and return one compact row per task."""
 
@@ -1230,10 +1255,14 @@ def build_task_ledger_audit(
         ]
         tasks = [_mapping(detail.get("task")) for detail in details]
 
-    tasks_by_id = {_text(task.get("id")): task for task in tasks if _text(task.get("id"))}
+    dependency_tasks = [_mapping(task) for task in (all_tasks or tasks)]
+    tasks_by_id = {
+        _text(task.get("id")): task for task in dependency_tasks if _text(task.get("id"))
+    }
+    git_command_cache: Dict[Tuple[str, Tuple[str, ...]], subprocess.CompletedProcess[str]] = {}
     repo_snapshots = {
         _text(repo.get("id")): _repository_snapshot(
-            repo, verify_git=verify_git, timeout=git_timeout_seconds
+            repo, verify_git=verify_git, timeout=git_timeout_seconds, cache=git_command_cache
         )
         for repo in repositories
         if _text(repo.get("id"))
@@ -1288,13 +1317,14 @@ def build_task_ledger_audit(
                 )
                 if key not in git_cache:
                     git_cache[key] = _git_claim_status(
-                        selected_snapshot, claim, task_id, git_timeout_seconds
+                        selected_snapshot, claim, task_id, git_timeout_seconds, git_command_cache
                     )
                 checked = {**claim, **git_cache[key]}
             verified_claims.append(checked)
         if selected_snapshot is not None and verify_git:
             attributed = _canonical_task_commit_claim(
-                selected_snapshot, task_id, _text(task.get("title")), git_timeout_seconds
+                selected_snapshot, task_id, _text(task.get("title")), git_timeout_seconds,
+                git_command_cache,
             )
             if attributed is not None and not any(
                 _text(claim.get("head_sha")) == _text(attributed.get("head_sha"))
@@ -1459,6 +1489,7 @@ def build_task_ledger_audit(
             "task_set_digest": _task_set_digest(tasks),
             "detail_error_count": len(detail_errors or []),
             "detail_errors": [dict(item) for item in (detail_errors or [])],
+            "pagination": dict(pagination or {"offset": 0, "limit": None, "returned": len(rows), "total": len(tasks)}),
             "changed_during_run": bool(added or removed or changed),
             "added_task_ids": added,
             "removed_task_ids": removed,

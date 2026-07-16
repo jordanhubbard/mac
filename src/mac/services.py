@@ -5455,6 +5455,8 @@ class ControlPlane:
         *,
         project: Optional[str] = None,
         verify_git: bool = True,
+        offset: int = 0,
+        limit: Optional[int] = None,
     ) -> JsonDict:
         """Read and reconcile every task against its durable proof.
 
@@ -5469,9 +5471,17 @@ class ControlPlane:
         started_at = utcnow()
         start_models = self.list_tasks(project=project)
         start_tasks = [task.to_dict() for task in start_models]
+        try:
+            offset_value = max(0, int(offset))
+            limit_value = None if limit is None else max(1, int(limit))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("task audit offset and limit must be integers") from exc
+        page_models = start_models[offset_value:]
+        if limit_value is not None:
+            page_models = page_models[:limit_value]
         details: List[JsonDict] = []
         detail_errors: List[JsonDict] = []
-        for task in start_models:
+        for task in page_models:
             try:
                 details.append(self.task_detail(task.id))
             except MACError as exc:
@@ -5496,6 +5506,8 @@ class ControlPlane:
             detail_errors=detail_errors,
             project=project,
             verify_git=verify_git,
+            all_tasks=start_tasks,
+            pagination={"offset": offset_value, "limit": limit_value, "returned": len(page_models), "total": len(start_models)},
         )
 
     def assign_review_experiment(

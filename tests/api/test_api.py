@@ -107,6 +107,30 @@ def test_task_ledger_audit_route_is_static_and_covers_every_task():
     assert second_row["assessment"]["verdict"] == "verified"
 
 
+def test_task_ledger_audit_route_pages_without_losing_snapshot_context():
+    cp = ControlPlane.in_memory()
+    first = cp.create_task("first page task", project="demo")
+    second = cp.create_task("second page task", project="demo", dependencies=[first.id])
+    app = create_app(control_plane=cp)
+
+    with TestClient(app) as client:
+        response = client.get("/tasks/audit?verify_git=false&offset=1&limit=1")
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["snapshot"]["task_count"] == 1
+    assert report["snapshot"]["pagination"] == {
+        "offset": 1,
+        "limit": 1,
+        "returned": 1,
+        "total": 2,
+    }
+    assert [row["task_id"] for row in report["tasks"]] == [second.id]
+    assert report["tasks"][0]["dependencies"]["items"] == [
+        {"task_id": first.id, "state": "open", "title": "first page task"}
+    ]
+
+
 def test_repository_ref_reconciler_operator_trigger_and_admin_scope(monkeypatch):
     monkeypatch.setenv("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
     app = create_app(

@@ -1943,6 +1943,8 @@ def cmd_task_audit(args: argparse.Namespace) -> None:
     report = _plane(args).task_ledger_audit(
         project=args.project,
         verify_git=not bool(args.no_git),
+        offset=args.offset,
+        limit=args.limit,
     )
     report = _unwrap(report)
     if _OUTPUT_JSON:
@@ -5069,6 +5071,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip repository ancestry checks (results remain unverified)",
     )
+    audit.add_argument("--offset", type=int, default=0, help="zero-based task page offset")
+    audit.add_argument("--limit", type=int, help="maximum tasks to audit (1-500)")
     _set(cmd_task_audit, audit)
 
     start = task.add_parser("start")
