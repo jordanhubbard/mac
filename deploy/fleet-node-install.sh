@@ -4319,6 +4319,21 @@ def add_openclaw_problem(message: str) -> None:
     openclaw_problems.append(message)
 
 
+# A non-zero / timed-out / sentinel-less openclaw-agent runtime probe is a soft,
+# DEGRADED condition (runtime/service reachability), not a hard startup
+# misconfiguration -- even on a node that actually serves the gateway.  These
+# agent-probe problems are tracked here so they stay non-blocking everywhere,
+# while hard misconfiguration problems (unreadable/missing/unverified
+# advertisement, model config, mandatory-service misconfig, etc.) remain
+# blocking on a gateway-serving node.
+openclaw_agent_probe_problems: list[str] = []
+
+
+def add_openclaw_agent_probe_problem(message: str) -> None:
+    add_openclaw_problem(message)
+    openclaw_agent_probe_problems.append(message)
+
+
 if not openclaw_required:
     checks["openclaw_runtime"] = True
     checks["openclaw_agent"] = True
@@ -4427,18 +4442,18 @@ if openclaw_required:
             checks["openclaw_agent"] = True
         elif completed.returncode != 0:
             openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-            add_openclaw_problem(f"OpenClaw agent self-test exited {completed.returncode}")
+            add_openclaw_agent_probe_problem(f"OpenClaw agent self-test exited {completed.returncode}")
         else:
-            add_openclaw_problem("OpenClaw agent self-test did not return its sentinel")
+            add_openclaw_agent_probe_problem("OpenClaw agent self-test did not return its sentinel")
             checks["openclaw_agent"] = False
     except subprocess.TimeoutExpired as exc:
         agent_returncode = None
         agent_output = tail(output_text(exc.stdout) + "\n" + output_text(exc.stderr))
         openclaw_failure_class = classify_openclaw_agent_failure(agent_output)
-        add_openclaw_problem(f"OpenClaw agent self-test timed out after {timeout}s")
+        add_openclaw_agent_probe_problem(f"OpenClaw agent self-test timed out after {timeout}s")
     except Exception as exc:
         agent_returncode = None
-        add_openclaw_problem(f"OpenClaw agent self-test failed to execute: {safe_error(exc)}")
+        add_openclaw_agent_probe_problem(f"OpenClaw agent self-test failed to execute: {safe_error(exc)}")
 
 # A gateway-less worker (impl advertises openclaw but the gateway artifacts are
 # not installed on this node) must not hard-crash on OpenClaw readiness gaps: the
@@ -4447,7 +4462,10 @@ if openclaw_required:
 # other problem — and any OpenClaw failure on a node that actually serves the
 # gateway — stays blocking.
 if openclaw_serves_gateway:
-    non_blocking_problems: list[str] = []
+    # A gateway-serving node keeps hard OpenClaw misconfiguration problems
+    # blocking, but a runtime/service-reachability failure of the openclaw-agent
+    # probe is degraded (soft), so those agent-probe problems stay non-blocking.
+    non_blocking_problems: list[str] = list(openclaw_agent_probe_problems)
 else:
     non_blocking_problems = list(openclaw_problems)
 # A shared-service (or hub) probe that only ever timed out is a transient hub
