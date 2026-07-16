@@ -209,6 +209,19 @@ def test_partial_orphan_missing_data_shadow_is_recovered(tmp_path):
         recovered._conn.close()
 
 
+def test_linux_fts5_corruption_signature_is_recoverable():
+    SessionDB = _session_db_cls()
+
+    assert SessionDB._is_fts_orphan_error(
+        "messages_fts",
+        'fts5: corruption found reading blob 1 from table "messages_fts"',
+    )
+    assert not SessionDB._is_fts_orphan_error(
+        "messages_fts_trigram",
+        'fts5: corruption found reading blob 1 from table "messages_fts"',
+    )
+
+
 def test_both_indexes_orphaned_recover_together(tmp_path):
     SessionDB = _session_db_cls()
     db_path = tmp_path / "state.db"
