@@ -597,3 +597,60 @@ def test_standing_exhausted_finding_escalates_once_not_per_cycle(cp):
         if n.event_type == "self_heal.escalated"
     ]
     assert len(notes) == 1
+
+
+# ── per-cycle spawn budget ────────────────────────────────────────────────────
+
+
+def test_config_reads_bounded_per_cycle_budget():
+    assert SelfHealingConfig.from_env({}).max_tasks_per_cycle == 10
+    ok = SelfHealingConfig.from_env({"MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE": "3"})
+    assert ok.max_tasks_per_cycle == 3 and ok.configuration_error == ""
+    bad = SelfHealingConfig.from_env({"MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE": "0"})
+    assert bad.max_tasks_per_cycle == 10 and "between 1 and 1000" in bad.configuration_error
+
+
+def test_budget_caps_new_task_filings_and_reports_skips(cp):
+    from mac.self_healing import Finding  # noqa: PLC0415
+
+    sentinel = _sentinel(cp, max_tasks_per_cycle=2)
+    findings = [
+        Finding(
+            fingerprint="synthetic:%d" % i,
+            kind="agent_unhealthy",
+            summary="synthetic finding %d" % i,
+            detail={"remediation": "noop"},
+        )
+        for i in range(5)
+    ]
+
+    actions = sentinel._act_on_findings(findings, actor="test")
+
+    filed = [a for a in actions if a.get("action") == "task_filed"]
+    skipped = [a for a in actions if a.get("action") == "skipped"]
+    assert len(filed) == 2
+    assert len(skipped) == 3
+    assert all(a["reason"] == "per_cycle_budget_exhausted" for a in skipped)
+    assert len(_self_heal_tasks(cp)) == 2
+
+
+def test_run_once_report_carries_budget_and_capped_count(cp, monkeypatch):
+    from mac.self_healing import Finding  # noqa: PLC0415
+
+    sentinel = _sentinel(cp, max_tasks_per_cycle=1)
+    findings = [
+        Finding(
+            fingerprint="synthetic:%d" % i,
+            kind="agent_unhealthy",
+            summary="synthetic finding %d" % i,
+            detail={"remediation": "noop"},
+        )
+        for i in range(3)
+    ]
+    monkeypatch.setattr(sentinel, "_check_agent_unhealthy", lambda: findings)
+
+    report = sentinel.run_once()
+
+    assert report["budget"] == 1
+    assert report["filed_count"] == 1
+    assert report["capped_count"] == 2

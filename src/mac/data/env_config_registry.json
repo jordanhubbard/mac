@@ -3015,6 +3015,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: dream repair max tasks per cycle.",
+    "family": "core",
+    "name": "MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE",
+    "retired": false,
+    "sources": [
+      "src/mac/dream_repair_tasks.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Evidence setting: evidence artifact max bytes.",
     "family": "evidence",
     "name": "MAC_EVIDENCE_ARTIFACT_MAX_BYTES",
@@ -7440,6 +7451,17 @@
       "src/mac/self_healing.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: self heal max tasks per cycle.",
+    "family": "core",
+    "name": "MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE",
+    "retired": false,
+    "sources": [
+      "src/mac/self_healing.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,

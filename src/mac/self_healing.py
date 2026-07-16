@@ -37,7 +37,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
-from mac.config_coercion import bounded_env_number, parse_timestamp as _parse_ts
+from mac.config_coercion import (
+    bounded_env_int,
+    bounded_env_number,
+    parse_timestamp as _parse_ts,
+)
 
 SELF_HEAL_SCHEMA = "mac.self_healing.v1"
 SELF_HEAL_ORIGIN_TYPE = "self_heal"
@@ -54,6 +58,10 @@ DEFAULT_READ_SILENCE_SECONDS = 24 * 60 * 60.0
 DEFAULT_PIN_DIVERGENCE_SECONDS = 3 * 60 * 60.0
 DEFAULT_AGENT_SILENCE_SECONDS = 60 * 60.0
 DEFAULT_MAX_ATTEMPTS = 3
+# Per-cycle cap on how many DISTINCT new fix tasks one sentinel run may file.
+# Fingerprint dedup stops re-filing a standing finding, but a single cycle that
+# surfaces many distinct violations could otherwise burst-file unboundedly.
+DEFAULT_MAX_TASKS_PER_CYCLE = 10
 
 _log = logging.getLogger("mac.self_healing")
 
@@ -88,6 +96,7 @@ class SelfHealingConfig:
     pin_divergence_seconds: float = DEFAULT_PIN_DIVERGENCE_SECONDS
     agent_silence_seconds: float = DEFAULT_AGENT_SILENCE_SECONDS
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    max_tasks_per_cycle: int = DEFAULT_MAX_TASKS_PER_CYCLE
     configuration_error: str = ""
 
     @property
@@ -128,6 +137,10 @@ class SelfHealingConfig:
                                        DEFAULT_AGENT_SILENCE_SECONDS,
                                        10 * 60.0, 7 * 24 * 60 * 60.0),
             max_attempts=int(_num("MAC_SELF_HEAL_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS, 1, 10)),
+            max_tasks_per_cycle=bounded_env_int(
+                env, "MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE",
+                DEFAULT_MAX_TASKS_PER_CYCLE, 1, 1000, errors=errors,
+            ),
             configuration_error="; ".join(errors),
         )
 
@@ -244,7 +257,7 @@ class SelfHealingSentinel:
             # Re-arm escalations for findings that cleared: a fresh
             # occurrence later deserves a fresh operator notification.
             self._escalated_fingerprints &= {f.fingerprint for f in findings}
-            actions = [self._act_on(finding, actor=actor) for finding in findings]
+            actions = self._act_on_findings(findings, actor=actor)
         finally:
             self._run_lock.release()
         report = {
@@ -255,6 +268,8 @@ class SelfHealingSentinel:
             "finding_count": len(findings),
             "filed_count": sum(1 for a in actions if a.get("action") == "task_filed"),
             "escalated_count": sum(1 for a in actions if a.get("action") == "escalated"),
+            "capped_count": sum(1 for a in actions if a.get("action") == "skipped"),
+            "budget": self.config.max_tasks_per_cycle,
             "findings": [
                 {**finding.to_dict(), **action}
                 for finding, action in zip(findings, actions)
@@ -591,6 +606,36 @@ class SelfHealingSentinel:
         return findings
 
     # -- plan / act / verify -------------------------------------------------
+
+    def _act_on_findings(
+        self, findings: List[Finding], *, actor: str
+    ) -> List[Dict[str, Any]]:
+        """Act on findings under a per-cycle new-task spawn budget.
+
+        Fingerprint dedup already collapses a standing problem to one task, but
+        a single cycle surfacing many DISTINCT violations could burst-file an
+        unbounded number of new tasks. Once ``max_tasks_per_cycle`` new fix
+        tasks have been filed this cycle, remaining findings that would file a
+        NEW task are reported as skipped with an explicit reason rather than
+        silently dropped. Findings resolved without a new task (already
+        in-progress or escalated) do not consume the budget.
+        """
+
+        budget = self.config.max_tasks_per_cycle
+        filed = 0
+        actions: List[Dict[str, Any]] = []
+        for finding in findings:
+            if filed >= budget:
+                actions.append({
+                    "action": "skipped",
+                    "reason": "per_cycle_budget_exhausted",
+                })
+                continue
+            action = self._act_on(finding, actor=actor)
+            if action.get("action") == "task_filed":
+                filed += 1
+            actions.append(action)
+        return actions
 
     def _act_on(self, finding: Finding, *, actor: str) -> Dict[str, Any]:
         active_task, completed_attempts, newest_completed = self._history_for(

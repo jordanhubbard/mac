@@ -45,3 +45,32 @@ def bounded_env_number(
         errors.append("%s must be between %s and %s" % (name, minimum, maximum))
         return default
     return value
+
+
+def bounded_env_int(
+    environ: Mapping[str, str],
+    name: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+    *,
+    errors: MutableSequence[str],
+) -> int:
+    """Read one bounded integer setting, appending actionable errors.
+
+    Non-integral or out-of-range values fall back to ``default`` and record a
+    message, matching :func:`bounded_env_number` semantics for numeric config.
+    """
+
+    raw = str(environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        errors.append("%s must be an integer" % name)
+        return default
+    if value < minimum or value > maximum:
+        errors.append("%s must be between %d and %d" % (name, minimum, maximum))
+        return default
+    return value

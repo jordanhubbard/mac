@@ -365,3 +365,93 @@ def test_append_unique_empty_value_is_not_appended():
     assert values == []
     _append_unique(values, "   ")
     assert values == []
+
+
+# ---------------------------------------------------------------------------
+# Per-cycle spawn budget
+# ---------------------------------------------------------------------------
+
+
+def _distinct_candidates(count: int) -> list[dict[str, Any]]:
+    candidates = []
+    for index in range(count):
+        candidate = _candidate(
+            summary="terminal_tool failed variant %d during skill_bundle" % index,
+            signature="failure:variant:%d" % index,
+            task_id="task-source-%d" % index,
+        )
+        candidates.append(candidate)
+    return candidates
+
+
+def test_default_budget_caps_distinct_new_tasks_per_cycle() -> None:
+    cp = FakeControlPlane()
+
+    report = file_low_confidence_repair_tasks(cp, _distinct_candidates(12))
+
+    assert report["budget"] == 10
+    assert report["created_count"] == 10
+    assert report["capped_count"] == 2
+    assert report["skipped_count"] == 2
+    assert len(cp.created) == 10
+    capped = [t for t in report["tasks"] if t.get("reason") == "per_cycle_budget_exhausted"]
+    assert len(capped) == 2
+
+
+def test_explicit_budget_argument_wins() -> None:
+    cp = FakeControlPlane()
+
+    report = file_low_confidence_repair_tasks(
+        cp, _distinct_candidates(5), max_tasks_per_cycle=2
+    )
+
+    assert report["budget"] == 2
+    assert report["created_count"] == 2
+    assert report["capped_count"] == 3
+    assert len(cp.created) == 2
+
+
+def test_env_budget_is_read_via_bounded_helper() -> None:
+    cp = FakeControlPlane()
+
+    report = file_low_confidence_repair_tasks(
+        cp,
+        _distinct_candidates(4),
+        environ={"MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE": "1"},
+    )
+
+    assert report["budget"] == 1
+    assert report["created_count"] == 1
+    assert report["capped_count"] == 3
+
+
+def test_invalid_env_budget_falls_back_to_default() -> None:
+    cp = FakeControlPlane()
+
+    report = file_low_confidence_repair_tasks(
+        cp,
+        _distinct_candidates(3),
+        environ={"MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE": "not-a-number"},
+    )
+
+    assert report["budget"] == 10
+    assert report["created_count"] == 3
+    assert report["capped_count"] == 0
+
+
+def test_dedup_does_not_consume_budget() -> None:
+    cp = FakeControlPlane()
+
+    first = file_low_confidence_repair_tasks(cp, [_candidate()], max_tasks_per_cycle=1)
+    assert first["created_count"] == 1
+
+    # Re-run with the same finding plus a new distinct one; the deduped finding
+    # must not eat the single-task budget meant for genuinely new work.
+    second = file_low_confidence_repair_tasks(
+        cp,
+        [_candidate(nap_run_id="nap-next"), _distinct_candidates(1)[0]],
+        max_tasks_per_cycle=1,
+    )
+    assert second["deduped_count"] == 1
+    assert second["created_count"] == 1
+    assert second["capped_count"] == 0

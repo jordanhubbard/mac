@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import Any, Iterable, Mapping
 
+from mac.config_coercion import bounded_env_int
 from mac.dream_cycle_classifier import classify_candidate
 from mac.models import JsonDict
 
@@ -14,6 +16,15 @@ from mac.models import JsonDict
 DREAM_REPAIR_TASKS_SCHEMA = "mac.dream_repair_tasks.v1"
 DREAM_REPAIR_TASK_SCHEMA = "mac.dream_repair_task.v1"
 DREAM_REPAIR_ORIGIN_TYPE = "dream_low_confidence_repair"
+
+# Per-invocation cap on how many DISTINCT new tasks a single scan may mint.
+# Fingerprint dedup only stops re-filing the SAME finding; a single tick with
+# many distinct low-confidence findings could otherwise create an unbounded
+# burst of tasks. Conservative default; overridable via env within bounds.
+MAX_TASKS_PER_CYCLE_ENV = "MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE"
+DEFAULT_MAX_TASKS_PER_CYCLE = 10
+MIN_MAX_TASKS_PER_CYCLE = 1
+MAX_MAX_TASKS_PER_CYCLE = 1000
 
 _MAX_DESCRIPTION_EVIDENCE = 5
 _MAX_METADATA_EVIDENCE = 8
@@ -42,6 +53,8 @@ def file_low_confidence_repair_tasks(
     *,
     actor: str = "dream-repair",
     project: str | None = None,
+    max_tasks_per_cycle: int | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> JsonDict:
     """Create MAC follow-up tasks for low-confidence dream findings.
 
@@ -58,9 +71,14 @@ def file_low_confidence_repair_tasks(
         "created_count": 0,
         "deduped_count": 0,
         "skipped_count": 0,
+        "capped_count": 0,
+        "budget": 0,
         "tasks": [],
         "errors": [],
     }
+    budget = _resolve_spawn_budget(max_tasks_per_cycle, environ)
+    report["budget"] = budget
+    created_this_cycle = 0
     try:
         known = _existing_repair_fingerprints(control_plane)
     except Exception as exc:  # noqa: BLE001 - do not risk duplicate task storms.
@@ -99,6 +117,14 @@ def file_low_confidence_repair_tasks(
             report["tasks"].append(item)
             continue
 
+        if created_this_cycle >= budget:
+            item["status"] = "skipped"
+            item["reason"] = "per_cycle_budget_exhausted"
+            report["capped_count"] += 1
+            report["skipped_count"] += 1
+            report["tasks"].append(item)
+            continue
+
         metadata = _task_metadata(candidate, classification, affected, fingerprint)
         task_project = _coerce_project(candidate.get("project")) or project
         try:
@@ -127,6 +153,7 @@ def file_low_confidence_repair_tasks(
         item["status"] = "created"
         item["task_id"] = task_id
         report["created_count"] += 1
+        created_this_cycle += 1
         report["tasks"].append(item)
     return report
 
@@ -435,10 +462,40 @@ def _truncate(value: str, limit: int) -> str:
     return value[: max(0, limit - 3)].rstrip() + "..."
 
 
+def _resolve_spawn_budget(
+    max_tasks_per_cycle: int | None,
+    environ: Mapping[str, str] | None,
+) -> int:
+    """Resolve the per-cycle spawn cap from an explicit arg or bounded env.
+
+    An explicit ``max_tasks_per_cycle`` wins (clamped to the safe range);
+    otherwise ``MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE`` is read via the shared
+    bounded-env helper, falling back to ``DEFAULT_MAX_TASKS_PER_CYCLE``.
+    """
+
+    if max_tasks_per_cycle is not None:
+        return max(
+            MIN_MAX_TASKS_PER_CYCLE,
+            min(MAX_MAX_TASKS_PER_CYCLE, int(max_tasks_per_cycle)),
+        )
+    env = os.environ if environ is None else environ
+    errors: list[str] = []
+    return bounded_env_int(
+        env,
+        MAX_TASKS_PER_CYCLE_ENV,
+        DEFAULT_MAX_TASKS_PER_CYCLE,
+        MIN_MAX_TASKS_PER_CYCLE,
+        MAX_MAX_TASKS_PER_CYCLE,
+        errors=errors,
+    )
+
+
 __all__ = [
     "DREAM_REPAIR_ORIGIN_TYPE",
     "DREAM_REPAIR_TASKS_SCHEMA",
     "DREAM_REPAIR_TASK_SCHEMA",
     "file_low_confidence_repair_tasks",
     "repair_fingerprint",
+    "DEFAULT_MAX_TASKS_PER_CYCLE",
+    "MAX_TASKS_PER_CYCLE_ENV",
 ]

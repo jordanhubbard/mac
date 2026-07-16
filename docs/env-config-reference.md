@@ -252,6 +252,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_WORKER_REQUIRE_CANARY` | bool | consumer-defined | deployment | Deployment setting: deploy worker require canary. |
 | `MAC_DIRECTABLE_TIMEOUT` | int | consumer-defined | core | Core setting: directable timeout. |
 | `MAC_DISPATCH_PRIORITY_AGING_SECONDS` | int | consumer-defined | core | Core setting: dispatch priority aging seconds. |
+| `MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE` | str | consumer-defined | core | Core setting: dream repair max tasks per cycle. |
 | `MAC_EVIDENCE_ARTIFACT_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact max bytes. |
 | `MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence artifact total max bytes. |
 | `MAC_EVIDENCE_BLOB_DIR` | str | consumer-defined | evidence | Evidence setting: evidence blob dir. |
@@ -615,6 +616,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SELF_HEAL_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: self heal initial delay seconds. |
 | `MAC_SELF_HEAL_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: self heal interval seconds. |
 | `MAC_SELF_HEAL_MAX_ATTEMPTS` | int | consumer-defined | core | Core setting: self heal max attempts. |
+| `MAC_SELF_HEAL_MAX_TASKS_PER_CYCLE` | str | consumer-defined | core | Core setting: self heal max tasks per cycle. |
 | `MAC_SELF_HEAL_NAP_STALL_SECONDS` | int | consumer-defined | core | Core setting: self heal nap stall seconds. |
 | `MAC_SELF_HEAL_PIN_DIVERGENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal pin divergence seconds. |
 | `MAC_SELF_HEAL_READ_SILENCE_SECONDS` | int | consumer-defined | core | Core setting: self heal read silence seconds. |
