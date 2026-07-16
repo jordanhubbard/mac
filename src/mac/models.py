@@ -2015,6 +2015,40 @@ class DesiredSourceIdempotencyRecord:
         return asdict(self)
 
 
+@dataclass
+class EvidenceReuseRecord:
+    """Audit record of a prior-executor-evidence reuse decision.
+
+    When a review-infrastructure failure prevents the normal reviewer path
+    from completing, recovery logic may attempt to reuse an existing
+    executor's evidence record instead of dispatching a fresh execution
+    (see ``mac.evidence_reuse_verifier``). Each such decision is persisted
+    here so the control plane keeps a durable, queryable trail of *which*
+    prior evidence was considered for *which* task, whether the fail-closed
+    verifier approved reuse, and the structured problems when it did not.
+
+    Schema: mac.evidence_reuse_record.v1
+
+    ``verification`` holds the serialised
+    :class:`~mac.evidence_reuse_verifier.ReuseVerificationResult` (or an
+    equivalent structured payload) that backed the ``reused`` decision.
+    """
+
+    id: str
+    task_id: str
+    source_evidence_id: str
+    remote_url: Optional[str]
+    expected_head_sha: Optional[str]
+    reused: bool
+    verification: JsonDict
+    problems: List[str]
+    decided_by: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
 def ensure_json_object(value: Optional[Mapping[str, Any]]) -> JsonDict:
     if value is None:
         return {}

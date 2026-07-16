@@ -1802,6 +1802,30 @@ CREATE TABLE IF NOT EXISTS fleet_desired_source_idempotency (
 CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
     ON fleet_desired_source_idempotency (scope_key, request_id);
 
+-- ============================================================================
+-- Evidence-reuse decision audit records
+-- Durable trail of prior-executor-evidence reuse decisions (see
+-- src/mac/evidence_reuse_verifier.py). SQLite stores ``reused`` as INTEGER;
+-- Postgres uses the same INTEGER column so the shared DDL and 0/1 params
+-- round-trip identically across backends.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS evidence_reuse_records (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    source_evidence_id TEXT NOT NULL,
+    remote_url TEXT,
+    expected_head_sha TEXT,
+    reused INTEGER NOT NULL,
+    verification TEXT NOT NULL,
+    problems TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_task
+    ON evidence_reuse_records (task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_source
+    ON evidence_reuse_records (source_evidence_id, created_at);
+
 -- Durable per-node source convergence state and multi-replica controller lease.
 CREATE TABLE IF NOT EXISTS source_convergence_nodes (
     id TEXT PRIMARY KEY,

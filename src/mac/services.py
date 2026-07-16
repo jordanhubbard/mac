@@ -77,6 +77,7 @@ from mac.models import (
     EvalSet,
     Evidence,
     EvidenceArtifact,
+    EvidenceReuseRecord,
     Fleet,
     HealthStatus,
     HistoryEvent,
@@ -7156,6 +7157,118 @@ class ControlPlane:
         if raw:
             return max(60, int(raw))
         return 24 * 60 * 60
+
+    # ------------------------------------------------------------------
+    # Evidence-reuse decision records
+    #
+    # Durable audit trail of prior-executor-evidence reuse decisions made
+    # by recovery logic when review infrastructure fails. See
+    # ``mac.evidence_reuse_verifier`` for the fail-closed verifier whose
+    # structured result is persisted here.
+    # ------------------------------------------------------------------
+    def record_evidence_reuse(
+        self,
+        task_id: str,
+        source_evidence_id: str,
+        reused: bool,
+        *,
+        verification: Optional[Mapping[str, Any]] = None,
+        problems: Optional[Iterable[str]] = None,
+        remote_url: Optional[str] = None,
+        expected_head_sha: Optional[str] = None,
+        decided_by: str = "control-plane",
+    ) -> EvidenceReuseRecord:
+        """Persist one evidence-reuse decision and return the stored record.
+
+        ``task_id`` must reference an existing task. ``verification`` is the
+        serialised structured result (e.g. ``ReuseVerificationResult.to_dict``)
+        that backed the decision; ``problems`` is the convenience list of
+        human-readable failure descriptions when reuse was refused.
+        """
+        self.get_task(task_id)
+        source_id = str(source_evidence_id or "").strip()
+        if not source_id:
+            raise ValidationError("evidence reuse requires source_evidence_id")
+        verification_payload = ensure_json_object(verification or {})
+        if problems is None:
+            raw_problems = verification_payload.get("problems")
+            problem_list = [str(p) for p in raw_problems] if isinstance(raw_problems, list) else []
+        else:
+            problem_list = [str(p) for p in problems]
+        decided = str(decided_by or "").strip() or "control-plane"
+        record_id = new_id("evreuse")
+        now = utcnow()
+        self.store.execute(
+            """
+            INSERT INTO evidence_reuse_records (
+                id, task_id, source_evidence_id, remote_url, expected_head_sha,
+                reused, verification, problems, decided_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record_id,
+                task_id,
+                source_id,
+                remote_url,
+                expected_head_sha,
+                1 if reused else 0,
+                json_dumps(verification_payload),
+                json_dumps(problem_list),
+                decided,
+                now,
+            ),
+        )
+        return self.get_evidence_reuse(record_id)
+
+    def get_evidence_reuse(self, record_id: str) -> EvidenceReuseRecord:
+        row = self.store.query_one(
+            "SELECT * FROM evidence_reuse_records WHERE id = ?", (record_id,)
+        )
+        if row is None:
+            raise NotFoundError("evidence reuse record not found: %s" % record_id)
+        return self._evidence_reuse_from_row(row)
+
+    def list_evidence_reuse(
+        self,
+        task_id: Optional[str] = None,
+        source_evidence_id: Optional[str] = None,
+        reused: Optional[bool] = None,
+        limit: int = 200,
+    ) -> List[EvidenceReuseRecord]:
+        clauses: List[str] = []
+        params: List[Any] = []
+        if task_id is not None:
+            clauses.append("task_id = ?")
+            params.append(task_id)
+        if source_evidence_id is not None:
+            clauses.append("source_evidence_id = ?")
+            params.append(source_evidence_id)
+        if reused is not None:
+            clauses.append("reused = ?")
+            params.append(1 if reused else 0)
+        sql = "SELECT * FROM evidence_reuse_records"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(min(max(1, int(limit)), 1000))
+        return [
+            self._evidence_reuse_from_row(row)
+            for row in self.store.query_all(sql, tuple(params))
+        ]
+
+    def _evidence_reuse_from_row(self, row: Any) -> EvidenceReuseRecord:
+        return EvidenceReuseRecord(
+            row["id"],
+            row["task_id"],
+            row["source_evidence_id"],
+            row["remote_url"],
+            row["expected_head_sha"],
+            bool(row["reused"]),
+            json_loads(row["verification"], {}),
+            json_loads(row["problems"], []),
+            row["decided_by"],
+            row["created_at"],
+        )
 
     def list_dead_letters(
         self,

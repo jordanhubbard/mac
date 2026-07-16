@@ -1901,6 +1901,28 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
                     ON fleet_desired_source_idempotency (scope_key, request_id);
 
+                -- ----------------------------------------------------------------
+                -- Evidence-reuse decision audit records
+                -- Durable trail of prior-executor-evidence reuse decisions made
+                -- when review infrastructure fails (see evidence_reuse_verifier).
+                -- ----------------------------------------------------------------
+                CREATE TABLE IF NOT EXISTS evidence_reuse_records (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    source_evidence_id TEXT NOT NULL,
+                    remote_url TEXT,
+                    expected_head_sha TEXT,
+                    reused INTEGER NOT NULL,
+                    verification TEXT NOT NULL,
+                    problems TEXT NOT NULL,
+                    decided_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_task
+                    ON evidence_reuse_records (task_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_source
+                    ON evidence_reuse_records (source_evidence_id, created_at);
+
                 CREATE TABLE IF NOT EXISTS source_convergence_nodes (
                     id TEXT PRIMARY KEY,
                     desired_source_state_id TEXT NOT NULL
@@ -2270,6 +2292,23 @@ class SQLiteStore:
             );
             CREATE INDEX IF NOT EXISTS idx_fleet_desired_source_idempotency_scope
                 ON fleet_desired_source_idempotency (scope_key, request_id);
+
+            CREATE TABLE IF NOT EXISTS evidence_reuse_records (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                source_evidence_id TEXT NOT NULL,
+                remote_url TEXT,
+                expected_head_sha TEXT,
+                reused INTEGER NOT NULL,
+                verification TEXT NOT NULL,
+                problems TEXT NOT NULL,
+                decided_by TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_task
+                ON evidence_reuse_records (task_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_source
+                ON evidence_reuse_records (source_evidence_id, created_at);
 
             CREATE TABLE IF NOT EXISTS source_convergence_nodes (
                 id TEXT PRIMARY KEY,
