@@ -1819,7 +1819,10 @@ CREATE TABLE IF NOT EXISTS evidence_reuse_records (
     verification TEXT NOT NULL,
     problems TEXT NOT NULL,
     decided_by TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    reused_by_agent_id TEXT NOT NULL DEFAULT '',
+    reuse_context TEXT NOT NULL DEFAULT '',
+    metadata TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_task
     ON evidence_reuse_records (task_id, created_at);

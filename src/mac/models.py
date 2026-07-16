@@ -2044,9 +2044,23 @@ class EvidenceReuseRecord:
     problems: List[str]
     decided_by: str
     created_at: str
+    # Reuse provenance: which agent reused the prior evidence, the coarse
+    # reuse context (e.g. "review_bypass" or "recovery_shortcut"), and an
+    # open metadata bag. These are additive and optional so historical rows
+    # (and positional constructors) keep working; ``prior_evidence_id`` is a
+    # provenance alias for ``source_evidence_id`` kept in sync at persist time.
+    reused_by_agent_id: str = ""
+    reuse_context: str = ""
+    metadata: JsonDict = field(default_factory=dict)
+
+    @property
+    def prior_evidence_id(self) -> str:
+        return self.source_evidence_id
 
     def to_dict(self) -> JsonDict:
-        return asdict(self)
+        data = asdict(self)
+        data["prior_evidence_id"] = self.source_evidence_id
+        return data
 
 
 def ensure_json_object(value: Optional[Mapping[str, Any]]) -> JsonDict:

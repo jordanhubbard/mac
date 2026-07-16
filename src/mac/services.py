@@ -7177,6 +7177,9 @@ class ControlPlane:
         remote_url: Optional[str] = None,
         expected_head_sha: Optional[str] = None,
         decided_by: str = "control-plane",
+        reused_by_agent_id: Optional[str] = None,
+        reuse_context: str = "",
+        metadata: Optional[Mapping[str, Any]] = None,
     ) -> EvidenceReuseRecord:
         """Persist one evidence-reuse decision and return the stored record.
 
@@ -7196,14 +7199,20 @@ class ControlPlane:
         else:
             problem_list = [str(p) for p in problems]
         decided = str(decided_by or "").strip() or "control-plane"
+        # Reuse provenance: default the acting agent to the deciding identity
+        # when the caller does not name one explicitly.
+        reused_by = str(reused_by_agent_id or "").strip() or decided
+        context = str(reuse_context or "").strip()
+        metadata_payload = ensure_json_object(metadata or {})
         record_id = new_id("evreuse")
         now = utcnow()
         self.store.execute(
             """
             INSERT INTO evidence_reuse_records (
                 id, task_id, source_evidence_id, remote_url, expected_head_sha,
-                reused, verification, problems, decided_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                reused, verification, problems, decided_by, created_at,
+                reused_by_agent_id, reuse_context, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_id,
@@ -7216,7 +7225,25 @@ class ControlPlane:
                 json_dumps(problem_list),
                 decided,
                 now,
+                reused_by,
+                context,
+                json_dumps(metadata_payload),
             ),
+        )
+        self._record_history(
+            task_id,
+            "evidence.reuse_recorded",
+            reused_by,
+            None,
+            None,
+            {
+                "record_id": record_id,
+                "source_evidence_id": source_id,
+                "prior_evidence_id": source_id,
+                "reused": bool(reused),
+                "reuse_context": context,
+                "decided_by": decided,
+            },
         )
         return self.get_evidence_reuse(record_id)
 
@@ -7257,6 +7284,7 @@ class ControlPlane:
         ]
 
     def _evidence_reuse_from_row(self, row: Any) -> EvidenceReuseRecord:
+        keys = row.keys() if hasattr(row, "keys") else ()
         return EvidenceReuseRecord(
             row["id"],
             row["task_id"],
@@ -7268,7 +7296,22 @@ class ControlPlane:
             json_loads(row["problems"], []),
             row["decided_by"],
             row["created_at"],
+            row["reused_by_agent_id"] if "reused_by_agent_id" in keys else "",
+            row["reuse_context"] if "reuse_context" in keys else "",
+            json_loads(row["metadata"], {}) if "metadata" in keys else {},
         )
+
+    def get_evidence_reuse_records(self, task_id: str) -> List[EvidenceReuseRecord]:
+        """Return every evidence-reuse record for ``task_id`` (oldest first)."""
+        self.get_task(task_id)
+        return [
+            self._evidence_reuse_from_row(row)
+            for row in self.store.query_all(
+                "SELECT * FROM evidence_reuse_records WHERE task_id = ?"
+                " ORDER BY created_at, id",
+                (task_id,),
+            )
+        ]
 
     def list_dead_letters(
         self,

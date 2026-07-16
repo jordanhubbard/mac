@@ -1916,7 +1916,10 @@ class SQLiteStore:
                     verification TEXT NOT NULL,
                     problems TEXT NOT NULL,
                     decided_by TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    reused_by_agent_id TEXT NOT NULL DEFAULT '',
+                    reuse_context TEXT NOT NULL DEFAULT '',
+                    metadata TEXT NOT NULL DEFAULT '{}'
                 );
                 CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_task
                     ON evidence_reuse_records (task_id, created_at);
@@ -2303,7 +2306,10 @@ class SQLiteStore:
                 verification TEXT NOT NULL,
                 problems TEXT NOT NULL,
                 decided_by TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                reused_by_agent_id TEXT NOT NULL DEFAULT '',
+                reuse_context TEXT NOT NULL DEFAULT '',
+                metadata TEXT NOT NULL DEFAULT '{}'
             );
             CREATE INDEX IF NOT EXISTS idx_evidence_reuse_records_task
                 ON evidence_reuse_records (task_id, created_at);
@@ -2398,6 +2404,24 @@ class SQLiteStore:
         self._conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_idempotency_key"
             " ON tasks (idempotency_key) WHERE idempotency_key IS NOT NULL"
+        )
+        # Reuse provenance columns on evidence_reuse_records: added additively
+        # so databases created before provenance recording keep their rows and
+        # gain the new columns with empty/"{}" defaults.
+        self._ensure_column(
+            "evidence_reuse_records",
+            "reused_by_agent_id",
+            "reused_by_agent_id TEXT NOT NULL DEFAULT ''",
+        )
+        self._ensure_column(
+            "evidence_reuse_records",
+            "reuse_context",
+            "reuse_context TEXT NOT NULL DEFAULT ''",
+        )
+        self._ensure_column(
+            "evidence_reuse_records",
+            "metadata",
+            "metadata TEXT NOT NULL DEFAULT '{}'",
         )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
