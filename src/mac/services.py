@@ -7758,25 +7758,54 @@ class ControlPlane:
             self.drain_task_transition_outbox(task_id=task_id, limit=20)
         transitioned = self.get_task(task_id)
         if target in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
-            self._fail_waiting_dependents_of(task_id, target, actor)
+            self._resolve_waiting_dependents_of(task_id, target, actor)
         return transitioned
 
-    def _fail_waiting_dependents_of(self, dep_id: str, dep_state: str, actor: str) -> None:
-        """Propagate a terminal (FAILED/CANCELLED) prerequisite to its WAITING
-        dependents so a dead prerequisite cannot wedge them forever.
+    def _terminal_dependency_replacement(self, dep_id: str) -> Optional[str]:
+        """Return a live replacement recorded on a terminal prerequisite.
 
-        A task leaves WAITING only when EVERY dependency is COMPLETED
-        (``_dependencies_satisfied``). A dependency that goes FAILED or CANCELLED
-        can never complete, so before this its dependents were stuck permanently
-        and INVISIBLY — the likely cause of the 1400+ live WAITING tasks, and the
-        repair-recursion guard now deliberately creates exactly such failures.
-        Dead-letter each affected dependent with a clear reason instead: it
-        becomes visible in the FAILED dead-letter view and an operator can
-        ``reopen`` it if the prerequisite was superseded rather than truly
-        failed. Recurses naturally — each FAILED transition re-enters this method
-        for that task's own dependents. Best-effort: never breaks the triggering
-        transition.
+        Cancellation normalisation already validates a superseding replacement
+        at write time. Re-check its current liveness here because a replacement
+        may have become terminal between the prerequisite transition and this
+        dependent reconciliation.
         """
+        try:
+            dependency = self.get_task(dep_id)
+        except NotFoundError:
+            return None
+        lifecycle = ensure_json_object(dependency.metadata).get(
+            "repository_ref_lifecycle"
+        )
+        replacement_id = str(
+            ensure_json_object(lifecycle).get("replacement_task_id") or ""
+        ).strip()
+        if not replacement_id:
+            return None
+        try:
+            replacement = self.get_task(replacement_id)
+        except NotFoundError:
+            return None
+        if replacement.state in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
+            return None
+        if bool(ensure_json_object(replacement.metadata).get("no_dispatch")):
+            return None
+        return replacement.id
+
+    def _resolve_waiting_dependents_of(self, dep_id: str, dep_state: str, actor: str) -> None:
+        """Reconcile waiting dependents of a terminal prerequisite.
+
+        A terminal prerequisite cannot satisfy a waiting dependency edge.  The
+        old behaviour recursively marked every dependent as ``failed``; that
+        converted one root failure into a large, misleading execution-failure
+        count.  A durable replacement is instead substituted into each edge.
+        When none exists, the dependent is explicitly cancelled with its
+        terminal-dependency provenance, preserving an auditable decision without
+        claiming the dependent itself executed and failed.
+
+        This remains best-effort: a reconciliation error must never invalidate
+        the triggering terminal transition.
+        """
+        replacement_id = self._terminal_dependency_replacement(dep_id)
         try:
             rows = self.store.query_all(
                 "SELECT id FROM tasks WHERE state = ? AND dependencies LIKE ?",
@@ -7798,17 +7827,28 @@ class ControlPlane:
             if dependent.state != TaskState.WAITING.value:
                 continue
             try:
-                self.transition_task(
-                    dependent_id,
-                    TaskState.FAILED.value,
-                    "dependency-propagation",
-                    {
-                        "reason": "dependency_terminated",
-                        "failed_dependency": dep_id,
-                        "dependency_state": dep_state,
-                        "manual_repair_required": True,
-                    },
-                )
+                if replacement_id:
+                    self.update_task(
+                        dependent_id,
+                        dependencies=[
+                            replacement_id if item == dep_id else item
+                            for item in dependent.dependencies
+                        ],
+                        actor="dependency-reconciliation",
+                    )
+                else:
+                    self.transition_task(
+                        dependent_id,
+                        TaskState.CANCELLED.value,
+                        "dependency-reconciliation",
+                        {
+                            "reason": "dependency_terminated",
+                            "disposition": "preserve",
+                            "failed_dependency": dep_id,
+                            "dependency_state": dep_state,
+                            "manual_repair_required": True,
+                        },
+                    )
             except Exception as exc:  # noqa: BLE001 - one dependent must not stop the rest
                 try:
                     self.record_log(
