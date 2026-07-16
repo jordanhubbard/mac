@@ -62,4 +62,17 @@ class HubClient:
             raise HubClientError("HTTP %s %s: %s" % (exc.code, exc.reason, detail))
         except urllib.error.URLError as exc:
             raise HubClientError(str(exc.reason))
+        except OSError as exc:
+            # Socket-level transient failures — a read timeout, connection reset,
+            # or broken pipe — are NOT wrapped in URLError by http.client. A
+            # timeout while READING the response raises a bare TimeoutError
+            # (TimeoutError/ConnectionError are OSError subclasses). Left
+            # unwrapped it escapes every caller's ``except HubClientError`` guard;
+            # observed killing mac-agent-service when the startup heartbeat
+            # surfaced a bare ``TimeoutError`` instead of ``HubClientError``.
+            # Wrapping it here makes a transient hub failure uniformly recoverable
+            # so callers retry instead of crashing.
+            raise HubClientError(
+                "transient transport error: %s" % exc
+            ) from exc
         return json.loads(payload) if payload else None
