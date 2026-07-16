@@ -444,7 +444,11 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
     # replacement back to the host.
     "ANTHROPIC_API_KEY,ANTHROPIC_AUTH_TOKEN,ANTHROPIC_BASE_URL,ANTHROPIC_MODEL,"
     "CLAUDE_CODE_OAUTH_TOKEN,CLAUDE_CODE_USE_BEDROCK,CLAUDE_CODE_USE_VERTEX,CLAUDE_CODE_USE_FOUNDRY,"
-    "CURSOR_API_KEY,MAC_CURSOR_ENDPOINT,CURSOR_AGENT_ENDPOINT,MAC_CURSOR_MODEL"
+    "CURSOR_API_KEY,MAC_CURSOR_ENDPOINT,CURSOR_AGENT_ENDPOINT,MAC_CURSOR_MODEL,"
+    # Repository credentials are separate from model-route credentials.  They
+    # use the same private mode-0600 upload as the other sandbox secrets so git
+    # and gh work inside the confined executor without copying host SSH keys.
+    "GH_TOKEN,GITHUB_TOKEN,GITEA_TOKEN,GITEA_USER"
 )
 
 # PATH is an image/runtime invariant, not configuration to import from the

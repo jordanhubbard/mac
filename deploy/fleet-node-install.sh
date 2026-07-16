@@ -66,6 +66,7 @@ WORKER_CAPABILITIES="${MAC_DEPLOY_WORKER_CAPABILITIES:-ops,python,openclaw,revie
 WORKER_ALLOWED_PROJECTS="${MAC_DEPLOY_WORKER_ALLOWED_PROJECTS:-}"
 WORKER_REQUIRED_METADATA="${MAC_DEPLOY_WORKER_REQUIRED_METADATA:-}"
 WORKER_REQUIRE_CANARY="${MAC_DEPLOY_WORKER_REQUIRE_CANARY:-1}"
+GITHUB_CREDENTIALS_REQUIRED="${MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED:-0}"
 SUPERVISOR_REQUESTED="${MAC_DEPLOY_SUPERVISOR:-auto}"
 SHARED_SERVICES_MANAGER_AGENT="${MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT:-$AGENT}"
 QDRANT_URL_CONFIGURED="${MAC_DEPLOY_QDRANT_URL:-}"
@@ -720,19 +721,39 @@ install_github_review_key() {
 configure_github_https_credentials() {
   local gh_bin
   if [ -z "${GH_TOKEN:-}" ]; then
-    log "GH_TOKEN absent; skipping GitHub HTTPS credential setup"
+    if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
+      log "ERROR: GH_TOKEN absent on a node that requires GitHub repository credentials"
+      return 1
+    fi
+    log "GH_TOKEN absent; skipping optional GitHub HTTPS credential setup"
     return 0
   fi
   gh_bin="$(command -v gh 2>/dev/null || true)"
   if [ -z "$gh_bin" ]; then
-    log "WARNING: gh CLI not found; GitHub HTTPS credential setup skipped"
+    if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
+      log "ERROR: gh CLI not found on a node that requires GitHub repository credentials"
+      return 1
+    fi
+    log "WARNING: gh CLI not found; optional GitHub HTTPS credential setup skipped"
     return 0
   fi
-  if "$gh_bin" auth setup-git --hostname github.com >/dev/null 2>&1; then
-    log "GitHub HTTPS credential helper configured"
-  else
-    log "WARNING: gh auth setup-git failed; HTTPS repository publication may fail"
+  if ! "$gh_bin" auth status --hostname github.com >/dev/null 2>&1; then
+    if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
+      log "ERROR: GH_TOKEN was projected but GitHub rejected it"
+      return 1
+    fi
+    log "WARNING: GH_TOKEN was projected but GitHub rejected it"
+    return 0
   fi
+  if ! "$gh_bin" auth setup-git --hostname github.com >/dev/null 2>&1; then
+    if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
+      log "ERROR: gh auth setup-git failed on a node that requires repository credentials"
+      return 1
+    fi
+    log "WARNING: gh auth setup-git failed; HTTPS repository publication may fail"
+    return 0
+  fi
+  log "GitHub HTTPS credential helper configured and credential verified (source: env:GH_TOKEN)"
 }
 
 # On a brand-new spoke the hub's Qdrant/Firecrawl are reached through a reverse
@@ -3218,6 +3239,10 @@ disk_hygiene_report "before-cleanup" "$LOG_DIR/disk-before-cleanup-${DEPLOY_TS}.
 cleanup_obsolete_deploy_artifacts
 disk_hygiene_report "after-cleanup" "$LOG_DIR/disk-after-cleanup-${DEPLOY_TS}.json"
 write_deploy_manifest "pre" "$MANIFEST_PRE"
+# Resolve and verify repository auth before draining the worker or replacing
+# source, so a missing required credential leaves the existing node untouched.
+install_github_cli || true
+configure_github_https_credentials
 drain_mac_agent_before_deploy
 stop_existing_services_for_deploy
 backup_existing_artifacts
@@ -3246,7 +3271,6 @@ fi
 mv "$SRC_DIR.new" "$SRC_DIR"
 rm -f "$ARCHIVE"
 
-install_github_cli || true
 install_codegraph_cli
 initialize_codegraph_repository "$SRC_DIR"
 
@@ -3285,7 +3309,6 @@ else
   wait_for_hub_reverse_tunnel
 fi
 install_github_review_key
-configure_github_https_credentials
 install_or_validate_shared_services
 write_hermes_memory_topology
 

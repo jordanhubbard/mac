@@ -146,6 +146,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_FLEET_REGISTRY` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry. |
 | `MAC_DEPLOY_FLEET_REGISTRY_FILE` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry file. |
 | `MAC_DEPLOY_GH_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gh token. |
+| `MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy github credentials required. |
 | `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64` | str | consumer-defined | deployment | Deployment setting: deploy github review key b64. |
 | `MAC_DEPLOY_GIT_BRANCH` | str | consumer-defined | deployment | Deployment setting: deploy git branch. |
 | `MAC_DEPLOY_GIT_REV` | str | consumer-defined | deployment | Deployment setting: deploy git rev. |

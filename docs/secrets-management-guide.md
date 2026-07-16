@@ -209,13 +209,15 @@ Repository credentials have two distinct layers:
    that Git operations actually resolve.
 
 Creating a vault secret named `github.token` does **not** automatically place it
-in a worker process. Fleet deploy accepts `MAC_DEPLOY_GH_TOKEN` from the
-operator's host-local `~/.mac/.env` and writes it to managed runtimes as
-`GH_TOKEN`. Kubernetes task and review Jobs read optional `GH_TOKEN`,
-`GITHUB_TOKEN`, and `GITEA_TOKEN` keys from the runner's configured Secret
-(default `mac-api-config`). Keep Git tokens out of `fleets.yaml`, committed
-fleet specs, task metadata, and operator CLI arguments. The internal resolver
-may place a credential in the argv of the one Git subprocess that needs it;
+in a worker process. Fleet deploy resolves `MAC_DEPLOY_GH_TOKEN`, `GH_TOKEN`,
+`GITHUB_TOKEN`, then the operator's authenticated `gh` keychain and writes the
+result to managed runtimes as `GH_TOKEN`. The value is streamed over SSH stdin
+through a one-use mode-`0600` file; it is not part of the remote command.
+Kubernetes task and review Jobs read optional `GH_TOKEN`, `GITHUB_TOKEN`, and
+`GITEA_TOKEN` keys from the runner's configured Secret (default
+`mac-api-config`). Keep Git tokens out of `fleets.yaml`, committed fleet specs,
+task metadata, operator CLI arguments, and logs. The internal Git resolver may
+place a credential in the argv of the one Git subprocess that needs it;
 process inspection on an execution host is therefore privileged access.
 
 At runtime, GitHub HTTPS access resolves `GH_TOKEN`, then `GITHUB_TOKEN`, then
@@ -224,6 +226,12 @@ the fallback. The credential is injected only into the individual Git command;
 the worker restores a credential-free `origin` immediately afterward. Review
 Jobs receive the optional Git-host keys but deliberately do not receive
 `MAC_SECRET_KEY`.
+
+Pure workers default `worker.github_credentials_required` to true. Deployment
+therefore validates `gh auth status` before draining or replacing a fresh node.
+The OpenShell executor forwards Git-host variables through its private
+mode-`0600` environment upload, rather than copying host SSH keys or exposing a
+token in `sandbox create` arguments.
 
 Repository access writes `fleet_learning:repository_access` common-memory
 records so reviewer routing can reuse proven success and avoid a recent auth

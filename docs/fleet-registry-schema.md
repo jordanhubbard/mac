@@ -88,3 +88,30 @@ enforcement and fail-closed execution during every deploy. This is deliberate
 for ephemeral pods: `~/.mac` may survive while `~/.local/bin/openshell` does
 not. The deploy must rebuild missing runtime prerequisites rather than accept a
 heartbeat from a worker that cannot execute a sandboxed coding route.
+
+## Worker repository credentials
+
+`worker.github_credentials_required` controls whether fleet deploy must verify
+an authenticated GitHub HTTPS credential before it drains the node or replaces
+source. A pure worker with `hermes.gateway_impl: none` defaults to `true` so a
+fresh pod cannot register as a code executor that can edit locally but cannot
+clone or publish. Conversational nodes default to `false`. Set it to `false`
+only for an intentionally public/read-only executor.
+
+The operator-side deploy resolves the credential in this order:
+`MAC_DEPLOY_GH_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then the existing
+`gh auth token --hostname github.com` keychain login. It reports only the
+source name and streams the value over the resolved SSH route on stdin. The
+credential is stored in the owner-only managed runtime as `GH_TOKEN` and is
+forwarded into OpenShell through its private mode-`0600` environment bundle;
+it is never placed in the SSH command, fleet registry, task metadata, or logs.
+
+```yaml
+agents:
+  worker-1:
+    hermes:
+      gateway_impl: none
+    worker:
+      mode: loop
+      github_credentials_required: true
+```

@@ -461,18 +461,23 @@ bridge files are bootstrapped as part of the fleet service picture. Standalone
 TokenHub is retired from the default fleet topology.
 
 Private GitHub HTTPS repositories require a credential on every host or task
-runner that performs Git work. Keep it in the host-local `~/.mac/.env` (mode
-`0600`), never in `~/.mac/fleets.yaml` or a committed fleet spec:
+runner that performs Git work. An explicit deploy token may be kept in the
+host-local `~/.mac/.env` (mode `0600`), never in `~/.mac/fleets.yaml` or a
+committed fleet spec:
 
 ```bash
 # ~/.mac/.env -- placeholder only; supply the real value out of band.
 MAC_DEPLOY_GH_TOKEN=<github-token-authorized-for-the-organization>
 ```
 
-Fleet deploy writes that value to the managed runtime as `GH_TOKEN`. Kubernetes
-task and review Jobs instead read optional `GH_TOKEN`, `GITHUB_TOKEN`, and
-`GITEA_TOKEN` keys from the runner's configured Kubernetes Secret. Review Jobs
-do not receive `MAC_SECRET_KEY`.
+Fleet deploy resolves `MAC_DEPLOY_GH_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then an
+existing `gh` keychain login. It reports only the source name, streams the value
+over SSH stdin, and writes it to the owner-only managed runtime as `GH_TOKEN`.
+Pure `gateway_impl: none` workers verify the credential before drain or source
+replacement and forward it to OpenShell through a private mode-`0600` file.
+Kubernetes task and review Jobs instead read optional `GH_TOKEN`,
+`GITHUB_TOKEN`, and `GITEA_TOKEN` keys from the runner's configured Kubernetes
+Secret. Review Jobs do not receive `MAC_SECRET_KEY`.
 
 ## Where To Go Next
 

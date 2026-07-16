@@ -478,12 +478,18 @@ and `mac-hermes-task-executor` oneshot work use the same per-agent identity.
 Upstream provider credentials remain centralized on the hub, resolved by the
 in-mac router from MAC's encrypted vault or inherited host-local environment;
 spokes receive only their hub-facing MAC token.
-Git-host credentials are a separate execution concern: when
-`MAC_DEPLOY_GH_TOKEN` is present in the operator's `~/.mac/.env`, deploy writes
-it to each managed runtime as `GH_TOKEN`. Do not put the value in
-`~/.mac/fleets.yaml`, a fleet spec, task metadata, or source control. A vault
-record by itself does not populate a worker environment; deploy or the
-Kubernetes runner Secret must inject the corresponding environment key.
+Git-host credentials are a separate execution concern. Fleet deploy resolves
+`MAC_DEPLOY_GH_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, then the operator's existing
+`gh` keychain login, and writes the result to each managed runtime as
+`GH_TOKEN`. Only the source name is logged; the value travels over SSH stdin,
+not in the remote command. Pure `gateway_impl: none` workers require successful
+GitHub validation by default before drain or source replacement. The variable
+is also included in OpenShell's private mode-`0600` environment bundle so
+confined tasks can clone and publish without copied host SSH keys. Do not put
+the value in `~/.mac/fleets.yaml`, a fleet spec, task metadata, or source
+control. A vault record by itself does not populate a worker environment;
+deploy or the Kubernetes runner Secret must inject the corresponding
+environment key.
 
 It ships this repository to each host, installs `mac` into `~/.mac/venv`,
 redeploys upstream `NousResearch/hermes-agent` into `~/.mac/hermes-agent`,

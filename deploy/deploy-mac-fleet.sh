@@ -54,11 +54,41 @@ load_env_file_with_caller_precedence() {
   done
 }
 
+# Resolve the GitHub credential once on the operator host.  A fleet deploy
+# should reuse an already-authenticated ``gh`` keychain login instead of
+# requiring operators to copy the same token into MAC_DEPLOY_GH_TOKEN by hand.
+# Explicit deployment input still wins, followed by the standard GitHub env
+# variables, then the owner-only gh credential store.  The value is never
+# printed; only the source name is safe to report.
+resolve_github_deploy_token() {
+  local token="" source=""
+  if [ -n "${MAC_DEPLOY_GH_TOKEN:-}" ]; then
+    token="$MAC_DEPLOY_GH_TOKEN"
+    source="env:MAC_DEPLOY_GH_TOKEN"
+  elif [ -n "${GH_TOKEN:-}" ]; then
+    token="$GH_TOKEN"
+    source="env:GH_TOKEN"
+  elif [ -n "${GITHUB_TOKEN:-}" ]; then
+    token="$GITHUB_TOKEN"
+    source="env:GITHUB_TOKEN"
+  elif command -v gh >/dev/null 2>&1; then
+    token="$(gh auth token --hostname github.com 2>/dev/null || true)"
+    if [ -n "$token" ]; then
+      source="gh-keyring:github.com"
+    fi
+  fi
+  if [ -n "$token" ]; then
+    export MAC_DEPLOY_GH_TOKEN="$token"
+  fi
+  GITHUB_DEPLOY_CREDENTIAL_SOURCE="$source"
+}
+
 # Direct fleet deploys use the same authoritative operator configuration as
 # setup.py. Load it before any deployment defaults are derived so callers do
 # not have to remember a separate `source ~/.mac/.env` step.
 DEPLOY_ENV_FILE="${MAC_DEPLOY_ENV_FILE:-$HOME/.mac/.env}"
 load_env_file_with_caller_precedence "$DEPLOY_ENV_FILE"
+resolve_github_deploy_token
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 TMPDIR_LOCAL="${TMPDIR:-/tmp}/mac-fleet-deploy-${TS}.$$"
 ARCHIVE="${TMPDIR_LOCAL}/mac.tar.gz"
@@ -932,6 +962,13 @@ for name in selected:
             worker.get("openshell_required"),
             text_field(hermes.get("gateway_impl") or "hermes") == "none",
         ),
+        # Pure workers must be able to fetch and publish repository work from a
+        # fresh host.  Make that fail closed by default while preserving an
+        # explicit opt-out for intentionally public/read-only executors.
+        bool_field(
+            worker.get("github_credentials_required"),
+            text_field(hermes.get("gateway_impl") or "hermes") == "none",
+        ),
     ]
     require_no_pipe(fields)
     print("|".join(fields))
@@ -1275,8 +1312,8 @@ validate_router_topology_spec() {
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
-  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required <<<"$spec"
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required <<<"$spec"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
   nvidia_base_url="$(fleet_scoped_env NVIDIA_BASE_URL "$agent")"
@@ -1349,7 +1386,7 @@ deploy_host() {
   scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$SANITIZED_FLEET_REGISTRY" "${scp_target}:${remote_registry}"
 
   echo "==> ${agent}: running one-time deploy"
-  local remote_env=() remote_cmd openshell_enabled=0 effective_openshell_args="${MAC_DEPLOY_OPENSHELL_ARGS:-}"
+  local remote_env=() remote_secret_env=() remote_cmd openshell_enabled=0 effective_openshell_args="${MAC_DEPLOY_OPENSHELL_ARGS:-}"
   case "$(printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" | tr 'A-Z' 'a-z')" in
     1|true|yes|on) openshell_enabled=1 ;;
   esac
@@ -1370,6 +1407,12 @@ deploy_host() {
       ;;
   esac
   add_remote_env() { remote_env+=("$1=$(shell_quote "$2")"); }
+  # Secret values are streamed over SSH stdin into a mode-0600, one-use file;
+  # they must never appear in the ssh remote command or process argv.
+  add_remote_secret_env() {
+    [ -n "$2" ] || return 0
+    remote_secret_env+=("$1=$(shell_quote "$2")")
+  }
   add_remote_env MAC_DEPLOY_AGENT "$agent"
   add_remote_env MAC_DEPLOY_OS "$os"
   add_remote_env MAC_DEPLOY_ARCHIVE "$remote_archive"
@@ -1394,6 +1437,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_WORKER_REQUIRED_METADATA "$worker_required_metadata"
   add_remote_env MAC_DEPLOY_WORKER_REQUIRE_CANARY "$worker_require_canary"
   add_remote_env MAC_DEPLOY_OPENSHELL_REQUIRED "$openshell_required"
+  add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED "$github_credentials_required"
   add_remote_env MAC_DEPLOY_SUPERVISOR "$supervisor"
   add_remote_env MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT "$shared_services_manager"
   add_remote_env MAC_DEPLOY_QDRANT_URL "$qdrant_url"
@@ -1480,7 +1524,8 @@ deploy_host() {
   # media-01 service-role election: ops the fleet wants held (hub seeds + reconciles).
   add_remote_env MAC_DEPLOY_SERVICE_ROLE_OPS "${MAC_DEPLOY_SERVICE_ROLE_OPS:-}"
   # Git credential for cloning/pushing private repos (-> GH_TOKEN in mac.env).
-  add_remote_env MAC_DEPLOY_GH_TOKEN "${MAC_DEPLOY_GH_TOKEN:-}"
+  # This is deliberately separate from remote_env: the latter becomes argv.
+  add_remote_secret_env MAC_DEPLOY_GH_TOKEN "${MAC_DEPLOY_GH_TOKEN:-}"
   # mac-selfdrive: hub self-drives its tick loop (review->merge->dispatch) on
   # this cadence so the autonomous loop needs no external clock. 30s; 0 disables.
   add_remote_env MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS "${MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS:-30}"
@@ -1511,17 +1556,18 @@ deploy_host() {
   # The deploy body is in the standalone fleet-node-install.sh script which is
   # copied to the remote node and executed there, eliminating the large stdin
   # heredoc and its interaction with child processes that read from stdin.
-  unset -f add_remote_env
+  unset -f add_remote_env add_remote_secret_env
   local remote_node_script="/tmp/mac-node-install-${agent}-${TS}.sh"
+  local remote_secret_file="/tmp/mac-node-install-${agent}-${TS}.env"
   local deploy_script
   deploy_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fleet-node-install.sh"
   echo "==> ${agent}: copying fleet-node-install.sh"
   scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" \
     "$deploy_script" "${scp_target}:${remote_node_script}"
   local remote_cmd
-  remote_cmd="${remote_env[*]} bash $(shell_quote "$remote_node_script"); _mac_rc=\$?; rm -f $(shell_quote "$remote_node_script"); exit \$_mac_rc"
-  if ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-    "$remote_cmd"
+  remote_cmd="${remote_env[*]} sh -c 'umask 077; _mac_secret_file=\$1; _mac_script=\$2; trap \"rm -f \\\"\$_mac_secret_file\\\" \\\"\$_mac_script\\\"\" EXIT HUP INT TERM; cat > \"\$_mac_secret_file\"; set -a; . \"\$_mac_secret_file\"; set +a; rm -f \"\$_mac_secret_file\"; bash \"\$_mac_script\"' sh $(shell_quote "$remote_secret_file") $(shell_quote "$remote_node_script")"
+  if printf '%s\n' "${remote_secret_env[@]}" | \
+    ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" "$remote_cmd"
   then
     echo "==> ${agent}: validating remote post-deploy manifest"
     if ! reconcile_remote_deploy "$agent" "$target"; then
@@ -1853,6 +1899,11 @@ main() {
   CONFIGURED_AGENT_IDS="$(fleet_config_query configured-agent-ids | paste -sd, -)"
   deployed_count=0
   echo "==> deploying fleet: hub=${hub_agent} target=${hub_target_str} agents=${REQUESTED_AGENTS[*]:-all}"
+  if [ -n "${GITHUB_DEPLOY_CREDENTIAL_SOURCE:-}" ]; then
+    echo "==> GitHub repository credential source: ${GITHUB_DEPLOY_CREDENTIAL_SOURCE}"
+  else
+    echo "==> WARNING: no GitHub repository credential found in deploy env or gh keyring"
+  fi
   github_review_key_b64="$(ensure_local_github_review_key)"
   if [ -z "$hub_tunnel_pubkey" ]; then
     hub_tunnel_pubkey="$(read_hub_tunnel_pubkey 2>/dev/null || true)"

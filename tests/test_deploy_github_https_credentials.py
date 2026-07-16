@@ -79,10 +79,13 @@ def test_setup_failure_is_nonfatal(tmp_path: Path) -> None:
     assert "WARNING" in result.stdout
 
 
-def test_deploy_configures_https_after_ssh_review_key() -> None:
+def test_deploy_configures_https_before_worker_drain_and_source_replacement() -> None:
     script = (
         (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
         + "\n"
         + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     )
-    assert "install_github_review_key\nconfigure_github_https_credentials\n" in script
+    main = script.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
+    auth = main.index("configure_github_https_credentials")
+    assert auth < main.index("drain_mac_agent_before_deploy")
+    assert auth < main.index('log "installing mac source"')

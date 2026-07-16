@@ -1749,6 +1749,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy github credentials required.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy github review key b64.",
     "family": "deployment",
     "name": "MAC_DEPLOY_GITHUB_REVIEW_KEY_B64",

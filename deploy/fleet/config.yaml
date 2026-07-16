@@ -53,6 +53,10 @@ defaults:
     # fresh pod bootstraps OpenShell instead of depending on stale ~/.local
     # state. Conversational nodes default to false unless set explicitly.
     # openshell_required: true
+    # Optional override. gateway_impl=none pure workers also default to
+    # fail-closed GitHub credential validation. Set false only for a deliberately
+    # public/read-only executor that will never publish repository work.
+    # github_credentials_required: true
     capabilities:
       - ops
       - python

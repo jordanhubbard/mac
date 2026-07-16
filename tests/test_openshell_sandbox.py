@@ -319,6 +319,19 @@ def test_env_passthrough_defaults_include_task_route_context(monkeypatch):
     assert values["MAC_LEASE_ID"] == "lease_route"
 
 
+def test_env_passthrough_defaults_include_repository_credentials(monkeypatch):
+    monkeypatch.delenv("MAC_OPENSHELL_ENV_PASSTHROUGH", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "github-secret")
+    monkeypatch.setenv("GITEA_TOKEN", "gitea-secret")
+    monkeypatch.setenv("GITEA_USER", "git-user")
+
+    values = te._openshell_environment()
+
+    assert values["GH_TOKEN"] == "github-secret"
+    assert values["GITEA_TOKEN"] == "gitea-secret"
+    assert values["GITEA_USER"] == "git-user"
+
+
 # ---------------------------------------------------------------------------
 # sandbox lifecycle orchestration: create -> download -> always delete
 # ---------------------------------------------------------------------------

@@ -135,6 +135,13 @@ shell. A credential sync does not repair any of these failures.
       database, secret-encryption key, or provider vault.
 - [ ] Git-host credentials are projected into the actual worker or runner
       environment. A vault record by itself does not populate `GH_TOKEN`.
+- [ ] Fleet deploy reuses an explicit deploy token, standard GitHub token env,
+      or the operator's authenticated `gh` keychain in that precedence order.
+      Pure workers fail before drain/source replacement when GitHub rejects the
+      projected credential.
+- [ ] `GH_TOKEN`, `GITHUB_TOKEN`, and Gitea equivalents enter OpenShell only
+      through the private mode-`0600` sandbox environment bundle, never through
+      `sandbox create --env`, the SSH command line, or copied host SSH keys.
 - [ ] Coding credentials are synced from the workstation with the freshest
       interactive login only when the node report says they are needed:
 
@@ -333,6 +340,10 @@ mac fleet soul-audit --fleet "$FLEET" --agent "$AGENT"
       is visible in the generated deploy spec. Deploy automatically runs the
       OpenShell bootstrap with `--enable --fail-closed`; it does not assume a
       binary under ephemeral `~/.local` survived a pod replacement.
+- [ ] `worker.github_credentials_required` is explicitly true or the
+      pure-worker default is visible in the generated deploy spec. A fresh pod
+      passes `gh auth status`, clone/fetch, and a temporary push/delete probe
+      from both the service environment and a normal OpenShell sandbox.
 - [ ] The route uses the declared bastion, strict known hosts, explicit identity,
       and in-cluster target. Never infer pod DNS from the agent name.
 - [ ] Direct mesh reachability to the hub does not wait for an unnecessary

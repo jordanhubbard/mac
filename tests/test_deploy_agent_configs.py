@@ -447,9 +447,10 @@ def test_fleet_deploy_installs_github_cli_for_workers():
     script = deploy_script_text()
 
     assert "install_github_cli()" in script
-    assert 'install_github_cli' in script.split('mv "$SRC_DIR.new" "$SRC_DIR"', 1)[1].split(
-        'log "creating/updating mac environment file"', 1
-    )[0]
+    main = script.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
+    install = main.index("install_github_cli || true")
+    assert install < main.index("drain_mac_agent_before_deploy")
+    assert install < main.index('log "installing mac source"')
     assert 'brew install gh' in script
     assert 'sudo apt-get install -y gh' in script
     assert 'https://cli.github.com/packages' in script
@@ -1251,6 +1252,47 @@ def test_direct_fleet_deploy_loads_authoritative_env_before_defaults():
         "deploy-mac-fleet.sh must call load_env_file_with_caller_precedence to load the env file"
     )
     assert script.index(call) < script.index('GIT_BRANCH="${MAC_DEPLOY_GIT_BRANCH:-main}"')
+
+
+def test_fleet_deploy_reuses_gh_keyring_token_with_explicit_precedence(tmp_path):
+    script = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    match = re.search(
+        r"resolve_github_deploy_token\(\) \{.*?\n\}", script, re.DOTALL
+    )
+    assert match is not None
+    function = match.group(0)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text("#!/bin/sh\nprintf '%s\\n' keyring-token\n", encoding="utf-8")
+    fake_gh.chmod(0o755)
+    env = {
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "MAC_DEPLOY_GH_TOKEN": "explicit-token",
+        "GH_TOKEN": "standard-token",
+        "GITHUB_TOKEN": "github-token",
+    }
+    command = (
+        function
+        + "\nresolve_github_deploy_token\n"
+        + "printf '%s|%s' \"$MAC_DEPLOY_GH_TOKEN\" \"$GITHUB_DEPLOY_CREDENTIAL_SOURCE\""
+    )
+    explicit = subprocess.run(
+        ["bash", "-c", command], env=env, capture_output=True, text=True, check=False
+    )
+    assert explicit.returncode == 0, explicit.stderr
+    assert explicit.stdout == "explicit-token|env:MAC_DEPLOY_GH_TOKEN"
+
+    keyring = subprocess.run(
+        ["bash", "-c", command],
+        env={"PATH": env["PATH"]},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert keyring.returncode == 0, keyring.stderr
+    assert keyring.stdout == "keyring-token|gh-keyring:github.com"
 
 
 def test_router_topology_preflight_runs_before_remote_mutation():
@@ -2172,18 +2214,19 @@ def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests
 
 def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
     # The one-time deploy now uses scp + ssh (no heredoc); verify the ssh
-    # invocation uses `if ssh` (not `if ! ssh`) and the host-side reconciliation
-    # logic is present after it.
+    # invocation is the final command in an `if` pipeline (with pipefail active)
+    # and the host-side reconciliation logic is present after it.
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     # Extract the ssh invocation section between remote_cmd= and openshell check.
     ssh_section = deploy.split("local remote_cmd", 1)[1].split(
         'if [ "$openshell_enabled" = "1" ]', 1
     )[0]
-    deploy_host_tail = deploy.split('if ssh -A -o BatchMode=yes', 1)[1].split(
+    deploy_host_tail = deploy.split('ssh -A -o BatchMode=yes', 1)[1].split(
         'if [ "$openshell_enabled" = "1" ]', 1
     )[0]
 
-    assert "if ssh -A -o BatchMode=yes" in ssh_section
+    assert "if printf '%s\\n' \"${remote_secret_env[@]}\" |" in ssh_section
+    assert "ssh -A -o BatchMode=yes" in ssh_section
     assert "if ! ssh -A -o BatchMode=yes" not in ssh_section
     assert 'echo "==> ${agent}: validating remote post-deploy manifest"' in deploy_host_tail
     assert 'if ! reconcile_remote_deploy "$agent" "$target"; then' in deploy_host_tail
@@ -2191,7 +2234,7 @@ def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
     assert 'echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"' in deploy_host_tail
 
 
-def test_pure_worker_deploy_requires_and_bootstraps_openshell(tmp_path):
+def test_pure_worker_deploy_requires_openshell_and_github_credentials(tmp_path):
     base = {
         "sample": True,
         "fleet_name": "example",
@@ -2246,10 +2289,14 @@ def test_pure_worker_deploy_requires_and_bootstraps_openshell(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().split("|")[-1] == "1"
+    assert result.stdout.strip().split("|")[-2:] == ["1", "1"]
 
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL_REQUIRED "$openshell_required"' in deploy
+    assert (
+        'add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED '
+        '"$github_credentials_required"'
+    ) in deploy
     assert 'run_openshell_bootstrap "$agent" "$target" "$effective_openshell_args"' in deploy
     assert '*" --enable "*' in deploy
     assert '*" --fail-closed "*' in deploy
@@ -2490,7 +2537,26 @@ def test_build_mac_env_passes_through_gh_token(tmp_path):
     bare = build_mac_env({}, deploy_env_config(tmp_path, fleet_name="gke2"), environ={})
     assert "GH_TOKEN" not in bare
     script = deploy_script_text()
-    assert "add_remote_env MAC_DEPLOY_GH_TOKEN" in script
+    assert "add_remote_env MAC_DEPLOY_GH_TOKEN" not in script
+    assert 'add_remote_secret_env MAC_DEPLOY_GH_TOKEN "${MAC_DEPLOY_GH_TOKEN:-}"' in script
+    assert "remote_secret_env" in script
+    assert r'cat > \"\$_mac_secret_file\"' in script
+    assert "printf '%s\\n' \"${remote_secret_env[@]}\" |" in script
+
+
+def test_required_github_credentials_fail_before_worker_drain():
+    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    function = script.split("configure_github_https_credentials() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert 'if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]' in function
+    assert "GH_TOKEN absent on a node that requires" in function
+    assert '"$gh_bin" auth status --hostname github.com' in function
+
+    main = script.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
+    auth = main.index("configure_github_https_credentials")
+    assert auth < main.index("drain_mac_agent_before_deploy")
+    assert auth < main.index('log "installing mac source"')
 
 
 def test_hub_env_includes_all_option_c_env_vars(tmp_path):
