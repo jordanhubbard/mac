@@ -7952,6 +7952,53 @@ def test_tick_fails_exhausted_blocked_attempt_without_reopening(cp):
     ]
 
 
+def test_tick_exhaustion_carries_attempt_output_into_terminal_diagnosis(cp):
+    task = cp.create_task("exhausted attempt output", max_attempts=1)
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "test_failed", "stderr_tail": "compile failed: missing header"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    terminal = [
+        event for event in cp.task_history(task.id) if event.to_state == TaskState.FAILED.value
+    ][-1]
+    assert terminal.detail["diagnosis"]["output_tail"] == "compile failed: missing header"
+    assert terminal.detail["diagnosis"]["output_tail_unavailable_reason"] == ""
+
+
+def test_tick_exhaustion_records_when_attempt_history_has_no_output(cp):
+    task = cp.create_task("exhausted attempt without output", max_attempts=1)
+    cp.transition_task(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {"reason": "test_failed"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    cp.tick(limit=0)
+
+    terminal = [
+        event for event in cp.task_history(task.id) if event.to_state == TaskState.FAILED.value
+    ][-1]
+    diagnosis = terminal.detail["diagnosis"]
+    assert diagnosis["output_tail"] == ""
+    assert diagnosis["output_tail_unavailable_reason"] == (
+        "no captured stdout, stderr, output, log, or tail exists in attempt history"
+    )
+
+
 def test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage(cp):
     task = cp.create_task(
         "exhausted blocked attempt with salvage",

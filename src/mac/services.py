@@ -592,7 +592,10 @@ def _diagnostic_output_tail(detail: Mapping[str, Any]) -> Tuple[str, str]:
         if value not in (None, "", [], {}):
             values.append(str(value))
     if not values:
-        return "", "transition supplied no stdout, stderr, output, log, or tail field"
+        return "", str(
+            detail.get("output_tail_unavailable_reason")
+            or "transition supplied no stdout, stderr, output, log, or tail field"
+        )
     text = "\n".join(values).replace("\x00", "")
     text = _DIAG_URL_AUTH_RE.sub(r"\1<redacted>@", text)
     text = _DIAG_SECRET_RE.sub(r"\1<redacted>", text)
@@ -14994,6 +14997,19 @@ class ControlPlane:
         )
         return classification.failure_class, dict(classification.salvage)
 
+    def _attempt_failure_output(self, task: Task) -> Tuple[str, str]:
+        """Return the newest durable output tail from the exhausted attempts."""
+        for event in reversed(self.task_history(task.id, limit=100)):
+            detail = ensure_json_object(event.detail)
+            output_tail, unavailable = _diagnostic_output_tail(detail)
+            if output_tail:
+                return output_tail, ""
+            diagnosis = ensure_json_object(detail.get("diagnosis"))
+            output_tail, unavailable = _diagnostic_output_tail(diagnosis)
+            if output_tail:
+                return output_tail, ""
+        return "", "no captured stdout, stderr, output, log, or tail exists in attempt history"
+
     def _exhausted_attempt_terminal_transition(
         self,
         task: Task,
@@ -15002,6 +15018,11 @@ class ControlPlane:
         failure_class, salvage = self._record_attempt_failure_classification(task)
         transition_detail = dict(detail)
         transition_detail["failure_class"] = failure_class
+        output_tail, unavailable = self._attempt_failure_output(task)
+        if output_tail:
+            transition_detail.setdefault("output_tail", output_tail)
+        else:
+            transition_detail.setdefault("output_tail_unavailable_reason", unavailable)
         if salvage:
             transition_detail["salvage"] = salvage
         # Contract failures are recoverable prerequisites, not dead-letter
