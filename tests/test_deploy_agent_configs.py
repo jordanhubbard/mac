@@ -3322,9 +3322,7 @@ exec "$@"
         encoding="utf-8",
     )
     sudo.chmod(0o755)
-    iptables = fake_bin / "iptables"
-    iptables.write_text(
-        """#!/bin/sh
+    iptables_script = """#!/bin/sh
 printf '%s\\n' "$*" >> "$IPTABLES_CALLS"
 if [ "$1" = "-C" ]; then
   exit 1
@@ -3342,10 +3340,14 @@ if [ "$1" = "-D" ] && [ "$2" = "INPUT" ] \
   exit 0
 fi
 exit 1
-""",
-        encoding="utf-8",
-    )
-    iptables.chmod(0o755)
+"""
+    # Keep this test hermetic on Linux CI hosts where a real ip6tables binary
+    # may be installed.  The production helper deliberately inspects both
+    # families when present, so both commands must belong to the fake host.
+    for name in ("iptables", "ip6tables"):
+        path = fake_bin / name
+        path.write_text(iptables_script, encoding="utf-8")
+        path.chmod(0o755)
     snippet = f"""
 set -euo pipefail
 die() {{ printf '%s\\n' "$*" >&2; return 1; }}
@@ -3391,6 +3393,8 @@ def _run_linux_optional_openshell_disable(
     helpers = installer[start:end]
 
     test_root = tmp_path / "root"
+    systemd_runtime = test_root / "run/systemd/system"
+    systemd_runtime.mkdir(parents=True)
     systemd_firewall = test_root / "etc/systemd/system/mac-openshell-firewall.service"
     supervisor_gateway = test_root / "etc/supervisor/conf.d/openshell-gateway.conf"
     supervisor_firewall = (
@@ -3414,6 +3418,10 @@ def _run_linux_optional_openshell_disable(
             'firewall_script="/usr/local/sbin/mac-openshell-firewall.sh"',
             "firewall_script=%s" % shlex.quote(str(firewall_script)),
         ),
+        (
+            "/run/systemd/system",
+            shlex.quote(str(systemd_runtime)),
+        ),
     ):
         helpers = helpers.replace(original, replacement)
 
@@ -3425,25 +3433,7 @@ def _run_linux_optional_openshell_disable(
     if managed_firewall:
         firewall_state.write_text("present\n", encoding="utf-8")
 
-    scripts = {
-        "sudo": """#!/bin/sh
-[ "$1" = "-n" ] && shift
-exec "$@"
-""",
-        "supervisorctl": """#!/bin/sh
-printf '%s\n' "$*" >> "$SUPERVISOR_CALLS"
-exit 91
-""",
-        "pgrep": "#!/bin/sh\nexit 1\n",
-        "pkill": "#!/bin/sh\nexit 0\n",
-        "ss": (
-            "#!/bin/sh\nprintf '%s\\n' "
-            + shlex.quote(
-                "LISTEN 0 4096 0.0.0.0:17670 0.0.0.0:*" if listener else ""
-            )
-            + "\n"
-        ),
-        "iptables": """#!/bin/sh
+    iptables_script = """#!/bin/sh
 printf '%s\n' "$*" >> "$IPTABLES_CALLS"
 if [ "$1" = "-S" ]; then
   [ "$FIREWALL_INSPECTION_FAILS" = 0 ] || exit 73
@@ -3460,7 +3450,36 @@ if [ "$1" = "-D" ] && [ "$2" = "INPUT" ]; then
   exit 0
 fi
 exit 1
+"""
+    scripts = {
+        "sudo": """#!/bin/sh
+[ "$1" = "-n" ] && shift
+exec "$@"
 """,
+        "supervisorctl": """#!/bin/sh
+printf '%s\n' "$*" >> "$SUPERVISOR_CALLS"
+exit 91
+""",
+        "pgrep": "#!/bin/sh\nexit 1\n",
+        "pkill": "#!/bin/sh\nexit 0\n",
+        # GitHub's Linux runners have a live /run/systemd/system and a real
+        # systemctl.  Exercise the systemd branch without talking to the host
+        # manager: mutation/reload succeeds and the post-stop probe is inactive.
+        "systemctl": """#!/bin/sh
+case " $* " in
+  *" is-active "*) exit 3 ;;
+esac
+exit 0
+""",
+        "ss": (
+            "#!/bin/sh\nprintf '%s\\n' "
+            + shlex.quote(
+                "LISTEN 0 4096 0.0.0.0:17670 0.0.0.0:*" if listener else ""
+            )
+            + "\n"
+        ),
+        "iptables": iptables_script,
+        "ip6tables": iptables_script,
     }
     for name, body in scripts.items():
         path = fake_bin / name
