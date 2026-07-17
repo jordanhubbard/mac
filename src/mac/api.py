@@ -68,7 +68,6 @@ from mac.services import ControlPlane
 from mac.store import SQLiteStore, StoreError, make_store_from_env
 from mac.work_plan_admission import (
     MANAGED_WORK_PLAN_MODE,
-    ManagedWorkPlanBridge,
     managed_plan_from_dashboard_accept,
 )
 from mac.work_package_pipeline_runtime import build_work_package_pipeline_runtime
@@ -244,7 +243,23 @@ def _normalize_auth_tokens(
 ) -> Dict[str, TokenPrincipal]:
     if not raw:
         return {}
-    return {str(token): _coerce_principal(value) for token, value in raw.items()}
+    normalized: Dict[str, TokenPrincipal] = {}
+    for token, value in raw.items():
+        registered = str(token)
+        principal = _coerce_principal(value)
+        if not principal.credential_fingerprint:
+            fingerprint = (
+                registered
+                if registered.startswith("sha256:") and len(registered) == 71
+                else "sha256:%s"
+                % hashlib.sha256(registered.encode("utf-8")).hexdigest()
+            )
+            principal = replace(
+                principal,
+                credential_fingerprint=fingerprint,
+            )
+        normalized[registered] = principal
+    return normalized
 
 
 def _resolve_principal(
@@ -291,6 +306,27 @@ def _data(model: BaseModel) -> Dict[str, Any]:
         return model.model_dump(exclude_unset=True)
     return model.dict(exclude_unset=True)
 
+
+def _task_create_idempotency_scope(
+    principal: "TokenPrincipal", *, surface: str
+) -> str:
+    """Build a stable, secret-free caller namespace for task-create retries."""
+
+    identity = (
+        "agent:%s" % principal.agent_id
+        if principal.agent_id
+        else "client:%s" % principal.client_id
+        if principal.client_id
+        else "credential:%s" % principal.credential_fingerprint
+        if principal.credential_fingerprint
+        else "tenant:%s" % principal.tenant_id
+        if principal.tenant_id
+        else "admin"
+        if principal.is_admin
+        else "scopes:%s" % ",".join(sorted(principal.scopes))
+    )
+    return "mac.task.create.v1|%s|%s" % (surface, identity)
+
 def _refuse_agent_minted_directives(principal: "TokenPrincipal", topic: Any) -> None:
     """human.directive.v1 authority IS its operator provenance — an
     agent-bound token minting one would forge a human voice."""
@@ -324,6 +360,8 @@ _TASK_LIST_SUMMARY_FIELDS = frozenset(
         "created_at",
         "updated_at",
         "last_updated_at",
+        "publication_lane",
+        "publication_route",
     }
 )
 _DASHBOARD_TASK_SUMMARY_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
@@ -339,7 +377,12 @@ _DASHBOARD_TASK_SUMMARY_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
     }
 )
 _DASHBOARD_IDE_TASK_FIELDS = _TASK_LIST_SUMMARY_FIELDS | frozenset(
-    {"dependencies", "required_capabilities"}
+    {
+        "dependencies",
+        "required_capabilities",
+        "publication_lane",
+        "publication_route",
+    }
 )
 _DASHBOARD_IDE_PROJECT_FIELDS = frozenset(
     {
@@ -379,6 +422,8 @@ class TaskCreate(BaseModel):
     required_capabilities: List[str] = Field(default_factory=list)
     dependencies: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    publication_lane_policy: Optional[Literal["auto", "managed", "legacy"]] = None
+    idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
     max_attempts: int = 3
     actor: str = "human"
 
@@ -1825,7 +1870,9 @@ def _load_auth_tokens_from_env() -> Dict[str, TokenPrincipal]:
         raise ValueError(
             "MAC_API_TOKEN is set but empty; unset it to leave the API open, or provide a non-empty token"
         )
-    return {single: TokenPrincipal(scopes=frozenset({"admin"}))}
+    return _normalize_auth_tokens(
+        {single: TokenPrincipal(scopes=frozenset({"admin"}))}
+    )
 
 
 def _required_scope(method: str, path: str) -> Optional[str]:
@@ -2887,6 +2934,15 @@ def _dashboard_ide_agent(
             machine_dict.get("resources")
         )
 
+    active_task_dicts = list(base["active_tasks"])
+    active_routes = cp.task_publication_routes(
+        (task["id"] for task in active_task_dicts), compact=True
+    )
+    for task in active_task_dicts:
+        route = active_routes[task["id"]]
+        task["publication_lane"] = route["lane"]
+        task["publication_route"] = route
+
     return {
         "agent": projected_agent,
         "machine": projected_machine,
@@ -2894,7 +2950,7 @@ def _dashboard_ide_agent(
             detail["task"]
             for detail in (
                 _dashboard_ide_task_dict(task_dict)
-                for task_dict in base["active_tasks"]
+                for task_dict in active_task_dicts
             )
         ],
         "active_projects": base["active_projects"],
@@ -2927,6 +2983,13 @@ def _dashboard_ide_state(
     ]
     tasks = cp.list_tasks()
     task_dicts = [task.to_dict() for task in tasks]
+    task_routes = cp.task_publication_routes(
+        (task["id"] for task in task_dicts), compact=True
+    )
+    for task in task_dicts:
+        route = task_routes[task["id"]]
+        task["publication_lane"] = route["lane"]
+        task["publication_route"] = route
     projects = cp._hermes_project_contexts(
         tasks,
         all_agents,
@@ -3854,10 +3917,7 @@ def create_app(
     app.state.client_principals = client_principals
     app.state.worker_principals = worker_principals
     app.state.worker_identity_policy = worker_identity_policy
-    app.state.managed_work_plan_bridge = ManagedWorkPlanBridge(
-        cp.store,
-        cp.work_packages,
-    )
+    app.state.managed_work_plan_bridge = cp.managed_work_plans
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
     app.state.backlog_groomer = backlog_groomer
@@ -4814,7 +4874,25 @@ def create_app(
         principal.assert_tenant(instance.tenant_id)
         data = _data(body)
         actor = data.pop("actor", "hermes")
-        return cp.create_interaction_task(instance_id, actor=actor, **data).to_dict()
+        metadata = dict(data.get("metadata") or {})
+        publication_lane_policy = data.pop("publication_lane_policy", None)
+        if publication_lane_policy is not None:
+            metadata["publication_lane_policy"] = publication_lane_policy
+            if publication_lane_policy == "managed":
+                metadata["no_decompose"] = True
+        if str(metadata.get("publication_lane_policy") or "auto").lower() == "legacy":
+            principal.require_admin()
+        data["metadata"] = metadata
+        return cp.create_interaction_task(
+            instance_id,
+            actor=actor,
+            _allow_legacy_publication=principal.is_admin,
+            _idempotency_scope=_task_create_idempotency_scope(
+                principal,
+                surface="hermes-instance:%s" % instance_id,
+            ),
+            **data,
+        ).to_dict()
 
     @app.post("/platform-bindings")
     def register_platform_binding(
@@ -4846,6 +4924,21 @@ def create_app(
         data = _data(body)
         actor = data.pop("actor", "human")
         metadata = dict(data.get("metadata") or {})
+        publication_lane_policy = data.pop("publication_lane_policy", None)
+        if publication_lane_policy is not None:
+            metadata["publication_lane_policy"] = publication_lane_policy
+            if publication_lane_policy == "managed":
+                metadata["no_decompose"] = True
+            data["metadata"] = metadata
+        effective_publication_policy = str(
+            metadata.get("publication_lane_policy") or "auto"
+        ).strip().lower()
+        if effective_publication_policy == "legacy":
+            # Automatic managed admission is a controller-selected hardening
+            # of ordinary task creation. Downgrading an otherwise eligible
+            # task bypasses that certification/landing path and is therefore
+            # an administrative migration operation, not ordinary write scope.
+            principal.require_admin()
         origin = dict(metadata.get("origin") or {}) if isinstance(metadata.get("origin"), dict) else {}
         existing_tenant = origin.get("tenant_id") or metadata.get("tenant_id")
         if principal.tenant_id is not None and not principal.is_admin:
@@ -4856,7 +4949,20 @@ def create_app(
             origin["tenant_id"] = principal.tenant_id
             metadata["origin"] = origin
             data["metadata"] = metadata
-        return cp.create_task(actor=actor, **data).to_dict()
+        created = cp.create_task(
+            actor=actor,
+            _allow_legacy_publication=principal.is_admin,
+            _idempotency_scope=_task_create_idempotency_scope(
+                principal,
+                surface="tasks",
+            ),
+            **data,
+        )
+        result = created.to_dict()
+        route = cp.task_publication_route(created.id)
+        result["publication_lane"] = route["lane"]
+        result["publication_route"] = route
+        return result
 
     @app.post("/repositories/onboard")
     def onboard_repository(
@@ -4879,6 +4985,13 @@ def create_app(
         limit: Optional[int] = Query(default=None),
     ) -> List[Dict[str, Any]]:
         tasks = [task.to_dict() for task in cp.list_tasks(state, tenant_id, project=project, limit=limit)]
+        routes = cp.task_publication_routes(
+            (task["id"] for task in tasks), compact=True
+        )
+        for task in tasks:
+            route = routes[task["id"]]
+            task["publication_lane"] = route["lane"]
+            task["publication_route"] = route
         if view == "summary":
             tasks = [
                 {k: v for k, v in t.items() if k in _TASK_LIST_SUMMARY_FIELDS}
@@ -4947,6 +5060,10 @@ def create_app(
     @app.get("/tasks/{task_id}/dispatch-explain")
     def task_dispatch_explain(task_id: str) -> Dict[str, Any]:
         return cp.explain_task_dispatch(task_id, record_observation=True)
+
+    @app.get("/tasks/{task_id}/publication-route")
+    def task_publication_route(task_id: str) -> Dict[str, Any]:
+        return cp.task_publication_route(task_id)
 
     @app.get("/tasks/{task_id}/break-glass-authorizations")
     def list_break_glass_authorizations(

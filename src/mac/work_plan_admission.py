@@ -25,6 +25,7 @@ see ``docs/secrets-management-guide.md`` for the accepted reference mechanism.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -33,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Tuple
 from urllib.parse import parse_qsl, urlsplit
 
-from mac.models import JsonDict, ValidationError, new_id
+from mac.models import JsonDict, ValidationError, json_loads, new_id
 from mac.repository_contract import resolve_repository_canonical_remote
 from mac.repository_namespace import attest_git_tree_resource_namespace
 from mac.store import Store
@@ -50,8 +51,11 @@ MANAGED_WORK_PLAN_MODE = "managed"
 MANAGED_WORK_PLAN_PREVIEW_SCHEMA = "mac.dashboard.managed_work_plan.v1"
 MANAGED_WORK_PLAN_ACCEPT_SCHEMA = "mac.dashboard.managed_work_plan_accept.v1"
 MANAGED_WORK_PLAN_PROVENANCE_SCHEMA = "mac.managed_work_plan.provenance.v1"
+MANAGED_SINGLE_TASK_SCHEMA = "mac.managed_single_task.v1"
+MANAGED_SINGLE_TASK_MUTATION_NODE_KEY = "change"
 
 _FULL_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_CANONICAL_TASK_ID_RE = re.compile(r"^task_[0-9a-f]{32}$")
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
 _SECRET_QUERY_KEYS = frozenset(
     {
@@ -67,6 +71,73 @@ _SECRET_QUERY_KEYS = frozenset(
         "token",
     }
 )
+
+_CANONICAL_PLAN_REPLAY_ONLY_FIELDS = frozenset(
+    {"compiler_version", "policy_version", "derived"}
+)
+_CANONICAL_NODE_REPLAY_ONLY_FIELDS = frozenset(
+    {
+        "input_lineage_status",
+        "carry_forward_eligible",
+        "effects_digest",
+        "contract_digest",
+        "input_digest",
+    }
+)
+
+
+def _replayable_plan(definition: Mapping[str, Any]) -> JsonDict:
+    """Project an immutable compiled definition back to compiler input.
+
+    Exact single-task retries must use the originally pinned definition after
+    the canonical branch moves. The stored row includes compiler-derived
+    fields that are deliberately rejected on ordinary planner input, so this
+    narrow projection removes only those controller-owned derivations and lets
+    the compiler reproduce and verify the original digest.
+    """
+
+    replay = copy.deepcopy(dict(definition))
+    for key in _CANONICAL_PLAN_REPLAY_ONLY_FIELDS:
+        replay.pop(key, None)
+    namespace = replay.get("resource_namespace")
+    if isinstance(namespace, Mapping):
+        replay["resource_namespace"] = {
+            key: copy.deepcopy(namespace[key])
+            for key in (
+                "case_sensitive",
+                "unicode_normalization",
+                "symlink_resolution",
+            )
+            if key in namespace
+        }
+    mutation_wip = replay.get("mutation_wip")
+    if isinstance(mutation_wip, dict):
+        mutation_wip.pop("max_fan_in", None)
+    nodes = replay.get("nodes")
+    if not isinstance(nodes, list):
+        raise ValidationError(
+            "managed single-task package has no replayable canonical nodes"
+        )
+    for raw_node in nodes:
+        if not isinstance(raw_node, dict):
+            raise ValidationError(
+                "managed single-task package has an invalid canonical node"
+            )
+        for key in _CANONICAL_NODE_REPLAY_ONLY_FIELDS:
+            raw_node.pop(key, None)
+        verification = raw_node.get("verification")
+        if isinstance(verification, dict):
+            verification.pop("command_authority", None)
+            verification.pop("policy_resolution", None)
+            if verification.get("commands") == []:
+                verification.pop("commands", None)
+        external_dependencies = raw_node.get("external_dependencies")
+        if isinstance(external_dependencies, list):
+            for dependency in external_dependencies:
+                if isinstance(dependency, dict):
+                    dependency.pop("lineage_status", None)
+                    dependency.pop("carry_forward_eligible", None)
+    return replay
 
 # High-confidence secret detectors that operate on scalar strings.
 #
@@ -464,6 +535,26 @@ class ManagedWorkPlanBridge:
         race rather than trusting this preflight observation.
         """
 
+        return self._accept(
+            plan,
+            actor=actor,
+            reason=reason,
+            tenant_id=tenant_id,
+            root_task_id=root_task_id,
+        )
+
+    def _accept(
+        self,
+        plan: Mapping[str, Any],
+        *,
+        actor: str,
+        reason: str,
+        tenant_id: Optional[str] = None,
+        root_task_id: Optional[str] = None,
+        controller_task_identity: Optional[Tuple[str, str]] = None,
+    ) -> ManagedWorkPlanAcceptance:
+        """Private controller path shared by generic and single-task admission."""
+
         if not isinstance(plan, Mapping):
             raise ValidationError("managed work plan acceptance requires a plan object")
         candidate = copy.deepcopy(dict(plan))
@@ -488,10 +579,184 @@ class ManagedWorkPlanBridge:
             reason=reason,
             tenant_id=tenant_id,
             root_task_id=root_task_id,
+            _controller_task_identity=controller_task_identity,
         )
         if admission.package.state not in {"admitted", "active"}:
             raise ValidationError("managed work plan admission returned an invalid package state")
         return ManagedWorkPlanAcceptance(admission=admission)
+
+    def admit_single_task(
+        self,
+        *,
+        task_id: str,
+        title: str,
+        description: str,
+        project: str,
+        repository_id: str,
+        priority: int,
+        required_capabilities: Sequence[str],
+        metadata: Mapping[str, Any],
+        max_attempts: int,
+        actor: str,
+        reason: str,
+        tenant_id: Optional[str] = None,
+    ) -> ManagedWorkPlanAcceptance:
+        """Admit one atomic repository task without a planner round trip.
+
+        The controller synthesizes the fixed mutation -> integration ->
+        certification line, pins the canonical base, and preserves the task id
+        already allocated by the ordinary create-task surface.  The package is
+        still held; the caller must use the normal readiness-gated activation
+        route before any worker can claim it.
+        """
+
+        exact_task_id = _required_text(
+            task_id, "managed single-task task_id", maximum=240
+        )
+        if not _CANONICAL_TASK_ID_RE.fullmatch(exact_task_id):
+            raise ValidationError(
+                "managed single-task task_id must be a canonical task id"
+            )
+        exact_title = _required_text(
+            title, "managed single-task title", maximum=240
+        )
+        exact_description = str(description or "")
+        if len(exact_description) > 100_000:
+            raise ValidationError(
+                "managed single-task description may contain at most 100000 characters"
+            )
+        package_id = "wp_fast_%s" % exact_task_id.removeprefix("task_")
+        task_metadata = copy.deepcopy(dict(metadata))
+        intent = {
+            "schema": MANAGED_SINGLE_TASK_SCHEMA,
+            "task_id": exact_task_id,
+            "title": exact_title,
+            "description": exact_description,
+            "project": str(project),
+            "repository_id": str(repository_id),
+            "priority": int(priority),
+            "required_capabilities": sorted(
+                {str(value) for value in required_capabilities}
+            ),
+            "metadata": task_metadata,
+            "max_attempts": int(max_attempts),
+        }
+        try:
+            intent_digest = hashlib.sha256(
+                json.dumps(
+                    intent,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ).encode("utf-8")
+            ).hexdigest()
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "managed single-task intent must be JSON serializable"
+            ) from exc
+
+        existing = self.store.query_one(
+            "SELECT plan.definition FROM work_package_plan_versions AS plan "
+            "WHERE plan.package_id = ? AND plan.version = ?",
+            (package_id, 1),
+        )
+        if existing is not None:
+            definition = json_loads(existing["definition"], {})
+            plan_metadata = (
+                definition.get("metadata")
+                if isinstance(definition, Mapping)
+                else None
+            )
+            marker = (
+                plan_metadata.get("single_task_fast_lane")
+                if isinstance(plan_metadata, Mapping)
+                else None
+            )
+            if not isinstance(marker, Mapping) or str(
+                marker.get("intent_digest") or ""
+            ) != intent_digest:
+                raise ValidationError(
+                    "managed single-task package already belongs to different intent"
+                )
+            admission = self.work_packages.admit(
+                _replayable_plan(definition),
+                actor=actor,
+                reason=reason,
+                tenant_id=tenant_id,
+                _controller_task_identity=(
+                    MANAGED_SINGLE_TASK_MUTATION_NODE_KEY,
+                    exact_task_id,
+                ),
+            )
+            return ManagedWorkPlanAcceptance(admission=admission)
+
+        proposal: JsonDict = {
+            "goal": exact_title,
+            "max_in_flight": 1,
+            "mutation_wip": {"max_tokens": 1},
+            "metadata": {
+                "single_task_fast_lane": {
+                    "schema": MANAGED_SINGLE_TASK_SCHEMA,
+                    "task_id": exact_task_id,
+                    "planner_bypassed": True,
+                    "intent_digest": intent_digest,
+                }
+            },
+            "nodes": [
+                {
+                    "node_id": MANAGED_SINGLE_TASK_MUTATION_NODE_KEY,
+                    "title": exact_title,
+                    "description": exact_description,
+                    "kind": "mutation",
+                    "priority": int(priority),
+                    "required_capabilities": list(required_capabilities),
+                    "max_attempts": int(max_attempts),
+                    "effects": {"exclusive": ["repo:*"]},
+                    "expected_outputs": ["exact-candidate"],
+                    "verification": {"profile": "repository-default"},
+                    "estimates": {"confidence": "high"},
+                    "metadata": task_metadata,
+                },
+                {
+                    "node_id": "assemble",
+                    "title": "Assemble exact candidate",
+                    "kind": "integration",
+                    "depends_on": [MANAGED_SINGLE_TASK_MUTATION_NODE_KEY],
+                    "effects": {},
+                    "expected_outputs": ["assembled-tree"],
+                    "verification": {"profile": "integration-default"},
+                },
+                {
+                    "node_id": "certify",
+                    "title": "Certify exact candidate",
+                    "kind": "certification",
+                    "depends_on": ["assemble"],
+                    "effects": {},
+                    "expected_outputs": ["certificate"],
+                    "verification": {"profile": "certification-default"},
+                },
+            ],
+        }
+        preview = self.preview(
+            proposal,
+            request={
+                "goal": exact_title,
+                "project": project,
+                "repository_id": repository_id,
+                "package_id": package_id,
+            },
+            source="controller_single_task_fast_lane",
+        )
+        return self._accept(
+            preview.plan,
+            actor=actor,
+            reason=reason,
+            tenant_id=tenant_id,
+            controller_task_identity=(
+                MANAGED_SINGLE_TASK_MUTATION_NODE_KEY,
+                exact_task_id,
+            ),
+        )
 
     def _compile_managed(self, plan: Mapping[str, Any]) -> CompiledWorkPackagePlan:
         _require_explicit_node_contracts(plan)

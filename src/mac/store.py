@@ -558,6 +558,34 @@ class SQLiteStore:
                     updated_at TEXT NOT NULL
                 );
 
+                -- One-way authority for ordinary atomic task publication. The
+                -- row is absent before rollout and is inserted exactly once
+                -- after the reviewed package-worker policy and controller
+                -- runtime are ready. It is intentionally not reversible:
+                -- later fleet/config drift may hold managed work, but cannot
+                -- silently restore the legacy publication path.
+                CREATE TABLE IF NOT EXISTS managed_task_publication_rollout (
+                    singleton_key TEXT PRIMARY KEY CHECK (singleton_key = 'fleet'),
+                    revision INTEGER NOT NULL CHECK (revision = 1),
+                    crossed_by TEXT NOT NULL,
+                    crossed_at TEXT NOT NULL,
+                    evidence TEXT NOT NULL DEFAULT '{}'
+                );
+
+                -- HTTP/CLI create retries reserve an identity before task or
+                -- package admission. Only digests are stored; raw caller keys
+                -- never enter the ledger. A reservation may outlive a failed
+                -- request so the same key can never name a different intent.
+                CREATE TABLE IF NOT EXISTS task_create_idempotency (
+                    scope_digest TEXT NOT NULL,
+                    key_digest TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    task_id TEXT NOT NULL UNIQUE,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (scope_digest, key_digest)
+                );
+
                 -- Durable crash diagnosis. ``agent_crash_reports`` is the
                 -- deduplicated incident keyed by a server-computed
                 -- revision+stack fingerprint; ``agent_crash_occurrences``

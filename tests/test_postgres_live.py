@@ -151,7 +151,6 @@ def test_postgres_work_package_schema_enforces_core_invariants(
             ") VALUES (?,?,?,?,?,?,?,?,?)",
             ("wp_bad", "bad", "active", 1, 1, "{}", "human", "now", "now"),
         )
-
     postgres_store.execute(
         "INSERT INTO work_packages ("
         "id, goal, state, current_plan_version, current_epoch, metadata, "
@@ -216,6 +215,160 @@ def test_postgres_work_package_schema_enforces_core_invariants(
             "WHERE package_id = ? AND version = ?",
             ("rewritten", "wp_pg", 1),
         )
+
+
+def test_postgres_controller_task_identity_is_atomic_rooted_and_idempotent(
+    postgres_store,
+) -> None:
+    from mac.work_package_service import WorkPackageService
+    from tests.test_work_package_service import _Verifier, _plan
+
+    now = "2026-07-17T00:00:00+00:00"
+    postgres_store.execute(
+        "INSERT INTO project_repositories ("
+        "id, name, path, source, project, required_capabilities, enabled, "
+        "poll_interval_seconds, metadata, created_at, updated_at"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "projectrepo_mac",
+            "mac",
+            "/tmp/mac",
+            "git@example.invalid:org/mac.git",
+            "mac",
+            "[]",
+            1,
+            60,
+            "{}",
+            now,
+            now,
+        ),
+    )
+    service = WorkPackageService(postgres_store, repository_verifier=_Verifier())
+    task_id = "task_" + ("9" * 32)
+    identity = ("build", task_id)
+
+    first = service.admit(
+        _plan(package_id="wp_fast_postgres_identity"),
+        actor="single-task-controller",
+        reason="postgres single-task admission",
+        _controller_task_identity=identity,
+    )
+    second = service.admit(
+        _plan(package_id="wp_fast_postgres_identity"),
+        actor="single-task-controller",
+        reason="postgres exact retry",
+        _controller_task_identity=identity,
+    )
+
+    assert first.created is True
+    assert second.created is False
+    assert second.task_ids == first.task_ids
+    assert first.task_ids[0] == task_id
+    package = postgres_store.query_one(
+        "SELECT root_task_id, state FROM work_packages WHERE id = ?",
+        ("wp_fast_postgres_identity",),
+    )
+    assert package["root_task_id"] == task_id
+    assert package["state"] == "admitted"
+    assert postgres_store.query_one(
+        "SELECT task_id FROM work_package_task_links "
+        "WHERE package_id = ? AND node_key = ?",
+        ("wp_fast_postgres_identity", "build"),
+    )["task_id"] == task_id
+
+
+def test_postgres_task_create_idempotency_reservation_is_exact_and_portable(
+    postgres_store,
+) -> None:
+    from mac.models import ValidationError
+    from mac.services import ControlPlane
+
+    cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    request = {
+        "description": "same request",
+        "idempotency_key": "postgres-retry-1",
+        "_idempotency_scope": "postgres-client:test",
+    }
+
+    first = cp.create_task("Postgres retry-safe task", **request)
+    retry = cp.create_task("Postgres retry-safe task", **request)
+
+    assert retry.id == first.id
+    assert postgres_store.query_one(
+        "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,)
+    )["n"] == 1
+    with pytest.raises(ValidationError, match="already bound to a different request"):
+        cp.create_task("Changed Postgres request", **request)
+
+
+def test_postgres_concurrent_exact_package_admissions_both_succeed(
+    postgres_store,
+) -> None:
+    from mac.work_package_service import WorkPackageService
+    from tests.test_work_package_service import _Verifier, _plan
+
+    now = "2026-07-17T00:00:00+00:00"
+    postgres_store.execute(
+        "INSERT INTO project_repositories ("
+        "id, name, path, source, project, required_capabilities, enabled, "
+        "poll_interval_seconds, metadata, created_at, updated_at"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "projectrepo_mac",
+            "mac",
+            "/tmp/mac",
+            "git@example.invalid:org/mac.git",
+            "mac",
+            "[]",
+            1,
+            60,
+            "{}",
+            now,
+            now,
+        ),
+    )
+    barrier = threading.Barrier(2)
+
+    class _ConcurrentVerifier(_Verifier):
+        def verify(self, repository, *, planning_base_ref, planning_base_sha):
+            result = super().verify(
+                repository,
+                planning_base_ref=planning_base_ref,
+                planning_base_sha=planning_base_sha,
+            )
+            barrier.wait(timeout=10)
+            return result
+
+    service = WorkPackageService(
+        postgres_store,
+        repository_verifier=_ConcurrentVerifier(),
+    )
+    results = []
+    errors = []
+
+    def admit() -> None:
+        try:
+            results.append(
+                service.admit(
+                    _plan(package_id="wp_pg_concurrent_exact"),
+                    actor="postgres-controller",
+                    reason="same concurrent request",
+                )
+            )
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=admit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert not errors
+    assert len(results) == 2
+    assert {result.created for result in results} == {True, False}
+    assert results[0].task_ids == results[1].task_ids
+    assert results[0].base_attestation == results[1].base_attestation
 
 
 def test_postgres_ref_retirement_records_are_append_only(postgres_store) -> None:

@@ -221,6 +221,13 @@ from mac.work_package_scheduler import (
     WorkPackageClaimGate,
 )
 from mac.work_package_service import WorkPackageService
+from mac.work_plan_admission import ManagedWorkPlanBridge
+from mac.publication_lane import (
+    PUBLICATION_LANE_LEGACY,
+    PUBLICATION_LANE_MANAGED,
+    classify_publication_lane,
+    describe_lane,
+)
 
 
 def _state_value(state: Any) -> str:
@@ -1366,6 +1373,10 @@ class ControlPlane:
         self.work_package_outputs = WorkPackageOutputService(self.store)
         self.work_package_replans = WorkPackageReplanService(self.store)
         self.work_packages = WorkPackageService(self.store)
+        self.managed_work_plans = ManagedWorkPlanBridge(
+            self.store,
+            self.work_packages,
+        )
         self.agent_state = AgentStateService(
             self.store,
             self.observability,
@@ -3510,6 +3521,9 @@ class ControlPlane:
         metadata: Optional[Dict[str, Any]] = None,
         max_attempts: int = 3,
         actor: str = "hermes",
+        idempotency_key: Optional[str] = None,
+        _allow_legacy_publication: bool = False,
+        _idempotency_scope: Optional[str] = None,
     ) -> Task:
         instance = self.get_hermes_instance(hermes_instance_id)
         if user_id:
@@ -3551,6 +3565,9 @@ class ControlPlane:
             metadata=task_metadata,
             max_attempts=max_attempts,
             actor=actor,
+            idempotency_key=idempotency_key,
+            _allow_legacy_publication=_allow_legacy_publication,
+            _idempotency_scope=_idempotency_scope,
         )
 
     # Task ledger
@@ -3665,6 +3682,492 @@ class ControlPlane:
                 "break-glass execution metadata is control-plane-owned; "
                 "use the admin break-glass authorization API"
             )
+        if any(
+            key in metadata
+            for key in (
+                "publication_lane",
+                "publication_route",
+                "managed_fast_lane",
+                "work_package",
+            )
+        ):
+            raise ValidationError(
+                "publication route metadata is control-plane-owned; use "
+                "publication_lane_policy to request managed routing"
+            )
+
+    @staticmethod
+    def _single_task_publication_policy(metadata: Mapping[str, Any]) -> str:
+        policy = str(metadata.get("publication_lane_policy") or "auto").strip().lower()
+        if policy not in {"auto", PUBLICATION_LANE_MANAGED, PUBLICATION_LANE_LEGACY}:
+            raise ValidationError(
+                "publication_lane_policy must be auto, managed, or legacy"
+            )
+        return policy
+
+    def _single_task_fast_lane_shape(
+        self,
+        *,
+        metadata: Mapping[str, Any],
+        dependencies: Sequence[str],
+        workflow_run_id: Optional[str],
+    ) -> JsonDict:
+        """Classify only an explicitly atomic, strong repository mutation.
+
+        ``no_decompose`` is the operator's assertion that one worker mutation
+        node is sufficient.  The controller still declares conservative
+        repository-wide exclusivity; it never infers fine-grained writes from
+        prose.  Tasks outside this shape retain the grandfathered legacy path.
+        """
+
+        contract = ensure_json_object(metadata.get("execution_contract"))
+        origin = ensure_json_object(metadata.get("origin"))
+        relationships = ensure_json_object(metadata.get("relationships"))
+        checks = (
+            (bool(metadata.get("no_decompose")), "task_not_declared_atomic"),
+            (not dependencies, "task_dependencies_require_planning"),
+            (not workflow_run_id, "workflow_task_uses_workflow_runtime"),
+            (
+                str(contract.get("type") or "") == "repository"
+                and str(contract.get("quality") or "") == "strong",
+                "strong_repository_contract_required",
+            ),
+            (
+                bool(str(contract.get("repository_id") or "").strip()),
+                "registered_repository_required",
+            ),
+            (not metadata_declares_report_deliverable(metadata), "report_task_is_not_a_repository_mutation"),
+            (not bool(origin.get("onboarding")), "repository_onboarding_uses_legacy_bootstrap"),
+            (
+                not bool(
+                    relationships.get("parent_task_id")
+                    or relationships.get("child_task_ids")
+                ),
+                "cooperative_task_requires_managed_plan_admission",
+            ),
+        )
+        blockers = [reason for passed, reason in checks if not passed]
+        return {
+            "eligible": not blockers,
+            "blockers": blockers,
+            "repository_id": str(contract.get("repository_id") or "").strip(),
+        }
+
+    def _managed_single_task_rollout(self) -> JsonDict:
+        """Resolve and, when proven ready, irreversibly cross fleet rollout.
+
+        Absence of the singleton database row is compatibility mode.  A
+        controller may create it only after its package pipeline is valid, a
+        package-capable runtime is registered, and the separately reviewed
+        worker-credential policy is already enforced.  The row is never
+        deleted or rewritten, so replicas and later inventory/config drift
+        cannot restore automatic legacy publication after cutover.
+        """
+
+        config = self.work_package_pipeline_runtime_config
+        observation_blockers: List[JsonDict] = []
+        if not config.enabled:
+            observation_blockers.append(
+                {
+                    "code": (
+                        "work_package_pipeline_configuration_invalid"
+                        if config.configuration_error
+                        else "work_package_pipeline_disabled"
+                    )
+                }
+            )
+        package_capable_agents = []
+        for row in self.store.query_all(
+            "SELECT id, capabilities FROM agents "
+            "WHERE deleted_at IS NULL ORDER BY id"
+        ):
+            capabilities = {
+                str(value) for value in json_loads(row["capabilities"], [])
+            }
+            if "work_package_v1" in capabilities:
+                package_capable_agents.append(str(row["id"]))
+        if not package_capable_agents:
+            observation_blockers.append(
+                {"code": "no_package_capable_worker_runtime"}
+            )
+        credential_policy = self.store.query_one(
+            "SELECT mode, revision, updated_by, updated_at, inventory_digest, "
+            "ready_agent_ids "
+            "FROM worker_credential_policy_state WHERE singleton_key = ?",
+            ("fleet",),
+        )
+        if (
+            credential_policy is None
+            or str(credential_policy["mode"]) != "enforced"
+        ):
+            observation_blockers.append(
+                {"code": "worker_credential_policy_not_enforced"}
+            )
+        reviewed_agent_ids = (
+            {
+                str(value)
+                for value in json_loads(credential_policy["ready_agent_ids"], [])
+            }
+            if credential_policy is not None
+            else set()
+        )
+        inventory_digest = (
+            str(credential_policy["inventory_digest"] or "")
+            if credential_policy is not None
+            else ""
+        )
+        reviewed_inventory_valid = bool(
+            re.fullmatch(r"sha256:[0-9a-f]{64}", inventory_digest)
+            and reviewed_agent_ids
+        )
+        if not reviewed_inventory_valid:
+            observation_blockers.append(
+                {"code": "worker_credential_review_missing_or_invalid"}
+            )
+        reviewed_package_agents = sorted(
+            set(package_capable_agents).intersection(reviewed_agent_ids)
+        )
+        if not reviewed_package_agents:
+            observation_blockers.append(
+                {"code": "no_reviewed_package_capable_worker_runtime"}
+            )
+        live_reviewed_package_agents: List[str] = []
+        if reviewed_package_agents and reviewed_inventory_valid:
+            from mac.worker_credentials import package_worker_readiness
+
+            for agent_id in reviewed_package_agents:
+                if package_worker_readiness(self.store, agent_id).get("ready"):
+                    live_reviewed_package_agents.append(agent_id)
+        if reviewed_package_agents and not live_reviewed_package_agents:
+            observation_blockers.append(
+                {"code": "no_live_reviewed_package_worker"}
+            )
+
+        state = self.store.query_one(
+            "SELECT * FROM managed_task_publication_rollout "
+            "WHERE singleton_key = ?",
+            ("fleet",),
+        )
+        crossing_revalidated = False
+        if state is None and not observation_blockers:
+            from mac.worker_credentials import assert_package_worker_ready
+
+            with self.store.transaction() as conn:
+                conn.execute(
+                    "UPDATE worker_credential_policy_state "
+                    "SET updated_at = updated_at WHERE singleton_key = ?",
+                    ("fleet",),
+                )
+                locked_policy = conn.execute(
+                    "SELECT * FROM worker_credential_policy_state "
+                    "WHERE singleton_key = ?",
+                    ("fleet",),
+                ).fetchone()
+                locked_ready_ids = (
+                    {
+                        str(value)
+                        for value in json_loads(
+                            locked_policy["ready_agent_ids"], []
+                        )
+                    }
+                    if locked_policy is not None
+                    else set()
+                )
+                locked_digest = (
+                    str(locked_policy["inventory_digest"] or "")
+                    if locked_policy is not None
+                    else ""
+                )
+                locked_candidates: List[str] = []
+                if (
+                    locked_policy is not None
+                    and str(locked_policy["mode"]) == "enforced"
+                    and re.fullmatch(r"sha256:[0-9a-f]{64}", locked_digest)
+                    and locked_ready_ids
+                ):
+                    for row in conn.execute(
+                        "SELECT id, capabilities FROM agents "
+                        "WHERE deleted_at IS NULL ORDER BY id"
+                    ).fetchall():
+                        agent_id = str(row["id"])
+                        capabilities = {
+                            str(value)
+                            for value in json_loads(row["capabilities"], [])
+                        }
+                        if (
+                            agent_id not in locked_ready_ids
+                            or "work_package_v1" not in capabilities
+                        ):
+                            continue
+                        try:
+                            assert_package_worker_ready(conn, agent_id)
+                        except TransitionError:
+                            continue
+                        locked_candidates.append(agent_id)
+                if locked_candidates:
+                    now = utcnow()
+                    evidence = {
+                        "schema": "mac.managed_single_task.rollout_evidence.v1",
+                        "package_capable_agent_ids": locked_candidates,
+                        "worker_credential_inventory_digest": locked_digest,
+                        "worker_credential_policy_revision": int(
+                            locked_policy["revision"]
+                        ),
+                        "worker_credential_policy_updated_by": str(
+                            locked_policy["updated_by"]
+                        ),
+                        "worker_credential_policy_updated_at": str(
+                            locked_policy["updated_at"]
+                        ),
+                    }
+                    conn.execute(
+                        "INSERT INTO managed_task_publication_rollout ("
+                        "singleton_key, revision, crossed_by, crossed_at, evidence"
+                        ") VALUES (?, ?, ?, ?, ?) "
+                        "ON CONFLICT(singleton_key) DO NOTHING",
+                        (
+                            "fleet",
+                            1,
+                            "managed-fast-lane-controller",
+                            now,
+                            json_dumps(evidence),
+                        ),
+                    )
+                    crossing_revalidated = True
+        # Re-read even when this replica observed blockers: a peer may have
+        # crossed the one-way boundary concurrently or in an earlier process.
+        state = self.store.query_one(
+            "SELECT * FROM managed_task_publication_rollout "
+            "WHERE singleton_key = ?",
+            ("fleet",),
+        )
+        crossed = state is not None
+        if not crossed and not observation_blockers and not crossing_revalidated:
+            observation_blockers.append(
+                {"code": "rollout_crossing_revalidation_failed"}
+            )
+        return {
+            "schema": "mac.managed_single_task.rollout.v1",
+            "ready": crossed,
+            "crossed": crossed,
+            "revision": int(state["revision"]) if state is not None else 0,
+            "crossed_at": str(state["crossed_at"]) if state is not None else None,
+            "crossed_by": str(state["crossed_by"]) if state is not None else None,
+            "package_capable_agent_ids": package_capable_agents,
+            "reviewed_package_capable_agent_ids": reviewed_package_agents,
+            "live_reviewed_package_agent_ids": live_reviewed_package_agents,
+            "blockers": [] if crossed else observation_blockers,
+            "current_observation_blockers": observation_blockers,
+        }
+
+    def _reserve_task_create_idempotency(
+        self,
+        *,
+        key: str,
+        scope: str,
+        request: Mapping[str, Any],
+        actor: str,
+    ) -> str:
+        """Bind a caller retry key to one canonical task identity and intent."""
+
+        exact_key = str(key or "").strip()
+        if not exact_key:
+            raise ValidationError("task create idempotency key must not be empty")
+        if len(exact_key) > 200:
+            raise ValidationError(
+                "task create idempotency key may contain at most 200 characters"
+            )
+        exact_scope = str(scope or "").strip()
+        if not exact_scope:
+            raise ValidationError("task create idempotency scope must not be empty")
+        if len(exact_scope) > 1000:
+            raise ValidationError(
+                "task create idempotency scope may contain at most 1000 characters"
+            )
+        scope_digest = hashlib.sha256(exact_scope.encode("utf-8")).hexdigest()
+        key_digest = hashlib.sha256(exact_key.encode("utf-8")).hexdigest()
+        try:
+            request_digest = hashlib.sha256(
+                json_dumps(dict(request)).encode("utf-8")
+            ).hexdigest()
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "task create idempotency request must be JSON serializable"
+            ) from exc
+        task_id = "task_%s" % hashlib.sha256(
+            (scope_digest + ":" + key_digest).encode("ascii")
+        ).hexdigest()[:32]
+        with self.store.transaction() as conn:
+            conn.execute(
+                "INSERT INTO task_create_idempotency ("
+                "scope_digest, key_digest, request_digest, task_id, created_by, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(scope_digest, key_digest) DO NOTHING",
+                (
+                    scope_digest,
+                    key_digest,
+                    request_digest,
+                    task_id,
+                    str(actor or "human"),
+                    utcnow(),
+                ),
+            )
+            row = conn.execute(
+                "SELECT request_digest, task_id FROM task_create_idempotency "
+                "WHERE scope_digest = ? AND key_digest = ?",
+                (scope_digest, key_digest),
+            ).fetchone()
+            if row is None:
+                raise ValidationError("task create idempotency reservation failed")
+            if str(row["request_digest"]) != request_digest:
+                raise ValidationError(
+                    "task create idempotency key is already bound to a different request"
+                )
+            return str(row["task_id"])
+
+    def _managed_single_task_readiness(
+        self,
+        *,
+        repository_id: str,
+        required_capabilities: Sequence[str],
+    ) -> JsonDict:
+        """Preflight the same fail-closed boundaries activation rechecks."""
+
+        from mac.worker_credentials import package_worker_readiness
+
+        blockers: List[JsonDict] = []
+        config = self.work_package_pipeline_runtime_config
+        if not config.enabled:
+            blockers.append(
+                {
+                    "code": (
+                        "work_package_pipeline_configuration_invalid"
+                        if config.configuration_error
+                        else "work_package_pipeline_disabled"
+                    )
+                }
+            )
+        repository = self.store.query_one(
+            "SELECT * FROM project_repositories WHERE id = ? AND enabled = ?",
+            (repository_id, 1),
+        )
+        if repository is None:
+            blockers.append({"code": "registered_repository_unavailable"})
+        else:
+            try:
+                self.work_package_certifications.validate_repository_contract(
+                    repository_id
+                )
+            except Exception:  # validation details stay in controller logs
+                blockers.append({"code": "certification_contract_unavailable"})
+            try:
+                resolve_repository_canonical_remote(dict(repository))
+            except (TypeError, ValueError):
+                blockers.append({"code": "landing_endpoint_unavailable"})
+
+        required = set(str(value) for value in required_capabilities)
+        required.add("work_package_v1")
+        eligible_agents = []
+        for row in self.store.query_all(
+            "SELECT agent.* FROM agents AS agent "
+            "JOIN machines AS machine ON machine.id = agent.machine_id "
+            "WHERE agent.deleted_at IS NULL AND agent.status IN (?, ?) "
+            "AND agent.health_status = ? AND agent.dispatch_hold = 0 "
+            "AND machine.trusted = 1 ORDER BY agent.id",
+            (
+                AgentStatus.IDLE.value,
+                AgentStatus.BUSY.value,
+                HealthStatus.HEALTHY.value,
+            ),
+        ):
+            agent_id = str(row["id"])
+            readiness = package_worker_readiness(self.store, agent_id)
+            capabilities = set(str(value) for value in json_loads(row["capabilities"], []))
+            if readiness.get("ready") and required.issubset(capabilities):
+                eligible_agents.append(agent_id)
+        if not eligible_agents:
+            blockers.append(
+                {
+                    "code": "no_ready_bound_worker",
+                    "required_capabilities": sorted(required),
+                }
+            )
+        return {
+            "schema": "mac.managed_single_task.readiness.v1",
+            "ready": not blockers,
+            "repository_id": repository_id,
+            "eligible_agent_ids": eligible_agents,
+            "blockers": blockers,
+        }
+
+    def _create_managed_single_task(
+        self,
+        *,
+        task_id: str,
+        title: str,
+        description: str,
+        project: str,
+        priority: int,
+        required_capabilities: Sequence[str],
+        metadata: Mapping[str, Any],
+        max_attempts: int,
+        actor: str,
+        repository_id: str,
+        readiness: Mapping[str, Any],
+    ) -> Task:
+        package_id = "wp_fast_%s" % task_id.removeprefix("task_")
+        operator_held = bool(metadata.get("no_dispatch"))
+        managed_metadata = dict(metadata)
+        origin = ensure_json_object(managed_metadata.get("origin"))
+        tenant_id = str(origin.get("tenant_id") or "").strip() or None
+        accepted = self.managed_work_plans.admit_single_task(
+            task_id=task_id,
+            title=title,
+            description=description,
+            project=project,
+            repository_id=repository_id,
+            priority=priority,
+            required_capabilities=required_capabilities,
+            metadata=managed_metadata,
+            max_attempts=max_attempts,
+            actor=actor,
+            reason="ordinary atomic repository task admitted to managed fast lane",
+            tenant_id=tenant_id,
+        )
+        admission = accepted.admission
+        if admission.package.id != package_id or task_id not in admission.task_ids:
+            raise ValidationError("managed single-task admission returned incoherent identities")
+        should_activate = bool(
+            admission.package.state == "admitted"
+            and readiness.get("ready")
+            and not operator_held
+        )
+        if should_activate:
+            try:
+                self.activate_work_package(
+                    admission.package.id,
+                    expected_plan_version=admission.plan_version,
+                    expected_epoch=admission.epoch,
+                    actor=actor,
+                )
+            except Exception:  # admission is durable; activation is retryable
+                # Never turn a successfully admitted task into an HTTP failure
+                # or legacy fallback because readiness changed after the check.
+                # Route state is derived from package/link rows, so no mutable
+                # task metadata is rewritten after activation.
+                try:
+                    self.record_log(
+                        "work_package.fast_lane.activation_held",
+                        layer="control_plane",
+                        source=actor,
+                        level="warning",
+                        subject_type="work_package",
+                        subject_id=package_id,
+                        detail={"code": "activation_retry_required"},
+                    )
+                except Exception:
+                    pass
+        return self.get_task(task_id)
 
     def create_task(
         self,
@@ -3677,30 +4180,79 @@ class ControlPlane:
         metadata: Optional[Dict[str, Any]] = None,
         max_attempts: int = 3,
         actor: str = "human",
+        idempotency_key: Optional[str] = None,
         _task_id: Optional[str] = None,
         _workflow_run_id: Optional[str] = None,
         _workflow_node_key: Optional[str] = None,
+        _allow_legacy_publication: bool = False,
+        _idempotency_scope: Optional[str] = None,
     ) -> Task:
         title = title.strip()
         if not title:
             raise ValidationError("task title is required")
         dep_ids = coerce_list(dependencies)
+        requested_capabilities = coerce_list(required_capabilities)
+        requested_metadata = ensure_json_object(metadata)
         for dep_id in dep_ids:
             self.get_task(dep_id)
-        now = utcnow()
-        task_id = str(_task_id or new_id("task")).strip()
-        if not task_id:
-            raise ValidationError("task id is required")
         if bool(_workflow_run_id) != bool(_workflow_node_key):
             raise ValidationError(
                 "workflow-linked task creation requires both run id and node key"
             )
+        self._reject_reserved_break_glass_metadata(requested_metadata)
+        requested_publication_policy = self._single_task_publication_policy(
+            requested_metadata
+        )
+        if (
+            requested_publication_policy == PUBLICATION_LANE_LEGACY
+            and not _allow_legacy_publication
+        ):
+            raise AuthorizationError(
+                "legacy publication override requires trusted controller authority"
+            )
+        if idempotency_key is not None:
+            if _task_id is not None:
+                raise ValidationError(
+                    "task create idempotency key cannot be combined with a supplied task id"
+                )
+            task_id = self._reserve_task_create_idempotency(
+                key=idempotency_key,
+                scope=(
+                    _idempotency_scope
+                    or "control-plane-actor:%s" % str(actor or "human")
+                ),
+                request={
+                    "schema": "mac.task_create_request.v1",
+                    "title": title,
+                    "description": str(description or ""),
+                    "project": project,
+                    "priority": int(priority),
+                    "required_capabilities": requested_capabilities,
+                    "dependencies": dep_ids,
+                    "metadata": requested_metadata,
+                    "max_attempts": int(max_attempts),
+                    "actor": str(actor or "human"),
+                    "workflow_run_id": _workflow_run_id,
+                    "workflow_node_key": _workflow_node_key,
+                },
+                actor=actor,
+            )
+            existing_retry = self.store.query_one(
+                "SELECT id FROM tasks WHERE id = ?", (task_id,)
+            )
+            if existing_retry is not None:
+                return self.get_task(task_id)
+        else:
+            task_id = str(_task_id or new_id("task")).strip()
+        if not task_id:
+            raise ValidationError("task id is required")
+
+        now = utcnow()
         state = TaskState.WAITING.value if dep_ids else TaskState.OPEN.value
-        self._reject_reserved_break_glass_metadata(ensure_json_object(metadata))
         task_capabilities, task_metadata = self._apply_project_task_defaults(
             project,
-            coerce_list(required_capabilities),
-            ensure_json_object(metadata),
+            requested_capabilities,
+            requested_metadata,
         )
         normalized_metadata = self._normalize_task_execution_contract(
             task_metadata,
@@ -3711,6 +4263,74 @@ class ControlPlane:
             task_capabilities,
             normalized_metadata,
         )
+        publication_policy = self._single_task_publication_policy(normalized_metadata)
+        if (
+            publication_policy == PUBLICATION_LANE_LEGACY
+            and not _allow_legacy_publication
+        ):
+            raise AuthorizationError(
+                "legacy publication override requires trusted controller authority"
+            )
+        fast_lane_shape = self._single_task_fast_lane_shape(
+            metadata=normalized_metadata,
+            dependencies=dep_ids,
+            workflow_run_id=_workflow_run_id,
+        )
+        if publication_policy == PUBLICATION_LANE_MANAGED and not fast_lane_shape["eligible"]:
+            raise ValidationError(
+                "managed publication requires an atomic repository task: %s"
+                % ", ".join(fast_lane_shape["blockers"])
+            )
+        if fast_lane_shape["eligible"]:
+            rollout = self._managed_single_task_rollout()
+            use_managed = publication_policy != PUBLICATION_LANE_LEGACY and bool(
+                rollout["ready"]
+            )
+            if publication_policy == PUBLICATION_LANE_MANAGED and not use_managed:
+                raise ValidationError(
+                    "managed publication rollout is unavailable: %s"
+                    % json_dumps(rollout["blockers"])
+                )
+            if use_managed:
+                readiness = self._managed_single_task_readiness(
+                    repository_id=str(fast_lane_shape["repository_id"]),
+                    required_capabilities=task_capabilities,
+                )
+                repository = self.store.query_one(
+                    "SELECT project FROM project_repositories WHERE id = ?",
+                    (fast_lane_shape["repository_id"],),
+                )
+                managed_project = str(
+                    project or (repository["project"] if repository is not None else "")
+                ).strip()
+                if not managed_project:
+                    raise ValidationError("managed publication requires a project")
+                return self._create_managed_single_task(
+                    task_id=task_id,
+                    title=title,
+                    description=description,
+                    project=managed_project,
+                    priority=int(priority),
+                    required_capabilities=task_capabilities,
+                    metadata=normalized_metadata,
+                    max_attempts=int(max_attempts),
+                    actor=actor,
+                    repository_id=str(fast_lane_shape["repository_id"]),
+                    readiness=readiness,
+                )
+            normalized_metadata["publication_lane"] = classify_publication_lane(
+                package_linked=False,
+                package_ready=False,
+            )
+            normalized_metadata["publication_route"] = describe_lane(
+                PUBLICATION_LANE_LEGACY
+            )
+            normalized_metadata["managed_fast_lane"] = {
+                "schema": "mac.managed_single_task.route.v1",
+                "activation": "legacy_compatibility",
+                "policy": publication_policy,
+                "rollout": rollout,
+            }
         normalized_metadata, optimizer_assignment = self.optimizer.prepare_task_assignment(
             task_id,
             project,
@@ -3723,7 +4343,7 @@ class ControlPlane:
                 (task_id,),
             ).fetchone()
             if existing is not None:
-                if not _task_id:
+                if _task_id is None and idempotency_key is None:
                     raise ValidationError("task already exists: %s" % task_id)
                 if (
                     str(existing["workflow_run_id"] or "")
@@ -3769,7 +4389,10 @@ class ControlPlane:
                         "SELECT workflow_run_id, workflow_node_key FROM tasks WHERE id = ?",
                         (task_id,),
                     ).fetchone()
-                    if not _task_id or existing is None:
+                    if (
+                        _task_id is None
+                        and idempotency_key is None
+                    ) or existing is None:
                         raise ValidationError("task already exists: %s" % task_id)
                     if (
                         str(existing["workflow_run_id"] or "")
@@ -4673,6 +5296,33 @@ class ControlPlane:
         pause). No-op if the task is not held.
         """
         task = self.get_task(task_id)
+        package = self.store.query_one(
+            "SELECT package.id, package.state, package.root_task_id, "
+            "package.current_plan_version, package.current_epoch "
+            "FROM work_package_task_links AS link "
+            "JOIN work_packages AS package ON package.id = link.package_id "
+            "WHERE link.task_id = ?",
+            (task.id,),
+        )
+        if package is not None:
+            if str(package["root_task_id"] or "") != task.id:
+                raise ValidationError(
+                    "generic task release is only valid for a managed "
+                    "single-task package root"
+                )
+            if str(package["state"]) == "active":
+                return task
+            if str(package["state"]) != "admitted":
+                raise ValidationError(
+                    "managed task release requires an admitted package"
+                )
+            self.activate_work_package(
+                str(package["id"]),
+                expected_plan_version=int(package["current_plan_version"]),
+                expected_epoch=int(package["current_epoch"]),
+                actor=actor,
+            )
+            return self.get_task(task.id)
         self._require_non_package_task_mutation(
             task.id,
             operation="generic task release",
@@ -5422,8 +6072,13 @@ class ControlPlane:
     ) -> JsonDict:
         task = self.get_task(task_id)
         resolved_task_id = task.id
+        publication_route = self.task_publication_route(resolved_task_id)
+        task_payload = task.to_dict()
+        task_payload["publication_lane"] = publication_route["lane"]
+        task_payload["publication_route"] = publication_route
         return {
-            "task": task.to_dict(),
+            "task": task_payload,
+            "publication_route": publication_route,
             "history": [
                 event.to_dict()
                 for event in self.task_history(resolved_task_id, limit=history_limit)
@@ -5444,6 +6099,124 @@ class ControlPlane:
             ],
             "llm_usage": self.observability.task_llm_usage(resolved_task_id),
         }
+
+    def task_publication_routes(
+        self, task_ids: Iterable[str], *, compact: bool = False
+    ) -> Dict[str, JsonDict]:
+        """Return server-derived route authority for a task set.
+
+        Work-package links, not caller-controlled task metadata, decide the
+        lane.  Readiness and package state are separate so linked-but-blocked
+        work can never be mislabeled as legacy. Lookups are internally chunked
+        for SQLite/PostgreSQL parameter limits; callers may safely pass the
+        complete fleet dashboard inventory.
+        """
+
+        exact_ids = sorted(
+            {
+                str(task_id or "").strip()
+                for task_id in task_ids
+                if str(task_id or "").strip()
+            }
+        )
+        if not exact_ids:
+            return {}
+        legacy = (
+            {
+                "lane": PUBLICATION_LANE_LEGACY,
+                "managed": False,
+            }
+            if compact
+            else describe_lane(PUBLICATION_LANE_LEGACY)
+        )
+        result: Dict[str, JsonDict] = {
+            task_id: {
+                **legacy,
+                "schema": "mac.task_publication_route.v1",
+                "task_id": task_id,
+                "route_state": "legacy_compatibility",
+                "package_id": None,
+                "plan_version": None,
+                "epoch": None,
+                "landing_receipt_id": None,
+                "finalization_id": None,
+            }
+            for task_id in exact_ids
+        }
+        rows = []
+        for offset in range(0, len(exact_ids), 400):
+            chunk = exact_ids[offset : offset + 400]
+            placeholders = ", ".join("?" for _ in chunk)
+            receipt_columns = (
+                ", (SELECT finalization.landing_receipt_id "
+                "FROM work_package_publication_finalizations AS finalization "
+                "WHERE finalization.package_id = link.package_id "
+                "ORDER BY finalization.finalized_at DESC, finalization.id DESC LIMIT 1) "
+                "AS landing_receipt_id, "
+                "(SELECT finalization.id "
+                "FROM work_package_publication_finalizations AS finalization "
+                "WHERE finalization.package_id = link.package_id "
+                "ORDER BY finalization.finalized_at DESC, finalization.id DESC LIMIT 1) "
+                "AS finalization_id "
+                if not compact
+                else ""
+            )
+            rows.extend(
+                self.store.query_all(
+                    "SELECT link.task_id, link.package_id, link.plan_version, "
+                    "link.epoch, package.state AS package_state%s "
+                    "FROM work_package_task_links AS link "
+                    "JOIN work_packages AS package ON package.id = link.package_id "
+                    "WHERE link.task_id IN (%s)" % (receipt_columns, placeholders),
+                    tuple(chunk),
+                )
+            )
+        managed = (
+            {
+                "lane": PUBLICATION_LANE_MANAGED,
+                "managed": True,
+            }
+            if compact
+            else describe_lane(
+                classify_publication_lane(
+                    package_linked=True,
+                    package_ready=False,
+                )
+            )
+        )
+        for row in rows:
+            task_id = str(row["task_id"])
+            package_state = str(row["package_state"] or "")
+            result[task_id] = {
+                **managed,
+                "schema": "mac.task_publication_route.v1",
+                "task_id": task_id,
+                "route_state": (
+                    "managed_held"
+                    if package_state == "admitted"
+                    else "managed_%s" % (package_state or "unknown")
+                ),
+                "package_id": str(row["package_id"]),
+                "package_state": package_state,
+                "plan_version": int(row["plan_version"]),
+                "epoch": int(row["epoch"]),
+                "landing_receipt_id": (
+                    None if compact else row["landing_receipt_id"]
+                ),
+                "finalization_id": None if compact else row["finalization_id"],
+            }
+            if compact:
+                result[task_id].pop("landing_receipt_id", None)
+                result[task_id].pop("finalization_id", None)
+        if compact:
+            for route in result.values():
+                route.pop("landing_receipt_id", None)
+                route.pop("finalization_id", None)
+        return result
+
+    def task_publication_route(self, task_id: str) -> JsonDict:
+        task = self.get_task(task_id)
+        return self.task_publication_routes([task.id])[task.id]
 
     def authorize_task_break_glass(
         self,
@@ -9459,7 +10232,18 @@ class ControlPlane:
         described = self.work_packages.describe(package_id)
         package = ensure_json_object(described["package"])
         downstream = self._work_package_downstream_activation_readiness(described)
-        agents = self.store.query_all("SELECT * FROM agents ORDER BY id")
+        agents = self.store.query_all(
+            "SELECT agent.* FROM agents AS agent "
+            "JOIN machines AS machine ON machine.id = agent.machine_id "
+            "WHERE agent.deleted_at IS NULL AND agent.status IN (?, ?) "
+            "AND agent.health_status = ? AND agent.dispatch_hold = 0 "
+            "AND machine.trusted = 1 ORDER BY agent.id",
+            (
+                AgentStatus.IDLE.value,
+                AgentStatus.BUSY.value,
+                HealthStatus.HEALTHY.value,
+            ),
+        )
         ready_agents: Dict[str, set[str]] = {}
         agent_readiness: Dict[str, JsonDict] = {}
         for agent in agents:

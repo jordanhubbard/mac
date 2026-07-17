@@ -10,6 +10,7 @@ new package work merely because a planner emitted it.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,7 @@ from mac.work_package_models import (
 
 
 WORK_PACKAGE_MATERIALIZER_VERSION = "work-package-materializer-v1"
+_CANONICAL_TASK_ID_RE = re.compile(r"^task_[0-9a-f]{32}$")
 
 
 @dataclass(frozen=True)
@@ -346,6 +348,7 @@ class WorkPackageService:
         reason: str,
         tenant_id: Optional[str] = None,
         root_task_id: Optional[str] = None,
+        _controller_task_identity: Optional[Tuple[str, str]] = None,
     ) -> WorkPackageAdmissionResult:
         """Atomically persist a compiled DAG as held canonical tasks.
 
@@ -356,12 +359,20 @@ class WorkPackageService:
 
         compiled = compile_work_package_plan(raw_plan)
         validate_executable_work_package_effects(compiled)
+        materialization_map = self._materialization_map(
+            compiled,
+            controller_task_identity=_controller_task_identity,
+        )
         actor_value = str(actor or "").strip()
         reason_value = str(reason or "").strip()
         if not actor_value:
             raise ValidationError("work package admission actor is required")
         if not reason_value:
             raise ValidationError("work package admission reason is required")
+        if _controller_task_identity is not None and root_task_id is not None:
+            raise ValidationError(
+                "controller task identity and external root task are mutually exclusive"
+            )
 
         definition = compiled.definition
         package_id = str(definition["package_id"])
@@ -370,30 +381,34 @@ class WorkPackageService:
             "SELECT * FROM work_packages WHERE id = ?", (package_id,)
         )
         if existing is not None:
-            metadata = json_loads(existing["metadata"], {})
-            raw_attestation = metadata.get("base_attestation")
-            if not isinstance(raw_attestation, Mapping):
-                raise ValidationError(
-                    "existing work package has no durable base attestation"
-                )
-            try:
-                stored_attestation = RepositoryBaseAttestation(
-                    repository_id=str(raw_attestation["repository_id"]),
-                    planning_base_ref=str(raw_attestation["planning_base_ref"]),
-                    planning_base_sha=str(raw_attestation["planning_base_sha"]),
-                    canonical_ref_sha=str(raw_attestation["canonical_ref_sha"]),
-                    source_kind=str(raw_attestation["source_kind"]),
-                    verified_at=str(raw_attestation["verified_at"]),
-                    resource_namespace=(
-                        dict(raw_attestation.get("resource_namespace") or {})
-                    ),
-                )
-            except KeyError as exc:
-                raise ValidationError(
-                    "existing work package has an incomplete base attestation"
-                ) from exc
+            stored_attestation = self._stored_base_attestation(existing)
             self._validate_attestation(stored_attestation, definition)
-            return self._idempotent_result(compiled, stored_attestation)
+            stored_materialization_map = self._materialization_map(
+                compiled,
+                controller_task_identity=_controller_task_identity,
+            )
+            if _controller_task_identity is not None:
+                linked = self.store.query_one(
+                    "SELECT task_id FROM work_package_task_links "
+                    "WHERE package_id = ? AND node_key = ? AND plan_version = 1 "
+                    "AND epoch = 1",
+                    (package_id, _controller_task_identity[0]),
+                )
+                if (
+                    linked is None
+                    or str(linked["task_id"]) != _controller_task_identity[1]
+                ):
+                    raise ValidationError(
+                        "work package id already belongs to different task identities"
+                    )
+            if materialization_map != stored_materialization_map:
+                raise ValidationError(
+                    "work package id already belongs to different task identities"
+                )
+            return self._idempotent_result(
+                compiled,
+                materialization_map=stored_materialization_map,
+            )
 
         repository_row = self.store.query_one(
             "SELECT * FROM project_repositories WHERE id = ?", (repository_id,)
@@ -411,7 +426,7 @@ class WorkPackageService:
 
         now = utcnow()
         task_ids = tuple(
-            str(compiled.materialization_map[key]["task_id"])
+            str(materialization_map[key]["task_id"])
             for key in compiled.topological_order
         )
         with self.store.transaction() as conn:
@@ -439,7 +454,17 @@ class WorkPackageService:
                 "SELECT id FROM work_packages WHERE id = ?", (package_id,)
             ).fetchone()
             if concurrent is not None:
-                raise ValidationError("work package id was admitted concurrently; retry")
+                # The repository-row lock above serializes admissions. Seeing
+                # the package here means an exact peer request committed while
+                # this caller was attesting the base. Validate every immutable
+                # plan/materialization field and return that same result; a
+                # transport retry must not surface a spurious failure merely
+                # because it overlapped the original request.
+                return self._idempotent_result(
+                    compiled,
+                    materialization_map=materialization_map,
+                    conn=conn,
+                )
             if root_task_id:
                 self._require_task(conn, root_task_id, "root task")
 
@@ -465,6 +490,14 @@ class WorkPackageService:
                             "materializer_version": WORK_PACKAGE_MATERIALIZER_VERSION,
                             "base_attestation": attestation.to_dict(),
                             "plan_metadata": definition.get("metadata") or {},
+                            "controller_task_identity": (
+                                {
+                                    "node_key": _controller_task_identity[0],
+                                    "task_id": _controller_task_identity[1],
+                                }
+                                if _controller_task_identity is not None
+                                else None
+                            ),
                         }
                     ),
                     actor_value,
@@ -513,7 +546,19 @@ class WorkPackageService:
                     project=definition.get("project"),
                     actor=actor_value,
                     now=now,
+                    materialized=materialization_map[node.node_key],
+                    materialization_map=materialization_map,
                 )
+            if _controller_task_identity is not None:
+                root_update = conn.execute(
+                    "UPDATE work_packages SET root_task_id = ? WHERE id = ? "
+                    "AND root_task_id IS NULL",
+                    (_controller_task_identity[1], package_id),
+                )
+                if root_update.rowcount != 1:
+                    raise ValidationError(
+                        "managed single-task package root linkage failed"
+                    )
             updated = conn.execute(
                 "UPDATE work_packages SET state = ?, current_plan_version = ?, "
                 "current_epoch = ?, updated_at = ? "
@@ -692,11 +737,12 @@ class WorkPackageService:
         project: Optional[str],
         actor: str,
         now: str,
+        materialized: Mapping[str, Any],
+        materialization_map: Mapping[str, Mapping[str, Any]],
     ) -> None:
-        materialized = compiled.materialization_map[node.node_key]
         task_id = str(materialized["task_id"])
         internal_ids = [
-            str(compiled.materialization_map[key]["task_id"])
+            str(materialization_map[key]["task_id"])
             for key in node.depends_on
         ]
         external_ids = [str(item["task_id"]) for item in node.external_dependencies]
@@ -851,17 +897,31 @@ class WorkPackageService:
     def _idempotent_result(
         self,
         compiled: CompiledWorkPackagePlan,
-        attestation: RepositoryBaseAttestation,
+        *,
+        materialization_map: Mapping[str, Mapping[str, Any]],
+        conn: Optional[Any] = None,
     ) -> WorkPackageAdmissionResult:
+        if conn is None:
+            def query_one(sql: str, params: Sequence[Any] = ()) -> Any:
+                return self.store.query_one(sql, params)
+
+            def query_all(sql: str, params: Sequence[Any] = ()) -> Any:
+                return self.store.query_all(sql, params)
+        else:
+            def query_one(sql: str, params: Sequence[Any] = ()) -> Any:
+                return conn.execute(sql, params).fetchone()
+
+            def query_all(sql: str, params: Sequence[Any] = ()) -> Any:
+                return conn.execute(sql, params).fetchall()
         package_id = str(compiled.definition["package_id"])
-        plan = self.store.query_one(
+        plan = query_one(
             "SELECT plan_digest FROM work_package_plan_versions "
             "WHERE package_id = ? AND version = ?",
             (package_id, 1),
         )
         if plan is None or plan["plan_digest"] != compiled.plan_digest:
             raise ValidationError("work package id already belongs to a different plan")
-        epoch = self.store.query_one(
+        epoch = query_one(
             "SELECT planning_base_ref, planning_base_sha FROM work_package_epochs "
             "WHERE package_id = ? AND epoch = ? AND plan_version = ?",
             (package_id, 1, 1),
@@ -871,7 +931,7 @@ class WorkPackageService:
             or epoch["planning_base_sha"] != compiled.definition["planning_base_sha"]
         ):
             raise ValidationError("work package id has an incoherent initial epoch")
-        rows = self.store.query_all(
+        rows = query_all(
             "SELECT task_id, node_key, contract_digest, input_digest, "
             "declared_effects_digest FROM work_package_task_links "
             "WHERE package_id = ? AND plan_version = ? AND epoch = ? ORDER BY node_key",
@@ -879,7 +939,7 @@ class WorkPackageService:
         )
         expected = sorted(
             (
-                str(compiled.materialization_map[node.node_key]["task_id"]),
+                str(materialization_map[node.node_key]["task_id"]),
                 node.node_key,
                 node.contract_digest,
                 node.input_digest,
@@ -899,17 +959,123 @@ class WorkPackageService:
         )
         if observed != expected:
             raise ValidationError("work package materialization is incomplete or incoherent")
-        package = self._get_package(package_id)
+        package_row = query_one(
+            "SELECT * FROM work_packages WHERE id = ?", (package_id,)
+        )
+        if package_row is None:
+            raise ValidationError("work package idempotent result is missing")
+        package = self._package_from_row(package_row)
+        stored_attestation = self._stored_base_attestation(package_row)
+        self._validate_attestation(stored_attestation, compiled.definition)
+        if controller_identity := next(
+            (
+                str(materialization_map[key]["task_id"])
+                for key in compiled.topological_order
+                if str(materialization_map[key]["task_id"])
+                != str(compiled.materialization_map[key]["task_id"])
+            ),
+            None,
+        ):
+            if package.root_task_id != controller_identity:
+                raise ValidationError(
+                    "work package root task identity is incomplete or incoherent"
+                )
         return WorkPackageAdmissionResult(
             package=package,
             plan_digest=compiled.plan_digest,
             plan_version=1,
             epoch=1,
-            task_ids=tuple(item[0] for item in expected),
+            task_ids=tuple(
+                str(materialization_map[node_key]["task_id"])
+                for node_key in compiled.topological_order
+            ),
             created=False,
             held=package.state == "admitted",
-            base_attestation=attestation,
+            base_attestation=stored_attestation,
         )
+
+    @staticmethod
+    def _stored_base_attestation(
+        package_row: Mapping[str, Any],
+    ) -> RepositoryBaseAttestation:
+        metadata = json_loads(package_row["metadata"], {})
+        raw_attestation = metadata.get("base_attestation")
+        if not isinstance(raw_attestation, Mapping):
+            raise ValidationError(
+                "existing work package has no durable base attestation"
+            )
+        try:
+            return RepositoryBaseAttestation(
+                repository_id=str(raw_attestation["repository_id"]),
+                planning_base_ref=str(raw_attestation["planning_base_ref"]),
+                planning_base_sha=str(raw_attestation["planning_base_sha"]),
+                canonical_ref_sha=str(raw_attestation["canonical_ref_sha"]),
+                source_kind=str(raw_attestation["source_kind"]),
+                verified_at=str(raw_attestation["verified_at"]),
+                resource_namespace=dict(
+                    raw_attestation.get("resource_namespace") or {}
+                ),
+            )
+        except KeyError as exc:
+            raise ValidationError(
+                "existing work package has an incomplete base attestation"
+            ) from exc
+
+    @staticmethod
+    def _materialization_map(
+        compiled: CompiledWorkPackagePlan,
+        *,
+        controller_task_identity: Optional[Tuple[str, str]],
+    ) -> JsonDict:
+        """Apply controller-owned task identities outside the planner schema.
+
+        Ordinary single-task admission allocates the public task id before it
+        resolves the remote base.  Preserving that id makes ``POST /tasks``
+        atomic and backward compatible, while keeping ids out of the
+        planner-controlled plan and its semantic digest.  Only this service
+        accepts the override and persists it with the package instance.
+        """
+
+        result: JsonDict = {
+            key: dict(value)
+            for key, value in compiled.materialization_map.items()
+        }
+        override_node = ""
+        override_task_id = ""
+        if controller_task_identity is not None:
+            if (
+                not isinstance(controller_task_identity, tuple)
+                or len(controller_task_identity) != 2
+            ):
+                raise ValidationError("controller task identity must be a node/task pair")
+            override_node = str(controller_task_identity[0] or "").strip()
+            override_task_id = str(controller_task_identity[1] or "").strip()
+            node_specs = {
+                node.node_key: node
+                for node in compiled.task_specs
+            }
+            node = node_specs.get(override_node)
+            if node is None:
+                raise ValidationError(
+                    "controller task identity references an unknown node"
+                )
+            if node.node_type != "mutation":
+                raise ValidationError(
+                    "controller task identity may only preserve a mutation node"
+                )
+            if not _CANONICAL_TASK_ID_RE.fullmatch(override_task_id):
+                raise ValidationError(
+                    "controller task identity must use a canonical task id"
+                )
+        task_ids = set()
+        for node_key in compiled.topological_order:
+            if node_key == override_node:
+                result[node_key]["task_id"] = override_task_id
+            task_id = str(result[node_key]["task_id"])
+            if task_id in task_ids:
+                raise ValidationError("work package task ids must be unique")
+            task_ids.add(task_id)
+        return result
 
     @staticmethod
     def _append_package_history(

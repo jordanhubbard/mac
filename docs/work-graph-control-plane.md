@@ -618,36 +618,98 @@ That managed fast lane omits multi-node planning and component-integration
 overhead. It still uses leases, exact-candidate certification, compare-and-swap
 landing, and completion proof.
 
-Existing unlinked tasks are a compatibility path, not that fully migrated fast
-lane. They retain their current executor pre-push tests, CodeGraph audit,
-review, and publication rules, but they do not automatically acquire the new
-external exact-candidate certifier or work-package landing receipt. The legacy
-pre-push tests are **not** the external work-package certifier: they run in the
-executor's own worktree before publication, whereas the managed certifier is an
-independently pinned, credential-free exact-candidate station. Describing the
-legacy path as if it already had those properties would be false. Migration is
-complete only when single-node package admission is the ordinary route or
-equivalent exact-candidate guarantees are added to the legacy path.
+New atomic repository tasks use single-node package admission as their ordinary
+route after the managed controller and package-worker fleet have crossed a
+durable rollout boundary. An atomic task is a dependency-free,
+non-workflow code task with a strong registered-repository
+contract and `metadata.no_decompose=true`. That flag is the operator's assertion
+that one coherent mutation node is sufficient; the controller never guesses
+atomicity or file-level effects from prose. It conservatively declares
+repository-wide exclusivity, bypasses the planner, pins the canonical base, and
+atomically materializes the fixed mutation -> integration -> certification
+line. Staged tasks are admitted in the same way and remain held; `mac task
+release <task-id>` performs the package-aware activation rather than mutating
+only the task row. The mutation preserves the task id already allocated by `POST /tasks` or
+`mac task create`; the two station tasks are controller-owned. Activation then
+rechecks exact worker identity/source/runtime/capability readiness plus the
+repository certification and landing gates before releasing the mutation.
 
-Every surface classifies a change the same way through
-`mac.publication_lane`. `classify_publication_lane` returns the `managed` lane
-only for a package-linked change whose worker is package-ready (mirroring the
-fail-closed actor policy in `mac.worker_credentials.evaluate_worker_actor`) and
-the `legacy` lane otherwise. `describe_lane` is the single source of truth for
-the guarantee vocabulary that the API, CLI, and Fleet IDE render, so no
-projection can call the legacy pre-push tests the external certifier:
+The rollout boundary is shared database authority, not a process-local feature
+test. Before cutover, the controller requires a valid enabled pipeline, a
+valid reviewed credential-inventory digest, and at least one live
+`work_package_v1` runtime whose id is present in that review's `ready_agent_ids`
+under an `enforced` worker-credential policy. It locks and revalidates that
+membership and package credential inside the crossing transaction, then
+inserts the singleton `managed_task_publication_rollout` row exactly once. The
+row is monotonic: it has no disable/update path. After it exists, replica
+configuration drift, worker re-registration, capability withdrawal, or a
+credential-policy rollback can make activation unready and hold managed work,
+but cannot restore automatic legacy publication.
 
-- managed lane guarantees: exact lease-specific attempt ref, controller
+`POST /tasks` and `mac task create --idempotency-key KEY` also bind a retry key
+to one exact request and canonical task id before admission. The binding is
+scoped by the stable server principal id (`agent_id` or `client_id`) plus API
+surface, with a server-derived bearer-credential fingerprint only for legacy
+static tokens that have no stable id. It is durable on SQLite and PostgreSQL
+and stores only hashes of the scope and caller key. Token renewal for one
+stable principal preserves its retry namespace, while two anonymous static
+tokens with identical role scopes remain distinct. An exact retry returns the same task/package even
+after a lost HTTP response or a moved canonical branch; reusing the key for a
+different request fails closed. A reservation deliberately survives a later
+validation or transport failure so the key can never be rebound to new intent.
+
+`publication_lane_policy` controls migration behavior:
+
+- `auto` (default) selects managed publication for an eligible atomic task once
+  the one-way fleet rollout row exists. Before that boundary is crossed, a
+  disabled controller, a fleet with no package-capable runtime, or a worker
+  credential policy that is not yet enforced remains on the explicitly
+  labelled legacy-compatibility path;
+- after that rollout boundary, transient worker health, credential,
+  certification, landing, or repository readiness loss admits a managed
+  package and leaves it held. It never permanently downgrades the task to the
+  legacy publisher;
+- `managed` requires the managed rollout and atomic shape (`mac task create
+  --publication-lane managed` also asserts `no_decompose`). Activation may
+  remain held until its live readiness gates pass;
+- `legacy` deliberately retains the compatibility publisher and is an
+  admin-only downgrade through the hub API. Ordinary write principals may
+  create tasks that the controller hardens into managed packages, but may not
+  opt eligible work out of certification and CAS landing.
+
+Existing unlinked tasks remain compatible and are never retroactively relabelled
+as managed. They retain executor pre-push tests, CodeGraph audit, review, and
+publication rules, but do not acquire the external exact-candidate certifier or
+work-package landing receipt. The legacy pre-push tests are **not** the external
+work-package certifier: they run in the executor's own worktree before
+publication, whereas the managed certifier is an independently pinned,
+credential-free exact-candidate station.
+
+Every surface classifies a change through `mac.publication_lane` and the
+authoritative `work_package_task_links` row. Lane is a property of the task
+route, not of a worker: a linked task remains `managed` when its worker is
+unready and is blocked rather than downgraded. Worker readiness separately
+reports `managed_lane_eligible` and `external_certifier_capable`. The task API,
+CLI task detail, and Fleet IDE render the server-derived
+`mac.task_publication_route.v1` projection, including the exact package state
+(`managed_held`, `managed_active`, `managed_paused`, `managed_completed`, and so
+on) and any landing/finalization receipt ids. List/dashboard projections are
+compact and internally chunked; task detail retains the full description.
+Mixed-version clients render absent route fields as `unknown`/`unreported`, not
+as legacy. `describe_lane` remains the required-guarantee
+vocabulary, so no projection calls legacy pre-push tests the external certifier:
+
+- managed route required guarantees: exact lease-specific attempt ref, controller
   verification, independently pinned certification, compare-and-swap landing,
   remote read-back receipt, and finalization proof;
-- legacy lane guarantees: executor pre-push tests, CodeGraph audit, review, and
+- legacy route required guarantees: executor pre-push tests, CodeGraph audit, review, and
   publication rules -- and explicitly **no** external certifier or landing
   receipt.
 
 The worker readiness inventory (`mac.worker_credential_readiness.v1`) carries
-`publication_lane` and `external_certifier` per worker so operators can see
-which workers publish through the managed lane and which remain on the legacy
-compatibility lane during a mixed-version rollout.
+`managed_lane_eligible` and `external_certifier_capable` per worker. Package
+claim authority still performs the exact transactional readiness check; these
+inventory fields are visibility, not permission and not a task-lane label.
 
 ## Compatibility and migration
 

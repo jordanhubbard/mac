@@ -26,15 +26,16 @@ from mac.publication_lane import (
 )
 
 
-def test_only_package_linked_and_ready_reaches_managed_lane() -> None:
+def test_package_link_is_route_authority_independent_of_readiness() -> None:
     assert (
         classify_publication_lane(package_linked=True, package_ready=True)
         == PUBLICATION_LANE_MANAGED
     )
-    # Every fail-closed combination stays on the legacy compatibility lane.
+    # An unready package worker blocks execution; it cannot downgrade the
+    # already-linked task into the legacy publisher.
     assert (
         classify_publication_lane(package_linked=True, package_ready=False)
-        == PUBLICATION_LANE_LEGACY
+        == PUBLICATION_LANE_MANAGED
     )
     assert (
         classify_publication_lane(package_linked=False, package_ready=True)
@@ -68,6 +69,7 @@ def test_describe_managed_lane_lists_exact_candidate_guarantees() -> None:
     assert described["external_certifier"] is True
     assert described["landing_receipt"] is True
     assert tuple(described["guarantees"]) == MANAGED_LANE_GUARANTEES
+    assert described["required_guarantees"] == described["guarantees"]
     for required in (
         "exact_lease_attempt_ref",
         "controller_verification",
@@ -100,13 +102,15 @@ def test_unknown_lane_fails_closed() -> None:
         lane_provides_external_certifier(None)  # type: ignore[arg-type]
 
 
-def test_annotate_inventory_entry_maps_readiness_to_lane() -> None:
+def test_annotate_inventory_entry_keeps_worker_eligibility_separate_from_lane() -> None:
     ready = annotate_inventory_entry({"agent_id": "a", "ready": True})
-    assert ready["publication_lane"] == PUBLICATION_LANE_MANAGED
-    assert ready["external_certifier"] is True
+    assert ready["managed_lane_eligible"] is True
+    assert ready["external_certifier_capable"] is True
+    assert "publication_lane" not in ready
     # Original keys are preserved and the input is not mutated in place.
     original = {"agent_id": "b", "ready": False}
     legacy = annotate_inventory_entry(original)
-    assert legacy["publication_lane"] == PUBLICATION_LANE_LEGACY
-    assert legacy["external_certifier"] is False
+    assert legacy["managed_lane_eligible"] is False
+    assert legacy["external_certifier_capable"] is False
+    assert "publication_lane" not in legacy
     assert "publication_lane" not in original

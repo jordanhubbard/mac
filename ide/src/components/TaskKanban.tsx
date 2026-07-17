@@ -67,6 +67,10 @@ export function TaskKanban({
           <div className="kanban-lane-body">
             {lane.tasks.length ? visibleTasks.map(({ task }) => {
               const selected = task.id === selectedTaskId;
+              const publicationLane = task.publication_lane || task.publication_route?.lane || "unknown";
+              const publicationLabel = publicationLane === "managed"
+                ? "managed route"
+                : publicationLane === "legacy" ? "legacy route" : "route unreported";
               return (
                 <article
                   className={`kanban-card state-${task.state || "open"} ${selected ? "selected" : ""}`}
@@ -87,6 +91,9 @@ export function TaskKanban({
                       <span>P{task.priority ?? 0}</span>
                       <span>{display(task.project, "unassigned")}</span>
                       <span>{display(task.owner_agent_id, "unowned").replace(/^agent_/, "")}</span>
+                      <span className={`publication-lane publication-lane-${publicationLane}`}>
+                        {publicationLabel}
+                      </span>
                     </span>
                   </button>
                   <button className="kanban-inspect" onClick={() => onInspectTask(task.id)} type="button">

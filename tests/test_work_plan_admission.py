@@ -322,6 +322,47 @@ def test_accept_fails_closed_when_canonical_base_moved(managed_bridge) -> None:
     assert store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 0
 
 
+def test_single_task_retry_reuses_original_plan_after_canonical_base_moves(
+    managed_bridge,
+) -> None:
+    store, resolver, _packages, bridge = managed_bridge
+    task_id = "task_" + ("c" * 32)
+    request = {
+        "task_id": task_id,
+        "title": "One exact change",
+        "description": "Keep the admitted base stable across a retry.",
+        "project": "mac",
+        "repository_id": "projectrepo_mac",
+        "priority": 1,
+        "required_capabilities": ["python"],
+        "metadata": {"no_decompose": True},
+        "max_attempts": 3,
+        "actor": "single-task-controller",
+        "reason": "ordinary atomic admission",
+    }
+
+    first = bridge.admit_single_task(**request)
+    original_calls = len(resolver.calls)
+    resolver.sha = "b" * 40
+    second = bridge.admit_single_task(**request)
+
+    assert second.admission.created is False
+    assert second.admission.plan_digest == first.admission.plan_digest
+    assert second.admission.task_ids == first.admission.task_ids
+    assert second.admission.base_attestation.planning_base_sha == SHA
+    assert len(resolver.calls) == original_calls
+    package = store.query_one(
+        "SELECT root_task_id FROM work_packages WHERE id = ?",
+        ("wp_fast_%s" % ("c" * 32),),
+    )
+    assert package["root_task_id"] == task_id
+
+    changed = dict(request)
+    changed["description"] = "Different work must not reuse the package."
+    with pytest.raises(ValidationError, match="different intent"):
+        bridge.admit_single_task(**changed)
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [

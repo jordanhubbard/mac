@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,69 @@ def test_admission_atomically_materializes_a_held_dag() -> None:
         store.close()
 
 
+def test_concurrent_exact_admissions_both_return_the_same_committed_package() -> None:
+    store = SQLiteStore(":memory:")
+    try:
+        _register_repository(store)
+        barrier = threading.Barrier(2)
+
+        class _ConcurrentVerifier(_Verifier):
+            def verify(self, repository, *, planning_base_ref, planning_base_sha):
+                observed = super().verify(
+                    repository,
+                    planning_base_ref=planning_base_ref,
+                    planning_base_sha=planning_base_sha,
+                )
+                barrier.wait(timeout=5)
+                return RepositoryBaseAttestation(
+                    repository_id=observed.repository_id,
+                    planning_base_ref=observed.planning_base_ref,
+                    planning_base_sha=observed.planning_base_sha,
+                    canonical_ref_sha=observed.canonical_ref_sha,
+                    source_kind=observed.source_kind,
+                    verified_at=threading.current_thread().name,
+                    resource_namespace=observed.resource_namespace,
+                )
+
+        service = WorkPackageService(
+            store,
+            repository_verifier=_ConcurrentVerifier(),
+        )
+        results = []
+        errors = []
+
+        def admit() -> None:
+            try:
+                results.append(
+                    service.admit(
+                        _plan(package_id="wp_concurrent_exact"),
+                        actor="planner-controller",
+                        reason="same concurrent request",
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=admit) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        assert not errors
+        assert len(results) == 2
+        assert {result.created for result in results} == {True, False}
+        assert results[0].package.id == results[1].package.id
+        assert results[0].task_ids == results[1].task_ids
+        assert results[0].base_attestation == results[1].base_attestation
+        assert store.query_one(
+            "SELECT COUNT(*) AS n FROM work_packages WHERE id = ?",
+            ("wp_concurrent_exact",),
+        )["n"] == 1
+    finally:
+        store.close()
+
+
 def test_admission_rejects_composed_mutation_bases_without_side_effects() -> None:
     store = SQLiteStore(":memory:")
     try:
@@ -277,6 +341,108 @@ def test_exact_admission_retry_is_idempotent_but_package_id_reuse_is_rejected() 
             service.admit(
                 _plan(goal="Different goal"), actor="controller", reason="collision"
             )
+    finally:
+        store.close()
+
+
+def test_controller_can_preserve_the_ordinary_mutation_task_identity() -> None:
+    store = SQLiteStore(":memory:")
+    try:
+        _register_repository(store)
+        service = WorkPackageService(store, repository_verifier=_Verifier())
+        task_id = "task_" + ("d" * 32)
+        first = service.admit(
+            _plan(package_id="wp_fast_ordinary_atomic"),
+            actor="single-task-controller",
+            reason="ordinary atomic admission",
+            _controller_task_identity=("build", task_id),
+        )
+        second = service.admit(
+            _plan(package_id="wp_fast_ordinary_atomic"),
+            actor="single-task-controller",
+            reason="idempotent retry",
+            _controller_task_identity=("build", task_id),
+        )
+
+        assert task_id in first.task_ids
+        assert task_id in second.task_ids
+        assert second.task_ids == first.task_ids
+        build_link = store.query_one(
+            "SELECT * FROM work_package_task_links WHERE node_key = ?",
+            ("build",),
+        )
+        assert build_link["task_id"] == task_id
+        assemble_link = store.query_one(
+            "SELECT * FROM work_package_task_links WHERE node_key = ?",
+            ("assemble",),
+        )
+        assemble = store.query_one(
+            "SELECT dependencies FROM tasks WHERE id = ?",
+            (assemble_link["task_id"],),
+        )
+        assert json_loads(assemble["dependencies"], []) == [task_id]
+        package = store.query_one(
+            "SELECT metadata FROM work_packages WHERE id = ?",
+            ("wp_fast_ordinary_atomic",),
+        )
+        assert json_loads(package["metadata"], {})["controller_task_identity"] == {
+            "node_key": "build",
+            "task_id": task_id,
+        }
+        assert store.query_one(
+            "SELECT root_task_id FROM work_packages WHERE id = ?",
+            ("wp_fast_ordinary_atomic",),
+        )["root_task_id"] == task_id
+        tampered_metadata = json_loads(package["metadata"], {})
+        tampered_metadata["controller_task_identity"] = {
+            "node_key": "build",
+            "task_id": "task_" + ("f" * 32),
+        }
+        store.execute(
+            "UPDATE work_packages SET metadata = ? WHERE id = ?",
+            (json_dumps(tampered_metadata), "wp_fast_ordinary_atomic"),
+        )
+        third = service.admit(
+            _plan(package_id="wp_fast_ordinary_atomic"),
+            actor="single-task-controller",
+            reason="retry ignores mutable metadata identity",
+            _controller_task_identity=("build", task_id),
+        )
+        assert third.task_ids == first.task_ids
+
+        with pytest.raises(ValidationError, match="different task identities"):
+            service.admit(
+                _plan(package_id="wp_fast_ordinary_atomic"),
+                actor="single-task-controller",
+                reason="identity collision",
+                _controller_task_identity=("build", "task_" + ("e" * 32)),
+            )
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("identity", "message"),
+    [
+        (("assemble", "task_" + ("a" * 32)), "only preserve a mutation"),
+        (("build", "task_not_canonical"), "canonical task id"),
+        (("missing", "task_" + ("b" * 32)), "unknown node"),
+    ],
+)
+def test_controller_task_identity_is_narrow_and_canonical(identity, message) -> None:
+    store = SQLiteStore(":memory:")
+    try:
+        _register_repository(store)
+        service = WorkPackageService(store, repository_verifier=_Verifier())
+        with pytest.raises(ValidationError, match=message):
+            service.admit(
+                _plan(package_id="wp_controller_identity_guard"),
+                actor="single-task-controller",
+                reason="guard controller identity",
+                _controller_task_identity=identity,
+            )
+        assert store.query_one("SELECT COUNT(*) AS n FROM work_packages")["n"] == 0
+        assert store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 0
     finally:
         store.close()
 

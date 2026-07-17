@@ -534,6 +534,69 @@ test("clicking a project then navigating to Work filters Kanban cards", async ({
   expect(count).toBeGreaterThan(0);
 });
 
+test("task cards and inspector expose the server-derived publication route", async ({
+  page,
+}) => {
+  const managed = makeTask(
+    "alpha-managed-1",
+    "open",
+    "alpha",
+    1,
+    "Managed exact task",
+  );
+  Object.assign(managed.task, {
+    publication_lane: "managed",
+    publication_route: {
+      schema: "mac.task_publication_route.v1",
+      lane: "managed",
+      route_state: "managed_completed",
+      package_id: "wp_fast_alpha",
+      package_state: "completed",
+      required_guarantees: ["exact_lease_attempt_ref", "independent_pinned_certification"],
+      summary: "Managed route requires exact-candidate certification.",
+      landing_receipt_id: "wplr_alpha",
+      finalization_id: "wppf_alpha",
+    },
+  });
+  await setupPage(page, { extraTasks: [managed] });
+  await page.goto("/");
+  await page.getByText("Work", { exact: true }).first().click();
+
+  const card = page.locator(".kanban-card", { hasText: "Managed exact task" });
+  await expect(card.getByText("managed route", { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Inspect" }).click();
+
+  await expect(page.getByRole("heading", { name: "Publication route" })).toBeVisible();
+  await expect(page.getByText("Managed route", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Required guarantees:/)).toBeVisible();
+  await expect(page.locator("p", { hasText: "Package state:" })).toContainText("completed");
+  await expect(page.getByText(/wp_fast_alpha/)).toBeVisible();
+  await expect(page.getByText(/wplr_alpha/)).toBeVisible();
+  await expect(page.getByText(/wppf_alpha/)).toBeVisible();
+});
+
+test("mixed-version tasks render an unreported route instead of legacy", async ({
+  page,
+}) => {
+  const unknown = makeTask(
+    "alpha-unreported-1",
+    "open",
+    "alpha",
+    1,
+    "Unreported route task",
+  );
+  await setupPage(page, { extraTasks: [unknown] });
+  await page.goto("/");
+  await page.getByText("Work", { exact: true }).first().click();
+
+  const card = page.locator(".kanban-card", { hasText: "Unreported route task" });
+  await expect(card.getByText("route unreported", { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Inspect" }).click();
+
+  await expect(page.getByText("Route unreported", { exact: true })).toBeVisible();
+  await expect(page.getByText(/did not report a publication route/)).toBeVisible();
+});
+
 // ─── authoritative project counts ────────────────────────────────────────────
 
 test("project count badge uses authoritative task_count from project_summaries", async ({

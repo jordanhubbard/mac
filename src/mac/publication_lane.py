@@ -18,6 +18,11 @@ repository changes:
   it does **not** acquire the managed lane's external exact-candidate certifier
   or work-package landing receipt.
 
+Lane identity belongs to the task route, not to a worker.  A package-linked
+task remains managed when no compatible worker is currently ready; it is
+blocked rather than silently downgraded to legacy publication.  Worker
+readiness is reported separately as managed-lane eligibility.
+
 This module is deliberately tiny and dependency-free so that every surface
 (API, CLI, Fleet IDE projections, dispatcher, and documentation) classifies a
 change the same way and describes the same guarantee set.  Centralising the
@@ -68,19 +73,20 @@ class PublicationLaneError(ValueError):
 def classify_publication_lane(
     *,
     package_linked: bool,
-    package_ready: bool = False,
+    package_ready: Optional[bool] = None,
 ) -> str:
     """Return the publication lane for a single atomic repository change.
 
-    A change enters the managed lane only when it is linked to a work package
-    *and* the acting worker satisfies package readiness.  Everything else --
-    an unlinked task, or a package-linked task whose worker is not yet
-    package-ready -- stays on the legacy compatibility lane.  This mirrors the
-    fail-closed actor policy in :func:`mac.worker_credentials.evaluate_worker_actor`
-    so a mixed-version hub/worker can never be treated as managed by accident.
+    A package link is durable route authority.  Readiness controls whether an
+    actor may execute that route, not which publication mechanism the task is
+    allowed to use.  ``package_ready`` is retained as a compatibility keyword
+    for callers rolling forward from v1; it intentionally does not change the
+    lane.  Mixed-version or unready workers are blocked by the package claim
+    gate and can never make linked work fall back to legacy publication.
     """
 
-    if package_linked and package_ready:
+    del package_ready
+    if package_linked:
         return PUBLICATION_LANE_MANAGED
     return PUBLICATION_LANE_LEGACY
 
@@ -125,22 +131,27 @@ def describe_lane(lane: str) -> Dict[str, Any]:
 
     normalized = _validate_lane(lane)
     managed = normalized == PUBLICATION_LANE_MANAGED
+    guarantees = list(
+        MANAGED_LANE_GUARANTEES if managed else LEGACY_LANE_GUARANTEES
+    )
     return {
         "schema": PUBLICATION_LANE_SCHEMA,
         "lane": normalized,
         "managed": managed,
-        "guarantees": list(
-            MANAGED_LANE_GUARANTEES if managed else LEGACY_LANE_GUARANTEES
-        ),
+        # Kept for v1 clients; these are required route guarantees, not a claim
+        # that a held or active task has already produced the corresponding
+        # candidate, certificate, receipt, or finalization.
+        "guarantees": guarantees,
+        "required_guarantees": guarantees,
         "external_certifier": managed,
         "landing_receipt": managed,
         "summary": (
-            "Managed single-node fast lane: exact lease-specific attempt ref, "
+            "Managed single-node route requires an exact lease-specific attempt ref, "
             "controller verification, independently pinned exact-candidate "
             "certification, compare-and-swap landing, remote read-back receipt, "
             "and finalization proof."
             if managed
-            else "Legacy compatibility lane: executor pre-push tests, CodeGraph "
+            else "Legacy compatibility route requires executor pre-push tests, CodeGraph "
             "audit, review, and publication rules. Its pre-push tests are not "
             "the external work-package certifier and it does not produce a "
             "work-package landing receipt."
@@ -149,20 +160,20 @@ def describe_lane(lane: str) -> Dict[str, Any]:
 
 
 def annotate_inventory_entry(entry: Mapping[str, Any]) -> Dict[str, Any]:
-    """Return ``entry`` enriched with its publication-lane classification.
+    """Return ``entry`` enriched with managed-lane eligibility.
 
     Readiness-inventory rows already carry ``package_linked_allowed`` and
-    ``legacy_fast_lane_allowed`` booleans.  A ready worker is eligible for the
-    managed lane; otherwise it can only publish through the legacy lane.  The
-    added ``publication_lane`` field lets every projection show the distinction
-    without re-deriving it.
+    ``legacy_fast_lane_allowed`` booleans.  A ready worker may execute a task
+    already assigned to the managed route.  It does not itself have a
+    publication lane: the same worker may execute an unlinked legacy task.
     """
 
     result = dict(entry)
     ready = bool(entry.get("ready"))
-    lane = PUBLICATION_LANE_MANAGED if ready else PUBLICATION_LANE_LEGACY
-    result["publication_lane"] = lane
-    result["external_certifier"] = lane_provides_external_certifier(lane)
+    result["managed_lane_eligible"] = ready
+    result["external_certifier_capable"] = ready
+    result.pop("publication_lane", None)
+    result.pop("external_certifier", None)
     return result
 
 

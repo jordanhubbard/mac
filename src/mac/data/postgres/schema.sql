@@ -405,6 +405,28 @@ CREATE TABLE IF NOT EXISTS worker_credential_policy_state (
     updated_at TEXT NOT NULL
 );
 
+-- One-way shared authority for ordinary atomic task publication. Absence is
+-- compatibility mode; the sole row records the irreversible managed cutover.
+CREATE TABLE IF NOT EXISTS managed_task_publication_rollout (
+    singleton_key TEXT PRIMARY KEY CHECK (singleton_key = 'fleet'),
+    revision INTEGER NOT NULL CHECK (revision = 1),
+    crossed_by TEXT NOT NULL,
+    crossed_at TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT '{}'
+);
+
+-- Durable request identity for create retries. Raw idempotency keys and
+-- principal identifiers are hashed before storage.
+CREATE TABLE IF NOT EXISTS task_create_idempotency (
+    scope_digest TEXT NOT NULL,
+    key_digest TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    task_id TEXT NOT NULL UNIQUE,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scope_digest, key_digest)
+);
+
 -- `leases` is declared before `agents` for historical schema ordering, so the
 -- delegated-agent foreign key must be installed only after the referenced
 -- table exists. The catalog guard keeps this additive migration idempotent on

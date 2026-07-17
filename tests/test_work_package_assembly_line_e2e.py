@@ -33,7 +33,6 @@ from mac.work_package_integration_service import WorkPackageIntegrationService
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_output_service import WorkPackageOutputService
 from mac.work_package_publication_finalizer import WorkPackagePublicationFinalizer
-from mac.work_package_service import WorkPackageService
 
 
 TARGET_REF = "refs/heads/main"
@@ -86,7 +85,25 @@ def _repository(tmp_path: Path) -> tuple[Path, Path, str]:
     _git(work, "config", "user.name", "Work Package E2E")
     _git(work, "config", "user.email", "work-package-e2e@example.invalid")
     (work / "README.md").write_text("base\n", encoding="utf-8")
+    contract_dir = work / ".mac"
+    contract_dir.mkdir()
+    (contract_dir / "project.yaml").write_text(
+        json.dumps(
+            {
+                "schema": "mac.repository_contract.v1",
+                "project": "mac",
+                "platforms": ["linux"],
+                "toolchain": {"required_commands": ["git"]},
+                "bootstrap": {"command": "true"},
+                "test": {"command": "true"},
+                "evidence": {"required": ["tests"]},
+                "canonical_remote_url": str(remote),
+            }
+        ),
+        encoding="utf-8",
+    )
     _git(work, "add", "README.md")
+    _git(work, "add", ".mac/project.yaml")
     _git(work, "commit", "-m", "base")
     base_sha = _git(work, "rev-parse", "HEAD")
     _git(work, "remote", "add", "origin", str(remote))
@@ -234,6 +251,7 @@ class _ExternalCertificationRunner:
 @dataclass
 class _AssemblyLine:
     store: SQLiteStore
+    control: ControlPlane
     remote: Path
     work: Path
     base_sha: str
@@ -249,6 +267,7 @@ class _AssemblyLine:
     certification_runner: _ExternalCertificationRunner
     expired_lease_id: str | None = None
     worker_lease_id: str | None = None
+    fast_lane_task_id: str | None = None
 
     def close(self) -> None:
         self.store.close()
@@ -308,6 +327,7 @@ def _run_to_certification(
     *,
     passed: bool,
     expire_first_claim: bool = False,
+    via_fast_lane: bool = False,
 ) -> _AssemblyLine:
     remote, work, base_sha = _repository(tmp_path)
     store = SQLiteStore(":memory:")
@@ -327,14 +347,57 @@ def _run_to_certification(
         ),
     )
 
-    packages = WorkPackageService(store)
-    admission = packages.admit(
-        _plan(package_id, base_sha), actor="planner-e2e", reason="approved E2E plan"
-    )
+    control = ControlPlane(store, secret_key="work-package-e2e-secret-key-0001")
+    packages = control.work_packages
+    fast_lane_task_id = None
+    if via_fast_lane:
+        monkeypatch.setattr(
+            control,
+            "_managed_single_task_rollout",
+            lambda: {
+                "schema": "mac.managed_single_task.rollout.v1",
+                "ready": True,
+                "package_capable_agent_ids": ["agent_runtime"],
+                "blockers": [],
+            },
+        )
+        monkeypatch.setattr(
+            control,
+            "_managed_single_task_readiness",
+            lambda **_kwargs: {
+                "schema": "mac.managed_single_task.readiness.v1",
+                "ready": False,
+                "repository_id": "repo_e2e",
+                "eligible_agent_ids": [],
+                "blockers": [{"code": "worker_not_registered_yet"}],
+            },
+        )
+        created = control.create_task(
+            "Create the product change",
+            description="Create one exact local Git candidate.",
+            project="mac",
+            metadata={"no_decompose": True, "no_dispatch": True},
+        )
+        fast_lane_task_id = created.id
+        link = store.query_one(
+            "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
+            (created.id,),
+        )
+        package_id = str(link["package_id"])
+        plan_version = 1
+        epoch = 1
+    else:
+        admission = packages.admit(
+            _plan(package_id, base_sha),
+            actor="planner-e2e",
+            reason="approved E2E plan",
+        )
+        plan_version = admission.plan_version
+        epoch = admission.epoch
     packages.activate(
         package_id,
-        expected_plan_version=admission.plan_version,
-        expected_epoch=admission.epoch,
+        expected_plan_version=plan_version,
+        expected_epoch=epoch,
         actor="operator-e2e",
     )
     task_ids = {
@@ -346,7 +409,6 @@ def _run_to_certification(
         )
     }
 
-    control = ControlPlane(store, secret_key="work-package-e2e-secret-key-0001")
     monkeypatch.setattr(
         control,
         "_work_package_downstream_activation_readiness",
@@ -362,6 +424,7 @@ def _run_to_certification(
         machine.id,
         "work-package-e2e-worker",
         capabilities=["work_package_v1"],
+        resources={"commands": {"available": ["git"]}},
     )
     monkeypatch.setattr(
         "mac.worker_credentials.assert_package_worker_ready",
@@ -532,6 +595,7 @@ def _run_to_certification(
     assert len(runner.calls) == 1
     return _AssemblyLine(
         store=store,
+        control=control,
         remote=remote,
         work=work,
         base_sha=base_sha,
@@ -547,24 +611,27 @@ def _run_to_certification(
         certification_runner=runner,
         expired_lease_id=expired_lease_id,
         worker_lease_id=lease.id,
+        fast_lane_task_id=fast_lane_task_id,
     )
 
 
 @pytest.mark.parametrize(
-    "expire_first_claim",
-    [False, True],
-    ids=["ordinary-claim", "expired-claim-retry"],
+    ("expire_first_claim", "via_fast_lane"),
+    [(False, False), (True, False), (False, True)],
+    ids=["ordinary-claim", "expired-claim-retry", "ordinary-task-fast-lane"],
 )
 def test_managed_work_package_reaches_exact_landed_completed_product(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     expire_first_claim: bool,
+    via_fast_lane: bool,
 ) -> None:
     line = _run_to_certification(
         tmp_path,
         monkeypatch,
         passed=True,
         expire_first_claim=expire_first_claim,
+        via_fast_lane=via_fast_lane,
     )
     try:
         endpoint = RepositoryEndpoint("repo_e2e", str(line.remote))
@@ -613,6 +680,17 @@ def test_managed_work_package_reaches_exact_landed_completed_product(
             "SELECT state FROM work_package_integration_batches WHERE id = ?",
             (line.batch_id,),
         )["state"] == "published"
+        if line.fast_lane_task_id is not None:
+            package = line.store.query_one(
+                "SELECT root_task_id FROM work_packages WHERE id = ?",
+                (line.package_id,),
+            )
+            assert package["root_task_id"] == line.fast_lane_task_id
+            route = line.control.task_publication_route(line.fast_lane_task_id)
+            assert route["lane"] == "managed"
+            assert route["route_state"] == "managed_completed"
+            assert route["landing_receipt_id"] == str(landed.detail["id"])
+            assert route["finalization_id"] == finalized.finalization_id
         tasks = line.store.query_all(
             "SELECT link.node_key, link.node_state, task.state AS task_state "
             "FROM work_package_task_links AS link JOIN tasks AS task "

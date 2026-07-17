@@ -2,7 +2,6 @@
 JSON. These lock the text renderer (a pure function, independent of the global
 output-mode flag the rest of the suite forces to JSON)."""
 
-import pytest
 from mac import cli
 
 # A realistic 37-char task id (task_ + 32 hex chars).
@@ -59,6 +58,18 @@ def test_task_list_renders_one_liner_per_task():
     assert lines[0].startswith("task_abc123")
     assert "open" in lines[0] and "mac" in lines[0] and "Do a thing" in lines[0]
     assert lines[1].startswith("task_def456")
+
+
+def test_task_table_reports_missing_mixed_version_lane_as_unknown():
+    out = cli._render_task_table(
+        [{"id": "task_old", "state": "open", "title": "Older hub task"}],
+        show_project=False,
+        color=False,
+        width=90,
+    )
+
+    assert "unknown" in out
+    assert "legacy" not in out
 
 
 def test_task_table_prioritizes_active_and_attention_states():
@@ -207,6 +218,11 @@ def test_task_show_wrapper_is_compact():
         "evidence": [1, 2],
         "reviews": [{"verdict": "approved"}],
         "publications": [{"status": "published"}],
+        "publication_route": {
+            "lane": "managed",
+            "route_state": "managed_active",
+            "package_id": "wp_fast_x",
+        },
         "llm_usage": {
             "observed_route_count": 2,
             "resolved_models": ["azure/anthropic/claude-sonnet-4-6"],
@@ -219,6 +235,7 @@ def test_task_show_wrapper_is_compact():
     assert "evidence: 2" in out and "reviews: 1" in out  # counts, not the full blob
     assert "claude-sonnet-4-6 via nvidia" in out
     assert "2 routes, 321 tokens" in out
+    assert "publication_lane: managed (managed_active) package=wp_fast_x" in out
 
 
 def test_task_show_wrapper_discloses_missing_model_attribution():

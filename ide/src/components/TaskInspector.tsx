@@ -91,6 +91,14 @@ export function TaskInspector({
   const waiting = String(task.state) === "waiting";
   const context = blockedContext(detail);
   const waitingOn = stringList(task.dependencies);
+  const publicationRoute = task.publication_route || {};
+  const publicationLane = task.publication_lane || publicationRoute.lane || "unknown";
+  const publicationLabel = publicationLane === "managed"
+    ? "Managed route"
+    : publicationLane === "legacy" ? "Legacy compatibility" : "Route unreported";
+  const publicationGuarantees = stringList(
+    publicationRoute.required_guarantees || publicationRoute.guarantees,
+  );
 
   useEffect(() => {
     let active = true;
@@ -142,6 +150,22 @@ export function TaskInspector({
           <span><small>Project</small><strong>{task.project || "unassigned"}</strong></span>
           <span><small>Owner</small><strong>{task.owner_agent_id?.replace(/^agent_/, "") || "unowned"}</strong></span>
           <span><small>Priority</small><strong>P{task.priority ?? 0}</strong></span>
+          <span><small>Publication</small><strong>{publicationLabel}</strong></span>
+        </div>
+
+        <div className={`task-inspector-section publication-route publication-route-${publicationLane}`}>
+          <h3>Publication route</h3>
+          <p>{stringValue(publicationRoute.summary) || (publicationLane === "managed"
+            ? "Managed work-package route."
+            : publicationLane === "legacy"
+              ? "Legacy compatibility route."
+              : "This hub did not report a publication route for the task.")}</p>
+          {publicationGuarantees.length ? <p><strong>Required guarantees:</strong> {publicationGuarantees.join(", ")}</p> : null}
+          {stringValue(publicationRoute.package_id) ? <p><strong>Package:</strong> {stringValue(publicationRoute.package_id)}</p> : null}
+          {stringValue(publicationRoute.package_state) ? <p><strong>Package state:</strong> {stringValue(publicationRoute.package_state)}</p> : null}
+          {stringValue(publicationRoute.route_state) ? <p><strong>Route state:</strong> {stringValue(publicationRoute.route_state)}</p> : null}
+          {stringValue(publicationRoute.landing_receipt_id) ? <p><strong>Landing receipt:</strong> {stringValue(publicationRoute.landing_receipt_id)}</p> : null}
+          {stringValue(publicationRoute.finalization_id) ? <p><strong>Finalization:</strong> {stringValue(publicationRoute.finalization_id)}</p> : null}
         </div>
 
         {task.description ? <div className="task-inspector-section"><h3>Description</h3><p>{task.description}</p></div> : null}

@@ -242,7 +242,11 @@ def _render_task_table(
             len("PROJECT"),
             min(18, max(len(str(task.get("project") or "-")) for task in records)),
         )
-    fixed_width = id_width + 2 + state_width + 2
+    lane_width = max(
+        len("LANE"),
+        max(len(str(task.get("publication_lane") or "unknown")) for task in records),
+    )
+    fixed_width = id_width + 2 + state_width + 2 + lane_width + 2
     if show_project:
         fixed_width += project_width + 2
     title_width = max(8, terminal_width - fixed_width)
@@ -256,8 +260,12 @@ def _render_task_table(
         )
     )
 
-    header_parts = ["TASK".ljust(id_width), "STATE".ljust(state_width)]
-    rule_parts = ["─" * id_width, "─" * state_width]
+    header_parts = [
+        "TASK".ljust(id_width),
+        "STATE".ljust(state_width),
+        "LANE".ljust(lane_width),
+    ]
+    rule_parts = ["─" * id_width, "─" * state_width, "─" * lane_width]
     if show_project:
         header_parts.append("PROJECT".ljust(project_width))
         rule_parts.append("─" * project_width)
@@ -283,6 +291,7 @@ def _render_task_table(
         row = [
             _ansi(display_id.ljust(id_width), "2", enabled=use_color),
             _task_state_cell(state, state_width, color=use_color),
+            str(task.get("publication_lane") or "unknown").ljust(lane_width),
         ]
         if show_project:
             project = _trunc(task.get("project") or "-", project_width)
@@ -410,6 +419,15 @@ def _render_text(value: Any) -> str:
         if isinstance(value.get("task"), dict):
             t = value["task"]
             lines = [_one_liner(t)]
+            publication_route = value.get("publication_route")
+            if isinstance(publication_route, dict):
+                lane = publication_route.get("lane") or "unknown"
+                route_state = publication_route.get("route_state") or ""
+                package_id = publication_route.get("package_id")
+                suffix = " (%s)" % route_state if route_state else ""
+                if package_id:
+                    suffix += " package=%s" % package_id
+                lines.append("  publication_lane: %s%s" % (lane, suffix))
             for k in ("assignee", "attempt_count", "max_attempts"):
                 if t.get(k) not in (None, ""):
                     lines.append("  %s: %s" % (k, t.get(k)))
@@ -1559,6 +1577,16 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         # Handoff / plan-note guard: the executor will not auto-decompose this
         # task into child tasks (add_child_tasks refuses with no_decompose).
         metadata["no_decompose"] = True
+    publication_lane = str(
+        getattr(args, "publication_lane", "auto") or "auto"
+    ).strip().lower()
+    if publication_lane != "auto":
+        metadata["publication_lane_policy"] = publication_lane
+    if publication_lane == "managed":
+        # Managed single-task admission is an atomic-work assertion.  Keep the
+        # CLI ergonomic while the control plane still performs every structural
+        # and rollout check before it creates held package state.
+        metadata["no_decompose"] = True
     model = str(getattr(args, "model", "") or "").strip()
     if model:
         # Per-task LLM pin by NAME: worker exports MAC_TASK_MODEL to the
@@ -1598,6 +1626,16 @@ def cmd_task_create(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
     project = project or None
+    create_kwargs = {}
+    idempotency_key = str(
+        getattr(args, "idempotency_key", "") or ""
+    ).strip()
+    if idempotency_key:
+        create_kwargs["idempotency_key"] = idempotency_key
+    if publication_lane == "legacy" and hasattr(cp, "store"):
+        # A local ledger is an explicit operator authority. Remote hubs enforce
+        # the same downgrade through their authenticated admin principal.
+        create_kwargs["_allow_legacy_publication"] = True
     created = cp.create_task(
         args.title,
         description=description,
@@ -1608,9 +1646,29 @@ def cmd_task_create(args: argparse.Namespace) -> None:
         metadata=metadata,
         max_attempts=args.max_attempts,
         actor=args.actor,
+        **create_kwargs,
     )
     _maybe_emit_ticket(created, args)
-    _print(created)
+    payload = created.to_dict() if hasattr(created, "to_dict") else dict(created)
+    route = payload.get("publication_route")
+    if not isinstance(route, dict):
+        route = {
+            "schema": "mac.task_publication_route.unreported.v1",
+            "lane": str(payload.get("publication_lane") or "unknown"),
+            "route_state": "unreported",
+        }
+        try:
+            route_value = cp.task_publication_route(payload["id"])
+            route = (
+                route_value.to_dict()
+                if hasattr(route_value, "to_dict")
+                else dict(route_value)
+            )
+        except Exception:  # noqa: BLE001 - mixed-version hub compatibility
+            pass
+    payload["publication_lane"] = route.get("lane") or "unknown"
+    payload["publication_route"] = route
+    _print(payload)
 
 
 def cmd_task_list(args: argparse.Namespace) -> None:
@@ -1626,6 +1684,18 @@ def cmd_task_list(args: argparse.Namespace) -> None:
             view="summary",
         )
     ]
+    missing_routes = [
+        task["id"] for task in tasks if not isinstance(task.get("publication_route"), dict)
+    ]
+    if missing_routes and hasattr(cp, "task_publication_routes"):
+        try:
+            routes = cp.task_publication_routes(missing_routes)
+            for task in tasks:
+                if task["id"] in routes:
+                    task["publication_route"] = routes[task["id"]]
+                    task["publication_lane"] = routes[task["id"]]["lane"]
+        except Exception:  # noqa: BLE001 - mixed-version hub compatibility
+            pass
     # Short-id display is text-only. JSON always retains canonical full ids.
     _set_full_ids(bool(getattr(args, "full_ids", False)))
     try:
@@ -5095,6 +5165,12 @@ def build_parser() -> argparse.ArgumentParser:
         "run time, so it stays valid as model names change. --model wins if both.",
     )
     create.add_argument("--actor", default="human")
+    create.add_argument(
+        "--idempotency-key",
+        default="",
+        help="retry-safe create key (max 200 characters); the hub binds it "
+             "durably to one request and task identity",
+    )
     create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
                         help="don't write the .tickets/<id>.md mirror for this task")
     create.add_argument("--no-dispatch", dest="no_dispatch", action="store_true",
@@ -5103,6 +5179,15 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
                         help="handoff/plan-note guard: the executor will not auto-decompose "
                              "this task into child tasks")
+    create.add_argument(
+        "--publication-lane",
+        dest="publication_lane",
+        choices=("auto", "managed", "legacy"),
+        default="auto",
+        help="publication route policy: auto uses the managed route for atomic "
+             "repository tasks after fleet rollout, managed requires it, and "
+             "legacy is the admin-only compatibility override",
+    )
     _set(cmd_task_create, create)
 
     list_tasks = task.add_parser(

@@ -17,6 +17,25 @@ export interface ActivityEntry {
   at: string;
 }
 
+export type PublicationLane = "managed" | "legacy" | "unknown";
+
+export interface TaskPublicationRoute {
+  schema?: string;
+  task_id?: string;
+  lane?: PublicationLane;
+  managed?: boolean;
+  summary?: string;
+  guarantees?: string[];
+  required_guarantees?: string[];
+  route_state?: string;
+  package_id?: string | null;
+  package_state?: string | null;
+  plan_version?: number | null;
+  epoch?: number | null;
+  landing_receipt_id?: string | null;
+  finalization_id?: string | null;
+}
+
 export interface Task {
   id: string;
   title?: string;
@@ -30,6 +49,8 @@ export interface Task {
   created_at?: string;
   updated_at?: string;
   metadata?: { activity?: ActivityEntry[]; [key: string]: unknown };
+  publication_lane?: PublicationLane;
+  publication_route?: TaskPublicationRoute;
   [key: string]: unknown;
 }
 
@@ -194,6 +215,8 @@ export interface TaskCreatePayload {
   required_capabilities?: string[];
   dependencies?: string[];
   metadata?: Record<string, unknown>;
+  publication_lane_policy?: "auto" | "managed" | "legacy";
+  idempotency_key?: string;
 }
 
 export interface TaskUpdatePayload {

@@ -334,6 +334,9 @@ class RemoteDispatch:
         )
         return _Dictish(self._post("/tasks", body))
 
+    def task_publication_route(self, task_id: str) -> _Dictish:
+        return _Dictish(self._get("/tasks/%s/publication-route" % task_id))
+
     def list_tasks(
         self,
         state: Optional[str] = None,

@@ -233,8 +233,156 @@ def test_post_tasks_accepts_summary_alias_for_description():
     assert resp.status_code == 200
     created = resp.json()
     assert created["description"] == "worker instructions"
-    detail = client.get("/tasks/%s" % created["id"]).json()["task"]
+    assert created["publication_lane"] == "legacy"
+    assert created["publication_route"]["external_certifier"] is False
+    response = client.get("/tasks/%s" % created["id"]).json()
+    detail = response["task"]
     assert detail["description"] == "worker instructions"
+    assert detail["publication_lane"] == "legacy"
+    route = client.get(
+        "/tasks/%s/publication-route" % created["id"]
+    ).json()
+    assert route == response["publication_route"]
+    assert route["required_guarantees"] == route["guarantees"]
+    listed = next(
+        item for item in client.get("/tasks").json() if item["id"] == created["id"]
+    )
+    assert listed["publication_route"]["lane"] == "legacy"
+    assert "guarantees" not in listed["publication_route"]
+    assert "summary" not in listed["publication_route"]
+
+
+def test_legacy_publication_override_is_admin_only_but_managed_is_not():
+    client = TestClient(
+        create_app(
+            control_plane=ControlPlane.in_memory(),
+            auth_tokens={"writer": ["write"], "admin": ["admin"]},
+        )
+    )
+    writer = {"Authorization": "Bearer writer"}
+    admin = {"Authorization": "Bearer admin"}
+
+    explicit = client.post(
+        "/tasks",
+        headers=writer,
+        json={"title": "downgrade", "publication_lane_policy": "legacy"},
+    )
+    metadata_bypass = client.post(
+        "/tasks",
+        headers=writer,
+        json={
+            "title": "metadata downgrade",
+            "metadata": {"publication_lane_policy": "legacy"},
+        },
+    )
+    managed = client.post(
+        "/tasks",
+        headers=writer,
+        json={"title": "managed assertion", "publication_lane_policy": "managed"},
+    )
+    approved = client.post(
+        "/tasks",
+        headers=admin,
+        json={"title": "admin compatibility", "publication_lane_policy": "legacy"},
+    )
+
+    assert explicit.status_code == 403
+    assert metadata_bypass.status_code == 403
+    # Managed routing only strengthens publication requirements. The request
+    # reaches structural validation under ordinary write scope rather than an
+    # admin authorization failure.
+    assert managed.status_code == 400
+    assert "managed publication requires" in managed.json()["detail"]
+    assert approved.status_code == 200
+    assert approved.json()["publication_lane"] == "legacy"
+
+
+def test_task_create_http_idempotency_is_principal_scoped_and_intent_bound():
+    cp = ControlPlane.in_memory()
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "writer-a": ["write"],
+                "writer-b": ["write"],
+            },
+        )
+    )
+    headers_a = {"Authorization": "Bearer writer-a"}
+    headers_b = {"Authorization": "Bearer writer-b"}
+    request = {
+        "title": "HTTP retry-safe task",
+        "description": "same logical create",
+        "idempotency_key": "transport-retry-7",
+    }
+
+    first = client.post("/tasks", headers=headers_a, json=request)
+    retry = client.post("/tasks", headers=headers_a, json=request)
+
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    assert retry.json()["id"] == first.json()["id"]
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.json()["id"],)
+    )["n"] == 1
+
+    changed = client.post(
+        "/tasks",
+        headers=headers_a,
+        json={**request, "title": "Different intent"},
+    )
+    assert changed.status_code == 400
+    assert "already bound to a different request" in changed.json()["detail"]
+
+    other_principal = client.post("/tasks", headers=headers_b, json=request)
+    assert other_principal.status_code == 200
+    assert other_principal.json()["id"] != first.json()["id"]
+
+    binding = cp.store.query_one(
+        "SELECT scope_digest, key_digest FROM task_create_idempotency "
+        "WHERE task_id = ?",
+        (first.json()["id"],),
+    )
+    assert binding["scope_digest"] != "writer-a"
+    assert binding["key_digest"] != request["idempotency_key"]
+
+
+def test_task_create_idempotency_survives_token_renewal_for_same_client():
+    cp = ControlPlane.in_memory()
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "old-token": {"scopes": ["write"], "client_id": "client-a"},
+                "renewed-token": {
+                    "scopes": ["write"],
+                    "client_id": "client-a",
+                },
+            },
+        )
+    )
+    request = {
+        "title": "Survive credential rotation",
+        "idempotency_key": "stable-client-request",
+    }
+
+    before = client.post(
+        "/tasks",
+        headers={"Authorization": "Bearer old-token"},
+        json=request,
+    )
+    after = client.post(
+        "/tasks",
+        headers={"Authorization": "Bearer renewed-token"},
+        json=request,
+    )
+
+    assert before.status_code == 200
+    assert after.status_code == 200
+    assert after.json()["id"] == before.json()["id"]
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM task_create_idempotency"
+    )["n"] == 1
 
 
 def test_review_experiment_api_persists_assignment_observation_and_outcome():
