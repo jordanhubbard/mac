@@ -1,0 +1,85 @@
+# Close-Out: dream finding `dreamrepair:3dc2cf317ea21e032952a355c3550f88` (openclaw_fleet_rollout deliverable)
+
+**Task**: Produce the acceptance-criteria review verdict for a low-confidence
+dream finding scoped to the `openclaw_fleet_rollout` deliverable for project
+`mac` — either apply the smallest appropriate repair / concrete follow-up plan,
+or, if the finding is not actionable, close it with an explicit reason and the
+evidence gap.
+**Parent task**: task_5287b80a718c432ca0e78807ccf45911
+(goal: "Investigate low-confidence dream finding: mac").
+**Upstream investigation node**: `docs/dream-finding-3dc2cf.md`.
+**Finding**: kind `failure_pattern`, scope `project`, repo_area `mac`,
+fingerprint `dreamrepair:3dc2cf317ea21e032952a355c3550f88`, confidence `low`
+(score 0.35), backed by exactly one evidence record.
+**Origin task of the one evidence record**: task_663c141c19494c76b0a0d28caa8fa07a.
+**Evidence record**: mem_a718733f11c040e98ae608ad93307df6
+(record_type `deployment_learning:mac`).
+**Prepared by**: fleet worker (verdict node; no production code or test edits).
+**Assessment date**: 2026-07-16
+
+## Verdict: NOT ACTIONABLE — finding closed, no source/skill/tool change recommended
+
+Under the parent acceptance criteria, when the deliverable and its tests already
+exist and pass, the finding is not actionable and the correct deliverable is
+this committed close-out note — not a change to any source module, test, skill,
+or tool. This verdict adopts and independently re-verifies the ground truth
+established by the upstream investigation (`docs/dream-finding-3dc2cf.md`): the
+finding is a low-confidence, single-record `failure_pattern` derived from a
+`deployment_learning` recap of the *original implementation* task, not a
+reproducible current defect.
+
+No files under `src/mac/`, `tests/`, `skills/`, or `deploy/` were modified.
+
+## Corroboration in the task worktree
+
+The `openclaw_fleet_rollout` deliverable and its suite were re-verified here
+against the bootstrapped `.venv`, reproducing the investigation's result:
+
+- Deliverable present and intact — `src/mac/openclaw_fleet_rollout.py`
+  (209 lines) exposes every required public symbol:
+  `ROLLOUT_PLAN_SCHEMA = "mac.openclaw_fleet_rollout.v1"`
+  (`src/mac/openclaw_fleet_rollout.py:22`), `RolloutPlanStep`
+  (`src/mac/openclaw_fleet_rollout.py:31`), `RolloutPlan`
+  (`src/mac/openclaw_fleet_rollout.py:41`), `RolloutResult`
+  (`src/mac/openclaw_fleet_rollout.py:65`), `build_staged_rollout_plan`
+  (`src/mac/openclaw_fleet_rollout.py:83`), and `execute_staged_rollout`
+  (`src/mac/openclaw_fleet_rollout.py:139`).
+- Test suite green via the canonical hermetic runner:
+  `scripts/run-contract-tests.sh tests/test_openclaw_fleet_rollout.py -q`
+  → `52 passed` (exit 0). The suite
+  (`tests/test_openclaw_fleet_rollout.py:1`, 545 lines) covers builder
+  validation, canary/promote staging, the executor simulate/deploy/health
+  paths, and a module-contract regression guard.
+
+There is no failing test, assertion, trace, or reproducer to repair.
+
+## Why the finding is not a live defect (evidence gap)
+
+- **Single, non-reproducing record.** The only supporting evidence
+  (`mem_a718733f11c040e98ae608ad93307df6`, `deployment_learning:mac`) is a
+  historical build/repair learning recap from the original implementation task
+  (task_663c141c19494c76b0a0d28caa8fa07a). It carries no failing assertion,
+  stack trace, current reproduction, or named offending code path.
+- **No independent corroboration.** Nothing in the checked-out repository —
+  neither the module, the 52-test suite, nor the hermetic runner — reproduces a
+  rollout failure.
+- **Score is a structural floor, not a severity signal.** The 0.35 confidence
+  is the classifier's deterministic single-record floor
+  (`CONFIDENCE_THRESHOLDS["low"] = ("low", 0.35)`,
+  `src/mac/dream_cycle_classifier.py:87`), returned by `_confidence_for(...)`
+  whenever `evidence_count < 2` and the candidate is not high/medium
+  (`src/mac/dream_cycle_classifier.py:233`). Low confidence here reflects
+  evidence volume (one record), not a confirmed defect.
+
+## Follow-up recommendation
+
+- **Close the finding as NOT ACTIONABLE.** No source, skill, or tool change is
+  warranted; the deliverable and its tests are intact and green.
+- **No new test/guard is added.** The module-contract regression guard already
+  present (`tests/test_openclaw_fleet_rollout.py`) is the appropriate standing
+  guard for this deliverable; adding another would be redundant.
+- **Systemic note (no code change):** single-record `deployment_learning`
+  recaps of original implementation tasks structurally surface at the 0.35
+  floor and should be triaged as historical learning artifacts rather than live
+  defects unless a second, independent reproducing record is attached. This is a
+  triage observation, not a defect requiring a classifier change.
