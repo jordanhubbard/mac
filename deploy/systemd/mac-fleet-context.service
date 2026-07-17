@@ -1,8 +1,11 @@
 [Unit]
 Description=mac fleet-context — refresh this agent's live view of its teammates
 Documentation=https://github.com/jordanh/mac
-After=mac.service
-Requires=mac.service
+# Spokes intentionally have no local mac.service; refresh-context reads their
+# remote hub authority from mac.env.  Network readiness is the only common
+# ordering requirement across hub and spoke roles.
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot

@@ -1005,6 +1005,19 @@ def test_supervisord_pure_worker_has_no_gateway_program_or_restart():
     assert 'run_supervisorctl status "$AGENT_SUPERVISORD_PROG"' in supervisor
 
 
+def test_fleet_context_systemd_unit_does_not_require_a_local_control_plane():
+    unit = (ROOT / "deploy" / "systemd" / "mac-fleet-context.service").read_text(
+        encoding="utf-8"
+    )
+    unit_section = unit.split("[Service]", 1)[0]
+
+    assert "After=network-online.target" in unit_section
+    assert "Wants=network-online.target" in unit_section
+    assert not re.search(
+        r"^(?:After|Requires)=.*\bmac\.service\b", unit_section, re.MULTILINE
+    )
+
+
 def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
     script = deploy_script_text()
     hub_env = build_mac_env(
