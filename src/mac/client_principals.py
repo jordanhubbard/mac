@@ -86,6 +86,23 @@ def _validate_id(value: str) -> str:
     return client_id
 
 
+def _validate_agent_id(value: str) -> str:
+    """Validate an actor binding without changing the actor's exact identity.
+
+    Agent ids are durable ledger identifiers rather than display names.  They
+    may be longer than client-profile ids, but whitespace/control characters
+    would make deployment manifests and audit records ambiguous and are never
+    valid actor ids in MAC.
+    """
+
+    agent_id = str(value or "")
+    if not agent_id or len(agent_id) > 256:
+        raise ClientPrincipalError("agent id must contain 1 to 256 characters")
+    if agent_id != agent_id.strip() or any(ord(ch) < 33 or ch.isspace() for ch in agent_id):
+        raise ClientPrincipalError("agent id must not contain whitespace or control characters")
+    return agent_id
+
+
 def normalize_scopes(
     scopes: Optional[Iterable[str]], *, allow_elevated: bool = False
 ) -> List[str]:
@@ -229,6 +246,8 @@ class ClientPrincipalStore:
             "schema": "mac.client_principal_audit.v1",
             "event": event,
             "client_id": record.get("id"),
+            "principal_kind": record.get("principal_kind") or "client",
+            "agent_id": record.get("agent_id"),
             "credential_version": record.get("credential_version"),
             "fleet": record.get("fleet"),
             "scopes": list(record.get("scopes") or []),
@@ -265,11 +284,23 @@ class ClientPrincipalStore:
         ssh_host_key_fingerprint: str,
         ssh_host_ca: str,
         capabilities: Iterable[str],
+        agent_id: str = "",
+        principal_kind: str = "client",
+        credential_metadata: Optional[Mapping[str, Any]] = None,
+        token_prefix: str = "mac_client_",
         actor: str,
         event: str,
     ) -> IssuedCredential:
         now = _now()
-        token = "mac_client_" + secrets.token_urlsafe(32)
+        bound_agent_id = _validate_agent_id(agent_id) if agent_id else ""
+        normalized_kind = str(principal_kind or "client").strip().lower()
+        if normalized_kind not in {"client", "worker"}:
+            raise ClientPrincipalError("principal kind must be client or worker")
+        if normalized_kind == "worker" and not bound_agent_id:
+            raise ClientPrincipalError("worker principal requires an exact agent id binding")
+        if token_prefix not in {"mac_client_", "mac_worker_"}:
+            raise ClientPrincipalError("unsupported credential token prefix")
+        token = token_prefix + secrets.token_urlsafe(32)
         clients = registry["clients"]
         previous = clients.get(client_id) if isinstance(clients, dict) else None
         version = int((previous or {}).get("credential_version") or 0) + 1
@@ -291,7 +322,18 @@ class ClientPrincipalStore:
             "capabilities": sorted(
                 {str(item).strip() for item in capabilities if str(item).strip()}
             ),
+            "principal_kind": normalized_kind,
         }
+        if bound_agent_id:
+            record["agent_id"] = bound_agent_id
+        if credential_metadata:
+            # Metadata is deliberately secret-free lifecycle state.  Callers
+            # must never place bearer material here: unlike ``token`` it is
+            # persisted in the hub registry and copied into audit/readiness
+            # views.
+            record["credential_metadata"] = json.loads(
+                json.dumps(dict(credential_metadata), sort_keys=True)
+            )
         clients[client_id] = record
         registry["updated_at"] = _timestamp(now)
         _atomic_json(self.path, registry)
@@ -311,6 +353,10 @@ class ClientPrincipalStore:
         ssh_host_key_fingerprint: str = "",
         ssh_host_ca: str = "",
         capabilities: Iterable[str] = (),
+        agent_id: str = "",
+        principal_kind: str = "client",
+        credential_metadata: Optional[Mapping[str, Any]] = None,
+        token_prefix: str = "mac_client_",
         allow_elevated: bool = False,
         rotate: bool = False,
         actor: str = "operator",
@@ -339,6 +385,10 @@ class ClientPrincipalStore:
                 ssh_host_key_fingerprint=ssh_host_key_fingerprint,
                 ssh_host_ca=ssh_host_ca,
                 capabilities=capabilities,
+                agent_id=agent_id,
+                principal_kind=principal_kind,
+                credential_metadata=credential_metadata,
+                token_prefix=token_prefix,
                 actor=actor,
                 event="client.rotated" if existing else "client.enrolled",
             )
@@ -374,6 +424,18 @@ class ClientPrincipalStore:
                 ssh_host_key_fingerprint=str(existing.get("ssh_host_key_fingerprint") or ""),
                 ssh_host_ca=str(existing.get("ssh_host_ca") or ""),
                 capabilities=list(existing.get("capabilities") or []),
+                agent_id=str(existing.get("agent_id") or ""),
+                principal_kind=str(existing.get("principal_kind") or "client"),
+                credential_metadata=(
+                    existing.get("credential_metadata")
+                    if isinstance(existing.get("credential_metadata"), Mapping)
+                    else None
+                ),
+                token_prefix=(
+                    "mac_worker_"
+                    if existing.get("principal_kind") == "worker"
+                    else "mac_client_"
+                ),
                 actor=actor,
                 event="client.renewed",
             )
@@ -413,7 +475,7 @@ def safe_record(record: Mapping[str, Any]) -> Dict[str, Any]:
 
 def enrollment_manifest(issued: IssuedCredential) -> Dict[str, Any]:
     record = issued.record
-    return {
+    manifest = {
         "schema": MANIFEST_SCHEMA,
         "client_id": record["id"],
         "display_name": record["display_name"],
@@ -437,6 +499,12 @@ def enrollment_manifest(issued: IssuedCredential) -> Dict[str, Any]:
         },
         "capabilities": list(record.get("capabilities") or []),
     }
+    if record.get("agent_id"):
+        manifest["principal"] = {
+            "kind": record.get("principal_kind") or "worker",
+            "agent_id": record["agent_id"],
+        }
+    return manifest
 
 
 def _active_mapping_from_registry(

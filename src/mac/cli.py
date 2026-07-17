@@ -1758,7 +1758,7 @@ def cmd_task_close(args: argparse.Namespace) -> None:
         )
         if args.replacement_task:
             detail["replacement_task_id"] = args.replacement_task
-    result = cp.transition_task(args.task_id, target, args.actor, detail)
+    result = cp.close_task(args.task_id, target, args.actor, detail)
     _maybe_emit_ticket(result, args, close_reason=args.reason or None)
     _print(result)
 
@@ -1887,6 +1887,7 @@ def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
             % (action, item.branch, item.sha),
             args.actor,
             metadata=metadata,
+            _trusted_internal=True,
         )
 
     result = prune_repository_refs(
@@ -2045,8 +2046,249 @@ def cmd_project_show(args: argparse.Namespace) -> None:
     _print(_plane(args).get_project(args.project))
 
 
+def cmd_work_package_list(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).list_work_packages(
+            state=args.state,
+            project=args.project,
+            limit=args.limit,
+        )
+    )
+
+
+def cmd_work_package_admit(args: argparse.Namespace) -> None:
+    plan = _read_json_arg(
+        args.plan,
+        args.plan_file,
+        label="work-package plan",
+        default=None,
+    )
+    if not isinstance(plan, dict):
+        raise SystemExit("work-package plan must be a JSON object")
+    _print(
+        _plane(args).admit_work_package(
+            plan,
+            actor=args.actor,
+            reason=args.reason,
+            tenant_id=args.tenant_id,
+            root_task_id=args.root_task_id,
+        )
+    )
+
+
+def cmd_work_package_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).describe_work_package(args.package_id))
+
+
+def cmd_work_package_readiness(args: argparse.Namespace) -> None:
+    _print(_plane(args).work_package_activation_readiness(args.package_id))
+
+
+def cmd_work_package_activate(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).activate_work_package(
+            args.package_id,
+            expected_plan_version=args.plan_version,
+            expected_epoch=args.epoch,
+            actor=args.actor,
+        )
+    )
+
+
+def _work_package_replan_plan(args: argparse.Namespace) -> Dict[str, Any]:
+    plan = _read_json_arg(
+        args.plan,
+        args.plan_file,
+        label="work-package replan",
+        default=None,
+    )
+    if not isinstance(plan, dict):
+        raise SystemExit("work-package replan must be a JSON object")
+    return plan
+
+
+def cmd_work_package_replan_preview(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).preview_work_package_replan(
+            args.package_id,
+            _work_package_replan_plan(args),
+            expected_plan_version=args.plan_version,
+            expected_epoch=args.epoch,
+            actor=args.actor,
+            reason=args.reason,
+        )
+    )
+
+
+def cmd_work_package_pause(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).pause_work_package(
+            args.package_id,
+            expected_plan_version=args.plan_version,
+            expected_epoch=args.epoch,
+            actor=args.actor,
+            reason=args.reason,
+        )
+    )
+
+
+def cmd_work_package_replan(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).replan_work_package(
+            args.package_id,
+            _work_package_replan_plan(args),
+            expected_plan_version=args.plan_version,
+            expected_epoch=args.epoch,
+            actor=args.actor,
+            reason=args.reason,
+        )
+    )
+
+
+def cmd_work_package_verify_output(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).verify_work_package_output(
+            args.evidence_id,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_work_package_accept_candidate(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).accept_work_package_candidate(
+            args.candidate_id,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_work_package_reject_candidate(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).reject_work_package_candidate(
+            args.candidate_id,
+            actor=args.actor,
+            reason=args.reason,
+        )
+    )
+
+
+def cmd_work_package_assemble(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).assemble_work_package(
+            args.package_id,
+            args.integration_node_key,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_work_package_assembly_status(args: argparse.Namespace) -> None:
+    _print(_plane(args).work_package_integration_status(args.batch_id))
+
+
+def cmd_work_package_assembly_claim(args: argparse.Namespace) -> None:
+    _print(_plane(args).claim_work_package_integration_batch(args.batch_id))
+
+
+def cmd_work_package_assemble_batch(args: argparse.Namespace) -> None:
+    _print(_plane(args).assemble_work_package_integration_batch(args.batch_id))
+
+
+def cmd_work_package_certification_prepare(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).prepare_work_package_certification_job(
+            args.batch_id,
+            args.bundle_path,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_work_package_certification_status(args: argparse.Namespace) -> None:
+    _print(_plane(args).work_package_certification_status(args.job_id))
+
+
+def cmd_work_package_certification_claim(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).claim_work_package_certification_job(
+            args.job_id,
+            owner=args.owner,
+        )
+    )
+
+
+def cmd_work_package_certification_ingest(args: argparse.Namespace) -> None:
+    result = _read_json_arg(
+        args.result,
+        args.result_file,
+        label="work-package certification result",
+        default=None,
+    )
+    if not isinstance(result, dict):
+        raise SystemExit("work-package certification result must be a JSON object")
+    _print(
+        _plane(args).ingest_work_package_certification_result(
+            args.job_id,
+            result,
+            owner=args.owner,
+            fence=args.fence,
+        )
+    )
+
+
+def cmd_work_package_certification_run(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).run_work_package_certification_job(
+            args.job_id,
+            args.bundle_path,
+            owner=args.owner,
+            result_path=args.result_path,
+        )
+    )
+
+
+def cmd_work_package_reject_failed_certification(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).reject_failed_work_package_certification(
+            args.batch_id,
+            args.certification_id,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_work_package_accept_certification(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).accept_work_package_certification(
+            args.batch_id,
+            args.certification_id,
+        )
+    )
+
+
+def cmd_work_package_land(args: argparse.Namespace) -> None:
+    _print(_plane(args).land_work_package(args.batch_id))
+
+
+def cmd_work_package_finalize_publication(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).finalize_work_package_publication(
+            args.batch_id,
+            actor=args.actor,
+            receipt_id=args.receipt_id,
+        )
+    )
+
+
 def cmd_task_start(args: argparse.Namespace) -> None:
-    _print(_plane(args).start_task(args.task_id, args.agent_id))
+    _print(
+        _plane(args).start_task(
+            args.task_id,
+            args.agent_id,
+            lease_id=args.lease_id,
+        )
+    )
 
 
 def cmd_task_release(args: argparse.Namespace) -> None:
@@ -2054,7 +2296,13 @@ def cmd_task_release(args: argparse.Namespace) -> None:
 
 
 def cmd_task_submit(args: argparse.Namespace) -> None:
-    _print(_plane(args).submit_for_review(args.task_id, args.agent_id))
+    _print(
+        _plane(args).submit_for_review(
+            args.task_id,
+            args.agent_id,
+            lease_id=args.lease_id,
+        )
+    )
 
 
 def cmd_task_evidence(args: argparse.Namespace) -> None:
@@ -2066,6 +2314,7 @@ def cmd_task_evidence(args: argparse.Namespace) -> None:
             args.summary,
             args.created_by,
             checksum=args.checksum,
+            lease_id=args.lease_id,
             metadata=_json_arg(args.metadata, {}),
         )
     )
@@ -5078,6 +5327,7 @@ def build_parser() -> argparse.ArgumentParser:
     start = task.add_parser("start")
     start.add_argument("task_id")
     start.add_argument("agent_id")
+    start.add_argument("--lease-id")
     _set(cmd_task_start, start)
 
     release = task.add_parser(
@@ -5090,6 +5340,7 @@ def build_parser() -> argparse.ArgumentParser:
     submit = task.add_parser("submit-review")
     submit.add_argument("task_id")
     submit.add_argument("agent_id")
+    submit.add_argument("--lease-id")
     _set(cmd_task_submit, submit)
 
     evidence = task.add_parser("evidence")
@@ -5099,6 +5350,7 @@ def build_parser() -> argparse.ArgumentParser:
     evidence.add_argument("--summary", required=True)
     evidence.add_argument("--created-by", required=True)
     evidence.add_argument("--checksum")
+    evidence.add_argument("--lease-id")
     evidence.add_argument("--metadata")
     _set(cmd_task_evidence, evidence)
 
@@ -5283,6 +5535,237 @@ def build_parser() -> argparse.ArgumentParser:
     project_show = project.add_parser("show")
     project_show.add_argument("project")
     _set(cmd_project_show, project_show)
+
+    work_package = sub.add_parser(
+        "work-package",
+        help="versioned work-DAG admission, readiness, and controller stages",
+    ).add_subparsers(dest="work_package_command", required=True)
+    wp_admit = work_package.add_parser(
+        "admit",
+        help="compile, attest, and atomically materialize a held plan",
+    )
+    wp_plan = wp_admit.add_mutually_exclusive_group(required=True)
+    wp_plan.add_argument("--plan", help="inline JSON plan")
+    wp_plan.add_argument(
+        "--plan-file",
+        help="JSON plan path, or '-' for stdin (recommended)",
+    )
+    wp_admit.add_argument("--reason", required=True)
+    wp_admit.add_argument("--actor", default="work-package-admission-controller")
+    wp_admit.add_argument("--tenant-id")
+    wp_admit.add_argument("--root-task-id")
+    _set(cmd_work_package_admit, wp_admit)
+    wp_list = work_package.add_parser("list")
+    wp_list.add_argument("--state")
+    wp_list.add_argument("--project")
+    wp_list.add_argument("--limit", type=int, default=100)
+    _set(cmd_work_package_list, wp_list)
+    wp_show = work_package.add_parser("show")
+    wp_show.add_argument("package_id")
+    _set(cmd_work_package_show, wp_show)
+    wp_readiness = work_package.add_parser(
+        "readiness",
+        help="show credential/capability activation blockers",
+    )
+    wp_readiness.add_argument("package_id")
+    _set(cmd_work_package_readiness, wp_readiness)
+    wp_activate = work_package.add_parser("activate")
+    wp_activate.add_argument("package_id")
+    wp_activate.add_argument("--plan-version", type=int, required=True)
+    wp_activate.add_argument("--epoch", type=int, required=True)
+    wp_activate.add_argument("--actor", default="human")
+    _set(cmd_work_package_activate, wp_activate)
+    wp_replan_preview = work_package.add_parser(
+        "replan-preview",
+        help="compile and attest plan N+1, then report whether it can be applied",
+    )
+    wp_replan_preview.add_argument("package_id")
+    wp_replan_preview_plan = wp_replan_preview.add_mutually_exclusive_group(
+        required=True
+    )
+    wp_replan_preview_plan.add_argument("--plan", help="inline JSON replacement plan")
+    wp_replan_preview_plan.add_argument(
+        "--plan-file",
+        help="replacement plan path, or '-' for stdin (recommended)",
+    )
+    wp_replan_preview.add_argument("--plan-version", type=int, required=True)
+    wp_replan_preview.add_argument("--epoch", type=int, required=True)
+    wp_replan_preview.add_argument("--reason", required=True)
+    wp_replan_preview.add_argument(
+        "--actor",
+        default="work-package-replan-controller",
+    )
+    _set(cmd_work_package_replan_preview, wp_replan_preview)
+    wp_pause = work_package.add_parser(
+        "pause",
+        help="raise the package Andon by exact plan-version and epoch CAS",
+    )
+    wp_pause.add_argument("package_id")
+    wp_pause.add_argument("--plan-version", type=int, required=True)
+    wp_pause.add_argument("--epoch", type=int, required=True)
+    wp_pause.add_argument("--reason", required=True)
+    wp_pause.add_argument("--actor", default="human")
+    _set(cmd_work_package_pause, wp_pause)
+    wp_replan = work_package.add_parser(
+        "replan",
+        help="atomically install one paused package's compiled replacement plan",
+    )
+    wp_replan.add_argument("package_id")
+    wp_replan_plan = wp_replan.add_mutually_exclusive_group(required=True)
+    wp_replan_plan.add_argument("--plan", help="inline JSON replacement plan")
+    wp_replan_plan.add_argument(
+        "--plan-file",
+        help="replacement plan path, or '-' for stdin (recommended)",
+    )
+    wp_replan.add_argument("--plan-version", type=int, required=True)
+    wp_replan.add_argument("--epoch", type=int, required=True)
+    wp_replan.add_argument("--reason", required=True)
+    wp_replan.add_argument(
+        "--actor",
+        default="work-package-replan-controller",
+    )
+    _set(cmd_work_package_replan, wp_replan)
+    wp_verify = work_package.add_parser(
+        "verify-output",
+        help="controller-observe an immutable attempt and append its receipt",
+    )
+    wp_verify.add_argument("evidence_id")
+    wp_verify.add_argument("--actor", default="work-package-output-controller")
+    _set(cmd_work_package_verify_output, wp_verify)
+    wp_accept_candidate = work_package.add_parser(
+        "accept-candidate",
+        help="accept one reviewed, controller-verified package candidate",
+    )
+    wp_accept_candidate.add_argument("candidate_id")
+    wp_accept_candidate.add_argument(
+        "--actor",
+        default="work-package-acceptance-controller",
+    )
+    _set(cmd_work_package_accept_candidate, wp_accept_candidate)
+    wp_reject_candidate = work_package.add_parser(
+        "reject-candidate",
+        help="reject one package candidate and stage its bounded rework decision",
+    )
+    wp_reject_candidate.add_argument("candidate_id")
+    wp_reject_candidate.add_argument("--reason", required=True)
+    wp_reject_candidate.add_argument(
+        "--actor",
+        default="work-package-acceptance-controller",
+    )
+    _set(cmd_work_package_reject_candidate, wp_reject_candidate)
+    wp_assemble = work_package.add_parser(
+        "assemble",
+        help="freeze and assemble exact accepted inputs for one integration node",
+    )
+    wp_assemble.add_argument("package_id")
+    wp_assemble.add_argument("integration_node_key")
+    wp_assemble.add_argument(
+        "--actor",
+        default="work-package-integration-controller",
+    )
+    _set(cmd_work_package_assemble, wp_assemble)
+    wp_assembly_status = work_package.add_parser(
+        "assembly-status",
+        help="show an integrity-checked integration-batch snapshot",
+    )
+    wp_assembly_status.add_argument("batch_id")
+    _set(cmd_work_package_assembly_status, wp_assembly_status)
+    wp_assembly_claim = work_package.add_parser(
+        "assembly-claim",
+        help="claim an integration batch under the controller fence",
+    )
+    wp_assembly_claim.add_argument("batch_id")
+    _set(cmd_work_package_assembly_claim, wp_assembly_claim)
+    wp_assemble_batch = work_package.add_parser(
+        "assemble-batch",
+        help="assemble a previously-created integration batch",
+    )
+    wp_assemble_batch.add_argument("batch_id")
+    _set(cmd_work_package_assemble_batch, wp_assemble_batch)
+    wp_certification_prepare = work_package.add_parser(
+        "certification-prepare",
+        help="prepare an immutable external-certifier job for an exact batch",
+    )
+    wp_certification_prepare.add_argument("batch_id")
+    wp_certification_prepare.add_argument("bundle_path")
+    wp_certification_prepare.add_argument(
+        "--actor",
+        default="work-package-certification-controller",
+    )
+    _set(cmd_work_package_certification_prepare, wp_certification_prepare)
+    wp_certification_status = work_package.add_parser(
+        "certification-status",
+        help="show an integrity-checked certification job snapshot",
+    )
+    wp_certification_status.add_argument("job_id")
+    _set(cmd_work_package_certification_status, wp_certification_status)
+    wp_certification_claim = work_package.add_parser(
+        "certification-claim",
+        help="claim a certification job under its monotonic controller fence",
+    )
+    wp_certification_claim.add_argument("job_id")
+    wp_certification_claim.add_argument("--owner")
+    _set(cmd_work_package_certification_claim, wp_certification_claim)
+    wp_certification_ingest = work_package.add_parser(
+        "certification-ingest",
+        help="ingest one exact fenced external-certifier result",
+    )
+    wp_certification_ingest.add_argument("job_id")
+    wp_certification_result = wp_certification_ingest.add_mutually_exclusive_group(
+        required=True
+    )
+    wp_certification_result.add_argument("--result", help="inline result JSON")
+    wp_certification_result.add_argument(
+        "--result-file",
+        help="result JSON path, or '-' for stdin (recommended)",
+    )
+    wp_certification_ingest.add_argument("--owner", required=True)
+    wp_certification_ingest.add_argument("--fence", required=True, type=int)
+    _set(cmd_work_package_certification_ingest, wp_certification_ingest)
+    wp_certification_run = work_package.add_parser(
+        "certification-run",
+        help="explicitly run and ingest a prepared OpenShell certification job",
+    )
+    wp_certification_run.add_argument("job_id")
+    wp_certification_run.add_argument("bundle_path")
+    wp_certification_run.add_argument("--owner")
+    wp_certification_run.add_argument("--result-path")
+    _set(cmd_work_package_certification_run, wp_certification_run)
+    wp_reject_certification = work_package.add_parser(
+        "reject-failed-certification",
+        help="read back the atomic Andon disposition for a failed certification",
+    )
+    wp_reject_certification.add_argument("batch_id")
+    wp_reject_certification.add_argument("certification_id")
+    wp_reject_certification.add_argument(
+        "--actor",
+        default="work-package-certification-controller",
+    )
+    _set(cmd_work_package_reject_failed_certification, wp_reject_certification)
+    wp_accept_certification = work_package.add_parser(
+        "accept-certification",
+        help="accept one exact passed certification for landing",
+    )
+    wp_accept_certification.add_argument("batch_id")
+    wp_accept_certification.add_argument("certification_id")
+    _set(cmd_work_package_accept_certification, wp_accept_certification)
+    wp_land = work_package.add_parser(
+        "land",
+        help="land one accepted exact candidate on its registered repository",
+    )
+    wp_land.add_argument("batch_id")
+    _set(cmd_work_package_land, wp_land)
+    wp_finalize_publication = work_package.add_parser(
+        "finalize-publication",
+        help="consume the exact landing receipt and complete the product graph",
+    )
+    wp_finalize_publication.add_argument("batch_id")
+    wp_finalize_publication.add_argument(
+        "--actor",
+        default="work-package-publication-finalizer",
+    )
+    wp_finalize_publication.add_argument("--receipt-id")
+    _set(cmd_work_package_finalize_publication, wp_finalize_publication)
 
     openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
     osh_reconcile = openshell.add_parser(

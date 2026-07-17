@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from mac.k8s import runner
 
 
@@ -71,6 +73,20 @@ def test_optional_int_sanitize_deadline_and_terminal_edges(monkeypatch) -> None:
     ) == 60
     assert runner._job_is_terminal(None) is False
     assert runner._job_is_terminal({"status": {"succeeded": "bad", "failed": "bad"}}) is False
+
+
+def test_agent_token_secret_map_is_reference_only_and_fail_closed() -> None:
+    assert runner._agent_token_secret_map("") == {}
+    assert runner._agent_token_secret_map(
+        '{"agent_a":"mac-worker-agent-a","agent_b":"mac-worker-agent-b"}'
+    ) == {
+        "agent_a": "mac-worker-agent-a",
+        "agent_b": "mac-worker-agent-b",
+    }
+    with pytest.raises(ValueError, match="JSON object"):
+        runner._agent_token_secret_map("[]")
+    with pytest.raises(ValueError, match="non-empty"):
+        runner._agent_token_secret_map('{"agent_a":""}')
 
 
 def test_dispatcher_capability_probe_shape_and_role_failures() -> None:

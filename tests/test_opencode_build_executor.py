@@ -131,6 +131,10 @@ def _make_fake_bin(
     record_provision_agent: bool = False,
     changed_files: Optional[List[str]] = None,
     codegraph_rc: Optional[int] = None,
+    git_base_sha: Optional[str] = None,
+    git_head_sha: Optional[str] = None,
+    remote_readback_sha: Optional[str] = None,
+    task_record_id: str = "task-test",
 ) -> None:
     """Create fake opencode/git/curl/mac/python helpers on PATH.
 
@@ -202,13 +206,20 @@ def _make_fake_bin(
     oc_out.write_text(opencode_stdout)
     oc_err = bindir / "_opencode_stderr.txt"
     oc_err.write_text(opencode_stderr)
+    opencode_ran = bindir / "_opencode_ran"
     seed_block = "".join(seed_lines[1:])  # drop the shebang line for embedding
+    git_state_line = (
+        "  touch %s\n" % json.dumps(str(opencode_ran))
+        if git_base_sha is not None or git_head_sha is not None
+        else ""
+    )
     _write_exec(
         bindir / "opencode",
         "#!/usr/bin/env bash\n"
         'if [ "$1" = "--version" ]; then echo "opencode 1.2.3"; exit 0; fi\n'
         'if [ "$1" = "run" ]; then\n'
         f"{seed_block}"
+        f"{git_state_line}"
         f'  cat "{oc_out}"\n'
         f'  cat "{oc_err}" >&2\n'
         f'  exit {opencode_rc}\n'
@@ -327,10 +338,16 @@ def _make_fake_bin(
     # are no-ops; status reports a change iff make_change; push exits with
     # push_rc; rev-parse/diff return canned values.
     change_flag = "yes" if make_change else "no"
+    base_sha = git_base_sha or "deadbeefcafef00d"
+    head_sha = git_head_sha or base_sha
+    readback_sha = remote_readback_sha or head_sha
+    git_calls = bindir / "_git_calls.txt"
     _write_exec(
         bindir / "git",
         "#!/usr/bin/env bash\n"
         'cmd="$1"; shift\n'
+        f'printf "%s" "$cmd $*" >> {json.dumps(str(git_calls))}\n'
+        f'printf "\\n" >> {json.dumps(str(git_calls))}\n'
         'case "$cmd" in\n'
         "  clone)\n"
         '    dest="${@: -1}"\n'
@@ -343,7 +360,13 @@ def _make_fake_bin(
         "  diff)\n"
         f'    if [ "{change_flag}" = "yes" ]; then printf "{diff_output}"; fi\n'
         "    ;;\n"
-        '  rev-parse) echo "deadbeefcafef00d" ;;\n'
+        "  rev-parse)\n"
+        f'    if [ -f {json.dumps(str(opencode_ran))} ]; then echo "{head_sha}"; else echo "{base_sha}"; fi\n'
+        "    ;;\n"
+        "  ls-remote)\n"
+        '    ref="${@: -1}"\n'
+        f'    printf "{readback_sha}\\t%s\\n" "$ref"\n'
+        "    ;;\n"
         f"  push) exit {push_rc} ;;\n"
         "  *) : ;;\n"
         "esac\n"
@@ -375,6 +398,7 @@ def _make_fake_bin(
     task_json = json.dumps(
         {
             "task": {
+                "id": task_record_id,
                 "title": "Do a thing",
                 "description": "edit files",
                 "project": "demo",
@@ -395,9 +419,11 @@ def _make_fake_bin(
     )
 
     # mac: only `pull-request open` is used.
+    mac_calls = bindir / "_mac_calls.txt"
     _write_exec(
         bindir / "mac",
         "#!/usr/bin/env bash\n"
+        f'echo "$*" >> {json.dumps(str(mac_calls))}\n'
         'if [ "$1" = "pull-request" ] && [ "$2" = "open" ]; then\n'
         f'  if [ "{pr_rc}" -ne 0 ]; then echo "boom" >&2; exit {pr_rc}; fi\n'
         f"  cat <<'JSON'\n{pr_json}\nJSON\n"
@@ -739,6 +765,206 @@ def test_successful_push_and_pr_records_pr_and_full_files(tmp_path: Path) -> Non
     assert repo.get("pr_opened") is True
     # fake git diff returns two files; full list preserved.
     assert repo["files_changed"] == ["a.txt", "b.txt"]
+
+
+def _work_package_metadata(
+    *,
+    base_sha: str,
+    attempt_ref: str,
+    lease_id: str = "lease-1",
+    task_id: str = "task-work-package",
+    agent_id: str = "mac-worker-python-coder-opencode",
+) -> dict:
+    return {
+        "work_package": {
+            "schema": "mac.work_package.task.v1",
+            "package_id": "wp_executor_test",
+            "plan_version": 1,
+            "epoch": 1,
+            "node_key": "change",
+            "node_generation": 1,
+            "node_type": "mutation",
+            "planning_base_ref": "refs/heads/main",
+            "planning_base_sha": base_sha,
+        },
+        "work_package_assignment": {
+            "schema": "mac.work_package.assignment_projection.v1",
+            "package_id": "wp_executor_test",
+            "plan_version": 1,
+            "epoch": 1,
+            "node_key": "change",
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "lease_id": lease_id,
+            "attempt_number": 1,
+            "attempt_ref": attempt_ref,
+            "attempt_base_ref": "refs/heads/main",
+            "attempt_base_sha": base_sha,
+            "declared_effects_digest": "sha256:effects",
+            "acquired_wip_token_ids": ["wpwip_test"],
+        },
+    }
+
+
+def test_work_package_pushes_exact_attempt_ref_reads_it_back_and_skips_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bindir = tmp_path / "bin"
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    attempt_ref = (
+        "refs/mac/attempts/0123456789abcdef/e1/change/a1-0123456789ab"
+    )
+    task_id = "task-work-package"
+    _make_fake_bin(
+        bindir,
+        opencode_stdout=json.dumps({"type": "step_finish", "reason": "stop"})
+        + "\n",
+        task_metadata=_work_package_metadata(
+            base_sha=base_sha,
+            attempt_ref=attempt_ref,
+            task_id=task_id,
+        ),
+        git_base_sha=base_sha,
+        git_head_sha=head_sha,
+        remote_readback_sha=head_sha,
+        task_record_id=task_id,
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+
+    result = _run_build(
+        bindir=bindir, manifest_path=manifest_path, task_id=task_id
+    )
+
+    assert result.returncode == 0, "stdout=%s stderr=%s" % (
+        result.stdout,
+        result.stderr,
+    )
+    git_calls = (bindir / "_git_calls.txt").read_text(encoding="utf-8")
+    assert (
+        "push --force-with-lease=%s: origin HEAD:%s" % (attempt_ref, attempt_ref)
+        in git_calls
+    )
+    assert "ls-remote --exit-code origin %s" % attempt_ref in git_calls
+    mac_calls = bindir / "_mac_calls.txt"
+    assert not mac_calls.exists() or "pull-request open" not in mac_calls.read_text(
+        encoding="utf-8"
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["evidence_type"] == "repo_change"
+    assert manifest["returncode"] == 0
+    assert manifest["repo"] == {
+        "remote_url": "https://gitea.omv.example/org/repo.git",
+        "remote_ref": attempt_ref,
+        "head_sha": head_sha,
+        "pushed": True,
+        "base_sha": base_sha,
+        "dirty": False,
+        "files_changed": ["a.txt", "b.txt"],
+    }
+    assert manifest["work_package_assignment"] == {
+        "package_id": "wp_executor_test",
+        "lease_id": "lease-1",
+        "attempt_number": "1",
+        "attempt_ref": attempt_ref,
+    }
+    items = _evidence_items(manifest)
+    assert items[3]["branch"] == attempt_ref
+    assert items[3]["remote_readback_sha"] == head_sha
+    assert items[4]["status"] == "skipped"
+    assert items[4]["reason"] == "work_package_candidate_assembly"
+
+    from mac.evidence_validators import validate_evidence_type
+
+    monkeypatch.setenv("MAC_VALIDATE_REMOTE_REFS", "0")
+    assert validate_evidence_type(
+        "repo_change",
+        manifest,
+        passed_check_count=lambda value: sum(
+            1
+            for check in value.get("checks", [])
+            if check.get("status") == "pass" or check.get("returncode") == 0
+        ),
+        require_tests=True,
+    ) == []
+
+
+def test_work_package_rejects_stale_assignment_lease_before_clone(
+    tmp_path: Path,
+) -> None:
+    bindir = tmp_path / "bin"
+    base_sha = "a" * 40
+    attempt_ref = (
+        "refs/mac/attempts/0123456789abcdef/e1/change/a1-0123456789ab"
+    )
+    task_id = "task-work-package-stale"
+    _make_fake_bin(
+        bindir,
+        opencode_stdout="",
+        task_metadata=_work_package_metadata(
+            base_sha=base_sha,
+            attempt_ref=attempt_ref,
+            lease_id="lease-stale",
+            task_id=task_id,
+        ),
+        git_base_sha=base_sha,
+        git_head_sha="b" * 40,
+        task_record_id=task_id,
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+
+    result = _run_build(
+        bindir=bindir, manifest_path=manifest_path, task_id=task_id
+    )
+
+    assert result.returncode == 2
+    assert "does not match the current lease" in result.stderr
+    assert not manifest_path.exists()
+    assert not (bindir / "_git_calls.txt").exists()
+
+
+def test_work_package_remote_sha_mismatch_fails_without_success_evidence(
+    tmp_path: Path,
+) -> None:
+    bindir = tmp_path / "bin"
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    attempt_ref = (
+        "refs/mac/attempts/0123456789abcdef/e1/change/a1-0123456789ab"
+    )
+    task_id = "task-work-package-mismatch"
+    _make_fake_bin(
+        bindir,
+        opencode_stdout=json.dumps({"type": "step_finish", "reason": "stop"})
+        + "\n",
+        task_metadata=_work_package_metadata(
+            base_sha=base_sha,
+            attempt_ref=attempt_ref,
+            task_id=task_id,
+        ),
+        git_base_sha=base_sha,
+        git_head_sha=head_sha,
+        remote_readback_sha="c" * 40,
+        task_record_id=task_id,
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+
+    result = _run_build(
+        bindir=bindir, manifest_path=manifest_path, task_id=task_id
+    )
+
+    assert result.returncode != 0
+    assert "remote readback failed or returned a different SHA" in result.stdout
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["evidence_type"] == "repo_change"
+    assert manifest["returncode"] != 0
+    assert manifest["repo"]["remote_ref"] == attempt_ref
+    assert manifest["repo"]["head_sha"] == head_sha
+    assert manifest["repo"]["pushed"] is False
+    assert manifest["repo"]["base_sha"] == base_sha
+    assert manifest["findings"]
 
 
 def _evidence_items(manifest: dict) -> Dict[int, dict]:

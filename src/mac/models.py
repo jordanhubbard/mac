@@ -59,9 +59,14 @@ def json_dumps(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def json_loads(value: Optional[str], default: Any = None) -> Any:
+def json_loads(value: Any, default: Any = None) -> Any:
     if value is None or value == "":
         return default
+    # psycopg decodes JSON/JSONB columns into native Python values, while
+    # SQLite returns the same logical columns as encoded TEXT.  Keep callers
+    # backend-neutral by treating an already-decoded JSON value as loaded.
+    if isinstance(value, (Mapping, list, bool, int, float)):
+        return value
     return json.loads(value)
 
 
@@ -367,7 +372,11 @@ ROLLOUT_ACTIONS = {
         "to": RolloutStatus.CANARYING.value,
     },
     "promote": {
-        "from": {RolloutStatus.PLANNED.value, RolloutStatus.CANARYING.value, RolloutStatus.PAUSED.value},
+        "from": {
+            RolloutStatus.PLANNED.value,
+            RolloutStatus.CANARYING.value,
+            RolloutStatus.PAUSED.value,
+        },
         "to": RolloutStatus.PROMOTED.value,
         "target_percent": 100,
     },
@@ -614,6 +623,59 @@ class EvidenceArtifact:
 
 
 @dataclass
+class EvidenceAttemptLink:
+    """Immutable attribution of evidence to the exact execution attempt."""
+
+    evidence_id: str
+    task_id: str
+    lease_id: str
+    agent_id: str
+    attempt_number: int
+    attempt_ref: str
+    attempt_base_sha: str
+    attempt_head_sha: Optional[str]
+    artifact_digest: Optional[str]
+    declared_effects_digest: Optional[str]
+    observed_effects_digest: Optional[str]
+    protected_ref: bool
+    controller_verified: bool
+    controller_verifier: Optional[str]
+    controller_verified_at: Optional[str]
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class EvidenceAttemptVerification:
+    """Append-only controller observation of one immutable attempt output."""
+
+    id: str
+    evidence_id: str
+    task_id: str
+    lease_id: str
+    agent_id: str
+    attempt_number: int
+    repository_id: str
+    attempt_ref: str
+    attempt_base_sha: str
+    attempt_head_sha: str
+    tree_digest: str
+    declared_effects_digest: str
+    observed_effects_digest: str
+    changed_paths: List[str]
+    changes: List[JsonDict]
+    verifier: str
+    verifier_version: str
+    verified_at: str
+    receipt_digest: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
 class Lease:
     id: str
     task_id: str
@@ -637,6 +699,7 @@ class ServiceRole:
     """A media service the cluster wants held by some capable host (media-01
     role-claims). The op is served by a catalog model; required_capabilities +
     hardware_requirements gate which agents are eligible to claim it."""
+
     id: str
     op: str
     slug: str
@@ -657,6 +720,7 @@ class ServiceRole:
 class ServiceClaim:
     """A capable host's leased hold on a service_role (mirrors Lease). Renewed by
     the holder's worker loop; expires on silence/overload; reopened for reclaim."""
+
     id: str
     service_role_id: str
     agent_id: str
@@ -936,6 +1000,488 @@ class NodeType(StrEnum):
     # the runtime injects each payload into the matching downstream
     # node before its task spawns.
     PLAN = "plan"
+
+
+class WorkPackageState(StrEnum):
+    """Lifecycle of one durable, versioned unit of parallel work."""
+
+    DRAFT = "draft"
+    ADMITTED = "admitted"
+    ACTIVE = "active"
+    PAUSED = "paused"
+    REPLANNING = "replanning"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class WorkPackageEpochState(StrEnum):
+    """Validity of a package execution epoch against a canonical base."""
+
+    STAGED = "staged"
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class WorkPackageNodeState(StrEnum):
+    """Package-pipeline state, intentionally independent of TaskState."""
+
+    PLANNED = "planned"
+    READY = "ready"
+    EXECUTING = "executing"
+    CANDIDATE_SUBMITTED = "candidate_submitted"
+    CANDIDATE_ACCEPTED = "candidate_accepted"
+    INTEGRATED = "integrated"
+    CERTIFIED = "certified"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+    CANCELLED = "cancelled"
+
+
+class WorkPackageCandidateState(StrEnum):
+    SUBMITTED = "submitted"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+
+
+class WorkPackageWipTokenState(StrEnum):
+    """Lifecycle of mutation inventory; it is not an execution lease."""
+
+    HELD = "held"
+    RELEASED = "released"
+    SUPERSEDED = "superseded"
+    CANCELLED = "cancelled"
+
+
+class WorkPackageLineageRelation(StrEnum):
+    CARRIED_FORWARD = "carried_forward"
+    REPLACED = "replaced"
+    SPLIT = "split"
+    MERGED = "merged"
+    INVALIDATED = "invalidated"
+
+
+class WorkPackageBatchState(StrEnum):
+    """Assembly-line state for a candidate integration batch."""
+
+    QUEUED = "queued"
+    ASSEMBLING = "assembling"
+    VERIFYING = "verifying"
+    CERTIFIED = "certified"
+    REJECTED = "rejected"
+    STALE = "stale"
+    PUBLISHED = "published"
+    CANCELLED = "cancelled"
+
+
+class WorkPackageCertificationState(StrEnum):
+    PASSED = "passed"
+    FAILED = "failed"
+    INVALIDATED = "invalidated"
+    PUBLISHED = "published"
+
+
+@dataclass
+class WorkPackage:
+    """Stable identity and current pointers for a versioned work DAG."""
+
+    id: str
+    tenant_id: Optional[str]
+    project: Optional[str]
+    repository_id: Optional[str]
+    root_task_id: Optional[str]
+    goal: str
+    state: str
+    current_plan_version: int
+    current_epoch: int
+    metadata: JsonDict
+    created_by: str
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackagePlanVersion:
+    """Immutable canonical plan snapshot for one work package."""
+
+    package_id: str
+    version: int
+    parent_version: Optional[int]
+    definition: JsonDict
+    plan_digest: str
+    reason: str
+    created_by: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageEpoch:
+    """Execution generation pinned to an exact repository base."""
+
+    package_id: str
+    epoch: int
+    plan_version: int
+    planning_base_ref: str
+    planning_base_sha: str
+    status: str
+    reason: str
+    created_by: str
+    created_at: str
+    superseded_at: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageTaskLink:
+    """Immutable ownership of a concrete task by a package plan node."""
+
+    task_id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    node_key: str
+    node_generation: int
+    declared_effects_digest: str
+    contract_digest: str
+    input_digest: str
+    node_state: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageNodeLineage:
+    """Audited relationship between materialized nodes across replans."""
+
+    id: str
+    package_id: str
+    from_plan_version: int
+    from_epoch: int
+    from_node_key: str
+    from_task_id: str
+    to_plan_version: int
+    to_epoch: int
+    to_node_key: str
+    to_task_id: str
+    relation: str
+    contract_digest: str
+    input_digest: str
+    source_evidence_id: Optional[str]
+    decision: JsonDict
+    created_by: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageAssignmentAudit:
+    """Allocator decision snapshot bound to the lease it produced."""
+
+    lease_id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    node_key: str
+    task_id: str
+    agent_id: str
+    attempt_number: int
+    attempt_ref: str
+    attempt_base_ref: str
+    attempt_base_sha: str
+    declared_effects_digest: str
+    allocator: str
+    allocator_version: str
+    score: Optional[float]
+    rationale: str
+    decision: JsonDict
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageNodeCandidate:
+    """Candidate output bound to its exact task lease and evidence attempt."""
+
+    id: str
+    task_id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    node_key: str
+    node_generation: int
+    assignment_lease_id: str
+    attempt_number: int
+    evidence_id: str
+    status: str
+    submitted_at: str
+    accepted_at: Optional[str]
+    accepted_by: Optional[str]
+    rejection_reason: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageWipToken:
+    """Durable mutation/WIP ownership independent of worker execution."""
+
+    id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    node_key: str
+    task_id: str
+    resource_key: str
+    token_kind: str
+    stage: str
+    state: str
+    generation: int
+    capacity_units: int
+    reservation_key: Optional[str]
+    predecessor_token_id: Optional[str]
+    acquired_by_assignment_lease_id: str
+    acquired_at: str
+    released_at: Optional[str]
+    release_reason: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageLeaseExpiryRepair:
+    """Append-only authorization for package repair after an expired lease."""
+
+    id: str
+    lease_id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    node_key: str
+    node_generation: int
+    task_id: str
+    agent_id: str
+    attempt_number: int
+    source_task_state: str
+    target_task_state: str
+    source_node_state: str
+    target_node_state: str
+    wip_disposition: str
+    held_wip_count: int
+    held_wip_ids: List[str]
+    finalizer_token: str
+    decision: JsonDict
+    decision_digest: str
+    reason: str
+    created_by: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageIntegrationBatch:
+    """Exact set of worker outputs assembled into one candidate tree."""
+
+    id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    repository_id: Optional[str]
+    target_ref: str
+    assembly_base_sha: str
+    landing_base_sha: str
+    input_digest: str
+    candidate_sha: Optional[str]
+    candidate_tree_digest: Optional[str]
+    candidate_ref: Optional[str]
+    candidate_fence: Optional[int]
+    state: str
+    integration_task_id: Optional[str]
+    lease_owner: Optional[str]
+    lease_expires_at: Optional[str]
+    lease_fence: int
+    metadata: JsonDict
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageBatchInput:
+    """Ordered, content-addressed evidence selected for an integration batch."""
+
+    id: str
+    batch_id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    ordinal: int
+    node_key: str
+    node_generation: int
+    task_id: str
+    candidate_id: str
+    candidate_status: str
+    assignment_lease_id: str
+    attempt_number: int
+    evidence_id: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageCertification:
+    """Verification result tied to an exact assembled candidate and base."""
+
+    id: str
+    batch_id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    candidate_sha: str
+    assembly_base_sha: str
+    landing_base_sha: str
+    target_ref: str
+    status: str
+    verification_digest: str
+    verification: JsonDict
+    certification_task_id: str
+    tests_evidence_id: str
+    review_task_id: str
+    review_evidence_id: str
+    codegraph_evidence_id: Optional[str]
+    certified_by: str
+    created_at: str
+    invalidated_at: Optional[str]
+    publication_id: Optional[str]
+    publication_evidence_id: Optional[str]
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageLandingStream:
+    """Monotonically fenced publication stream for one repository target."""
+
+    repository_id: str
+    target_ref: str
+    lease_owner: Optional[str]
+    lease_expires_at: Optional[str]
+    lease_fence: int
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageLandingIntent:
+    """Append-only write-ahead intent for one exact certified candidate."""
+
+    id: str
+    batch_id: str
+    package_id: str
+    plan_version: int
+    epoch: int
+    repository_id: str
+    target_ref: str
+    candidate_sha: str
+    candidate_ref: str
+    assembly_base_sha: str
+    landing_base_sha: str
+    certification_id: str
+    stream_fence: int
+    created_by: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageLandingAttempt:
+    """Append-only authorization record written before a canonical push."""
+
+    id: str
+    intent_id: str
+    attempt_number: int
+    repository_id: str
+    target_ref: str
+    candidate_sha: str
+    expected_remote_sha: str
+    stream_fence: int
+    created_by: str
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageLandingReceipt:
+    """Append-only remote read-back proof for one landing attempt."""
+
+    id: str
+    intent_id: str
+    attempt_id: str
+    batch_id: str
+    repository_id: str
+    target_ref: str
+    candidate_sha: str
+    observed_sha: str
+    recovered: bool
+    recovery: str
+    attempt_stream_fence: int
+    recording_stream_fence: int
+    recorded_by: str
+    recorded_at: str
+    receipt_digest: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageHistoryEvent:
+    id: str
+    package_id: str
+    seq: int
+    event_type: str
+    actor: str
+    plan_version: Optional[int]
+    epoch: Optional[int]
+    detail: JsonDict
+    created_at: str
+
+    def to_dict(self) -> JsonDict:
+        return asdict(self)
 
 
 class EdgeCondition(StrEnum):
@@ -1488,7 +2034,9 @@ class MacVectorPayload:
         )
         for name in required_fields:
             if not raw.get(name):
-                raise ValidationError("vector payload missing required field: %s" % name)
+                raise ValidationError(
+                    "vector payload missing required field: %s" % name
+                )
         return cls(
             schema=MAC_MEMORY_PAYLOAD_SCHEMA,
             tier=tier,
@@ -1847,7 +2395,9 @@ class EvalRun:
 def validate_transition(current: str, target: str) -> None:
     allowed = TASK_TRANSITIONS.get(current, set())
     if target not in allowed:
-        raise TransitionError("cannot transition task from %s to %s" % (current, target))
+        raise TransitionError(
+            "cannot transition task from %s to %s" % (current, target)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1901,7 +2451,7 @@ class SourceRelease:
     artifact_digest: Optional[str]
     image_digest: Optional[str]
     # Creation provenance
-    created_by: str          # actor (agent_id or human principal)
+    created_by: str  # actor (agent_id or human principal)
     created_by_task_id: Optional[str]  # task that produced this release
     # Review and publication evidence references
     review_evidence_id: Optional[str]
@@ -1922,6 +2472,7 @@ class SourceRelease:
 
 class DesiredSourcePolicy(StrEnum):
     """Rollout policy for fleet desired-source transitions."""
+
     IMMEDIATE = "immediate"
     CANARY = "canary"
     MANUAL = "manual"
@@ -1962,9 +2513,7 @@ class FleetDesiredSourceState:
 
     def __post_init__(self) -> None:
         if self.generation < 1:
-            raise ValidationError(
-                "generation must be >= 1; got %d" % self.generation
-            )
+            raise ValidationError("generation must be >= 1; got %d" % self.generation)
         if self.fleet_id is None and self.environment_id is None:
             raise ValidationError(
                 "FleetDesiredSourceState requires fleet_id or environment_id"
@@ -2005,8 +2554,8 @@ class DesiredSourceIdempotencyRecord:
     """
 
     id: str
-    scope_key: str          # e.g. "fleet:<fleet_id>" or "env:<environment_id>"
-    request_id: str         # caller-supplied idempotency key
+    scope_key: str  # e.g. "fleet:<fleet_id>" or "env:<environment_id>"
+    request_id: str  # caller-supplied idempotency key
     desired_source_state_id: str
     generation: int
     created_at: str

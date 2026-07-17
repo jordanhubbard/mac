@@ -127,6 +127,7 @@ def test_crash_repair_tick_refiles_failed_repair_with_prior_evidence_link():
         "failed",
         repairer.id,
         {"reason": "first repair approach did not hold"},
+        lease_id=old_task.lease_id,
     )
     tick = cp.crashes.tick()
     assert tick["requeued"] == 1

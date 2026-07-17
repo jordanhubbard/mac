@@ -171,7 +171,9 @@ def test_tasks_get_reflects_state():
     assert get_state() == TaskState.SUBMITTED
 
     # Drive the ledger task into a "working" state and confirm the projection.
-    cp.transition_task(task_id, MacTaskState.CLAIMED.value, actor="tester")
+    cp._transition_task_internal(
+        task_id, MacTaskState.CLAIMED.value, actor="test-fixture"
+    )
     assert get_state() == TaskState.WORKING
 
 

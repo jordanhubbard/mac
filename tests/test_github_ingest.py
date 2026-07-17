@@ -162,6 +162,11 @@ class FakeControlPlane:
         )
         return None
 
+    def close_task(self, task_id, target_state, actor, detail=None, **kwargs):
+        return self.transition_task(
+            task_id, target_state, actor, detail=detail, **kwargs
+        )
+
     def record_log(self, *args, **kwargs):
         self.logs.append({"args": args, "kwargs": kwargs})
         return None

@@ -707,7 +707,7 @@ class GitHubIssueIngestor:
             if str(getattr(task, "state", "") or "") != open_state:
                 continue
             try:
-                self.control_plane.transition_task(
+                self.control_plane.close_task(
                     getattr(task, "id"),
                     "cancelled",
                     actor,

@@ -28,9 +28,13 @@ def _register_agent(cp, name):
 
 def _drive_to_exhausted_environment_failure(cp, task, worker):
     """Mirror test_control_plane's expire-lease environment-failure path."""
-    _, lease = cp.claim_task(task.id, worker.id, lease_seconds=-1)
+    _, lease = cp.claim_task(task.id, worker.id)
     cp.transition_task(
-        task.id, TaskState.BLOCKED.value, "worker", {"reason": "heartbeat_offline"}
+        task.id,
+        TaskState.BLOCKED.value,
+        worker.id,
+        {"reason": "heartbeat_offline"},
+        lease_id=lease.id,
     )
     cp.store.execute("UPDATE tasks SET attempt_count = 1 WHERE id = ?", (task.id,))
     cp.store.execute(

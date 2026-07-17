@@ -235,7 +235,12 @@ def test_nap_lifecycle_begin_complete_restores_agent_and_updates_schedule(cp):
     # agent would attach a real one. For this test we make one against a task.
     task = cp.create_task("nap-summary-host", required_capabilities=["ops"])
     evidence = cp.add_evidence(
-        task.id, "log", "log://nap/summary", "wrote nap summary to qdrant", agent.id
+        task.id,
+        "log",
+        "log://nap/summary",
+        "wrote nap summary to qdrant",
+        agent.id,
+        _trusted_internal=True,
     )
 
     completed = cp.complete_nap(run.id, summary_evidence_id=evidence.id)
@@ -260,7 +265,14 @@ def test_complete_nap_requires_log_kind_evidence(cp):
     cp.configure_nap(agent.id)
     run = cp.begin_nap(agent.id)
     task = cp.create_task("dummy", required_capabilities=["ops"])
-    wrong = cp.add_evidence(task.id, "test", "artifact://t", "tests passed", agent.id)
+    wrong = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://t",
+        "tests passed",
+        agent.id,
+        _trusted_internal=True,
+    )
     with pytest.raises(ValidationError):
         cp.complete_nap(run.id, summary_evidence_id=wrong.id)
 

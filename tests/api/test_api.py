@@ -90,6 +90,7 @@ def test_task_ledger_audit_route_is_static_and_covers_every_task():
                 "evidence_type": "operator_result",
             }
         },
+        _trusted_internal=True,
     )
     cp.force_complete_task(second.id, "operator", "report accepted")
     app = create_app(control_plane=cp)
@@ -281,8 +282,17 @@ def test_review_experiment_api_persists_assignment_observation_and_outcome():
 
 
 def test_evidence_artifacts_are_retrievable_via_api():
-    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("artifact-worker-host")
+    agent = cp.register_agent(
+        machine.id,
+        "artifact-worker",
+        capabilities=["python"],
+        agent_id="agent",
+    )
+    client = TestClient(create_app(control_plane=cp))
     task = client.post("/tasks", json={"title": "artifact task"}).json()
+    cp.claim_task(task["id"], agent.id, sync_beads=False)
     payload = base64.b64encode(b"captured stdout\n").decode("ascii")
 
     evidence_resp = client.post(
@@ -334,6 +344,7 @@ def test_evidence_artifact_content_requires_secret_scope():
                 "content_base64": base64.b64encode(b"sensitive output\n").decode("ascii"),
             }
         ],
+        _trusted_internal=True,
     )
     artifact_id = cp.list_evidence_artifacts(evidence.id)[0]["id"]
     client = TestClient(
@@ -944,6 +955,83 @@ def test_force_complete_requires_admin_not_write():
     )
     assert allowed.status_code == 200
     assert allowed.json()["state"] == "completed"
+
+
+def test_task_transition_separates_operator_close_from_worker_lease_authority():
+    plane = ControlPlane.in_memory()
+    machine = plane.register_machine("close-boundary-host")
+    agent = plane.register_agent(machine.id, "close-boundary-worker")
+    operator_task = plane.create_task("operator cancellation")
+    writer_task = plane.create_task("writer must not impersonate operator")
+    worker_task = plane.create_task("worker lease cancellation")
+    _claimed, lease = plane.claim_task(
+        worker_task.id,
+        agent.id,
+        sync_beads=False,
+    )
+    client = TestClient(
+        create_app(
+            control_plane=plane,
+            auth_tokens={
+                "writer": ["write"],
+                "admin": ["admin"],
+                "worker": {
+                    "scopes": ["write"],
+                    "agent_id": agent.id,
+                    "principal_kind": "worker",
+                },
+            },
+        )
+    )
+
+    untrusted_operator = client.post(
+        "/tasks/%s/transition" % writer_task.id,
+        headers={"Authorization": "Bearer writer"},
+        json={
+            "target_state": "cancelled",
+            "actor": "operator",
+            "detail": {"reason": "not authorized"},
+        },
+    )
+    assert untrusted_operator.status_code == 403
+    assert plane.get_task(writer_task.id).state == "open"
+
+    operator_close = client.post(
+        "/tasks/%s/transition" % operator_task.id,
+        headers={"Authorization": "Bearer admin"},
+        json={
+            "target_state": "cancelled",
+            "actor": "operator",
+            "detail": {"reason": "operator decision"},
+        },
+    )
+    assert operator_close.status_code == 200
+    assert operator_close.json()["state"] == "cancelled"
+
+    stale_worker = client.post(
+        "/tasks/%s/transition" % worker_task.id,
+        headers={"Authorization": "Bearer worker"},
+        json={
+            "target_state": "cancelled",
+            "actor": agent.id,
+            "detail": {"reason": "missing fence"},
+        },
+    )
+    assert stale_worker.status_code == 403
+    assert plane.get_task(worker_task.id).state == "claimed"
+
+    fenced_worker = client.post(
+        "/tasks/%s/transition" % worker_task.id,
+        headers={"Authorization": "Bearer worker"},
+        json={
+            "target_state": "cancelled",
+            "actor": agent.id,
+            "detail": {"reason": "lease-bound worker decision"},
+            "lease_id": lease.id,
+        },
+    )
+    assert fenced_worker.status_code == 200
+    assert fenced_worker.json()["state"] == "cancelled"
 
 
 def test_dashboard_state_exposes_session_scope_capabilities():
@@ -2102,6 +2190,7 @@ def test_dashboard_state_caps_high_volume_task_and_message_data():
             "evidence %03d" % index,
             agent["id"],
             sync_beads=False,
+            _trusted_internal=True,
         )
     for index in range(250):
         cp.send_message(
@@ -2328,11 +2417,23 @@ def test_tasks_expose_lifecycle_timestamps_and_child_relationships():
         "/tasks",
         json={"title": "Terminal timing", "required_capabilities": ["python"]},
     ).json()
-    client.post("/tasks/%s/claim" % terminal["id"], params={"agent_id": agent["id"]})
-    client.post("/tasks/%s/start" % terminal["id"], params={"agent_id": agent["id"]})
+    terminal_claim = client.post(
+        "/tasks/%s/claim" % terminal["id"],
+        params={"agent_id": agent["id"]},
+    ).json()
+    terminal_lease_id = terminal_claim["lease"]["id"]
+    client.post(
+        "/tasks/%s/start" % terminal["id"],
+        params={"agent_id": agent["id"], "lease_id": terminal_lease_id},
+    )
     failed = client.post(
         "/tasks/%s/transition" % terminal["id"],
-        json={"target_state": "failed", "actor": agent["id"], "detail": {"reason": "test"}},
+        json={
+            "target_state": "failed",
+            "actor": agent["id"],
+            "lease_id": terminal_lease_id,
+            "detail": {"reason": "test"},
+        },
     ).json()
     assert failed["completed_at"] is not None
     assert failed["last_updated_at"] == failed["updated_at"]
@@ -2370,7 +2471,8 @@ def test_dashboard_exposes_service_links_with_redacted_credentials(monkeypatch):
 
 
 def test_dashboard_models_large_swarm_by_project_and_limits_dispatch_candidates():
-    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
     machine = client.post("/machines", json={"hostname": "swarm-host"}).json()
     for index in range(75):
         client.post(
@@ -2409,15 +2511,13 @@ def test_dashboard_models_large_swarm_by_project_and_limits_dispatch_candidates(
             "required_capabilities": ["python"],
         },
     ).json()
-    client.post(
-        "/tasks/%s/transition" % manual_block["id"],
-        json={
-            "target_state": "blocked",
-            "actor": "verifier",
-            "detail": {
-                "reason": "verification_contract_failed",
-                "manual_repair_required": True,
-            },
+    cp._transition_task_internal(
+        manual_block["id"],
+        "blocked",
+        "verifier",
+        {
+            "reason": "verification_contract_failed",
+            "manual_repair_required": True,
         },
     )
 

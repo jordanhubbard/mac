@@ -76,6 +76,15 @@ spec:
                   optional: true
             - name: MAC_BIND_HOST
               value: "0.0.0.0"
+            # The automatic work-package assembly line invokes an external
+            # OpenShell certifier and needs durable bundle storage plus
+            # canonical Git read/write authority. The stock stateless API image
+            # intentionally supplies none of those, so both actuation switches
+            # remain visibly fail-closed. See deploy/k8s/README.md.
+            - name: MAC_WORK_PACKAGE_PIPELINE_ENABLED
+              value: "false"
+            - name: MAC_WORK_PACKAGE_LANDING_ENABLED
+              value: "false"
           resources:
             requests:
               cpu: 100m

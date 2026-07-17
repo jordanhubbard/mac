@@ -380,8 +380,8 @@ def test_run_advances_on_task_completed_through_to_terminal(cp):
         hermes_instance_id=qa_soul,
     )
     cp.roles.assign_role(qa_agent.id, "qa")
-    cp.claim_task(first_task.id, qa_agent.id)
-    cp.start_task(first_task.id, qa_agent.id)
+    _, lease = cp.claim_task(first_task.id, qa_agent.id)
+    cp.start_task(first_task.id, qa_agent.id, lease_id=lease.id)
     from mac.services import sign_verification_manifest
     from tests.conftest import submit_review_verdict
 
@@ -443,10 +443,15 @@ def test_failed_task_picks_failure_edge_and_finishes(cp):
         machine.id, "rocky", capabilities=["python", "qa"], hermes_instance_id=soul
     )
     cp.roles.assign_role(qa_agent.id, "qa")
-    cp.claim_task(first_task.id, qa_agent.id)
-    cp.start_task(first_task.id, qa_agent.id)
+    _, lease = cp.claim_task(first_task.id, qa_agent.id)
+    cp.start_task(first_task.id, qa_agent.id, lease_id=lease.id)
     # Fail the task — there's a failure edge to '' (terminal).
-    cp.transition_task(first_task.id, TaskState.FAILED.value, "rocky")
+    cp.transition_task(
+        first_task.id,
+        TaskState.FAILED.value,
+        qa_agent.id,
+        lease_id=lease.id,
+    )
 
     run = cp.workflow_runtime.get_run(run.id)
     assert run.state == "failed"
@@ -523,9 +528,14 @@ def test_forged_workflow_run_id_metadata_is_ignored_by_runtime(cp):
     # Bring it to terminal state.
     machine = cp.register_machine("h2")
     agent = cp.register_agent(machine.id, "outsider")
-    cp.claim_task(forged.id, agent.id)
-    cp.start_task(forged.id, agent.id)
-    cp.transition_task(forged.id, TaskState.FAILED.value, "outsider")
+    _, lease = cp.claim_task(forged.id, agent.id)
+    cp.start_task(forged.id, agent.id, lease_id=lease.id)
+    cp.transition_task(
+        forged.id,
+        TaskState.FAILED.value,
+        agent.id,
+        lease_id=lease.id,
+    )
 
     # Run hasn't moved off its first node.
     run_after = cp.workflow_runtime.get_run(run.id)
@@ -583,9 +593,14 @@ def test_cyclic_workflow_terminates_when_max_attempts_exhausted(cp):
             break
         task = cp.get_task(run.current_task_id)
         agent = qa_agent if task.metadata["required_role"] == "qa" else dev_agent
-        cp.claim_task(task.id, agent.id)
-        cp.start_task(task.id, agent.id)
-        cp.transition_task(task.id, TaskState.FAILED.value, agent.id)
+        _, lease = cp.claim_task(task.id, agent.id)
+        cp.start_task(task.id, agent.id, lease_id=lease.id)
+        cp.transition_task(
+            task.id,
+            TaskState.FAILED.value,
+            agent.id,
+            lease_id=lease.id,
+        )
 
     final = cp.workflow_runtime.get_run(run.id)
     assert final.state == "failed", f"expected failed after max_attempts, got {final.state}"

@@ -121,6 +121,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_AGENT_GEN_VIDEO_PORT` | int | consumer-defined | deploy-agent-generation | Deploy Agent Generation setting: deploy agent gen video port. |
 | `MAC_DEPLOY_AGENT_MEDIA_ROUTES` | str | consumer-defined | deployment | Deployment setting: deploy agent media routes. |
 | `MAC_DEPLOY_ALLOW_DEGRADED_SERVICES` | bool | consumer-defined | deployment | Deployment setting: deploy allow degraded services. |
+| `MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN` | bool | consumer-defined | deployment | Deployment setting: deploy allow legacy worker token. |
 | `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG` | bool | consumer-defined | deployment | Deployment setting: deploy allow sample config. |
 | `MAC_DEPLOY_API_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy api timeout seconds. |
 | `MAC_DEPLOY_ARCHIVE` | str | consumer-defined | deployment | Deployment setting: deploy archive. |
@@ -248,9 +249,22 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_WEBDAV_URL` | str | consumer-defined | deployment | Deployment setting: deploy webdav url. |
 | `MAC_DEPLOY_WORKER_ALLOWED_PROJECTS` | str | consumer-defined | deployment | Deployment setting: deploy worker allowed projects. |
 | `MAC_DEPLOY_WORKER_CAPABILITIES` | str | consumer-defined | deployment | Deployment setting: deploy worker capabilities. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID` | str | consumer-defined | deployment | Deployment setting: deploy worker credential agent id. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_FINGERPRINT` | str | consumer-defined | deployment | Deployment setting: deploy worker credential fingerprint. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_ID` | str | consumer-defined | deployment | Deployment setting: deploy worker credential id. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy worker credential retries. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_RETRY_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy worker credential retry seconds. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_RUNTIME_DIGEST` | str | consumer-defined | deployment | Deployment setting: deploy worker credential runtime digest. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_SOURCE_COMMIT` | str | consumer-defined | deployment | Deployment setting: deploy worker credential source commit. |
+| `MAC_DEPLOY_WORKER_CREDENTIAL_VERSION` | str | consumer-defined | deployment | Deployment setting: deploy worker credential version. |
+| `MAC_DEPLOY_WORKER_IDENTITY_ENFORCE` | str | consumer-defined | deployment | Deployment setting: deploy worker identity enforce. |
 | `MAC_DEPLOY_WORKER_MODE` | str | consumer-defined | deployment | Deployment setting: deploy worker mode. |
 | `MAC_DEPLOY_WORKER_REQUIRED_METADATA` | bool | consumer-defined | deployment | Deployment setting: deploy worker required metadata. |
 | `MAC_DEPLOY_WORKER_REQUIRE_CANARY` | bool | consumer-defined | deployment | Deployment setting: deploy worker require canary. |
+| `MAC_DEPLOY_WORKER_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy worker token. |
+| `MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR` | str | consumer-defined | deployment | Deployment setting: deploy work package bundle dir. |
+| `MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy work package landing enabled. |
+| `MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy work package pipeline enabled. |
 | `MAC_DIRECTABLE_TIMEOUT` | int | consumer-defined | core | Core setting: directable timeout. |
 | `MAC_DISPATCH_PRIORITY_AGING_SECONDS` | int | consumer-defined | core | Core setting: dispatch priority aging seconds. |
 | `MAC_DREAM_REPAIR_MAX_TASKS_PER_CYCLE` | str | consumer-defined | core | Core setting: dream repair max tasks per cycle. |
@@ -341,6 +355,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_JOURNAL_MANIFEST` | str | consumer-defined | core | Core setting: journal manifest. |
 | `MAC_JOURNAL_PATH` | str | consumer-defined | core | Core setting: journal path. |
 | `MAC_LAUNCHD_LABEL` | str | consumer-defined | core | Core setting: launchd label. |
+| `MAC_LEASE_EXPIRY_FINALIZER_STALE_SECONDS` | int | consumer-defined | core | Core setting: lease expiry finalizer stale seconds. |
 | `MAC_LEASE_ID` | str | consumer-defined | core | Core setting: lease id. |
 | `MAC_LEDGER_BACKUP_DB` | str | consumer-defined | core | Core setting: ledger backup db. |
 | `MAC_LEDGER_BACKUP_DIR` | str | consumer-defined | core | Core setting: ledger backup dir. |
@@ -357,6 +372,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MACHINE_ID` | str | consumer-defined | core | Core setting: machine id. |
 | `MAC_MAX_CHILD_TASKS_PER_PARENT` | str | consumer-defined | core | Core setting: max child tasks per parent. |
 | `MAC_MAX_DECOMPOSE_DEPTH` | str | consumer-defined | core | Core setting: max decompose depth. |
+| `MAC_MAX_TASK_LEASE_SECONDS` | int | consumer-defined | core | Core setting: max task lease seconds. |
 | `MAC_MEMORY_EMBEDDING_DIM` | int | consumer-defined | memory | Memory setting: memory embedding dim. |
 | `MAC_MEMORY_EMBED_API_KEY` | str | consumer-defined | memory | Memory setting: memory embed api key. |
 | `MAC_MEMORY_EMBED_BACKEND` | str | consumer-defined | memory | Memory setting: memory embed backend. |
@@ -576,6 +592,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_ROUTER_VIDEO_UPSTREAM` | str | consumer-defined | router | Router setting: router video upstream. |
 | `MAC_ROUTER_WILDCARD_MODELS` | str | consumer-defined | router | Router setting: router wildcard models. |
 | `MAC_RUNNER_ACTIVE_DEADLINE_SECONDS` | int | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner active deadline seconds. |
+| `MAC_RUNNER_AGENT_TOKEN_SECRETS` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner agent token secrets. |
 | `MAC_RUNNER_CAPABILITIES` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner capabilities. |
 | `MAC_RUNNER_DEFAULT_IMAGE` | str | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner default image. |
 | `MAC_RUNNER_JOB_POLL_INTERVAL_SECONDS` | int | consumer-defined | kubernetes-runner | Kubernetes Runner setting: runner job poll interval seconds. |
@@ -710,12 +727,20 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker command inventory interval seconds. |
 | `MAC_WORKER_COMMAND_INVENTORY_MAX` | int | consumer-defined | worker | Worker setting: worker command inventory max. |
 | `MAC_WORKER_COMMAND_PROBES` | str | consumer-defined | worker | Worker setting: worker command probes. |
+| `MAC_WORKER_CREDENTIAL_AGENT_ID` | str | consumer-defined | worker | Worker setting: worker credential agent id. |
+| `MAC_WORKER_CREDENTIAL_FINGERPRINT` | str | consumer-defined | worker | Worker setting: worker credential fingerprint. |
+| `MAC_WORKER_CREDENTIAL_ID` | str | consumer-defined | worker | Worker setting: worker credential id. |
+| `MAC_WORKER_CREDENTIAL_POLICY_FILE` | str | consumer-defined | worker | Worker setting: worker credential policy file. |
+| `MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST` | str | consumer-defined | worker | Worker setting: worker credential runtime digest. |
+| `MAC_WORKER_CREDENTIAL_SOURCE_COMMIT` | str | consumer-defined | worker | Worker setting: worker credential source commit. |
+| `MAC_WORKER_CREDENTIAL_VERSION` | str | consumer-defined | worker | Worker setting: worker credential version. |
 | `MAC_WORKER_DELIVERY_DRAIN_SECONDS` | int | consumer-defined | worker | Worker setting: worker delivery drain seconds. |
 | `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
 | `MAC_WORKER_EXECUTOR` | str | consumer-defined | worker | Worker setting: worker executor. |
 | `MAC_WORKER_HEARTBEAT_INTERVAL` | int | consumer-defined | worker | Worker setting: worker heartbeat interval. |
 | `MAC_WORKER_HERMES_INSTANCE_ID` | str | consumer-defined | worker | Worker setting: worker hermes instance id. |
 | `MAC_WORKER_HOSTNAME` | str | consumer-defined | worker | Worker setting: worker hostname. |
+| `MAC_WORKER_IDENTITY_MODE` | str | consumer-defined | worker | Worker setting: worker identity mode. |
 | `MAC_WORKER_LEASE_SECONDS` | int | consumer-defined | worker | Worker setting: worker lease seconds. |
 | `MAC_WORKER_MODE` | str | consumer-defined | worker | Worker setting: worker mode. |
 | `MAC_WORKER_PERSONA_ID` | str | consumer-defined | worker | Worker setting: worker persona id. |
@@ -726,6 +751,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_REQUIRE_CANARY` | bool | consumer-defined | worker | Worker setting: worker require canary. |
 | `MAC_WORKER_RESOURCES` | str | consumer-defined | worker | Worker setting: worker resources. |
 | `MAC_WORKER_RESOURCES_FILE` | str | consumer-defined | worker | Worker setting: worker resources file. |
+| `MAC_WORKER_RUNNING_DIGEST` | str | consumer-defined | worker | Worker setting: worker running digest. |
 | `MAC_WORKER_TOKEN` | str | consumer-defined | worker | Worker setting: worker token. |
 | `MAC_WORKER_WORKSPACE` | str | consumer-defined | worker | Worker setting: worker workspace. |
 | `MAC_WORKER_WORKSPACE_GC_ENABLED` | bool | consumer-defined | worker | Worker setting: worker workspace gc enabled. |
@@ -735,6 +761,19 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_WORKSPACE_GC_MAX_AGE_HOURS` | str | consumer-defined | worker | Worker setting: worker workspace gc max age hours. |
 | `MAC_WORKER_WORKSPACE_GC_MIN_FREE_GB` | str | consumer-defined | worker | Worker setting: worker workspace gc min free gb. |
 | `MAC_WORKFLOW_ADVANCEMENT_RESERVATION_SECONDS` | int | consumer-defined | core | Core setting: workflow advancement reservation seconds. |
+| `MAC_WORK_PACKAGE_BUNDLE_DIR` | str | consumer-defined | core | Core setting: work package bundle dir. |
+| `MAC_WORK_PACKAGE_BUNDLE_RETENTION_DAYS` | str | consumer-defined | core | Core setting: work package bundle retention days. |
+| `MAC_WORK_PACKAGE_CANDIDATE_NAMESPACE` | str | consumer-defined | core | Core setting: work package candidate namespace. |
+| `MAC_WORK_PACKAGE_GIT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: work package git timeout seconds. |
+| `MAC_WORK_PACKAGE_LANDING_ENABLED` | bool | consumer-defined | core | Core setting: work package landing enabled. |
+| `MAC_WORK_PACKAGE_LANDING_LEASE_SECONDS` | int | consumer-defined | core | Core setting: work package landing lease seconds. |
+| `MAC_WORK_PACKAGE_PIPELINE_ACTOR` | str | consumer-defined | core | Core setting: work package pipeline actor. |
+| `MAC_WORK_PACKAGE_PIPELINE_ENABLED` | bool | consumer-defined | core | Core setting: work package pipeline enabled. |
+| `MAC_WORK_PACKAGE_PIPELINE_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: work package pipeline initial delay seconds. |
+| `MAC_WORK_PACKAGE_PIPELINE_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: work package pipeline interval seconds. |
+| `MAC_WORK_PACKAGE_PIPELINE_MAX_ACTIONS` | str | consumer-defined | core | Core setting: work package pipeline max actions. |
+| `MAC_WORK_PACKAGE_PIPELINE_MAX_ERROR_CHARS` | str | consumer-defined | core | Core setting: work package pipeline max error chars. |
+| `MAC_WORK_PACKAGE_PIPELINE_MAX_ITEMS` | str | consumer-defined | core | Core setting: work package pipeline max items. |
 
 ## Environment variable precedence
 

@@ -78,6 +78,15 @@ def _create_task(tmp_path, title="test task", project=None):
     return task
 
 
+def _claim_for_evidence(tmp_path, task, *, name="evidence-worker"):
+    """Create one real lease fence for the public evidence command."""
+
+    agent = _register_agent(tmp_path, name=name)
+    rc, claimed = _run(tmp_path, "task", "claim", task["id"], agent["id"])
+    assert rc == 0
+    return agent, claimed["lease_id"]
+
+
 # ---------------------------------------------------------------------------
 # task audit
 # ---------------------------------------------------------------------------
@@ -498,6 +507,7 @@ def test_task_release_is_noop_for_normal_task(tmp_path):
 def test_task_evidence_adds_test_evidence(tmp_path):
     """task evidence --kind test creates an evidence record on the task."""
     task = _create_task(tmp_path)
+    agent, lease_id = _claim_for_evidence(tmp_path, task)
 
     rc, ev = _run(
         tmp_path,
@@ -505,18 +515,20 @@ def test_task_evidence_adds_test_evidence(tmp_path):
         "--kind", "test",
         "--uri", "ci://build/42/test-results",
         "--summary", "all 86 tests passed",
-        "--created-by", "hub",
+        "--created-by", agent["id"],
+        "--lease-id", lease_id,
     )
     assert rc == 0
     assert ev["id"].startswith("ev_")
     assert ev["kind"] == "test"
     assert ev["task_id"] == task["id"]
-    assert ev["created_by"] == "hub"
+    assert ev["created_by"] == agent["id"]
 
 
 def test_task_evidence_adds_artifact_evidence(tmp_path):
     """task evidence --kind artifact records an artifact URI."""
     task = _create_task(tmp_path)
+    agent, lease_id = _claim_for_evidence(tmp_path, task)
 
     rc, ev = _run(
         tmp_path,
@@ -524,7 +536,8 @@ def test_task_evidence_adds_artifact_evidence(tmp_path):
         "--kind", "artifact",
         "--uri", "s3://bucket/output/report.json",
         "--summary", "generated report artifact",
-        "--created-by", "worker-1",
+        "--created-by", agent["id"],
+        "--lease-id", lease_id,
     )
     assert rc == 0
     assert ev["kind"] == "artifact"
@@ -534,13 +547,15 @@ def test_task_evidence_adds_artifact_evidence(tmp_path):
 def test_task_evidence_appears_in_task_show(tmp_path):
     """Evidence added via CLI appears when the task is queried via task show."""
     task = _create_task(tmp_path)
+    agent, lease_id = _claim_for_evidence(tmp_path, task)
     _run(
         tmp_path,
         "task", "evidence", task["id"],
         "--kind", "log",
         "--uri", "logs://run/999",
         "--summary", "execution log",
-        "--created-by", "worker-1",
+        "--created-by", agent["id"],
+        "--lease-id", lease_id,
     )
 
     rc, detail = _run(tmp_path, "task", "show", task["id"])

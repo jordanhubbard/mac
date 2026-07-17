@@ -80,6 +80,8 @@ def _sample(name: str) -> Any:
         "stale_after_seconds",
         "max_attempts",
         "baseline_score",
+        "expected_plan_version",
+        "expected_epoch",
     }:
         return 1
     if name in {"nap_interval_hours", "min_score"}:
@@ -92,6 +94,7 @@ def _sample(name: str) -> Any:
         "pre_decisions",
         "scopes",
         "checks",
+        "plan",
     }:
         return {"sample": "value"}
     if name == "artifacts":

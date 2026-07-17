@@ -193,7 +193,11 @@ def _hub_post_child_tasks(task_id: str, children: List[Dict[str, Any]]) -> Optio
     if not base_url or not token:
         return None
     path = "/tasks/%s/children" % task_id
-    payload = {"children": children}
+    payload = {
+        "children": children,
+        "actor": os.environ.get("MAC_AGENT_ID", "").strip() or "mac-task-runner",
+        "lease_id": os.environ.get("MAC_LEASE_ID", "").strip() or None,
+    }
     data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         base_url + path,

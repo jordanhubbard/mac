@@ -220,7 +220,7 @@ class A2AService:
         # transition (handle_rpc maps it to task-not-found).
         self.cp.get_task(task_id)
         try:
-            task = self.cp.transition_task(
+            task = self.cp.close_task(
                 task_id,
                 MacTaskState.CANCELLED.value,
                 actor=self.ACTOR,

@@ -259,6 +259,9 @@ button.data-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .split-grid { display: grid; gap: 14px; padding: 16px; }
 .workflow-layout { grid-template-columns: minmax(460px, 1.75fr) minmax(270px, .9fr); min-height: calc(100% - 107px); }
 .planner-surface { display: flex; flex-direction: column; min-height: 500px; }
+.planner-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 15px 15px 0; }
+.planner-controls label, .managed-plan-editor label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 9px; text-transform: uppercase; }
+.planner-controls select, .managed-plan-editor input { min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--border); background: var(--bg-2); color: var(--text); font-size: 11px; text-transform: none; }
 .planner-surface > textarea { min-height: 110px; margin: 15px; padding: 12px; resize: vertical; border: 1px solid var(--border); background: #081219; color: var(--text); }
 .form-actions { display: flex; align-items: center; gap: 8px; padding: 0 15px 15px; }
 .form-message { color: var(--muted); font-size: 11px; }
@@ -269,6 +272,12 @@ button.data-row.selected { box-shadow: inset 2px 0 var(--cyan); }
 .preview-node { display: grid; grid-template-columns: 24px 1fr; min-height: 70px; gap: 3px 7px; padding: 11px; background: var(--bg-1); }
 .preview-node > span { grid-row: span 2; color: var(--cyan); font: 12px var(--mono); }
 .preview-node small { color: var(--muted); }
+.managed-plan-editor { display: grid; gap: 7px; padding: 13px; border-top: 1px solid var(--border); }
+.managed-plan-editor textarea { min-height: 260px; padding: 10px; resize: vertical; border: 1px solid var(--border); background: #050d12; color: var(--text); font: 10px/1.5 var(--mono); tab-size: 2; }
+.activation-panel { display: flex; flex-direction: column; gap: 6px; margin: 0 13px 13px; padding: 12px; border: 1px solid var(--amber); background: rgb(255 181 71 / 5%); }
+.activation-panel.ready { border-color: var(--green); background: rgb(74 222 128 / 5%); }
+.activation-panel span, .activation-panel small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.compact-actions { padding: 6px 0 0; }
 .compact-surface { overflow: auto; min-height: 220px; }
 .record-list { display: flex; flex-direction: column; }
 .record-item { display: flex; align-items: center; min-height: 52px; gap: 10px; padding: 8px 13px; border-bottom: 1px solid var(--border); }

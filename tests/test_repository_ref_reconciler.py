@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -382,3 +383,270 @@ def test_invalid_manual_mode_is_rejected():
     )
     with pytest.raises(RepositoryHygieneError, match="mode"):
         reconciler.run_once(mode="destroy")
+
+
+@pytest.mark.parametrize("state", ["stale", "rejected", "cancelled"])
+def test_terminal_candidate_refs_become_due_only_from_controller_batches(state):
+    class _Store:
+        def query_all(self, sql, params=()):
+            if "FROM work_package_integration_batches AS batch" in sql:
+                return [
+                    {
+                        "id": "batch_%s" % state,
+                        "state": state,
+                        "candidate_ref": "refs/mac/integration/batch_%s" % state,
+                        "candidate_sha": "d" * 40,
+                        "completed_at": "2026-01-01T00:00:00+00:00",
+                        "updated_at": "2026-01-01T00:00:00+00:00",
+                        "finalization_id": None,
+                    }
+                ]
+            if "FROM work_package_assignment_audit AS assignment" in sql:
+                return []
+            if "FROM work_package_batch_inputs AS input" in sql:
+                return []
+            raise AssertionError(sql)
+
+    plane = _Plane()
+    plane.store = _Store()
+    reconciler = RepositoryRefReconciler(
+        plane,
+        RepositoryRefReconcilerConfig(mode="audit", default_grace_seconds=60),
+    )
+
+    authorities = reconciler._protected_ref_authorities(
+        "repo_terminal",
+        now=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        grace_seconds=60,
+    )
+
+    assert len(authorities) == 1
+    assert authorities[0].batch_id == "batch_%s" % state
+    assert authorities[0].terminal_state == "batch:%s" % state
+
+
+def _attempt_ref_row(
+    *, candidate_status=None, attempt_head_sha=None, lease_status="released"
+):
+    return {
+        "lease_id": "lease_attempt_terminal",
+        "attempt_ref": "refs/mac/attempts/wp/1/node/1/lease_attempt_terminal",
+        "task_id": "task_attempt_terminal",
+        "plan_version": 1,
+        "epoch": 1,
+        "node_key": "mutate",
+        "attempt_number": 1,
+        "lease_status": lease_status,
+        "lease_updated_at": "2026-01-01T00:00:00+00:00",
+        "task_state": "failed",
+        "task_attempt_count": 1,
+        "current_task_lease_id": None,
+        "task_updated_at": "2026-01-01T00:00:01+00:00",
+        "task_completed_at": "2026-01-01T00:00:01+00:00",
+        "package_state": "active",
+        "current_plan_version": 1,
+        "current_epoch": 1,
+        "package_updated_at": "2026-01-01T00:00:00+00:00",
+        "epoch_status": "active",
+        "superseded_at": None,
+        "node_state": "rejected" if candidate_status else "cancelled",
+        "candidate_id": "candidate_failed" if candidate_status else None,
+        "candidate_status": candidate_status,
+        "submitted_at": (
+            "2026-01-01T00:00:00+00:00" if candidate_status else None
+        ),
+        "accepted_at": None,
+        "attempt_head_sha": attempt_head_sha,
+        "verified_at": (
+            "2026-01-01T00:00:00+00:00" if attempt_head_sha else None
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("candidate_status", "lease_status"),
+    [("submitted", "released"), (None, "expired")],
+)
+def test_failed_or_abandoned_attempt_without_observed_head_is_explicit_audit_debt(
+    candidate_status,
+    lease_status,
+):
+    class _Store:
+        def query_all(self, sql, params=()):
+            if "FROM work_package_integration_batches AS batch" in sql:
+                return []
+            if "FROM work_package_assignment_audit AS assignment" in sql:
+                return [
+                    _attempt_ref_row(
+                        candidate_status=candidate_status,
+                        lease_status=lease_status,
+                    )
+                ]
+            if "FROM work_package_batch_inputs AS input" in sql:
+                return []
+            raise AssertionError(sql)
+
+    plane = _Plane()
+    plane.store = _Store()
+    reconciler = RepositoryRefReconciler(
+        plane,
+        RepositoryRefReconcilerConfig(mode="audit", default_grace_seconds=0),
+    )
+    debts = []
+
+    authorities = reconciler._protected_ref_authorities(
+        "repo_terminal",
+        now=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        grace_seconds=0,
+        audit_debts=debts,
+    )
+
+    assert authorities == []
+    assert len(debts) == 1
+    assert debts[0]["reason_code"] == "controller_head_sha_unavailable"
+    assert debts[0]["lease_id"] == "lease_attempt_terminal"
+    assert debts[0]["terminal_state"] == (
+        "candidate:submitted"
+        if candidate_status
+        else "lease:%s:no_candidate" % lease_status
+    )
+
+
+def test_terminal_verified_attempt_uses_controller_head_without_candidate_n_plus_one():
+    calls = []
+
+    class _Store:
+        def query_all(self, sql, params=()):
+            calls.append(sql)
+            if "FROM work_package_integration_batches AS batch" in sql:
+                return []
+            if "FROM work_package_assignment_audit AS assignment" in sql:
+                return [
+                    _attempt_ref_row(
+                        candidate_status="rejected", attempt_head_sha="e" * 40
+                    )
+                ]
+            if "FROM work_package_batch_inputs AS input" in sql:
+                return []
+            raise AssertionError(sql)
+
+    plane = _Plane()
+    plane.store = _Store()
+    reconciler = RepositoryRefReconciler(
+        plane,
+        RepositoryRefReconcilerConfig(mode="audit", default_grace_seconds=0),
+    )
+
+    authorities = reconciler._protected_ref_authorities(
+        "repo_terminal",
+        now=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        grace_seconds=0,
+    )
+
+    assert len(authorities) == 1
+    assert authorities[0].expected_sha == "e" * 40
+    assert authorities[0].terminal_state == "candidate:rejected"
+    assert len(calls) == 3
+
+
+def test_unretirable_attempt_debt_is_visible_in_reconciler_result(monkeypatch, tmp_path):
+    plane = _Plane()
+    plane.store = object()
+    reconciler = RepositoryRefReconciler(
+        plane,
+        RepositoryRefReconcilerConfig(mode="audit", default_grace_seconds=0),
+    )
+
+    def scan(*_args, **kwargs):
+        kwargs["audit_debts"].append(
+            {
+                "schema": "mac.work_package.ref_retirement_audit_debt.v1",
+                "ref": "refs/mac/attempts/unobserved",
+                "reason_code": "controller_head_sha_unavailable",
+            }
+        )
+        return []
+
+    monkeypatch.setattr(reconciler, "_protected_ref_authorities", scan)
+
+    result = reconciler._reconcile_protected_work_package_refs(
+        repo=tmp_path,
+        repository_id="repo",
+        remote="origin",
+        mode="audit",
+        actor="test",
+    )
+
+    assert result["eligible_count"] == 0
+    assert result["audit_debt_count"] == 1
+    assert result["audit_debts"][0]["reason_code"] == (
+        "controller_head_sha_unavailable"
+    )
+
+
+def test_failed_protected_ref_delete_is_durable_and_retryable(monkeypatch, tmp_path):
+    class _Store:
+        def query_one(self, sql, params=()):
+            assert "work_package_ref_retirement_receipts" in sql
+            return None
+
+    plane = _Plane()
+    plane.store = _Store()
+    reconciler = RepositoryRefReconciler(
+        plane,
+        RepositoryRefReconcilerConfig(mode="prune", default_grace_seconds=0),
+    )
+    authority = rrr._ProtectedRefAuthority(
+        repository_id="repo",
+        ref_kind="candidate",
+        ref="refs/mac/integration/batch-retry",
+        expected_sha="d" * 40,
+        terminal_state="batch:rejected",
+        terminal_at="2026-01-01T00:00:00+00:00",
+        eligible_after="2026-01-01T00:00:00+00:00",
+        batch_id="batch-retry",
+    )
+    monkeypatch.setattr(
+        reconciler,
+        "_protected_ref_authorities",
+        lambda *_args, **_kwargs: [authority],
+    )
+    monkeypatch.setattr(
+        reconciler,
+        "_ensure_ref_retirement_intent",
+        lambda *_args, **_kwargs: "intent-retry",
+    )
+    recorded = []
+    monkeypatch.setattr(
+        reconciler,
+        "_record_ref_retirement_result",
+        lambda intent_id, **values: recorded.append((intent_id, values)),
+    )
+    attempts = iter([RepositoryHygieneError("remote unavailable"), "deleted"])
+
+    def retire(*_args, **_kwargs):
+        value = next(attempts)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(rrr, "retire_protected_remote_ref_exact", retire)
+
+    failed = reconciler._reconcile_protected_work_package_refs(
+        repo=tmp_path,
+        repository_id="repo",
+        remote="origin",
+        mode="prune",
+        actor="test",
+    )
+    retried = reconciler._reconcile_protected_work_package_refs(
+        repo=tmp_path,
+        repository_id="repo",
+        remote="origin",
+        mode="prune",
+        actor="test",
+    )
+
+    assert failed["failed_count"] == 1
+    assert retried["deleted_count"] == 1
+    assert [value[1]["outcome"] for value in recorded] == ["failed", "deleted"]

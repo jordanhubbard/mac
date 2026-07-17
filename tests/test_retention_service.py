@@ -490,7 +490,12 @@ class TestHardExclusions:
         from mac.models import TaskState
         task = cp.create_task("terminal task for exclusion test")
         # Transition to failed (a terminal state) without requiring agent lifecycle
-        cp.transition_task(task.id, TaskState.FAILED.value, "test", {"reason": "terminal-test"})
+        cp._transition_task_internal(
+            task.id,
+            TaskState.FAILED.value,
+            "test",
+            {"reason": "terminal-test"},
+        )
 
         obs_id = new_id("obs")
         store.execute(

@@ -282,7 +282,11 @@ CREATE TABLE IF NOT EXISTS leases (
     -- PR2c (spec §6.3, Option B): dispatcher (lease owner) may delegate
     -- lifecycle authorship to the role agent spawned in the task Job.
     -- NULL = no delegation; the owner is the sole authoriser.
-    delegated_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL
+    delegated_agent_id TEXT,
+    expiry_finalizer_token TEXT,
+    expiry_finalizer_claimed_at TIMESTAMPTZ,
+    expiry_finalized_at TIMESTAMPTZ,
+    expiry_finalization_decision JSONB
 );
 -- Additive migration for existing deployments: schema.sql is run on every
 -- mac-api startup, and CREATE TABLE IF NOT EXISTS skips already-present
@@ -290,7 +294,11 @@ CREATE TABLE IF NOT EXISTS leases (
 -- explicit ALTER. Postgres 9.6+ supports `ADD COLUMN IF NOT EXISTS`, so
 -- this is idempotent and safe to re-run.
 ALTER TABLE leases ADD COLUMN IF NOT EXISTS delegated_agent_id TEXT
-    REFERENCES agents(id) ON DELETE SET NULL;
+;
+ALTER TABLE leases ADD COLUMN IF NOT EXISTS expiry_finalizer_token TEXT;
+ALTER TABLE leases ADD COLUMN IF NOT EXISTS expiry_finalizer_claimed_at TIMESTAMPTZ;
+ALTER TABLE leases ADD COLUMN IF NOT EXISTS expiry_finalized_at TIMESTAMPTZ;
+ALTER TABLE leases ADD COLUMN IF NOT EXISTS expiry_finalization_decision JSONB;
 CREATE INDEX IF NOT EXISTS idx_leases_task_status ON leases (task_id, status);
 CREATE INDEX IF NOT EXISTS idx_leases_agent_status ON leases (agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_leases_status_expiry ON leases (status, expires_at, id);
@@ -338,6 +346,84 @@ CREATE TABLE IF NOT EXISTS agents (
     last_seen_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agents_status_health ON agents (status, health_status);
+
+-- Hub-authoritative per-worker identities. Only a SHA-256 bearer hash is
+-- persisted; raw tokens exist solely in one-time install manifests and at the
+-- destination Secret/env file. Co-location with agent state lets every API
+-- replica and package claim transaction consult the same authority.
+CREATE TABLE IF NOT EXISTS worker_credentials (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+    fleet TEXT NOT NULL DEFAULT '',
+    credential_version INTEGER NOT NULL CHECK (credential_version >= 1),
+    token_hash TEXT NOT NULL UNIQUE,
+    token_fingerprint TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    environment TEXT NOT NULL CHECK (environment IN ('vm', 'k8s')),
+    expected_source_commit TEXT NOT NULL DEFAULT '',
+    expected_runtime_digest TEXT NOT NULL DEFAULT '',
+    required_capabilities TEXT NOT NULL DEFAULT '[]',
+    package_capable BOOLEAN NOT NULL DEFAULT FALSE,
+    state TEXT NOT NULL CHECK (
+        state IN ('pending_install', 'active', 'superseded', 'revoked')
+    ),
+    destination TEXT NOT NULL DEFAULT '',
+    issued_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    activated_at TEXT,
+    revoked_at TEXT,
+    superseded_by TEXT REFERENCES worker_credentials(id) ON DELETE RESTRICT,
+    created_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(agent_id, credential_version)
+);
+CREATE INDEX IF NOT EXISTS idx_worker_credentials_agent_state
+    ON worker_credentials (agent_id, state, credential_version DESC);
+CREATE INDEX IF NOT EXISTS idx_worker_credentials_expiry
+    ON worker_credentials (expires_at, state);
+
+CREATE TABLE IF NOT EXISTS worker_credential_events (
+    id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL REFERENCES worker_credentials(id) ON DELETE RESTRICT,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_worker_credential_events_agent_created
+    ON worker_credential_events (agent_id, created_at, id);
+
+-- Shared singleton rollout policy; local files cannot coordinate API replicas.
+CREATE TABLE IF NOT EXISTS worker_credential_policy_state (
+    singleton_key TEXT PRIMARY KEY CHECK (singleton_key = 'fleet'),
+    mode TEXT NOT NULL CHECK (mode IN ('compatibility', 'enforced')),
+    inventory_digest TEXT,
+    ready_agent_ids TEXT NOT NULL DEFAULT '[]',
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- `leases` is declared before `agents` for historical schema ordering, so the
+-- delegated-agent foreign key must be installed only after the referenced
+-- table exists. The catalog guard keeps this additive migration idempotent on
+-- both fresh and already-initialized authorities.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'leases'::regclass
+          AND conname = 'leases_delegated_agent_id_fkey'
+    ) THEN
+        ALTER TABLE leases
+            ADD CONSTRAINT leases_delegated_agent_id_fkey
+            FOREIGN KEY (delegated_agent_id)
+            REFERENCES agents(id) ON DELETE SET NULL;
+    END IF;
+END;
+$$;
 
 -- Durable supervisor-observed crash evidence. The report row is the
 -- deduplicated revision+stack incident; occurrences retain every raw event.
@@ -1454,6 +1540,2796 @@ CREATE TABLE IF NOT EXISTS workflow_run_history (
     UNIQUE(run_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_run_history_run ON workflow_run_history (run_id, seq);
+
+-- Durable, versioned unit of coordinated parallel work. A package owns
+-- immutable plan snapshots and base-pinned execution epochs while concrete
+-- executable work remains in the canonical tasks table.
+CREATE TABLE IF NOT EXISTS work_packages (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT REFERENCES tenants(id) ON DELETE RESTRICT,
+    project TEXT,
+    repository_id TEXT REFERENCES project_repositories(id) ON DELETE RESTRICT,
+    root_task_id TEXT REFERENCES tasks(id) ON DELETE RESTRICT,
+    goal TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN (
+        'draft', 'admitted', 'active', 'paused', 'replanning',
+        'completed', 'failed', 'cancelled'
+    )),
+    current_plan_version INTEGER NOT NULL DEFAULT 0 CHECK (current_plan_version >= 0),
+    current_epoch INTEGER NOT NULL DEFAULT 0 CHECK (current_epoch >= 0),
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    UNIQUE (id, repository_id),
+    CHECK (
+        state IN ('draft', 'cancelled') OR
+        (current_plan_version >= 1 AND current_epoch >= 1)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_work_packages_state
+    ON work_packages (state, updated_at, id);
+CREATE INDEX IF NOT EXISTS idx_work_packages_project
+    ON work_packages (project, state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_work_packages_repository
+    ON work_packages (repository_id, state, updated_at);
+
+CREATE OR REPLACE FUNCTION trg_work_packages_initial_state()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.state <> 'draft' THEN
+        RAISE EXCEPTION 'work packages must start draft';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_packages_initial_state ON work_packages;
+CREATE TRIGGER trg_work_packages_initial_state
+    BEFORE INSERT ON work_packages
+    FOR EACH ROW EXECUTE FUNCTION trg_work_packages_initial_state();
+
+CREATE OR REPLACE FUNCTION trg_work_packages_state_transition()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.state <> OLD.state AND NOT (
+        (OLD.state = 'draft' AND NEW.state IN ('admitted', 'cancelled')) OR
+        (OLD.state = 'admitted' AND NEW.state IN (
+            'active', 'paused', 'failed', 'cancelled'
+        )) OR
+        (OLD.state = 'active' AND NEW.state IN (
+            'paused', 'replanning', 'completed', 'failed', 'cancelled'
+        )) OR
+        (OLD.state = 'paused' AND NEW.state IN (
+            'active', 'replanning', 'failed', 'cancelled'
+        )) OR
+        (OLD.state = 'replanning' AND NEW.state IN (
+            'active', 'paused', 'failed', 'cancelled'
+        ))
+    ) THEN
+        RAISE EXCEPTION 'invalid work package state transition';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_packages_state_transition ON work_packages;
+CREATE TRIGGER trg_work_packages_state_transition
+    BEFORE UPDATE OF state ON work_packages
+    FOR EACH ROW EXECUTE FUNCTION trg_work_packages_state_transition();
+
+CREATE TABLE IF NOT EXISTS work_package_plan_versions (
+    package_id TEXT NOT NULL REFERENCES work_packages(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK (version >= 1),
+    parent_version INTEGER,
+    definition TEXT NOT NULL,
+    plan_digest TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (package_id, version),
+    UNIQUE (package_id, plan_digest),
+    CHECK (parent_version IS NULL OR (
+        parent_version >= 1 AND parent_version < version
+    )),
+    FOREIGN KEY (package_id, parent_version)
+        REFERENCES work_package_plan_versions(package_id, version) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_plan_digest
+    ON work_package_plan_versions (plan_digest);
+
+CREATE TABLE IF NOT EXISTS work_package_epochs (
+    package_id TEXT NOT NULL REFERENCES work_packages(id) ON DELETE CASCADE,
+    epoch INTEGER NOT NULL CHECK (epoch >= 1),
+    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+    planning_base_ref TEXT NOT NULL,
+    planning_base_sha TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'staged', 'active', 'superseded', 'completed', 'cancelled'
+    )),
+    reason TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    PRIMARY KEY (package_id, epoch),
+    UNIQUE (package_id, epoch, plan_version),
+    FOREIGN KEY (package_id, plan_version)
+        REFERENCES work_package_plan_versions(package_id, version) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_work_package_active_epoch
+    ON work_package_epochs (package_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_work_package_epochs_plan
+    ON work_package_epochs (package_id, plan_version, epoch);
+
+CREATE OR REPLACE FUNCTION trg_work_packages_current_epoch_coherent()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.state NOT IN ('draft', 'cancelled') AND NOT EXISTS (
+        SELECT 1 FROM work_package_epochs AS epoch
+        WHERE epoch.package_id = NEW.id
+          AND epoch.epoch = NEW.current_epoch
+          AND epoch.plan_version = NEW.current_plan_version
+          AND (
+              NEW.state NOT IN ('admitted', 'active', 'paused') OR
+              epoch.status = 'active'
+          )
+    ) THEN
+        RAISE EXCEPTION 'work package current epoch/version is incoherent';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_packages_current_epoch_insert ON work_packages;
+CREATE TRIGGER trg_work_packages_current_epoch_insert
+    BEFORE INSERT ON work_packages
+    FOR EACH ROW EXECUTE FUNCTION trg_work_packages_current_epoch_coherent();
+DROP TRIGGER IF EXISTS trg_work_packages_current_epoch_update ON work_packages;
+CREATE TRIGGER trg_work_packages_current_epoch_update
+    BEFORE UPDATE OF state, current_plan_version, current_epoch ON work_packages
+    FOR EACH ROW EXECUTE FUNCTION trg_work_packages_current_epoch_coherent();
+
+CREATE OR REPLACE FUNCTION trg_work_package_current_epoch_status()
+RETURNS trigger AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM work_packages AS package
+        WHERE package.id = OLD.package_id
+          AND package.current_epoch = OLD.epoch
+          AND package.current_plan_version = OLD.plan_version
+          AND package.state IN ('admitted', 'active', 'paused')
+    ) AND (TG_OP = 'DELETE' OR NEW.status <> 'active') THEN
+        RAISE EXCEPTION 'cannot deactivate or delete a runnable package current epoch';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_current_epoch_status ON work_package_epochs;
+CREATE TRIGGER trg_work_package_current_epoch_status
+    BEFORE UPDATE OF status OR DELETE ON work_package_epochs
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_current_epoch_status();
+
+CREATE OR REPLACE FUNCTION trg_work_package_plan_versions_immutable()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'work package plan versions are immutable';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_plan_versions_immutable
+    ON work_package_plan_versions;
+CREATE TRIGGER trg_work_package_plan_versions_immutable
+    BEFORE UPDATE OR DELETE ON work_package_plan_versions
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_plan_versions_immutable();
+
+CREATE OR REPLACE FUNCTION trg_work_package_epochs_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'work package epochs are append-only';
+    END IF;
+    IF ROW(
+        NEW.package_id, NEW.epoch, NEW.plan_version, NEW.planning_base_ref,
+        NEW.planning_base_sha, NEW.reason, NEW.created_by, NEW.created_at
+    ) IS DISTINCT FROM ROW(
+        OLD.package_id, OLD.epoch, OLD.plan_version, OLD.planning_base_ref,
+        OLD.planning_base_sha, OLD.reason, OLD.created_by, OLD.created_at
+    ) THEN
+        RAISE EXCEPTION 'work package epoch identity is immutable';
+    END IF;
+    IF NEW.status <> OLD.status AND NOT (
+        (OLD.status = 'staged' AND NEW.status IN ('active', 'cancelled')) OR
+        (OLD.status = 'active' AND NEW.status IN (
+            'superseded', 'completed', 'cancelled'
+        ))
+    ) THEN
+        RAISE EXCEPTION 'invalid work package epoch state transition';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_epochs_lifecycle ON work_package_epochs;
+CREATE TRIGGER trg_work_package_epochs_lifecycle
+    BEFORE UPDATE OR DELETE ON work_package_epochs
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_epochs_lifecycle();
+
+CREATE TABLE IF NOT EXISTS work_package_task_links (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE RESTRICT,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    node_key TEXT NOT NULL,
+    node_generation INTEGER NOT NULL CHECK (node_generation >= 1),
+    declared_effects_digest TEXT NOT NULL,
+    contract_digest TEXT NOT NULL,
+    input_digest TEXT NOT NULL,
+    node_state TEXT NOT NULL CHECK (node_state IN (
+        'planned', 'ready', 'executing', 'candidate_submitted',
+        'candidate_accepted', 'integrated', 'certified',
+        'rejected', 'superseded', 'cancelled'
+    )),
+    created_at TEXT NOT NULL,
+    UNIQUE (package_id, epoch, node_key),
+    UNIQUE (package_id, node_key, node_generation),
+    UNIQUE (package_id, plan_version, epoch, node_key, task_id),
+    UNIQUE (
+        package_id, plan_version, epoch, node_key, node_generation, task_id
+    ),
+    UNIQUE (
+        package_id, plan_version, epoch, node_key,
+        task_id, declared_effects_digest
+    ),
+    FOREIGN KEY (package_id, epoch, plan_version)
+        REFERENCES work_package_epochs(package_id, epoch, plan_version) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_task_links_package
+    ON work_package_task_links (package_id, epoch, node_key);
+CREATE INDEX IF NOT EXISTS idx_work_package_task_links_state
+    ON work_package_task_links (package_id, epoch, node_state, node_key);
+
+CREATE OR REPLACE FUNCTION trg_work_package_task_links_identity_immutable()
+RETURNS trigger AS $$
+BEGIN
+    IF ROW(
+        NEW.task_id, NEW.package_id, NEW.plan_version, NEW.epoch, NEW.node_key,
+        NEW.node_generation, NEW.declared_effects_digest,
+        NEW.contract_digest, NEW.input_digest, NEW.created_at
+    ) IS DISTINCT FROM ROW(
+        OLD.task_id, OLD.package_id, OLD.plan_version, OLD.epoch, OLD.node_key,
+        OLD.node_generation, OLD.declared_effects_digest,
+        OLD.contract_digest, OLD.input_digest, OLD.created_at
+    ) THEN
+        RAISE EXCEPTION 'work package task-link identity is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_task_links_identity_immutable
+    ON work_package_task_links;
+CREATE TRIGGER trg_work_package_task_links_identity_immutable
+    BEFORE UPDATE ON work_package_task_links
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_task_links_identity_immutable();
+
+CREATE OR REPLACE FUNCTION trg_work_package_task_links_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' AND NEW.node_state <> 'planned' THEN
+        RAISE EXCEPTION 'work package task links must start planned';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'work package task links are append-only';
+    END IF;
+    IF TG_OP = 'UPDATE' AND NEW.node_state <> OLD.node_state AND NOT (
+        (OLD.node_state = 'planned' AND NEW.node_state IN (
+            'ready', 'superseded', 'cancelled'
+        )) OR
+        (OLD.node_state = 'ready' AND NEW.node_state IN (
+            'executing', 'superseded', 'cancelled'
+        )) OR
+        (OLD.node_state = 'executing' AND NEW.node_state IN (
+            'ready', 'candidate_submitted', 'rejected', 'cancelled'
+        )) OR
+        (OLD.node_state = 'candidate_submitted' AND NEW.node_state IN (
+            'candidate_accepted', 'rejected', 'superseded'
+        )) OR
+        (OLD.node_state = 'candidate_accepted' AND NEW.node_state IN (
+            'integrated', 'rejected', 'superseded'
+        )) OR
+        (OLD.node_state = 'integrated' AND NEW.node_state IN (
+            'certified', 'rejected', 'superseded'
+        )) OR
+        (OLD.node_state = 'rejected' AND NEW.node_state = 'executing')
+    ) THEN
+        RAISE EXCEPTION 'invalid work package node state transition';
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_task_links_lifecycle
+    ON work_package_task_links;
+CREATE TRIGGER trg_work_package_task_links_lifecycle
+    BEFORE INSERT OR UPDATE OF node_state OR DELETE ON work_package_task_links
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_task_links_lifecycle();
+
+-- Close the inverse mixed-version ordering: a legacy writer cannot first
+-- create/claim an ordinary task and only then attach it to a package.
+CREATE OR REPLACE FUNCTION trg_work_package_task_link_executable_insert()
+RETURNS trigger AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM tasks AS task
+        WHERE task.id = NEW.task_id
+          AND task.state IN ('claimed', 'running')
+    ) THEN
+        RAISE EXCEPTION
+            'executable task cannot be linked without package claim authority';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_task_link_executable_insert
+    ON work_package_task_links;
+CREATE TRIGGER trg_work_package_task_link_executable_insert
+    BEFORE INSERT ON work_package_task_links
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_task_link_executable_insert();
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_evidence_task_identity
+    ON evidence (id, task_id);
+CREATE TABLE IF NOT EXISTS work_package_node_lineage (
+    id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL,
+    from_plan_version INTEGER NOT NULL,
+    from_epoch INTEGER NOT NULL,
+    from_node_key TEXT NOT NULL,
+    from_task_id TEXT NOT NULL,
+    to_plan_version INTEGER NOT NULL,
+    to_epoch INTEGER NOT NULL,
+    to_node_key TEXT NOT NULL,
+    to_task_id TEXT NOT NULL,
+    relation TEXT NOT NULL CHECK (relation IN (
+        'carried_forward', 'replaced', 'split', 'merged', 'invalidated'
+    )),
+    contract_digest TEXT NOT NULL,
+    input_digest TEXT NOT NULL,
+    source_evidence_id TEXT,
+    decision TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (
+        package_id, from_plan_version, from_epoch, from_node_key,
+        to_plan_version, to_epoch, to_node_key
+    ),
+    FOREIGN KEY (
+        package_id, from_plan_version, from_epoch, from_node_key, from_task_id
+    ) REFERENCES work_package_task_links (
+        package_id, plan_version, epoch, node_key, task_id
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (
+        package_id, to_plan_version, to_epoch, to_node_key, to_task_id
+    ) REFERENCES work_package_task_links (
+        package_id, plan_version, epoch, node_key, task_id
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (source_evidence_id, from_task_id)
+        REFERENCES evidence(id, task_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_node_lineage_from
+    ON work_package_node_lineage (
+        package_id, from_plan_version, from_epoch, from_node_key
+    );
+CREATE INDEX IF NOT EXISTS idx_work_package_node_lineage_to
+    ON work_package_node_lineage (
+        package_id, to_plan_version, to_epoch, to_node_key
+    );
+
+CREATE OR REPLACE FUNCTION trg_work_package_node_lineage_immutable()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'work package node lineage is append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_node_lineage_immutable
+    ON work_package_node_lineage;
+CREATE TRIGGER trg_work_package_node_lineage_immutable
+    BEFORE UPDATE OR DELETE ON work_package_node_lineage
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_node_lineage_immutable();
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_leases_assignment_identity
+    ON leases (id, task_id, agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_evidence_task_identity
+    ON evidence (id, task_id);
+CREATE TABLE IF NOT EXISTS evidence_attempt_links (
+    evidence_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    lease_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    attempt_ref TEXT NOT NULL,
+    attempt_base_sha TEXT NOT NULL,
+    attempt_head_sha TEXT,
+    artifact_digest TEXT,
+    declared_effects_digest TEXT,
+    observed_effects_digest TEXT,
+    protected_ref INTEGER NOT NULL DEFAULT 0 CHECK (protected_ref IN (0, 1)),
+    controller_verified INTEGER NOT NULL DEFAULT 0
+        CHECK (controller_verified IN (0, 1)),
+    controller_verifier TEXT,
+    controller_verified_at TEXT,
+    created_at TEXT NOT NULL,
+    CHECK (protected_ref = 0 OR attempt_ref LIKE 'refs/mac/%'),
+    CHECK (
+        (controller_verified = 0 AND controller_verifier IS NULL
+         AND controller_verified_at IS NULL) OR
+        (controller_verified = 1 AND protected_ref = 1
+         AND attempt_head_sha IS NOT NULL AND artifact_digest IS NOT NULL
+         AND controller_verifier IS NOT NULL
+         AND controller_verified_at IS NOT NULL)
+    ),
+    UNIQUE (evidence_id, task_id, lease_id, attempt_number),
+    FOREIGN KEY (evidence_id, task_id)
+        REFERENCES evidence(id, task_id) ON DELETE RESTRICT,
+    FOREIGN KEY (lease_id, task_id, agent_id)
+        REFERENCES leases(id, task_id, agent_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_attempt_links_lease
+    ON evidence_attempt_links (lease_id, attempt_number, evidence_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_evidence_attempt_verification_identity
+    ON evidence_attempt_links (
+        evidence_id, task_id, lease_id, agent_id, attempt_number,
+        attempt_ref, attempt_base_sha, declared_effects_digest
+    );
+
+CREATE OR REPLACE FUNCTION trg_evidence_attempt_links_immutable()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'evidence attempt attribution is immutable';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_evidence_attempt_links_immutable ON evidence_attempt_links;
+CREATE TRIGGER trg_evidence_attempt_links_immutable
+    BEFORE UPDATE OR DELETE ON evidence_attempt_links
+    FOR EACH ROW EXECUTE FUNCTION trg_evidence_attempt_links_immutable();
+
+CREATE TABLE IF NOT EXISTS work_package_assignment_audit (
+    lease_id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    node_key TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    attempt_ref TEXT NOT NULL,
+    attempt_base_ref TEXT NOT NULL,
+    attempt_base_sha TEXT NOT NULL,
+    declared_effects_digest TEXT NOT NULL,
+    allocator TEXT NOT NULL,
+    allocator_version TEXT NOT NULL,
+    score DOUBLE PRECISION,
+    rationale TEXT NOT NULL,
+    decision TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    UNIQUE (
+        lease_id, package_id, plan_version, epoch, node_key, task_id
+    ),
+    UNIQUE (
+        lease_id, package_id, plan_version, epoch, node_key, task_id, attempt_number
+    ),
+    FOREIGN KEY (
+        package_id, plan_version, epoch, node_key,
+        task_id, declared_effects_digest
+    )
+        REFERENCES work_package_task_links(
+            package_id, plan_version, epoch, node_key,
+            task_id, declared_effects_digest
+        ) ON DELETE RESTRICT,
+    FOREIGN KEY (lease_id, task_id, agent_id)
+        REFERENCES leases(id, task_id, agent_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_assignment_package
+    ON work_package_assignment_audit (package_id, epoch, created_at);
+CREATE INDEX IF NOT EXISTS idx_work_package_assignment_agent
+    ON work_package_assignment_audit (agent_id, created_at);
+
+CREATE OR REPLACE FUNCTION trg_work_package_assignment_immutable()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'work package assignment audit is append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_assignment_immutable
+    ON work_package_assignment_audit;
+CREATE TRIGGER trg_work_package_assignment_immutable
+    BEFORE UPDATE OR DELETE ON work_package_assignment_audit
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_assignment_immutable();
+
+-- Mixed-version safety boundary: a hub that only understands the legacy task
+-- state machine must not claim a work-package task without the package
+-- allocator's exact immutable assignment for this lease generation.
+CREATE OR REPLACE FUNCTION trg_work_package_task_claim_authority()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.state IN ('claimed', 'running')
+       AND EXISTS (
+            SELECT 1 FROM work_package_task_links AS linked
+            WHERE linked.task_id = NEW.id
+       )
+       AND NOT EXISTS (
+            SELECT 1
+            FROM work_package_assignment_audit AS assignment
+            JOIN work_package_task_links AS linked
+              ON linked.package_id = assignment.package_id
+             AND linked.plan_version = assignment.plan_version
+             AND linked.epoch = assignment.epoch
+             AND linked.node_key = assignment.node_key
+             AND linked.task_id = assignment.task_id
+             AND linked.declared_effects_digest = assignment.declared_effects_digest
+            JOIN leases AS lease
+              ON lease.id = assignment.lease_id
+             AND lease.task_id = assignment.task_id
+             AND lease.agent_id = assignment.agent_id
+            WHERE assignment.task_id = NEW.id
+              AND assignment.lease_id = NEW.lease_id
+              AND assignment.agent_id = NEW.owner_agent_id
+              AND assignment.attempt_number = NEW.attempt_count
+              AND lease.status = 'active'
+              AND linked.node_state = 'executing'
+       ) THEN
+        RAISE EXCEPTION
+            'work package task claim lacks exact assignment authority';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_task_claim_authority ON tasks;
+CREATE TRIGGER trg_work_package_task_claim_authority
+    BEFORE UPDATE OF state, owner_agent_id, lease_id, attempt_count ON tasks
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_task_claim_authority();
+
+CREATE OR REPLACE FUNCTION trg_evidence_attempt_package_identity()
+RETURNS trigger AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM work_package_assignment_audit AS assignment
+        WHERE assignment.lease_id = NEW.lease_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM work_package_assignment_audit AS assignment
+        WHERE assignment.lease_id = NEW.lease_id
+          AND assignment.task_id = NEW.task_id
+          AND assignment.agent_id = NEW.agent_id
+          AND assignment.attempt_number = NEW.attempt_number
+          AND assignment.attempt_ref = NEW.attempt_ref
+          AND assignment.attempt_base_sha = NEW.attempt_base_sha
+          AND assignment.declared_effects_digest = NEW.declared_effects_digest
+    ) THEN
+        RAISE EXCEPTION 'evidence attempt does not match package assignment';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_evidence_attempt_package_identity ON evidence_attempt_links;
+CREATE TRIGGER trg_evidence_attempt_package_identity
+    BEFORE INSERT ON evidence_attempt_links
+    FOR EACH ROW EXECUTE FUNCTION trg_evidence_attempt_package_identity();
+
+-- Worker evidence is immutable attribution.  Independent controller facts
+-- are appended here instead of mutating or upgrading the worker-authored row.
+CREATE TABLE IF NOT EXISTS evidence_attempt_verifications (
+    id TEXT PRIMARY KEY,
+    evidence_id TEXT NOT NULL UNIQUE,
+    task_id TEXT NOT NULL,
+    lease_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    repository_id TEXT NOT NULL
+        REFERENCES project_repositories(id) ON DELETE RESTRICT,
+    attempt_ref TEXT NOT NULL CHECK (attempt_ref LIKE 'refs/mac/attempts/%'),
+    attempt_base_sha TEXT NOT NULL CHECK (
+        attempt_base_sha ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+    ),
+    attempt_head_sha TEXT NOT NULL CHECK (
+        attempt_head_sha ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+    ),
+    tree_digest TEXT NOT NULL CHECK (tree_digest ~ '^sha256:[0-9a-f]{64}$'),
+    declared_effects_digest TEXT NOT NULL,
+    observed_effects_digest TEXT NOT NULL CHECK (
+        observed_effects_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    changed_paths JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (
+        jsonb_typeof(changed_paths) = 'array'
+    ),
+    changes JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (
+        jsonb_typeof(changes) = 'array'
+    ),
+    verifier TEXT NOT NULL CHECK (verifier <> ''),
+    verifier_version TEXT NOT NULL CHECK (verifier_version <> ''),
+    verified_at TIMESTAMPTZ NOT NULL,
+    receipt_digest TEXT NOT NULL UNIQUE CHECK (
+        receipt_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    FOREIGN KEY (
+        evidence_id, task_id, lease_id, agent_id, attempt_number,
+        attempt_ref, attempt_base_sha, declared_effects_digest
+    ) REFERENCES evidence_attempt_links (
+        evidence_id, task_id, lease_id, agent_id, attempt_number,
+        attempt_ref, attempt_base_sha, declared_effects_digest
+    ) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_attempt_verifications_lease
+    ON evidence_attempt_verifications (lease_id, attempt_number, evidence_id);
+
+CREATE OR REPLACE FUNCTION trg_evidence_attempt_verification_identity()
+RETURNS trigger AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM work_package_assignment_audit AS assignment
+        JOIN work_package_task_links AS link
+          ON link.package_id = assignment.package_id
+         AND link.plan_version = assignment.plan_version
+         AND link.epoch = assignment.epoch
+         AND link.node_key = assignment.node_key
+         AND link.task_id = assignment.task_id
+        JOIN work_packages AS package ON package.id = assignment.package_id
+        WHERE assignment.lease_id = NEW.lease_id
+          AND assignment.task_id = NEW.task_id
+          AND assignment.agent_id = NEW.agent_id
+          AND assignment.attempt_number = NEW.attempt_number
+          AND assignment.attempt_ref = NEW.attempt_ref
+          AND assignment.attempt_base_sha = NEW.attempt_base_sha
+          AND assignment.declared_effects_digest = NEW.declared_effects_digest
+          AND package.repository_id = NEW.repository_id
+    ) THEN
+        RAISE EXCEPTION 'attempt verification does not match package assignment';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_evidence_attempt_verification_identity
+    ON evidence_attempt_verifications;
+CREATE TRIGGER trg_evidence_attempt_verification_identity
+    BEFORE INSERT ON evidence_attempt_verifications
+    FOR EACH ROW EXECUTE FUNCTION trg_evidence_attempt_verification_identity();
+
+CREATE OR REPLACE FUNCTION trg_evidence_attempt_verifications_immutable()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'attempt verification receipts are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_evidence_attempt_verifications_immutable
+    ON evidence_attempt_verifications;
+CREATE TRIGGER trg_evidence_attempt_verifications_immutable
+    BEFORE UPDATE OR DELETE ON evidence_attempt_verifications
+    FOR EACH ROW EXECUTE FUNCTION trg_evidence_attempt_verifications_immutable();
+
+CREATE TABLE IF NOT EXISTS work_package_node_candidates (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    node_key TEXT NOT NULL,
+    node_generation INTEGER NOT NULL CHECK (node_generation >= 1),
+    assignment_lease_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    evidence_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'submitted', 'accepted', 'rejected', 'superseded'
+    )),
+    submitted_at TEXT NOT NULL,
+    accepted_at TEXT,
+    accepted_by TEXT,
+    rejection_reason TEXT,
+    UNIQUE (task_id, assignment_lease_id, attempt_number),
+    UNIQUE (evidence_id),
+    UNIQUE (
+        id, task_id, package_id, plan_version, epoch, node_key,
+        node_generation, assignment_lease_id, attempt_number, evidence_id, status
+    ),
+    FOREIGN KEY (
+        package_id, plan_version, epoch, node_key, node_generation, task_id
+    )
+        REFERENCES work_package_task_links(
+            package_id, plan_version, epoch, node_key, node_generation, task_id
+        ) ON DELETE RESTRICT,
+    FOREIGN KEY (
+        assignment_lease_id, package_id, plan_version, epoch,
+        node_key, task_id, attempt_number
+    ) REFERENCES work_package_assignment_audit (
+        lease_id, package_id, plan_version, epoch,
+        node_key, task_id, attempt_number
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (evidence_id, task_id, assignment_lease_id, attempt_number)
+        REFERENCES evidence_attempt_links(
+            evidence_id, task_id, lease_id, attempt_number
+        ) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_node_candidates_package
+    ON work_package_node_candidates (package_id, epoch, status, node_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_work_package_accepted_candidate
+    ON work_package_node_candidates (
+        package_id, epoch, node_key, node_generation
+    ) WHERE status = 'accepted';
+
+CREATE OR REPLACE FUNCTION trg_work_package_node_candidate_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status <> 'submitted'
+           OR NEW.accepted_at IS NOT NULL
+           OR NEW.accepted_by IS NOT NULL
+           OR NEW.rejection_reason IS NOT NULL THEN
+            RAISE EXCEPTION 'work package candidates must start submitted';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'work package candidates are append-only';
+    END IF;
+    IF ROW(
+        NEW.id, NEW.task_id, NEW.package_id, NEW.plan_version, NEW.epoch,
+        NEW.node_key, NEW.node_generation, NEW.assignment_lease_id,
+        NEW.attempt_number, NEW.evidence_id, NEW.submitted_at
+    ) IS DISTINCT FROM ROW(
+        OLD.id, OLD.task_id, OLD.package_id, OLD.plan_version, OLD.epoch,
+        OLD.node_key, OLD.node_generation, OLD.assignment_lease_id,
+        OLD.attempt_number, OLD.evidence_id, OLD.submitted_at
+    ) THEN
+        RAISE EXCEPTION 'work package candidate identity is immutable';
+    END IF;
+    IF NEW.status <> OLD.status AND NOT (
+        OLD.status = 'submitted' AND
+        NEW.status IN ('accepted', 'rejected', 'superseded')
+    ) THEN
+        RAISE EXCEPTION 'invalid work package candidate state transition';
+    END IF;
+    IF NEW.status = 'accepted' AND (
+        NEW.accepted_at IS NULL OR NEW.accepted_by IS NULL
+        OR NEW.rejection_reason IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'accepted candidate metadata is incoherent';
+    END IF;
+    IF NEW.status = 'rejected' AND (
+        NEW.accepted_at IS NOT NULL OR NEW.accepted_by IS NOT NULL
+        OR NEW.rejection_reason IS NULL OR NEW.rejection_reason = ''
+    ) THEN
+        RAISE EXCEPTION 'rejected candidate metadata is incoherent';
+    END IF;
+    IF NEW.status IN ('submitted', 'superseded') AND (
+        NEW.accepted_at IS NOT NULL OR NEW.accepted_by IS NOT NULL
+        OR NEW.rejection_reason IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'candidate terminal metadata is incoherent';
+    END IF;
+    IF ROW(NEW.accepted_at, NEW.accepted_by, NEW.rejection_reason)
+       IS DISTINCT FROM ROW(OLD.accepted_at, OLD.accepted_by, OLD.rejection_reason)
+       AND NOT (OLD.status = 'submitted' AND NEW.status <> 'submitted') THEN
+        RAISE EXCEPTION 'candidate terminal metadata is immutable';
+    END IF;
+    IF NEW.status = 'accepted' AND NOT EXISTS (
+        SELECT 1 FROM evidence_attempt_verifications AS verification
+        WHERE verification.evidence_id = NEW.evidence_id
+          AND verification.task_id = NEW.task_id
+          AND verification.lease_id = NEW.assignment_lease_id
+          AND verification.attempt_number = NEW.attempt_number
+    ) THEN
+        RAISE EXCEPTION 'candidate output is not controller-verified';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_node_candidate_lifecycle
+    ON work_package_node_candidates;
+CREATE TRIGGER trg_work_package_node_candidate_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_node_candidates
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_node_candidate_lifecycle();
+
+CREATE OR REPLACE FUNCTION trg_work_package_task_link_candidate_state()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.node_state IN (
+        'candidate_submitted', 'candidate_accepted', 'integrated',
+        'certified', 'rejected'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM work_package_node_candidates AS candidate
+        WHERE candidate.task_id = NEW.task_id
+          AND candidate.package_id = NEW.package_id
+          AND candidate.plan_version = NEW.plan_version
+          AND candidate.epoch = NEW.epoch
+          AND candidate.node_key = NEW.node_key
+          AND (
+              (NEW.node_state = 'candidate_submitted'
+               AND candidate.status = 'submitted') OR
+              (NEW.node_state IN ('candidate_accepted', 'integrated', 'certified')
+               AND candidate.status = 'accepted') OR
+              (NEW.node_state = 'rejected' AND candidate.status = 'rejected')
+          )
+    ) THEN
+        RAISE EXCEPTION 'node candidate state lacks exact attempt evidence';
+    END IF;
+    IF OLD.node_state = 'rejected' AND NEW.node_state = 'executing'
+       AND NOT EXISTS (
+        SELECT 1
+        FROM work_package_assignment_audit AS assignment
+        JOIN tasks AS task ON task.id = NEW.task_id
+        WHERE assignment.package_id = NEW.package_id
+          AND assignment.plan_version = NEW.plan_version
+          AND assignment.epoch = NEW.epoch
+          AND assignment.node_key = NEW.node_key
+          AND assignment.task_id = NEW.task_id
+          AND assignment.attempt_number <= task.max_attempts
+          AND assignment.attempt_number > COALESCE((
+              SELECT MAX(candidate.attempt_number)
+              FROM work_package_node_candidates AS candidate
+              WHERE candidate.task_id = NEW.task_id
+                AND candidate.status = 'rejected'
+          ), 0)
+    ) THEN
+        RAISE EXCEPTION 'rework requires a newer bounded assignment';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_task_link_candidate_state
+    ON work_package_task_links;
+CREATE TRIGGER trg_work_package_task_link_candidate_state
+    BEFORE UPDATE OF node_state ON work_package_task_links
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_task_link_candidate_state();
+
+CREATE OR REPLACE FUNCTION trg_work_package_lineage_carry_forward_evidence()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.relation = 'carried_forward' AND (
+        NEW.source_evidence_id IS NULL OR NOT EXISTS (
+            SELECT 1 FROM work_package_node_candidates AS candidate
+            WHERE candidate.task_id = NEW.from_task_id
+              AND candidate.evidence_id = NEW.source_evidence_id
+              AND candidate.package_id = NEW.package_id
+              AND candidate.plan_version = NEW.from_plan_version
+              AND candidate.epoch = NEW.from_epoch
+              AND candidate.node_key = NEW.from_node_key
+              AND candidate.status = 'accepted'
+        )
+    ) THEN
+        RAISE EXCEPTION 'carried-forward lineage requires accepted evidence';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_lineage_carry_forward_evidence
+    ON work_package_node_lineage;
+CREATE TRIGGER trg_work_package_lineage_carry_forward_evidence
+    BEFORE INSERT ON work_package_node_lineage
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_lineage_carry_forward_evidence();
+
+CREATE TABLE IF NOT EXISTS work_package_wip_tokens (
+    id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    node_key TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    resource_key TEXT NOT NULL,
+    token_kind TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (stage IN (
+        'mutation', 'candidate_buffer', 'fan_in_reservation', 'integration'
+    )),
+    state TEXT NOT NULL CHECK (state IN (
+        'held', 'released', 'superseded', 'cancelled'
+    )),
+    generation INTEGER NOT NULL CHECK (generation >= 1),
+    capacity_units INTEGER NOT NULL DEFAULT 1 CHECK (capacity_units >= 1),
+    reservation_key TEXT,
+    predecessor_token_id TEXT REFERENCES work_package_wip_tokens(id) ON DELETE RESTRICT,
+    acquired_by_assignment_lease_id TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    released_at TEXT,
+    release_reason TEXT,
+    UNIQUE (package_id, epoch, resource_key, generation),
+    FOREIGN KEY (
+        acquired_by_assignment_lease_id, package_id, plan_version,
+        epoch, node_key, task_id
+    ) REFERENCES work_package_assignment_audit (
+        lease_id, package_id, plan_version,
+        epoch, node_key, task_id
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (package_id, plan_version, epoch, node_key, task_id)
+        REFERENCES work_package_task_links(
+            package_id, plan_version, epoch, node_key, task_id
+        ) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_work_package_held_wip_resource
+    ON work_package_wip_tokens (package_id, epoch, resource_key)
+    WHERE state = 'held';
+CREATE INDEX IF NOT EXISTS idx_work_package_wip_stage
+    ON work_package_wip_tokens (package_id, epoch, stage, state, acquired_at);
+CREATE INDEX IF NOT EXISTS idx_work_package_wip_reservation
+    ON work_package_wip_tokens (reservation_key, state, acquired_at);
+
+CREATE OR REPLACE FUNCTION trg_work_package_wip_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.state <> 'held' OR NEW.released_at IS NOT NULL
+           OR NEW.release_reason IS NOT NULL THEN
+            RAISE EXCEPTION 'work package WIP tokens must start held';
+        END IF;
+        IF NEW.predecessor_token_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM work_package_wip_tokens AS predecessor
+            WHERE predecessor.id = NEW.predecessor_token_id
+              AND predecessor.package_id = NEW.package_id
+              AND predecessor.epoch = NEW.epoch
+              AND predecessor.resource_key = NEW.resource_key
+              AND predecessor.state IN ('released', 'superseded')
+        ) THEN
+            RAISE EXCEPTION 'WIP transfer predecessor is not resolved';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'work package WIP tokens are append-only';
+    END IF;
+    IF ROW(
+        NEW.id, NEW.package_id, NEW.plan_version, NEW.epoch, NEW.node_key,
+        NEW.task_id, NEW.resource_key, NEW.token_kind, NEW.stage, NEW.generation,
+        NEW.capacity_units, NEW.reservation_key, NEW.predecessor_token_id,
+        NEW.acquired_by_assignment_lease_id, NEW.acquired_at
+    ) IS DISTINCT FROM ROW(
+        OLD.id, OLD.package_id, OLD.plan_version, OLD.epoch, OLD.node_key,
+        OLD.task_id, OLD.resource_key, OLD.token_kind, OLD.stage, OLD.generation,
+        OLD.capacity_units, OLD.reservation_key, OLD.predecessor_token_id,
+        OLD.acquired_by_assignment_lease_id, OLD.acquired_at
+    ) THEN
+        RAISE EXCEPTION 'work package WIP token identity is immutable';
+    END IF;
+    IF NEW.state <> OLD.state AND NOT (
+        OLD.state = 'held' AND
+        NEW.state IN ('released', 'superseded', 'cancelled')
+    ) THEN
+        RAISE EXCEPTION 'invalid work package WIP state transition';
+    END IF;
+    IF NEW.state IN ('released', 'superseded', 'cancelled')
+       AND (NEW.released_at IS NULL OR NEW.release_reason IS NULL
+            OR NEW.release_reason = '') THEN
+        RAISE EXCEPTION 'resolved WIP token requires release metadata';
+    END IF;
+    IF NEW.state = 'held' AND (
+        NEW.released_at IS NOT NULL OR NEW.release_reason IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'held WIP token cannot have release metadata';
+    END IF;
+    IF ROW(NEW.released_at, NEW.release_reason)
+       IS DISTINCT FROM ROW(OLD.released_at, OLD.release_reason)
+       AND NOT (OLD.state = 'held' AND NEW.state <> 'held') THEN
+        RAISE EXCEPTION 'WIP release metadata is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_wip_lifecycle ON work_package_wip_tokens;
+CREATE TRIGGER trg_work_package_wip_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_wip_tokens
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_wip_lifecycle();
+
+-- A package task cannot be detached by lease expiry while leaving its DAG
+-- node permanently executing.  The finalizer first appends this fenced repair
+-- authority, then detaches the task, applies the recorded WIP disposition,
+-- transitions the node, and finally stamps expiry_finalized_at atomically.
+CREATE TABLE IF NOT EXISTS work_package_lease_expiry_repairs (
+    id TEXT PRIMARY KEY,
+    lease_id TEXT NOT NULL UNIQUE,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    node_key TEXT NOT NULL,
+    node_generation INTEGER NOT NULL CHECK (node_generation >= 1),
+    task_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    source_task_state TEXT NOT NULL,
+    target_task_state TEXT NOT NULL CHECK (
+        target_task_state IN ('open', 'waiting', 'failed', 'cancelled')
+    ),
+    source_node_state TEXT NOT NULL DEFAULT 'executing' CHECK (
+        source_node_state = 'executing'
+    ),
+    target_node_state TEXT NOT NULL CHECK (
+        target_node_state IN ('ready', 'cancelled')
+    ),
+    wip_disposition TEXT NOT NULL CHECK (
+        wip_disposition IN ('retain', 'cancel')
+    ),
+    held_wip_count INTEGER NOT NULL CHECK (held_wip_count >= 0),
+    held_wip_ids JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (
+        jsonb_typeof(held_wip_ids) = 'array' AND
+        jsonb_array_length(held_wip_ids) = held_wip_count
+    ),
+    finalizer_token TEXT NOT NULL CHECK (finalizer_token <> ''),
+    decision JSONB NOT NULL,
+    decision_digest TEXT NOT NULL CHECK (
+        decision_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    reason TEXT NOT NULL CHECK (reason <> ''),
+    created_by TEXT NOT NULL CHECK (created_by IN ('controller', 'dispatcher')),
+    created_at TIMESTAMPTZ NOT NULL,
+    CHECK (
+        (
+            target_task_state IN ('open', 'waiting') AND
+            target_node_state = 'ready' AND
+            wip_disposition = 'retain'
+        ) OR (
+            target_task_state IN ('failed', 'cancelled') AND
+            target_node_state = 'cancelled' AND
+            wip_disposition = 'cancel'
+        )
+    ),
+    FOREIGN KEY (
+        lease_id, package_id, plan_version, epoch,
+        node_key, task_id, attempt_number
+    ) REFERENCES work_package_assignment_audit (
+        lease_id, package_id, plan_version, epoch,
+        node_key, task_id, attempt_number
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (lease_id, task_id, agent_id)
+        REFERENCES leases(id, task_id, agent_id) ON DELETE RESTRICT,
+    FOREIGN KEY (
+        package_id, plan_version, epoch, node_key, node_generation, task_id
+    ) REFERENCES work_package_task_links (
+        package_id, plan_version, epoch, node_key, node_generation, task_id
+    ) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_expiry_repairs_node
+    ON work_package_lease_expiry_repairs (
+        package_id, epoch, node_key, attempt_number
+    );
+
+CREATE OR REPLACE FUNCTION trg_work_package_expiry_repair_authority()
+RETURNS trigger AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM leases AS lease
+        JOIN tasks AS task ON task.id = lease.task_id
+        JOIN work_package_assignment_audit AS assignment
+          ON assignment.lease_id = lease.id
+        JOIN work_package_task_links AS link
+          ON link.package_id = assignment.package_id
+         AND link.plan_version = assignment.plan_version
+         AND link.epoch = assignment.epoch
+         AND link.node_key = assignment.node_key
+         AND link.task_id = assignment.task_id
+        WHERE lease.id = NEW.lease_id
+          AND lease.task_id = NEW.task_id
+          AND lease.agent_id = NEW.agent_id
+          AND lease.status = 'expired'
+          AND lease.expiry_finalizer_token = NEW.finalizer_token
+          AND lease.expiry_finalized_at IS NULL
+          AND lease.expiry_finalization_decision = NEW.decision
+          AND task.lease_id = NEW.lease_id
+          AND task.owner_agent_id = NEW.agent_id
+          AND task.state = NEW.source_task_state
+          AND assignment.package_id = NEW.package_id
+          AND assignment.plan_version = NEW.plan_version
+          AND assignment.epoch = NEW.epoch
+          AND assignment.node_key = NEW.node_key
+          AND assignment.task_id = NEW.task_id
+          AND assignment.agent_id = NEW.agent_id
+          AND assignment.attempt_number = NEW.attempt_number
+          AND link.node_generation = NEW.node_generation
+          AND link.node_state = NEW.source_node_state
+          AND NEW.attempt_number = (
+              SELECT MAX(latest.attempt_number)
+              FROM work_package_assignment_audit AS latest
+              WHERE latest.package_id = NEW.package_id
+                AND latest.plan_version = NEW.plan_version
+                AND latest.epoch = NEW.epoch
+                AND latest.node_key = NEW.node_key
+                AND latest.task_id = NEW.task_id
+          )
+    ) OR (
+        SELECT COUNT(*)
+        FROM work_package_wip_tokens AS token
+        WHERE token.package_id = NEW.package_id
+          AND token.plan_version = NEW.plan_version
+          AND token.epoch = NEW.epoch
+          AND token.node_key = NEW.node_key
+          AND token.task_id = NEW.task_id
+          AND token.state = 'held'
+    ) <> NEW.held_wip_count OR EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(NEW.held_wip_ids) AS item(value)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM work_package_wip_tokens AS token
+            WHERE token.id = item.value
+              AND token.package_id = NEW.package_id
+              AND token.plan_version = NEW.plan_version
+              AND token.epoch = NEW.epoch
+              AND token.node_key = NEW.node_key
+              AND token.task_id = NEW.task_id
+              AND token.state = 'held'
+        )
+    ) OR EXISTS (
+        SELECT 1
+        FROM work_package_wip_tokens AS token
+        WHERE token.package_id = NEW.package_id
+          AND token.plan_version = NEW.plan_version
+          AND token.epoch = NEW.epoch
+          AND token.node_key = NEW.node_key
+          AND token.task_id = NEW.task_id
+          AND token.state = 'held'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(NEW.held_wip_ids) AS item(value)
+              WHERE item.value = token.id
+          )
+    ) THEN
+        RAISE EXCEPTION 'lease-expiry repair lacks exact finalizer or WIP authority';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_expiry_repair_authority
+    ON work_package_lease_expiry_repairs;
+CREATE TRIGGER trg_work_package_expiry_repair_authority
+    BEFORE INSERT ON work_package_lease_expiry_repairs
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_expiry_repair_authority();
+
+CREATE OR REPLACE FUNCTION trg_work_package_expiry_repairs_immutable()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'lease-expiry repair receipts are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_expiry_repairs_immutable
+    ON work_package_lease_expiry_repairs;
+CREATE TRIGGER trg_work_package_expiry_repairs_immutable
+    BEFORE UPDATE OR DELETE ON work_package_lease_expiry_repairs
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_expiry_repairs_immutable();
+
+CREATE OR REPLACE FUNCTION trg_work_package_expiry_task_detach_guard()
+RETURNS trigger AS $$
+BEGIN
+    IF OLD.lease_id IS NOT NULL AND NEW.lease_id IS NULL AND EXISTS (
+        SELECT 1
+        FROM leases AS lease
+        JOIN work_package_assignment_audit AS assignment
+          ON assignment.lease_id = lease.id
+        JOIN work_package_task_links AS link
+          ON link.package_id = assignment.package_id
+         AND link.plan_version = assignment.plan_version
+         AND link.epoch = assignment.epoch
+         AND link.node_key = assignment.node_key
+         AND link.task_id = assignment.task_id
+        WHERE lease.id = OLD.lease_id
+          AND lease.task_id = OLD.id
+          AND lease.status = 'expired'
+          AND link.node_state = 'executing'
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM work_package_lease_expiry_repairs AS repair
+        JOIN leases AS lease ON lease.id = repair.lease_id
+        WHERE repair.lease_id = OLD.lease_id
+          AND repair.task_id = OLD.id
+          AND repair.agent_id = OLD.owner_agent_id
+          AND repair.source_task_state = OLD.state
+          AND repair.target_task_state = NEW.state
+          AND lease.status = 'expired'
+          AND lease.expiry_finalizer_token = repair.finalizer_token
+          AND lease.expiry_finalized_at IS NULL
+          AND NEW.owner_agent_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'expired package task detach requires exact repair receipt';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_expiry_task_detach_guard ON tasks;
+CREATE TRIGGER trg_work_package_expiry_task_detach_guard
+    BEFORE UPDATE OF lease_id ON tasks
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_expiry_task_detach_guard();
+
+CREATE OR REPLACE FUNCTION trg_work_package_expiry_node_guard()
+RETURNS trigger AS $$
+BEGIN
+    IF OLD.node_state = 'executing' AND NEW.node_state = 'ready' AND NOT EXISTS (
+        SELECT 1
+        FROM work_package_lease_expiry_repairs AS repair
+        JOIN tasks AS task ON task.id = repair.task_id
+        WHERE repair.package_id = NEW.package_id
+          AND repair.plan_version = NEW.plan_version
+          AND repair.epoch = NEW.epoch
+          AND repair.node_key = NEW.node_key
+          AND repair.node_generation = NEW.node_generation
+          AND repair.task_id = NEW.task_id
+          AND repair.source_node_state = OLD.node_state
+          AND repair.target_node_state = NEW.node_state
+          AND repair.wip_disposition = 'retain'
+          AND task.state = repair.target_task_state
+          AND task.state IN ('open', 'waiting')
+          AND task.lease_id IS NULL
+          AND task.owner_agent_id IS NULL
+          AND repair.attempt_number = (
+              SELECT MAX(latest.attempt_number)
+              FROM work_package_assignment_audit AS latest
+              WHERE latest.package_id = NEW.package_id
+                AND latest.plan_version = NEW.plan_version
+                AND latest.epoch = NEW.epoch
+                AND latest.node_key = NEW.node_key
+                AND latest.task_id = NEW.task_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(repair.held_wip_ids) AS item(value)
+              WHERE NOT EXISTS (
+                  SELECT 1 FROM work_package_wip_tokens AS token
+                  WHERE token.id = item.value AND token.state = 'held'
+              )
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM work_package_wip_tokens AS token
+              WHERE token.package_id = NEW.package_id
+                AND token.plan_version = NEW.plan_version
+                AND token.epoch = NEW.epoch
+                AND token.node_key = NEW.node_key
+                AND token.task_id = NEW.task_id
+                AND token.state = 'held'
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements_text(repair.held_wip_ids) AS item(value)
+                    WHERE item.value = token.id
+                )
+          )
+    ) THEN
+        RAISE EXCEPTION 'executing node requeue requires exact lease-expiry repair';
+    END IF;
+
+    IF OLD.node_state = 'executing' AND NEW.node_state = 'cancelled'
+       AND EXISTS (
+           SELECT 1 FROM work_package_lease_expiry_repairs AS repair
+           WHERE repair.package_id = NEW.package_id
+             AND repair.plan_version = NEW.plan_version
+             AND repair.epoch = NEW.epoch
+             AND repair.node_key = NEW.node_key
+             AND repair.node_generation = NEW.node_generation
+             AND repair.task_id = NEW.task_id
+             AND repair.target_node_state = 'cancelled'
+       ) AND NOT EXISTS (
+        SELECT 1
+        FROM work_package_lease_expiry_repairs AS repair
+        JOIN tasks AS task ON task.id = repair.task_id
+        WHERE repair.package_id = NEW.package_id
+          AND repair.plan_version = NEW.plan_version
+          AND repair.epoch = NEW.epoch
+          AND repair.node_key = NEW.node_key
+          AND repair.node_generation = NEW.node_generation
+          AND repair.task_id = NEW.task_id
+          AND repair.source_node_state = OLD.node_state
+          AND repair.target_node_state = NEW.node_state
+          AND repair.wip_disposition = 'cancel'
+          AND task.state = repair.target_task_state
+          AND task.state IN ('failed', 'cancelled')
+          AND task.lease_id IS NULL
+          AND task.owner_agent_id IS NULL
+          AND repair.attempt_number = (
+              SELECT MAX(latest.attempt_number)
+              FROM work_package_assignment_audit AS latest
+              WHERE latest.package_id = NEW.package_id
+                AND latest.plan_version = NEW.plan_version
+                AND latest.epoch = NEW.epoch
+                AND latest.node_key = NEW.node_key
+                AND latest.task_id = NEW.task_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(repair.held_wip_ids) AS item(value)
+              WHERE NOT EXISTS (
+                  SELECT 1 FROM work_package_wip_tokens AS token
+                  WHERE token.id = item.value
+                    AND token.state = 'cancelled'
+                    AND token.released_at IS NOT NULL
+                    AND token.release_reason IS NOT NULL
+                    AND token.release_reason <> ''
+              )
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM work_package_wip_tokens AS token
+              WHERE token.package_id = NEW.package_id
+                AND token.plan_version = NEW.plan_version
+                AND token.epoch = NEW.epoch
+                AND token.node_key = NEW.node_key
+                AND token.task_id = NEW.task_id
+                AND token.state = 'held'
+          )
+    ) THEN
+        RAISE EXCEPTION 'terminal lease-expiry repair must cancel exact held WIP';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_expiry_node_guard
+    ON work_package_task_links;
+CREATE TRIGGER trg_work_package_expiry_node_guard
+    BEFORE UPDATE OF node_state ON work_package_task_links
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_expiry_node_guard();
+
+CREATE TABLE IF NOT EXISTS work_package_integration_batches (
+    id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    repository_id TEXT REFERENCES project_repositories(id) ON DELETE RESTRICT,
+    target_ref TEXT NOT NULL,
+    assembly_base_sha TEXT NOT NULL CHECK (assembly_base_sha ~ '^[0-9a-f]{40}$'),
+    landing_base_sha TEXT NOT NULL CHECK (landing_base_sha ~ '^[0-9a-f]{40}$'),
+    input_digest TEXT NOT NULL,
+    candidate_sha TEXT,
+    candidate_tree_digest TEXT,
+    candidate_ref TEXT,
+    candidate_fence INTEGER CHECK (candidate_fence IS NULL OR candidate_fence >= 1),
+    state TEXT NOT NULL CHECK (state IN (
+        'queued', 'assembling', 'verifying', 'certified',
+        'rejected', 'stale', 'published', 'cancelled'
+    )),
+    integration_task_id TEXT REFERENCES tasks(id) ON DELETE RESTRICT,
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    lease_fence INTEGER NOT NULL DEFAULT 0 CHECK (lease_fence >= 0),
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    UNIQUE (
+        id, package_id, plan_version, epoch,
+        candidate_sha, assembly_base_sha, landing_base_sha, target_ref
+    ),
+    UNIQUE (id, package_id, plan_version, epoch),
+    UNIQUE (id, integration_task_id),
+    CHECK (
+        (lease_owner IS NULL AND lease_expires_at IS NULL) OR
+        (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL
+         AND lease_fence >= 1)
+    ),
+    CHECK (
+        (candidate_sha IS NULL AND candidate_tree_digest IS NULL
+         AND candidate_ref IS NULL AND candidate_fence IS NULL) OR
+        (candidate_sha IS NOT NULL AND candidate_tree_digest IS NOT NULL
+         AND candidate_ref IS NOT NULL AND candidate_fence IS NOT NULL
+         AND candidate_ref LIKE 'refs/mac/%')
+    ),
+    FOREIGN KEY (package_id, epoch, plan_version)
+        REFERENCES work_package_epochs(package_id, epoch, plan_version) ON DELETE RESTRICT,
+    FOREIGN KEY (package_id, repository_id)
+        REFERENCES work_packages(id, repository_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_batches_queue
+    ON work_package_integration_batches (state, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_work_package_batches_target
+    ON work_package_integration_batches (repository_id, target_ref, state, created_at);
+CREATE INDEX IF NOT EXISTS idx_work_package_batches_package
+    ON work_package_integration_batches (package_id, epoch, created_at);
+
+CREATE OR REPLACE FUNCTION trg_work_package_batch_repository_matches()
+RETURNS trigger AS $$
+DECLARE
+    expected_repository TEXT;
+BEGIN
+    SELECT repository_id INTO expected_repository
+      FROM work_packages WHERE id = NEW.package_id;
+    IF NEW.repository_id IS DISTINCT FROM expected_repository THEN
+        RAISE EXCEPTION 'integration batch repository must match package';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_batch_repository_matches
+    ON work_package_integration_batches;
+CREATE TRIGGER trg_work_package_batch_repository_matches
+    BEFORE INSERT OR UPDATE OF package_id, repository_id
+    ON work_package_integration_batches
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_batch_repository_matches();
+
+CREATE OR REPLACE FUNCTION trg_work_package_batch_fence_monotonic()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.lease_fence < OLD.lease_fence THEN
+        RAISE EXCEPTION 'integration batch lease fence cannot decrease';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_batch_fence_monotonic
+    ON work_package_integration_batches;
+CREATE TRIGGER trg_work_package_batch_fence_monotonic
+    BEFORE UPDATE OF lease_fence ON work_package_integration_batches
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_batch_fence_monotonic();
+
+CREATE OR REPLACE FUNCTION trg_work_package_batch_invariants()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'integration batches are append-only';
+    END IF;
+    IF ROW(
+        NEW.id, NEW.package_id, NEW.plan_version, NEW.epoch, NEW.repository_id,
+        NEW.target_ref, NEW.assembly_base_sha, NEW.landing_base_sha,
+        NEW.input_digest, NEW.integration_task_id, NEW.created_at
+    ) IS DISTINCT FROM ROW(
+        OLD.id, OLD.package_id, OLD.plan_version, OLD.epoch, OLD.repository_id,
+        OLD.target_ref, OLD.assembly_base_sha, OLD.landing_base_sha,
+        OLD.input_digest, OLD.integration_task_id, OLD.created_at
+    ) THEN
+        RAISE EXCEPTION 'integration batch identity is immutable';
+    END IF;
+    IF NEW.lease_owner IS NOT NULL
+       AND NEW.lease_owner IS DISTINCT FROM OLD.lease_owner
+       AND NEW.lease_fence <= OLD.lease_fence THEN
+        RAISE EXCEPTION 'integration batch owner change requires a new fence';
+    END IF;
+    IF NEW.state <> OLD.state AND NOT (
+        (OLD.state = 'queued' AND NEW.state IN ('assembling', 'cancelled')) OR
+        (OLD.state = 'assembling' AND NEW.state IN (
+            'verifying', 'rejected', 'stale', 'cancelled'
+        )) OR
+        (OLD.state = 'verifying' AND NEW.state IN (
+            'certified', 'rejected', 'stale', 'cancelled'
+        )) OR
+        (OLD.state = 'certified' AND NEW.state IN ('published', 'stale'))
+    ) THEN
+        RAISE EXCEPTION 'invalid integration batch state transition';
+    END IF;
+    IF ROW(
+        NEW.candidate_sha, NEW.candidate_tree_digest,
+        NEW.candidate_ref, NEW.candidate_fence
+    ) IS DISTINCT FROM ROW(
+        OLD.candidate_sha, OLD.candidate_tree_digest,
+        OLD.candidate_ref, OLD.candidate_fence
+    ) AND NOT (
+        OLD.state = 'assembling' AND NEW.state = 'assembling'
+        AND OLD.candidate_sha IS NULL AND OLD.candidate_tree_digest IS NULL
+        AND OLD.candidate_ref IS NULL AND OLD.candidate_fence IS NULL
+        AND NEW.candidate_sha IS NOT NULL
+        AND NEW.candidate_tree_digest IS NOT NULL
+        AND NEW.candidate_ref LIKE 'refs/mac/%'
+        AND NEW.candidate_fence = OLD.lease_fence
+        AND OLD.lease_owner IS NOT NULL
+        AND NEW.lease_owner IS NOT DISTINCT FROM OLD.lease_owner
+        AND NEW.lease_fence = OLD.lease_fence
+    ) THEN
+        RAISE EXCEPTION 'integration candidate assignment requires current fence';
+    END IF;
+    IF NEW.state = 'verifying' AND (
+        NEW.candidate_sha IS NULL OR NEW.candidate_tree_digest IS NULL
+        OR NEW.candidate_ref IS NULL OR NEW.candidate_fence IS NULL
+    ) THEN
+        RAISE EXCEPTION 'verifying batch requires a fenced candidate';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_batch_invariants
+    ON work_package_integration_batches;
+CREATE TRIGGER trg_work_package_batch_invariants
+    BEFORE UPDATE OR DELETE ON work_package_integration_batches
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_batch_invariants();
+
+CREATE OR REPLACE FUNCTION trg_work_package_batch_initial_state()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.state <> 'queued' OR NEW.candidate_sha IS NOT NULL
+       OR NEW.candidate_tree_digest IS NOT NULL
+       OR NEW.candidate_ref IS NOT NULL OR NEW.candidate_fence IS NOT NULL THEN
+        RAISE EXCEPTION 'integration batches must start queued';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_batch_initial_state
+    ON work_package_integration_batches;
+CREATE TRIGGER trg_work_package_batch_initial_state
+    BEFORE INSERT ON work_package_integration_batches
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_batch_initial_state();
+
+CREATE TABLE IF NOT EXISTS work_package_batch_inputs (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    node_key TEXT NOT NULL,
+    node_generation INTEGER NOT NULL CHECK (node_generation >= 1),
+    task_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    candidate_status TEXT NOT NULL DEFAULT 'accepted'
+        CHECK (candidate_status = 'accepted'),
+    assignment_lease_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    evidence_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (batch_id, ordinal),
+    UNIQUE (batch_id, evidence_id),
+    FOREIGN KEY (batch_id, package_id, plan_version, epoch)
+        REFERENCES work_package_integration_batches(
+            id, package_id, plan_version, epoch
+        ) ON DELETE CASCADE,
+    FOREIGN KEY (
+        assignment_lease_id, package_id, plan_version, epoch,
+        node_key, task_id, attempt_number
+    ) REFERENCES work_package_assignment_audit (
+        lease_id, package_id, plan_version, epoch,
+        node_key, task_id, attempt_number
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (evidence_id, task_id)
+        REFERENCES evidence(id, task_id) ON DELETE RESTRICT,
+    FOREIGN KEY (evidence_id, task_id, assignment_lease_id, attempt_number)
+        REFERENCES evidence_attempt_links(
+            evidence_id, task_id, lease_id, attempt_number
+        ) ON DELETE RESTRICT,
+    FOREIGN KEY (package_id, plan_version, epoch, node_key, task_id)
+        REFERENCES work_package_task_links(
+            package_id, plan_version, epoch, node_key, task_id
+        ) ON DELETE RESTRICT,
+    FOREIGN KEY (
+        candidate_id, task_id, package_id, plan_version, epoch,
+        node_key, node_generation, assignment_lease_id,
+        attempt_number, evidence_id, candidate_status
+    ) REFERENCES work_package_node_candidates (
+        id, task_id, package_id, plan_version, epoch,
+        node_key, node_generation, assignment_lease_id,
+        attempt_number, evidence_id, status
+    ) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_batch_inputs_task
+    ON work_package_batch_inputs (task_id, created_at);
+
+CREATE OR REPLACE FUNCTION trg_work_package_batch_inputs_open()
+RETURNS trigger AS $$
+DECLARE
+    parent_batch_id TEXT;
+    parent_state TEXT;
+BEGIN
+    parent_batch_id := CASE WHEN TG_OP = 'INSERT' THEN NEW.batch_id ELSE OLD.batch_id END;
+    -- Serialize membership changes with queued -> assembling. Without the row
+    -- lock an INSERT and state transition can both validate an old snapshot.
+    SELECT state INTO parent_state
+      FROM work_package_integration_batches WHERE id = parent_batch_id
+      FOR UPDATE;
+    IF TG_OP = 'INSERT' AND (
+        parent_state IS DISTINCT FROM 'queued' OR NOT EXISTS (
+            SELECT 1 FROM work_package_task_links AS link
+            WHERE link.task_id = NEW.task_id
+              AND link.package_id = NEW.package_id
+              AND link.plan_version = NEW.plan_version
+              AND link.epoch = NEW.epoch
+              AND link.node_key = NEW.node_key
+              AND link.node_generation = NEW.node_generation
+              AND link.node_state = 'candidate_accepted'
+        ) OR NOT EXISTS (
+            SELECT 1 FROM evidence_attempt_verifications AS verification
+            WHERE verification.evidence_id = NEW.evidence_id
+              AND verification.task_id = NEW.task_id
+              AND verification.lease_id = NEW.assignment_lease_id
+              AND verification.attempt_number = NEW.attempt_number
+        )
+    ) THEN
+        RAISE EXCEPTION 'batch input is not an accepted verified candidate';
+    END IF;
+    IF TG_OP IN ('UPDATE', 'DELETE') AND parent_state IS DISTINCT FROM 'queued' THEN
+        RAISE EXCEPTION 'batch membership is immutable after assembly starts';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_batch_inputs_open
+    ON work_package_batch_inputs;
+CREATE TRIGGER trg_work_package_batch_inputs_open
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_batch_inputs
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_batch_inputs_open();
+
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_publications_task_evidence_identity
+    ON publications (id, task_id, evidence_id);
+CREATE TABLE IF NOT EXISTS work_package_certifications (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    candidate_sha TEXT NOT NULL,
+    assembly_base_sha TEXT NOT NULL,
+    landing_base_sha TEXT NOT NULL,
+    target_ref TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'passed', 'failed', 'invalidated', 'published'
+    )),
+    verification_digest TEXT NOT NULL,
+    verification TEXT NOT NULL DEFAULT '{}',
+    certification_task_id TEXT NOT NULL,
+    tests_evidence_id TEXT NOT NULL,
+    review_task_id TEXT NOT NULL,
+    review_evidence_id TEXT NOT NULL,
+    codegraph_evidence_id TEXT,
+    certified_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    invalidated_at TEXT,
+    publication_id TEXT,
+    publication_evidence_id TEXT,
+    UNIQUE (batch_id, candidate_sha, verification_digest),
+    CHECK (
+        (publication_id IS NULL AND publication_evidence_id IS NULL) OR
+        (publication_id IS NOT NULL AND publication_evidence_id IS NOT NULL)
+    ),
+    FOREIGN KEY (
+        batch_id, package_id, plan_version, epoch,
+        candidate_sha, assembly_base_sha, landing_base_sha, target_ref
+    ) REFERENCES work_package_integration_batches (
+        id, package_id, plan_version, epoch,
+        candidate_sha, assembly_base_sha, landing_base_sha, target_ref
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (tests_evidence_id, certification_task_id)
+        REFERENCES evidence(id, task_id) ON DELETE RESTRICT,
+    FOREIGN KEY (review_evidence_id, review_task_id)
+        REFERENCES evidence(id, task_id) ON DELETE RESTRICT,
+    FOREIGN KEY (codegraph_evidence_id, certification_task_id)
+        REFERENCES evidence(id, task_id) ON DELETE RESTRICT,
+    FOREIGN KEY (publication_id, certification_task_id, publication_evidence_id)
+        REFERENCES publications (id, task_id, evidence_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_certifications_status
+    ON work_package_certifications (status, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_work_package_certifications_package
+    ON work_package_certifications (package_id, epoch, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_work_package_cert_landing_identity
+    ON work_package_certifications (
+        id, batch_id, package_id, plan_version, epoch, candidate_sha,
+        assembly_base_sha, landing_base_sha, target_ref
+    );
+
+CREATE OR REPLACE FUNCTION trg_work_package_certification_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status NOT IN ('passed', 'failed')
+           OR NEW.invalidated_at IS NOT NULL
+           OR NEW.publication_id IS NOT NULL
+           OR NEW.publication_evidence_id IS NOT NULL THEN
+            RAISE EXCEPTION 'certification must start uncommitted as passed or failed';
+        END IF;
+        -- Certification and batch-state transitions share the same row lock,
+        -- so a cert cannot race a verifying -> terminal transition.
+        PERFORM 1 FROM work_package_integration_batches AS batch
+            WHERE batch.id = NEW.batch_id
+              AND batch.package_id = NEW.package_id
+              AND batch.plan_version = NEW.plan_version
+              AND batch.epoch = NEW.epoch
+              AND batch.state = 'verifying'
+              AND batch.candidate_sha = NEW.candidate_sha
+              AND batch.assembly_base_sha = NEW.assembly_base_sha
+              AND batch.landing_base_sha = NEW.landing_base_sha
+              AND batch.target_ref = NEW.target_ref
+              AND batch.candidate_tree_digest IS NOT NULL
+              AND batch.candidate_ref IS NOT NULL
+              AND batch.candidate_fence IS NOT NULL
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'certification requires a finalized verifying batch';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'certifications are append-only';
+    END IF;
+    IF ROW(
+        NEW.id, NEW.batch_id, NEW.package_id, NEW.plan_version, NEW.epoch,
+        NEW.candidate_sha, NEW.assembly_base_sha, NEW.landing_base_sha,
+        NEW.target_ref, NEW.verification_digest, NEW.verification,
+        NEW.certification_task_id, NEW.tests_evidence_id, NEW.review_task_id,
+        NEW.review_evidence_id, NEW.codegraph_evidence_id, NEW.certified_by,
+        NEW.created_at
+    ) IS DISTINCT FROM ROW(
+        OLD.id, OLD.batch_id, OLD.package_id, OLD.plan_version, OLD.epoch,
+        OLD.candidate_sha, OLD.assembly_base_sha, OLD.landing_base_sha,
+        OLD.target_ref, OLD.verification_digest, OLD.verification,
+        OLD.certification_task_id, OLD.tests_evidence_id, OLD.review_task_id,
+        OLD.review_evidence_id, OLD.codegraph_evidence_id, OLD.certified_by,
+        OLD.created_at
+    ) THEN
+        RAISE EXCEPTION 'certification identity is immutable';
+    END IF;
+    IF NEW.status <> OLD.status AND NOT (
+        (OLD.status = 'passed' AND NEW.status IN ('invalidated', 'published')) OR
+        (OLD.status = 'failed' AND NEW.status = 'invalidated')
+    ) THEN
+        RAISE EXCEPTION 'invalid certification state transition';
+    END IF;
+    IF NEW.status = 'invalidated' AND (
+        NEW.invalidated_at IS NULL
+        OR NEW.publication_id IS NOT NULL
+        OR NEW.publication_evidence_id IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'invalidated certification metadata is incoherent';
+    END IF;
+    IF NEW.status = 'published' AND (
+        NEW.invalidated_at IS NOT NULL
+        OR NEW.publication_id IS NULL
+        OR NEW.publication_evidence_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'published certification metadata is incoherent';
+    END IF;
+    IF NEW.status IN ('passed', 'failed') AND (
+        NEW.invalidated_at IS NOT NULL
+        OR NEW.publication_id IS NOT NULL
+        OR NEW.publication_evidence_id IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'uncommitted certification metadata is incoherent';
+    END IF;
+    IF NEW.invalidated_at IS DISTINCT FROM OLD.invalidated_at
+       AND NOT (
+           OLD.status IN ('passed', 'failed') AND NEW.status = 'invalidated'
+       ) THEN
+        RAISE EXCEPTION 'certification invalidation metadata is immutable';
+    END IF;
+    IF ROW(NEW.publication_id, NEW.publication_evidence_id)
+       IS DISTINCT FROM ROW(OLD.publication_id, OLD.publication_evidence_id)
+       AND NOT (OLD.status = 'passed' AND NEW.status = 'published') THEN
+        RAISE EXCEPTION 'certification publication metadata is incoherent';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_certification_lifecycle
+    ON work_package_certifications;
+CREATE TRIGGER trg_work_package_certification_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_certifications
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_certification_lifecycle();
+
+CREATE TABLE IF NOT EXISTS work_package_certification_jobs (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL UNIQUE,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+    epoch INTEGER NOT NULL CHECK (epoch >= 1),
+    repository_id TEXT NOT NULL REFERENCES project_repositories(id) ON DELETE RESTRICT,
+    candidate_sha TEXT NOT NULL CHECK (candidate_sha ~ '^[0-9a-f]{40}$'),
+    candidate_tree_digest TEXT NOT NULL CHECK (
+        candidate_tree_digest ~ '^git-tree:[0-9a-f]{40}$'
+    ),
+    candidate_ref TEXT NOT NULL CHECK (candidate_ref LIKE 'refs/mac/%'),
+    candidate_fence INTEGER NOT NULL CHECK (candidate_fence >= 1),
+    assembly_base_sha TEXT NOT NULL CHECK (assembly_base_sha ~ '^[0-9a-f]{40}$'),
+    landing_base_sha TEXT NOT NULL CHECK (landing_base_sha ~ '^[0-9a-f]{40}$'),
+    target_ref TEXT NOT NULL CHECK (target_ref LIKE 'refs/heads/%'),
+    policy_id TEXT NOT NULL CHECK (policy_id <> ''),
+    policy_version INTEGER NOT NULL CHECK (policy_version >= 1),
+    policy_checksum TEXT NOT NULL CHECK (
+        policy_checksum ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    image_ref TEXT NOT NULL CHECK (image_ref LIKE '%@' || image_digest),
+    image_digest TEXT NOT NULL CHECK (image_digest ~ '^sha256:[0-9a-f]{64}$'),
+    bundle_digest TEXT NOT NULL CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'),
+    commands_digest TEXT NOT NULL CHECK (commands_digest ~ '^sha256:[0-9a-f]{64}$'),
+    job_digest TEXT NOT NULL UNIQUE CHECK (job_digest ~ '^sha256:[0-9a-f]{64}$'),
+    definition TEXT NOT NULL CHECK (jsonb_typeof(definition::jsonb) = 'object'),
+    state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed')),
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    lease_fence INTEGER NOT NULL DEFAULT 0 CHECK (lease_fence >= 0),
+    result_digest TEXT UNIQUE CHECK (
+        result_digest IS NULL OR result_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    certification_id TEXT UNIQUE
+        REFERENCES work_package_certifications(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    UNIQUE (
+        id, batch_id, package_id, plan_version, epoch,
+        candidate_sha, assembly_base_sha, landing_base_sha, target_ref
+    ),
+    FOREIGN KEY (
+        batch_id, package_id, plan_version, epoch, candidate_sha,
+        assembly_base_sha, landing_base_sha, target_ref
+    ) REFERENCES work_package_integration_batches (
+        id, package_id, plan_version, epoch, candidate_sha,
+        assembly_base_sha, landing_base_sha, target_ref
+    ) ON DELETE RESTRICT,
+    CHECK (
+        (state = 'queued' AND lease_owner IS NULL
+         AND lease_expires_at IS NULL AND lease_fence = 0
+         AND result_digest IS NULL AND certification_id IS NULL
+         AND completed_at IS NULL) OR
+        (state = 'running' AND lease_owner IS NOT NULL
+         AND lease_expires_at IS NOT NULL AND lease_fence >= 1
+         AND result_digest IS NULL AND certification_id IS NULL
+         AND completed_at IS NULL) OR
+        (state IN ('completed', 'failed') AND result_digest IS NOT NULL
+         AND certification_id IS NOT NULL AND completed_at IS NOT NULL
+         AND lease_owner IS NULL AND lease_expires_at IS NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_certification_jobs_state
+    ON work_package_certification_jobs (state, created_at, id);
+
+CREATE OR REPLACE FUNCTION trg_work_package_certification_job_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.state <> 'queued' OR NEW.lease_owner IS NOT NULL
+           OR NEW.lease_expires_at IS NOT NULL OR NEW.lease_fence <> 0
+           OR NEW.result_digest IS NOT NULL OR NEW.certification_id IS NOT NULL
+           OR NEW.completed_at IS NOT NULL THEN
+            RAISE EXCEPTION 'certification jobs must start queued';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'certification jobs are append-only';
+    END IF;
+    IF ROW(
+        NEW.id, NEW.batch_id, NEW.package_id, NEW.plan_version, NEW.epoch,
+        NEW.repository_id, NEW.candidate_sha, NEW.candidate_tree_digest,
+        NEW.candidate_ref, NEW.candidate_fence, NEW.assembly_base_sha,
+        NEW.landing_base_sha, NEW.target_ref, NEW.policy_id, NEW.policy_version,
+        NEW.policy_checksum, NEW.image_ref, NEW.image_digest, NEW.bundle_digest,
+        NEW.commands_digest, NEW.job_digest, NEW.definition, NEW.created_at
+    ) IS DISTINCT FROM ROW(
+        OLD.id, OLD.batch_id, OLD.package_id, OLD.plan_version, OLD.epoch,
+        OLD.repository_id, OLD.candidate_sha, OLD.candidate_tree_digest,
+        OLD.candidate_ref, OLD.candidate_fence, OLD.assembly_base_sha,
+        OLD.landing_base_sha, OLD.target_ref, OLD.policy_id, OLD.policy_version,
+        OLD.policy_checksum, OLD.image_ref, OLD.image_digest, OLD.bundle_digest,
+        OLD.commands_digest, OLD.job_digest, OLD.definition, OLD.created_at
+    ) THEN
+        RAISE EXCEPTION 'certification job identity is immutable';
+    END IF;
+    IF NEW.state <> OLD.state AND NOT (
+        (OLD.state = 'queued' AND NEW.state = 'running') OR
+        (OLD.state = 'running' AND NEW.state IN ('completed', 'failed'))
+    ) THEN
+        RAISE EXCEPTION 'invalid certification job state transition';
+    END IF;
+    IF NEW.lease_fence NOT IN (OLD.lease_fence, OLD.lease_fence + 1) OR (
+        NEW.lease_owner IS NOT NULL
+        AND NEW.lease_owner IS DISTINCT FROM OLD.lease_owner
+        AND NEW.lease_fence <= OLD.lease_fence
+    ) THEN
+        RAISE EXCEPTION 'certification job owner requires a new fence';
+    END IF;
+    IF NEW.certification_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM work_package_certifications AS certification
+        WHERE certification.id = NEW.certification_id
+          AND certification.batch_id = NEW.batch_id
+          AND certification.package_id = NEW.package_id
+          AND certification.plan_version = NEW.plan_version
+          AND certification.epoch = NEW.epoch
+          AND certification.candidate_sha = NEW.candidate_sha
+          AND certification.assembly_base_sha = NEW.assembly_base_sha
+          AND certification.landing_base_sha = NEW.landing_base_sha
+          AND certification.target_ref = NEW.target_ref
+          AND certification.verification_digest = NEW.result_digest
+    ) THEN
+        RAISE EXCEPTION 'certification job result identity is invalid';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_certification_job_lifecycle
+    ON work_package_certification_jobs;
+CREATE TRIGGER trg_work_package_certification_job_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_certification_jobs
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_certification_job_lifecycle();
+
+-- Controller-owned graph nodes terminate from exact controller provenance,
+-- never from a synthetic worker candidate.  One immutable receipt binds the
+-- task/link projection to the exact integration batch or certification job.
+CREATE TABLE IF NOT EXISTS work_package_controller_station_receipts (
+    id TEXT PRIMARY KEY,
+    station_kind TEXT NOT NULL CHECK (
+        station_kind IN ('integration', 'certification')
+    ),
+    task_id TEXT NOT NULL UNIQUE,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+    epoch INTEGER NOT NULL CHECK (epoch >= 1),
+    node_key TEXT NOT NULL CHECK (node_key <> ''),
+    batch_id TEXT NOT NULL,
+    certification_job_id TEXT UNIQUE
+        REFERENCES work_package_certification_jobs(id) ON DELETE RESTRICT,
+    certification_id TEXT UNIQUE
+        REFERENCES work_package_certifications(id) ON DELETE RESTRICT,
+    outcome TEXT NOT NULL CHECK (outcome IN ('integrated', 'certified', 'rejected')),
+    result_digest TEXT CHECK (
+        result_digest IS NULL OR result_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    provenance_digest TEXT NOT NULL UNIQUE CHECK (
+        provenance_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    actor TEXT NOT NULL CHECK (actor <> ''),
+    detail TEXT NOT NULL CHECK (jsonb_typeof(detail::jsonb) = 'object'),
+    created_at TEXT NOT NULL,
+    UNIQUE (package_id, plan_version, epoch, node_key),
+    FOREIGN KEY (package_id, plan_version, epoch, node_key, task_id)
+        REFERENCES work_package_task_links (
+            package_id, plan_version, epoch, node_key, task_id
+        ) ON DELETE RESTRICT,
+    FOREIGN KEY (batch_id, package_id, plan_version, epoch)
+        REFERENCES work_package_integration_batches (
+            id, package_id, plan_version, epoch
+        ) ON DELETE RESTRICT,
+    CHECK (
+        (station_kind = 'integration' AND outcome = 'integrated'
+         AND certification_job_id IS NULL
+         AND certification_id IS NULL AND result_digest IS NULL) OR
+        (station_kind = 'certification' AND outcome IN ('certified', 'rejected')
+         AND certification_job_id IS NOT NULL
+         AND certification_id IS NOT NULL AND result_digest IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_controller_station_batch
+    ON work_package_controller_station_receipts (
+        batch_id, station_kind, outcome, created_at
+    );
+
+CREATE OR REPLACE FUNCTION trg_work_package_controller_station_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        RAISE EXCEPTION 'controller station receipts are append-only';
+    END IF;
+    IF NEW.station_kind = 'integration' THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM work_package_integration_batches AS batch
+            JOIN work_package_task_links AS link
+              ON link.task_id = NEW.task_id
+             AND link.package_id = NEW.package_id
+             AND link.plan_version = NEW.plan_version
+             AND link.epoch = NEW.epoch
+             AND link.node_key = NEW.node_key
+            JOIN tasks AS task ON task.id = link.task_id
+            WHERE batch.id = NEW.batch_id
+              AND batch.package_id = NEW.package_id
+              AND batch.plan_version = NEW.plan_version
+              AND batch.epoch = NEW.epoch
+              AND batch.integration_task_id = NEW.task_id
+              AND batch.state = 'verifying'
+              AND batch.candidate_sha IS NOT NULL
+              AND batch.candidate_tree_digest IS NOT NULL
+              AND batch.candidate_ref IS NOT NULL
+              AND batch.candidate_fence IS NOT NULL
+              AND link.node_state IN ('planned', 'ready')
+              AND task.state IN ('open', 'waiting')
+              AND task.owner_agent_id IS NULL
+              AND task.lease_id IS NULL
+              AND task.metadata::jsonb #>> '{no_dispatch}' = 'true'
+              AND task.metadata::jsonb #>> '{work_package,node_type}' = 'integration'
+        ) THEN
+            RAISE EXCEPTION 'controller station receipt lacks exact durable provenance';
+        END IF;
+    ELSIF NEW.station_kind = 'certification' THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM work_package_certification_jobs AS job
+            JOIN work_package_certifications AS certification
+              ON certification.id = NEW.certification_id
+             AND certification.batch_id = job.batch_id
+             AND certification.package_id = job.package_id
+             AND certification.plan_version = job.plan_version
+             AND certification.epoch = job.epoch
+             AND certification.candidate_sha = job.candidate_sha
+             AND certification.assembly_base_sha = job.assembly_base_sha
+             AND certification.landing_base_sha = job.landing_base_sha
+             AND certification.target_ref = job.target_ref
+             AND certification.verification_digest = job.result_digest
+            JOIN work_package_task_links AS link
+              ON link.task_id = NEW.task_id
+             AND link.package_id = NEW.package_id
+             AND link.plan_version = NEW.plan_version
+             AND link.epoch = NEW.epoch
+             AND link.node_key = NEW.node_key
+            JOIN tasks AS task ON task.id = link.task_id
+            WHERE job.id = NEW.certification_job_id
+              AND job.batch_id = NEW.batch_id
+              AND job.package_id = NEW.package_id
+              AND job.plan_version = NEW.plan_version
+              AND job.epoch = NEW.epoch
+              AND job.certification_id = NEW.certification_id
+              AND job.result_digest = NEW.result_digest
+              AND job.definition::jsonb #>> '{certification_task_id}' = NEW.task_id
+              AND job.definition::jsonb #>> '{certification_node_key}' = NEW.node_key
+              AND (
+                  (NEW.outcome = 'certified' AND job.state = 'completed'
+                   AND certification.status = 'passed') OR
+                  (NEW.outcome = 'rejected' AND job.state = 'failed'
+                   AND certification.status = 'failed')
+              )
+              AND link.node_state = 'ready'
+              AND task.state = 'waiting'
+              AND task.owner_agent_id IS NULL
+              AND task.lease_id IS NULL
+              AND certification.certification_task_id = NEW.task_id
+              AND task.metadata::jsonb #>> '{no_dispatch}' = 'true'
+              AND task.metadata::jsonb #>> '{work_package,node_type}' = 'certification'
+        ) THEN
+            RAISE EXCEPTION 'controller station receipt lacks exact durable provenance';
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'controller station receipt kind is invalid';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_controller_station_lifecycle
+    ON work_package_controller_station_receipts;
+CREATE TRIGGER trg_work_package_controller_station_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_controller_station_receipts
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_controller_station_lifecycle();
+
+-- Install receipt-aware controller-station transitions while retaining the
+-- ordinary worker candidate state machine unchanged.
+CREATE OR REPLACE FUNCTION trg_work_package_task_links_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' AND NEW.node_state <> 'planned' THEN
+        RAISE EXCEPTION 'work package task links must start planned';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'work package task links are append-only';
+    END IF;
+    IF TG_OP = 'UPDATE' AND NEW.node_state <> OLD.node_state AND NOT (
+        (OLD.node_state = 'planned' AND NEW.node_state IN (
+            'ready', 'superseded', 'cancelled'
+        )) OR
+        (OLD.node_state = 'ready' AND NEW.node_state IN (
+            'executing', 'superseded', 'cancelled'
+        )) OR
+        (OLD.node_state = 'executing' AND NEW.node_state IN (
+            'ready', 'candidate_submitted', 'rejected', 'cancelled'
+        )) OR
+        (OLD.node_state = 'candidate_submitted' AND NEW.node_state IN (
+            'candidate_accepted', 'rejected', 'superseded'
+        )) OR
+        (OLD.node_state = 'candidate_accepted' AND NEW.node_state IN (
+            'integrated', 'rejected', 'superseded'
+        )) OR
+        (OLD.node_state = 'integrated' AND NEW.node_state IN (
+            'certified', 'rejected', 'superseded'
+        )) OR
+        (OLD.node_state = 'rejected' AND NEW.node_state = 'executing') OR
+        (
+            OLD.node_state IN ('planned', 'ready')
+            AND NEW.node_state = 'integrated'
+            AND EXISTS (
+                SELECT 1
+                FROM work_package_controller_station_receipts AS receipt
+                WHERE receipt.task_id = NEW.task_id
+                  AND receipt.package_id = NEW.package_id
+                  AND receipt.plan_version = NEW.plan_version
+                  AND receipt.epoch = NEW.epoch
+                  AND receipt.node_key = NEW.node_key
+                  AND receipt.station_kind = 'integration'
+                  AND receipt.outcome = 'integrated'
+            )
+        ) OR (
+            OLD.node_state = 'ready'
+            AND NEW.node_state IN ('certified', 'rejected')
+            AND EXISTS (
+                SELECT 1
+                FROM work_package_controller_station_receipts AS receipt
+                WHERE receipt.task_id = NEW.task_id
+                  AND receipt.package_id = NEW.package_id
+                  AND receipt.plan_version = NEW.plan_version
+                  AND receipt.epoch = NEW.epoch
+                  AND receipt.node_key = NEW.node_key
+                  AND receipt.station_kind = 'certification'
+                  AND receipt.outcome = NEW.node_state
+            )
+        )
+    ) THEN
+        RAISE EXCEPTION 'invalid work package node state transition';
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION trg_work_package_task_link_candidate_state()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.node_state IN (
+        'candidate_submitted', 'candidate_accepted', 'integrated',
+        'certified', 'rejected'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM work_package_node_candidates AS candidate
+        WHERE candidate.task_id = NEW.task_id
+          AND candidate.package_id = NEW.package_id
+          AND candidate.plan_version = NEW.plan_version
+          AND candidate.epoch = NEW.epoch
+          AND candidate.node_key = NEW.node_key
+          AND (
+              (NEW.node_state = 'candidate_submitted'
+               AND candidate.status = 'submitted') OR
+              (NEW.node_state IN ('candidate_accepted', 'integrated', 'certified')
+               AND candidate.status = 'accepted') OR
+              (NEW.node_state = 'rejected' AND candidate.status = 'rejected')
+          )
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM work_package_controller_station_receipts AS receipt
+        WHERE receipt.task_id = NEW.task_id
+          AND receipt.package_id = NEW.package_id
+          AND receipt.plan_version = NEW.plan_version
+          AND receipt.epoch = NEW.epoch
+          AND receipt.node_key = NEW.node_key
+          AND receipt.outcome = NEW.node_state
+    ) THEN
+        RAISE EXCEPTION 'node terminal state lacks exact provenance';
+    END IF;
+    IF OLD.node_state = 'rejected' AND NEW.node_state = 'executing'
+       AND NOT EXISTS (
+        SELECT 1
+        FROM work_package_assignment_audit AS assignment
+        JOIN tasks AS task ON task.id = NEW.task_id
+        WHERE assignment.package_id = NEW.package_id
+          AND assignment.plan_version = NEW.plan_version
+          AND assignment.epoch = NEW.epoch
+          AND assignment.node_key = NEW.node_key
+          AND assignment.task_id = NEW.task_id
+          AND assignment.attempt_number <= task.max_attempts
+          AND assignment.attempt_number > COALESCE((
+              SELECT MAX(candidate.attempt_number)
+              FROM work_package_node_candidates AS candidate
+              WHERE candidate.task_id = NEW.task_id
+                AND candidate.status = 'rejected'
+          ), 0)
+    ) THEN
+        RAISE EXCEPTION 'rework requires a newer bounded assignment';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TABLE IF NOT EXISTS work_package_landing_streams (
+    repository_id TEXT NOT NULL
+        REFERENCES project_repositories(id) ON DELETE RESTRICT,
+    target_ref TEXT NOT NULL CHECK (target_ref LIKE 'refs/heads/%'),
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    lease_fence INTEGER NOT NULL DEFAULT 0 CHECK (lease_fence >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (repository_id, target_ref),
+    CHECK (
+        (lease_owner IS NULL AND lease_expires_at IS NULL) OR
+        (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL
+         AND lease_fence >= 1)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_landing_stream_lease
+    ON work_package_landing_streams (lease_expires_at, repository_id);
+
+CREATE OR REPLACE FUNCTION trg_work_package_landing_stream_invariants()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'landing streams are append-only';
+    END IF;
+    IF ROW(NEW.repository_id, NEW.target_ref, NEW.created_at)
+       IS DISTINCT FROM ROW(OLD.repository_id, OLD.target_ref, OLD.created_at) THEN
+        RAISE EXCEPTION 'landing stream identity is immutable';
+    END IF;
+    IF NEW.lease_fence < OLD.lease_fence OR (
+        NEW.lease_owner IS NOT NULL
+        AND NEW.lease_owner IS DISTINCT FROM OLD.lease_owner
+        AND NEW.lease_fence <= OLD.lease_fence
+    ) THEN
+        RAISE EXCEPTION 'landing stream owner requires a monotonic fence';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_landing_stream_invariants
+    ON work_package_landing_streams;
+CREATE TRIGGER trg_work_package_landing_stream_invariants
+    BEFORE UPDATE OR DELETE ON work_package_landing_streams
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_landing_stream_invariants();
+
+CREATE TABLE IF NOT EXISTS work_package_landing_intents (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL UNIQUE,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    repository_id TEXT NOT NULL,
+    target_ref TEXT NOT NULL,
+    candidate_sha TEXT NOT NULL CHECK (candidate_sha ~ '^[0-9a-f]{40}$'),
+    candidate_ref TEXT NOT NULL CHECK (candidate_ref LIKE 'refs/mac/%'),
+    assembly_base_sha TEXT NOT NULL CHECK (assembly_base_sha ~ '^[0-9a-f]{40}$'),
+    landing_base_sha TEXT NOT NULL CHECK (landing_base_sha ~ '^[0-9a-f]{40}$'),
+    certification_id TEXT NOT NULL UNIQUE,
+    stream_fence INTEGER NOT NULL CHECK (stream_fence >= 1),
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (
+        id, repository_id, target_ref, candidate_sha, landing_base_sha
+    ),
+    UNIQUE (
+        id, batch_id, repository_id, target_ref, candidate_sha
+    ),
+    FOREIGN KEY (repository_id, target_ref)
+        REFERENCES work_package_landing_streams(repository_id, target_ref)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (
+        batch_id, package_id, plan_version, epoch, candidate_sha,
+        assembly_base_sha, landing_base_sha, target_ref
+    ) REFERENCES work_package_integration_batches (
+        id, package_id, plan_version, epoch, candidate_sha,
+        assembly_base_sha, landing_base_sha, target_ref
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (
+        certification_id, batch_id, package_id, plan_version, epoch,
+        candidate_sha, assembly_base_sha, landing_base_sha, target_ref
+    ) REFERENCES work_package_certifications (
+        id, batch_id, package_id, plan_version, epoch, candidate_sha,
+        assembly_base_sha, landing_base_sha, target_ref
+    ) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_landing_intents_target
+    ON work_package_landing_intents (repository_id, target_ref, created_at, id);
+
+CREATE OR REPLACE FUNCTION trg_work_package_landing_intent_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'landing intents are immutable';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'landing intents are append-only';
+    END IF;
+    PERFORM 1 FROM work_package_integration_batches AS batch
+    JOIN work_package_certifications AS certification
+      ON certification.id = NEW.certification_id
+     AND certification.batch_id = batch.id
+    JOIN work_package_landing_streams AS stream
+      ON stream.repository_id = NEW.repository_id
+     AND stream.target_ref = NEW.target_ref
+    WHERE batch.id = NEW.batch_id
+      AND batch.package_id = NEW.package_id
+      AND batch.plan_version = NEW.plan_version
+      AND batch.epoch = NEW.epoch
+      AND batch.repository_id = NEW.repository_id
+      AND batch.target_ref = NEW.target_ref
+      AND batch.candidate_sha = NEW.candidate_sha
+      AND batch.candidate_ref = NEW.candidate_ref
+      AND batch.assembly_base_sha = NEW.assembly_base_sha
+      AND batch.landing_base_sha = NEW.landing_base_sha
+      AND batch.state = 'certified'
+      AND certification.status = 'passed'
+      AND stream.lease_owner = NEW.created_by
+      AND stream.lease_fence = NEW.stream_fence
+      AND stream.lease_expires_at > NEW.created_at
+    FOR UPDATE OF batch, certification, stream;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'landing intent requires an exact certified candidate and current stream fence';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_landing_intent_lifecycle
+    ON work_package_landing_intents;
+CREATE TRIGGER trg_work_package_landing_intent_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_landing_intents
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_landing_intent_lifecycle();
+
+CREATE TABLE IF NOT EXISTS work_package_landing_attempts (
+    id TEXT PRIMARY KEY,
+    intent_id TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    repository_id TEXT NOT NULL,
+    target_ref TEXT NOT NULL,
+    candidate_sha TEXT NOT NULL CHECK (candidate_sha ~ '^[0-9a-f]{40}$'),
+    expected_remote_sha TEXT NOT NULL
+        CHECK (expected_remote_sha ~ '^[0-9a-f]{40}$'),
+    stream_fence INTEGER NOT NULL CHECK (stream_fence >= 1),
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (intent_id, attempt_number),
+    UNIQUE (
+        id, intent_id, repository_id, target_ref, candidate_sha, stream_fence
+    ),
+    FOREIGN KEY (repository_id, target_ref)
+        REFERENCES work_package_landing_streams(repository_id, target_ref)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (
+        intent_id, repository_id, target_ref, candidate_sha, expected_remote_sha
+    ) REFERENCES work_package_landing_intents (
+        id, repository_id, target_ref, candidate_sha, landing_base_sha
+    ) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_landing_attempts_intent
+    ON work_package_landing_attempts (intent_id, attempt_number, created_at);
+
+CREATE OR REPLACE FUNCTION trg_work_package_landing_attempt_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'landing attempts are immutable';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'landing attempts are append-only';
+    END IF;
+    PERFORM 1 FROM work_package_landing_streams AS stream
+    WHERE stream.repository_id = NEW.repository_id
+      AND stream.target_ref = NEW.target_ref
+      AND stream.lease_owner = NEW.created_by
+      AND stream.lease_fence = NEW.stream_fence
+      AND stream.lease_expires_at > NEW.created_at
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'landing attempt requires the current stream fence';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_landing_attempt_lifecycle
+    ON work_package_landing_attempts;
+CREATE TRIGGER trg_work_package_landing_attempt_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_landing_attempts
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_landing_attempt_lifecycle();
+
+CREATE TABLE IF NOT EXISTS work_package_landing_receipts (
+    id TEXT PRIMARY KEY,
+    intent_id TEXT NOT NULL UNIQUE,
+    attempt_id TEXT NOT NULL UNIQUE,
+    batch_id TEXT NOT NULL UNIQUE,
+    repository_id TEXT NOT NULL,
+    target_ref TEXT NOT NULL,
+    candidate_sha TEXT NOT NULL CHECK (candidate_sha ~ '^[0-9a-f]{40}$'),
+    observed_sha TEXT NOT NULL CHECK (observed_sha ~ '^[0-9a-f]{40}$'),
+    recovered INTEGER NOT NULL CHECK (recovered IN (0, 1)),
+    recovery TEXT NOT NULL DEFAULT '',
+    attempt_stream_fence INTEGER NOT NULL CHECK (attempt_stream_fence >= 1),
+    recording_stream_fence INTEGER NOT NULL CHECK (recording_stream_fence >= 1),
+    recorded_by TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    receipt_digest TEXT NOT NULL UNIQUE CHECK (
+        receipt_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    CHECK (
+        (recovered = 0 AND recovery = '' AND observed_sha = candidate_sha)
+        OR (recovered = 1 AND recovery <> '')
+    ),
+    FOREIGN KEY (repository_id, target_ref)
+        REFERENCES work_package_landing_streams(repository_id, target_ref)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (
+        intent_id, batch_id, repository_id, target_ref, candidate_sha
+    ) REFERENCES work_package_landing_intents (
+        id, batch_id, repository_id, target_ref, candidate_sha
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (
+        attempt_id, intent_id, repository_id, target_ref,
+        candidate_sha, attempt_stream_fence
+    ) REFERENCES work_package_landing_attempts (
+        id, intent_id, repository_id, target_ref, candidate_sha, stream_fence
+    ) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_landing_receipts_target
+    ON work_package_landing_receipts (repository_id, target_ref, recorded_at, id);
+
+CREATE OR REPLACE FUNCTION trg_work_package_landing_receipt_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'landing receipts are immutable';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'landing receipts are append-only';
+    END IF;
+    PERFORM 1 FROM work_package_integration_batches AS batch
+    JOIN work_package_landing_streams AS stream
+      ON stream.repository_id = NEW.repository_id
+     AND stream.target_ref = NEW.target_ref
+    WHERE batch.id = NEW.batch_id
+      AND batch.repository_id = NEW.repository_id
+      AND batch.target_ref = NEW.target_ref
+      AND batch.candidate_sha = NEW.candidate_sha
+      AND batch.state = 'certified'
+      AND stream.lease_owner = NEW.recorded_by
+      AND stream.lease_fence = NEW.recording_stream_fence
+      AND stream.lease_expires_at > NEW.recorded_at
+    FOR UPDATE OF batch, stream;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'landing receipt requires a certified batch and current stream fence';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_landing_receipt_lifecycle
+    ON work_package_landing_receipts;
+CREATE TRIGGER trg_work_package_landing_receipt_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_landing_receipts
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_landing_receipt_lifecycle();
+
+-- Atomic product-completion receipt.  The landing receipt proves the Git
+-- side effect; this separate append-only record proves the controller also
+-- released bounded product WIP and closed the exact current graph.
+CREATE TABLE IF NOT EXISTS work_package_publication_finalizations (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL UNIQUE,
+    landing_receipt_id TEXT NOT NULL UNIQUE
+        REFERENCES work_package_landing_receipts(id) ON DELETE RESTRICT,
+    package_id TEXT NOT NULL,
+    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+    epoch INTEGER NOT NULL CHECK (epoch >= 1),
+    repository_id TEXT NOT NULL
+        REFERENCES project_repositories(id) ON DELETE RESTRICT,
+    integration_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT,
+    certification_task_id TEXT REFERENCES tasks(id) ON DELETE RESTRICT,
+    certification_id TEXT NOT NULL
+        REFERENCES work_package_certifications(id) ON DELETE RESTRICT,
+    candidate_sha TEXT NOT NULL CHECK (candidate_sha ~ '^[0-9a-f]{40}$'),
+    candidate_ref TEXT NOT NULL CHECK (candidate_ref LIKE 'refs/mac/%'),
+    assembly_base_sha TEXT NOT NULL,
+    landing_base_sha TEXT NOT NULL,
+    target_ref TEXT NOT NULL CHECK (target_ref LIKE 'refs/heads/%'),
+    observed_sha TEXT NOT NULL CHECK (observed_sha ~ '^[0-9a-f]{40}$'),
+    landing_receipt_digest TEXT NOT NULL CHECK (
+        landing_receipt_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    released_wip_ids TEXT NOT NULL CHECK (
+        jsonb_typeof(released_wip_ids::jsonb) = 'array'
+    ),
+    controller_station_receipt_ids TEXT NOT NULL CHECK (
+        jsonb_typeof(controller_station_receipt_ids::jsonb) = 'array'
+    ),
+    finalization_digest TEXT NOT NULL UNIQUE CHECK (
+        finalization_digest ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    finalized_by TEXT NOT NULL,
+    finalized_at TEXT NOT NULL,
+    FOREIGN KEY (package_id, epoch, plan_version)
+        REFERENCES work_package_epochs(package_id, epoch, plan_version)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (
+        batch_id, package_id, plan_version, epoch, candidate_sha,
+        assembly_base_sha, landing_base_sha, target_ref
+    ) REFERENCES work_package_integration_batches (
+        id, package_id, plan_version, epoch, candidate_sha,
+        assembly_base_sha, landing_base_sha, target_ref
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (
+        certification_id, batch_id, package_id, plan_version, epoch,
+        candidate_sha, assembly_base_sha, landing_base_sha, target_ref
+    ) REFERENCES work_package_certifications (
+        id, batch_id, package_id, plan_version, epoch,
+        candidate_sha, assembly_base_sha, landing_base_sha, target_ref
+    ) ON DELETE RESTRICT,
+    FOREIGN KEY (batch_id, integration_task_id)
+        REFERENCES work_package_integration_batches(id, integration_task_id)
+        ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_publication_finalizations_package
+    ON work_package_publication_finalizations (
+        package_id, epoch, finalized_at, id
+    );
+
+CREATE OR REPLACE FUNCTION trg_work_package_publication_finalization_lifecycle()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        RAISE EXCEPTION 'publication finalizations are immutable';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'publication finalizations are append-only';
+    END IF;
+
+    PERFORM 1
+    FROM work_package_integration_batches AS batch
+    JOIN work_package_landing_receipts AS receipt
+      ON receipt.id = NEW.landing_receipt_id
+     AND receipt.batch_id = batch.id
+    JOIN work_package_landing_intents AS intent
+      ON intent.id = receipt.intent_id
+     AND intent.batch_id = batch.id
+    JOIN work_package_certifications AS certification
+      ON certification.id = NEW.certification_id
+     AND certification.id = intent.certification_id
+     AND certification.batch_id = batch.id
+    JOIN work_packages AS package ON package.id = batch.package_id
+    JOIN work_package_epochs AS epoch
+      ON epoch.package_id = batch.package_id
+     AND epoch.plan_version = batch.plan_version
+     AND epoch.epoch = batch.epoch
+    WHERE batch.id = NEW.batch_id
+      AND batch.package_id = NEW.package_id
+      AND batch.plan_version = NEW.plan_version
+      AND batch.epoch = NEW.epoch
+      AND batch.repository_id = NEW.repository_id
+      AND batch.integration_task_id = NEW.integration_task_id
+      AND batch.candidate_sha = NEW.candidate_sha
+      AND batch.candidate_ref = NEW.candidate_ref
+      AND batch.assembly_base_sha = NEW.assembly_base_sha
+      AND batch.landing_base_sha = NEW.landing_base_sha
+      AND batch.target_ref = NEW.target_ref
+      AND batch.state = 'published'
+      AND receipt.repository_id = NEW.repository_id
+      AND receipt.target_ref = NEW.target_ref
+      AND receipt.candidate_sha = NEW.candidate_sha
+      AND receipt.observed_sha = NEW.observed_sha
+      AND receipt.receipt_digest = NEW.landing_receipt_digest
+      AND certification.package_id = NEW.package_id
+      AND certification.plan_version = NEW.plan_version
+      AND certification.epoch = NEW.epoch
+      AND certification.candidate_sha = NEW.candidate_sha
+      AND certification.assembly_base_sha = NEW.assembly_base_sha
+      AND certification.landing_base_sha = NEW.landing_base_sha
+      AND certification.target_ref = NEW.target_ref
+      AND certification.status IN ('passed', 'published')
+      AND package.current_plan_version = NEW.plan_version
+      AND package.current_epoch = NEW.epoch
+      AND package.state = 'completed'
+      AND epoch.status = 'completed'
+    FOR UPDATE OF batch, package, epoch;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'publication finalization identity is not exact';
+    END IF;
+
+    IF jsonb_array_length(NEW.released_wip_ids::jsonb) = 0 OR
+       jsonb_array_length(NEW.released_wip_ids::jsonb) <> (
+           SELECT COUNT(DISTINCT item.value)
+           FROM jsonb_array_elements_text(
+               NEW.released_wip_ids::jsonb
+           ) AS item(value)
+       ) OR EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(NEW.released_wip_ids::jsonb) AS item(value)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM work_package_wip_tokens AS token
+            WHERE token.id = item.value
+              AND token.package_id = NEW.package_id
+              AND token.plan_version = NEW.plan_version
+              AND token.epoch = NEW.epoch
+              AND token.stage = 'integration'
+              AND token.state = 'released'
+              AND token.reservation_key = NEW.batch_id
+              AND token.predecessor_token_id IS NOT NULL
+              AND token.release_reason =
+                  'publication_finalized:' || NEW.landing_receipt_id
+        )
+    ) OR EXISTS (
+        SELECT 1 FROM work_package_wip_tokens AS token
+        WHERE token.package_id = NEW.package_id
+          AND token.plan_version = NEW.plan_version
+          AND token.epoch = NEW.epoch
+          AND token.stage = 'integration'
+          AND token.reservation_key = NEW.batch_id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(NEW.released_wip_ids::jsonb) AS item(value)
+              WHERE item.value = token.id
+          )
+    ) OR EXISTS (
+        SELECT 1 FROM work_package_wip_tokens AS token
+        WHERE token.package_id = NEW.package_id
+          AND token.plan_version = NEW.plan_version
+          AND token.epoch = NEW.epoch
+          AND token.state = 'held'
+    ) THEN
+        RAISE EXCEPTION 'publication finalization WIP is incomplete';
+    END IF;
+
+    IF jsonb_array_length(NEW.controller_station_receipt_ids::jsonb) = 0 OR
+       jsonb_array_length(NEW.controller_station_receipt_ids::jsonb) <> (
+           SELECT COUNT(DISTINCT item.value)
+           FROM jsonb_array_elements_text(
+               NEW.controller_station_receipt_ids::jsonb
+           ) AS item(value)
+       ) OR EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(
+            NEW.controller_station_receipt_ids::jsonb
+        ) AS item(value)
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM work_package_controller_station_receipts AS receipt
+            WHERE receipt.id = item.value
+              AND receipt.batch_id = NEW.batch_id
+              AND receipt.package_id = NEW.package_id
+              AND receipt.plan_version = NEW.plan_version
+              AND receipt.epoch = NEW.epoch
+              AND (
+                  (receipt.station_kind = 'integration'
+                   AND receipt.outcome = 'integrated'
+                   AND receipt.task_id = NEW.integration_task_id) OR
+                  (receipt.station_kind = 'certification'
+                   AND receipt.outcome = 'certified'
+                   AND receipt.task_id = NEW.certification_task_id
+                   AND receipt.certification_id = NEW.certification_id)
+              )
+        )
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM work_package_controller_station_receipts AS receipt
+        JOIN tasks AS task ON task.id = receipt.task_id
+        JOIN work_package_task_links AS link ON link.task_id = receipt.task_id
+        WHERE receipt.batch_id = NEW.batch_id
+          AND receipt.package_id = NEW.package_id
+          AND receipt.plan_version = NEW.plan_version
+          AND receipt.epoch = NEW.epoch
+          AND receipt.station_kind = 'integration'
+          AND receipt.outcome = 'integrated'
+          AND receipt.task_id = NEW.integration_task_id
+          AND task.state = 'completed'
+          AND link.node_state = 'integrated'
+          AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(
+                  NEW.controller_station_receipt_ids::jsonb
+              ) AS item(value)
+              WHERE item.value = receipt.id
+          )
+    ) OR (
+        NEW.certification_task_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1
+            FROM work_package_controller_station_receipts AS receipt
+            JOIN tasks AS task ON task.id = receipt.task_id
+            JOIN work_package_task_links AS link ON link.task_id = receipt.task_id
+            WHERE receipt.batch_id = NEW.batch_id
+              AND receipt.package_id = NEW.package_id
+              AND receipt.plan_version = NEW.plan_version
+              AND receipt.epoch = NEW.epoch
+              AND receipt.station_kind = 'certification'
+              AND receipt.outcome = 'certified'
+              AND receipt.task_id = NEW.certification_task_id
+              AND receipt.certification_id = NEW.certification_id
+              AND task.state = 'completed'
+              AND link.node_state = 'certified'
+              AND EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(
+                      NEW.controller_station_receipt_ids::jsonb
+                  ) AS item(value)
+                  WHERE item.value = receipt.id
+              )
+        )
+    ) OR (
+        NEW.certification_task_id IS NULL AND EXISTS (
+            SELECT 1
+            FROM work_package_controller_station_receipts AS receipt
+            WHERE receipt.batch_id = NEW.batch_id
+              AND receipt.station_kind = 'certification'
+              AND receipt.outcome = 'certified'
+        )
+    ) OR EXISTS (
+        SELECT 1
+        FROM work_package_controller_station_receipts AS receipt
+        WHERE receipt.batch_id = NEW.batch_id
+          AND receipt.outcome IN ('integrated', 'certified')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(
+                  NEW.controller_station_receipt_ids::jsonb
+              ) AS item(value)
+              WHERE item.value = receipt.id
+          )
+    ) THEN
+        RAISE EXCEPTION 'publication finalization station provenance is incomplete';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_publication_finalization_lifecycle
+    ON work_package_publication_finalizations;
+CREATE TRIGGER trg_work_package_publication_finalization_lifecycle
+    BEFORE INSERT OR UPDATE OR DELETE ON work_package_publication_finalizations
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_publication_finalization_lifecycle();
+
+CREATE TABLE IF NOT EXISTS work_package_ref_retirement_intents (
+    id TEXT PRIMARY KEY,
+    repository_id TEXT NOT NULL
+        REFERENCES project_repositories(id) ON DELETE RESTRICT,
+    ref_kind TEXT NOT NULL CHECK (ref_kind IN ('attempt', 'candidate')),
+    ref TEXT NOT NULL,
+    expected_sha TEXT NOT NULL CHECK (expected_sha ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'),
+    task_id TEXT REFERENCES tasks(id) ON DELETE RESTRICT,
+    batch_id TEXT REFERENCES work_package_integration_batches(id) ON DELETE RESTRICT,
+    terminal_state TEXT NOT NULL CHECK (terminal_state <> ''),
+    terminal_at TIMESTAMPTZ NOT NULL,
+    eligible_after TIMESTAMPTZ NOT NULL,
+    created_by TEXT NOT NULL CHECK (created_by <> ''),
+    created_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (repository_id, ref, expected_sha),
+    CHECK (
+        (ref_kind = 'attempt' AND ref LIKE 'refs/mac/attempts/%'
+         AND task_id IS NOT NULL AND batch_id IS NULL) OR
+        (ref_kind = 'candidate'
+         AND (ref LIKE 'refs/mac/integration/%'
+              OR ref LIKE 'refs/mac/candidates/%')
+         AND task_id IS NULL AND batch_id IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_ref_retirement_due
+    ON work_package_ref_retirement_intents (repository_id, eligible_after, ref);
+
+CREATE TABLE IF NOT EXISTS work_package_ref_retirement_attempts (
+    id TEXT PRIMARY KEY,
+    intent_id TEXT NOT NULL REFERENCES work_package_ref_retirement_intents(id)
+        ON DELETE RESTRICT,
+    outcome TEXT NOT NULL CHECK (outcome IN ('failed', 'deleted', 'missing')),
+    error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL,
+    CHECK ((outcome = 'failed' AND error <> '') OR
+           (outcome <> 'failed' AND error = ''))
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_ref_retirement_attempts_intent
+    ON work_package_ref_retirement_attempts (intent_id, created_at);
+
+CREATE TABLE IF NOT EXISTS work_package_ref_retirement_receipts (
+    id TEXT PRIMARY KEY,
+    intent_id TEXT NOT NULL UNIQUE
+        REFERENCES work_package_ref_retirement_intents(id) ON DELETE RESTRICT,
+    outcome TEXT NOT NULL CHECK (outcome IN ('deleted', 'missing')),
+    completed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE OR REPLACE FUNCTION trg_work_package_ref_retirement_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'work-package ref retirement records are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_ref_retirement_intent_append_only
+    ON work_package_ref_retirement_intents;
+CREATE TRIGGER trg_work_package_ref_retirement_intent_append_only
+    BEFORE UPDATE OR DELETE ON work_package_ref_retirement_intents
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_ref_retirement_append_only();
+DROP TRIGGER IF EXISTS trg_work_package_ref_retirement_attempt_append_only
+    ON work_package_ref_retirement_attempts;
+CREATE TRIGGER trg_work_package_ref_retirement_attempt_append_only
+    BEFORE UPDATE OR DELETE ON work_package_ref_retirement_attempts
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_ref_retirement_append_only();
+DROP TRIGGER IF EXISTS trg_work_package_ref_retirement_receipt_append_only
+    ON work_package_ref_retirement_receipts;
+CREATE TRIGGER trg_work_package_ref_retirement_receipt_append_only
+    BEFORE UPDATE OR DELETE ON work_package_ref_retirement_receipts
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_ref_retirement_append_only();
+
+CREATE TABLE IF NOT EXISTS work_package_history (
+    id TEXT PRIMARY KEY,
+    package_id TEXT NOT NULL REFERENCES work_packages(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL CHECK (seq >= 1),
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    plan_version INTEGER,
+    epoch INTEGER,
+    detail TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    UNIQUE (package_id, seq),
+    CHECK (
+        (plan_version IS NULL AND epoch IS NULL) OR
+        (plan_version IS NOT NULL AND epoch IS NOT NULL)
+    ),
+    FOREIGN KEY (package_id, epoch, plan_version)
+        REFERENCES work_package_epochs(package_id, epoch, plan_version)
+        ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_history_package
+    ON work_package_history (package_id, seq);
+
+CREATE OR REPLACE FUNCTION trg_work_package_history_immutable()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'work package history is append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_history_immutable ON work_package_history;
+CREATE TRIGGER trg_work_package_history_immutable
+    BEFORE UPDATE OR DELETE ON work_package_history
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_history_immutable();
 
 CREATE TABLE IF NOT EXISTS agent_provisioning_requests (
     id TEXT PRIMARY KEY,

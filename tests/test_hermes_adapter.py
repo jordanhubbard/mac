@@ -562,12 +562,16 @@ def test_hermes_adapter_transition_operation_updates_mac_task_state():
         registration["hermes_instance"]["id"],
         ConversationTaskInput(title="Pause task", summary="Mark this blocked."),
     )
+    worker = register_agent(cp, "hermes", [])
+    _, lease = cp.claim_task(task["id"], worker.id)
+    cp.start_task(task["id"], worker.id, lease_id=lease.id)
 
     blocked = adapter.transition_task(
         task["id"],
         TaskState.BLOCKED.value,
-        "hermes",
+        worker.id,
         {"reason": "waiting for user"},
+        lease_id=lease.id,
     )
 
     assert blocked["state"] == TaskState.BLOCKED.value

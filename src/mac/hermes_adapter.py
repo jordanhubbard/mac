@@ -456,8 +456,14 @@ class HermesMacAdapter:
         query = _query((("agent_id", agent_id), ("lease_seconds", int(lease_seconds))))
         return self.client.post("/tasks/%s/claim?%s" % (_path_part(task_id), query), {})
 
-    def start_task(self, task_id: str, agent_id: str) -> JsonDict:
-        query = _query((("agent_id", agent_id),))
+    def start_task(
+        self,
+        task_id: str,
+        agent_id: str,
+        *,
+        lease_id: Optional[str] = None,
+    ) -> JsonDict:
+        query = _query((("agent_id", agent_id), ("lease_id", lease_id)))
         return self.client.post("/tasks/%s/start?%s" % (_path_part(task_id), query), {})
 
     def transition_task(
@@ -466,14 +472,19 @@ class HermesMacAdapter:
         target_state: str,
         actor: str,
         detail: Optional[JsonDict] = None,
+        *,
+        lease_id: Optional[str] = None,
     ) -> JsonDict:
+        body: JsonDict = {
+            "target_state": target_state,
+            "actor": actor,
+            "detail": _sanitize_json_object(detail or {}),
+        }
+        if lease_id:
+            body["lease_id"] = lease_id
         return self.client.post(
             "/tasks/%s/transition" % _path_part(task_id),
-            {
-                "target_state": target_state,
-                "actor": actor,
-                "detail": _sanitize_json_object(detail or {}),
-            },
+            body,
         )
 
     def add_evidence(
@@ -485,18 +496,22 @@ class HermesMacAdapter:
         created_by: str,
         *,
         checksum: Optional[str] = None,
+        lease_id: Optional[str] = None,
         metadata: Optional[JsonDict] = None,
     ) -> JsonDict:
+        body: JsonDict = {
+            "kind": kind,
+            "uri": uri,
+            "summary": summary,
+            "created_by": created_by,
+            "checksum": checksum,
+            "metadata": _sanitize_json_object(metadata or {}),
+        }
+        if lease_id:
+            body["lease_id"] = lease_id
         return self.client.post(
             "/tasks/%s/evidence" % _path_part(task_id),
-            {
-                "kind": kind,
-                "uri": uri,
-                "summary": summary,
-                "created_by": created_by,
-                "checksum": checksum,
-                "metadata": _sanitize_json_object(metadata or {}),
-            },
+            body,
         )
 
     def submit_for_review(
@@ -504,11 +519,13 @@ class HermesMacAdapter:
         task_id: str,
         agent_id: str,
         *,
+        lease_id: Optional[str] = None,
         advance_default_workflow: bool = False,
     ) -> JsonDict:
         query = _query(
             (
                 ("agent_id", agent_id),
+                ("lease_id", lease_id),
                 ("advance_default_workflow", advance_default_workflow),
             )
         )
@@ -1049,7 +1066,13 @@ def _cmd_claim(args: argparse.Namespace) -> None:
 
 
 def _cmd_start(args: argparse.Namespace) -> None:
-    _print(_adapter(args).start_task(args.task_id, args.agent_id))
+    _print(
+        _adapter(args).start_task(
+            args.task_id,
+            args.agent_id,
+            lease_id=args.lease_id,
+        )
+    )
 
 
 def _cmd_transition(args: argparse.Namespace) -> None:
@@ -1059,6 +1082,7 @@ def _cmd_transition(args: argparse.Namespace) -> None:
             args.target_state,
             args.actor,
             _json_arg(args.detail, {}),
+            lease_id=args.lease_id,
         )
     )
 
@@ -1093,6 +1117,7 @@ def _cmd_evidence(args: argparse.Namespace) -> None:
             args.summary,
             args.created_by,
             checksum=args.checksum,
+            lease_id=args.lease_id,
             metadata=_json_arg(args.metadata, {}),
         )
     )
@@ -1103,6 +1128,7 @@ def _cmd_submit_review(args: argparse.Namespace) -> None:
         _adapter(args).submit_for_review(
             args.task_id,
             args.agent_id,
+            lease_id=args.lease_id,
             advance_default_workflow=args.advance_default_workflow,
         )
     )
@@ -1401,6 +1427,7 @@ def build_parser() -> argparse.ArgumentParser:
     start = sub.add_parser("start", help="start a claimed MAC task")
     start.add_argument("task_id")
     start.add_argument("agent_id")
+    start.add_argument("--lease-id")
     start.set_defaults(func=_cmd_start)
 
     transition = sub.add_parser("transition", help="transition a MAC task")
@@ -1408,6 +1435,7 @@ def build_parser() -> argparse.ArgumentParser:
     transition.add_argument("target_state")
     transition.add_argument("--actor", required=True)
     transition.add_argument("--detail", default="{}")
+    transition.add_argument("--lease-id")
     transition.set_defaults(func=_cmd_transition)
 
     add_child_task = sub.add_parser("add-child-task", help="create a child task that blocks its parent")
@@ -1430,12 +1458,14 @@ def build_parser() -> argparse.ArgumentParser:
     evidence.add_argument("--summary", required=True)
     evidence.add_argument("--created-by", required=True)
     evidence.add_argument("--checksum")
+    evidence.add_argument("--lease-id")
     evidence.add_argument("--metadata", default="{}")
     evidence.set_defaults(func=_cmd_evidence)
 
     submit_review = sub.add_parser("submit-review", help="submit a task for review")
     submit_review.add_argument("task_id")
     submit_review.add_argument("agent_id")
+    submit_review.add_argument("--lease-id")
     submit_review.add_argument("--advance-default-workflow", action="store_true")
     submit_review.set_defaults(func=_cmd_submit_review)
 

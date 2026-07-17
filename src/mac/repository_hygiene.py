@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
+from mac.gitops import validate_git_ref
 from mac.models import MACError, ValidationError
 
 
@@ -565,6 +566,92 @@ def list_managed_remote_refs(
             # lookalikes; cleanup only ever acts on exact managed refs.
             continue
     return sorted(refs, key=lambda item: (item.task_id, item.branch))
+
+
+def retire_protected_remote_ref_exact(
+    repo: Path,
+    remote: str,
+    ref: str,
+    expected_sha: str,
+    *,
+    execute: bool,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = _run,
+) -> str:
+    """Inspect or delete one controller-recorded protected ref by exact SHA.
+
+    Ownership is deliberately outside this helper: callers must derive ``ref``
+    and ``expected_sha`` from durable controller records.  Prefix recognition
+    alone never authorizes deletion.
+    """
+
+    root = Path(repo).expanduser().resolve()
+    if not _REMOTE_NAME_RE.fullmatch(str(remote or "")):
+        raise RepositoryHygieneError("invalid git remote name")
+    try:
+        validate_git_ref(ref)
+    except ValueError as exc:
+        raise RepositoryHygieneError("invalid protected work-package ref") from exc
+    if not ref.startswith(
+        ("refs/mac/attempts/", "refs/mac/integration/", "refs/mac/candidates/")
+    ):
+        raise RepositoryHygieneError("ref is outside protected work-package namespaces")
+    if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", expected_sha):
+        raise RepositoryHygieneError("invalid expected protected-ref SHA")
+
+    def observed() -> Optional[str]:
+        result = runner(
+            root,
+            ["git", "ls-remote", remote, ref],
+            timeout=60,
+        )
+        if result.returncode != 0:
+            raise RepositoryHygieneError(
+                "could not inspect protected remote ref: %s"
+                % _redact(result.stderr or result.stdout or "git ls-remote failed")
+            )
+        values = {
+            fields[0]
+            for line in result.stdout.splitlines()
+            if len(fields := line.strip().split()) == 2 and fields[1] == ref
+        }
+        if not values:
+            return None
+        if len(values) != 1 or not all(
+            re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", value)
+            for value in values
+        ):
+            raise RepositoryHygieneError("protected remote ref resolved ambiguously")
+        return next(iter(values))
+
+    current = observed()
+    if current is None:
+        return "missing"
+    if current != expected_sha:
+        raise RepositoryHygieneError(
+            "protected remote ref changed identity; refusing cleanup"
+        )
+    if not execute:
+        return "eligible"
+    pushed = runner(
+        root,
+        [
+            "git",
+            "push",
+            "--porcelain",
+            "--force-with-lease=%s:%s" % (ref, expected_sha),
+            remote,
+            ":%s" % ref,
+        ],
+        timeout=120,
+    )
+    if pushed.returncode != 0:
+        raise RepositoryHygieneError(
+            "protected remote ref cleanup failed: %s"
+            % _redact(pushed.stderr or pushed.stdout or "git push failed")
+        )
+    if observed() is not None:
+        raise RepositoryHygieneError("protected remote ref deletion read-back failed")
+    return "deleted"
 
 
 def _plain(value: Any) -> Any:

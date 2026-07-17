@@ -186,8 +186,8 @@ def run_c26_project_inception_proof(
     for key in fanout_keys:
         task = implementation_tasks[key]
         worker = agents[_task_agent_key(key)]
-        claimed, _lease = cp.claim_task(task.id, worker.id)
-        started = cp.start_task(claimed.id, worker.id)
+        claimed, lease = cp.claim_task(task.id, worker.id)
+        started = cp.start_task(claimed.id, worker.id, lease_id=lease.id)
         running_fanout.append(
             {
                 "task_id": started.id,
@@ -524,7 +524,7 @@ def _complete_task(
     }:
         task = cp.claim_task(task.id, worker.id)[0]
     if task.state == TaskState.CLAIMED.value:
-        task = cp.start_task(task.id, worker.id)
+        task = cp.start_task(task.id, worker.id, lease_id=task.lease_id)
     return _finish_running_task(
         cp,
         task,
@@ -565,9 +565,10 @@ def _finish_running_task(
         "artifact://c26/%s" % task.id,
         summary,
         worker.id,
+        lease_id=task.lease_id,
         metadata=metadata,
     )
-    cp.submit_for_review(task.id, worker.id)
+    cp.submit_for_review(task.id, worker.id, lease_id=task.lease_id)
     review = cp.request_review(task.id, reviewer.id)
     verdict_id = _submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
     cp.submit_review(

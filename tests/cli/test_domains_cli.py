@@ -480,13 +480,19 @@ def test_task_force_complete(tmp_path):
 
 def test_task_evidence_attach(tmp_path):
     """task evidence attaches an evidence record to a task."""
+    _, agent = _setup_machine_agent(
+        tmp_path, host="evidence-host", agent_name="evidence-worker"
+    )
     rc, task = _run(tmp_path, "task", "create", "evidenced")
+    assert rc == 0
+    rc, claimed = _run(tmp_path, "task", "claim", task["id"], agent["id"])
     assert rc == 0
     rc, ev = _run(tmp_path, "task", "evidence", task["id"],
                   "--kind", "log",
                   "--uri", "file:///tmp/test.log",
                   "--summary", "tests passed",
-                  "--created-by", "ops")
+                  "--created-by", agent["id"],
+                  "--lease-id", claimed["lease_id"])
     assert rc == 0
     assert ev["task_id"] == task["id"]
     assert ev["kind"] == "log"

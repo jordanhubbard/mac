@@ -13,7 +13,7 @@ def test_cancelled_task_defaults_to_preserved_repository_refs():
     cp = ControlPlane.in_memory()
     task = cp.create_task("cancel conservatively")
 
-    cancelled = cp.transition_task(
+    cancelled = cp.close_task(
         task.id,
         TaskState.CANCELLED.value,
         "operator",
@@ -37,7 +37,7 @@ def test_superseded_task_records_replacement_and_cleanup_schedule():
     cp = ControlPlane.in_memory()
     task = cp.create_task("old implementation")
 
-    cancelled = cp.transition_task(
+    cancelled = cp.close_task(
         task.id,
         TaskState.CANCELLED.value,
         "operator",
@@ -69,7 +69,7 @@ def test_invalid_cancellation_contract_is_rejected(detail):
     task = cp.create_task("invalid cancellation")
 
     with pytest.raises(ValidationError):
-        cp.transition_task(
+        cp.close_task(
             task.id,
             TaskState.CANCELLED.value,
             "operator",
@@ -83,7 +83,7 @@ def test_preserved_cancellation_requires_reason():
     task = cp.create_task("missing cancellation reason")
 
     with pytest.raises(ValidationError, match="requires a reason"):
-        cp.transition_task(
+        cp.close_task(
             task.id,
             TaskState.CANCELLED.value,
             "operator",
@@ -96,7 +96,7 @@ def test_preserved_cancellation_requires_reason():
 def test_reopening_cancelled_task_invalidates_cleanup_schedule():
     cp = ControlPlane.in_memory()
     task = cp.create_task("retry later")
-    cp.transition_task(
+    cp.close_task(
         task.id,
         TaskState.CANCELLED.value,
         "operator",
@@ -119,7 +119,7 @@ def test_reopening_cancelled_task_invalidates_cleanup_schedule():
 def test_cancelled_task_disposition_can_be_backfilled_without_reopening():
     cp = ControlPlane.in_memory()
     task = cp.create_task("legacy cancellation")
-    original = cp.transition_task(
+    original = cp.close_task(
         task.id,
         TaskState.CANCELLED.value,
         "operator",
@@ -127,7 +127,7 @@ def test_cancelled_task_disposition_can_be_backfilled_without_reopening():
     )
     terminal_at = original.metadata["repository_ref_lifecycle"]["terminal_at"]
 
-    updated = cp.transition_task(
+    updated = cp.close_task(
         task.id,
         TaskState.CANCELLED.value,
         "operator",
@@ -155,7 +155,7 @@ def test_failed_task_is_quarantined_not_scheduled():
     cp = ControlPlane.in_memory()
     task = cp.create_task("failed attempt")
 
-    failed = cp.transition_task(
+    failed = cp._transition_task_internal(
         task.id,
         TaskState.FAILED.value,
         "worker",

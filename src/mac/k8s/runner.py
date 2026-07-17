@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
 import threading
 import time
@@ -38,6 +39,32 @@ def _optional_int_env(name: str) -> Optional[int]:
     return value if value > 0 else None
 
 
+def _agent_token_secret_map(raw: str) -> Dict[str, str]:
+    """Parse exact agent-id -> Kubernetes Secret name bindings.
+
+    The map contains references only, never token material. Invalid input is a
+    startup error rather than a silent fallback to the shared legacy token.
+    """
+
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("MAC_RUNNER_AGENT_TOKEN_SECRETS must be a JSON object") from exc
+    if not isinstance(value, dict):
+        raise ValueError("MAC_RUNNER_AGENT_TOKEN_SECRETS must be a JSON object")
+    result: Dict[str, str] = {}
+    for agent_id, secret_name in value.items():
+        agent = str(agent_id or "").strip()
+        secret = str(secret_name or "").strip()
+        if not agent or not secret:
+            raise ValueError("agent token Secret bindings require non-empty ids and names")
+        result[agent] = secret
+    return result
+
+
 @dataclass
 class RunnerConfig:
     mac_url: str
@@ -62,6 +89,10 @@ class RunnerConfig:
     role_attestation_key_secrets: Dict[str, Dict[str, str]] = field(
         default_factory=dict
     )
+    # Exact agent identity -> per-agent Secret created by
+    # mac.worker_credentials. Absence means legacy compatibility mode and is
+    # never sufficient for a work_package_v1 task.
+    agent_token_secrets: Dict[str, str] = field(default_factory=dict)
     reviewer_agent_ids: Dict[str, str] = field(default_factory=dict)
     lease_renew_interval_seconds: float = float(DEFAULT_LEASE_RENEW_INTERVAL_SECONDS)
     job_poll_interval_seconds: float = float(DEFAULT_JOB_POLL_INTERVAL_SECONDS)
@@ -123,6 +154,9 @@ class RunnerConfig:
             role_executors=cfg_file.role_executors(),
             capability_role_aliases=dict(cfg_file.capability_role_aliases),
             role_attestation_key_secrets=cfg_file.role_attestation_key_secrets(),
+            agent_token_secrets=_agent_token_secret_map(
+                os.environ.get("MAC_RUNNER_AGENT_TOKEN_SECRETS", "")
+            ),
             reviewer_agent_ids=cfg_file.reviewer_agent_ids(),
             lease_renew_interval_seconds=float(
                 os.environ.get(
@@ -176,6 +210,25 @@ def _resolve_agent_id_for_role(role: Optional[str], cfg: RunnerConfig) -> str:
         return cfg.role_agent_ids[role]
     return cfg.agent_id
 
+
+def _resolve_execution_agent_id(
+    task: JsonDict, role: Optional[str], cfg: RunnerConfig
+) -> str:
+    """Keep immutable package authority on the exact claiming identity.
+
+    Ordinary tasks retain the historical dispatcher-to-role delegation path.
+    A package task, however, already carries an immutable assignment bound to
+    ``cfg.agent_id`` and its lease.  Moving only the ordinary lease delegate
+    would make the role pod's identity disagree with that assignment.  Treat
+    even a malformed projection as package-linked here so corruption fails in
+    the executor instead of broadening authority through delegation.
+    """
+
+    metadata = task.get("metadata")
+    if isinstance(metadata, dict) and "work_package_assignment" in metadata:
+        return cfg.agent_id
+    return _resolve_agent_id_for_role(role, cfg)
+
 def _resolve_executor_for_role(
     role: Optional[str], cfg: RunnerConfig
 ) -> Optional[str]:
@@ -228,6 +281,7 @@ _OPTIONAL_SECRET_ENV_KEYS = (
 def _build_executor_container_env(
     cfg: RunnerConfig,
     *,
+    credential_agent_id: str,
     base_env: List[JsonDict],
     executor_cmd: Optional[str],
     attestation_secret: Optional[Dict[str, str]],
@@ -249,17 +303,40 @@ def _build_executor_container_env(
                 },
             }
         )
-    env.append(
-        {
-            "name": "MAC_WORKER_TOKEN",
-            "valueFrom": {
-                "secretKeyRef": {
-                    "name": cfg.secret_name_for_token,
-                    "key": cfg.secret_key_for_token,
+    bound_secret = cfg.agent_token_secrets.get(credential_agent_id)
+    if bound_secret:
+        for key in (
+            "MAC_WORKER_TOKEN",
+            "MAC_WORKER_CREDENTIAL_ID",
+            "MAC_WORKER_CREDENTIAL_VERSION",
+            "MAC_WORKER_CREDENTIAL_AGENT_ID",
+            "MAC_WORKER_CREDENTIAL_FINGERPRINT",
+            "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT",
+            "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST",
+            "MAC_WORKER_RUNNING_DIGEST",
+        ):
+            env.append(
+                {
+                    "name": key,
+                    "valueFrom": {
+                        "secretKeyRef": {"name": bound_secret, "key": key}
+                    },
                 }
-            },
-        }
-    )
+            )
+        env.append({"name": "MAC_WORKER_IDENTITY_MODE", "value": "bound"})
+    else:
+        env.append(
+            {
+                "name": "MAC_WORKER_TOKEN",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": cfg.secret_name_for_token,
+                        "key": cfg.secret_key_for_token,
+                    }
+                },
+            }
+        )
+        env.append({"name": "MAC_WORKER_IDENTITY_MODE", "value": "compatibility"})
     if include_secret_key:
         env.append(
             {
@@ -366,7 +443,7 @@ def build_job_spec(
     lease_id = lease["id"]
     name = _job_name_for(task_id, lease_id)
     role = _resolve_task_role(task, cfg)
-    job_agent_id = _resolve_agent_id_for_role(role, cfg)
+    job_agent_id = _resolve_execution_agent_id(task, role, cfg)
     executor_cmd = _resolve_executor_for_role(role, cfg)
     attestation_secret = _resolve_attestation_key_secret_for_role(role, cfg)
     image = _resolve_task_image(task, cfg)
@@ -388,6 +465,7 @@ def build_job_spec(
         )
     container_env = _build_executor_container_env(
         cfg,
+        credential_agent_id=job_agent_id,
         base_env=base_env,
         executor_cmd=executor_cmd,
         attestation_secret=attestation_secret,
@@ -644,7 +722,7 @@ def claim_and_launch_one(
         return None
 
     role = _resolve_task_role(task, cfg)
-    job_agent_id = _resolve_agent_id_for_role(role, cfg)
+    job_agent_id = _resolve_execution_agent_id(task, role, cfg)
     if job_agent_id != cfg.agent_id:
         try:
             mac.post(
@@ -804,6 +882,7 @@ def build_review_job_spec(
     # and immediately scrubs it from origin.
     container_env = _build_executor_container_env(
         cfg,
+        credential_agent_id=reviewer_agent_id,
         base_env=base_env,
         executor_cmd=executor_cmd,
         attestation_secret=attestation_secret,

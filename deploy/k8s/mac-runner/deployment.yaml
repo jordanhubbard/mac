@@ -7,7 +7,9 @@ metadata:
     app.kubernetes.io/name: mac-k8s-orchestrator
     app.kubernetes.io/component: orchestrator
 spec:
-  # Multi-replica is safe: claim-next is atomic at the database layer
+  # Multi-replica is safe: both pods are replicas of ONE logical dispatcher
+  # identity (mac-k8s-orchestrator), authenticated by its exact agent-bound
+  # credential. claim-next is atomic at the database layer
   # (uniq_leases_active_per_task partial unique index). Two runners
   # racing for the same task is a no-op.
   replicas: 2
@@ -52,9 +54,7 @@ spec:
             - name: PYTHONFAULTHANDLER
               value: "1"
             - name: MAC_AGENT_ID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name   # deterministic per-pod id
+              value: "mac-k8s-orchestrator"
             - name: MAC_RUNNER_NAMESPACE
               value: "mac"
             - name: MAC_RUNNER_TASK_SERVICE_ACCOUNT
@@ -68,8 +68,55 @@ spec:
             - name: MAC_WORKER_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: mac-api-config
+                  # Generated/applied by `python -m mac.worker_credentials`.
+                  # This Secret is bound only to MAC_AGENT_ID above; it is not
+                  # the hub admin Secret and must not be reused by role workers.
+                  name: mac-worker-mac-k8s-orchestrator-cf67fc64
                   key: MAC_WORKER_TOKEN
+            - name: MAC_WORKER_CREDENTIAL_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mac-worker-mac-k8s-orchestrator-cf67fc64
+                  key: MAC_WORKER_CREDENTIAL_ID
+            - name: MAC_WORKER_CREDENTIAL_VERSION
+              valueFrom:
+                secretKeyRef:
+                  name: mac-worker-mac-k8s-orchestrator-cf67fc64
+                  key: MAC_WORKER_CREDENTIAL_VERSION
+            - name: MAC_WORKER_CREDENTIAL_AGENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mac-worker-mac-k8s-orchestrator-cf67fc64
+                  key: MAC_WORKER_CREDENTIAL_AGENT_ID
+            - name: MAC_WORKER_CREDENTIAL_FINGERPRINT
+              valueFrom:
+                secretKeyRef:
+                  name: mac-worker-mac-k8s-orchestrator-cf67fc64
+                  key: MAC_WORKER_CREDENTIAL_FINGERPRINT
+            - name: MAC_WORKER_CREDENTIAL_SOURCE_COMMIT
+              valueFrom:
+                secretKeyRef:
+                  name: mac-worker-mac-k8s-orchestrator-cf67fc64
+                  key: MAC_WORKER_CREDENTIAL_SOURCE_COMMIT
+            - name: MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST
+              valueFrom:
+                secretKeyRef:
+                  name: mac-worker-mac-k8s-orchestrator-cf67fc64
+                  key: MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST
+            - name: MAC_WORKER_RUNNING_DIGEST
+              valueFrom:
+                secretKeyRef:
+                  name: mac-worker-mac-k8s-orchestrator-cf67fc64
+                  key: MAC_WORKER_RUNNING_DIGEST
+            - name: MAC_WORKER_IDENTITY_MODE
+              value: "bound"
+            # Exact ordinary-task/reviewer agent -> Secret names. Package tasks
+            # retain the dispatcher identity because their immutable assignment
+            # was created for that exact claimant; they use the dispatcher Secret
+            # above even when a role-specific image/executor is selected. An
+            # absent role mapping deliberately stays on the compatibility path.
+            - name: MAC_RUNNER_AGENT_TOKEN_SECRETS
+              value: '{"mac-k8s-orchestrator":"mac-worker-mac-k8s-orchestrator-cf67fc64"}'
           resources:
             requests:
               cpu: 50m

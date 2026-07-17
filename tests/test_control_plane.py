@@ -147,6 +147,7 @@ def test_add_evidence_persists_durable_artifacts(cp):
         "file:///tmp/worker-result.json",
         "worker completed",
         "agent",
+        _trusted_internal=True,
         artifacts=[
             {
                 "name": "stdout.txt",
@@ -189,6 +190,7 @@ def test_add_evidence_owns_durable_artifacts_metadata(cp):
         "worker completed without artifacts",
         "agent",
         metadata={"durable_artifacts": {"fake": True}, "kept": True},
+        _trusted_internal=True,
     )
 
     assert evidence.metadata == {"kept": True}
@@ -204,6 +206,7 @@ def test_add_evidence_rejects_invalid_and_oversized_artifacts(cp, monkeypatch):
             "file:///tmp/result.json",
             "bad base64",
             "agent",
+            _trusted_internal=True,
             artifacts=[{"name": "stdout.txt", "content_base64": "not base64!"}],
         )
 
@@ -215,6 +218,7 @@ def test_add_evidence_rejects_invalid_and_oversized_artifacts(cp, monkeypatch):
             "file:///tmp/result.json",
             "too much content",
             "agent",
+            _trusted_internal=True,
             artifacts=[
                 {"name": "a.txt", "content_base64": base64.b64encode(b"abc").decode("ascii")},
                 {"name": "b.txt", "content_base64": base64.b64encode(b"def").decode("ascii")},
@@ -895,7 +899,12 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, monkeypatch):
     )
     cp.submit_for_review(task.id, worker.id)
     cp.advance_default_review_workflow(task.id)  # assign reviewer
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+    )
 
     # Simulate auto-publish failing on a merge conflict.
     def _boom(*_a, **_k):
@@ -1161,6 +1170,7 @@ def test_default_review_retraction_cap_resets_on_new_evidence(cp, monkeypatch):
         "file://repo2",
         "second try",
         worker.id,
+        _trusted_internal=True,
         metadata=verified_repo_metadata(
             cp,
             worker.id,
@@ -1215,6 +1225,7 @@ def test_default_review_workflow_caps_verdict_wait(cp, monkeypatch):
             "file://review-%d" % i,
             "looked, still unsure",
             review.reviewer_agent_id,
+            _trusted_internal=True,
         )
 
     result = cp.advance_default_review_workflow(task.id)
@@ -1263,6 +1274,7 @@ def test_default_review_retracts_protocol_failure_and_selects_another_reviewer(c
             "review_id": pending[0].id,
             "executor_evidence_id": executor_evidence.id,
         },
+        _trusted_internal=True,
     )
 
     failed = cp.advance_default_review_workflow(task.id)
@@ -1318,6 +1330,7 @@ def test_default_review_blocks_when_pinned_reviewer_fails_protocol(cp):
             "review_id": pending.id,
             "executor_evidence_id": executor_evidence.id,
         },
+        _trusted_internal=True,
     )
 
     failed = cp.advance_default_review_workflow(task.id)
@@ -1379,6 +1392,7 @@ def test_default_review_retraction_cap_not_reset_by_review_evidence(cp, monkeypa
         "file://review-churn",
         "still unsure",
         "agent_reviewer-a",
+        _trusted_internal=True,
     )
 
     result = cp.advance_default_review_workflow(task.id)
@@ -1515,7 +1529,13 @@ def test_publication_uses_linked_review_verdict_when_newer_duplicates_exist(cp):
     linked_verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
     approved = cp.advance_default_review_workflow(task.id)
     assert approved["status"] == "waiting_for_publication_target"
-    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    submit_review_verdict(
+        cp,
+        task.id,
+        reviewer.id,
+        evidence.id,
+        trusted_internal=True,
+    )
 
     publication = cp.publish_task(
         task.id,
@@ -2567,7 +2587,15 @@ def test_default_review_rejects_alias_evidence_taxonomy(cp):
         "UPDATE tasks SET state = ? WHERE id = ?",
         (TaskState.NEEDS_REVIEW.value, task.id),
     )
-    cp.add_evidence(task.id, "log", "artifact://2", "x", worker.id, metadata=bad_type)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://2",
+        "x",
+        worker.id,
+        metadata=bad_type,
+        _trusted_internal=True,
+    )
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "waiting_for_verifiable_evidence"
 
@@ -2578,7 +2606,15 @@ def test_default_review_rejects_alias_evidence_taxonomy(cp):
         "UPDATE tasks SET state = ? WHERE id = ?",
         (TaskState.NEEDS_REVIEW.value, task.id),
     )
-    cp.add_evidence(task.id, "log", "artifact://3", "x", worker.id, metadata=bad_field)
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://3",
+        "x",
+        worker.id,
+        metadata=bad_field,
+        _trusted_internal=True,
+    )
     result = cp.advance_default_review_workflow(task.id)
     assert result["status"] == "waiting_for_verifiable_evidence"
 
@@ -3538,9 +3574,12 @@ def test_default_review_workflow_ignores_retracted_publication_and_review(cp):
         "new verified result",
         worker.id,
         metadata=verified_repo_metadata(cp, worker.id, head_sha="fedcba9876543210fedcba9876543210fedcba98"),
+        _trusted_internal=True,
     )
-    cp.transition_task(task.id, TaskState.RUNNING.value, "test-retry")
-    cp.transition_task(task.id, TaskState.NEEDS_REVIEW.value, "test-retry")
+    cp._transition_task_internal(task.id, TaskState.RUNNING.value, "test-retry")
+    cp._transition_task_internal(
+        task.id, TaskState.NEEDS_REVIEW.value, "test-retry"
+    )
 
     waiting_again = cp.advance_default_review_workflow(task.id)
     assert waiting_again["status"] == "waiting_for_reviewer_verdict"
@@ -3566,9 +3605,18 @@ def test_dispatcher_matches_capabilities_and_expired_leases_recover(cp):
     docs_agent = register_agent(cp, "docs", ["docs"])
     task = cp.create_task("Python work", required_capabilities=["python"], max_attempts=2)
 
-    assignment = cp.dispatch_once(lease_seconds=-1)
+    assignment = cp.dispatch_once()
     assert assignment["agent"]["id"] == python_agent.id
     assert assignment["agent"]["id"] != docs_agent.id
+    expired_at = "2000-01-01T00:00:00.000000+00:00"
+    cp.store.execute(
+        "UPDATE leases SET expires_at = ? WHERE id = ?",
+        (expired_at, assignment["lease"]["id"]),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET leased_until = ? WHERE id = ?",
+        (expired_at, task.id),
+    )
 
     recovered = cp.expire_leases(now=utcnow())
     assert [item.id for item in recovered] == [task.id]
@@ -3596,12 +3644,23 @@ def test_dispatcher_respects_capacity_resources_and_dead_letters(cp):
     second = cp.dispatch_once()
 
     assert first["agent"]["id"] == large.id
-    assert second["agent"]["id"] == large.id
-    assert cp.get_agent(small.id).status == AgentStatus.IDLE.value
+    # The second task fits either worker, so deterministic dispatch preserves
+    # the larger worker's remaining slot and chooses the lower normalized load.
+    assert second["agent"]["id"] == small.id
+    assert cp.get_agent(small.id).status == AgentStatus.BUSY.value
 
     dead = cp.create_task("dead letter", required_capabilities=["docs"], max_attempts=1)
     docs = register_agent(cp, "docs-dead", ["docs"])
-    cp.claim_task(dead.id, docs.id, lease_seconds=-1)
+    _, dead_lease = cp.claim_task(dead.id, docs.id)
+    expired_at = "2000-01-01T00:00:00.000000+00:00"
+    cp.store.execute(
+        "UPDATE leases SET expires_at = ? WHERE id = ?",
+        (expired_at, dead_lease.id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET leased_until = ? WHERE id = ?",
+        (expired_at, dead.id),
+    )
     cp.expire_leases(now=utcnow())
 
     assert [task.id for task in cp.list_dead_letters()] == [dead.id]
@@ -4206,7 +4265,7 @@ def test_dependencies_block_until_parent_completes(cp):
 def test_manual_block_without_dependencies_is_not_auto_unblocked(cp):
     worker = register_agent(cp, "worker", ["python"])
     task = cp.create_task("Needs manual repair", required_capabilities=["python"])
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "verifier",
@@ -4227,13 +4286,13 @@ def test_manual_repair_block_with_satisfied_dependencies_is_not_auto_unblocked(c
     child = cp.create_task("Child", required_capabilities=["python"], dependencies=[parent.id])
 
     finish_task(cp, parent, worker, reviewer)
-    cp.transition_task(
+    cp._transition_task_internal(
         child.id,
         TaskState.OPEN.value,
         "dispatcher",
         {"reason": "dependencies satisfied"},
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         child.id,
         TaskState.BLOCKED.value,
         "verifier",
@@ -4260,13 +4319,15 @@ def test_reason_only_manual_repair_blocks_are_not_auto_unblocked(cp, reason):
     child = cp.create_task("Child", required_capabilities=["python"], dependencies=[parent.id])
 
     finish_task(cp, parent, worker, reviewer)
-    cp.transition_task(
+    cp._transition_task_internal(
         child.id,
         TaskState.OPEN.value,
         "dispatcher",
         {"reason": "dependencies satisfied"},
     )
-    cp.transition_task(child.id, TaskState.BLOCKED.value, "worker", {"reason": reason})
+    cp._transition_task_internal(
+        child.id, TaskState.BLOCKED.value, "worker", {"reason": reason}
+    )
 
     tick = cp.tick()
 
@@ -4460,6 +4521,7 @@ def test_add_evidence_captures_environment_delta_proposal(cp):
                 },
             },
         },
+        _trusted_internal=True,
     )
 
     deltas = cp.list_runtime_deltas(task_id=task.id)
@@ -5208,10 +5270,23 @@ def test_operator_notifications_track_task_lifecycle(cp):
     worker = register_agent(cp, "worker", ["python"])
     task = cp.create_task("observable task", required_capabilities=["python"])
 
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.add_evidence(task.id, "test", "artifact://pytest", "pytest passed", worker.id)
-    cp.transition_task(task.id, TaskState.FAILED.value, worker.id, {"reason": "boom"})
+    _, lease = cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id, lease_id=lease.id)
+    cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://pytest",
+        "pytest passed",
+        worker.id,
+        lease_id=lease.id,
+    )
+    cp.transition_task(
+        task.id,
+        TaskState.FAILED.value,
+        worker.id,
+        {"reason": "boom"},
+        lease_id=lease.id,
+    )
 
     event_types = {item.event_type for item in cp.list_notifications(subject_id=task.id)}
     assert {"task.claimed", "task.running", "task.evidence_added", "task.failed"} <= event_types
@@ -5300,8 +5375,8 @@ def test_task_notifier_delivers_task_progress_to_configured_slack_home_channel(c
     )
 
     task = cp.create_task("notify progress", required_capabilities=["python"])
-    cp.claim_task(task.id, agent.id)
-    cp.start_task(task.id, agent.id)
+    _, lease = cp.claim_task(task.id, agent.id)
+    cp.start_task(task.id, agent.id, lease_id=lease.id)
 
     result = cp.deliver_pending_notifications(limit=20)
 
@@ -7971,7 +8046,7 @@ def test_tick_fails_exhausted_blocked_attempt_without_reopening(cp):
 
 def test_tick_exhaustion_carries_attempt_output_into_terminal_diagnosis(cp):
     task = cp.create_task("exhausted attempt output", max_attempts=1)
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -7993,7 +8068,7 @@ def test_tick_exhaustion_carries_attempt_output_into_terminal_diagnosis(cp):
 
 def test_tick_exhaustion_records_when_attempt_history_has_no_output(cp):
     task = cp.create_task("exhausted attempt without output", max_attempts=1)
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8022,7 +8097,7 @@ def test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage(cp):
         required_capabilities=["python"],
         max_attempts=2,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8058,7 +8133,7 @@ def test_tick_exhausted_environment_failure_repair_task_has_environment_prerequi
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8100,7 +8175,7 @@ def test_tick_exhausted_superseded_attempt_cancels_instead_of_failing(cp):
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8134,7 +8209,7 @@ def test_tick_exhausted_executor_failed_creates_environment_repair_task(cp):
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8167,7 +8242,7 @@ def test_tick_exhausted_worker_exception_creates_environment_repair_task(cp):
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8199,7 +8274,7 @@ def test_tick_exhausted_environment_failure_resets_attempt_count_to_zero(cp):
         required_capabilities=["python"],
         max_attempts=2,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8223,7 +8298,7 @@ def test_tick_exhausted_environment_failure_transition_detail_and_metadata(cp):
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8255,7 +8330,7 @@ def test_tick_exhausted_environment_repair_task_title_and_description(cp):
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8282,7 +8357,7 @@ def test_tick_exhausted_environment_repair_task_idempotent(cp):
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8314,7 +8389,7 @@ def test_claim_exhausted_attempt_records_failure_class(cp):
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8342,7 +8417,7 @@ def test_tick_exhausted_contract_failure_sets_contract_repair_status_waiting(cp)
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8371,7 +8446,7 @@ def test_tick_exhausted_environment_failure_does_not_set_contract_repair_status(
         required_capabilities=["python"],
         max_attempts=1,
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8407,7 +8482,7 @@ def test_tick_skips_non_retryable_blocked_attempt_diagnoses(cp, diagnosis):
         "non retryable blocked attempt",
         required_capabilities=["python"],
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -8702,11 +8777,16 @@ def test_failed_to_open_requeue_resets_attempt_count(cp):
     task = cp.create_task("t", required_capabilities=["python"], max_attempts=2)
 
     # Burn both attempts.
-    cp.claim_task(task.id, worker.id)
-    cp.start_task(task.id, worker.id)
-    cp.transition_task(task.id, TaskState.FAILED.value, worker.id)
+    _, lease = cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id, lease_id=lease.id)
+    cp.transition_task(
+        task.id,
+        TaskState.FAILED.value,
+        worker.id,
+        lease_id=lease.id,
+    )
     # Re-open and try once more.
-    cp.transition_task(task.id, TaskState.OPEN.value, "ops")
+    cp.reopen_task(task.id, "ops")
     after_first_requeue = cp.get_task(task.id)
     # The reset must zero attempt_count and clear completed_at so the
     # next claim is permitted.
@@ -8918,7 +8998,16 @@ def test_expire_leases_exhausted_task_stamps_failure_class(cp):
     """
     worker = register_agent(cp, "w", ["python"])
     task = cp.create_task("work", required_capabilities=["python"], max_attempts=1)
-    _, lease = cp.claim_task(task.id, worker.id, lease_seconds=-1)
+    _, lease = cp.claim_task(task.id, worker.id)
+    expired_at = "2000-01-01T00:00:00.000000+00:00"
+    cp.store.execute(
+        "UPDATE leases SET expires_at = ? WHERE id = ?",
+        (expired_at, lease.id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET leased_until = ? WHERE id = ?",
+        (expired_at, task.id),
+    )
 
     recovered = cp.expire_leases(now=utcnow())
 
@@ -8944,12 +9033,13 @@ def test_expire_leases_exhausted_environment_failure_creates_repair_task(cp):
     """
     worker = register_agent(cp, "w2", ["python"])
     task = cp.create_task("env work", required_capabilities=["python"], max_attempts=1)
-    _, lease = cp.claim_task(task.id, worker.id, lease_seconds=-1)
+    _, lease = cp.claim_task(task.id, worker.id)
     cp.transition_task(
         task.id,
         TaskState.BLOCKED.value,
-        "worker",
+        worker.id,
         {"reason": "heartbeat_offline"},
+        lease_id=lease.id,
     )
     cp.store.execute(
         "UPDATE tasks SET attempt_count = 1 WHERE id = ?",
@@ -9016,7 +9106,12 @@ def test_draining_heartbeat_pauses_claims_without_requeueing_active_lease(cp):
     assert cp.get_task(queued.id).state == TaskState.OPEN.value
 
     cp.release_lease(lease.id, worker.id)
-    cp.transition_task(active.id, TaskState.FAILED.value, "test", {"reason": "drain-test-finished"})
+    cp._transition_task_internal(
+        active.id,
+        TaskState.FAILED.value,
+        "test",
+        {"reason": "drain-test-finished"},
+    )
     restored = cp.heartbeat_agent(
         worker.id,
         status=AgentStatus.IDLE.value,
@@ -9835,8 +9930,8 @@ def test_observability_prune_drops_old_or_excess_rows(cp):
 def test_transition_to_terminal_state_is_atomic_across_task_agent_and_history(cp):
     agent = register_agent(cp, "alpha", ["python"])
     task = cp.create_task("transactional", required_capabilities=["python"])
-    cp.claim_task(task.id, agent.id)
-    cp.start_task(task.id, agent.id)
+    _, lease = cp.claim_task(task.id, agent.id)
+    cp.start_task(task.id, agent.id, lease_id=lease.id)
 
     # Force the history write to fail and prove the task + agent updates roll
     # back with it — the whole transition_task must be all-or-nothing.
@@ -9848,7 +9943,12 @@ def test_transition_to_terminal_state_is_atomic_across_task_agent_and_history(cp
     cp._record_history = boom  # type: ignore[assignment]
     try:
         with pytest.raises(RuntimeError):
-            cp.transition_task(task.id, TaskState.FAILED.value, "tester")
+            cp.transition_task(
+                task.id,
+                TaskState.FAILED.value,
+                agent.id,
+                lease_id=lease.id,
+            )
     finally:
         cp._record_history = original  # type: ignore[assignment]
 
@@ -9859,7 +9959,12 @@ def test_transition_to_terminal_state_is_atomic_across_task_agent_and_history(cp
     assert cp.get_agent(agent.id).current_task_id == task.id
 
     # Now succeed: all three writes commit together.
-    cp.transition_task(task.id, TaskState.FAILED.value, "tester")
+    cp.transition_task(
+        task.id,
+        TaskState.FAILED.value,
+        agent.id,
+        lease_id=lease.id,
+    )
     final = cp.get_task(task.id)
     assert final.state == TaskState.FAILED.value
     assert final.owner_agent_id is None
@@ -9875,7 +9980,14 @@ def test_add_evidence_rolls_back_if_history_write_fails(cp):
     cp._record_history = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("history boom"))  # type: ignore[assignment]
     try:
         with pytest.raises(RuntimeError):
-            cp.add_evidence(task_id, "log", "file://x", "summary", "tester")
+            cp.add_evidence(
+                task_id,
+                "log",
+                "file://x",
+                "summary",
+                "tester",
+                _trusted_internal=True,
+            )
     finally:
         cp._record_history = original  # type: ignore[assignment]
 
@@ -10585,6 +10697,7 @@ def _add_signed_repo_evidence(cp, task_id, agent_id):
         "repo changed",
         agent_id,
         metadata=verified_repo_metadata(cp, agent_id),
+        _trusted_internal=True,
     )
 
 
@@ -10613,6 +10726,7 @@ def test_find_review_verdict_rejected_requires_digest(cp):
         "rejected",
         reviewer.id,
         metadata={"returncode": 0, "verification": manifest},
+        _trusted_internal=True,
     )
 
     found, problems = cp._find_review_verdict_evidence(task.id, reviewer.id, executor_evidence_id=evidence.id)
@@ -10647,6 +10761,7 @@ def test_find_review_verdict_rejected_skips_repo_push_checks(cp):
         "rejected",
         reviewer.id,
         metadata={"returncode": 0, "verification": manifest},
+        _trusted_internal=True,
     )
 
     found, problems = cp._find_review_verdict_evidence(task.id, reviewer.id, executor_evidence_id=evidence.id)
@@ -10721,8 +10836,8 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
     assert task.metadata["required_role"] == "python-coder-opencode"
 
     # First attempt: executor works, reviewer rejects
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
+    _, first_lease = cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id, lease_id=first_lease.id)
     first_evidence = cp.add_evidence(
         task.id,
         "log",
@@ -10730,8 +10845,9 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
         "repo changed",
         executor.id,
         metadata=verified_repo_metadata(cp, executor.id, files_changed=["src/mac/ui/app.ts"]),
+        lease_id=first_lease.id,
     )
-    cp.submit_for_review(task.id, executor.id)
+    cp.submit_for_review(task.id, executor.id, lease_id=first_lease.id)
     first_review = cp.request_review(task.id, reviewer.id)
     rejected_verdict = submit_review_verdict(
         cp,
@@ -10748,8 +10864,8 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
     assert reopened.metadata["review_feedback"]["latest"]["feedback"] == "Fix layout overflow on the task cards."
 
     # Second attempt: executor addresses feedback, reviewer approves
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
+    _, second_lease = cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id, lease_id=second_lease.id)
     second_evidence = cp.add_evidence(
         task.id,
         "log",
@@ -10757,8 +10873,9 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
         "repo changed after feedback",
         executor.id,
         metadata=verified_repo_metadata(cp, executor.id, files_changed=["src/mac/ui/app.ts"]),
+        lease_id=second_lease.id,
     )
-    cp.submit_for_review(task.id, executor.id)
+    cp.submit_for_review(task.id, executor.id, lease_id=second_lease.id)
     second_review = cp.request_review(task.id, reviewer.id)
     approved_verdict = submit_review_verdict(cp, task.id, reviewer.id, second_evidence.id)
     cp.submit_review(second_review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=approved_verdict)
@@ -10777,8 +10894,8 @@ def test_historical_approval_cannot_complete_a_later_attempt(cp):
     reviewer = register_agent(cp, "attempt-reviewer", capabilities=["review"])
     task = cp.create_task("attempt-bound review", max_attempts=3)
 
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
+    _, first_lease = cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id, lease_id=first_lease.id)
     first_evidence = cp.add_evidence(
         task.id,
         "log",
@@ -10786,8 +10903,9 @@ def test_historical_approval_cannot_complete_a_later_attempt(cp):
         "first attempt",
         executor.id,
         metadata=verified_repo_metadata(cp, executor.id, files_changed=["one.py"]),
+        lease_id=first_lease.id,
     )
-    cp.submit_for_review(task.id, executor.id)
+    cp.submit_for_review(task.id, executor.id, lease_id=first_lease.id)
     first_review = cp.request_review(task.id, reviewer.id)
     first_verdict = submit_review_verdict(
         cp, task.id, reviewer.id, first_evidence.id
@@ -10799,9 +10917,14 @@ def test_historical_approval_cannot_complete_a_later_attempt(cp):
         evidence_id=first_verdict,
     )
 
-    cp.transition_task(task.id, TaskState.OPEN.value, "operator", {"reason": "rework"})
-    cp.claim_task(task.id, executor.id)
-    cp.start_task(task.id, executor.id)
+    cp._transition_task_internal(
+        task.id,
+        TaskState.OPEN.value,
+        "operator",
+        {"reason": "rework"},
+    )
+    _, second_lease = cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id, lease_id=second_lease.id)
     second_evidence = cp.add_evidence(
         task.id,
         "log",
@@ -10814,8 +10937,9 @@ def test_historical_approval_cannot_complete_a_later_attempt(cp):
             files_changed=["two.py"],
             head_sha="fedcba9876543210fedcba9876543210fedcba98",
         ),
+        lease_id=second_lease.id,
     )
-    cp.submit_for_review(task.id, executor.id)
+    cp.submit_for_review(task.id, executor.id, lease_id=second_lease.id)
     second_review = cp.request_review(task.id, reviewer.id)
 
     with pytest.raises(ValidationError, match="stale executor evidence"):
@@ -10826,7 +10950,7 @@ def test_historical_approval_cannot_complete_a_later_attempt(cp):
             evidence_id=first_verdict,
         )
     with pytest.raises(ValidationError, match="completion requires approved review"):
-        cp.transition_task(task.id, TaskState.COMPLETED.value, "operator")
+        cp._transition_task_internal(task.id, TaskState.COMPLETED.value, "operator")
 
     assert cp.get_task(task.id).metadata["review_target"]["executor_evidence_id"] == second_evidence.id
     assert cp.get_review(second_review.id).status == ReviewStatus.PENDING.value
@@ -10860,12 +10984,12 @@ def test_decomposed_children_use_distinct_agents_and_feed_integrator(cp, tmp_pat
 
     assert not cp._agent_available_for(planner, child_one)
     assert cp._agent_available_for(child_one_agent, child_one)
-    cp.claim_task(child_one.id, child_one_agent.id)
+    _, child_one_lease = cp.claim_task(child_one.id, child_one_agent.id)
     assert not cp._agent_available_for(child_one_agent, child_two)
     assert cp._agent_available_for(child_two_agent, child_two)
 
-    def complete_child(task, agent, head_sha, changed_file):
-        cp.start_task(task.id, agent.id)
+    def complete_child(task, agent, lease, head_sha, changed_file):
+        cp.start_task(task.id, agent.id, lease_id=lease.id)
         evidence = cp.add_evidence(
             task.id,
             "log",
@@ -10878,8 +11002,9 @@ def test_decomposed_children_use_distinct_agents_and_feed_integrator(cp, tmp_pat
                 head_sha=head_sha,
                 files_changed=[changed_file],
             ),
+            lease_id=lease.id,
         )
-        cp.submit_for_review(task.id, agent.id)
+        cp.submit_for_review(task.id, agent.id, lease_id=lease.id)
         review = cp.request_review(task.id, reviewer.id)
         verdict = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
         cp.submit_review(
@@ -10888,19 +11013,25 @@ def test_decomposed_children_use_distinct_agents_and_feed_integrator(cp, tmp_pat
             reviewer.id,
             evidence_id=verdict,
         )
-        cp.transition_task(task.id, TaskState.COMPLETED.value, reviewer.id)
+        cp._transition_task_internal(
+            task.id,
+            TaskState.COMPLETED.value,
+            reviewer.id,
+        )
         return evidence
 
     first_evidence = complete_child(
         child_one,
         child_one_agent,
+        child_one_lease,
         "abcdef1234567890abcdef1234567890abcdef12",
         "src/one.py",
     )
-    cp.claim_task(child_two.id, child_two_agent.id)
+    _, child_two_lease = cp.claim_task(child_two.id, child_two_agent.id)
     second_evidence = complete_child(
         child_two,
         child_two_agent,
+        child_two_lease,
         "fedcba9876543210fedcba9876543210fedcba98",
         "src/two.py",
     )
@@ -11228,8 +11359,14 @@ def test_reopen_task_requeues_terminal_task_and_resets_attempts(cp):
     immediately re-exhausted."""
     worker = register_agent(cp, "recover-worker", ["python"])
     task = cp.create_task("recover me", required_capabilities=["python"])
-    cp.claim_task(task.id, worker.id, sync_beads=False)
-    cp.transition_task(task.id, TaskState.FAILED.value, "dispatcher", {"reason": "heartbeat_offline"})
+    _, lease = cp.claim_task(task.id, worker.id, sync_beads=False)
+    cp.transition_task(
+        task.id,
+        TaskState.FAILED.value,
+        worker.id,
+        {"reason": "heartbeat_offline"},
+        lease_id=lease.id,
+    )
     assert cp.get_task(task.id).state == TaskState.FAILED.value
 
     reopened = cp.reopen_task(task.id, "operator", reason="hub flap; retry")
@@ -11244,7 +11381,7 @@ def test_reopen_task_requeues_terminal_task_and_resets_attempts(cp):
 
 def test_reopen_task_recovers_blocked_task(cp):
     task = cp.create_task("blocked recover", required_capabilities=["python"])
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "dispatcher",
@@ -11259,7 +11396,12 @@ def test_blocked_transitions_require_reason_and_dependency_updates_use_waiting(c
     task = cp.create_task("blocked ledger contract")
 
     with pytest.raises(ValidationError, match="blocked task transition requires"):
-        cp.transition_task(task.id, TaskState.BLOCKED.value, "worker", {})
+        cp._transition_task_internal(
+            task.id,
+            TaskState.BLOCKED.value,
+            "worker",
+            {},
+        )
 
     updated = cp.update_task(task.id, dependencies=[dependency.id], actor="worker")
     assert updated.state == TaskState.WAITING.value
@@ -11273,7 +11415,12 @@ def test_force_complete_overrides_review_gate_for_stranded_task(cp):
     merged out-of-band) can be force-completed without the review/evidence gate,
     and the override is audited (who, prior state, why)."""
     task = cp.create_task("done out of band", required_capabilities=["python"])
-    cp.transition_task(task.id, TaskState.FAILED.value, "dispatcher", {"reason": "flap"})
+    cp._transition_task_internal(
+        task.id,
+        TaskState.FAILED.value,
+        "dispatcher",
+        {"reason": "flap"},
+    )
 
     completed = cp.force_complete_task(task.id, "operator", reason="merged via PR #181")
     assert completed.state == TaskState.COMPLETED.value
@@ -11287,7 +11434,12 @@ def test_force_complete_overrides_review_gate_for_stranded_task(cp):
 
 def test_force_complete_normalizes_unambiguous_task_prefix(cp):
     task = cp.create_task("done out of band through short id")
-    cp.transition_task(task.id, TaskState.BLOCKED.value, "dispatcher", {"reason": "stranded"})
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "dispatcher",
+        {"reason": "stranded"},
+    )
 
     completed = cp.force_complete_task(
         task.id[:13], "operator", reason="verified canonical commit"
@@ -11335,6 +11487,7 @@ def test_repository_completion_requires_durable_canonical_integration(cp, monkey
                 },
             }
         },
+        _trusted_internal=True,
     )
 
     completed = cp.force_complete_task(task.id, "operator", reason="integrated")
@@ -11356,7 +11509,11 @@ def test_repository_completion_requires_durable_canonical_integration(cp, monkey
         (TaskState.REVIEWING.value, third.id),
     )
     with pytest.raises(ValidationError, match="canonical integration proof"):
-        cp.transition_task(third.id, TaskState.COMPLETED.value, "reviewer")
+        cp._transition_task_internal(
+            third.id,
+            TaskState.COMPLETED.value,
+            "reviewer",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -12089,7 +12246,7 @@ def test_tick_injects_plan_first_on_timeout_blocked_attempt(cp, timeout_reason):
     re-dispatches it with ``metadata.plan_first=True`` so the next executor run
     decomposes the work instead of attempting it monolithically again."""
     task = cp.create_task("timed-out task", required_capabilities=["python"])
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -12129,7 +12286,7 @@ def test_tick_does_not_inject_plan_first_for_non_timeout_blocked_attempt(cp):
     """Non-timeout block reasons (executor_failed, etc.) must NOT set plan_first —
     only agent-run-timeout failures trigger the decomposition redirect."""
     task = cp.create_task("executor-failed task", required_capabilities=["python"])
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",
@@ -12168,7 +12325,7 @@ def test_tick_does_not_re_inject_plan_first_when_already_set(cp):
         metadata={"plan_first": True},
         required_capabilities=["python"],
     )
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "worker",

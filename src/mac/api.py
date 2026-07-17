@@ -15,9 +15,9 @@ import time
 import urllib.parse
 from collections import Counter
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Union
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -66,6 +66,12 @@ from mac.repository_ref_reconciler import (
 )
 from mac.services import ControlPlane
 from mac.store import SQLiteStore, StoreError, make_store_from_env
+from mac.work_plan_admission import (
+    MANAGED_WORK_PLAN_MODE,
+    ManagedWorkPlanBridge,
+    managed_plan_from_dashboard_accept,
+)
+from mac.work_package_pipeline_runtime import build_work_package_pipeline_runtime
 
 _log = logging.getLogger(__name__)
 
@@ -104,6 +110,11 @@ class TokenPrincipal:
     tenant_id: Optional[str] = None
     agent_id: Optional[str] = None
     client_id: Optional[str] = None
+    principal_kind: Optional[str] = None
+    credential_fingerprint: Optional[str] = None
+    worker_credential_version: Optional[int] = None
+    worker_credential_state: Optional[str] = None
+    worker_identity_mode: str = "compatibility"
 
     @property
     def is_admin(self) -> bool:
@@ -150,24 +161,50 @@ class TokenPrincipal:
         if not self.is_admin:
             raise AuthorizationError("admin scope is required for this operation")
 
-    def assert_actor(self, claimed_agent_id: str) -> None:
+    def assert_actor(
+        self,
+        claimed_agent_id: str,
+        *,
+        package_linked: bool = False,
+        package_ready: bool = False,
+    ) -> None:
         """Bind a request's actor field to the bearer principal.
 
         mac-rreh / mac-kgi5 / mac-wcfy: callers pass actor identifiers
         (``agent_id``, ``sender_agent_id``, ``accessor_agent_id``,
-        ``created_by``) in request bodies / URL paths. When the token
-        is bound to a specific agent, the claimed actor MUST match the
-        binding. Admin tokens may impersonate freely; unbound
-        operator-style tokens (no agent_id) are treated like admin
-        here. This is the principal/payload binding from the audit.
+        ``created_by``) in request bodies / URL paths. Actor-bearing worker
+        endpoints require a per-agent credential: neither a shared write token
+        nor an admin token may turn a payload string into worker authority.
+        Operators use explicit admin/recovery routes; trusted services call the
+        private ControlPlane path after their own authority check.
         """
-        if self.is_admin or self.agent_id is None:
+        from mac.worker_credentials import evaluate_worker_actor
+
+        decision = evaluate_worker_actor(
+            mode=self.worker_identity_mode,
+            principal_agent_id=self.agent_id,
+            claimed_agent_id=claimed_agent_id,
+            package_linked=package_linked,
+            package_ready=package_ready,
+        )
+        if decision.allowed:
             return
-        if not claimed_agent_id or claimed_agent_id != self.agent_id:
+        if decision.reason == "agent_principal_mismatch":
             raise AuthorizationError(
                 "token is bound to agent %s and cannot act as %r"
                 % (self.agent_id, claimed_agent_id)
             )
+        if decision.reason == "package_worker_readiness_required":
+            raise AuthorizationError(
+                "package-linked work requires a current credential readiness membership"
+            )
+        if decision.reason == "legacy_worker_package_link_forbidden":
+            raise AuthorizationError(
+                "legacy worker credentials cannot act on package-linked work"
+            )
+        raise AuthorizationError(
+            "actor-bearing worker endpoint requires an agent-bound token"
+        )
 
 
 AuthTokenMapping = Mapping[str, Union[List[str], Dict[str, Any], TokenPrincipal]]
@@ -186,6 +223,18 @@ def _coerce_principal(value: Union[List[str], Dict[str, Any], TokenPrincipal]) -
             tenant_id=tenant,
             agent_id=agent,
             client_id=str(client) if client else None,
+            principal_kind=str(value.get("principal_kind") or "") or None,
+            credential_fingerprint=(
+                str(value.get("credential_fingerprint") or "") or None
+            ),
+            worker_credential_version=(
+                int(value["worker_credential_version"])
+                if value.get("worker_credential_version") is not None
+                else None
+            ),
+            worker_credential_state=(
+                str(value.get("worker_credential_state") or "") or None
+            ),
         )
     return TokenPrincipal(scopes=frozenset(str(s) for s in value))
 
@@ -447,6 +496,7 @@ class TaskChildCreate(BaseModel):
 class TaskChildrenCreate(BaseModel):
     children: List[TaskChildCreate]
     actor: str = "human"
+    lease_id: Optional[str] = None
 
 
 class TaskDelete(BaseModel):
@@ -468,6 +518,116 @@ class ProjectDispatch(BaseModel):
     actor: str = "human"
 
 
+class WorkPackageAdmit(BaseModel):
+    plan: Dict[str, Any]
+    actor: str = "work-package-admission-controller"
+    reason: str
+    tenant_id: Optional[str] = None
+    root_task_id: Optional[str] = None
+
+
+class WorkPackageActivate(BaseModel):
+    expected_plan_version: int
+    expected_epoch: int
+    actor: str = "human"
+
+
+class WorkPackagePause(BaseModel):
+    expected_plan_version: int = Field(ge=1)
+    expected_epoch: int = Field(ge=1)
+    actor: str = Field(default="human", min_length=1, max_length=256)
+    reason: str = Field(min_length=1, max_length=4000)
+
+
+class WorkPackageReplan(BaseModel):
+    plan: Dict[str, Any]
+    expected_plan_version: int = Field(ge=1)
+    expected_epoch: int = Field(ge=1)
+    actor: str = Field(
+        default="work-package-replan-controller",
+        min_length=1,
+        max_length=256,
+    )
+    reason: str = Field(min_length=1, max_length=4000)
+
+
+class WorkPackageOutputVerify(BaseModel):
+    actor: str = "work-package-output-controller"
+
+
+class WorkPackageIntegrationRequest(BaseModel):
+    integration_node_key: str = Field(min_length=1, max_length=512)
+    actor: str = Field(
+        default="work-package-integration-controller",
+        min_length=1,
+        max_length=256,
+    )
+
+
+class WorkPackageCertificationPrepare(BaseModel):
+    bundle_path: str = Field(min_length=1, max_length=4096)
+    actor: str = Field(
+        default="work-package-certification-controller",
+        min_length=1,
+        max_length=256,
+    )
+
+
+class WorkPackageCertificationClaim(BaseModel):
+    owner: Optional[str] = Field(default=None, min_length=1, max_length=256)
+
+
+class WorkPackageCertificationIngest(BaseModel):
+    result: Dict[str, Any]
+    owner: str = Field(min_length=1, max_length=256)
+    fence: int = Field(ge=1)
+
+
+class WorkPackageCertificationRun(BaseModel):
+    bundle_path: str = Field(min_length=1, max_length=4096)
+    owner: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    result_path: Optional[str] = Field(default=None, min_length=1, max_length=4096)
+
+
+class WorkPackageFailedCertification(BaseModel):
+    certification_id: str = Field(min_length=1, max_length=256)
+    actor: str = Field(
+        default="work-package-certification-controller",
+        min_length=1,
+        max_length=256,
+    )
+
+
+class WorkPackageCertificationAccept(BaseModel):
+    certification_id: str = Field(min_length=1, max_length=256)
+
+
+class WorkPackagePublicationFinalize(BaseModel):
+    actor: str = Field(
+        default="work-package-publication-finalizer",
+        min_length=1,
+        max_length=256,
+    )
+    receipt_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+
+
+class WorkPackageCandidateAccept(BaseModel):
+    actor: str = Field(
+        default="work-package-acceptance-controller",
+        min_length=1,
+        max_length=256,
+    )
+
+
+class WorkPackageCandidateReject(BaseModel):
+    actor: str = Field(
+        default="work-package-acceptance-controller",
+        min_length=1,
+        max_length=256,
+    )
+    reason: str = Field(min_length=1, max_length=4000)
+
+
 class TaskRelease(BaseModel):
     actor: str = "human"
 
@@ -476,6 +636,7 @@ class TaskActivityAppend(BaseModel):
     phase: str
     actor: str
     summary: str
+    lease_id: Optional[str] = None
 
 
 class ProjectUpdate(BaseModel):
@@ -590,6 +751,7 @@ class TransitionRequest(BaseModel):
     target_state: str
     actor: str
     detail: Dict[str, Any] = Field(default_factory=dict)
+    lease_id: Optional[str] = None
 
 
 class TaskRecoveryRequest(BaseModel):
@@ -603,6 +765,7 @@ class EvidenceCreate(BaseModel):
     summary: str
     created_by: str
     checksum: Optional[str] = None
+    lease_id: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     artifacts: List[Dict[str, Any]] = Field(default_factory=list)
 
@@ -792,6 +955,10 @@ class WorkflowCancel(BaseModel):
 class DashboardWorkflowPlanRequest(BaseModel):
     goal: str
     project: Optional[str] = None
+    mode: Literal["legacy", "managed"] = "legacy"
+    repository_id: Optional[str] = None
+    planning_base_ref: Optional[str] = None
+    package_id: Optional[str] = None
     prompt: str = ""
     required_capabilities: List[str] = Field(default_factory=list)
     max_tasks: int = 8
@@ -803,18 +970,45 @@ class DashboardWorkflowPlanNode(BaseModel):
     node_id: str
     title: str
     description: str = ""
+    kind: Optional[str] = None
+    node_type: Optional[str] = None
     required_capabilities: List[str] = Field(default_factory=list)
     depends_on: List[str] = Field(default_factory=list)
     priority: int = 0
+    effects: Dict[str, Any] = Field(default_factory=dict)
+    inputs: List[Any] = Field(default_factory=list)
+    external_dependencies: List[Any] = Field(default_factory=list)
+    expected_outputs: List[Any] = Field(default_factory=list)
+    verification: Dict[str, Any] = Field(default_factory=dict)
+    estimates: Dict[str, Any] = Field(default_factory=dict)
+    estimate: Optional[Dict[str, Any]] = None
+    rework: Dict[str, Any] = Field(default_factory=dict)
+    max_attempts: Optional[int] = None
+    scope_confidence: Optional[float] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class DashboardWorkflowPlanAccept(BaseModel):
     goal: str
     project: Optional[str] = None
+    mode: Literal["legacy", "managed"] = "legacy"
     plan_id: Optional[str] = None
-    nodes: List[DashboardWorkflowPlanNode]
+    package_id: Optional[str] = None
+    repository_id: Optional[str] = None
+    planning_base_ref: Optional[str] = None
+    planning_base_sha: Optional[str] = None
+    plan_generation: int = 1
+    max_in_flight: Optional[int] = None
+    max_mutation_wip: Optional[int] = None
+    mutation_wip: Optional[Dict[str, Any]] = None
+    integration: Optional[Dict[str, Any]] = None
+    resource_namespace: Optional[Dict[str, Any]] = None
+    nodes: List[DashboardWorkflowPlanNode] = Field(default_factory=list)
+    plan: Optional[Dict[str, Any]] = None
     actor: str = "human"
+    reason: str = "operator accepted managed work plan"
+    tenant_id: Optional[str] = None
+    root_task_id: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1664,6 +1858,10 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # A forced reconciliation in prune mode can delete remote branches.
         # Status is ordinary read data; every mutating trigger is admin-only.
         return "read" if method == "GET" else "admin"
+    if path.startswith("/work-package-pipeline"):
+        # The status projection is safe fleet visibility. Waking the controller
+        # can ultimately certify and CAS-land code, so it is global admin work.
+        return "read" if method == "GET" else "admin"
     if path.startswith("/optimizer"):
         # Learned policy changes future task execution across a project.  Reads
         # are ordinary fleet visibility; mutation and manual ticks are admin
@@ -1742,10 +1940,15 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # `write` token can't flush every reviewable task to
         # COMPLETED on demand. mac-iez.
         return "admin"
-    if re.match(r"^/tasks/[^/]+/force-complete$", path):
-        # This endpoint deliberately bypasses the normal review/evidence gate.
-        # It is stronger than the default-review tick and therefore must never
-        # be available to an ordinary task writer.
+    if re.match(r"^/tasks/[^/]+/(force-complete|reopen|release)$", path):
+        # These recovery/control-plane endpoints bypass normal worker flow or
+        # make held work dispatchable. They must never be available to an
+        # ordinary task writer.
+        return "admin"
+    if (
+        method in {"PUT", "DELETE"}
+        and re.match(r"^/tasks/[^/]+$", path)
+    ):
         return "admin"
     return "write"
 
@@ -3265,6 +3468,30 @@ def _dashboard_workflow_plan_prompt(cp: ControlPlane, request: Dict[str, Any]) -
         "project_summary": project_summary,
         "extra_context": request.get("context") or {},
     }
+    if str(request.get("mode") or "legacy").strip().lower() == MANAGED_WORK_PLAN_MODE:
+        return (
+            "Propose an editable managed work DAG; do not create tasks and do not choose "
+            "repository identity, refs, SHAs, package ids, or other controller-owned fields. "
+            "Return ONLY JSON with nodes. Every node must explicitly declare effects, "
+            "expected_outputs, and verification. Mutation nodes must declare repository-relative "
+            "writes/exclusive effects, estimates.confidence, and repository-default verification. "
+            "Finish with exactly one integration node that depends directly on every mutation "
+            "leaf, followed by exactly one terminal certification node that depends only on the "
+            "integration node. Controller stations may declare reads but no writes/exclusive/"
+            "external effects. Use this shape: "
+            "{\"nodes\":[{\"node_id\":\"short_key\",\"title\":\"task title\","
+            "\"description\":\"implementation-grade instructions\",\"kind\":\"mutation\","
+            "\"required_capabilities\":[\"python\"],\"depends_on\":[],"
+            "\"effects\":{\"reads\":[],\"writes\":[\"src/path\"],\"exclusive\":[]},"
+            "\"expected_outputs\":[\"candidate\"],"
+            "\"verification\":{\"profile\":\"repository-default\","
+            "\"required_evidence\":[\"tests\"]},"
+            "\"estimates\":{\"confidence\":\"high\"},\"metadata\":{}}],"
+            "\"max_in_flight\":4,\"mutation_wip\":{\"max_tokens\":2}}. "
+            "Use integration-default and certification-default verification profiles for the "
+            "two controller stations. Keep the plan small and executable.\n\nContext:\n%s"
+            % json.dumps(context, sort_keys=True)
+        )
     return (
         "Create a concrete MAC task plan for the requested work. "
         "Return ONLY JSON with this shape: "
@@ -3485,6 +3712,10 @@ def create_app(
     # This gives SSH enrollment immediate issuance/renewal/revocation without a
     # control-plane restart while preserving the static admin recovery token.
     from mac.client_principals import ClientPrincipalProvider
+    from mac.worker_credentials import (
+        WorkerCredentialPolicyProvider,
+        WorkerCredentialPrincipalProvider,
+    )
 
     configured_client_path = client_principals_path or os.environ.get(
         "MAC_CLIENT_PRINCIPALS_FILE"
@@ -3502,6 +3733,8 @@ def create_app(
     client_registry_seen = bool(
         client_principals is not None and client_principals.path.exists()
     )
+    worker_principals = WorkerCredentialPrincipalProvider(cp.store)
+    worker_identity_policy = WorkerCredentialPolicyProvider(cp.store)
 
     def _current_auth_tokens() -> Dict[str, TokenPrincipal]:
         nonlocal client_registry_seen
@@ -3512,9 +3745,10 @@ def create_app(
             if client_principals is not None
             else {}
         )
+        workers = _normalize_auth_tokens(worker_principals.tokens())
         # Static environment tokens are the recovery authority if an
         # impossible hash collision or duplicate registration occurs.
-        merged = {**dynamic, **tokens}
+        merged = {**dynamic, **workers, **tokens}
         if client_registry_seen and not merged:
             # A registry that becomes empty/corrupt after enrollment must not
             # turn a previously authenticated hub into open development mode.
@@ -3579,6 +3813,10 @@ def create_app(
     # when the hub node dropped off the network). Default-ON for authoritative
     # hubs; no-op on clients or with MAC_LEDGER_BACKUP_ENABLED=0.
     ledger_backup_scheduler = LedgerBackupScheduler(cp, LedgerBackupConfig.from_env())
+    # The heavy integration/certification line is independent of request
+    # handling and default-off. Its trigger only wakes a bounded background
+    # controller; Git and OpenShell work never runs on an HTTP thread.
+    work_package_pipeline = build_work_package_pipeline_runtime(cp)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -3591,9 +3829,11 @@ def create_app(
         curiosity_reviewer.start()
         self_healing_sentinel.start()
         ledger_backup_scheduler.start()
+        work_package_pipeline.start()
         try:
             yield
         finally:
+            work_package_pipeline.stop()
             ledger_backup_scheduler.stop()
             self_healing_sentinel.stop()
             curiosity_reviewer.stop()
@@ -3612,6 +3852,12 @@ def create_app(
     app.state.control_plane = cp
     app.state.auth_tokens = initial_tokens
     app.state.client_principals = client_principals
+    app.state.worker_principals = worker_principals
+    app.state.worker_identity_policy = worker_identity_policy
+    app.state.managed_work_plan_bridge = ManagedWorkPlanBridge(
+        cp.store,
+        cp.work_packages,
+    )
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
     app.state.backlog_groomer = backlog_groomer
@@ -3620,6 +3866,7 @@ def create_app(
     app.state.nap_ticker = nap_ticker
     app.state.curiosity_reviewer = curiosity_reviewer
     app.state.self_healing_sentinel = self_healing_sentinel
+    app.state.work_package_pipeline = work_package_pipeline
     # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
     # reconcile -> lease expiry) so the autonomous loop needs no external clock.
     _start_hub_tick_loop(app, cp)
@@ -3627,6 +3874,45 @@ def create_app(
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
     # integration. Routing decisions now come from the in-mac router.
     app.state.hermes_startup = build_hermes_startup_report()
+
+    def _task_is_package_linked(task_id: str) -> bool:
+        from mac.work_package_store import get_work_package_task_link
+
+        return get_work_package_task_link(cp.store, task_id) is not None
+
+    def _package_actor_ready(principal: TokenPrincipal, agent_id: str) -> bool:
+        from mac.worker_credentials import package_worker_readiness
+
+        readiness = package_worker_readiness(cp.store, agent_id)
+        return bool(
+            readiness.get("ready")
+            and principal.principal_kind == "worker"
+            and principal.client_id == readiness.get("principal_id")
+            and principal.worker_credential_version
+            == readiness.get("credential_version")
+            and principal.credential_fingerprint
+            == readiness.get("token_fingerprint")
+        )
+
+    def _assert_task_actor(
+        principal: TokenPrincipal, task_id: str, claimed_agent_id: str
+    ) -> None:
+        package_linked = _task_is_package_linked(task_id)
+        principal.assert_actor(
+            claimed_agent_id,
+            package_linked=package_linked,
+            package_ready=(
+                _package_actor_ready(principal, claimed_agent_id)
+                if package_linked
+                else False
+            ),
+        )
+
+    def _assert_review_actor(
+        principal: TokenPrincipal, review_id: str, claimed_agent_id: str
+    ) -> None:
+        review = cp.get_review(review_id)
+        _assert_task_actor(principal, review.task_id, claimed_agent_id)
     if (
         os.environ.get("MAC_REQUIRE_HERMES_STARTUP_READY", "").strip().lower()
         in {"1", "true", "yes", "on"}
@@ -3693,6 +3979,11 @@ def create_app(
                 request.headers.get("authorization"),
                 _current_auth_tokens(),
             )
+            if principal is not None:
+                principal = replace(
+                    principal,
+                    worker_identity_mode=worker_identity_policy.mode,
+                )
             request.state.principal = principal
         except AuthorizationError as exc:
             status_code = 403
@@ -3774,6 +4065,7 @@ def create_app(
                 curiosity_reviewer=curiosity_reviewer,
                 self_healing_sentinel=self_healing_sentinel,
                 model_selection_service=model_selection_service,
+                work_package_pipeline=work_package_pipeline,
             ),
             get_principal=_get_principal,
         )
@@ -3958,6 +4250,12 @@ def create_app(
         planner = getattr(app.state, "workflow_plan_model", None)
         if callable(planner):
             raw = planner(data)
+            if str(data.get("mode") or "legacy").strip().lower() == MANAGED_WORK_PLAN_MODE:
+                return app.state.managed_work_plan_bridge.preview(
+                    raw,
+                    request=data,
+                    source="injected",
+                ).to_dict()
             return _normalize_dashboard_workflow_plan(raw, data, source="injected")
         raw = _dashboard_workflow_plan_from_router(
             cp,
@@ -3965,6 +4263,12 @@ def create_app(
             secret_resolver=_router_secret_resolver,
             route_observer=_router_route_observer,
         )
+        if str(data.get("mode") or "legacy").strip().lower() == MANAGED_WORK_PLAN_MODE:
+            return app.state.managed_work_plan_bridge.preview(
+                raw,
+                request=data,
+                source="model",
+            ).to_dict()
         return _normalize_dashboard_workflow_plan(raw, data, source="model")
 
     @app.post("/dashboard/workflow-plan/accept")
@@ -3974,6 +4278,21 @@ def create_app(
     ) -> Dict[str, Any]:
         _ensure_payload_bounded(body.metadata, "dashboard.workflow_plan.metadata")
         data = _data(body)
+        if str(data.get("mode") or "legacy").strip().lower() == MANAGED_WORK_PLAN_MODE:
+            principal.require_admin()
+            plan = (
+                dict(body.plan)
+                if isinstance(body.plan, dict)
+                else managed_plan_from_dashboard_accept(data)
+            )
+            _ensure_payload_bounded(plan, "dashboard.managed_work_plan.plan")
+            return app.state.managed_work_plan_bridge.accept(
+                plan,
+                actor=body.actor,
+                reason=body.reason,
+                tenant_id=body.tenant_id,
+                root_task_id=body.root_task_id,
+            ).to_dict()
         for index, node in enumerate(data.get("nodes") or [], start=1):
             if isinstance(node, dict):
                 _ensure_payload_bounded(
@@ -4671,7 +4990,12 @@ def create_app(
         ).to_dict()
 
     @app.put("/tasks/{task_id}")
-    def update_task(task_id: str, body: TaskUpdate) -> Dict[str, Any]:
+    def update_task(
+        task_id: str,
+        body: TaskUpdate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
         data = _data(body)
         actor = data.pop("actor", "human")
         if data.get("metadata") is not None:
@@ -4813,15 +5137,23 @@ def create_app(
         return scientific_optimizer.analyze_experiment(experiment_id, actor="operator")
 
     @app.post("/tasks/{task_id}/children")
-    def add_child_tasks(task_id: str, body: TaskChildrenCreate) -> Dict[str, Any]:
+    def add_child_tasks(
+        task_id: str,
+        body: TaskChildrenCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
         data = _data(body)
+        actor = data.get("actor", "human")
+        _assert_task_actor(principal, task_id, actor)
         for index, child in enumerate(data.get("children") or [], start=1):
             if child.get("metadata") is not None:
                 _ensure_payload_bounded(child["metadata"], "task.children.%d.metadata" % index)
         return cp.add_child_tasks(
             task_id,
             data.get("children") or [],
-            actor=data.get("actor", "human"),
+            actor=actor,
+            lease_id=data.get("lease_id"),
+            trusted_internal=principal.is_admin,
         )
 
     @app.delete("/tasks/{task_id}")
@@ -4829,7 +5161,9 @@ def create_app(
         task_id: str,
         force: bool = Query(default=False),
         actor: str = Query(default="human"),
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        principal.require_admin()
         cp.delete_task(task_id, force=force, actor=actor)
         return {"deleted": task_id}
 
@@ -4893,6 +5227,298 @@ def create_app(
     def list_projects() -> List[Dict[str, Any]]:
         return cp.list_projects()
 
+    @app.get("/work-packages")
+    def list_work_packages(
+        state: Optional[str] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=1000),
+    ) -> List[Dict[str, Any]]:
+        return cp.list_work_packages(state=state, project=project, limit=limit)
+
+    @app.post("/work-packages")
+    def admit_work_package(
+        body: WorkPackageAdmit,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        _ensure_payload_bounded(body.plan, "work_package.plan")
+        return cp.admit_work_package(
+            body.plan,
+            actor=body.actor,
+            reason=body.reason,
+            tenant_id=body.tenant_id,
+            root_task_id=body.root_task_id,
+        ).to_dict()
+
+    @app.get("/work-packages/{package_id}")
+    def describe_work_package(package_id: str) -> Dict[str, Any]:
+        return cp.describe_work_package(package_id)
+
+    @app.get("/work-packages/{package_id}/activation-readiness")
+    def work_package_activation_readiness(package_id: str) -> Dict[str, Any]:
+        return cp.work_package_activation_readiness(package_id)
+
+    @app.post("/work-packages/{package_id}/activate")
+    def activate_work_package(
+        package_id: str,
+        body: WorkPackageActivate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.activate_work_package(
+            package_id,
+            expected_plan_version=body.expected_plan_version,
+            expected_epoch=body.expected_epoch,
+            actor=body.actor,
+        )
+
+    @app.post("/work-packages/{package_id}/replan-preview")
+    def preview_work_package_replan(
+        package_id: str,
+        body: WorkPackageReplan,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        _ensure_payload_bounded(body.plan, "work_package.replan.plan")
+        return cp.preview_work_package_replan(
+            package_id,
+            body.plan,
+            expected_plan_version=body.expected_plan_version,
+            expected_epoch=body.expected_epoch,
+            actor=body.actor,
+            reason=body.reason,
+        )
+
+    @app.post("/work-packages/{package_id}/pause")
+    def pause_work_package(
+        package_id: str,
+        body: WorkPackagePause,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.pause_work_package(
+            package_id,
+            expected_plan_version=body.expected_plan_version,
+            expected_epoch=body.expected_epoch,
+            actor=body.actor,
+            reason=body.reason,
+        )
+
+    @app.post("/work-packages/{package_id}/replan")
+    def replan_work_package(
+        package_id: str,
+        body: WorkPackageReplan,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        _ensure_payload_bounded(body.plan, "work_package.replan.plan")
+        return cp.replan_work_package(
+            package_id,
+            body.plan,
+            expected_plan_version=body.expected_plan_version,
+            expected_epoch=body.expected_epoch,
+            actor=body.actor,
+            reason=body.reason,
+        )
+
+    @app.post("/work-packages/{package_id}/integration-batches")
+    def create_work_package_integration_batch(
+        package_id: str,
+        body: WorkPackageIntegrationRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.create_work_package_integration_batch(
+            package_id,
+            body.integration_node_key,
+            actor=body.actor,
+        ).to_dict()
+
+    @app.post("/work-packages/{package_id}/assemble")
+    def assemble_work_package(
+        package_id: str,
+        body: WorkPackageIntegrationRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.assemble_work_package(
+            package_id,
+            body.integration_node_key,
+            actor=body.actor,
+        )
+
+    @app.get("/work-package-integration-batches/{batch_id}")
+    def work_package_integration_status(
+        batch_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.work_package_integration_status(batch_id)
+
+    @app.post("/work-package-integration-batches/{batch_id}/claim")
+    def claim_work_package_integration_batch(
+        batch_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.claim_work_package_integration_batch(batch_id).to_dict()
+
+    @app.post("/work-package-integration-batches/{batch_id}/assemble")
+    def assemble_work_package_integration_batch(
+        batch_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.assemble_work_package_integration_batch(batch_id).to_dict()
+
+    @app.post("/work-package-integration-batches/{batch_id}/certification-jobs")
+    def prepare_work_package_certification_job(
+        batch_id: str,
+        body: WorkPackageCertificationPrepare,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.prepare_work_package_certification_job(
+            batch_id,
+            body.bundle_path,
+            actor=body.actor,
+        )
+
+    @app.get("/work-package-certification-jobs/{job_id}")
+    def work_package_certification_status(
+        job_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.work_package_certification_status(job_id)
+
+    @app.post("/work-package-certification-jobs/{job_id}/claim")
+    def claim_work_package_certification_job(
+        job_id: str,
+        body: WorkPackageCertificationClaim,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.claim_work_package_certification_job(
+            job_id,
+            owner=body.owner,
+        ).to_dict()
+
+    @app.post("/work-package-certification-jobs/{job_id}/ingest")
+    def ingest_work_package_certification_result(
+        job_id: str,
+        body: WorkPackageCertificationIngest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        _ensure_payload_bounded(body.result, "work_package.certification.result")
+        return cp.ingest_work_package_certification_result(
+            job_id,
+            body.result,
+            owner=body.owner,
+            fence=body.fence,
+        ).to_dict()
+
+    @app.post("/work-package-certification-jobs/{job_id}/run")
+    def run_work_package_certification_job(
+        job_id: str,
+        body: WorkPackageCertificationRun,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.run_work_package_certification_job(
+            job_id,
+            body.bundle_path,
+            owner=body.owner,
+            result_path=body.result_path,
+        ).to_dict()
+
+    @app.post(
+        "/work-package-integration-batches/{batch_id}/reject-failed-certification"
+    )
+    def reject_failed_work_package_certification(
+        batch_id: str,
+        body: WorkPackageFailedCertification,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.reject_failed_work_package_certification(
+            batch_id,
+            body.certification_id,
+            actor=body.actor,
+        )
+
+    @app.post(
+        "/work-package-integration-batches/{batch_id}/accept-certification"
+    )
+    def accept_work_package_certification(
+        batch_id: str,
+        body: WorkPackageCertificationAccept,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.accept_work_package_certification(
+            batch_id,
+            body.certification_id,
+        ).to_dict()
+
+    @app.post("/work-package-integration-batches/{batch_id}/land")
+    def land_work_package(
+        batch_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.land_work_package(batch_id).to_dict()
+
+    @app.post(
+        "/work-package-integration-batches/{batch_id}/finalize-publication"
+    )
+    def finalize_work_package_publication(
+        batch_id: str,
+        body: WorkPackagePublicationFinalize,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.finalize_work_package_publication(
+            batch_id,
+            actor=body.actor,
+            receipt_id=body.receipt_id,
+        ).to_dict()
+
+    @app.post("/work-package-outputs/{evidence_id}/verify")
+    def verify_work_package_output(
+        evidence_id: str,
+        _body: WorkPackageOutputVerify,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.verify_work_package_output(evidence_id).to_dict()
+
+    @app.post("/work-packages/candidates/{candidate_id}/accept")
+    def accept_work_package_candidate(
+        candidate_id: str,
+        body: WorkPackageCandidateAccept,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.accept_work_package_candidate(
+            candidate_id,
+            actor=body.actor,
+        ).to_dict()
+
+    @app.post("/work-packages/candidates/{candidate_id}/reject")
+    def reject_work_package_candidate(
+        candidate_id: str,
+        body: WorkPackageCandidateReject,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.reject_work_package_candidate(
+            candidate_id,
+            actor=body.actor,
+            reason=body.reason,
+        ).to_dict()
+
     @app.post("/projects")
     def create_project(
         body: ProjectCreate,
@@ -4942,14 +5568,36 @@ def create_app(
         task_id: str,
         body: TransitionRequest,
         background_tasks: BackgroundTasks,
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        task = cp.transition_task(
-            task_id,
-            body.target_state,
-            body.actor,
-            body.detail,
-            drain_outbox=False,
-        )
+        terminal_close = str(body.target_state).strip().lower() in {
+            "completed",
+            "cancelled",
+        }
+        operator_close = terminal_close and principal.agent_id is None
+        if operator_close:
+            # An unbound writer is not worker authority and must not gain an
+            # implicit lifecycle bypass by choosing an actor string.  Only the
+            # explicit admin/operator principal reaches the trusted close
+            # service.  Package tasks still fail closed inside that service.
+            principal.require_admin()
+            task = cp.close_task(
+                task_id,
+                body.target_state,
+                body.actor,
+                body.detail,
+                drain_outbox=False,
+            )
+        else:
+            _assert_task_actor(principal, task_id, body.actor)
+            task = cp.transition_task(
+                task_id,
+                body.target_state,
+                body.actor,
+                body.detail,
+                lease_id=body.lease_id,
+                drain_outbox=False,
+            )
         background_tasks.add_task(
             cp.drain_task_transition_outbox_best_effort,
             task_id=task_id,
@@ -4963,34 +5611,60 @@ def create_app(
         agent_id: str,
         background_tasks: BackgroundTasks,
         lease_seconds: int = 900,
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        _assert_task_actor(principal, task_id, agent_id)
         task, lease = cp.claim_task(task_id, agent_id, lease_seconds, sync_beads=False)
         return {"task": task.to_dict(), "lease": lease.to_dict()}
 
     @app.post("/tasks/{task_id}/reopen")
-    def reopen_task(task_id: str, body: TaskRecoveryRequest) -> Dict[str, Any]:
+    def reopen_task(
+        task_id: str,
+        body: TaskRecoveryRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
         # Recovery: return a stuck/terminal task (failed/cancelled/blocked) to
         # OPEN so it can be retried or reconciled. Counterpart to force-complete.
         return cp.reopen_task(task_id, body.actor, body.reason).to_dict()
 
     @app.post("/tasks/{task_id}/force-complete")
-    def force_complete_task(task_id: str, body: TaskRecoveryRequest) -> Dict[str, Any]:
+    def force_complete_task(
+        task_id: str,
+        body: TaskRecoveryRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
         # Operator override: mark a task COMPLETED regardless of state/review,
         # for reconciling work done out-of-band (e.g. merged via PR) or a task
         # stranded in a terminal state. Bypasses the review gate (audited).
         return cp.force_complete_task(task_id, body.actor, body.reason).to_dict()
 
     @app.post("/leases/{lease_id}/renew")
-    def renew_lease(lease_id: str, body: LeaseRenewRequest) -> Dict[str, Any]:
+    def renew_lease(
+        lease_id: str,
+        body: LeaseRenewRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _assert_task_actor(
+            principal, cp.get_lease(lease_id).task_id, body.agent_id
+        )
         return cp.renew_lease(lease_id, body.agent_id, body.lease_seconds).to_dict()
 
     @app.post("/leases/{lease_id}/delegate")
-    def delegate_lease(lease_id: str, body: LeaseDelegateRequest) -> Dict[str, Any]:
+    def delegate_lease(
+        lease_id: str,
+        body: LeaseDelegateRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
         # PR2c (spec §6.3, Option B): the dispatcher holds the lease but
         # the role agent spawned in the task Job authors start /
         # submit_for_review / evidence. This endpoint records the
         # delegation so those calls accept the delegate as a valid
         # actor. Owner remains the sole renew/release authority.
+        _assert_task_actor(
+            principal, cp.get_lease(lease_id).task_id, body.agent_id
+        )
         return cp.delegate_lease(lease_id, body.agent_id, body.to_agent_id).to_dict()
 
     @app.post("/tasks/{task_id}/start")
@@ -4998,8 +5672,16 @@ def create_app(
         task_id: str,
         agent_id: str,
         background_tasks: BackgroundTasks,
+        lease_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        task = cp.start_task(task_id, agent_id, drain_outbox=False)
+        _assert_task_actor(principal, task_id, agent_id)
+        task = cp.start_task(
+            task_id,
+            agent_id,
+            lease_id=lease_id,
+            drain_outbox=False,
+        )
         background_tasks.add_task(
             cp.drain_task_transition_outbox_best_effort,
             task_id=task_id,
@@ -5008,16 +5690,28 @@ def create_app(
         return task.to_dict()
 
     @app.post("/tasks/{task_id}/release")
-    def release_task(task_id: str, body: TaskRelease = TaskRelease()) -> Dict[str, Any]:
+    def release_task(
+        task_id: str,
+        body: TaskRelease = TaskRelease(),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
         return cp.release_task(task_id, actor=body.actor).to_dict()
 
     @app.post("/tasks/{task_id}/activity")
-    def append_task_activity(task_id: str, body: TaskActivityAppend) -> Dict[str, Any]:
+    def append_task_activity(
+        task_id: str,
+        body: TaskActivityAppend,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _assert_task_actor(principal, task_id, body.actor)
         return cp.append_task_activity(
             task_id,
             phase=body.phase,
             actor=body.actor,
             summary=body.summary,
+            lease_id=body.lease_id,
+            trusted_internal=principal.is_admin,
         ).to_dict()
 
     @app.post("/tasks/{task_id}/submit-for-review")
@@ -5025,9 +5719,17 @@ def create_app(
         task_id: str,
         agent_id: str,
         background_tasks: BackgroundTasks,
+        lease_id: Optional[str] = Query(default=None),
         advance_default_workflow: bool = Query(default=False),
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        task = cp.submit_for_review(task_id, agent_id, drain_outbox=False)
+        _assert_task_actor(principal, task_id, agent_id)
+        task = cp.submit_for_review(
+            task_id,
+            agent_id,
+            lease_id=lease_id,
+            drain_outbox=False,
+        )
         background_tasks.add_task(
             cp.drain_task_transition_outbox_best_effort,
             task_id=task_id,
@@ -5052,7 +5754,7 @@ def create_app(
         # agent token could mint evidence as any other agent and defeat
         # the reviewer-independence check (which reads evidence.created_by
         # downstream). Bind it to the principal.
-        principal.assert_actor(body.created_by)
+        _assert_task_actor(principal, task_id, body.created_by)
         evidence = cp.add_evidence(task_id=task_id, sync_beads=False, **_data(body))
         return evidence.to_dict()
 
@@ -5090,6 +5792,27 @@ def create_app(
         principal.require_global_fleet()
         _ensure_payload_bounded(body.resources, "agent.resources")
         data = _data(body)
+        requested_agent_id = str(data.get("agent_id") or "")
+        if not principal.is_admin:
+            principal.assert_actor(requested_agent_id)
+        resources = dict(data.get("resources") or {})
+        resources.pop("worker_credential_authenticated", None)
+        if (
+            principal.principal_kind == "worker"
+            and principal.agent_id
+            and principal.agent_id == requested_agent_id
+        ):
+            from mac.worker_credentials import authenticated_credential_resource
+
+            authenticated = authenticated_credential_resource(
+                agent_id=requested_agent_id,
+                principal_id=principal.client_id,
+                token_fingerprint=principal.credential_fingerprint,
+                credential_version=principal.worker_credential_version,
+            )
+            if authenticated:
+                resources["worker_credential_authenticated"] = authenticated
+        data["resources"] = resources
         fleet_id = data.pop("fleet_id", None)
         actor = str(data.get("actor") or "human")
         agent = cp.register_agent(**data)
@@ -5687,7 +6410,31 @@ def create_app(
         # agent. Any agent-scoped token could heartbeat/claim/audit-log
         # as a peer. Bind to principal.
         principal.assert_actor(agent_id)
-        return cp.heartbeat_agent(agent_id, **_data(body)).to_dict()
+        data = _data(body)
+        resources_value = data.get("resources")
+        resources = (
+            dict(resources_value)
+            if isinstance(resources_value, Mapping)
+            else dict(cp.get_agent(agent_id).resources)
+        )
+        # This namespace is hub-owned. A legacy/shared token clears any stale
+        # authentication proof; a DB-backed exact worker token replaces it
+        # with facts derived from the resolved bearer principal.
+        resources.pop("worker_credential_authenticated", None)
+        if principal.principal_kind == "worker" and principal.agent_id == agent_id:
+            from mac.worker_credentials import authenticated_credential_resource
+
+            authenticated = authenticated_credential_resource(
+                agent_id=agent_id,
+                principal_id=principal.client_id,
+                token_fingerprint=principal.credential_fingerprint,
+                credential_version=principal.worker_credential_version,
+            )
+            if authenticated:
+                resources["worker_credential_authenticated"] = authenticated
+        if resources_value is not None or resources:
+            data["resources"] = resources
+        return cp.heartbeat_agent(agent_id, **data).to_dict()
 
     @app.post("/agents/{agent_id}/crash-reports")
     def report_agent_crash(
@@ -5746,6 +6493,10 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Optional[Dict[str, Any]]:
         principal.assert_actor(agent_id)  # mac-wcfy
+        allow_package_linked = bool(
+            principal.agent_id == agent_id
+            and _package_actor_ready(principal, agent_id)
+        )
         assignment = cp.claim_next_for_agent(
             agent_id,
             lease_seconds=body.lease_seconds,
@@ -5754,6 +6505,7 @@ def create_app(
             require_canary=body.require_canary,
             dry_run=body.dry_run,
             capabilities=body.capabilities,
+            allow_package_linked=allow_package_linked,
             sync_beads=False,
         )
         return assignment
@@ -6778,26 +7530,44 @@ def create_app(
         return StreamingResponse(iter_events(), media_type="application/x-ndjson")
 
     @app.post("/tasks/{task_id}/reviews")
-    def request_review(task_id: str, body: ReviewRequest) -> Dict[str, Any]:
-        return cp.request_review(task_id, body.reviewer_agent_id, body.actor).to_dict()
+    def request_review(
+        task_id: str,
+        body: ReviewRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        # Reviewer assignment is a scheduler/operator action. An agent may
+        # claim only the review already assigned to its bound identity; it may
+        # not nominate itself (or a collaborator) by forging payload fields.
+        principal.require_admin()
+        actor = principal.client_id or "admin.review-assignment"
+        return cp.request_review(
+            task_id, body.reviewer_agent_id, actor
+        ).to_dict()
 
     @app.post("/reviews/{review_id}/claim")
     def claim_review(
         review_id: str,
         body: ReviewClaim,
         background_tasks: BackgroundTasks,
+        principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
+        _assert_review_actor(principal, review_id, body.reviewer_agent_id)
         claim = cp.claim_review(
             review_id,
             body.reviewer_agent_id,
             executor_evidence_id=body.executor_evidence_id,
-            actor=body.actor,
+            actor=body.reviewer_agent_id,
             sync_beads=False,
         )
         return claim
 
     @app.post("/reviews/{review_id}/decision")
-    def submit_review(review_id: str, body: ReviewDecision) -> Dict[str, Any]:
+    def submit_review(
+        review_id: str,
+        body: ReviewDecision,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        _assert_review_actor(principal, review_id, body.reviewer_agent_id)
         return cp.submit_review(review_id, **_data(body)).to_dict()
 
     @app.post("/reviews/default/tick")

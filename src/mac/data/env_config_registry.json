@@ -1209,7 +1209,8 @@
       "src/mac/ledger_backup.py",
       "src/mac/router_service.py",
       "src/mac/store.py",
-      "src/mac/worker.py"
+      "src/mac/worker.py",
+      "src/mac/worker_credentials.py"
     ],
     "type": "str"
   },
@@ -1230,7 +1231,8 @@
       "src/mac/ledger_backup_scheduler.py",
       "src/mac/router_service.py",
       "src/mac/store.py",
-      "src/mac/worker.py"
+      "src/mac/worker.py",
+      "src/mac/worker_credentials.py"
     ],
     "type": "str"
   },
@@ -1442,6 +1444,17 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy allow legacy worker token.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "bool"
   },
@@ -1793,7 +1806,8 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -2970,6 +2984,105 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy worker credential agent id.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker credential fingerprint.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_FINGERPRINT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker credential id.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_ID",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker credential retries.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_RETRIES",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker credential retry seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_RETRY_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker credential runtime digest.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_RUNTIME_DIGEST",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker credential source commit.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_SOURCE_COMMIT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker credential version.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CREDENTIAL_VERSION",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker identity enforce.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_IDENTITY_ENFORCE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy worker mode.",
     "family": "deployment",
     "name": "MAC_DEPLOY_WORKER_MODE",
@@ -3001,6 +3114,53 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy worker token.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_TOKEN",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy work package bundle dir.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy work package landing enabled.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy work package pipeline enabled.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "bool"
   },
@@ -3469,7 +3629,8 @@
       "src/mac/agent_provider.py",
       "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
-      "src/mac/hermes_chat_config.py"
+      "src/mac/hermes_chat_config.py",
+      "src/mac/worker_credentials.py"
     ],
     "type": "str"
   },
@@ -3788,6 +3949,7 @@
       "src/mac/models_catalog.py",
       "src/mac/services.py",
       "src/mac/worker.py",
+      "src/mac/worker_credentials.py",
       "src/mac/worker_runtime_deps.py"
     ],
     "type": "str"
@@ -4186,6 +4348,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: lease expiry finalizer stale seconds.",
+    "family": "core",
+    "name": "MAC_LEASE_EXPIRY_FINALIZER_STALE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: lease id.",
     "family": "core",
     "name": "MAC_LEASE_ID",
@@ -4193,6 +4366,7 @@
     "sources": [
       "src/mac/_hermes/agent/agent_init.py",
       "src/mac/coding_agent.py",
+      "src/mac/executor_hub_io.py",
       "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/k8s/runner.py",
@@ -4366,6 +4540,17 @@
       "src/mac/services.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: max task lease seconds.",
+    "family": "core",
+    "name": "MAC_MAX_TASK_LEASE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -6178,7 +6363,8 @@
     "name": "MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/services.py"
+      "src/mac/services.py",
+      "src/mac/work_package_assignment.py"
     ],
     "type": "int"
   },
@@ -6189,7 +6375,8 @@
     "name": "MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS",
     "retired": false,
     "sources": [
-      "src/mac/services.py"
+      "src/mac/services.py",
+      "src/mac/work_package_assignment.py"
     ],
     "type": "int"
   },
@@ -6988,6 +7175,18 @@
       "src/mac/k8s/runner.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Kubernetes Runner setting: runner agent token secrets.",
+    "family": "kubernetes-runner",
+    "name": "MAC_RUNNER_AGENT_TOKEN_SECRETS",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/k8s/runner.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -7986,7 +8185,8 @@
     "retired": false,
     "sources": [
       "src/mac/fleet_learning.py",
-      "src/mac/gitops.py"
+      "src/mac/gitops.py",
+      "src/mac/work_package_pipeline_runtime.py"
     ],
     "type": "str"
   },
@@ -8633,6 +8833,105 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker credential agent id.",
+    "family": "worker",
+    "name": "MAC_WORKER_CREDENTIAL_AGENT_ID",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/orchestrator.py",
+      "src/mac/k8s/runner.py",
+      "src/mac/worker_credentials.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker credential fingerprint.",
+    "family": "worker",
+    "name": "MAC_WORKER_CREDENTIAL_FINGERPRINT",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/runner.py",
+      "src/mac/worker_credentials.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker credential id.",
+    "family": "worker",
+    "name": "MAC_WORKER_CREDENTIAL_ID",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/orchestrator.py",
+      "src/mac/k8s/runner.py",
+      "src/mac/worker_credentials.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker credential policy file.",
+    "family": "worker",
+    "name": "MAC_WORKER_CREDENTIAL_POLICY_FILE",
+    "retired": false,
+    "sources": [
+      "src/mac/worker_credentials.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker credential runtime digest.",
+    "family": "worker",
+    "name": "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/orchestrator.py",
+      "src/mac/k8s/runner.py",
+      "src/mac/worker_credentials.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker credential source commit.",
+    "family": "worker",
+    "name": "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/orchestrator.py",
+      "src/mac/k8s/runner.py",
+      "src/mac/worker_credentials.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker credential version.",
+    "family": "worker",
+    "name": "MAC_WORKER_CREDENTIAL_VERSION",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/runner.py",
+      "src/mac/worker_credentials.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker delivery drain seconds.",
     "family": "worker",
     "name": "MAC_WORKER_DELIVERY_DRAIN_SECONDS",
@@ -8674,7 +8973,8 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/orchestrator.py"
     ],
     "type": "int"
   },
@@ -8704,6 +9004,20 @@
       "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker identity mode.",
+    "family": "worker",
+    "name": "MAC_WORKER_IDENTITY_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/runner.py",
+      "src/mac/worker_credentials.py"
     ],
     "type": "str"
   },
@@ -8831,6 +9145,21 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker running digest.",
+    "family": "worker",
+    "name": "MAC_WORKER_RUNNING_DIGEST",
+    "retired": false,
+    "sources": [
+      "deploy/k8s/mac-runner/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/k8s/runner.py",
+      "src/mac/worker.py",
+      "src/mac/worker_credentials.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker token.",
     "family": "worker",
     "name": "MAC_WORKER_TOKEN",
@@ -8859,7 +9188,8 @@
       "src/mac/openshell_collector.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/router_service.py",
-      "src/mac/worker.py"
+      "src/mac/worker.py",
+      "src/mac/worker_credentials.py"
     ],
     "type": "str"
   },
@@ -8951,5 +9281,163 @@
       "src/mac/workflow_runtime.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package bundle dir.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_BUNDLE_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package bundle retention days.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_BUNDLE_RETENTION_DAYS",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package candidate namespace.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_CANDIDATE_NAMESPACE",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package git timeout seconds.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_GIT_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package landing enabled.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_LANDING_ENABLED",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/k8s/mac-api/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package landing lease seconds.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_LANDING_LEASE_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package pipeline actor.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_PIPELINE_ACTOR",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package pipeline enabled.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_PIPELINE_ENABLED",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/k8s/mac-api/deployment.yaml",
+      "src/mac/deploy_env.py",
+      "src/mac/work_package_pipeline.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package pipeline initial delay seconds.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_PIPELINE_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package pipeline interval seconds.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_PIPELINE_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package pipeline max actions.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_PIPELINE_MAX_ACTIONS",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package pipeline max error chars.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_PIPELINE_MAX_ERROR_CHARS",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: work package pipeline max items.",
+    "family": "core",
+    "name": "MAC_WORK_PACKAGE_PIPELINE_MAX_ITEMS",
+    "retired": false,
+    "sources": [
+      "src/mac/work_package_pipeline.py",
+      "src/mac/work_package_pipeline_runtime.py"
+    ],
+    "type": "str"
   }
 ]

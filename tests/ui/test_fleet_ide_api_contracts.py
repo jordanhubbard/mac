@@ -310,10 +310,10 @@ def test_create_task_invalid_payload_returns_422():
 def test_workbench_blocked_task_context_and_operator_direction_round_trip():
     cp = ControlPlane.in_memory()
     task_id = _seed_task(cp, title="Waiting for operator direction")
-    cp.transition_task(
+    cp._transition_task_internal(
         task_id,
         TaskState.BLOCKED.value,
-        "worker",
+        "operator",
         {
             "reason": "missing_target_region",
             "question": "Which production region should receive this deployment?",

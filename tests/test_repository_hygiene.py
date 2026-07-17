@@ -23,6 +23,7 @@ from mac.repository_hygiene import (
     query_open_pull_requests,
     refresh_remote_base_ref,
     repository_ref_lifecycle_for_transition,
+    retire_protected_remote_ref_exact,
     resolve_remote_base_ref,
     verify_repository_remote,
 )
@@ -51,6 +52,55 @@ def _ref(**overrides):
     }
     values.update(overrides)
     return ManagedRepositoryRef(**values)
+
+
+def test_protected_ref_cleanup_rejects_sha_mismatch_before_push(tmp_path):
+    ref = "refs/mac/integration/batch-1"
+    calls = []
+
+    def runner(_repo, argv, timeout):
+        calls.append(list(argv))
+        return _cp(argv, stdout="%s\t%s\n" % ("e" * 40, ref))
+
+    with pytest.raises(RepositoryHygieneError, match="changed identity"):
+        retire_protected_remote_ref_exact(
+            tmp_path,
+            "origin",
+            ref,
+            "d" * 40,
+            execute=True,
+            runner=runner,
+        )
+
+    assert len(calls) == 1
+    assert calls[0][1] == "ls-remote"
+
+
+def test_protected_ref_cleanup_uses_exact_sha_lease_and_readback(tmp_path):
+    ref = "refs/mac/attempts/package/e1/change/a1-lease"
+    sha = "d" * 40
+    calls = []
+    observations = iter(["%s\t%s\n" % (sha, ref), ""])
+
+    def runner(_repo, argv, timeout):
+        calls.append(list(argv))
+        if argv[1] == "ls-remote":
+            return _cp(argv, stdout=next(observations))
+        return _cp(argv, stdout="ok")
+
+    outcome = retire_protected_remote_ref_exact(
+        tmp_path,
+        "origin",
+        ref,
+        sha,
+        execute=True,
+        runner=runner,
+    )
+
+    assert outcome == "deleted"
+    push = calls[1]
+    assert "--force-with-lease=%s:%s" % (ref, sha) in push
+    assert ":%s" % ref in push
 
 
 def _detail(

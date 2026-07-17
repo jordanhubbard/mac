@@ -23,7 +23,7 @@ from mac.providers import ROUTER_PROVIDERS, router_secret_name, upstream_provide
 
 DEFAULT_WORKER_CAPABILITIES = (
     "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
-    "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+    "typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1"
 )
 LEGACY_WORKER_CAPABILITIES = (
     "ops,python,hermes,review,api,architecture,cli,docs,security,testing,"
@@ -118,6 +118,16 @@ class WorkerConfig:
     allowed_projects: str
     required_metadata: str
     require_canary: str
+    # A worker-facing bearer is distinct from both the hub's local admin token
+    # and the router credential.  The remaining fields are secret-free proof
+    # material written beside it so heartbeats can attest the installed version.
+    token: str = ""
+    credential_id: str = ""
+    credential_version: str = ""
+    credential_agent_id: str = ""
+    credential_fingerprint: str = ""
+    credential_source_commit: str = ""
+    credential_runtime_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -367,6 +377,8 @@ def _gateway_values(cfg: DeployEnvConfig) -> Dict[str, str]:
 
 
 def _worker_token(cfg: DeployEnvConfig, values: Mapping[str, str]) -> str:
+    if cfg.worker.token:
+        return cfg.worker.token
     if cfg.worker.mode == "loop" and cfg.identity.is_hub:
         return values["MAC_API_TOKEN"]
     if cfg.control.hub_token:
@@ -377,7 +389,7 @@ def _worker_token(cfg: DeployEnvConfig, values: Mapping[str, str]) -> str:
 def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str, str]:
     worker = cfg.worker
     identity = cfg.identity
-    return {
+    result = {
         "MAC_WORKER_TOKEN": _worker_token(cfg, values),
         "MAC_WORKER_AGENT_NAME": identity.agent,
         "MAC_WORKER_HOSTNAME": identity.agent,
@@ -387,6 +399,34 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
         "MAC_WORKER_ALLOWED_PROJECTS": worker.allowed_projects,
         "MAC_WORKER_REQUIRED_METADATA": worker.required_metadata,
     }
+    credential_values = {
+        "MAC_WORKER_CREDENTIAL_ID": worker.credential_id,
+        "MAC_WORKER_CREDENTIAL_VERSION": worker.credential_version,
+        "MAC_WORKER_CREDENTIAL_AGENT_ID": worker.credential_agent_id,
+        "MAC_WORKER_CREDENTIAL_FINGERPRINT": worker.credential_fingerprint,
+        "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT": worker.credential_source_commit,
+        "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST": worker.credential_runtime_digest,
+    }
+    if all(
+        credential_values[key]
+        for key in (
+            "MAC_WORKER_CREDENTIAL_ID",
+            "MAC_WORKER_CREDENTIAL_VERSION",
+            "MAC_WORKER_CREDENTIAL_AGENT_ID",
+            "MAC_WORKER_CREDENTIAL_FINGERPRINT",
+        )
+    ):
+        result.update(credential_values)
+        result["MAC_WORKER_IDENTITY_MODE"] = "bound"
+    else:
+        # Mixed-version rollout: keep legacy workers operational, but make the
+        # mode explicit so the scheduler can keep them off package-linked work.
+        result["MAC_WORKER_IDENTITY_MODE"] = "compatibility"
+        for key in credential_values:
+            result.pop(key, None)
+    if worker.credential_runtime_digest:
+        result["MAC_WORKER_RUNNING_DIGEST"] = worker.credential_runtime_digest
+    return result
 
 
 def _chat_gateway_values(
@@ -863,6 +903,23 @@ def build_mac_env(
             "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
             "MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
         ),
+        # Controller-owned work-package assembly line. Deployment is explicit
+        # and fail-closed: every new hub starts with both execution and landing
+        # disabled, while an operator may opt in only after provisioning the
+        # external certifier, a valid repository contract, Git authority, and
+        # durable bundle storage.
+        (
+            "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED",
+            "MAC_WORK_PACKAGE_PIPELINE_ENABLED",
+        ),
+        (
+            "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED",
+            "MAC_WORK_PACKAGE_LANDING_ENABLED",
+        ),
+        (
+            "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR",
+            "MAC_WORK_PACKAGE_BUNDLE_DIR",
+        ),
         # OpenShell sandbox requirement, data-driven from the agent's resources
         # (no hardcoded agent list). The deploy orchestrator derives this from the
         # agent's DB resources["openshell_required"]; it lands in mac.env and the
@@ -884,8 +941,20 @@ def build_mac_env(
         # to a ticket, which the reconciler never touches. Failed branches are
         # quarantined (kept) regardless, so 0 never deletes unmerged work.
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS", "0")
+        values.setdefault("MAC_WORK_PACKAGE_PIPELINE_ENABLED", "0")
+        values.setdefault("MAC_WORK_PACKAGE_LANDING_ENABLED", "0")
+        values.setdefault(
+            "MAC_WORK_PACKAGE_BUNDLE_DIR",
+            str(cfg.paths.mac_home / "work-package-bundles"),
+        )
     else:
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
+        # Spokes never own controller integration/certification/landing. Clear
+        # stale values rather than preserving an old hub configuration after a
+        # role change or host swap.
+        values["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] = "0"
+        values["MAC_WORK_PACKAGE_LANDING_ENABLED"] = "0"
+        values.pop("MAC_WORK_PACKAGE_BUNDLE_DIR", None)
     values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
     values.setdefault("MAC_WORKER_WORKSPACE", str(cfg.paths.mac_home / "agent-workspaces"))
     values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")
@@ -1035,6 +1104,25 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
             allowed_projects=a.worker_allowed_projects.strip(),
             required_metadata=a.worker_required_metadata.strip(),
             require_canary=a.worker_require_canary.strip() or "1",
+            token=(env.get("MAC_DEPLOY_WORKER_TOKEN") or "").strip(),
+            credential_id=(env.get("MAC_DEPLOY_WORKER_CREDENTIAL_ID") or "").strip(),
+            credential_version=(
+                env.get("MAC_DEPLOY_WORKER_CREDENTIAL_VERSION") or ""
+            ).strip(),
+            credential_agent_id=(
+                env.get("MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID") or ""
+            ).strip(),
+            credential_fingerprint=(
+                env.get("MAC_DEPLOY_WORKER_CREDENTIAL_FINGERPRINT") or ""
+            ).strip(),
+            credential_source_commit=(
+                env.get("MAC_DEPLOY_WORKER_CREDENTIAL_SOURCE_COMMIT")
+                or env.get("MAC_DEPLOY_GIT_REV")
+                or ""
+            ).strip(),
+            credential_runtime_digest=(
+                env.get("MAC_DEPLOY_WORKER_CREDENTIAL_RUNTIME_DIGEST") or ""
+            ).strip(),
         ),
         services=SharedServicesConfig(
             qdrant_url=a.qdrant_url.strip(),

@@ -111,7 +111,8 @@ def run_one_lease(
 
     try:
         mac.post(
-            "/tasks/%s/start?agent_id=%s" % (_q(task_id), _q(agent_id)),
+            "/tasks/%s/start?agent_id=%s&lease_id=%s"
+            % (_q(task_id), _q(agent_id), _q(lease_id)),
             {},
         )
     except Exception as exc:  # noqa: BLE001
@@ -135,6 +136,7 @@ def run_one_lease(
     evidence = _submit_execution_evidence(
         mac,
         task_id=task_id,
+        lease_id=lease_id,
         agent_id=agent_id,
         exec_result=exec_result,
         duration_ms=duration_ms,
@@ -153,8 +155,8 @@ def run_one_lease(
     if exec_result.returncode == 0:
         try:
             mac.post(
-                "/tasks/%s/submit-for-review?agent_id=%s"
-                % (_q(task_id), _q(agent_id)),
+                "/tasks/%s/submit-for-review?agent_id=%s&lease_id=%s"
+                % (_q(task_id), _q(agent_id), _q(lease_id)),
                 {},
             )
             return JobExecutionResult(
@@ -534,6 +536,7 @@ def _submit_execution_evidence(
     agent_id: str,
     exec_result: _ExecResult,
     duration_ms: float,
+    lease_id: Optional[str] = None,
 ) -> Optional[JsonDict]:
     metadata: JsonDict = {
         "returncode": exec_result.returncode,
@@ -549,17 +552,17 @@ def _submit_execution_evidence(
     if exec_result.manifest_error:
         metadata["verification_manifest_error"] = exec_result.manifest_error
     try:
-        return mac.post(
-            "/tasks/%s/evidence" % _q(task_id),
-            {
-                "kind": "log",
-                "uri": "stdout://mac-task-runner",
-                "summary": "executor returncode=%d duration_ms=%.1f"
-                % (exec_result.returncode, duration_ms),
-                "created_by": agent_id,
-                "metadata": metadata,
-            },
-        )
+        body: JsonDict = {
+            "kind": "log",
+            "uri": "stdout://mac-task-runner",
+            "summary": "executor returncode=%d duration_ms=%.1f"
+            % (exec_result.returncode, duration_ms),
+            "created_by": agent_id,
+            "metadata": metadata,
+        }
+        if lease_id:
+            body["lease_id"] = lease_id
+        return mac.post("/tasks/%s/evidence" % _q(task_id), body)
     except Exception as exc:  # noqa: BLE001
         log.error("evidence POST failed for task=%s: %s", task_id, exc)
         return None
@@ -576,6 +579,7 @@ def _record_failure_evidence(
     evidence = _submit_execution_evidence(
         mac,
         task_id=task_id,
+        lease_id=lease_id,
         agent_id=agent_id,
         exec_result=_ExecResult(
             returncode=returncode,
@@ -637,6 +641,7 @@ def _block_task_after_evidence(
             {
                 "target_state": "blocked",
                 "actor": agent_id,
+                "lease_id": lease_id,
                 "detail": detail,
             },
         )

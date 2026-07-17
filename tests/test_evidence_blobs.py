@@ -50,7 +50,7 @@ def test_store_blob_sets_mode_0600(tmp_path):
     readable by other local users on the hub host.
     """
     content = b"sensitive evidence payload"
-    uri = evidence_blobs.store_blob(tmp_path, content)
+    evidence_blobs.store_blob(tmp_path, content)
     digest = hashlib.sha256(content).hexdigest()
     path = evidence_blobs.blob_path(tmp_path, digest)
     actual_mode = path.stat().st_mode & 0o777
@@ -104,6 +104,7 @@ def test_large_artifact_externalizes_and_reads_back(cp, tmp_path, monkeypatch):
     evidence = cp.add_evidence(
         task.id, "log", "file:///tmp/result.json", "done", "agent",
         artifacts=[_artifact(content)],
+        _trusted_internal=True,
     )
 
     # Ledger row carries the uri, not the bytes.
@@ -131,6 +132,7 @@ def test_small_artifact_stays_inline(cp, tmp_path, monkeypatch):
     evidence = cp.add_evidence(
         task.id, "log", "file:///tmp/result.json", "done", "agent",
         artifacts=[_artifact(content)],
+        _trusted_internal=True,
     )
     row = cp.store.query_one(
         "SELECT content_base64, content_uri FROM evidence_artifacts WHERE evidence_id = ?",
@@ -148,6 +150,7 @@ def test_unconfigured_blob_store_keeps_inline_behavior(cp, monkeypatch):
     evidence = cp.add_evidence(
         task.id, "log", "file:///tmp/result.json", "done", "agent",
         artifacts=[_artifact(content)],
+        _trusted_internal=True,
     )
     listed = cp.list_evidence_artifacts(evidence.id)
     artifact = cp.get_evidence_artifact(evidence.id, listed[0]["id"])
@@ -162,6 +165,7 @@ def test_missing_blob_fails_closed_with_clear_error(cp, tmp_path, monkeypatch):
     evidence = cp.add_evidence(
         task.id, "log", "file:///tmp/result.json", "done", "agent",
         artifacts=[_artifact(content)],
+        _trusted_internal=True,
     )
     listed = cp.list_evidence_artifacts(evidence.id)
     digest = hashlib.sha256(content).hexdigest()
@@ -181,6 +185,7 @@ def test_corrupted_blob_fails_closed_on_read(cp, tmp_path, monkeypatch):
     evidence = cp.add_evidence(
         task.id, "log", "file:///tmp/result.json", "done", "agent",
         artifacts=[_artifact(content)],
+        _trusted_internal=True,
     )
     listed = cp.list_evidence_artifacts(evidence.id)
     digest = hashlib.sha256(content).hexdigest()
@@ -202,6 +207,7 @@ def test_identical_content_across_evidence_deduplicates(cp, tmp_path, monkeypatc
         cp.add_evidence(
             task.id, "log", "file:///tmp/result.json", "done", "agent",
             artifacts=[_artifact(content)],
+            _trusted_internal=True,
         )
     blobs = [p for p in blob_dir.rglob("*") if p.is_file()]
     assert len(blobs) == 1

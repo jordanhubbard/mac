@@ -110,7 +110,9 @@ def test_get_task_reflects_state():
     assert client.get_task(task.id).status.state == TaskState.SUBMITTED
 
     # Drive the remote ledger into a "working" state and confirm the projection.
-    cp.transition_task(task.id, MacTaskState.CLAIMED.value, actor="tester")
+    cp._transition_task_internal(
+        task.id, MacTaskState.CLAIMED.value, actor="test-fixture"
+    )
     assert client.get_task(task.id).status.state == TaskState.WORKING
 
 

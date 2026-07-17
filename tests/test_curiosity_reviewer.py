@@ -212,7 +212,9 @@ def test_cooldown_blocks_refile_after_task_closes(cp):
     reviewer = _reviewer(cp)
     first = reviewer.run_once()
     task_id = first["agents"][0]["task_id"]
-    cp.transition_task(task_id, "cancelled", "operator", detail={"reason": "test cleanup"})
+    cp.close_task(
+        task_id, "cancelled", "operator", detail={"reason": "test cleanup"}
+    )
 
     report = reviewer.run_once()
     assert report["filed_count"] == 0
@@ -225,8 +227,12 @@ def test_refiles_after_cooldown_elapses(cp, monkeypatch):
     _register_openclaw_agent(cp, "rocky")
     reviewer = _reviewer(cp)
     first = reviewer.run_once()
-    cp.transition_task(first["agents"][0]["task_id"], "cancelled", "operator",
-                       detail={"reason": "test cleanup"})
+    cp.close_task(
+        first["agents"][0]["task_id"],
+        "cancelled",
+        "operator",
+        detail={"reason": "test cleanup"},
+    )
 
     # Jump the reviewer's clock past the cooldown window.
     future = _utcnow() + timedelta(seconds=DEFAULT_COOLDOWN_SECONDS + 60)
@@ -246,8 +252,12 @@ def test_cooldown_ignores_active_task_of_other_agent(cp):
     assert first["filed_count"] == 2
 
     by_id = {r["agent_id"]: r for r in first["agents"]}
-    cp.transition_task(by_id[rocky.id]["task_id"], "cancelled", "operator",
-                       detail={"reason": "test cleanup"})
+    cp.close_task(
+        by_id[rocky.id]["task_id"],
+        "cancelled",
+        "operator",
+        detail={"reason": "test cleanup"},
+    )
 
     second = reviewer.run_once()
     by_id = {r["agent_id"]: r for r in second["agents"]}

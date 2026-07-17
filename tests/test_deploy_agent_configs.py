@@ -338,7 +338,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
     cfg = load_sample_fleet_config()
     expected = (
         "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,"
-        "typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+        "typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1"
     )
 
     assert "worker_capabilities_field(worker.get(\"capabilities\"))" in script
@@ -363,6 +363,7 @@ def test_fleet_agent_configs_enable_review_capability_by_default():
         "web_extract",
         "web_crawl",
         "firecrawl",
+        "work_package_v1",
     ]
 
     import importlib.util
@@ -2612,6 +2613,29 @@ def test_fleet_deploy_forwards_repository_ref_reconciler_overrides():
         "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
     ):
         assert 'add_remote_env %s "${%s:-}"' % (name, name) in script
+
+
+def test_fleet_deploy_forwards_fail_closed_work_package_activation():
+    script = deploy_script_text()
+
+    for name in (
+        "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED",
+        "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED",
+        "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR",
+    ):
+        assert 'add_remote_env %s "${%s:-}"' % (name, name) in script
+
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "prepare_work_package_pipeline_storage" in installer
+    assert "work-package bundle directory mode is not 0700" in installer
+    assert "work-package pipeline may run only on the control-plane hub" in installer
+
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'ln -sf "$cli" "$MAC_HOME/bin/openshell"' in bootstrap
 
 
 def _startup_self_test_source() -> str:

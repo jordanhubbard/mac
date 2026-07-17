@@ -14,9 +14,9 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import yaml
 from cryptography.fernet import Fernet
@@ -29,7 +29,6 @@ from mac.agentbus_control import (
     REFLECT_REQUEST_CONTENT_TYPE,
     REFLECT_REQUEST_SCHEMA,
     REFLECT_REQUEST_TOPIC,
-    REFLECT_RESULT_CONTENT_TYPE,
     REFLECT_RESULT_TOPIC,
     REPO_UPDATE_CONTENT_TYPE,
     REPO_UPDATE_TOPIC,
@@ -42,6 +41,8 @@ from mac.repository_contract import (
     normalize_repo_relative_path as _normalize_repo_relative_path,
     remote_branch_from_ref as _remote_branch_from_ref,
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
+    resolve_repository_canonical_remote,
+    validate_secret_free_git_remote,
 )
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
 from mac.models import (
@@ -192,6 +193,34 @@ from mac.store import SQLiteStore, Store, make_store_from_env
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
+from mac.work_package_acceptance_service import WorkPackageAcceptanceService
+from mac.work_package_candidate_service import WorkPackageCandidateService
+from mac.work_package_evidence import attempt_artifact_manifest_digest
+from mac.work_package_integration_service import WorkPackageIntegrationService
+from mac.work_package_certification_service import (
+    WorkPackageCertificationService,
+    normalize_repository_certification_contract,
+)
+from mac.work_package_publication_finalizer import WorkPackagePublicationFinalizer
+from mac.landing_service import (
+    LandingService,
+    RepositoryEndpoint,
+)
+from mac.work_package_output_service import (
+    AttemptVerificationResult,
+    WorkPackageOutputService,
+)
+from mac.work_package_replan_service import WorkPackageReplanService
+from mac.work_package_assignment import (
+    WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
+    WorkPackageDispatchAdvisor,
+    WorkPackageTaskRank,
+)
+from mac.work_package_scheduler import (
+    WORK_PACKAGE_ALLOCATOR_VERSION,
+    WorkPackageClaimGate,
+)
+from mac.work_package_service import WorkPackageService
 
 
 def _state_value(state: Any) -> str:
@@ -673,6 +702,7 @@ REPOSITORY_CONTRACT_FILES = (
 )
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
 _GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_FULL_GIT_OBJECT_ID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 # Sandbox git preflight for hub verification. The repo is tar-uploaded into the
 # sandbox, so its files can be owned by a different uid than the user running
 # the tests (HOME=/tmp guarantees no .gitconfig safe.directory whitelist).
@@ -1003,12 +1033,17 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             canonical_remote_url_raw,
             "repository runtime contract.canonical_remote_url",
         )
-        if _canonicalize_git_url(canonical_remote_url) is None:
-            raise ValidationError(
-                "repository runtime contract.canonical_remote_url is not a parseable git URL: %r"
-                % canonical_remote_url
+        try:
+            canonical_remote_url = validate_secret_free_git_remote(
+                canonical_remote_url
             )
-    return {
+        except ValueError as exc:
+            raise ValidationError(
+                "repository runtime contract.canonical_remote_url must not embed "
+                "credentials and must be a secret-free git URL: %r"
+                % canonical_remote_url
+            ) from exc
+    normalized = {
         "schema": schema,
         "project": project,
         "contract_path": contract_path,
@@ -1040,6 +1075,22 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             ),
         },
     }
+    if (
+        "landing_certification_policy_id" in data
+        or "work_package_certification" in data
+    ):
+        # Validate before copying the extension into durable repository/task
+        # metadata. The live preparation path uses the same helper, so a
+        # checked-in contract cannot pass onboarding yet fail after WIP moves.
+        normalize_repository_certification_contract(data)
+        normalized["landing_certification_policy_id"] = _contract_string(
+            data.get("landing_certification_policy_id"),
+            "repository runtime contract.landing_certification_policy_id",
+        )
+        normalized["work_package_certification"] = json.loads(
+            json_dumps(data.get("work_package_certification"))
+        )
+    return normalized
 
 
 def _canonicalize_for_signature(manifest: Dict[str, Any]) -> bytes:
@@ -1114,6 +1165,8 @@ class ControlPlane:
         self,
         store: Optional[Store] = None,
         secret_key: Optional[str] = None,
+        *,
+        lease_clock: Optional[Callable[[], Any]] = None,
     ) -> None:
         # When no store is injected, pick an explicitly configured backend:
         # MAC_DATABASE_URL -> PostgresStore, or MAC_DB -> SQLiteStore. Missing
@@ -1121,6 +1174,12 @@ class ControlPlane:
         # This is what makes multi-replica mac-api stateless — every
         # replica hits the shared CNPG cluster without any code change.
         self.store: Store = store or make_store_from_env()
+        # Lease authority is deliberately distinct from general event
+        # timestamps. PostgreSQL-backed hubs read it from the shared database;
+        # SQLite is a single-hub authority and samples this service clock only
+        # after the transaction's potentially blocking locks are held. Tests
+        # may inject a clock to prove lock-wait and skew invariants.
+        self._lease_clock = lease_clock
         raw_key = secret_key if secret_key is not None else os.environ.get("MAC_SECRET_KEY")
         if not raw_key:
             raise ValidationError(
@@ -1206,7 +1265,7 @@ class ControlPlane:
             self.workflows,
             self.roles,
             create_task=self.create_task,
-            transition_task=self.transition_task,
+            transition_task=self._transition_task_internal,
             transition_task_in_transaction=self._transition_task_in_transaction,
             get_task=self.get_task,
             record_history=self._record_history,
@@ -1266,7 +1325,7 @@ class ControlPlane:
             get_task=self.get_task,
             get_agent=self.get_agent,
             get_evidence=self.get_evidence,
-            transition_task=self.transition_task,
+            transition_task=self._transition_task_internal,
             transition_task_in_transaction=self._transition_task_in_transaction,
             record_history=self._record_history,
             find_verdict_evidence=self._find_review_verdict_evidence,
@@ -1275,6 +1334,38 @@ class ControlPlane:
             completion_proof_check=self._require_canonical_integration_proof,
             drain_task_transition_outbox=self.drain_task_transition_outbox,
         )
+        self.work_package_acceptance = WorkPackageAcceptanceService(self.store)
+        self.work_package_candidates = WorkPackageCandidateService(self.store)
+        from mac.work_package_pipeline_runtime import (
+            WorkPackagePipelineRuntimeConfig,
+            controller_git_credential_environment,
+        )
+
+        self.work_package_pipeline_runtime_config = (
+            WorkPackagePipelineRuntimeConfig.from_env()
+        )
+
+        self.work_package_integrations = WorkPackageIntegrationService(
+            self.store,
+            owner=new_id("work-package-integrator"),
+            credential_environment=controller_git_credential_environment,
+        )
+        self.work_package_certifications = WorkPackageCertificationService(
+            self.store,
+            owner=new_id("work-package-certifier"),
+        )
+        self.work_package_landing = LandingService(
+            self.store,
+            owner=new_id("work-package-landing"),
+            config=self.work_package_pipeline_runtime_config.landing,
+            credential_environment=controller_git_credential_environment,
+        )
+        self.work_package_publication_finalizer = WorkPackagePublicationFinalizer(
+            self.store
+        )
+        self.work_package_outputs = WorkPackageOutputService(self.store)
+        self.work_package_replans = WorkPackageReplanService(self.store)
+        self.work_packages = WorkPackageService(self.store)
         self.agent_state = AgentStateService(
             self.store,
             self.observability,
@@ -4313,6 +4404,49 @@ class ControlPlane:
         )
         return {row["state"]: int(row["n"]) for row in rows}
 
+    def _require_non_package_task_mutation(
+        self,
+        task_id: str,
+        *,
+        operation: str,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Keep legacy task writers from splitting a work graph in two.
+
+        Once admission creates a ``work_package_task_links`` row, the task's
+        structure, hold, and terminal lifecycle are controller-owned.  A
+        generic task mutation would update only ``tasks`` while leaving the
+        immutable plan, node state, WIP, candidate, and epoch records behind.
+        Package-aware services perform their coordinated writes directly in
+        one transaction; legacy entry points must fail closed.
+        """
+
+        sql = (
+            "SELECT package_id, plan_version, epoch, node_key, node_state "
+            "FROM work_package_task_links WHERE task_id = ?"
+        )
+        row = (
+            conn.execute(sql, (task_id,)).fetchone()
+            if conn is not None
+            else self.store.query_one(sql, (task_id,))
+        )
+        if row is None:
+            return
+        raise ValidationError(
+            "%s is not valid for work-package task %s "
+            "(package %s, epoch %s, node %s, state %s); use the "
+            "work-package coordinator so task, node, WIP, and epoch state "
+            "change atomically"
+            % (
+                operation,
+                task_id,
+                row["package_id"],
+                row["epoch"],
+                row["node_key"],
+                row["node_state"],
+            )
+        )
+
     def update_task(
         self,
         task_id: str,
@@ -4328,6 +4462,10 @@ class ControlPlane:
         actor: str = "human",
     ) -> Task:
         task = self.get_task(task_id)
+        self._require_non_package_task_mutation(
+            task.id,
+            operation="generic task update",
+        )
         updates: List[str] = []
         params: List[Any] = []
         detail: JsonDict = {}
@@ -4439,6 +4577,8 @@ class ControlPlane:
         *,
         detail: Optional[Mapping[str, Any]] = None,
         max_entries: int = 24,
+        lease_id: Optional[str] = None,
+        trusted_internal: bool = True,
     ) -> Task:
         """Append a short, human-readable entry to the task's per-task activity
         narrative (``task.metadata['activity']``).
@@ -4458,24 +4598,70 @@ class ControlPlane:
         lines = [ln.rstrip() for ln in summary.splitlines() if ln.strip()][:6]
         summary = "\n".join(lines)[:1200]
         task = self.get_task(task_id)
-        metadata = ensure_json_object(task.metadata)
-        activity = metadata.get("activity")
-        if not isinstance(activity, list):
-            activity = []
-        entry: JsonDict = {
-            "phase": phase,
-            "actor": str(actor or "")[:120],
-            "summary": summary,
-            "at": utcnow(),
-        }
-        if detail:
-            entry["detail"] = ensure_json_object(dict(detail))
-        activity.append(entry)
-        metadata["activity"] = activity[-max_entries:]
-        self.store.execute(
-            "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
-            (json_dumps(metadata), utcnow(), task_id),
-        )
+        fenced_lease_id: Optional[str] = None
+        reviewer_authorized = False
+        if not trusted_internal:
+            if task.state in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
+                self._require_exact_lease_actor(task, actor, lease_id)
+                fenced_lease_id = str(lease_id or "").strip()
+            else:
+                reviewer_authorized = self.store.query_one(
+                    "SELECT 1 FROM reviews WHERE task_id = ? "
+                    "AND reviewer_agent_id = ? AND status = ? LIMIT 1",
+                    (task.id, actor, ReviewStatus.PENDING.value),
+                ) is not None
+                if not reviewer_authorized:
+                    raise AuthorizationError(
+                        "activity author is neither the active lease actor nor pending reviewer"
+                    )
+        now = utcnow()
+        with self.store.transaction() as conn:
+            if fenced_lease_id:
+                self._require_exact_lease_actor_in_transaction(
+                    conn,
+                    task_id=task.id,
+                    agent_id=actor,
+                    lease_id=fenced_lease_id,
+                    allowed_states=(TaskState.CLAIMED.value, TaskState.RUNNING.value),
+                )
+            else:
+                task_lock = conn.execute(
+                    "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                    (task.id,),
+                )
+                if task_lock.rowcount != 1:
+                    raise NotFoundError("task not found: %s" % task.id)
+                if reviewer_authorized:
+                    review_lock = conn.execute(
+                        "UPDATE reviews SET status = status "
+                        "WHERE task_id = ? AND reviewer_agent_id = ? AND status = ?",
+                        (task.id, actor, ReviewStatus.PENDING.value),
+                    )
+                    if review_lock.rowcount < 1:
+                        raise AuthorizationError("review activity authority changed")
+            current_row = conn.execute(
+                "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
+            ).fetchone()
+            if current_row is None:
+                raise NotFoundError("task not found: %s" % task.id)
+            metadata = json_loads(current_row["metadata"], {})
+            activity = metadata.get("activity")
+            if not isinstance(activity, list):
+                activity = []
+            entry: JsonDict = {
+                "phase": phase,
+                "actor": str(actor or "")[:120],
+                "summary": summary,
+                "at": now,
+            }
+            if detail:
+                entry["detail"] = ensure_json_object(dict(detail))
+            activity.append(entry)
+            metadata["activity"] = activity[-max_entries:]
+            conn.execute(
+                "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(metadata), now, task.id),
+            )
         return self.get_task(task_id)
 
     def release_task(self, task_id: str, *, actor: str = "human") -> Task:
@@ -4487,6 +4673,10 @@ class ControlPlane:
         pause). No-op if the task is not held.
         """
         task = self.get_task(task_id)
+        self._require_non_package_task_mutation(
+            task.id,
+            operation="generic task release",
+        )
         md = ensure_json_object(task.metadata)
         if not md.pop("no_dispatch", None):
             return task
@@ -4522,8 +4712,22 @@ class ControlPlane:
         children: Iterable[Dict[str, Any]],
         *,
         actor: str = "human",
+        lease_id: Optional[str] = None,
+        trusted_internal: bool = True,
     ) -> JsonDict:
         parent = self.get_task(task_id)
+        self._require_non_package_task_mutation(
+            parent.id,
+            operation="ad-hoc child creation",
+        )
+        fenced_lease_id: Optional[str] = None
+        if not trusted_internal:
+            if parent.state not in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
+                raise AuthorizationError(
+                    "non-admin child creation requires an active task lease"
+                )
+            self._require_exact_lease_actor(parent, actor, lease_id)
+            fenced_lease_id = str(lease_id or "").strip()
         if parent.state not in {
             TaskState.OPEN.value,
             TaskState.WAITING.value,
@@ -4741,6 +4945,14 @@ class ControlPlane:
 
         release_lease_id = parent.lease_id
         with self.store.transaction() as conn:
+            if fenced_lease_id:
+                self._require_exact_lease_actor_in_transaction(
+                    conn,
+                    task_id=parent.id,
+                    agent_id=actor,
+                    lease_id=fenced_lease_id,
+                    allowed_states=(parent.state,),
+                )
             for child in prepared:
                 conn.execute(
                     """
@@ -4796,21 +5008,29 @@ class ControlPlane:
                     lease_id=release_lease_id,
                     now=now,
                 )
-            conn.execute(
+            parent_where = "WHERE id = ? AND state = ?"
+            parent_guards: List[Any] = [parent.id, parent.state]
+            if fenced_lease_id:
+                parent_where += " AND lease_id = ?"
+                parent_guards.append(fenced_lease_id)
+            parent_update = conn.execute(
                 """
                 UPDATE tasks
                 SET dependencies = ?, metadata = ?, state = ?, owner_agent_id = NULL,
                     lease_id = NULL, leased_until = NULL, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    json_dumps(parent_dependencies),
-                    json_dumps(parent_metadata),
-                    TaskState.WAITING.value,
-                    now,
-                    parent.id,
+                """ + parent_where,
+                tuple(
+                    [
+                        json_dumps(parent_dependencies),
+                        json_dumps(parent_metadata),
+                        TaskState.WAITING.value,
+                        now,
+                    ]
+                    + parent_guards
                 ),
             )
+            if parent_update.rowcount != 1:
+                raise TransitionError("parent assignment changed during decomposition")
             if parent.owner_agent_id:
                 self._set_agent_idle(parent.owner_agent_id, conn=conn)
             detail = {
@@ -5271,10 +5491,6 @@ class ControlPlane:
             raise ValidationError(
                 "break-glass target agent must be healthy"
             )
-        now = utcnow()
-        expires_at = (
-            parse_time(now) + timedelta(seconds=ttl)
-        ).isoformat(timespec="microseconds")
         authorization_id = new_id("breakglass")
         metadata = {
             "schema": BREAK_GLASS_AUTHORIZATION_SCHEMA,
@@ -5289,26 +5505,63 @@ class ControlPlane:
             ],
         }
         with self.store.transaction() as conn:
-            conn.execute(
-                """
-                UPDATE task_break_glass_authorizations
-                SET status = 'expired'
-                WHERE status = 'active' AND expires_at <= ?
-                """,
-                (now,),
+            # Serialize authorization creation with claim_task on the task row.
+            # Without this lock an authorization for B could be inserted after
+            # A's dispatch preflight while A was concurrently claiming, leaving
+            # an active authorization stranded on B after A owned the task.
+            task_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (task.id,),
             )
+            if task_lock.rowcount != 1:
+                raise NotFoundError("task not found: %s" % task.id)
+            current_task = conn.execute(
+                "SELECT state, lease_id FROM tasks WHERE id = ?", (task.id,)
+            ).fetchone()
+            if (
+                current_task is None
+                or current_task["state"] != TaskState.OPEN.value
+                or current_task["lease_id"] is not None
+            ):
+                raise ValidationError(
+                    "break-glass authorization requires an open unleased task"
+                )
             existing = conn.execute(
                 """
-                SELECT id FROM task_break_glass_authorizations
-                WHERE task_id = ? AND status = 'active' AND expires_at > ?
-                LIMIT 1
+                SELECT * FROM task_break_glass_authorizations
+                WHERE task_id = ? AND status = 'active'
+                ORDER BY created_at DESC LIMIT 1
                 """,
-                (task.id, now),
+                (task.id,),
             ).fetchone()
             if existing is not None:
+                conn.execute(
+                    "UPDATE task_break_glass_authorizations SET status = status "
+                    "WHERE id = ?",
+                    (existing["id"],),
+                )
+                existing = conn.execute(
+                    "SELECT * FROM task_break_glass_authorizations WHERE id = ?",
+                    (existing["id"],),
+                ).fetchone()
+            now = self._lease_authority_now_in_transaction(conn)
+            expires_at = (
+                parse_time(now) + timedelta(seconds=ttl)
+            ).isoformat(timespec="microseconds")
+            if (
+                existing is not None
+                and existing["status"] == "active"
+                and self._timestamp_is_after(existing["expires_at"], now)
+            ):
                 raise ValidationError(
                     "task %s already has an active break-glass authorization"
                     % task.id
+                )
+            if existing is not None and existing["status"] == "active":
+                conn.execute(
+                    "UPDATE task_break_glass_authorizations SET status = 'expired' "
+                    "WHERE id = ? AND status = 'active'",
+                    (existing["id"],),
                 )
             conn.execute(
                 """
@@ -7423,7 +7676,7 @@ class ControlPlane:
             raise ValidationError("invalid %s cursor" % kind)
         return position, item_id
 
-    def transition_task(
+    def close_task(
         self,
         task_id: str,
         target_state: str,
@@ -7432,11 +7685,81 @@ class ControlPlane:
         *,
         drain_outbox: bool = True,
     ) -> Task:
+        """Operator boundary for an ordinary task's terminal close.
+
+        Worker-authored transitions belong to :meth:`transition_task` and are
+        fenced to an exact active lease.  This separate public operation is
+        for an authenticated operator that has already been authorized by the
+        transport (or for an explicitly selected local authority).  It is
+        deliberately limited to the two ``task close`` outcomes; package-
+        linked tasks remain protected by the generic lifecycle guard in
+        :meth:`_transition_task_impl` and must advance through their package
+        controller instead.
+        """
+
+        target = _state_value(target_state)
+        if target not in {
+            TaskState.COMPLETED.value,
+            TaskState.CANCELLED.value,
+        }:
+            raise ValidationError(
+                "operator close only supports completed or cancelled"
+            )
+        return self._transition_task_impl(
+            task_id,
+            target,
+            actor,
+            detail,
+            lease_id=None,
+            trusted_internal=True,
+            drain_outbox=drain_outbox,
+            conn=None,
+        )
+
+    def transition_task(
+        self,
+        task_id: str,
+        target_state: str,
+        actor: str,
+        detail: Optional[Dict[str, Any]] = None,
+        *,
+        lease_id: Optional[str] = None,
+        drain_outbox: bool = True,
+    ) -> Task:
         return self._transition_task_impl(
             task_id,
             target_state,
             actor,
             detail,
+            lease_id=lease_id,
+            trusted_internal=False,
+            drain_outbox=drain_outbox,
+            conn=None,
+        )
+
+    def _transition_task_internal(
+        self,
+        task_id: str,
+        target_state: str,
+        actor: str,
+        detail: Optional[Dict[str, Any]] = None,
+        *,
+        drain_outbox: bool = True,
+    ) -> Task:
+        """Trusted service-only transition path.
+
+        Public callers must use :meth:`transition_task`, whose active-task
+        writes require an exact lease fence.  Internal services may use this
+        private entry point only after performing their own authority check
+        (for example ``start_task`` validates owner/delegate plus lease first).
+        """
+        return self._transition_task_impl(
+            task_id,
+            target_state,
+            actor,
+            detail,
+            lease_id=None,
+            trusted_internal=True,
             drain_outbox=drain_outbox,
             conn=None,
         )
@@ -7454,6 +7777,8 @@ class ControlPlane:
             target_state,
             actor,
             detail,
+            lease_id=None,
+            trusted_internal=True,
             drain_outbox=False,
             conn=conn,
         )
@@ -7465,6 +7790,8 @@ class ControlPlane:
         actor: str,
         detail: Optional[Dict[str, Any]] = None,
         *,
+        lease_id: Optional[str],
+        trusted_internal: bool,
         drain_outbox: bool,
         conn: Optional[Any],
     ) -> Task:
@@ -7483,6 +7810,43 @@ class ControlPlane:
         # otherwise the initial read succeeds but the UPDATE/history/outbox
         # writes target the non-existent prefix.
         task_id = task.id
+        package_link = (
+            conn.execute(
+                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            if conn is not None
+            else self.store.query_one(
+                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
+                (task_id,),
+            )
+        )
+        if package_link is not None and target not in {
+            TaskState.RUNNING.value,
+            TaskState.NEEDS_REVIEW.value,
+        }:
+            self._require_non_package_task_mutation(
+                task_id,
+                operation="generic transition to %s" % target,
+                conn=conn,
+            )
+        # Worker-authored lifecycle writes are fenced to the exact active lease
+        # attempt. Without this check, an old process for lease A can mutate a
+        # task after the same agent has reacquired it as lease B (the classic
+        # ABA failure). It also prevents any bound agent from using the generic
+        # endpoint to mutate an unowned OPEN/review/terminal task. Operators,
+        # dispatchers, and reviewers use explicit trusted service paths.
+        fenced_lease_id: Optional[str] = None
+        if not trusted_internal:
+            if task.state not in {
+                TaskState.CLAIMED.value,
+                TaskState.RUNNING.value,
+            }:
+                raise AuthorizationError(
+                    "worker task transitions require ownership of an active lease"
+                )
+            self._require_exact_lease_actor(task, actor, lease_id)
+            fenced_lease_id = str(lease_id or "").strip()
         transition_detail = dict(detail or {})
         if target == TaskState.BLOCKED.value:
             transition_detail = _normalize_blocked_detail(transition_detail)
@@ -7667,6 +8031,14 @@ class ControlPlane:
         )
 
         def apply_transition(conn: Any) -> None:
+            if fenced_lease_id:
+                self._require_exact_lease_actor_in_transaction(
+                    conn,
+                    task_id=task_id,
+                    agent_id=actor,
+                    lease_id=fenced_lease_id,
+                    allowed_states=(task.state,),
+                )
             if release_lease_id:
                 conn.execute(
                     "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
@@ -7679,33 +8051,43 @@ class ControlPlane:
                     now=now,
                 )
             if is_requeue_from_terminal:
+                transition_where = "WHERE id = ? AND state = ?"
+                transition_guards: List[Any] = [task_id, task.state]
+                if fenced_lease_id:
+                    transition_where += " AND lease_id = ?"
+                    transition_guards.append(fenced_lease_id)
                 changed = conn.execute(
                     """
                     UPDATE tasks
                     SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
                         started_at = NULL, completed_at = NULL,
                         attempt_count = 0, updated_at = ?
-                    WHERE id = ? AND state = ?
-                    """,
-                    (
+                    """ + transition_where,
+                    tuple(
+                        [
                         target,
                         owner_agent_id,
                         lease_id,
                         leased_until,
                         now,
-                        task_id,
-                        task.state,
+                        ]
+                        + transition_guards
                     ),
                 )
             else:
+                transition_where = "WHERE id = ? AND state = ?"
+                transition_guards = [task_id, task.state]
+                if fenced_lease_id:
+                    transition_where += " AND lease_id = ?"
+                    transition_guards.append(fenced_lease_id)
                 changed = conn.execute(
                     """
                     UPDATE tasks
                     SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
                         started_at = ?, completed_at = ?, updated_at = ?
-                    WHERE id = ? AND state = ?
-                    """,
-                    (
+                    """ + transition_where,
+                    tuple(
+                        [
                         target,
                         owner_agent_id,
                         lease_id,
@@ -7713,8 +8095,8 @@ class ControlPlane:
                         now if target == TaskState.RUNNING.value and not task.started_at else task.started_at,
                         now if target in TERMINAL_TASK_STATES and not task.completed_at else task.completed_at,
                         now,
-                        task_id,
-                        task.state,
+                        ]
+                        + transition_guards
                     ),
                 )
             if changed.rowcount != 1:
@@ -7844,6 +8226,26 @@ class ControlPlane:
                 continue
             if dependent.state != TaskState.WAITING.value:
                 continue
+            if self.store.query_one(
+                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
+                (dependent_id,),
+            ) is not None:
+                # A package node's dependency and cancellation decisions are
+                # part of the immutable graph/epoch transaction.  The legacy
+                # best-effort reconciler must not rewrite just the task row.
+                try:
+                    self.record_log(
+                        "work_package.dependency_reconciliation_deferred",
+                        level="warning",
+                        detail={
+                            "dependent": dependent_id,
+                            "dependency": dep_id,
+                            "dependency_state": dep_state,
+                        },
+                    )
+                except Exception:  # noqa: BLE001 - diagnostic only
+                    pass
+                continue
             try:
                 if replacement_id:
                     self.update_task(
@@ -7855,7 +8257,7 @@ class ControlPlane:
                         actor="dependency-reconciliation",
                     )
                 else:
-                    self.transition_task(
+                    self._transition_task_internal(
                         dependent_id,
                         TaskState.CANCELLED.value,
                         "dependency-reconciliation",
@@ -7892,10 +8294,17 @@ class ControlPlane:
         task. Records who reopened it and why. Counterpart to
         :meth:`force_complete_task`.
         """
+        task = self.get_task(task_id)
+        self._require_non_package_task_mutation(
+            task.id,
+            operation="operator reopen",
+        )
         detail: Dict[str, Any] = {"via": "operator_reopen"}
         if reason:
             detail["reason"] = reason
-        return self.transition_task(task_id, TaskState.OPEN.value, actor, detail)
+        return self._transition_task_internal(
+            task.id, TaskState.OPEN.value, actor, detail
+        )
 
     def force_complete_task(
         self,
@@ -7916,6 +8325,10 @@ class ControlPlane:
         # get_task accepts unambiguous display prefixes, but every mutation and
         # foreign-keyed audit row must use the canonical full identifier.
         task_id = task.id
+        self._require_non_package_task_mutation(
+            task_id,
+            operation="operator force-complete",
+        )
         if task.state == TaskState.COMPLETED.value:
             return task
         self._require_canonical_integration_proof(task)
@@ -8039,8 +8452,15 @@ class ControlPlane:
         *,
         sync_beads: bool = True,
         allow_cooperative_reuse: bool = False,
+        assignment_allocator: str = "control-plane",
+        assignment_allocator_version: Optional[str] = None,
+        assignment_score: Optional[float] = None,
+        assignment_rationale: Optional[str] = None,
+        assignment_decision: Optional[Mapping[str, Any]] = None,
     ) -> Tuple[Task, Lease]:
+        lease_seconds = self._validated_task_lease_seconds(lease_seconds)
         task = self.get_task(task_id)
+        task_id = task.id
         agent = self._require_live_agent(agent_id)
         if (
             task.state in {TaskState.WAITING.value, TaskState.BLOCKED.value}
@@ -8049,9 +8469,15 @@ class ControlPlane:
             and not self._blocked_task_requires_manual_repair(task)
         ):
             task = self._prepare_cooperative_integration_task(task)
-            task = self.transition_task(task_id, TaskState.OPEN.value, "dispatcher", {"reason": "dependencies satisfied"})
+            task = self._transition_task_internal(
+                task_id,
+                TaskState.OPEN.value,
+                "dispatcher",
+                {"reason": "dependencies satisfied"},
+            )
         if task.state != TaskState.OPEN.value:
             raise TransitionError("only open tasks can be claimed")
+        self._assert_work_package_claim_downstream_ready(task.id)
         # mac-1g3u: the tenant gate also runs as an explicit chokepoint
         # in claim_task itself, not only through _agent_available_for.
         # A future dispatch path that forgets the broader eligibility
@@ -8065,23 +8491,23 @@ class ControlPlane:
                 "machine %s tenant policy refuses tenant %s for task %s"
                 % (machine.id, task_tenant, task_id)
             )
-        if not self._agent_available_for(
+        # Candidate availability is an advisory fast path only. Always call it
+        # so dispatch telemetry and test barriers observe the preflight, but do
+        # not let a replica-local clock or stale mutable snapshot make the
+        # authorization decision. The locked snapshot below is authoritative.
+        self._agent_available_for(
             agent, task, allow_cooperative_reuse=allow_cooperative_reuse
-        ):
-            raise ValidationError("agent %s cannot claim task %s" % (agent_id, task_id))
+        )
         if task.attempt_count >= task.max_attempts:
             target_state, detail = self._exhausted_attempt_terminal_transition(
                 task,
                 {"reason": "max attempts"},
             )
-            self.transition_task(task_id, target_state, "dispatcher", detail)
+            self._transition_task_internal(
+                task_id, target_state, "dispatcher", detail
+            )
             raise TransitionError("task %s exhausted max_attempts" % task_id)
-        now = utcnow()
-        expires_at = (parse_time(now) + timedelta(seconds=int(lease_seconds))).isoformat(timespec="microseconds")
         lease_id = new_id("lease")
-        break_glass = self._active_break_glass_authorization(
-            task.id, agent.id, now=now
-        )
         coordination_related_ids = self._coordination_related_task_ids(task)
         coordination_lock_task_id: Optional[str] = None
         if coordination_related_ids:
@@ -8094,6 +8520,37 @@ class ControlPlane:
                 or task.id
             ).strip()
         with self.store.transaction() as conn:
+            # Claims for the same agent must serialize before capacity is
+            # counted.  The earlier availability check is useful for a cheap
+            # rejection, but it cannot be the authority: two dispatchers can
+            # both observe one free slot.  Locking the agent row and repeating
+            # the count closes that race on both SQLite and PostgreSQL.
+            agent_lock = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (agent_id,),
+            )
+            if agent_lock.rowcount != 1:
+                raise ValidationError("agent %s is unavailable" % agent_id)
+            agent_row = conn.execute(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            if agent_row is None:
+                raise ValidationError("agent %s is unavailable" % agent_id)
+            current_agent = self._agent_from_row(agent_row)
+            active_count_row = conn.execute(
+                """
+                SELECT COUNT(*) AS count FROM leases l
+                JOIN tasks t ON t.lease_id = l.id
+                WHERE l.agent_id = ?
+                  AND l.status = ?
+                  AND t.owner_agent_id = ?
+                """,
+                (agent_id, LeaseStatus.ACTIVE.value, agent_id),
+            ).fetchone()
+            active_count = int(
+                active_count_row["count"] if active_count_row is not None else 0
+            )
             if coordination_lock_task_id:
                 # Serialize family participation across dispatchers.  The
                 # eligibility check above is intentionally repeated while a
@@ -8132,6 +8589,187 @@ class ControlPlane:
                         "agent %s already participated in cooperative task family for %s"
                         % (agent_id, task_id)
                     )
+            # Lock and re-read the task after the agent capacity lock.  The
+            # task's dependency list and every dependency state below are now
+            # checked in the same transaction as the claim write, so an OPEN
+            # task with incomplete prerequisites cannot slip through a stale
+            # dispatcher candidate snapshot.
+            task_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (task_id,),
+            )
+            if task_lock.rowcount != 1:
+                raise NotFoundError("task not found: %s" % task_id)
+            task_row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if task_row is None:
+                raise NotFoundError("task not found: %s" % task_id)
+            current_task = self._task_from_row(task_row)
+            if (
+                current_task.state != TaskState.OPEN.value
+                or current_task.lease_id is not None
+            ):
+                raise TransitionError("task %s was claimed by another agent" % task_id)
+            for dependency_id in current_task.dependencies:
+                dependency_row = conn.execute(
+                    "SELECT state FROM tasks WHERE id = ?", (dependency_id,)
+                ).fetchone()
+                if (
+                    dependency_row is None
+                    or dependency_row["state"] != TaskState.COMPLETED.value
+                ):
+                    raise TransitionError(
+                        "task %s dependencies are not complete" % task_id
+                    )
+            if current_task.attempt_count >= current_task.max_attempts:
+                raise TransitionError("task %s exhausted max_attempts" % task_id)
+            self._assert_work_package_claim_downstream_ready_in_transaction(
+                conn, current_task.id
+            )
+            project_paused = False
+            if current_task.project:
+                # A project pause is part of claim authority, so serialize
+                # against activation/pause writes and inspect the same row in
+                # this transaction. Implicit projects have no row and remain
+                # active by design.
+                conn.execute(
+                    "UPDATE projects SET updated_at = updated_at "
+                    "WHERE name = ? OR id = ?",
+                    (current_task.project, current_task.project),
+                )
+                project_row = conn.execute(
+                    "SELECT status, metadata FROM projects WHERE name = ? OR id = ?",
+                    (current_task.project, current_task.project),
+                ).fetchone()
+                if project_row is not None:
+                    project_metadata = json_loads(project_row["metadata"], {})
+                    project_paused = (
+                        str(project_row["status"] or "active") != "active"
+                        or bool(project_metadata.get("dispatch_paused"))
+                    )
+            machine_lock = conn.execute(
+                "UPDATE machines SET updated_at = updated_at WHERE id = ?",
+                (current_agent.machine_id,),
+            )
+            if machine_lock.rowcount != 1:
+                raise ValidationError("agent machine is unavailable")
+            machine_row = conn.execute(
+                "SELECT * FROM machines WHERE id = ?",
+                (current_agent.machine_id,),
+            ).fetchone()
+            if machine_row is None:
+                raise ValidationError("agent machine is unavailable")
+            current_machine = self._machine_from_row(machine_row)
+            required_runtime_digest = self._task_required_runtime_digest_in_transaction(
+                conn, current_task
+            )
+            role_reason = self._claim_role_ineligibility_reason_in_transaction(
+                conn,
+                agent=current_agent,
+                task=current_task,
+                machine=current_machine,
+            )
+            # The task row lock serializes this read with authorization
+            # creation. Lock the one ACTIVE record as well so its revoke/claim
+            # CAS cannot wait until after we sample time. An authorization for
+            # another agent reserves the task; it must never be silently left
+            # active after a different worker claims the task.
+            break_glass_row = conn.execute(
+                """
+                SELECT * FROM task_break_glass_authorizations
+                WHERE task_id = ? AND status = 'active'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (current_task.id,),
+            ).fetchone()
+            if break_glass_row is not None:
+                conn.execute(
+                    "UPDATE task_break_glass_authorizations SET status = status "
+                    "WHERE id = ?",
+                    (break_glass_row["id"],),
+                )
+                break_glass_row = conn.execute(
+                    "SELECT * FROM task_break_glass_authorizations WHERE id = ?",
+                    (break_glass_row["id"],),
+                ).fetchone()
+
+            # This is deliberately after every potentially blocking claim lock.
+            # A lease therefore receives its full TTL even if the transaction
+            # waited behind another hub replica.
+            now = self._lease_authority_now_in_transaction(conn)
+            break_glass: Optional[BreakGlassAuthorization] = None
+            if (
+                break_glass_row is not None
+                and break_glass_row["status"] == "active"
+            ):
+                if self._timestamp_is_after(break_glass_row["expires_at"], now):
+                    break_glass = self._break_glass_authorization_from_row(
+                        break_glass_row
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE task_break_glass_authorizations "
+                        "SET status = 'expired' WHERE id = ? AND status = 'active'",
+                        (break_glass_row["id"],),
+                    )
+            if break_glass is not None:
+                if break_glass.agent_id != current_agent.id:
+                    raise AuthorizationError(
+                        "task %s is reserved by break-glass authorization for agent %s"
+                        % (current_task.id, break_glass.agent_id)
+                    )
+                if break_glass.execution_boundary != BREAK_GLASS_EXECUTION_BOUNDARY:
+                    raise AuthorizationError(
+                        "task break-glass execution boundary is invalid"
+                    )
+                role_reason = None
+            ineligible_reason = self._claim_snapshot_ineligibility_reason(
+                agent=current_agent,
+                task=current_task,
+                machine=current_machine,
+                active_count=active_count,
+                project_paused=project_paused,
+                break_glass=break_glass,
+                required_runtime_digest=required_runtime_digest,
+                role_reason=role_reason,
+            )
+            if ineligible_reason is not None:
+                raise ValidationError(
+                    "agent %s cannot claim task %s: %s"
+                    % (agent_id, task_id, ineligible_reason)
+                )
+            expires_at = (
+                parse_time(now) + timedelta(seconds=lease_seconds)
+            ).isoformat(timespec="microseconds")
+            # Prepare the lease and, for a linked work-package task, its exact
+            # immutable assignment/WIP authority before changing the ordinary
+            # task row.  The database claim guard can therefore fail closed for
+            # mixed-version hubs that know only the legacy task state machine.
+            conn.execute(
+                """
+                INSERT INTO leases (id, task_id, agent_id, expires_at, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (lease_id, task_id, agent_id, expires_at, LeaseStatus.ACTIVE.value, now, now),
+            )
+            package_assignment = WorkPackageClaimGate().admit_claim(
+                conn,
+                task_id=task_id,
+                agent_id=agent_id,
+                lease_id=lease_id,
+                attempt_number=current_task.attempt_count + 1,
+                now=now,
+                allocator=assignment_allocator,
+                allocator_version=(
+                    assignment_allocator_version
+                    or WORK_PACKAGE_ALLOCATOR_VERSION
+                ),
+                score=assignment_score,
+                rationale=(assignment_rationale or "authoritative package claim"),
+                decision=assignment_decision,
+                prepared_task=True,
+            )
             # Atomic claim: the UPDATE only succeeds if the task is still OPEN and
             # unleased. rowcount==0 means another dispatcher already took it.
             cursor = conn.execute(
@@ -8153,20 +8791,38 @@ class ControlPlane:
             )
             if cursor.rowcount != 1:
                 raise TransitionError("task %s was claimed by another agent" % task_id)
-            conn.execute(
-                """
-                INSERT INTO leases (id, task_id, agent_id, expires_at, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (lease_id, task_id, agent_id, expires_at, LeaseStatus.ACTIVE.value, now, now),
-            )
+            if package_assignment is not None:
+                # Worker-visible projection only; the immutable assignment
+                # audit remains authority.  This gives executors the exact
+                # attempt ref they must push without letting them derive or
+                # select a mutable task branch.
+                projected_metadata = ensure_json_object(current_task.metadata)
+                projected_metadata["work_package_assignment"] = {
+                    "schema": "mac.work_package.assignment_projection.v1",
+                    **package_assignment.to_dict(),
+                }
+                projected = conn.execute(
+                    "UPDATE tasks SET metadata = ?, updated_at = ? "
+                    "WHERE id = ? AND lease_id = ? AND state = ?",
+                    (
+                        json_dumps(projected_metadata),
+                        now,
+                        task_id,
+                        lease_id,
+                        TaskState.CLAIMED.value,
+                    ),
+                )
+                if projected.rowcount != 1:
+                    raise TransitionError(
+                        "work-package assignment projection lost its lease fence"
+                    )
             if break_glass is not None:
                 authorization_update = conn.execute(
                     """
                     UPDATE task_break_glass_authorizations
                     SET status = 'claimed', claimed_at = ?, lease_id = ?
                     WHERE id = ? AND task_id = ? AND agent_id = ?
-                      AND status = 'active' AND expires_at > ?
+                      AND status = 'active'
                     """,
                     (
                         now,
@@ -8174,7 +8830,6 @@ class ControlPlane:
                         break_glass.id,
                         task.id,
                         agent.id,
-                        now,
                     ),
                 )
                 if authorization_update.rowcount != 1:
@@ -8330,25 +8985,41 @@ class ControlPlane:
             return
         raise ValidationError("unsupported task transition outbox event: %s" % item.event_type)
 
-    def start_task(self, task_id: str, agent_id: str, *, drain_outbox: bool = True) -> Task:
+    def start_task(
+        self,
+        task_id: str,
+        agent_id: str,
+        *,
+        lease_id: Optional[str] = None,
+        drain_outbox: bool = True,
+    ) -> Task:
         task = self.get_task(task_id)
         # PR2c (spec §6.3): accept either the lease owner OR a delegated
         # actor (recorded via delegate_lease). Renewal / release stay
         # strictly owner-only and are unchanged.
-        if not self._lease_actor_allowed(task, agent_id):
-            raise AuthorizationError("agent does not own task lease")
+        self._require_lease_actor(task, agent_id, lease_id)
+        current_lease_id = str(task.lease_id or "")
         # A loop worker may restart after it moved an assignment to RUNNING but
         # before it recorded evidence.  Starting the same, still-active lease
         # is idempotent so the worker can resume execution instead of stranding
         # the dispatcher-owned assignment on an invalid RUNNING -> RUNNING
         # transition.
         if task.state == TaskState.RUNNING.value:
-            return task
+            with self.store.transaction() as conn:
+                self._require_exact_lease_actor_in_transaction(
+                    conn,
+                    task_id=task.id,
+                    agent_id=agent_id,
+                    lease_id=current_lease_id,
+                    allowed_states=(TaskState.RUNNING.value,),
+                )
+            return self.get_task(task.id)
         return self.transition_task(
             task_id,
             TaskState.RUNNING.value,
             agent_id,
             {},
+            lease_id=current_lease_id,
             drain_outbox=drain_outbox,
         )
 
@@ -8357,24 +9028,709 @@ class ControlPlane:
         task_id: str,
         agent_id: str,
         *,
+        lease_id: Optional[str] = None,
         drain_outbox: bool = True,
     ) -> Task:
         task = self.get_task(task_id)
         # PR2c (spec §6.3): accept either the lease owner OR a delegated
         # actor (recorded via delegate_lease).
-        if not self._lease_actor_allowed(task, agent_id):
-            raise AuthorizationError("agent does not own task lease")
+        self._require_lease_actor(task, agent_id, lease_id)
+        package_link = self.store.query_one(
+            "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
+            (task.id,),
+        )
+        if package_link is not None:
+            # Package work leaves the mutation station as an immutable
+            # candidate before its execution lease is released.  The
+            # controller derives the exact evidence target using the same
+            # review-readiness gate as the normal transition; worker metadata
+            # never chooses the candidate identity.  Submission is idempotent,
+            # so a worker retry after a response loss cannot duplicate WIP.
+            candidate_evidence = self._require_review_ready(task)
+            candidate_submission = self.work_package_candidates.submit(
+                candidate_evidence.id,
+                actor="work-package-candidate-controller",
+            )
         reviewed = self.transition_task(
             task_id,
             TaskState.NEEDS_REVIEW.value,
             agent_id,
             {},
+            lease_id=str(task.lease_id or ""),
             drain_outbox=drain_outbox,
         )
+        if package_link is not None:
+            # Repository observation is controller-owned and therefore cannot
+            # happen inside the worker's evidence transaction.  Start it as
+            # soon as the immutable candidate reaches the review buffer, but
+            # never trust worker evidence or undo submission if Git/network
+            # observation is temporarily unavailable.  The approved review
+            # station retries the same idempotent receipt before acceptance.
+            try:
+                verification = self.verify_work_package_output(candidate_evidence.id)
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.package_output_verified",
+                    "info",
+                    {
+                        "candidate_id": verification.candidate_id,
+                        "evidence_id": candidate_evidence.id,
+                        "verification_receipt_id": verification.verification.id,
+                        "created": verification.created,
+                        "trigger": "candidate_submission",
+                    },
+                    "work-package-output-controller",
+                )
+            except Exception as exc:  # noqa: BLE001 - observation is retried at approval.
+                try:
+                    self._record_default_review_observation(
+                        task_id,
+                        "workflow.default_review.package_output_verification_failed",
+                        "warning",
+                        {
+                            "candidate_id": candidate_submission.candidate.id,
+                            "evidence_id": candidate_evidence.id,
+                            "error": (
+                                str(exc)[:500]
+                                if isinstance(exc, MACError)
+                                else "unexpected controller output verification failure"
+                            ),
+                            "error_class": exc.__class__.__name__,
+                            "trigger": "candidate_submission",
+                        },
+                        "work-package-output-controller",
+                    )
+                except Exception:  # noqa: BLE001 - telemetry must not break submission.
+                    pass
         # Event, not sweep: start the review workflow the moment work is
         # submitted instead of waiting up to a full tick interval.
         self._nudge_review_workflow(task_id)
         return reviewed
+
+    def verify_work_package_output(
+        self,
+        evidence_id: str,
+    ) -> AttemptVerificationResult:
+        """Independently observe and receipt one exact package attempt output.
+
+        This is intentionally separate from the worker-authored evidence call:
+        repository inspection may involve remote I/O, and only the controller
+        may append the immutable verification receipt consumed by acceptance
+        and assembly.
+        """
+
+        return self.work_package_outputs.verify(evidence_id)
+
+    def accept_work_package_candidate(
+        self,
+        candidate_id: str,
+        *,
+        actor: str = "work-package-acceptance-controller",
+    ) -> Any:
+        """Accept one reviewed, controller-verified package candidate."""
+
+        return self.work_package_acceptance.accept(candidate_id, actor=actor)
+
+    def reject_work_package_candidate(
+        self,
+        candidate_id: str,
+        *,
+        actor: str = "work-package-acceptance-controller",
+        reason: str,
+    ) -> Any:
+        """Reject one exact package candidate under its immutable rework budget."""
+
+        return self.work_package_acceptance.reject(
+            candidate_id,
+            actor=actor,
+            reason=reason,
+        )
+
+    def create_work_package_integration_batch(
+        self,
+        package_id: str,
+        integration_node_key: str,
+        *,
+        actor: str = "work-package-integration-controller",
+    ) -> Any:
+        """Freeze the exact accepted inputs for one integration node."""
+
+        return self.work_package_integrations.create_batch(
+            package_id,
+            integration_node_key,
+            actor=actor,
+        )
+
+    def work_package_integration_status(self, batch_id: str) -> JsonDict:
+        """Return the integrity-checked state of one assembly batch."""
+
+        return self.work_package_integrations.status(batch_id)
+
+    def claim_work_package_integration_batch(self, batch_id: str) -> Any:
+        """Claim one integration batch under this controller's monotonic fence."""
+
+        return self.work_package_integrations.claim(batch_id)
+
+    def assemble_work_package_integration_batch(self, batch_id: str) -> Any:
+        """Assemble one already-created batch from its exact protected inputs."""
+
+        return self.work_package_integrations.assemble(batch_id)
+
+    def assemble_work_package(
+        self,
+        package_id: str,
+        integration_node_key: str,
+        *,
+        actor: str = "work-package-integration-controller",
+    ) -> JsonDict:
+        """Create and assemble an integration batch as one controller operation."""
+
+        batch = self.create_work_package_integration_batch(
+            package_id,
+            integration_node_key,
+            actor=actor,
+        )
+        assembly = self.assemble_work_package_integration_batch(batch.batch_id)
+        return {
+            "batch": batch.to_dict(),
+            "assembly": assembly.to_dict(),
+        }
+
+    def prepare_work_package_certification_job(
+        self,
+        batch_id: str,
+        bundle_path: str,
+        *,
+        actor: str = "work-package-certification-controller",
+    ) -> JsonDict:
+        """Prepare one immutable OpenShell job for the exact cert successor."""
+
+        return self.work_package_certifications.prepare(
+            batch_id,
+            Path(bundle_path),
+            actor=actor,
+        )
+
+    def work_package_certification_status(self, job_id: str) -> JsonDict:
+        return self.work_package_certifications.get(job_id)
+
+    def claim_work_package_certification_job(
+        self,
+        job_id: str,
+        *,
+        owner: Optional[str] = None,
+    ) -> Any:
+        return self.work_package_certifications.claim(job_id, owner=owner)
+
+    def ingest_work_package_certification_result(
+        self,
+        job_id: str,
+        result: Mapping[str, Any],
+        *,
+        owner: str,
+        fence: int,
+    ) -> Any:
+        return self.work_package_certifications.ingest(
+            job_id,
+            result,
+            owner=owner,
+            fence=fence,
+        )
+
+    def run_work_package_certification_job(
+        self,
+        job_id: str,
+        bundle_path: str,
+        *,
+        owner: Optional[str] = None,
+        result_path: Optional[str] = None,
+    ) -> Any:
+        return self.work_package_certifications.run(
+            job_id,
+            Path(bundle_path),
+            owner=owner,
+            result_path=Path(result_path) if result_path else None,
+        )
+
+    def reject_failed_work_package_certification(
+        self,
+        batch_id: str,
+        certification_id: str,
+        *,
+        actor: str = "work-package-certification-controller",
+    ) -> JsonDict:
+        return self.work_package_certifications.reject_failed_certification(
+            batch_id,
+            certification_id=certification_id,
+            actor=actor,
+        )
+
+    def accept_work_package_certification(
+        self,
+        batch_id: str,
+        certification_id: str,
+    ) -> Any:
+        return self.work_package_landing.accept_certification(
+            batch_id,
+            self._work_package_repository_endpoint(batch_id),
+            certification_id=certification_id,
+        )
+
+    def land_work_package(self, batch_id: str) -> Any:
+        return self.work_package_landing.land(
+            batch_id,
+            self._work_package_repository_endpoint(batch_id),
+        )
+
+    def finalize_work_package_publication(
+        self,
+        batch_id: str,
+        *,
+        actor: str = "work-package-publication-finalizer",
+        receipt_id: Optional[str] = None,
+    ) -> Any:
+        return self.work_package_publication_finalizer.finalize_landed_batch(
+            batch_id,
+            actor=actor,
+            receipt_id=receipt_id,
+        )
+
+    def _work_package_repository_endpoint(self, batch_id: str) -> RepositoryEndpoint:
+        row = self.store.query_one(
+            "SELECT batch.repository_id, repository.source, repository.metadata, "
+            "repository.name, repository.enabled "
+            "FROM work_package_integration_batches AS batch "
+            "JOIN project_repositories AS repository "
+            "ON repository.id = batch.repository_id WHERE batch.id = ?",
+            (str(batch_id or "").strip(),),
+        )
+        if row is None or not bool(row["enabled"]):
+            raise ValidationError(
+                "work-package batch repository is unavailable for landing"
+            )
+        try:
+            metadata = json_loads(row["metadata"], {}) or {}
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "work-package repository metadata is malformed"
+            ) from exc
+        if not isinstance(metadata, Mapping):
+            raise ValidationError("work-package repository metadata is malformed")
+        try:
+            canonical = resolve_repository_canonical_remote(
+                {
+                    "id": row["repository_id"],
+                    "source": row["source"],
+                    "metadata": metadata,
+                }
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                "work-package canonical remote is invalid"
+            ) from exc
+        return RepositoryEndpoint(
+            repository_id=str(row["repository_id"]),
+            remote_url=canonical.url,
+            display_name=str(row["name"] or "canonical"),
+        )
+
+    def admit_work_package(
+        self,
+        plan: Mapping[str, Any],
+        *,
+        actor: str,
+        reason: str,
+        tenant_id: Optional[str] = None,
+        root_task_id: Optional[str] = None,
+    ) -> Any:
+        """Compile, attest, and atomically materialize a held work DAG."""
+
+        return self.work_packages.admit(
+            plan,
+            actor=actor,
+            reason=reason,
+            tenant_id=tenant_id,
+            root_task_id=root_task_id,
+        )
+
+    def preview_work_package_replan(
+        self,
+        package_id: str,
+        plan: Mapping[str, Any],
+        *,
+        expected_plan_version: int,
+        expected_epoch: int,
+        actor: str,
+        reason: str,
+    ) -> JsonDict:
+        """Compile, attest, and preview plan N+1 without mutating the package."""
+
+        proposal = self.work_package_replans.propose(
+            plan,
+            package_id=package_id,
+            expected_plan_version=expected_plan_version,
+            expected_epoch=expected_epoch,
+            actor=actor,
+            reason=reason,
+        )
+        preview = self.work_package_replans.preview(proposal)
+        return {
+            "proposal": proposal.to_dict(),
+            "preview": preview.to_dict(),
+        }
+
+    def pause_work_package(
+        self,
+        package_id: str,
+        *,
+        expected_plan_version: int,
+        expected_epoch: int,
+        actor: str,
+        reason: str,
+    ) -> JsonDict:
+        """Raise the package Andon by exact plan-version and epoch CAS."""
+
+        return self.work_package_replans.pause(
+            package_id,
+            expected_plan_version=expected_plan_version,
+            expected_epoch=expected_epoch,
+            actor=actor,
+            reason=reason,
+        ).to_dict()
+
+    def replan_work_package(
+        self,
+        package_id: str,
+        plan: Mapping[str, Any],
+        *,
+        expected_plan_version: int,
+        expected_epoch: int,
+        actor: str,
+        reason: str,
+    ) -> JsonDict:
+        """Install one fully compiled replacement plan and epoch by CAS."""
+
+        proposal = self.work_package_replans.propose(
+            plan,
+            package_id=package_id,
+            expected_plan_version=expected_plan_version,
+            expected_epoch=expected_epoch,
+            actor=actor,
+            reason=reason,
+        )
+        result = self.work_package_replans.apply(
+            proposal,
+            expected_plan_version=expected_plan_version,
+            expected_epoch=expected_epoch,
+        )
+        return {
+            "proposal": proposal.to_dict(),
+            "result": result.to_dict(),
+        }
+
+    def list_work_packages(
+        self,
+        *,
+        state: Optional[str] = None,
+        project: Optional[str] = None,
+        limit: int = 100,
+        after_id: Optional[str] = None,
+        order_by_id: bool = False,
+    ) -> List[JsonDict]:
+        return [
+            package.to_dict()
+            for package in self.work_packages.list(
+                state=state,
+                project=project,
+                limit=limit,
+                after_id=after_id,
+                order_by_id=order_by_id,
+            )
+        ]
+
+    def describe_work_package(self, package_id: str) -> JsonDict:
+        return self.work_packages.describe(package_id)
+
+    def work_package_activation_readiness(self, package_id: str) -> JsonDict:
+        """Prove every worker and downstream controller station is ready."""
+
+        from mac.worker_credentials import package_worker_readiness
+
+        described = self.work_packages.describe(package_id)
+        package = ensure_json_object(described["package"])
+        downstream = self._work_package_downstream_activation_readiness(described)
+        agents = self.store.query_all("SELECT * FROM agents ORDER BY id")
+        ready_agents: Dict[str, set[str]] = {}
+        agent_readiness: Dict[str, JsonDict] = {}
+        for agent in agents:
+            agent_id = str(agent["id"])
+            readiness = package_worker_readiness(self.store, agent_id)
+            agent_readiness[agent_id] = readiness
+            if readiness.get("ready"):
+                ready_agents[agent_id] = set(
+                    str(value)
+                    for value in json_loads(agent["capabilities"], [])
+                )
+
+        requirements: List[JsonDict] = []
+        blockers: List[JsonDict] = []
+        for node in described["nodes"]:
+            metadata = ensure_json_object(node.get("metadata"))
+            contract = ensure_json_object(metadata.get("work_package"))
+            node_type = str(contract.get("node_type") or "mutation")
+            # Integration and certification are controller stations. They are
+            # never made eligible merely because an ordinary worker happens to
+            # advertise a similarly named capability.
+            if node_type in {"integration", "certification"}:
+                requirements.append(
+                    {
+                        "node_key": node["node_key"],
+                        "node_type": node_type,
+                        "route": "controller_station",
+                        "ready": bool(downstream["ready"]),
+                        "readiness_code": downstream["code"],
+                    }
+                )
+                continue
+            required = {
+                str(value) for value in node.get("required_capabilities") or []
+            }
+            eligible = sorted(
+                agent_id
+                for agent_id, capabilities in ready_agents.items()
+                if required.issubset(capabilities)
+            )
+            item = {
+                "node_key": node["node_key"],
+                "node_type": node_type,
+                "route": "worker",
+                "required_capabilities": sorted(required),
+                "eligible_agent_ids": eligible,
+                "ready": bool(eligible),
+            }
+            requirements.append(item)
+            if not eligible:
+                blockers.append(
+                    {
+                        "code": "no_ready_bound_worker",
+                        "node_key": node["node_key"],
+                        "required_capabilities": sorted(required),
+                }
+            )
+        if not downstream["ready"]:
+            blockers.append(
+                {
+                    "code": downstream["code"],
+                    "reason": downstream["reason"],
+                }
+            )
+        if package.get("state") not in {"admitted", "active", "paused"}:
+            blockers.append(
+                {
+                    "code": "package_state_not_activatable",
+                    "state": package.get("state"),
+                }
+            )
+        return {
+            "schema": "mac.work_package.activation_readiness.v1",
+            "package_id": package_id,
+            "plan_version": package.get("current_plan_version"),
+            "epoch": package.get("current_epoch"),
+            "ready": not blockers,
+            "requirements": requirements,
+            "blockers": blockers,
+            "agent_readiness": agent_readiness,
+            "downstream": downstream,
+        }
+
+    def _assert_work_package_claim_downstream_ready(self, task_id: str) -> None:
+        """Keep active packages pull-fenced across hub restarts/config drift."""
+
+        link = self.store.query_one(
+            "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
+            (str(task_id),),
+        )
+        if link is None:
+            return
+        described = self.work_packages.describe(str(link["package_id"]))
+        downstream = self._work_package_downstream_activation_readiness(described)
+        if not downstream["ready"]:
+            raise TransitionError(
+                "work-package downstream release gate is closed: %s"
+                % downstream["code"]
+            )
+
+    def _assert_work_package_claim_downstream_ready_in_transaction(
+        self, conn: Any, task_id: str
+    ) -> None:
+        """Revalidate the pull fence under the claim's durable row locks."""
+
+        link = conn.execute(
+            "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
+            (str(task_id),),
+        ).fetchone()
+        if link is None:
+            return
+        package_id = str(link["package_id"])
+        if conn.execute(
+            "UPDATE work_packages SET updated_at = updated_at WHERE id = ?",
+            (package_id,),
+        ).rowcount != 1:
+            raise TransitionError("work package disappeared during downstream check")
+        package = conn.execute(
+            "SELECT repository_id, current_plan_version, current_epoch "
+            "FROM work_packages WHERE id = ?",
+            (package_id,),
+        ).fetchone()
+        if package is None or not str(package["repository_id"] or ""):
+            raise TransitionError("work package repository is unavailable")
+        repository_id = str(package["repository_id"])
+        # The lock is intentionally taken before the resolver reads both the
+        # endpoint and certification contract through this same transaction.
+        # It closes the preflight-to-claim race without holding a transaction
+        # across Git/network I/O (the release gate is metadata-only).
+        if conn.execute(
+            "UPDATE project_repositories SET updated_at = updated_at WHERE id = ?",
+            (repository_id,),
+        ).rowcount != 1:
+            raise TransitionError("work package repository is unavailable")
+        downstream = self._work_package_downstream_release_gate(
+            package_id,
+            plan_version=int(package["current_plan_version"]),
+            epoch=int(package["current_epoch"]),
+            source=conn,
+        )
+        if not downstream["ready"]:
+            raise TransitionError(
+                "work-package downstream release gate is closed: %s"
+                % downstream["code"]
+            )
+
+    def _work_package_downstream_release_gate(
+        self,
+        package_id: str,
+        *,
+        plan_version: int,
+        epoch: int,
+        source: Optional[Any] = None,
+    ) -> JsonDict:
+        """Resolve one metadata-only gate, optionally from a locked transaction."""
+
+        from mac.work_package_pipeline_runtime import (
+            RepositoryPipelineReleaseGateResolver,
+        )
+
+        config = self.work_package_pipeline_runtime_config
+        if not config.enabled:
+            return {
+                "ready": False,
+                "code": (
+                    "work_package_pipeline_configuration_invalid"
+                    if config.configuration_error
+                    else "work_package_pipeline_disabled"
+                ),
+                "reason": (
+                    "work-package pipeline configuration is invalid"
+                    if config.configuration_error
+                    else "work-package pipeline is disabled"
+                ),
+            }
+        resolver = RepositoryPipelineReleaseGateResolver(
+            self.store,
+            validate_certification_contract=(
+                self.work_package_certifications.validate_repository_contract
+            ),
+            landing_config=config.landing,
+        )
+        gate = resolver.resolve_package(
+            package_id,
+            plan_version=plan_version,
+            epoch=epoch,
+            source=source,
+        )
+        return {
+            "ready": bool(gate.ready),
+            "code": "ready" if gate.ready else gate.code,
+            "reason": "" if gate.ready else (gate.reason or gate.code),
+        }
+
+    def _work_package_downstream_activation_readiness(
+        self, described: Mapping[str, Any]
+    ) -> JsonDict:
+        """Resolve the same fail-closed pull gate used by the assembly loop.
+
+        Activation is the upstream release point.  Checking only when an
+        integration batch is created is too late: workers could already have
+        manufactured mutation inventory for a disabled certification/landing
+        line.  The package therefore remains held until the runtime and the
+        exact registered repository both satisfy the downstream gate.
+        """
+
+        from mac.work_package_pipeline import PipelineSnapshot
+        package = ensure_json_object(described.get("package"))
+        integration_nodes = []
+        for node in described.get("nodes") or []:
+            metadata = ensure_json_object(node.get("metadata"))
+            contract = ensure_json_object(metadata.get("work_package"))
+            if str(contract.get("node_type") or "") == "integration":
+                integration_nodes.append(node)
+        if len(integration_nodes) != 1:
+            return {
+                "ready": False,
+                "code": "work_package_integration_station_invalid",
+                "reason": "work package does not have exactly one integration station",
+            }
+        integration = integration_nodes[0]
+        snapshot = PipelineSnapshot(
+            key="%s:%s:%s:%s"
+            % (
+                package.get("id"),
+                package.get("current_plan_version"),
+                package.get("current_epoch"),
+                integration.get("node_key"),
+            ),
+            package_id=str(package.get("id") or ""),
+            plan_version=int(package.get("current_plan_version") or 0),
+            epoch=int(package.get("current_epoch") or 0),
+            integration_node_key=str(integration.get("node_key") or ""),
+            integration_task_id=str(integration.get("task_id") or ""),
+            integration_node_state=str(integration.get("node_state") or ""),
+        )
+        return self._work_package_downstream_release_gate(
+            snapshot.package_id,
+            plan_version=snapshot.plan_version,
+            epoch=snapshot.epoch,
+        )
+
+    def activate_work_package(
+        self,
+        package_id: str,
+        *,
+        expected_plan_version: int,
+        expected_epoch: int,
+        actor: str,
+    ) -> JsonDict:
+        readiness = self.work_package_activation_readiness(package_id)
+        if (
+            int(readiness["plan_version"]) != int(expected_plan_version)
+            or int(readiness["epoch"]) != int(expected_epoch)
+        ):
+            raise ValidationError("work package activation generation changed")
+        if not readiness["ready"]:
+            raise ValidationError(
+                "work package activation readiness failed: %s"
+                % json_dumps(readiness["blockers"])
+            )
+        package = self.work_packages.activate(
+            package_id,
+            expected_plan_version=expected_plan_version,
+            expected_epoch=expected_epoch,
+            actor=actor,
+        )
+        return {
+            "package": package.to_dict(),
+            "readiness": readiness,
+        }
 
     def _require_review_ready(self, task: Task) -> Evidence:
         evidence, assessment = self._default_review_evidence(task)
@@ -8401,23 +9757,97 @@ class ControlPlane:
         checksum: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         *,
+        lease_id: Optional[str] = None,
         artifacts: Optional[List[Dict[str, Any]]] = None,
         sync_beads: bool = True,
+        _trusted_internal: bool = False,
     ) -> Evidence:
-        task = self.get_task(task_id)
-        # Prefix resolution is part of the public id-taking contract.  Persist
-        # evidence, artifacts, and history under the canonical foreign key,
-        # not the caller's shortened display id.
-        task_id = task.id
-        if task.state in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
-            if not self._lease_actor_allowed(task, created_by):
-                raise AuthorizationError("agent does not own task lease")
         if not kind or not uri or not summary:
             raise ValidationError("evidence requires kind, uri, and summary")
         if kind not in EVIDENCE_KINDS:
             raise ValidationError("unsupported evidence kind: %s" % kind)
         if kind == "publication" and not checksum:
             raise ValidationError("publication evidence requires a checksum")
+        task = self.get_task(task_id)
+        # Prefix resolution is part of the public id-taking contract.  Persist
+        # evidence, artifacts, and history under the canonical foreign key,
+        # not the caller's shortened display id.
+        task_id = task.id
+        fenced_lease_id: Optional[str] = None
+        fenced_review_id: Optional[str] = None
+        fenced_review_status: Optional[str] = None
+        if _trusted_internal:
+            pass
+        elif task.state in {TaskState.CLAIMED.value, TaskState.RUNNING.value}:
+            self._require_lease_actor(task, created_by, lease_id)
+            fenced_lease_id = str(task.lease_id or "")
+        elif task.state == TaskState.REVIEWING.value:
+            fenced_review_status = (
+                ReviewStatus.APPROVED.value
+                if kind == "publication"
+                else ReviewStatus.PENDING.value
+            )
+            review_rows = self.store.query_all(
+                "SELECT id FROM reviews WHERE task_id = ? "
+                "AND reviewer_agent_id = ? AND status = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT 2",
+                (task_id, created_by, fenced_review_status),
+            )
+            if len(review_rows) != 1:
+                raise AuthorizationError(
+                    "review evidence requires one current review assigned to the author"
+                )
+            if fenced_review_status == ReviewStatus.PENDING.value:
+                evidence_metadata = ensure_json_object(metadata)
+                verification = ensure_json_object(
+                    evidence_metadata.get("verification")
+                )
+                is_review_verdict = (
+                    str(verification.get("evidence_type") or "").strip().lower()
+                    == "review_verdict"
+                )
+                review_id = str(review_rows[0]["id"])
+                try:
+                    protocol_returncode: Optional[int] = int(
+                        evidence_metadata.get("returncode")
+                    )
+                except (TypeError, ValueError):
+                    protocol_returncode = None
+                is_protocol_failure = (
+                    kind == "review"
+                    and str(evidence_metadata.get("review_id") or "").strip()
+                    == review_id
+                    and protocol_returncode is not None
+                    and protocol_returncode != 0
+                )
+                if not is_review_verdict and not is_protocol_failure:
+                    raise AuthorizationError(
+                        "post-lease review evidence must be a review_verdict "
+                        "or a fenced nonzero review attempt"
+                    )
+                current_target = str(
+                    ensure_json_object(
+                        ensure_json_object(task.metadata).get("review_target")
+                    ).get("executor_evidence_id")
+                    or ""
+                ).strip()
+                reviewed_target = str(
+                    (
+                        verification.get("reviewed_evidence_id")
+                        if is_review_verdict
+                        else evidence_metadata.get("executor_evidence_id")
+                    )
+                    or ""
+                ).strip()
+                if not current_target or reviewed_target != current_target:
+                    raise AuthorizationError(
+                        "review evidence must target the current executor evidence revision"
+                    )
+            fenced_review_id = str(review_rows[0]["id"])
+        else:
+            raise AuthorizationError(
+                "evidence author requires an active lease or assigned pending review"
+            )
         # mem-11: reject `operator_result` evidence_type when the task's
         # execution contract declared a repository contract (or set
         # repository_required=true). The original `task_d7c51a0b`
@@ -8447,6 +9877,128 @@ class ControlPlane:
                 ],
             }
         with self.store.transaction() as conn:
+            assignment = None
+            if fenced_review_id:
+                task_lock = conn.execute(
+                    "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                    (task_id,),
+                )
+                if task_lock.rowcount != 1:
+                    raise NotFoundError("task not found: %s" % task_id)
+                current_task_row = conn.execute(
+                    "SELECT state, metadata FROM tasks WHERE id = ?",
+                    (task_id,),
+                ).fetchone()
+                review_lock = conn.execute(
+                    "UPDATE reviews SET status = status WHERE id = ? "
+                    "AND task_id = ? AND reviewer_agent_id = ? AND status = ?",
+                    (
+                        fenced_review_id,
+                        task_id,
+                        created_by,
+                        fenced_review_status,
+                    ),
+                )
+                if (
+                    current_task_row is None
+                    or current_task_row["state"] != TaskState.REVIEWING.value
+                    or review_lock.rowcount != 1
+                ):
+                    raise AuthorizationError(
+                        "review assignment changed before evidence was recorded"
+                    )
+                current_metadata = ensure_json_object(
+                    json_loads(current_task_row["metadata"], {})
+                )
+                if fenced_review_status == ReviewStatus.PENDING.value:
+                    current_target = str(
+                        ensure_json_object(current_metadata.get("review_target")).get(
+                            "executor_evidence_id"
+                        )
+                        or ""
+                    ).strip()
+                    verification = ensure_json_object(
+                        metadata_obj.get("verification")
+                    )
+                    reviewed_target = str(
+                        verification.get("reviewed_evidence_id")
+                        or metadata_obj.get("executor_evidence_id")
+                        or ""
+                    ).strip()
+                    if not current_target or reviewed_target != current_target:
+                        raise AuthorizationError(
+                            "review target changed before verdict evidence was recorded"
+                        )
+            if fenced_lease_id:
+                assignment_hint = conn.execute(
+                    "SELECT package_id FROM work_package_assignment_audit "
+                    "WHERE lease_id = ?",
+                    (fenced_lease_id,),
+                ).fetchone()
+                if assignment_hint is not None:
+                    package_lock = conn.execute(
+                        "UPDATE work_packages SET updated_at = updated_at "
+                        "WHERE id = ?",
+                        (assignment_hint["package_id"],),
+                    )
+                    if package_lock.rowcount != 1:
+                        raise TransitionError(
+                            "work package assignment no longer has a package"
+                        )
+                self._require_exact_lease_actor_in_transaction(
+                    conn,
+                    task_id=task_id,
+                    agent_id=created_by,
+                    lease_id=fenced_lease_id,
+                    allowed_states=(
+                        TaskState.CLAIMED.value,
+                        TaskState.RUNNING.value,
+                    ),
+                )
+                assignment = conn.execute(
+                    """
+                    SELECT assignment.*,
+                           package.state AS package_state,
+                           package.current_plan_version AS current_plan_version,
+                           package.current_epoch AS current_epoch,
+                           epoch.status AS epoch_status,
+                           task.attempt_count AS current_attempt_number
+                    FROM work_package_assignment_audit AS assignment
+                    JOIN work_packages AS package
+                      ON package.id = assignment.package_id
+                    JOIN work_package_epochs AS epoch
+                      ON epoch.package_id = assignment.package_id
+                     AND epoch.epoch = assignment.epoch
+                     AND epoch.plan_version = assignment.plan_version
+                    JOIN tasks AS task ON task.id = assignment.task_id
+                    WHERE assignment.lease_id = ?
+                    """,
+                    (fenced_lease_id,),
+                ).fetchone()
+                if assignment is None:
+                    package_link = conn.execute(
+                        "SELECT package_id FROM work_package_task_links "
+                        "WHERE task_id = ?",
+                        (task_id,),
+                    ).fetchone()
+                    if package_link is not None:
+                        raise TransitionError(
+                            "work-package evidence requires an immutable assignment audit"
+                        )
+                elif (
+                    assignment["task_id"] != task_id
+                    or int(assignment["attempt_number"])
+                    != int(assignment["current_attempt_number"])
+                    or assignment["package_state"] != "active"
+                    or int(assignment["plan_version"])
+                    != int(assignment["current_plan_version"])
+                    or int(assignment["epoch"])
+                    != int(assignment["current_epoch"])
+                    or assignment["epoch_status"] != "active"
+                ):
+                    raise TransitionError(
+                        "work-package assignment is not in the current active epoch"
+                    )
             conn.execute(
                 """
                 INSERT INTO evidence (id, task_id, kind, uri, summary, checksum, metadata, created_by, created_at)
@@ -8464,6 +10016,78 @@ class ControlPlane:
                     now,
                 ),
             )
+            if assignment is not None:
+                verification = ensure_json_object(metadata_obj.get("verification"))
+                repo = ensure_json_object(verification.get("repo"))
+                if str(verification.get("schema") or "") != VERIFICATION_SCHEMA:
+                    raise ValidationError(
+                        "work-package evidence requires a worker evidence manifest"
+                    )
+                if str(verification.get("evidence_type") or "").strip().lower() != "repo_change":
+                    raise ValidationError(
+                        "work-package evidence must declare evidence_type=repo_change"
+                    )
+                expected_ref = str(assignment["attempt_ref"])
+                claimed_ref = str(repo.get("remote_ref") or "").strip()
+                if (
+                    not expected_ref.startswith("refs/mac/attempts/")
+                    or claimed_ref != expected_ref
+                ):
+                    raise ValidationError(
+                        "work-package evidence must name its exact assigned attempt ref"
+                    )
+                if repo.get("pushed") is not True:
+                    raise ValidationError(
+                        "work-package evidence must report a remotely read-back attempt ref"
+                    )
+                claimed_head = str(repo.get("head_sha") or "").strip()
+                if not _FULL_GIT_OBJECT_ID_RE.fullmatch(claimed_head):
+                    raise ValidationError(
+                        "work-package evidence must declare a full lowercase Git object id"
+                    )
+                claimed_base = str(repo.get("base_sha") or "").strip()
+                if claimed_base and claimed_base != str(assignment["attempt_base_sha"]):
+                    raise ValidationError(
+                        "work-package evidence base does not match its immutable assignment"
+                    )
+                artifact_digest = attempt_artifact_manifest_digest(
+                    verification=verification,
+                    attempt_ref=expected_ref,
+                    attempt_base_sha=str(assignment["attempt_base_sha"]),
+                    attempt_head_sha=claimed_head,
+                    declared_effects_digest=str(
+                        assignment["declared_effects_digest"]
+                    ),
+                    artifacts=[item.to_dict() for item in stored_artifacts],
+                )
+                # The worker supplies only the expected object claim.  The
+                # append-only controller verification receipt independently
+                # fetches this exact protected ref and is the sole authority
+                # for observed tree/effects provenance.
+                conn.execute(
+                    """
+                    INSERT INTO evidence_attempt_links (
+                        evidence_id, task_id, lease_id, agent_id,
+                        attempt_number, attempt_ref, attempt_base_sha,
+                        attempt_head_sha, artifact_digest,
+                        declared_effects_digest, observed_effects_digest, protected_ref,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?)
+                    """,
+                    (
+                        evidence_id,
+                        assignment["task_id"],
+                        fenced_lease_id,
+                        assignment["agent_id"],
+                        int(assignment["attempt_number"]),
+                        assignment["attempt_ref"],
+                        assignment["attempt_base_sha"],
+                        claimed_head,
+                        artifact_digest,
+                        assignment["declared_effects_digest"],
+                        now,
+                    ),
+                )
             for artifact in stored_artifacts:
                 conn.execute(
                     """
@@ -8503,6 +10127,8 @@ class ControlPlane:
                     "kind": kind,
                     "uri": uri,
                     "artifact_count": len(stored_artifacts),
+                    "lease_id": fenced_lease_id,
+                    "review_id": fenced_review_id,
                 },
                 conn=conn,
             )
@@ -8833,24 +10459,73 @@ class ControlPlane:
         return [self._evidence_from_row(row) for row in rows]
 
     def renew_lease(self, lease_id: str, agent_id: str, lease_seconds: int = 900) -> Lease:
-        lease = self.get_lease(lease_id)
-        if lease.agent_id != agent_id:
-            raise AuthorizationError("agent does not own lease")
-        if lease.status != LeaseStatus.ACTIVE.value:
-            raise ValidationError("only active leases can be renewed")
-        now = utcnow()
-        expires_at = (parse_time(now) + timedelta(seconds=int(lease_seconds))).isoformat(timespec="microseconds")
+        lease_seconds = self._validated_task_lease_seconds(lease_seconds)
         with self.store.transaction() as conn:
+            lease_lock = conn.execute(
+                "UPDATE leases SET updated_at = updated_at WHERE id = ?",
+                (lease_id,),
+            )
+            if lease_lock.rowcount != 1:
+                raise NotFoundError("lease not found: %s" % lease_id)
+            lease_row = conn.execute(
+                "SELECT * FROM leases WHERE id = ?", (lease_id,)
+            ).fetchone()
+            if lease_row is None:
+                raise NotFoundError("lease not found: %s" % lease_id)
+            if lease_row["agent_id"] != agent_id:
+                raise AuthorizationError("agent does not own lease")
+            if lease_row["status"] != LeaseStatus.ACTIVE.value:
+                raise ValidationError("only active leases can be renewed")
+            task_id = str(lease_row["task_id"])
+            task_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (task_id,),
+            )
+            if task_lock.rowcount != 1:
+                raise ValidationError("lease task no longer exists")
+            agent_lock = conn.execute(
+                "UPDATE agents SET updated_at = updated_at WHERE id = ?",
+                (agent_id,),
+            )
+            if agent_lock.rowcount != 1:
+                raise ValidationError("lease owner no longer exists")
+            task_row = conn.execute(
+                "SELECT state, lease_id, owner_agent_id, leased_until "
+                "FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            now = self._lease_authority_now_in_transaction(conn)
+            if not self._timestamp_is_after(lease_row["expires_at"], now):
+                raise ValidationError("expired leases cannot be renewed")
+            if (
+                task_row is None
+                or task_row["lease_id"] != lease_id
+                or task_row["owner_agent_id"] != agent_id
+                or task_row["state"]
+                not in {TaskState.CLAIMED.value, TaskState.RUNNING.value}
+                or not task_row["leased_until"]
+                or not self._timestamp_is_after(task_row["leased_until"], now)
+            ):
+                raise ValidationError("lease is no longer attached to an active task")
+            expires_at = (
+                parse_time(now) + timedelta(seconds=lease_seconds)
+            ).isoformat(timespec="microseconds")
             lease_cursor = conn.execute(
                 """
                 UPDATE leases
                 SET expires_at = ?, updated_at = ?
                 WHERE id = ? AND agent_id = ? AND status = ?
                 """,
-                (expires_at, now, lease_id, agent_id, LeaseStatus.ACTIVE.value),
+                (
+                    expires_at,
+                    now,
+                    lease_id,
+                    agent_id,
+                    LeaseStatus.ACTIVE.value,
+                ),
             )
             if lease_cursor.rowcount != 1:
-                raise ValidationError("only active leases can be renewed")
+                raise ValidationError("only unexpired active leases can be renewed")
             task_cursor = conn.execute(
                 """
                 UPDATE tasks
@@ -8863,7 +10538,7 @@ class ControlPlane:
                 (
                     expires_at,
                     now,
-                    lease.task_id,
+                    task_id,
                     lease_id,
                     agent_id,
                     TaskState.CLAIMED.value,
@@ -8878,13 +10553,70 @@ class ControlPlane:
                 SET status = ?, current_task_id = ?, updated_at = ?, last_seen_at = ?
                 WHERE id = ?
                 """,
-                (AgentStatus.BUSY.value, lease.task_id, now, now, agent_id),
+                (AgentStatus.BUSY.value, task_id, now, now, agent_id),
             )
-        self._record_history(lease.task_id, "task.lease_renewed", agent_id, None, None, {"lease_id": lease_id})
+        self._record_history(task_id, "task.lease_renewed", agent_id, None, None, {"lease_id": lease_id})
         heartbeat_agent = self.get_agent(agent_id)
         self._maybe_advance_reviews_on_heartbeat(heartbeat_agent)
         self._maybe_drain_notifications_on_heartbeat(heartbeat_agent)
         return self.get_lease(lease_id)
+
+    @staticmethod
+    def _validated_task_lease_seconds(value: int) -> int:
+        try:
+            seconds = int(value)
+        except (TypeError, ValueError):
+            raise ValidationError("lease_seconds must be an integer") from None
+        maximum = max(1, _int_env("MAC_MAX_TASK_LEASE_SECONDS", 3600))
+        if seconds <= 0 or seconds > maximum:
+            raise ValidationError(
+                "lease_seconds must be between 1 and %d" % maximum
+            )
+        return seconds
+
+    @staticmethod
+    def _lease_datetime(value: Any) -> datetime:
+        """Normalize a persisted or driver-native timestamp for lease logic."""
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            text = str(value or "").strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(text)
+            except (TypeError, ValueError):
+                raise ValidationError("invalid lease timestamp: %r" % value) from None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @classmethod
+    def _timestamp_is_after(cls, value: Any, boundary: Any) -> bool:
+        """Compare timestamp values semantically, never as TEXT collation."""
+        return cls._lease_datetime(value) > cls._lease_datetime(boundary)
+
+    def _lease_authority_now_in_transaction(self, conn: Any) -> str:
+        """Sample the lease authority clock after transaction locks are held.
+
+        PostgreSQL is the shared clock for a multi-replica hub. ``clock_timestamp``
+        is intentional: unlike ``CURRENT_TIMESTAMP`` it advances after a row-lock
+        wait instead of freezing at transaction start. SQLite is supported only
+        as a single-hub authority, so its process clock is sampled at this same
+        late point. The injected clock is a deterministic test seam.
+        """
+        if self._lease_clock is not None:
+            raw = self._lease_clock()
+        elif type(self.store).__module__ == "mac.store_postgres":
+            row = conn.execute(
+                "SELECT clock_timestamp() AS authoritative_now"
+            ).fetchone()
+            if row is None:
+                raise ValidationError("database lease clock is unavailable")
+            raw = row["authoritative_now"]
+        else:
+            raw = utcnow()
+        return self._lease_datetime(raw).isoformat(timespec="microseconds")
 
     def get_lease(self, lease_id: str) -> Lease:
         row = self.store.query_one("SELECT * FROM leases WHERE id = ?", (lease_id,))
@@ -8915,16 +10647,38 @@ class ControlPlane:
         # the agents-table FK that the schema declares so SQLite (no FK
         # enforcement by default) matches Postgres semantics.
         self.get_agent(to_agent_id)
-        now = utcnow()
         with self.store.transaction() as conn:
-            conn.execute(
+            target_lock = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (to_agent_id,),
+            )
+            if target_lock.rowcount != 1:
+                raise ValidationError("delegated agent is unavailable")
+            self._require_exact_lease_actor_in_transaction(
+                conn,
+                task_id=lease.task_id,
+                agent_id=owner_agent_id,
+                lease_id=lease_id,
+                allowed_states=(TaskState.CLAIMED.value, TaskState.RUNNING.value),
+            )
+            now = self._lease_authority_now_in_transaction(conn)
+            delegated = conn.execute(
                 """
                 UPDATE leases
                 SET delegated_agent_id = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND agent_id = ? AND status = ?
                 """,
-                (to_agent_id, now, lease_id),
+                (
+                    to_agent_id,
+                    now,
+                    lease_id,
+                    owner_agent_id,
+                    LeaseStatus.ACTIVE.value,
+                ),
             )
+            if delegated.rowcount != 1:
+                raise AuthorizationError("lease delegation authority changed")
             self._record_history(
                 lease.task_id,
                 "task.lease_delegated",
@@ -8936,7 +10690,29 @@ class ControlPlane:
             )
         return self.get_lease(lease_id)
 
-    def _lease_actor_allowed(self, task: Task, agent_id: str) -> bool:
+    def _is_lease_actor(self, task: Task, agent_id: str) -> bool:
+        """Return whether ``agent_id`` is named by the current lease.
+
+        This intentionally does not establish authority by itself; callers
+        that mutate active work must also validate the lease-attempt fence.
+        """
+        if not task.lease_id:
+            return False
+        try:
+            lease = self.get_lease(task.lease_id)
+        except NotFoundError:
+            return False
+        return lease.agent_id == agent_id or (
+            bool(lease.delegated_agent_id)
+            and lease.delegated_agent_id == agent_id
+        )
+
+    def _lease_actor_allowed(
+        self,
+        task: Task,
+        agent_id: str,
+        lease_id: Optional[str] = None,
+    ) -> bool:
         """Return True if ``agent_id`` may author lifecycle transitions
         on ``task`` per spec §6.3 (Option B).
 
@@ -8945,8 +10721,6 @@ class ControlPlane:
           * the agent recorded in the task's active lease's
             ``delegated_agent_id`` (set via :meth:`delegate_lease`).
         """
-        if task.owner_agent_id and task.owner_agent_id == agent_id:
-            return True
         if not task.lease_id:
             return False
         try:
@@ -8955,7 +10729,113 @@ class ControlPlane:
             return False
         if lease.status != LeaseStatus.ACTIVE.value:
             return False
-        return bool(lease.delegated_agent_id) and lease.delegated_agent_id == agent_id
+        if lease.agent_id != agent_id and lease.delegated_agent_id != agent_id:
+            return False
+        supplied_lease_id = str(lease_id or "").strip()
+        if supplied_lease_id:
+            return supplied_lease_id == lease.id
+
+        # Bounded compatibility for pre-fence callers: omission is safe only
+        # while this actor identity has participated in exactly one lease
+        # attempt for the task. A different agent may safely be the second
+        # owner, but once the same owner/delegate identity reacquires the task,
+        # an omitted token could be its old process and is rejected.
+        count_row = self.store.query_one(
+            "SELECT COUNT(*) AS count FROM leases "
+            "WHERE task_id = ? AND (agent_id = ? OR delegated_agent_id = ?)",
+            (task.id, agent_id, agent_id),
+        )
+        return int(count_row["count"] if count_row is not None else 0) == 1
+
+    def _require_exact_lease_actor(
+        self,
+        task: Task,
+        agent_id: str,
+        lease_id: Optional[str],
+    ) -> None:
+        """Require an exact current-attempt fence for a public transition."""
+        supplied_lease_id = str(lease_id or "").strip()
+        if not supplied_lease_id:
+            raise AuthorizationError(
+                "current lease_id is required for active task transitions"
+            )
+        if not self._lease_actor_allowed(task, agent_id, supplied_lease_id):
+            raise AuthorizationError("agent does not own the current task lease")
+
+    def _require_lease_actor(
+        self,
+        task: Task,
+        agent_id: str,
+        lease_id: Optional[str],
+    ) -> None:
+        if self._lease_actor_allowed(task, agent_id, lease_id):
+            return
+        if self._is_lease_actor(task, agent_id) and not str(lease_id or "").strip():
+            raise AuthorizationError(
+                "current lease_id is required after a task has been reacquired"
+            )
+        raise AuthorizationError("agent does not own the current task lease")
+
+    def _require_exact_lease_actor_in_transaction(
+        self,
+        conn: Any,
+        *,
+        task_id: str,
+        agent_id: str,
+        lease_id: str,
+        allowed_states: Sequence[str],
+    ) -> None:
+        """Lock and validate the active assignment in the write transaction.
+
+        Lease then task is the same lock order used by release/expiry paths.
+        This closes the validation-to-write race where lease A is checked,
+        reassigned as B, and A's delayed INSERT/UPDATE lands on B's attempt.
+        """
+        supplied_lease_id = str(lease_id or "").strip()
+        if not supplied_lease_id:
+            raise AuthorizationError("current lease_id is required")
+        lease_lock = conn.execute(
+            "UPDATE leases SET updated_at = updated_at WHERE id = ?",
+            (supplied_lease_id,),
+        )
+        if lease_lock.rowcount != 1:
+            raise AuthorizationError("task lease does not exist")
+        task_lock = conn.execute(
+            "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+            (task_id,),
+        )
+        if task_lock.rowcount != 1:
+            raise NotFoundError("task not found: %s" % task_id)
+        row = conn.execute(
+            """
+            SELECT t.state AS task_state, t.lease_id AS current_lease_id,
+                   l.task_id AS lease_task_id, l.agent_id AS lease_agent_id,
+                   l.delegated_agent_id AS delegated_agent_id,
+                   l.status AS lease_status, l.expires_at AS lease_expires_at
+            FROM tasks t
+            LEFT JOIN leases l ON l.id = ?
+            WHERE t.id = ?
+            """,
+            (supplied_lease_id, task_id),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError("task not found: %s" % task_id)
+        if (
+            row["current_lease_id"] != supplied_lease_id
+            or row["lease_task_id"] != task_id
+            or row["lease_status"] != LeaseStatus.ACTIVE.value
+        ):
+            raise AuthorizationError("lease fence is not the task's active lease")
+        if row["task_state"] not in set(allowed_states):
+            raise TransitionError("task state changed during fenced write; retry")
+        now = self._lease_authority_now_in_transaction(conn)
+        if not self._timestamp_is_after(row["lease_expires_at"], now):
+            raise AuthorizationError("task lease has expired")
+        if (
+            row["lease_agent_id"] != agent_id
+            and row["delegated_agent_id"] != agent_id
+        ):
+            raise AuthorizationError("agent does not own the current task lease")
 
     def expire_leases(
         self,
@@ -8993,17 +10873,33 @@ class ControlPlane:
             cutoff_dt = parse_time(utcnow()) - timedelta(seconds=grace)
         cutoff = cutoff_dt.isoformat(timespec="microseconds")
         limit_value = max(1, min(int(limit), 1000))
-        clauses = ["status = ?", "expires_at <= ?"]
-        params: List[Any] = [LeaseStatus.ACTIVE.value, cutoff]
+        # Candidate selection is deliberately advisory: a skewed process clock
+        # may over-select, and a renewal may land before row processing. The
+        # per-row transaction below re-reads against the authority clock. Also
+        # resume a prior crash that durably fenced a lease EXPIRED but did not
+        # yet detach its task.
+        clauses = [
+            "((l.status = ? AND l.expires_at <= ?) "
+            "OR (l.status = ? AND t.lease_id = l.id))"
+        ]
+        params: List[Any] = [
+            LeaseStatus.ACTIVE.value,
+            cutoff,
+            LeaseStatus.EXPIRED.value,
+        ]
         decoded = self._decode_scan_cursor(cursor, "expired-leases")
         if decoded is not None:
             expires_at, lease_id = decoded
-            clauses.append("(expires_at > ? OR (expires_at = ? AND id > ?))")
+            clauses.append(
+                "(l.expires_at > ? OR (l.expires_at = ? AND l.id > ?))"
+            )
             params.extend([expires_at, expires_at, lease_id])
         params.append(limit_value + 1)
         rows = self.store.query_all(
-            "SELECT * FROM leases WHERE %s "
-            "ORDER BY expires_at, id LIMIT ?" % " AND ".join(clauses),
+            "SELECT l.* FROM leases AS l "
+            "LEFT JOIN tasks AS t ON t.lease_id = l.id "
+            "WHERE %s ORDER BY l.expires_at, l.id LIMIT ?"
+            % " AND ".join(clauses),
             tuple(params),
         )
         has_more = len(rows) > limit_value
@@ -9011,7 +10907,7 @@ class ControlPlane:
         recovered: List[Task] = []
         for row in rows:
             try:
-                task = self._expire_lease_row(row)
+                task = self._expire_lease_row(row, grace_seconds=grace)
             except Exception as exc:  # noqa: BLE001 - isolate corrupt lease rows.
                 try:
                     self.record_log(
@@ -9043,10 +10939,175 @@ class ControlPlane:
             "has_more": has_more,
         }
 
-    def _expire_lease_row(self, row: Any) -> Optional[Task]:
-        lease = self._lease_from_row(row)
+    def _expire_lease_row(
+        self,
+        row: Any,
+        *,
+        grace_seconds: int = 0,
+        force_expire: bool = False,
+        decision_override: Optional[Mapping[str, Any]] = None,
+    ) -> Optional[Task]:
+        candidate = self._lease_from_row(row)
+        # Phase 1 is the authority decision. Lease then task matches the fence
+        # lock order used by renew/worker writes. A renewed lease is re-read
+        # after the wait and left ACTIVE; process-clock skew can only make this
+        # scan do extra work, never expire a DB-live assignment.
+        with self.store.transaction() as conn:
+            lease_lock = conn.execute(
+                "UPDATE leases SET updated_at = updated_at WHERE id = ?",
+                (candidate.id,),
+            )
+            if lease_lock.rowcount != 1:
+                return None
+            lease_row = conn.execute(
+                "SELECT * FROM leases WHERE id = ?", (candidate.id,)
+            ).fetchone()
+            if lease_row is None:
+                return None
+            task_id = str(lease_row["task_id"])
+            task_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (task_id,),
+            )
+            if task_lock.rowcount != 1:
+                return None
+            attached = conn.execute(
+                "SELECT lease_id FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if attached is None or attached["lease_id"] != candidate.id:
+                return None
+            status = str(lease_row["status"])
+            if status == LeaseStatus.ACTIVE.value:
+                authority_now = self._lease_authority_now_in_transaction(conn)
+                if not force_expire:
+                    cutoff = (
+                        parse_time(authority_now)
+                        - timedelta(seconds=max(0, int(grace_seconds)))
+                    ).isoformat(timespec="microseconds")
+                    if self._timestamp_is_after(lease_row["expires_at"], cutoff):
+                        return None
+                fenced = conn.execute(
+                    "UPDATE leases SET status = ?, updated_at = ? "
+                    "WHERE id = ? AND status = ? AND expires_at = ?",
+                    (
+                        LeaseStatus.EXPIRED.value,
+                        authority_now,
+                        candidate.id,
+                        LeaseStatus.ACTIVE.value,
+                        lease_row["expires_at"],
+                    ),
+                )
+                if fenced.rowcount != 1:
+                    return None
+            elif status != LeaseStatus.EXPIRED.value:
+                return None
+
+        # The EXPIRED fence is durable before classification/repair work. If
+        # this process crashes, the scan above includes EXPIRED leases still
+        # attached to a task and resumes this idempotent finalization; renewal
+        # can never resurrect the assignment between the two phases. A durable
+        # per-lease claim prevents concurrent sweepers from both creating the
+        # same repair work. Stale claims are reclaimable after a bounded delay;
+        # repair creation below has a deterministic id and the final task write
+        # is an exact lease CAS, so crash recovery remains idempotent.
+        finalizer_token = self._claim_lease_expiry_finalization(candidate.id)
+        if finalizer_token is None:
+            return None
+        lease = self.get_lease(candidate.id)
         task = self.get_task(lease.task_id)
-        is_exhausted = task.attempt_count >= task.max_attempts
+        if task.lease_id != lease.id:
+            return None
+        decision_row = self.store.query_one(
+            "SELECT expiry_finalization_decision FROM leases WHERE id = ?",
+            (lease.id,),
+        )
+        raw_decision = (
+            decision_row["expiry_finalization_decision"]
+            if decision_row is not None
+            else None
+        )
+        decision = ensure_json_object(
+            raw_decision
+            if isinstance(raw_decision, Mapping)
+            else json_loads(raw_decision, {})
+        )
+        if decision.get("schema") == "mac.lease_expiry_decision.v1":
+            if decision_override is not None and decision != ensure_json_object(
+                decision_override
+            ):
+                raise ValidationError(
+                    "stored lease expiry decision conflicts with the requested decision"
+                )
+            if (
+                decision.get("lease_id") != lease.id
+                or decision.get("task_id") != task.id
+            ):
+                raise ValidationError(
+                    "stored lease expiry decision belongs to a different assignment"
+                )
+            target_state = str(decision.get("target_state") or "")
+            transition_history_detail = ensure_json_object(decision.get("detail"))
+            reset_attempt_count = bool(decision.get("reset_attempt_count"))
+            attempt_count_after = decision.get("attempt_count_after")
+            if target_state not in {
+                TaskState.OPEN.value,
+                TaskState.WAITING.value,
+                TaskState.FAILED.value,
+                TaskState.CANCELLED.value,
+            }:
+                raise ValidationError("stored lease expiry decision is invalid")
+            if reset_attempt_count and target_state != TaskState.WAITING.value:
+                raise ValidationError(
+                    "stored lease expiry decision has an invalid attempt reset"
+                )
+            if attempt_count_after is not None and (
+                isinstance(attempt_count_after, bool)
+                or not isinstance(attempt_count_after, int)
+                or attempt_count_after < 0
+                or attempt_count_after > task.attempt_count
+            ):
+                raise ValidationError(
+                    "stored lease expiry decision has an invalid attempt count"
+                )
+        else:
+            override = ensure_json_object(decision_override)
+            if override:
+                if override.get("schema") != "mac.lease_expiry_decision.v1":
+                    raise ValidationError("lease expiry decision override is invalid")
+                if (
+                    override.get("lease_id") != lease.id
+                    or override.get("task_id") != task.id
+                ):
+                    raise ValidationError(
+                        "lease expiry decision override belongs to another assignment"
+                    )
+                target_state = str(override.get("target_state") or "")
+                transition_history_detail = ensure_json_object(override.get("detail"))
+                reset_attempt_count = bool(override.get("reset_attempt_count"))
+                attempt_count_after = override.get("attempt_count_after")
+                if target_state not in {
+                    TaskState.OPEN.value,
+                    TaskState.WAITING.value,
+                    TaskState.FAILED.value,
+                    TaskState.CANCELLED.value,
+                }:
+                    raise ValidationError("lease expiry decision override is invalid")
+                if reset_attempt_count and target_state != TaskState.WAITING.value:
+                    raise ValidationError(
+                        "lease expiry decision override has an invalid attempt reset"
+                    )
+                if attempt_count_after is not None and (
+                    isinstance(attempt_count_after, bool)
+                    or not isinstance(attempt_count_after, int)
+                    or attempt_count_after < 0
+                    or attempt_count_after > task.attempt_count
+                ):
+                    raise ValidationError(
+                        "lease expiry decision override has an invalid attempt count"
+                    )
+                decision = dict(override)
+            else:
+                is_exhausted = task.attempt_count >= task.max_attempts
         # When the lease expires and the task has exhausted its retry budget,
         # call _exhausted_attempt_terminal_transition before the guarded
         # transaction.  This stamps failure_class on the task metadata,
@@ -9054,36 +11115,148 @@ class ControlPlane:
         # returns the real target state (FAILED, WAITING, or CANCELLED).
         # The call must precede the transaction because FAILED→WAITING is not
         # a valid post-hoc state transition.
-        if is_exhausted:
-            target_state, exhausted_detail = self._exhausted_attempt_terminal_transition(
-                task,
-                {"lease_id": lease.id, "agent_id": lease.agent_id},
-            )
-            transition_history_detail = exhausted_detail
-        else:
-            target_state = TaskState.OPEN.value
-            transition_history_detail = {"lease_id": lease.id, "agent_id": lease.agent_id}
-        timestamp = utcnow()
+                if is_exhausted:
+                    target_state, exhausted_detail = self._exhausted_attempt_terminal_transition(
+                        task,
+                        {
+                            "lease_id": lease.id,
+                            "agent_id": lease.agent_id,
+                            "_defer_attempt_reset": True,
+                        },
+                    )
+                    transition_history_detail = exhausted_detail
+                    reset_attempt_count = bool(
+                        transition_history_detail.get("reset_attempt_count")
+                    )
+                else:
+                    target_state = TaskState.OPEN.value
+                    transition_history_detail = {
+                        "lease_id": lease.id,
+                        "agent_id": lease.agent_id,
+                    }
+                    reset_attempt_count = False
+                attempt_count_after = None
+                decision = {
+                    "schema": "mac.lease_expiry_decision.v1",
+                    "lease_id": lease.id,
+                    "task_id": task.id,
+                    "target_state": target_state,
+                    "reset_attempt_count": reset_attempt_count,
+                    "detail": transition_history_detail,
+                }
+            with self.store.transaction() as conn:
+                decision_lock = conn.execute(
+                    "UPDATE leases SET updated_at = updated_at WHERE id = ?",
+                    (lease.id,),
+                )
+                if decision_lock.rowcount != 1:
+                    return None
+                persisted = conn.execute(
+                    "UPDATE leases SET expiry_finalization_decision = ?, "
+                    "updated_at = ? WHERE id = ? AND status = ? "
+                    "AND expiry_finalizer_token = ? "
+                    "AND expiry_finalization_decision IS NULL",
+                    (
+                        json_dumps(decision),
+                        self._lease_authority_now_in_transaction(conn),
+                        lease.id,
+                        LeaseStatus.EXPIRED.value,
+                        finalizer_token,
+                    ),
+                )
+                if persisted.rowcount != 1:
+                    current = conn.execute(
+                        "SELECT expiry_finalization_decision FROM leases WHERE id = ?",
+                        (lease.id,),
+                    ).fetchone()
+                    raw_existing = (
+                        current["expiry_finalization_decision"]
+                        if current is not None
+                        else None
+                    )
+                    existing = ensure_json_object(
+                        raw_existing
+                        if isinstance(raw_existing, Mapping)
+                        else json_loads(raw_existing, {})
+                    )
+                    if existing != decision:
+                        return None
         with self.store.transaction() as conn:
-            # Guard both updates so another replica renewing/reclaiming the
-            # lease wins cleanly instead of having its task state overwritten.
-            cur = conn.execute(
-                "UPDATE leases SET status = ?, updated_at = ? "
-                "WHERE id = ? AND status = ?",
-                (
-                    LeaseStatus.EXPIRED.value,
-                    timestamp,
-                    lease.id,
-                    LeaseStatus.ACTIVE.value,
-                ),
+            lease_lock = conn.execute(
+                "UPDATE leases SET updated_at = updated_at WHERE id = ?",
+                (lease.id,),
             )
-            if cur.rowcount == 0:
+            if lease_lock.rowcount != 1:
                 return None
+            finalizer_row = conn.execute(
+                "SELECT status, expiry_finalizer_token, expiry_finalized_at, "
+                "expiry_finalization_decision "
+                "FROM leases WHERE id = ?",
+                (lease.id,),
+            ).fetchone()
+            if (
+                finalizer_row is None
+                or finalizer_row["status"] != LeaseStatus.EXPIRED.value
+                or finalizer_row["expiry_finalizer_token"] != finalizer_token
+                or finalizer_row["expiry_finalized_at"] is not None
+                or ensure_json_object(
+                    finalizer_row["expiry_finalization_decision"]
+                    if isinstance(
+                        finalizer_row["expiry_finalization_decision"], Mapping
+                    )
+                    else json_loads(
+                        finalizer_row["expiry_finalization_decision"], {}
+                    )
+                )
+                != decision
+            ):
+                return None
+            task_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (task.id,),
+            )
+            if task_lock.rowcount != 1:
+                return None
+            current_task_row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task.id,)
+            ).fetchone()
+            if current_task_row is None or current_task_row["lease_id"] != lease.id:
+                detached_at = self._lease_authority_now_in_transaction(conn)
+                conn.execute(
+                    "UPDATE leases SET expiry_finalized_at = ?, "
+                    "expiry_finalizer_token = NULL, updated_at = ? "
+                    "WHERE id = ? AND expiry_finalizer_token = ?",
+                    (
+                        detached_at,
+                        detached_at,
+                        lease.id,
+                        finalizer_token,
+                    ),
+                )
+                return None
+            current_task = self._task_from_row(current_task_row)
+            timestamp = self._lease_authority_now_in_transaction(conn)
+            repair = self._begin_work_package_lease_expiry_repair(
+                conn,
+                lease=lease,
+                task=current_task,
+                target_state=target_state,
+                finalizer_token=finalizer_token,
+                decision=decision,
+                persisted_decision=finalizer_row["expiry_finalization_decision"],
+                detail=transition_history_detail,
+                timestamp=timestamp,
+            )
             cur = conn.execute(
                 """
                 UPDATE tasks
                 SET state = ?, owner_agent_id = NULL, lease_id = NULL,
                     leased_until = NULL,
+                    attempt_count = CASE
+                        WHEN ? = 1 THEN ?
+                        WHEN ? = 1 THEN 0
+                        ELSE attempt_count
+                    END,
                     completed_at = CASE
                         WHEN ? = ? AND completed_at IS NULL THEN ?
                         ELSE completed_at
@@ -9093,6 +11266,9 @@ class ControlPlane:
                 """,
                 (
                     target_state,
+                    1 if attempt_count_after is not None else 0,
+                    attempt_count_after if attempt_count_after is not None else 0,
+                    1 if reset_attempt_count else 0,
                     target_state,
                     TaskState.FAILED.value,
                     timestamp,
@@ -9103,6 +11279,16 @@ class ControlPlane:
             )
             if cur.rowcount == 0:
                 return None
+            if repair is not None:
+                self._finish_work_package_lease_expiry_repair(
+                    conn,
+                    repair=repair,
+                    timestamp=timestamp,
+                )
+                transition_history_detail = {
+                    **transition_history_detail,
+                    "work_package_expiry_repair_id": repair["id"],
+                }
             self._consume_break_glass_authorizations(
                 conn,
                 task_id=task.id,
@@ -9121,11 +11307,20 @@ class ControlPlane:
                 task.id,
                 "task.lease_expired",
                 "dispatcher",
-                task.state,
+                current_task.state,
                 target_state,
                 transition_history_detail,
                 conn=conn,
             )
+            finalized = conn.execute(
+                "UPDATE leases SET expiry_finalized_at = ?, "
+                "expiry_finalizer_token = NULL, updated_at = ? "
+                "WHERE id = ? AND expiry_finalizer_token = ? "
+                "AND expiry_finalized_at IS NULL",
+                (timestamp, timestamp, lease.id, finalizer_token),
+            )
+            if finalized.rowcount != 1:
+                raise TransitionError("lease expiry finalizer ownership changed; retry")
         recovered = self.get_task(task.id)
         try:
             self._record_expired_lease_zombie_signal(lease)
@@ -9146,6 +11341,348 @@ class ControlPlane:
             )
         self.drain_task_transition_outbox(task_id=task.id, limit=20)
         return recovered
+
+    def _begin_work_package_lease_expiry_repair(
+        self,
+        conn: Any,
+        *,
+        lease: Lease,
+        task: Task,
+        target_state: str,
+        finalizer_token: str,
+        decision: Mapping[str, Any],
+        persisted_decision: Any,
+        detail: Mapping[str, Any],
+        timestamp: str,
+    ) -> Optional[JsonDict]:
+        """Append the exact receipt required before detaching a package task."""
+
+        assignment = conn.execute(
+            "SELECT assignment.package_id, assignment.plan_version, "
+            "assignment.epoch, assignment.node_key, assignment.task_id, "
+            "assignment.agent_id, assignment.attempt_number, "
+            "link.node_generation, link.node_state "
+            "FROM work_package_assignment_audit AS assignment "
+            "JOIN work_package_task_links AS link "
+            "ON link.package_id = assignment.package_id "
+            "AND link.plan_version = assignment.plan_version "
+            "AND link.epoch = assignment.epoch "
+            "AND link.node_key = assignment.node_key "
+            "AND link.task_id = assignment.task_id "
+            "WHERE assignment.lease_id = ? AND assignment.task_id = ? "
+            "AND assignment.agent_id = ?",
+            (lease.id, task.id, lease.agent_id),
+        ).fetchone()
+        if assignment is None:
+            return None
+        if assignment["node_state"] != "executing":
+            # Candidate submission already transfers the node and product WIP
+            # before releasing its lease; only an executing node needs repair.
+            return None
+        if target_state in {TaskState.OPEN.value, TaskState.WAITING.value}:
+            target_node_state = "ready"
+            wip_disposition = "retain"
+        elif target_state in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
+            target_node_state = "cancelled"
+            wip_disposition = "cancel"
+        else:  # The receipt schema deliberately has no fail-open fallback.
+            raise ValidationError(
+                "work-package lease expiry has unsupported target state: %s"
+                % target_state
+            )
+
+        held_rows = conn.execute(
+            "SELECT id FROM work_package_wip_tokens "
+            "WHERE package_id = ? AND plan_version = ? AND epoch = ? "
+            "AND node_key = ? AND task_id = ? AND state = ? ORDER BY id",
+            (
+                assignment["package_id"],
+                int(assignment["plan_version"]),
+                int(assignment["epoch"]),
+                assignment["node_key"],
+                task.id,
+                "held",
+            ),
+        ).fetchall()
+        held_wip_ids = [str(row["id"]) for row in held_rows]
+        decision_text = (
+            str(persisted_decision)
+            if isinstance(persisted_decision, str)
+            else json_dumps(ensure_json_object(persisted_decision) or dict(decision))
+        )
+        decision_digest = "sha256:%s" % hashlib.sha256(
+            decision_text.encode("utf-8")
+        ).hexdigest()
+        repair_id = "wpxr_%s" % hashlib.sha256(
+            (lease.id + "\x00" + decision_digest).encode("utf-8")
+        ).hexdigest()[:32]
+        reason = str(
+            detail.get("reason")
+            or detail.get("failure_class")
+            or "lease_expired"
+        ).strip()
+        repair: JsonDict = {
+            "id": repair_id,
+            "lease_id": lease.id,
+            "package_id": str(assignment["package_id"]),
+            "plan_version": int(assignment["plan_version"]),
+            "epoch": int(assignment["epoch"]),
+            "node_key": str(assignment["node_key"]),
+            "node_generation": int(assignment["node_generation"]),
+            "task_id": task.id,
+            "agent_id": lease.agent_id,
+            "attempt_number": int(assignment["attempt_number"]),
+            "source_task_state": task.state,
+            "target_task_state": target_state,
+            "source_node_state": "executing",
+            "target_node_state": target_node_state,
+            "wip_disposition": wip_disposition,
+            "held_wip_ids": held_wip_ids,
+            "finalizer_token": finalizer_token,
+            "decision": decision_text,
+            "decision_digest": decision_digest,
+            "reason": reason,
+            "created_at": timestamp,
+        }
+        conn.execute(
+            "INSERT INTO work_package_lease_expiry_repairs ("
+            "id, lease_id, package_id, plan_version, epoch, node_key, "
+            "node_generation, task_id, agent_id, attempt_number, "
+            "source_task_state, target_task_state, source_node_state, "
+            "target_node_state, wip_disposition, held_wip_count, held_wip_ids, "
+            "finalizer_token, decision, decision_digest, reason, created_by, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                repair["id"],
+                repair["lease_id"],
+                repair["package_id"],
+                repair["plan_version"],
+                repair["epoch"],
+                repair["node_key"],
+                repair["node_generation"],
+                repair["task_id"],
+                repair["agent_id"],
+                repair["attempt_number"],
+                repair["source_task_state"],
+                repair["target_task_state"],
+                repair["source_node_state"],
+                repair["target_node_state"],
+                repair["wip_disposition"],
+                len(held_wip_ids),
+                json_dumps(held_wip_ids),
+                repair["finalizer_token"],
+                repair["decision"],
+                repair["decision_digest"],
+                repair["reason"],
+                "dispatcher",
+                repair["created_at"],
+            ),
+        )
+        return repair
+
+    def _finish_work_package_lease_expiry_repair(
+        self,
+        conn: Any,
+        *,
+        repair: Mapping[str, Any],
+        timestamp: str,
+    ) -> None:
+        """Resolve captured WIP and move the node after the task is detached."""
+
+        held_wip_ids = [str(value) for value in repair.get("held_wip_ids", [])]
+        if repair["wip_disposition"] == "cancel":
+            for token_id in held_wip_ids:
+                changed = conn.execute(
+                    "UPDATE work_package_wip_tokens SET state = ?, released_at = ?, "
+                    "release_reason = ? WHERE id = ? AND package_id = ? "
+                    "AND plan_version = ? AND epoch = ? AND node_key = ? "
+                    "AND task_id = ? AND state = ?",
+                    (
+                        "cancelled",
+                        timestamp,
+                        "lease_expiry:%s" % repair["id"],
+                        token_id,
+                        repair["package_id"],
+                        repair["plan_version"],
+                        repair["epoch"],
+                        repair["node_key"],
+                        repair["task_id"],
+                        "held",
+                    ),
+                )
+                if changed.rowcount != 1:
+                    raise TransitionError(
+                        "work-package lease expiry WIP changed during finalization"
+                    )
+        link = conn.execute(
+            "UPDATE work_package_task_links SET node_state = ? "
+            "WHERE task_id = ? AND package_id = ? AND plan_version = ? "
+            "AND epoch = ? AND node_key = ? AND node_generation = ? "
+            "AND node_state = ?",
+            (
+                repair["target_node_state"],
+                repair["task_id"],
+                repair["package_id"],
+                repair["plan_version"],
+                repair["epoch"],
+                repair["node_key"],
+                repair["node_generation"],
+                repair["source_node_state"],
+            ),
+        )
+        if link.rowcount != 1:
+            raise TransitionError(
+                "work-package node changed during lease expiry finalization"
+            )
+        seq = conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS value "
+            "FROM work_package_history WHERE package_id = ?",
+            (repair["package_id"],),
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO work_package_history ("
+            "id, package_id, seq, event_type, actor, plan_version, epoch, "
+            "detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                new_id("wph"),
+                repair["package_id"],
+                int(seq["value"]),
+                "work_package.lease_expiry_repaired",
+                "dispatcher",
+                repair["plan_version"],
+                repair["epoch"],
+                json_dumps(
+                    {
+                        "repair_id": repair["id"],
+                        "lease_id": repair["lease_id"],
+                        "task_id": repair["task_id"],
+                        "node_key": repair["node_key"],
+                        "target_task_state": repair["target_task_state"],
+                        "target_node_state": repair["target_node_state"],
+                        "wip_disposition": repair["wip_disposition"],
+                        "held_wip_ids": held_wip_ids,
+                        "decision_digest": repair["decision_digest"],
+                    }
+                ),
+                timestamp,
+            ),
+        )
+
+    def _claim_lease_expiry_finalization(self, lease_id: str) -> Optional[str]:
+        """Claim the side-effecting half of lease expiry exactly once at a time.
+
+        The ACTIVE -> EXPIRED decision is already durable when this runs. A
+        claim is deliberately separate so a crashed sweeper can be resumed.
+        Only an expired lease still attached to its task is claimable. A live
+        claim blocks peers; after the bounded stale interval a peer may take it
+        over and safely repeat only idempotent preparation before the final CAS.
+        """
+
+        token = new_id("lease-finalizer")
+        stale_seconds = max(
+            1,
+            min(
+                _int_env("MAC_LEASE_EXPIRY_FINALIZER_STALE_SECONDS", 300),
+                3600,
+            ),
+        )
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE leases SET updated_at = updated_at WHERE id = ?",
+                (lease_id,),
+            )
+            if locked.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT task_id, status, expiry_finalizer_token, "
+                "expiry_finalizer_claimed_at, expiry_finalized_at "
+                "FROM leases WHERE id = ?",
+                (lease_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["status"] != LeaseStatus.EXPIRED.value
+                or row["expiry_finalized_at"] is not None
+            ):
+                return None
+            task_id = str(row["task_id"])
+            task_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at WHERE id = ?",
+                (task_id,),
+            )
+            if task_lock.rowcount != 1:
+                return None
+            attached = conn.execute(
+                "SELECT lease_id FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if attached is None or attached["lease_id"] != lease_id:
+                return None
+            authority_now = self._lease_authority_now_in_transaction(conn)
+            existing_token = str(row["expiry_finalizer_token"] or "").strip()
+            existing_claimed_at = row["expiry_finalizer_claimed_at"]
+            if existing_token and existing_claimed_at is not None:
+                stale_cutoff = (
+                    parse_time(authority_now) - timedelta(seconds=stale_seconds)
+                ).isoformat(timespec="microseconds")
+                try:
+                    if self._timestamp_is_after(existing_claimed_at, stale_cutoff):
+                        return None
+                except (TypeError, ValueError):
+                    # Malformed legacy timestamps are treated as stale. The
+                    # exact token/time CAS below still prevents dual ownership.
+                    pass
+            if existing_token and existing_claimed_at is not None:
+                claimed = conn.execute(
+                    "UPDATE leases SET expiry_finalizer_token = ?, "
+                    "expiry_finalizer_claimed_at = ?, updated_at = ? "
+                    "WHERE id = ? AND status = ? "
+                    "AND expiry_finalizer_token = ? "
+                    "AND expiry_finalizer_claimed_at = ? "
+                    "AND expiry_finalized_at IS NULL",
+                    (
+                        token,
+                        authority_now,
+                        authority_now,
+                        lease_id,
+                        LeaseStatus.EXPIRED.value,
+                        row["expiry_finalizer_token"],
+                        existing_claimed_at,
+                    ),
+                )
+            elif existing_token:
+                claimed = conn.execute(
+                    "UPDATE leases SET expiry_finalizer_token = ?, "
+                    "expiry_finalizer_claimed_at = ?, updated_at = ? "
+                    "WHERE id = ? AND status = ? "
+                    "AND expiry_finalizer_token = ? "
+                    "AND expiry_finalizer_claimed_at IS NULL "
+                    "AND expiry_finalized_at IS NULL",
+                    (
+                        token,
+                        authority_now,
+                        authority_now,
+                        lease_id,
+                        LeaseStatus.EXPIRED.value,
+                        row["expiry_finalizer_token"],
+                    ),
+                )
+            else:
+                claimed = conn.execute(
+                    "UPDATE leases SET expiry_finalizer_token = ?, "
+                    "expiry_finalizer_claimed_at = ?, updated_at = ? "
+                    "WHERE id = ? AND status = ? "
+                    "AND expiry_finalizer_token IS NULL "
+                    "AND expiry_finalized_at IS NULL",
+                    (
+                        token,
+                        authority_now,
+                        authority_now,
+                        lease_id,
+                        LeaseStatus.EXPIRED.value,
+                    ),
+                )
+            return token if claimed.rowcount == 1 else None
 
     def _agent_is_virtual(self, agent_id: str) -> bool:
         """True for hub-driven virtual agents (e.g. the hub_verify review
@@ -11503,6 +14040,9 @@ class ControlPlane:
             if (self._task_tenant_id(task) or "") not in skipped
         ]
         agents = self._available_agents()
+        assignment_advisor = WorkPackageDispatchAdvisor(self.store)
+        task_rank_snapshot = assignment_advisor.task_rank_snapshot(tasks)
+        score_snapshot = assignment_advisor.score_snapshot(agents)
         unmatched: List[Task] = []
         assignments: List[JsonDict] = []
         skip_logs = 0
@@ -11540,8 +14080,10 @@ class ControlPlane:
                     )
                     skip_logs += 1
                 continue
+
             def _try_assign(allow_cooperative_reuse: bool) -> bool:
                 nonlocal skip_logs
+                eligible_agents = []
                 for agent in agents:
                     available, reason = self._agent_availability_for_task(
                         agent, task, allow_cooperative_reuse=allow_cooperative_reuse
@@ -11559,12 +14101,32 @@ class ControlPlane:
                             )
                             skip_logs += 1
                         continue
+                    eligible_agents.append(agent)
+                ranked_agents = assignment_advisor.rank_agents(
+                    task=task,
+                    eligible_agents=eligible_agents,
+                    snapshot=score_snapshot,
+                    route="dispatch_push",
+                    task_rank=task_rank_snapshot.get(task.id),
+                    allow_cooperative_reuse=allow_cooperative_reuse,
+                )
+                for advice in ranked_agents:
+                    agent = advice.agent
+                    assignment_decision = dict(advice.decision)
+                    assignment_decision["task_candidate_rank"] = candidate_rank
                     try:
                         claimed, lease = self.claim_task(
                             task.id,
                             agent.id,
                             lease_seconds=lease_seconds,
                             allow_cooperative_reuse=allow_cooperative_reuse,
+                            assignment_allocator="deterministic-dispatch",
+                            assignment_allocator_version=(
+                                WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION
+                            ),
+                            assignment_score=advice.score,
+                            assignment_rationale=advice.rationale,
+                            assignment_decision=assignment_decision,
                         )
                     except (TransitionError, ValidationError) as exc:
                         # task was already claimed, exhausted attempts, or otherwise
@@ -11581,6 +14143,16 @@ class ControlPlane:
                             )
                             skip_logs += 1
                         continue
+                    score_snapshot.record_assignment(agent.id)
+                    self._record_claimed_allocation_advice(
+                        task=claimed,
+                        agent_id=agent.id,
+                        lease_id=lease.id,
+                        score=advice.score,
+                        rationale=advice.rationale,
+                        decision=assignment_decision,
+                        package_linked=task_rank_snapshot.get(task.id) is not None,
+                    )
                     nudge_detail = {
                         "task_id": claimed.id,
                         "lease_id": lease.id,
@@ -11624,6 +14196,12 @@ class ControlPlane:
                 # undispatchable.  Mirrors the reviewer-independence fallback.
                 matched = _try_assign(True)
             if not matched:
+                self._record_unclaimed_allocation_advice(
+                    task=task,
+                    candidate_rank=candidate_rank,
+                    task_rank=task_rank_snapshot.get(task.id),
+                    available_agent_count=len(agents),
+                )
                 unmatched.append(task)
             if len(assignments) >= limit_value:
                 break
@@ -11634,6 +14212,94 @@ class ControlPlane:
         for task in unmatched:
             self._emit_dispatch_provisioning_signal(task)
         return assignments
+
+    def _record_claimed_allocation_advice(
+        self,
+        *,
+        task: Task,
+        agent_id: str,
+        lease_id: str,
+        score: float,
+        rationale: str,
+        decision: Mapping[str, Any],
+        package_linked: bool,
+    ) -> None:
+        """Project successful advice without replacing exact package audit."""
+
+        try:
+            self.record_log(
+                "dispatcher.assignment.claimed",
+                level="info",
+                layer="control_plane",
+                source="deterministic-dispatch",
+                subject_type="task",
+                subject_id=task.id,
+                detail={
+                    "agent_id": agent_id,
+                    "task_id": task.id,
+                    "lease_id": lease_id,
+                    "score": score,
+                    "rationale": rationale,
+                    "decision": dict(decision),
+                    "assignment_audit_behavior": (
+                        "persisted_atomically_with_exact_lease"
+                        if package_linked
+                        else "routing_observation_only_for_ordinary_task"
+                    ),
+                },
+            )
+        except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.
+            pass
+
+    def _record_unclaimed_allocation_advice(
+        self,
+        *,
+        task: Task,
+        candidate_rank: int,
+        task_rank: Optional[WorkPackageTaskRank],
+        available_agent_count: int,
+    ) -> None:
+        """Explain a no-claim decision without fabricating assignment authority.
+
+        ``work_package_assignment_audit`` is lease-keyed by design.  When no
+        hard-eligible agent reaches a successful transactional claim there is
+        no exact lease, so an assignment-audit row would be false evidence.
+        The durable routing observation below records that intentional absence.
+        """
+
+        task_order = (
+            task_rank.to_dict()
+            if task_rank is not None
+            else {
+                "source": "ordinary_task_fallback",
+                "critical_path_rank": None,
+                "order_signal": 0.0,
+            }
+        )
+        try:
+            self.record_log(
+                "dispatcher.assignment.unclaimed",
+                level="info",
+                layer="control_plane",
+                source="deterministic-dispatch",
+                subject_type="task",
+                subject_id=task.id,
+                detail={
+                    "schema": "mac.work_package.assignment_advice.v1",
+                    "allocator_version": WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION,
+                    "advisory_only": True,
+                    "route": "dispatch_push",
+                    "reason": "no_authoritative_claim_succeeded",
+                    "task_candidate_rank": candidate_rank,
+                    "task_order": task_order,
+                    "available_agent_count": available_agent_count,
+                    "assignment_audit_behavior": (
+                        "intentionally_absent_without_exact_lease"
+                    ),
+                },
+            )
+        except Exception:  # noqa: BLE001 - telemetry cannot authorize or block work.
+            pass
 
     def _emit_dispatch_provisioning_signal(self, task: Task) -> None:
         required_role = None
@@ -11674,6 +14340,7 @@ class ControlPlane:
         dry_run: bool = False,
         capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
+        allow_package_linked: bool = True,
     ) -> Optional[JsonDict]:
         self._require_live_agent(agent_id)
         return self.dispatch.claim_next_for_agent(
@@ -11685,6 +14352,7 @@ class ControlPlane:
             dry_run=dry_run,
             capabilities=capabilities,
             sync_beads=sync_beads,
+            allow_package_linked=allow_package_linked,
         )
 
     def _claim_next_for_agent_impl(
@@ -11697,6 +14365,7 @@ class ControlPlane:
         dry_run: bool = False,
         capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
+        allow_package_linked: bool = True,
     ) -> Optional[JsonDict]:
         """Claim the next dispatch-eligible task for one worker.
 
@@ -11717,18 +14386,23 @@ class ControlPlane:
             if assignment is not None:
                 task = assignment["task"]
                 lease = assignment["lease"]
-                self._record_claim_next_log_best_effort(
-                    "worker.routing.resumed",
-                    agent_id=agent.id,
-                    task_id=task["id"],
-                    detail={
-                        "agent_id": agent.id,
-                        "task_id": task["id"],
-                        "lease_id": lease["id"],
-                        "task_state": task["state"],
-                    },
-                )
-                return assignment
+                if not allow_package_linked and self._task_is_work_package_linked(
+                    str(task["id"])
+                ):
+                    assignment = None
+                else:
+                    self._record_claim_next_log_best_effort(
+                        "worker.routing.resumed",
+                        agent_id=agent.id,
+                        task_id=task["id"],
+                        detail={
+                            "agent_id": agent.id,
+                            "task_id": task["id"],
+                            "lease_id": lease["id"],
+                            "task_state": task["state"],
+                        },
+                    )
+                    return assignment
         policy = self._worker_claim_policy(
             allowed_projects=allowed_projects,
             required_metadata=required_metadata,
@@ -11740,8 +14414,19 @@ class ControlPlane:
         rejected_dispatch = 0
         considered = 0
         skip_logs = 0
-        for task in self._dispatch_ordered_tasks():
+        ordered_tasks = self._dispatch_ordered_tasks()
+        assignment_advisor = WorkPackageDispatchAdvisor(self.store)
+        task_rank_snapshot = assignment_advisor.task_rank_snapshot(ordered_tasks)
+        score_snapshot = assignment_advisor.score_snapshot([agent])
+        for task in ordered_tasks:
             considered += 1
+            if not allow_package_linked and self._task_is_work_package_linked(
+                task.id
+            ):
+                rejected_policy["package_linked"] = (
+                    rejected_policy.get("package_linked", 0) + 1
+                )
+                continue
             allowed, reason = self._task_matches_worker_claim_policy(
                 task, policy, agent_id=agent.id
             )
@@ -11776,6 +14461,13 @@ class ControlPlane:
                     )
                     skip_logs += 1
                 continue
+            advice = assignment_advisor.rank_agents(
+                task=task,
+                eligible_agents=[agent],
+                snapshot=score_snapshot,
+                route="worker_pull",
+                task_rank=task_rank_snapshot.get(task.id),
+            )[0]
             detail = {
                 "agent_id": agent.id,
                 "task_id": task.id,
@@ -11784,6 +14476,13 @@ class ControlPlane:
                 "considered": considered,
                 "rejected_policy": rejected_policy,
                 "rejected_dispatch": rejected_dispatch,
+                "assignment_score": advice.score,
+                "assignment_decision": advice.decision,
+                "assignment_audit_behavior": (
+                    "dry_run_intentionally_absent_without_exact_lease"
+                    if dry_run
+                    else "persist_with_exact_lease_if_claim_succeeds"
+                ),
             }
             if dry_run:
                 self.record_log(
@@ -11807,6 +14506,16 @@ class ControlPlane:
                     agent.id,
                     lease_seconds=lease_seconds,
                     sync_beads=sync_beads,
+                    assignment_allocator="deterministic-worker-pull",
+                    assignment_allocator_version=(
+                        WORK_PACKAGE_ASSIGNMENT_ADVISOR_VERSION
+                    ),
+                    assignment_score=advice.score,
+                    assignment_rationale=advice.rationale,
+                    assignment_decision={
+                        **advice.decision,
+                        "task_candidate_rank": considered,
+                    },
                 )
             except (TransitionError, ValidationError) as exc:
                 if skip_logs < self._DISPATCH_SKIP_LOG_LIMIT:
@@ -11831,7 +14540,16 @@ class ControlPlane:
                 "worker.routing.claimed",
                 agent_id=agent.id,
                 task_id=claimed.id,
-                detail={**detail, "lease_id": lease.id},
+                detail={
+                    **detail,
+                    "lease_id": lease.id,
+                    "worker_identity_fixed": True,
+                    "assignment_audit_behavior": (
+                        "persisted_atomically_with_exact_lease"
+                        if task_rank_snapshot.get(task.id) is not None
+                        else "routing_observation_only_for_ordinary_task"
+                    ),
+                },
             )
             self._send_claim_next_nudge_best_effort(agent.id, claimed.id, lease.id)
             return assignment
@@ -11847,9 +14565,19 @@ class ControlPlane:
                 "considered": considered,
                 "rejected_policy": rejected_policy,
                 "rejected_dispatch": rejected_dispatch,
+                "worker_identity_fixed": True,
+                "assignment_audit_behavior": (
+                    "intentionally_absent_without_exact_lease"
+                ),
             },
         )
         return None
+
+    def _task_is_work_package_linked(self, task_id: str) -> bool:
+        return self.store.query_one(
+            "SELECT 1 FROM work_package_task_links WHERE task_id = ? LIMIT 1",
+            (task_id,),
+        ) is not None
 
     def _record_claim_next_log_best_effort(
         self,
@@ -12580,6 +15308,11 @@ class ControlPlane:
                 "task": task.to_dict(),
                 "claim": existing_claim if isinstance(existing_claim, dict) else None,
             }
+        current_target = self.reviews.current_review_target_evidence_id(task.id)
+        if current_target and executor_evidence_id != current_target:
+            raise ValidationError(
+                "review claim must fence the current executor evidence revision"
+            )
         if isinstance(existing_claim, dict) and existing_claim.get(
             "reviewer_agent_id"
         ) not in {
@@ -12624,6 +15357,43 @@ class ControlPlane:
         metadata["review_claims"] = claims
         metadata["latest_review_claim"] = claim
         with self.store.transaction() as conn:
+            task_lock = conn.execute(
+                "UPDATE tasks SET updated_at = updated_at "
+                "WHERE id = ? AND state = ?",
+                (task.id, TaskState.REVIEWING.value),
+            )
+            review_lock = conn.execute(
+                "UPDATE reviews SET status = status WHERE id = ? "
+                "AND task_id = ? AND reviewer_agent_id = ? AND status = ?",
+                (
+                    review.id,
+                    task.id,
+                    reviewer_agent_id,
+                    ReviewStatus.PENDING.value,
+                ),
+            )
+            current_task_row = conn.execute(
+                "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
+            ).fetchone()
+            current_metadata = ensure_json_object(
+                json_loads(current_task_row["metadata"], {})
+                if current_task_row is not None
+                else {}
+            )
+            locked_target = str(
+                ensure_json_object(current_metadata.get("review_target")).get(
+                    "executor_evidence_id"
+                )
+                or ""
+            ).strip()
+            if (
+                task_lock.rowcount != 1
+                or review_lock.rowcount != 1
+                or (locked_target and executor_evidence_id != locked_target)
+            ):
+                raise AuthorizationError(
+                    "review assignment or executor evidence revision changed"
+                )
             conn.execute(
                 "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
                 (json_dumps(metadata), now, task.id),
@@ -12754,6 +15524,14 @@ class ControlPlane:
         evidence_id = kwargs.get("evidence_id")
         if evidence_id is None and len(args) >= 4:
             evidence_id = args[3]
+        if task_id is not None and self.store.query_one(
+            "SELECT task_id FROM work_package_task_links WHERE task_id = ?",
+            (self._resolve_task_id(str(task_id)),),
+        ) is not None:
+            raise ValidationError(
+                "work-package task publication is controlled by exact-candidate "
+                "assembly, certification, and serialized landing"
+            )
         if task_id is not None:
             self._validate_publication_evidence(str(task_id), evidence_id)
         git_publication = None
@@ -12854,6 +15632,7 @@ class ControlPlane:
             "Canonical branch integration verified at %s" % final_sha,
             created_by,
             metadata={"verification": manifest},
+            _trusted_internal=True,
         )
 
     def _publish_git_target_if_needed(
@@ -13514,7 +16293,7 @@ class ControlPlane:
                     },
                 )
                 try:
-                    self.transition_task(
+                    self._transition_task_internal(
                         task_id,
                         TaskState.BLOCKED.value,
                         actor,
@@ -13574,7 +16353,7 @@ class ControlPlane:
                         actor,
                     )
                     try:
-                        self.transition_task(
+                        self._transition_task_internal(
                             task_id,
                             TaskState.BLOCKED.value,
                             actor,
@@ -13811,7 +16590,7 @@ class ControlPlane:
                         },
                     )
                     try:
-                        self.transition_task(
+                        self._transition_task_internal(
                             task_id,
                             TaskState.BLOCKED.value,
                             actor,
@@ -13936,6 +16715,113 @@ class ControlPlane:
                 "status": "approved_not_publishable",
                 "state": task.state,
                 "review_id": review.id,
+            }
+        package_candidate = self.store.query_one(
+            "SELECT candidate.id, candidate.status "
+            "FROM work_package_task_links AS link "
+            "JOIN work_package_node_candidates AS candidate "
+            "ON candidate.task_id = link.task_id "
+            "AND candidate.package_id = link.package_id "
+            "AND candidate.plan_version = link.plan_version "
+            "AND candidate.epoch = link.epoch "
+            "WHERE link.task_id = ? ORDER BY candidate.attempt_number DESC LIMIT 1",
+            (task.id,),
+        )
+        if package_candidate is not None:
+            # Approval is one station in the managed line, not authority to
+            # publish a component directly.  Re-observe the exact protected
+            # attempt ref (idempotently) and only then let the acceptance
+            # service atomically consume the receipt + this approved review.
+            # Every outcome returns from this branch, so package work can
+            # never fall through to legacy per-task publication.
+            candidate_id = str(package_candidate["id"])
+            try:
+                verification = self.verify_work_package_output(evidence.id)
+                if verification.candidate_id != candidate_id:
+                    raise ValidationError(
+                        "verified work-package output names a different candidate"
+                    )
+            except MACError as exc:
+                detail = str(exc)[:500]
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.package_output_verification_failed",
+                    "warning",
+                    {
+                        "review_id": review.id,
+                        "candidate_id": candidate_id,
+                        "candidate_status": package_candidate["status"],
+                        "evidence_id": evidence.id,
+                        "error": detail,
+                        "error_class": exc.__class__.__name__,
+                        "trigger": "approved_review",
+                    },
+                    actor,
+                )
+                return {
+                    "task_id": task_id,
+                    "status": "approved_waiting_for_package_output_verification",
+                    "review_id": review.id,
+                    "candidate_id": candidate_id,
+                    "candidate_status": package_candidate["status"],
+                    "evidence_id": evidence.id,
+                    "problem": detail,
+                    "error_class": exc.__class__.__name__,
+                }
+            try:
+                accepted = self.accept_work_package_candidate(
+                    candidate_id,
+                    actor="work-package-acceptance-controller",
+                )
+            except MACError as exc:
+                detail = str(exc)[:500]
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.package_candidate_acceptance_failed",
+                    "warning",
+                    {
+                        "review_id": review.id,
+                        "candidate_id": candidate_id,
+                        "candidate_status": package_candidate["status"],
+                        "evidence_id": evidence.id,
+                        "verification_receipt_id": verification.verification.id,
+                        "error": detail,
+                        "error_class": exc.__class__.__name__,
+                    },
+                    actor,
+                )
+                return {
+                    "task_id": task_id,
+                    "status": "approved_waiting_for_package_candidate_acceptance",
+                    "review_id": review.id,
+                    "candidate_id": candidate_id,
+                    "candidate_status": package_candidate["status"],
+                    "evidence_id": evidence.id,
+                    "verification_receipt_id": verification.verification.id,
+                    "problem": detail,
+                    "error_class": exc.__class__.__name__,
+                }
+            self._record_default_review_observation(
+                task_id,
+                "workflow.default_review.package_candidate_accepted",
+                "info",
+                {
+                    "review_id": review.id,
+                    "candidate_id": candidate_id,
+                    "evidence_id": evidence.id,
+                    "verification_receipt_id": verification.verification.id,
+                    "released_downstream_task_ids": list(
+                        accepted.released_downstream_task_ids
+                    ),
+                },
+                actor,
+            )
+            return {
+                "task_id": task_id,
+                "status": "package_candidate_accepted",
+                "review_id": review.id,
+                "verification": verification.to_dict(),
+                "acceptance": accepted.to_dict(),
             }
         if self.reviews.task_requires_publication_evidence(task):
             self._record_default_review_observation(
@@ -14960,7 +17846,13 @@ class ControlPlane:
         when: str,
     ) -> None:
         payload = self._notification_payload_for_history(
-            task_id, event_type, actor, from_state, to_state, detail
+            task_id,
+            event_type,
+            actor,
+            from_state,
+            to_state,
+            detail,
+            writer=writer,
         )
         if payload is None:
             return
@@ -14984,10 +17876,24 @@ class ControlPlane:
         from_state: Optional[str],
         to_state: Optional[str],
         detail: Dict[str, Any],
+        *,
+        writer: Any = None,
     ) -> Optional[JsonDict]:
         task_title = task_id
         try:
-            task_title = self.get_task(task_id).title
+            # Reuse the caller's transaction connection when history and its
+            # notification are emitted atomically.  Opening a second pooled
+            # connection here can deadlock a small PostgreSQL pool: one claim
+            # holds this transaction, a peer claim holds the other connection
+            # while waiting on the same agent row, and both wait forever for a
+            # third connection.  The direct lookup also sees the transaction's
+            # own task writes.
+            source = writer if writer is not None else self.store
+            row = source.execute(
+                "SELECT title FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if row is not None and row["title"]:
+                task_title = str(row["title"])
         except Exception:
             pass
         metadata = {
@@ -15154,6 +18060,9 @@ class ControlPlane:
     ) -> Tuple[str, JsonDict]:
         failure_class, salvage = self._record_attempt_failure_classification(task)
         transition_detail = dict(detail)
+        defer_attempt_reset = bool(
+            transition_detail.pop("_defer_attempt_reset", False)
+        )
         transition_detail["failure_class"] = failure_class
         output_tail, unavailable = self._attempt_failure_output(task)
         if output_tail:
@@ -15192,6 +18101,11 @@ class ControlPlane:
             # object passed into this method.
             metadata = ensure_json_object(self.get_task(task.id).metadata)
             repair_metadata_key = "contract_repair_task_id" if contract_failure else "environment_repair_task_id"
+            origin_type = (
+                "contract_prerequisite"
+                if contract_failure
+                else "environment_prerequisite"
+            )
             repair_id = str(metadata.get(repair_metadata_key) or "").strip()
             if not repair_id:
                 if contract_failure:
@@ -15201,7 +18115,6 @@ class ControlPlane:
                         "changes, pass the required verification gate, and push a remote "
                         "ref/PR. The parent task will retry automatically after completion."
                     ) % task.id
-                    origin_type = "contract_prerequisite"
                 else:
                     repair_title = "Repair environment prerequisites: %s" % task.title
                     repair_description = (
@@ -15210,7 +18123,14 @@ class ControlPlane:
                         "required agent, service, credential source, or toolchain. The parent "
                         "task will retry automatically after this prerequisite completes."
                     ) % task.id
-                    origin_type = "environment_prerequisite"
+                # The repair identity is an idempotency key, not a random
+                # allocation. If a sweeper crashes after creating the repair
+                # but before detaching the expired lease, a recovery sweep (or
+                # an exceptionally stale finalizer takeover) reuses this exact
+                # task instead of manufacturing duplicate prerequisites.
+                repair_id = "task_repair_%s" % hashlib.sha256(
+                    (task.id + ":" + repair_metadata_key).encode("utf-8")
+                ).hexdigest()[:24]
                 repair = self.create_task(
                     repair_title,
                     description=repair_description,
@@ -15219,8 +18139,19 @@ class ControlPlane:
                     required_capabilities=task.required_capabilities,
                     metadata={"origin": {"type": origin_type, "parent_task_id": task.id}},
                     actor="dispatcher.tick",
+                    _task_id=repair_id,
                 )
                 repair_id = repair.id
+                repair_origin = ensure_json_object(
+                    ensure_json_object(repair.metadata).get("origin")
+                )
+                if (
+                    repair_origin.get("type") != origin_type
+                    or repair_origin.get("parent_task_id") != task.id
+                ):
+                    raise ValidationError(
+                        "deterministic repair id collides with unrelated task"
+                    )
                 metadata[repair_metadata_key] = repair_id
                 if contract_failure:
                     metadata["contract_repair_status"] = "waiting"
@@ -15230,11 +18161,25 @@ class ControlPlane:
                     metadata=metadata,
                     actor="dispatcher.tick",
                 )
+                transition_detail["repair_task_id"] = repair_id
+            repair_task = self.get_task(repair_id)
+            repair_origin = ensure_json_object(
+                ensure_json_object(repair_task.metadata).get("origin")
+            )
+            if (
+                repair_origin.get("type") != origin_type
+                or repair_origin.get("parent_task_id") != task.id
+            ):
+                raise ValidationError(
+                    "repair prerequisite does not match its parent and origin"
+                )
+            if not defer_attempt_reset:
                 self.store.execute(
                     "UPDATE tasks SET attempt_count = 0, updated_at = ? WHERE id = ?",
                     (utcnow(), task.id),
                 )
-                transition_detail["repair_task_id"] = repair_id
+            else:
+                transition_detail["reset_attempt_count"] = True
             transition_detail["reason"] = (
                 "waiting_on_contract_prerequisite"
                 if contract_failure
@@ -15367,7 +18312,7 @@ class ControlPlane:
                     "reason": "max attempts",
                 },
             )
-            exhausted = self.transition_task(
+            exhausted = self._transition_task_internal(
                 task.id,
                 target_state,
                 "dispatcher.tick",
@@ -15397,7 +18342,7 @@ class ControlPlane:
                 TaskState.BLOCKED.value,
                 {**detail, "injected": "plan_first"},
             )
-        reopened = self.transition_task(
+        reopened = self._transition_task_internal(
             task.id,
             TaskState.OPEN.value,
             "dispatcher.tick",
@@ -15521,7 +18466,7 @@ class ControlPlane:
                 if task.dependencies and self._dependencies_satisfied(task) and not manual_repair:
                     task = self._prepare_cooperative_integration_task(task)
                     unblocked.append(
-                        self.transition_task(
+                        self._transition_task_internal(
                             task.id,
                             TaskState.OPEN.value,
                             "dispatcher",
@@ -15535,7 +18480,7 @@ class ControlPlane:
                 ):
                     # One-way compatibility migration for ledgers created
                     # before dependency waits had their own state.
-                    self.transition_task(
+                    self._transition_task_internal(
                         task.id,
                         TaskState.WAITING.value,
                         "dispatcher",
@@ -15692,15 +18637,25 @@ class ControlPlane:
     def _dispatch_ordered_tasks(self, *, project: Optional[str] = None) -> List[Task]:
         groups: Dict[str, List[Task]] = {}
         now = utcnow()
-        for task in self._dispatch_candidate_tasks(project=project):
+        candidates = self._dispatch_candidate_tasks(project=project)
+        task_ranks = WorkPackageDispatchAdvisor(self.store).task_rank_snapshot(
+            candidates
+        )
+        for task in candidates:
             tenant_key = self._task_tenant_id(task) or ""
             groups.setdefault(tenant_key, []).append(task)
         for tenant_id, tenant_tasks in groups.items():
-            groups[tenant_id] = self._interleave_tasks_by_project(tenant_tasks, now)
+            groups[tenant_id] = self._interleave_tasks_by_project(
+                tenant_tasks,
+                now,
+                task_ranks=task_ranks,
+            )
         tenant_order = sorted(
             groups,
             key=lambda tenant_id: (
-                *self._dispatch_task_sort_key(groups[tenant_id][0], now),
+                *self._dispatch_task_sort_key(
+                    groups[tenant_id][0], now, task_ranks=task_ranks
+                ),
                 tenant_id,
             ),
         )
@@ -15711,7 +18666,13 @@ class ControlPlane:
                     ordered.append(groups[tenant_id].pop(0))
         return ordered
 
-    def _interleave_tasks_by_project(self, tasks: List[Task], now: str) -> List[Task]:
+    def _interleave_tasks_by_project(
+        self,
+        tasks: List[Task],
+        now: str,
+        *,
+        task_ranks: Optional[Mapping[str, WorkPackageTaskRank]] = None,
+    ) -> List[Task]:
         """Round-robin a tenant's candidates across projects.
 
         Projects sharing a tenant otherwise contend on a single
@@ -15724,11 +18685,17 @@ class ControlPlane:
         for task in tasks:
             projects.setdefault(task.project or "", []).append(task)
         for project_tasks in projects.values():
-            project_tasks.sort(key=lambda item: self._dispatch_task_sort_key(item, now))
+            project_tasks.sort(
+                key=lambda item: self._dispatch_task_sort_key(
+                    item, now, task_ranks=task_ranks
+                )
+            )
         project_order = sorted(
             projects,
             key=lambda name: (
-                *self._dispatch_task_sort_key(projects[name][0], now),
+                *self._dispatch_task_sort_key(
+                    projects[name][0], now, task_ranks=task_ranks
+                ),
                 name,
             ),
         )
@@ -15774,10 +18741,14 @@ class ControlPlane:
         self,
         task: Task,
         now: Optional[str] = None,
-    ) -> Tuple[int, str, str]:
+        *,
+        task_ranks: Optional[Mapping[str, WorkPackageTaskRank]] = None,
+    ) -> Tuple[int, float, str, str]:
         age_bonus = self._dispatch_priority_age_bonus(task, now or utcnow())
         effective_priority = int(task.priority or 0) + age_bonus
-        return (-effective_priority, task.created_at, task.id)
+        package_rank = (task_ranks or {}).get(task.id)
+        order_signal = package_rank.order_signal if package_rank is not None else 0.0
+        return (-effective_priority, -order_signal, task.created_at, task.id)
 
     def _dispatch_priority_age_bonus(self, task: Task, now: str) -> int:
         step_seconds = _int_env(
@@ -16059,6 +19030,225 @@ class ControlPlane:
             agent, task, allow_cooperative_reuse=allow_cooperative_reuse
         )
         return available
+
+    def _claim_snapshot_ineligibility_reason(
+        self,
+        *,
+        agent: Agent,
+        task: Task,
+        machine: Machine,
+        active_count: int,
+        project_paused: bool,
+        break_glass: Optional[BreakGlassAuthorization],
+        required_runtime_digest: Optional[str],
+        role_reason: Optional[str],
+    ) -> Optional[str]:
+        """Evaluate mutable claim predicates from transaction-locked rows.
+
+        Candidate generation remains an optimization. This is the authority
+        immediately before lease INSERT, covering the state that can change
+        after a dispatcher preflight (agent drain/status/capabilities/runtime,
+        task/project holds, and machine trust/resource/tenant policy).
+        """
+        if agent.deleted_at:
+            return "agent_deleted"
+        if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
+            return "agent_status_unavailable"
+        if agent.health_status != HealthStatus.HEALTHY.value:
+            return "agent_health_unavailable"
+        if active_count >= self._agent_capacity(agent):
+            return "agent_capacity_full"
+        if not machine.trusted:
+            return "machine_untrusted"
+        if not self._machine_allows_tenant(machine, self._task_tenant_id(task)):
+            return "machine_tenant_not_allowed"
+
+        break_glass_active = break_glass is not None and break_glass.agent_id == agent.id
+        if self._task_dispatch_held(task) and not break_glass_active:
+            return "dispatch_held"
+        if project_paused and not break_glass_active:
+            return "project_dispatch_paused"
+        if agent.dispatch_hold and not break_glass_active:
+            return "agent_dispatch_held"
+
+        metadata = ensure_json_object(task.metadata)
+        excluded = {
+            str(value)
+            for value in metadata.get("excluded_agent_ids", [])
+            if str(value)
+        } if isinstance(metadata.get("excluded_agent_ids"), list) else set()
+        if agent.id in excluded:
+            return "explicit_agent_excluded"
+        target_agent_id = str(metadata.get("target_agent_id") or "").strip()
+        if target_agent_id and target_agent_id != agent.id:
+            return "target_agent_id_mismatch"
+        target_agent_name = str(metadata.get("target_agent_name") or "").strip()
+        if target_agent_name and target_agent_name != agent.name:
+            return "target_agent_name_mismatch"
+        if required_runtime_digest and agent.running_digest != required_runtime_digest:
+            return "runtime_digest_mismatch"
+
+        if break_glass_active:
+            return None
+        if not self._agent_resources_satisfy(agent, machine, task):
+            return "agent_resources_insufficient"
+        if not self._agent_has_repository_commands(agent, task):
+            return "repository_commands_missing"
+        coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(
+            agent, task
+        )
+        if not coding_route_ok:
+            return coding_route_reason
+        if role_reason is not None:
+            return role_reason
+        return None
+
+    def _task_required_runtime_digest_in_transaction(
+        self,
+        conn: Any,
+        task: Task,
+    ) -> Optional[str]:
+        metadata = ensure_json_object(task.metadata)
+        runtime_meta = ensure_json_object(metadata.get("runtime"))
+        for value in (
+            runtime_meta.get("required_runtime_digest"),
+            runtime_meta.get("runtime_digest"),
+            runtime_meta.get("base_runtime_digest"),
+            metadata.get("required_runtime_digest"),
+            metadata.get("runtime_digest"),
+        ):
+            digest = str(value or "").strip()
+            if digest:
+                return digest
+        runtime_id = str(
+            runtime_meta.get("runtime_environment_id")
+            or runtime_meta.get("required_runtime_environment_id")
+            or metadata.get("runtime_environment_id")
+            or metadata.get("required_runtime_environment_id")
+            or ""
+        ).strip()
+        if not runtime_id:
+            return None
+        conn.execute(
+            "UPDATE runtime_environments SET updated_at = updated_at WHERE id = ?",
+            (runtime_id,),
+        )
+        row = conn.execute(
+            "SELECT digest FROM runtime_environments WHERE id = ?",
+            (runtime_id,),
+        ).fetchone()
+        return str(row["digest"]) if row is not None else "__unknown_runtime_digest__"
+
+    def _claim_role_ineligibility_reason_in_transaction(
+        self,
+        conn: Any,
+        *,
+        agent: Agent,
+        task: Task,
+        machine: Machine,
+    ) -> Optional[str]:
+        """Connection-local role, hardware, and soul eligibility snapshot."""
+
+        def locked_role_by_id(role_id: str) -> Optional[Any]:
+            conn.execute(
+                "UPDATE agent_roles SET updated_at = updated_at WHERE id = ?",
+                (role_id,),
+            )
+            return conn.execute(
+                "SELECT * FROM agent_roles WHERE id = ?", (role_id,)
+            ).fetchone()
+
+        def locked_global_role(role_id_or_slug: str) -> Optional[Any]:
+            row = conn.execute(
+                "SELECT id FROM agent_roles WHERE id = ?",
+                (role_id_or_slug,),
+            ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT id FROM agent_roles "
+                    "WHERE slug = ? AND tenant_id IS NULL",
+                    (role_id_or_slug,),
+                ).fetchone()
+            return locked_role_by_id(str(row["id"])) if row is not None else None
+
+        metadata = ensure_json_object(task.metadata)
+        required_role = str(metadata.get("required_role") or "").strip()
+        target_role = locked_global_role(required_role) if required_role else None
+        if required_role and target_role is None:
+            return "required_role_unknown"
+
+        bound_role = locked_role_by_id(agent.role_id) if agent.role_id else None
+        if agent.role_id and bound_role is None:
+            return "agent_role_unknown"
+        if required_role:
+            if bound_role is not None:
+                if str(bound_role["slug"]) != required_role:
+                    return "required_role_mismatch"
+            else:
+                target_caps = set(json_loads(target_role["required_capabilities"], []))
+                if not target_caps.issubset(set(agent.capabilities)):
+                    return "required_role_capabilities_missing"
+
+        role_required_caps: set = set()
+        if bound_role is not None:
+            role_required_caps = set(
+                json_loads(bound_role["required_capabilities"], [])
+            )
+            from mac.roles_service import machine_hardware_satisfies
+
+            hardware_ok, _reasons = machine_hardware_satisfies(
+                json_loads(bound_role["hardware_requirements"], {}),
+                machine.hardware,
+            )
+            if not hardware_ok:
+                return "role_hardware_insufficient"
+            if not agent.hermes_instance_id:
+                return "role_not_accepted_by_soul"
+            conn.execute(
+                "UPDATE hermes_instances SET updated_at = updated_at WHERE id = ?",
+                (agent.hermes_instance_id,),
+            )
+            instance = conn.execute(
+                "SELECT persona_id FROM hermes_instances WHERE id = ?",
+                (agent.hermes_instance_id,),
+            ).fetchone()
+            if instance is None or not instance["persona_id"]:
+                return "role_not_accepted_by_soul"
+            persona_id = str(instance["persona_id"])
+            conn.execute(
+                "UPDATE personas SET updated_at = updated_at WHERE id = ?",
+                (persona_id,),
+            )
+            persona = conn.execute(
+                "SELECT name, metadata FROM personas WHERE id = ?",
+                (persona_id,),
+            ).fetchone()
+            if persona is None:
+                return "role_not_accepted_by_soul"
+            persona_metadata = json_loads(persona["metadata"], {})
+            explicit_slugs = persona_metadata.get("role_slugs")
+            if isinstance(explicit_slugs, list) and explicit_slugs:
+                allowed_slugs = {
+                    str(value).strip().lower()
+                    for value in explicit_slugs
+                    if str(value).strip()
+                }
+            else:
+                default_slug = (
+                    str(persona["name"] or "")
+                    .strip()
+                    .lower()
+                    .replace(" ", "-")
+                    .replace("_", "-")
+                )
+                allowed_slugs = {default_slug} if default_slug else set()
+            if str(bound_role["slug"]) not in allowed_slugs:
+                return "role_not_accepted_by_soul"
+
+        required_caps = set(task.required_capabilities) | role_required_caps
+        if not required_caps.issubset(set(agent.capabilities)):
+            return "capabilities_missing"
+        return None
 
     def _agent_availability_for_task(
         self, agent: Agent, task: Task, *, allow_cooperative_reuse: bool = False
@@ -18887,71 +22077,71 @@ class ControlPlane:
         )
         if not rows:
             return
-        with self.store.transaction() as conn:
-            for row in rows:
-                if liveness_loss:
-                    next_state = TaskState.OPEN.value
-                elif row["attempt_count"] >= row["max_attempts"]:
-                    next_state = TaskState.FAILED.value
-                else:
-                    next_state = TaskState.OPEN.value
-                attempt_count_after = max(
-                    0,
-                    int(row["attempt_count"]) - (1 if liveness_loss else 0),
-                )
-                conn.execute(
-                    "UPDATE leases SET status = ?, updated_at = ? WHERE id = ?",
-                    (LeaseStatus.EXPIRED.value, timestamp, row["lease_id"]),
-                )
-                self._consume_break_glass_authorizations(
-                    conn,
-                    task_id=row["task_id"],
-                    lease_id=row["lease_id"],
-                    now=timestamp,
-                )
-                conn.execute(
-                    """
-                    UPDATE tasks
-                    SET state = ?, owner_agent_id = NULL, lease_id = NULL, leased_until = NULL,
-                        attempt_count = ?,
-                        completed_at = CASE
-                            WHEN ? = ? AND completed_at IS NULL THEN ?
-                            ELSE completed_at
-                        END,
-                        updated_at = ?
-                    WHERE id = ? AND lease_id = ?
-                    """,
-                    (
-                        next_state,
-                        attempt_count_after,
-                        next_state,
-                        TaskState.FAILED.value,
-                        timestamp,
-                        timestamp,
-                        row["task_id"],
-                        row["lease_id"],
-                    ),
-                )
-                detail = {
-                    "lease_id": row["lease_id"],
-                    "agent_id": agent_id,
-                    "reason": reason,
-                    "failure_class": "environment" if liveness_loss else "work",
-                    "attempt_refunded": liveness_loss,
-                    "attempt_count_before": int(row["attempt_count"]),
-                    "attempt_count_after": attempt_count_after,
-                }
-                self._record_history(
-                    row["task_id"],
-                    "task.lease_expired",
-                    "dispatcher",
-                    row["task_state"],
-                    next_state,
-                    detail,
-                    conn,
-                )
+        # Do not maintain a second, weaker expiry implementation here.  An
+        # offline event may force an otherwise clock-live lease to EXPIRED and
+        # refund its attempt, but durable finalizer ownership, persisted
+        # decision, package repair receipt, WIP handling, task detach, and node
+        # transition must all run through the same resumable path as the normal
+        # sweeper.
         for row in rows:
-            self.drain_task_transition_outbox(task_id=row["task_id"], limit=20)
+            if liveness_loss:
+                next_state = TaskState.OPEN.value
+            elif row["attempt_count"] >= row["max_attempts"]:
+                next_state = TaskState.FAILED.value
+            else:
+                next_state = TaskState.OPEN.value
+            attempt_count_after = max(
+                0,
+                int(row["attempt_count"]) - (1 if liveness_loss else 0),
+            )
+            detail = {
+                "lease_id": row["lease_id"],
+                "agent_id": agent_id,
+                "reason": reason,
+                "failure_class": "environment" if liveness_loss else "work",
+                "attempt_refunded": liveness_loss,
+                "attempt_count_before": int(row["attempt_count"]),
+                "attempt_count_after": attempt_count_after,
+            }
+            decision = {
+                "schema": "mac.lease_expiry_decision.v1",
+                "lease_id": row["lease_id"],
+                "task_id": row["task_id"],
+                "target_state": next_state,
+                "reset_attempt_count": False,
+                "attempt_count_after": attempt_count_after,
+                "detail": detail,
+            }
+            lease_row = self.store.query_one(
+                "SELECT * FROM leases WHERE id = ?",
+                (row["lease_id"],),
+            )
+            if lease_row is None:
+                continue
+            try:
+                self._expire_lease_row(
+                    lease_row,
+                    force_expire=True,
+                    decision_override=decision,
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate one stale assignment.
+                try:
+                    self.record_log(
+                        "lease.recovery.failed",
+                        layer="control_plane",
+                        source="dispatcher",
+                        level="error",
+                        subject_type="lease",
+                        subject_id=str(row["lease_id"]),
+                        detail={
+                            "lease_id": str(row["lease_id"]),
+                            "reason": reason,
+                            "error": str(exc),
+                        },
+                    )
+                except Exception:
+                    pass
+        for row in rows:
             # Self-documenting: a lease expiry means the agent stopped heartbeating
             # mid-task (offline / crash / long synchronous op like a big clone).
             # Record the cause + remediation on the task (visible in `mac task

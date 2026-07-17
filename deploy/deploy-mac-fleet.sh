@@ -511,7 +511,7 @@ def text_field(value: Any) -> str:
     return str(value).strip()
 
 
-DEFAULT_WORKER_CAPABILITIES = "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl"
+DEFAULT_WORKER_CAPABILITIES = "ops,python,openclaw,review,api,architecture,cli,docs,security,testing,typescript,ui,web_search,web_extract,web_crawl,firecrawl,work_package_v1"
 LEGACY_WORKER_CAPABILITIES = {
     "ops", "python", "hermes", "review", "web_search", "web_extract", "web_crawl", "firecrawl"
 }
@@ -1429,7 +1429,10 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_HERMES_SURFACE_B64 "$hermes_surface_b64"
   add_remote_env MAC_DEPLOY_OPENCLAW_LIVE_CANARY "${MAC_DEPLOY_OPENCLAW_LIVE_CANARY:-0}"
   add_remote_env MAC_DEPLOY_HUB_URL "$hub_url"
-  add_remote_env MAC_DEPLOY_HUB_TOKEN "$hub_token"
+  # The shared token exists only for the compatibility bootstrap. Keep it out
+  # of the remote command/argv just like every other deploy credential; the
+  # per-agent credential phase below replaces it before deployment succeeds.
+  add_remote_secret_env MAC_DEPLOY_HUB_TOKEN "$hub_token"
   add_remote_env MAC_DEPLOY_CONTROL_BIND_HOST "$bind_host"
   add_remote_env MAC_DEPLOY_WORKER_MODE "$worker_mode"
   add_remote_env MAC_DEPLOY_WORKER_CAPABILITIES "$worker_capabilities"
@@ -1536,6 +1539,12 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS:-}"
   add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS:-}"
   add_remote_env MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS "${MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS:-}"
+  # Assembly-line activation is an explicit hub opt-in. Empty values preserve
+  # the remote fail-closed defaults; the deployment guide requires a complete
+  # repository certifier contract and durable storage before setting these.
+  add_remote_env MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED "${MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED:-}"
+  add_remote_env MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED "${MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED:-}"
+  add_remote_env MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR "${MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR:-}"
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
     img_key="" ; aud_key="" ; vid_key=""
@@ -1888,9 +1897,190 @@ worker_can_reach_hub_url() {
     "curl -fsS --connect-timeout 3 --max-time 5 '${hub_url%/}/health' >/dev/null 2>&1" 2>/dev/null
 }
 
+stable_worker_agent_id() {
+  "$PYTHON_BIN" - "$1" <<'PY'
+import re
+import sys
+
+safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", sys.argv[1].lower()).strip("_") or "default"
+print("agent_%s" % safe)
+PY
+}
+
+provision_bound_worker_credential() (
+  # The first deploy starts under the compatibility token so a brand-new agent
+  # can register. This second phase replaces it with an exact per-agent token,
+  # proves the destination readback and authenticated heartbeat, then activates
+  # it. Raw token material only crosses owner-only files; it is never argv/log
+  # data, and the hub manifest is consumed on successful activation.
+  set -euo pipefail
+  local agent="$1" hub_agent="$2" supervisor="$3" fleet_name="$4" worker_capabilities="$5"
+  case "$(printf '%s' "${MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on)
+      echo "==> ${agent}: explicit legacy worker-token override; package work remains disabled"
+      return 0
+      ;;
+  esac
+
+  local agent_id runtime_digest principal_id
+  agent_id="$(stable_worker_agent_id "$agent")"
+  runtime_digest="mac-source:${GIT_REV}"
+  local local_manifest="$TMPDIR_LOCAL/worker-credential-${agent_id}.json"
+  local local_receipt="$TMPDIR_LOCAL/worker-credential-${agent_id}-receipt.json"
+  local hub_manifest="/tmp/mac-worker-credential-${agent_id}-${TS}.json"
+  local hub_receipt="/tmp/mac-worker-credential-${agent_id}-${TS}-receipt.json"
+  local worker_manifest="/tmp/mac-worker-credential-${agent_id}-${TS}.json"
+  local worker_receipt="/tmp/mac-worker-credential-${agent_id}-${TS}-receipt.json"
+
+  local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target
+  local hub_scp_parts=() hub_scp_args=() hub_scp_target
+  local worker_ssh_parts=() worker_ssh_args=() worker_ssh_target
+  local worker_scp_parts=() worker_scp_args=() worker_scp_target
+  local item last_index
+  while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  while IFS= read -r -d '' item; do hub_scp_parts+=("$item"); done < <(scp_target_args "$hub_agent")
+  while IFS= read -r -d '' item; do worker_ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  while IFS= read -r -d '' item; do worker_scp_parts+=("$item"); done < <(scp_target_args "$agent")
+  last_index=$((${#hub_ssh_parts[@]} - 1))
+  hub_ssh_target="${hub_ssh_parts[$last_index]}"
+  hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  last_index=$((${#hub_scp_parts[@]} - 1))
+  hub_scp_target="${hub_scp_parts[$last_index]}"
+  hub_scp_args=("${hub_scp_parts[@]:0:$last_index}")
+  last_index=$((${#worker_ssh_parts[@]} - 1))
+  worker_ssh_target="${worker_ssh_parts[$last_index]}"
+  worker_ssh_args=("${worker_ssh_parts[@]:0:$last_index}")
+  last_index=$((${#worker_scp_parts[@]} - 1))
+  worker_scp_target="${worker_scp_parts[$last_index]}"
+  worker_scp_args=("${worker_scp_parts[@]:0:$last_index}")
+
+  cleanup_worker_relay() {
+    rm -f "$local_manifest" "$local_receipt"
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${worker_ssh_args[@]}" \
+      "$worker_ssh_target" \
+      "rm -f $(shell_quote "$worker_manifest") $(shell_quote "$worker_receipt")" \
+      >/dev/null 2>&1 || true
+  }
+  trap cleanup_worker_relay EXIT
+  rm -f "$local_manifest" "$local_receipt"
+
+  local issue_cmd issue_ok=0 attempt
+  issue_cmd='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; umask 077; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials issue'
+  issue_cmd+=" --agent-id $(shell_quote "$agent_id")"
+  issue_cmd+=" --fleet $(shell_quote "$fleet_name") --environment vm"
+  issue_cmd+=" --expected-source-commit $(shell_quote "$GIT_REV")"
+  issue_cmd+=" --expected-runtime-digest $(shell_quote "$runtime_digest")"
+  case ",$worker_capabilities," in
+    *,work_package_v1,*)
+      issue_cmd+=" --capability work_package_v1 --package-capable"
+      ;;
+  esac
+  issue_cmd+=" --manifest-out $(shell_quote "$hub_manifest")"
+  echo "==> ${agent}: issuing exact bound worker credential"
+  for attempt in $(seq 1 "${MAC_DEPLOY_WORKER_CREDENTIAL_RETRIES:-24}"); do
+    if ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${hub_ssh_args[@]}" "$hub_ssh_target" "$issue_cmd" \
+      >/dev/null 2>&1; then
+      issue_ok=1
+      break
+    fi
+    sleep "${MAC_DEPLOY_WORKER_CREDENTIAL_RETRY_SECONDS:-5}"
+  done
+  if [ "$issue_ok" != "1" ]; then
+    echo "==> ${agent}: ERROR: hub never observed the registered worker for credential issuance" >&2
+    return 1
+  fi
+
+  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_scp_args[@]}" "${hub_scp_target}:${hub_manifest}" "$local_manifest"
+  chmod 0600 "$local_manifest"
+  principal_id="$("$PYTHON_BIN" - "$local_manifest" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    payload = json.load(stream)
+principal = str(payload.get("principal_id") or "")
+if payload.get("schema") != "mac.worker_credential_install.v1" or not principal:
+    raise SystemExit("invalid worker credential manifest")
+print(principal)
+PY
+)"
+  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 \
+    "${worker_scp_args[@]}" "$local_manifest" \
+    "${worker_scp_target}:${worker_manifest}"
+  local install_cmd
+  install_cmd='set -e; umask 077; chmod 0600'
+  install_cmd+=" $(shell_quote "$worker_manifest")"
+  install_cmd+='; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials install-vm'
+  install_cmd+=" --manifest $(shell_quote "$worker_manifest")"
+  install_cmd+=" --agent-id $(shell_quote "$agent_id")"
+  install_cmd+=' --env-file "$HOME/.mac/mac.env"'
+  install_cmd+=" --receipt-out $(shell_quote "$worker_receipt")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$install_cmd" >/dev/null
+  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 \
+    "${worker_scp_args[@]}" "${worker_scp_target}:${worker_receipt}" "$local_receipt"
+  chmod 0600 "$local_receipt"
+  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_scp_args[@]}" "$local_receipt" \
+    "${hub_scp_target}:${hub_receipt}"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "chmod 0600 $(shell_quote "$hub_receipt")"
+
+  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart
+  local activate_cmd activate_ok=0
+  activate_cmd='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials activate'
+  activate_cmd+=" --agent-id $(shell_quote "$agent_id")"
+  activate_cmd+=" --principal-id $(shell_quote "$principal_id")"
+  activate_cmd+=" --receipt $(shell_quote "$hub_receipt")"
+  activate_cmd+=" --manifest $(shell_quote "$hub_manifest")"
+  echo "==> ${agent}: waiting for exact authenticated heartbeat"
+  for attempt in $(seq 1 "${MAC_DEPLOY_WORKER_CREDENTIAL_RETRIES:-24}"); do
+    if ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${hub_ssh_args[@]}" "$hub_ssh_target" "$activate_cmd" \
+      >/dev/null 2>&1; then
+      activate_ok=1
+      break
+    fi
+    sleep "${MAC_DEPLOY_WORKER_CREDENTIAL_RETRY_SECONDS:-5}"
+  done
+  if [ "$activate_ok" != "1" ]; then
+    echo "==> ${agent}: ERROR: bound credential did not prove destination, source, runtime, capability, and authenticated heartbeat" >&2
+    echo "    hub retry manifest retained at $hub_manifest" >&2
+    return 1
+  fi
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "rm -f $(shell_quote "$hub_receipt")"
+  local policy_cmd
+  policy_cmd='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials set-mode compatibility --review-live'
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" "$policy_cmd" >/dev/null
+  echo "==> ${agent}: exact worker credential active and package membership reconciled"
+)
+
+enforce_bound_worker_credentials() {
+  local hub_agent="$1" hub_ssh_parts=() hub_ssh_args=() hub_ssh_target item last_index
+  case "$(printf '%s' "${MAC_DEPLOY_WORKER_IDENTITY_ENFORCE:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) ;;
+    *) return 0 ;;
+  esac
+  while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#hub_ssh_parts[@]} - 1))
+  hub_ssh_target="${hub_ssh_parts[$last_index]}"
+  hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  local policy_cmd
+  policy_cmd='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials set-mode enforced --review-live'
+  echo "==> fleet: requesting worker-identity enforcement after live 100% review"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" "$policy_cmd" >/dev/null
+}
+
 main() {
   make_archive
-  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file
+  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
   hub_token="$(fleet_scoped_env MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
@@ -1918,6 +2108,8 @@ main() {
     local_ssh_target="${local_ssh_parts[$local_last_index]}"
     local_ssh_args=("${local_ssh_parts[@]:0:$local_last_index}")
     hub_url_field="${spec_fields[7]:-}"
+    worker_capabilities_field="${spec_fields[10]:-}"
+    supervisor_field="${spec_fields[14]:-auto}"
     fleet_name_field="${spec_fields[23]:-mac}"
     network_provider_field="${spec_fields[31]:-none}"
     direct_mesh_hub=0
@@ -2003,6 +2195,9 @@ main() {
         fi
       fi
     fi
+    provision_bound_worker_credential \
+      "$agent" "$hub_agent" "$supervisor_field" "$fleet_name_field" \
+      "$worker_capabilities_field"
   done < <(selected_hosts "${REQUESTED_AGENTS[@]}")
   if [ "$deployed_count" -eq 0 ]; then
     echo "ERROR: no agents were deployed. Check that the fleet config is valid and the requested agents exist." >&2
@@ -2012,6 +2207,7 @@ main() {
     echo "  Requested agents: ${REQUESTED_AGENTS[*]:-all}" >&2
     exit 1
   fi
+  enforce_bound_worker_credentials "$hub_agent"
   rm -rf "$TMPDIR_LOCAL"
 }
 

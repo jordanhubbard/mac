@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Agent, type AgentCard, type CommunicationAccount, type CommunicationIdentity, type DashboardAgent, type DashboardState, type GatewayIdentityLease, type RepresentationBinding, type TaskDetail } from "../api/mac";
+import { api, type Agent, type AgentCard, type CommunicationAccount, type CommunicationIdentity, type DashboardAgent, type DashboardState, type GatewayIdentityLease, type ManagedWorkPlanAcceptance, type RepresentationBinding, type TaskDetail, type WorkPackageActivationReadiness } from "../api/mac";
 import type { WorkbenchView } from "./ActivityRail";
 import { agentHardware, availabilityLabel, availableCodingClis, cpuLabel, gpuName, isAgentOnline, memoryLabel, platformLabel } from "./agentFacts";
 import { TaskInspector } from "./TaskInspector";
@@ -71,7 +71,7 @@ export function WorkbenchViewContent({
         />
       );
     case "workflows":
-      return <WorkflowView data={data} onRefresh={onRefresh} />;
+      return <WorkflowView data={data} onRefresh={onRefresh} selectedProjectId={selectedProjectId} />;
     case "agents":
       return (
         <AgentsView
@@ -311,19 +311,73 @@ function TaskView({
   );
 }
 
-function WorkflowView({ data, onRefresh }: { data: DashboardState; onRefresh: () => void }) {
+function WorkflowView({
+  data,
+  onRefresh,
+  selectedProjectId,
+}: {
+  data: DashboardState;
+  onRefresh: () => void | Promise<void>;
+  selectedProjectId: string | null;
+}) {
   const [prompt, setPrompt] = useState("");
+  const [mode, setMode] = useState<"managed" | "legacy">("managed");
+  const projects = useMemo(() => data.project_summaries
+    .map((item) => text(item.name || item.project, ""))
+    .filter(Boolean), [data.project_summaries]);
+  const [project, setProject] = useState(selectedProjectId || projects[0] || "");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [planText, setPlanText] = useState("");
+  const [acceptanceReason, setAcceptanceReason] = useState("Operator reviewed the exact managed DAG");
+  const [acceptance, setAcceptance] = useState<ManagedWorkPlanAcceptance | null>(null);
+  const [readiness, setReadiness] = useState<WorkPackageActivationReadiness | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const canAdminister = data.session?.is_admin === true;
   const runs = Array.isArray(data.workflow_runs.latest) ? data.workflow_runs.latest as Array<Record<string, unknown>> : [];
+
+  useEffect(() => {
+    if (selectedProjectId && projects.includes(selectedProjectId)) {
+      setProject(selectedProjectId);
+    } else if (!project && projects.length) {
+      setProject(projects[0]);
+    }
+  }, [project, projects, selectedProjectId]);
+
+  const nodes = useMemo(() => {
+    if (mode === "managed" && planText) {
+      try {
+        const plan = JSON.parse(planText) as Record<string, unknown>;
+        if (Array.isArray(plan.nodes)) return plan.nodes as Array<Record<string, unknown>>;
+      } catch {
+        // Keep rendering the controller preview while the operator edits JSON.
+      }
+    }
+    return preview && Array.isArray(preview.nodes)
+      ? preview.nodes as Array<Record<string, unknown>>
+      : [];
+  }, [mode, planText, preview]);
+
+  function resetResult() {
+    setAcceptance(null);
+    setReadiness(null);
+  }
 
   async function generate() {
     if (!prompt.trim()) return;
+    if (mode === "managed" && !project) {
+      setMessage("Select a project with exactly one enabled registered repository.");
+      return;
+    }
     setBusy(true);
     setMessage("");
+    resetResult();
     try {
-      setPreview(await api.workflowPlanPreview(prompt.trim(), { source: "fleet-workbench" }));
+      const next = mode === "managed"
+        ? await api.managedWorkPlanPreview({ goal: prompt.trim(), project })
+        : await api.workflowPlanPreview(prompt.trim(), { source: "fleet-ide" });
+      setPreview(next);
+      setPlanText(mode === "managed" ? JSON.stringify(next.plan, null, 2) : "");
     } catch (error) {
       setMessage(String(error));
     } finally {
@@ -333,13 +387,40 @@ function WorkflowView({ data, onRefresh }: { data: DashboardState; onRefresh: ()
 
   async function accept() {
     if (!preview) return;
+    if (mode === "managed" && !canAdminister) {
+      setMessage("An admin-scoped session is required to admit a managed package.");
+      return;
+    }
     setBusy(true);
+    setMessage("");
     try {
-      await api.workflowPlanAccept(preview);
-      setMessage("Workflow accepted and released to the ledger.");
-      setPreview(null);
-      setPrompt("");
-      onRefresh();
+      if (mode === "managed") {
+        let edited: unknown;
+        try {
+          edited = JSON.parse(planText);
+        } catch (error) {
+          throw new Error(`Managed plan JSON is invalid: ${String(error)}`);
+        }
+        if (!edited || Array.isArray(edited) || typeof edited !== "object") {
+          throw new Error("Managed plan JSON must be an object.");
+        }
+        const accepted = await api.managedWorkPlanAccept({
+          goal: String(preview.goal || prompt).trim(),
+          project: String(preview.project || project).trim(),
+          plan: edited as Record<string, unknown>,
+          reason: acceptanceReason.trim() || "Operator reviewed the exact managed DAG",
+        });
+        setAcceptance(accepted);
+        const status = await api.workPackageActivationReadiness(accepted.package.id);
+        setReadiness(status);
+        setMessage(`Managed work package admitted and held: ${accepted.package.id}`);
+      } else {
+        await api.workflowPlanAccept(preview);
+        setMessage("Legacy workflow accepted and released to the ledger.");
+        setPreview(null);
+        setPrompt("");
+      }
+      await onRefresh();
     } catch (error) {
       setMessage(String(error));
     } finally {
@@ -347,13 +428,84 @@ function WorkflowView({ data, onRefresh }: { data: DashboardState; onRefresh: ()
     }
   }
 
-  const nodes = preview && Array.isArray(preview.nodes) ? preview.nodes as Array<Record<string, unknown>> : [];
+  async function refreshReadiness(): Promise<WorkPackageActivationReadiness | null> {
+    if (!acceptance) return null;
+    try {
+      const status = await api.workPackageActivationReadiness(acceptance.package.id);
+      setReadiness(status);
+      return status;
+    } catch (error) {
+      setReadiness(null);
+      setMessage(`Activation readiness check failed: ${String(error)}`);
+      return null;
+    }
+  }
+
+  async function activate() {
+    if (!acceptance) return;
+    if (!canAdminister) {
+      setMessage("An admin-scoped session is required to activate a managed package.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      // Readiness is intentionally checked again immediately before the
+      // version/epoch-fenced activation request; a prior green UI projection
+      // never authorizes release by itself.
+      const current = await refreshReadiness();
+      if (!current?.ready) {
+        throw new Error(`Work package remains held: ${current?.reason || current?.code || "activation prerequisites are not ready"}`);
+      }
+      await api.activateWorkPackage(
+        acceptance.package.id,
+        acceptance.activation.expected_plan_version,
+        acceptance.activation.expected_epoch,
+      );
+      setAcceptance({
+        ...acceptance,
+        held: false,
+        package: { ...acceptance.package, state: "active" },
+        activation: { ...acceptance.activation, required: false, automatic: false },
+      });
+      setReadiness(null);
+      setMessage(`Managed work package activated: ${acceptance.package.id}`);
+      await onRefresh();
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="workbench-view">
-      <ViewHeader description="Turn an objective into an inspectable DAG, then approve it into the ledger." eyebrow="DAG automation" title="Workflow studio" />
+      <ViewHeader description="Compile an objective into an exact DAG, admit it held, then release only when downstream assembly is ready." eyebrow="Managed assembly line" title="Workflow studio" />
       <div className="split-grid workflow-layout">
         <section className="primary-surface planner-surface">
           <div className="surface-heading"><span className="surface-kicker">Plan with the fleet</span></div>
+          <div className="planner-controls">
+            <label>Planning route
+              <select
+                onChange={(event) => {
+                  setMode(event.target.value === "legacy" ? "legacy" : "managed");
+                  setPreview(null);
+                  setPlanText("");
+                  resetResult();
+                }}
+                value={mode}
+              >
+                <option value="managed">Managed work package</option>
+                <option value="legacy">Legacy workflow</option>
+              </select>
+            </label>
+            <label>Project
+              <select disabled={mode !== "managed"} onChange={(event) => setProject(event.target.value)} value={project}>
+                <option value="">Select project</option>
+                {projects.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+          </div>
           <textarea
             onChange={(event) => setPrompt(event.target.value)}
             placeholder="Describe the desired outcome, constraints, verification, and rollout policy…"
@@ -363,25 +515,51 @@ function WorkflowView({ data, onRefresh }: { data: DashboardState; onRefresh: ()
             <button className="button primary" disabled={busy || !prompt.trim()} onClick={generate} type="button">
               <i className="codicon codicon-sparkle" /> {busy ? "Planning…" : "Generate graph"}
             </button>
-            {preview ? <button className="button" disabled={busy} onClick={accept} type="button">Accept plan</button> : null}
+            {preview && !acceptance ? <button className="button" disabled={busy || (mode === "managed" && !canAdminister)} onClick={accept} type="button">{mode === "managed" ? "Admit held plan" : "Accept plan"}</button> : null}
             <span className="form-message">{message}</span>
           </div>
           <div className="workflow-preview">
             {preview ? (
               <>
                 <div className="preview-summary">
-                  <strong>{text(preview.title || preview.name, "Proposed workflow")}</strong>
-                  <span>{nodes.length} nodes · inspect before accepting</span>
+                  <strong>{text(preview.goal || preview.title || preview.name, "Proposed workflow")}</strong>
+                  <span>{nodes.length} nodes · {mode === "managed" ? `${text(preview.planning_base_ref)} @ ${text(preview.planning_base_sha).slice(0, 12)}` : "inspect before accepting"}</span>
                 </div>
                 <div className="preview-nodes">
                   {nodes.map((node, index) => (
-                    <div className="preview-node" key={text(node.id || node.key, String(index))}>
+                    <div className="preview-node" key={text(node.node_key || node.id || node.key, String(index))}>
                       <span>{index + 1}</span>
-                      <strong>{text(node.title || node.name || node.key, `Step ${index + 1}`)}</strong>
-                      <small>{text(node.required_role || node.role || node.type)}</small>
+                      <strong>{text(node.title || node.name || node.node_key || node.key, `Step ${index + 1}`)}</strong>
+                      <small>{text(node.node_type || node.kind || node.required_role || node.role || node.type)}</small>
                     </div>
                   ))}
                 </div>
+                {mode === "managed" ? (
+                  <div className="managed-plan-editor">
+                    <label htmlFor="managed-plan-json">Exact editable plan JSON</label>
+                    <textarea id="managed-plan-json" onChange={(event) => setPlanText(event.target.value)} spellCheck={false} value={planText} />
+                    <label htmlFor="managed-plan-reason">Acceptance reason</label>
+                    <input id="managed-plan-reason" onChange={(event) => setAcceptanceReason(event.target.value)} value={acceptanceReason} />
+                    {!canAdminister ? <span className="form-message">An admin-scoped session is required to admit or activate a managed package.</span> : null}
+                  </div>
+                ) : null}
+                {acceptance ? (
+                  <div className={`activation-panel ${!acceptance.held || readiness?.ready ? "ready" : "held"}`}>
+                    <strong>{acceptance.held ? "Held" : "Active"} work package {acceptance.package.id}</strong>
+                    <span>{acceptance.held
+                      ? readiness?.ready
+                        ? "Downstream pull gate is ready."
+                        : text(readiness?.reason || readiness?.code, "Checking downstream activation gates…")
+                      : "The exact accepted plan version and epoch are active."}</span>
+                    {acceptance.held && readiness?.blockers?.length ? <small>{JSON.stringify(readiness.blockers)}</small> : null}
+                    {acceptance.held && acceptance.activation.required ? (
+                      <div className="form-actions compact-actions">
+                        <button className="button" disabled={busy} onClick={() => void refreshReadiness()} type="button">Refresh readiness</button>
+                        <button className="button primary" disabled={busy || !canAdminister || !readiness?.ready} onClick={activate} type="button">Activate exact version</button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             ) : <div className="empty-state centered"><i className="codicon codicon-type-hierarchy" /><strong>No draft graph</strong><span>Your prompt will be previewed here before anything is created.</span></div>}
           </div>

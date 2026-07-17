@@ -156,8 +156,9 @@ class TestGetTaskPrefixResolution:
             "artifact://prefix-proof",
             "prefix evidence",
             "operator",
+            _trusted_internal=True,
         )
-        cp.transition_task(
+        cp.close_task(
             full_id,
             "cancelled",
             "operator",
@@ -184,6 +185,7 @@ class TestGetTaskPrefixResolution:
             "artifact://summary-prefix-proof",
             "summary evidence",
             "operator",
+            _trusted_internal=True,
         )
 
         summary = cp.task_summary("task_87654321")
@@ -200,6 +202,7 @@ class TestGetTaskPrefixResolution:
             "artifact://short-id-evidence",
             "short-id evidence",
             "operator",
+            _trusted_internal=True,
         )
 
         assert evidence.task_id == full_id
@@ -214,7 +217,7 @@ class TestGetTaskPrefixResolution:
     def test_transition_persists_under_canonical_id_for_prefix(self, cp):
         full_id = self._make_task_with_prefix(cp, "13579bdfabcdef01", "transition mutation")
 
-        transitioned = cp.transition_task(
+        transitioned = cp.close_task(
             "task_13579bdf",
             "cancelled",
             "operator",
@@ -294,7 +297,7 @@ class TestReplacementTaskIdPrefixResolution:
         replacement_id = self._insert_task(cp, "bbbb22220000cccc", title="replacement task")
         short_prefix = "task_bbbb2222"
 
-        result = cp.transition_task(
+        result = cp.close_task(
             subject_id,
             "cancelled",
             "operator",
@@ -319,7 +322,7 @@ class TestReplacementTaskIdPrefixResolution:
         ambiguous_prefix = "task_dddd1111"
 
         with pytest.raises(AmbiguousIdError):
-            cp.transition_task(
+            cp.close_task(
                 subject_id,
                 "cancelled",
                 "operator",
@@ -340,7 +343,7 @@ class TestReplacementTaskIdPrefixResolution:
         unknown_prefix = "task_00000000dead"
 
         with pytest.raises(NotFoundError):
-            cp.transition_task(
+            cp.close_task(
                 subject_id,
                 "cancelled",
                 "operator",
@@ -359,7 +362,7 @@ class TestReplacementTaskIdPrefixResolution:
         subject_id = self._insert_task(cp, "ffff11110000aaaa", title="subject-full")
         replacement_id = self._insert_task(cp, "ffff22220000bbbb", title="replacement-full")
 
-        result = cp.transition_task(
+        result = cp.close_task(
             subject_id,
             "cancelled",
             "operator",

@@ -66,6 +66,7 @@ quirks that will not be ported.
 | Agent list + inspector | Done | Done |
 | Project list + inspector | Done | Done |
 | Workflow planner (plan/accept/cancel) | Done | Done |
+| Managed work package (exact-base edit, held admission, readiness-gated activation) | N/A | Done |
 | Runtime panel (deltas / runs / environments / rollouts) | Done | Planned |
 | Observability streaming | Done | Planned |
 | Debug terminal (xterm.js) | Done | Planned |

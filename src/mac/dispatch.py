@@ -53,7 +53,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 from urllib.parse import quote, urlencode
 
 from mac.fleet_env import resolve as resolve_env_var
@@ -144,13 +144,29 @@ class LocalDispatch:
 
     _TASK_PRODUCING_METHODS = frozenset(
         {
+            "accept_work_package_candidate",
             "convert_ticketing_source",
             "create_interaction_task",
             "create_task",
             "evaluate_rollout_health",
             "import_project_item",
+            "admit_work_package",
+            "assemble_work_package",
+            "assemble_work_package_integration_batch",
+            "accept_work_package_certification",
+            "claim_work_package_certification_job",
+            "claim_work_package_integration_batch",
+            "create_work_package_integration_batch",
+            "finalize_work_package_publication",
+            "ingest_work_package_certification_result",
+            "land_work_package",
             "onboard_repository",
+            "prepare_work_package_certification_job",
+            "replan_work_package",
+            "reject_failed_work_package_certification",
             "rescue_rollout",
+            "reject_work_package_candidate",
+            "run_work_package_certification_job",
             "start_workflow",
         }
     )
@@ -215,6 +231,17 @@ class LocalDispatch:
         view: Optional[str] = None,  # accepted for interface parity; projection is server-side only
     ) -> Any:
         return self._plane.list_tasks(state, tenant_id, limit=limit, project=project)
+
+    def close_task(
+        self,
+        task_id: str,
+        to_state: str,
+        actor: str,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """Expose the same operator-close boundary as hub dispatch."""
+
+        return self._plane.close_task(task_id, to_state, actor, detail)
 
 
 # ---------------------------------------------------------------------------
@@ -578,15 +605,36 @@ class RemoteDispatch:
         to_state: str,
         actor: str,
         detail: Optional[Dict[str, Any]] = None,
+        *,
+        lease_id: Optional[str] = None,
     ) -> _Dictish:
         body = _drop_none(
             {
                 "target_state": to_state,
                 "actor": actor,
                 "detail": detail or {},
+                "lease_id": lease_id,
             }
         )
         return _Dictish(self._post("/tasks/%s/transition" % quote(task_id, safe=""), body))
+
+    def close_task(
+        self,
+        task_id: str,
+        to_state: str,
+        actor: str,
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> _Dictish:
+        """Use the compatible transition route through the operator boundary."""
+
+        body = {
+            "target_state": to_state,
+            "actor": actor,
+            "detail": detail or {},
+        }
+        return _Dictish(
+            self._post("/tasks/%s/transition" % quote(task_id, safe=""), body)
+        )
 
     def reopen_task(
         self,
@@ -606,21 +654,27 @@ class RemoteDispatch:
         body = _drop_none({"actor": actor, "reason": reason})
         return _Dictish(self._post("/tasks/%s/force-complete" % quote(task_id, safe=""), body))
 
-    def start_task(self, task_id: str, agent_id: str) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/tasks/%s/start" % quote(task_id, safe=""),
-                {"agent_id": agent_id},
-            )
-        )
+    def start_task(
+        self,
+        task_id: str,
+        agent_id: str,
+        *,
+        lease_id: Optional[str] = None,
+    ) -> _Dictish:
+        path = "/tasks/%s/start" % quote(task_id, safe="")
+        path += _query({"agent_id": agent_id, "lease_id": lease_id})
+        return _Dictish(self._post(path))
 
-    def submit_for_review(self, task_id: str, agent_id: str) -> _Dictish:
-        return _Dictish(
-            self._post(
-                "/tasks/%s/submit-for-review" % quote(task_id, safe=""),
-                {"agent_id": agent_id},
-            )
-        )
+    def submit_for_review(
+        self,
+        task_id: str,
+        agent_id: str,
+        *,
+        lease_id: Optional[str] = None,
+    ) -> _Dictish:
+        path = "/tasks/%s/submit-for-review" % quote(task_id, safe="")
+        path += _query({"agent_id": agent_id, "lease_id": lease_id})
+        return _Dictish(self._post(path))
 
     def release_task(self, task_id: str, *, actor: Optional[str] = None) -> _Dictish:
         return _Dictish(
@@ -639,6 +693,7 @@ class RemoteDispatch:
         created_by: str,
         *,
         checksum: Optional[str] = None,
+        lease_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         artifacts: Optional[List[Dict[str, Any]]] = None,
     ) -> _Dictish:
@@ -649,6 +704,7 @@ class RemoteDispatch:
                 "summary": summary,
                 "created_by": created_by,
                 "checksum": checksum,
+                "lease_id": lease_id,
                 "metadata": metadata,
                 "artifacts": artifacts,
             }
@@ -701,6 +757,376 @@ class RemoteDispatch:
 
     def get_project(self, project: str) -> _Dictish:
         return _Dictish(self._get("/projects/%s" % quote(project, safe="")))
+
+    # -- Work-package surface -----------------------------------------------
+
+    def list_work_packages(
+        self,
+        *,
+        state: Optional[str] = None,
+        project: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[_Dictish]:
+        return _wrap_list(
+            self._get(
+                "/work-packages",
+                state=state,
+                project=project,
+                limit=limit,
+            )
+        )
+
+    def admit_work_package(
+        self,
+        plan: Mapping[str, Any],
+        *,
+        actor: str,
+        reason: str,
+        tenant_id: Optional[str] = None,
+        root_task_id: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages",
+                _drop_none(
+                    {
+                        "plan": dict(plan),
+                        "actor": actor,
+                        "reason": reason,
+                        "tenant_id": tenant_id,
+                        "root_task_id": root_task_id,
+                    }
+                ),
+            )
+        )
+
+    def describe_work_package(self, package_id: str) -> _Dictish:
+        return _Dictish(
+            self._get("/work-packages/%s" % quote(package_id, safe=""))
+        )
+
+    def work_package_activation_readiness(self, package_id: str) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/work-packages/%s/activation-readiness"
+                % quote(package_id, safe="")
+            )
+        )
+
+    def activate_work_package(
+        self,
+        package_id: str,
+        *,
+        expected_plan_version: int,
+        expected_epoch: int,
+        actor: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/%s/activate" % quote(package_id, safe=""),
+                {
+                    "expected_plan_version": int(expected_plan_version),
+                    "expected_epoch": int(expected_epoch),
+                    "actor": actor,
+                },
+            )
+        )
+
+    def preview_work_package_replan(
+        self,
+        package_id: str,
+        plan: Mapping[str, Any],
+        *,
+        expected_plan_version: int,
+        expected_epoch: int,
+        actor: str,
+        reason: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/%s/replan-preview"
+                % quote(package_id, safe=""),
+                {
+                    "plan": dict(plan),
+                    "expected_plan_version": int(expected_plan_version),
+                    "expected_epoch": int(expected_epoch),
+                    "actor": actor,
+                    "reason": reason,
+                },
+            )
+        )
+
+    def pause_work_package(
+        self,
+        package_id: str,
+        *,
+        expected_plan_version: int,
+        expected_epoch: int,
+        actor: str,
+        reason: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/%s/pause" % quote(package_id, safe=""),
+                {
+                    "expected_plan_version": int(expected_plan_version),
+                    "expected_epoch": int(expected_epoch),
+                    "actor": actor,
+                    "reason": reason,
+                },
+            )
+        )
+
+    def replan_work_package(
+        self,
+        package_id: str,
+        plan: Mapping[str, Any],
+        *,
+        expected_plan_version: int,
+        expected_epoch: int,
+        actor: str,
+        reason: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/%s/replan" % quote(package_id, safe=""),
+                {
+                    "plan": dict(plan),
+                    "expected_plan_version": int(expected_plan_version),
+                    "expected_epoch": int(expected_epoch),
+                    "actor": actor,
+                    "reason": reason,
+                },
+            )
+        )
+
+    def verify_work_package_output(
+        self,
+        evidence_id: str,
+        *,
+        actor: str = "work-package-output-controller",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-outputs/%s/verify"
+                % quote(evidence_id, safe=""),
+                {"actor": actor},
+            )
+        )
+
+    def accept_work_package_candidate(
+        self,
+        candidate_id: str,
+        *,
+        actor: str = "work-package-acceptance-controller",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/candidates/%s/accept"
+                % quote(candidate_id, safe=""),
+                {"actor": actor},
+            )
+        )
+
+    def reject_work_package_candidate(
+        self,
+        candidate_id: str,
+        *,
+        actor: str = "work-package-acceptance-controller",
+        reason: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/candidates/%s/reject"
+                % quote(candidate_id, safe=""),
+                {"actor": actor, "reason": reason},
+            )
+        )
+
+    def create_work_package_integration_batch(
+        self,
+        package_id: str,
+        integration_node_key: str,
+        *,
+        actor: str = "work-package-integration-controller",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/%s/integration-batches"
+                % quote(package_id, safe=""),
+                {
+                    "integration_node_key": integration_node_key,
+                    "actor": actor,
+                },
+            )
+        )
+
+    def work_package_integration_status(self, batch_id: str) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/work-package-integration-batches/%s"
+                % quote(batch_id, safe="")
+            )
+        )
+
+    def claim_work_package_integration_batch(self, batch_id: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-integration-batches/%s/claim"
+                % quote(batch_id, safe="")
+            )
+        )
+
+    def assemble_work_package_integration_batch(self, batch_id: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-integration-batches/%s/assemble"
+                % quote(batch_id, safe="")
+            )
+        )
+
+    def assemble_work_package(
+        self,
+        package_id: str,
+        integration_node_key: str,
+        *,
+        actor: str = "work-package-integration-controller",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-packages/%s/assemble" % quote(package_id, safe=""),
+                {
+                    "integration_node_key": integration_node_key,
+                    "actor": actor,
+                },
+            )
+        )
+
+    def prepare_work_package_certification_job(
+        self,
+        batch_id: str,
+        bundle_path: str,
+        *,
+        actor: str = "work-package-certification-controller",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-integration-batches/%s/certification-jobs"
+                % quote(batch_id, safe=""),
+                {"bundle_path": bundle_path, "actor": actor},
+            )
+        )
+
+    def work_package_certification_status(self, job_id: str) -> _Dictish:
+        return _Dictish(
+            self._get(
+                "/work-package-certification-jobs/%s"
+                % quote(job_id, safe="")
+            )
+        )
+
+    def claim_work_package_certification_job(
+        self,
+        job_id: str,
+        *,
+        owner: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-certification-jobs/%s/claim"
+                % quote(job_id, safe=""),
+                _drop_none({"owner": owner}),
+            )
+        )
+
+    def ingest_work_package_certification_result(
+        self,
+        job_id: str,
+        result: Mapping[str, Any],
+        *,
+        owner: str,
+        fence: int,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-certification-jobs/%s/ingest"
+                % quote(job_id, safe=""),
+                {"result": result, "owner": owner, "fence": fence},
+            )
+        )
+
+    def run_work_package_certification_job(
+        self,
+        job_id: str,
+        bundle_path: str,
+        *,
+        owner: Optional[str] = None,
+        result_path: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-certification-jobs/%s/run"
+                % quote(job_id, safe=""),
+                _drop_none(
+                    {
+                        "bundle_path": bundle_path,
+                        "owner": owner,
+                        "result_path": result_path,
+                    }
+                ),
+            )
+        )
+
+    def reject_failed_work_package_certification(
+        self,
+        batch_id: str,
+        certification_id: str,
+        *,
+        actor: str = "work-package-certification-controller",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-integration-batches/%s/reject-failed-certification"
+                % quote(batch_id, safe=""),
+                {"certification_id": certification_id, "actor": actor},
+            )
+        )
+
+    def accept_work_package_certification(
+        self,
+        batch_id: str,
+        certification_id: str,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-integration-batches/%s/accept-certification"
+                % quote(batch_id, safe=""),
+                {"certification_id": certification_id},
+            )
+        )
+
+    def land_work_package(self, batch_id: str) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-integration-batches/%s/land"
+                % quote(batch_id, safe="")
+            )
+        )
+
+    def finalize_work_package_publication(
+        self,
+        batch_id: str,
+        *,
+        actor: str = "work-package-publication-finalizer",
+        receipt_id: Optional[str] = None,
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/work-package-integration-batches/%s/finalize-publication"
+                % quote(batch_id, safe=""),
+                _drop_none({"actor": actor, "receipt_id": receipt_id}),
+            )
+        )
 
     def update_project(
         self,

@@ -5,7 +5,7 @@ import os
 import sys
 import threading
 import time
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 controller_loop_failures = 0
 review_loop_failures = 0
@@ -123,6 +123,56 @@ def _run_review_loop_forever(
             review_loop_failures,
         )
 
+
+def _report_bound_worker_credential(mac: Any, agent_id: str, log: logging.Logger) -> bool:
+    """Publish secret-free proof using the already-authenticated bound token."""
+
+    from mac.worker_credentials import credential_resource_from_env
+
+    proof = credential_resource_from_env(agent_id)
+    if not proof or proof.get("mode") != "bound":
+        return False
+    try:
+        current = mac.get("/agents/%s" % agent_id)
+        resources = dict((current or {}).get("resources") or {})
+        resources["worker_credential"] = proof
+        source_commit = (
+            os.environ.get("MAC_WORKER_CREDENTIAL_SOURCE_COMMIT") or ""
+        ).strip()
+        if source_commit:
+            resources["source_state"] = {
+                "schema": "mac.worker_source_state.v1",
+                "commit_sha": source_commit,
+                "tree_sha": "",
+                "dirty": False,
+                "source": "pinned_k8s_credential",
+                "observed_at": proof["observed_at"],
+            }
+        payload: Dict[str, Any] = {"resources": resources}
+        runtime_digest = (
+            os.environ.get("MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST") or ""
+        ).strip()
+        if runtime_digest:
+            payload["running_digest"] = runtime_digest
+        mac.post("/agents/%s/heartbeat" % agent_id, payload)
+        return True
+    except Exception as exc:  # noqa: BLE001 - readiness remains fail-closed
+        log.warning("bound worker credential heartbeat failed for %s: %s", agent_id, exc)
+        return False
+
+
+def _credential_heartbeat_loop(
+    mac: Any,
+    agent_id: str,
+    *,
+    interval: float,
+    log: logging.Logger,
+) -> None:
+    while True:
+        _report_bound_worker_credential(mac, agent_id, log)
+        _sleep(interval)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("mac-k8s-orchestrator")
@@ -156,6 +206,28 @@ def main(argv: Optional[List[str]] = None) -> int:
         runner_cfg.mac_url,
         runner_cfg.capability_filter or "<any>",
     )
+
+    if os.environ.get("MAC_WORKER_CREDENTIAL_ID") and os.environ.get(
+        "MAC_WORKER_CREDENTIAL_AGENT_ID"
+    ):
+        # Report once synchronously so rollout inventory need not wait a full
+        # interval, then keep liveness/proof fresh. Compatibility pods omit the
+        # metadata and deliberately skip this path.
+        _report_bound_worker_credential(mac, runner_cfg.agent_id, log)
+        credential_thread = threading.Thread(
+            target=_credential_heartbeat_loop,
+            kwargs={
+                "mac": mac,
+                "agent_id": runner_cfg.agent_id,
+                "interval": float(
+                    os.environ.get("MAC_WORKER_HEARTBEAT_INTERVAL", "30")
+                ),
+                "log": logging.getLogger("mac-k8s-orchestrator.credential"),
+            },
+            name="mac-orchestrator-credential-heartbeat",
+            daemon=True,
+        )
+        credential_thread.start()
 
     missing = check_dispatcher_capabilities(runner_cfg, mac)
     if missing:

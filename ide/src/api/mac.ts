@@ -202,6 +202,57 @@ export interface TaskUpdatePayload {
   metadata?: Record<string, unknown>;
 }
 
+export interface ManagedWorkPlanPreview {
+  schema: "mac.dashboard.managed_work_plan.v1";
+  mode: "managed";
+  package_id: string;
+  goal: string;
+  project: string;
+  repository_id: string;
+  planning_base_ref: string;
+  planning_base_sha: string;
+  plan_generation: number;
+  plan_digest: string;
+  topological_order: string[];
+  nodes: Array<Record<string, unknown>>;
+  plan: Record<string, unknown>;
+  activation: {
+    required: boolean;
+    automatic: false;
+    expected_plan_version: number;
+    expected_epoch: number;
+    endpoint: string;
+  };
+  [key: string]: unknown;
+}
+
+export interface ManagedWorkPlanAcceptance {
+  schema: "mac.dashboard.managed_work_plan_accept.v1";
+  mode: "managed";
+  held: boolean;
+  package: Record<string, unknown> & { id: string; state: string };
+  task_ids: string[];
+  activation: {
+    required: boolean;
+    automatic: false;
+    expected_plan_version: number;
+    expected_epoch: number;
+    endpoint: string;
+  };
+  [key: string]: unknown;
+}
+
+export interface WorkPackageActivationReadiness {
+  ready: boolean;
+  package_id?: string;
+  plan_version?: number;
+  epoch?: number;
+  code?: string;
+  reason?: string;
+  blockers?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
 interface A2AResponse<T> {
   jsonrpc: "2.0";
   id: string;
@@ -387,6 +438,45 @@ export const api = {
     }),
   workflowPlanAccept: (draft: Record<string, unknown>) =>
     req<Record<string, unknown>>("POST", "/dashboard/workflow-plan/accept", draft),
+  managedWorkPlanPreview: (payload: {
+    goal: string;
+    project: string;
+    repository_id?: string;
+    planning_base_ref?: string;
+  }) => req<ManagedWorkPlanPreview>("POST", "/dashboard/workflow-plan/preview", {
+    mode: "managed",
+    prompt: payload.goal,
+    context: { source: "fleet-ide" },
+    ...payload,
+  }),
+  managedWorkPlanAccept: (payload: {
+    goal: string;
+    project: string;
+    plan: Record<string, unknown>;
+    reason: string;
+  }) => req<ManagedWorkPlanAcceptance>("POST", "/dashboard/workflow-plan/accept", {
+    mode: "managed",
+    actor: "human",
+    ...payload,
+  }),
+  workPackageActivationReadiness: (packageId: string) =>
+    req<WorkPackageActivationReadiness>(
+      "GET",
+      `/work-packages/${encodeURIComponent(packageId)}/activation-readiness`,
+    ),
+  activateWorkPackage: (
+    packageId: string,
+    expectedPlanVersion: number,
+    expectedEpoch: number,
+  ) => req<Record<string, unknown>>(
+    "POST",
+    `/work-packages/${encodeURIComponent(packageId)}/activate`,
+    {
+      actor: "human",
+      expected_plan_version: expectedPlanVersion,
+      expected_epoch: expectedEpoch,
+    },
+  ),
   cancelWorkflowRun: (runId: string, reason = "Cancelled from Fleet Workbench") =>
     req<Record<string, unknown>>("POST", `/workflows/runs/${encodeURIComponent(runId)}/cancel`, {
       reason,

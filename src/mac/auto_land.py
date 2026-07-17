@@ -487,6 +487,7 @@ def safe_do_land(
                 "auto-land: both gates green, marked ready-to-land",
                 created_by,
                 metadata={"decision": decision.to_dict(), "land_action": result},
+                _trusted_internal=True,
             )
         except Exception as exc:  # best-effort; the land itself already happened
             result["evidence_error"] = str(exc)
@@ -512,6 +513,7 @@ def record_outcome(
                 decision.reason,
                 created_by,
                 metadata=payload,
+                _trusted_internal=True,
             )
         except Exception as exc:
             payload = dict(payload)

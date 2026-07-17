@@ -270,7 +270,9 @@ class _FakePlane:
     def __init__(self):
         self.evidence = []
 
-    def add_evidence(self, target, kind, uri, summary, created_by, metadata=None):
+    def add_evidence(
+        self, target, kind, uri, summary, created_by, metadata=None, **_kwargs
+    ):
         self.evidence.append((target, kind, summary, metadata))
 
 

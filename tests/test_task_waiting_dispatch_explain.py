@@ -113,7 +113,7 @@ def test_block_transition_records_structured_diagnosis_and_redacted_tail():
     cp = ControlPlane.in_memory()
     task = cp.create_task("diagnose me", metadata={"deliverable": "report"})
 
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "agent_test",
@@ -142,7 +142,7 @@ def test_block_transition_records_structured_diagnosis_and_redacted_tail():
 def test_block_transition_records_explicit_missing_output_reason():
     cp = ControlPlane.in_memory()
     task = cp.create_task("diagnose no output", metadata={"deliverable": "report"})
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.BLOCKED.value,
         "agent_test",

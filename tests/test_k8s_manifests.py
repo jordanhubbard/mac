@@ -57,6 +57,18 @@ def test_mac_api_env_wires_secret_key() -> None:
     assert sk["valueFrom"]["secretKeyRef"]["name"] == "mac-api-config"
 
 
+def test_mac_api_work_package_actuation_is_explicitly_disabled() -> None:
+    deploy = _load(ROOT / "mac-api" / "deployment.yaml")[0]
+    env = {
+        item["name"]: item
+        for item in deploy["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+
+    assert env["MAC_WORK_PACKAGE_PIPELINE_ENABLED"]["value"] == "false"
+    assert env["MAC_WORK_PACKAGE_LANDING_ENABLED"]["value"] == "false"
+    assert "MAC_WORK_PACKAGE_BUNDLE_DIR" not in env
+
+
 def test_mac_api_both_probes_defined() -> None:
     deploy = _load(ROOT / "mac-api" / "deployment.yaml")[0]
     container = deploy["spec"]["template"]["spec"]["containers"][0]
@@ -134,8 +146,24 @@ def test_orchestrator_deployment_uses_orchestrator_sa_and_runs_correct_binary() 
         "MAC_RUNNER_NAMESPACE",
         "MAC_RUNNER_TASK_SERVICE_ACCOUNT",
         "MAC_WORKER_TOKEN",
+        "MAC_WORKER_CREDENTIAL_ID",
+        "MAC_WORKER_CREDENTIAL_VERSION",
+        "MAC_WORKER_CREDENTIAL_AGENT_ID",
+        "MAC_WORKER_CREDENTIAL_FINGERPRINT",
+        "MAC_WORKER_RUNNING_DIGEST",
+        "MAC_WORKER_IDENTITY_MODE",
+        "MAC_RUNNER_AGENT_TOKEN_SECRETS",
     ):
         assert required in env_names
+    env = {item["name"]: item for item in container["env"]}
+    assert env["MAC_AGENT_ID"] == {
+        "name": "MAC_AGENT_ID",
+        "value": "mac-k8s-orchestrator",
+    }
+    token_ref = env["MAC_WORKER_TOKEN"]["valueFrom"]["secretKeyRef"]
+    assert token_ref["name"].startswith("mac-worker-mac-k8s-orchestrator-")
+    assert token_ref["name"] != "mac-api-config"
+    assert env["MAC_WORKER_IDENTITY_MODE"]["value"] == "bound"
 
 
 def test_runner_deployment_is_replicated() -> None:

@@ -342,6 +342,7 @@ class Migrator:
             record.get("created_by", "migration"),
             checksum=record.get("checksum"),
             metadata=record.get("metadata"),
+            _trusted_internal=True,
         )
 
     def _apply_provenance(self, record: JsonDict) -> None:

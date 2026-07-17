@@ -31,6 +31,18 @@ def _register_agent(cp: ControlPlane, name: str = "worker-1"):
     return cp.register_agent(machine.id, name)
 
 
+def _expire_claim(cp: ControlPlane, task_id: str, lease_id: str) -> None:
+    expired_at = "2000-01-01T00:00:00+00:00"
+    cp.store.execute(
+        "UPDATE leases SET expires_at = ? WHERE id = ?",
+        (expired_at, lease_id),
+    )
+    cp.store.execute(
+        "UPDATE tasks SET leased_until = ? WHERE id = ?",
+        (expired_at, task_id),
+    )
+
+
 # ---------------------------------------------------------------------------
 # set_agent_dispatch_hold
 # ---------------------------------------------------------------------------
@@ -189,7 +201,8 @@ def test_two_zero_telemetry_expiries_auto_quarantine_agent(monkeypatch):
 
     for index in range(2):
         task = cp.create_task("no telemetry %d" % index)
-        cp.claim_task(task.id, agent.id, lease_seconds=-1)
+        _, lease = cp.claim_task(task.id, agent.id)
+        _expire_claim(cp, task.id, lease.id)
         cp.expire_leases(now=utcnow())
 
     held = cp.get_agent(agent.id)
@@ -217,7 +230,8 @@ def test_virtual_agent_lease_expiry_never_quarantines(monkeypatch):
     # Well past the threshold: a real agent would be quarantined after 2.
     for index in range(4):
         task = cp.create_task("virtual review %d" % index)
-        cp.claim_task(task.id, agent.id, lease_seconds=-1)
+        _, lease = cp.claim_task(task.id, agent.id)
+        _expire_claim(cp, task.id, lease.id)
         cp.expire_leases(now=utcnow())
 
     refreshed = cp.get_agent(agent.id)
@@ -232,12 +246,13 @@ def test_expired_lease_telemetry_resets_no_telemetry_counter(monkeypatch):
     agent = _register_agent(cp, "telemetry-agent")
 
     first = cp.create_task("missing telemetry")
-    cp.claim_task(first.id, agent.id, lease_seconds=-1)
+    _, first_lease = cp.claim_task(first.id, agent.id)
+    _expire_claim(cp, first.id, first_lease.id)
     cp.expire_leases(now=utcnow())
     assert cp.get_agent(agent.id).consecutive_lease_expiries_no_telemetry == 1
 
     second = cp.create_task("has telemetry")
-    cp.claim_task(second.id, agent.id, lease_seconds=-1)
+    _, second_lease = cp.claim_task(second.id, agent.id)
     cp.record_log(
         "executor.started",
         layer="executor",
@@ -246,6 +261,7 @@ def test_expired_lease_telemetry_resets_no_telemetry_counter(monkeypatch):
         subject_id=second.id,
         detail={"agent_id": agent.id},
     )
+    _expire_claim(cp, second.id, second_lease.id)
     cp.expire_leases(now=utcnow())
 
     refreshed = cp.get_agent(agent.id)
@@ -259,13 +275,22 @@ def test_evidence_row_resets_no_telemetry_counter(monkeypatch):
     agent = _register_agent(cp, "evidence-agent")
 
     first = cp.create_task("missing evidence")
-    cp.claim_task(first.id, agent.id, lease_seconds=-1)
+    _, first_lease = cp.claim_task(first.id, agent.id)
+    _expire_claim(cp, first.id, first_lease.id)
     cp.expire_leases(now=utcnow())
     assert cp.get_agent(agent.id).consecutive_lease_expiries_no_telemetry == 1
 
     second = cp.create_task("has evidence")
-    cp.claim_task(second.id, agent.id, lease_seconds=-1)
-    cp.add_evidence(second.id, "log", "artifact://attempt", "attempt log", agent.id)
+    _, second_lease = cp.claim_task(second.id, agent.id)
+    cp.add_evidence(
+        second.id,
+        "log",
+        "artifact://attempt",
+        "attempt log",
+        agent.id,
+        lease_id=second_lease.id,
+    )
+    _expire_claim(cp, second.id, second_lease.id)
     cp.expire_leases(now=utcnow())
 
     refreshed = cp.get_agent(agent.id)

@@ -22,6 +22,19 @@ class _StubMac:
         self.url = url
         self.token = token
 
+
+class _CredentialMac:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def get(self, path: str) -> Dict[str, Any]:
+        self.calls.append(("get", path, None))
+        return {"resources": {"hardware": {"cpu": "test"}}}
+
+    def post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        self.calls.append(("post", path, body))
+        return {"ok": True}
+
 class _StubJobs:
     pass
 
@@ -170,6 +183,50 @@ def test_main_returns_two_when_token_missing(
     monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
     monkeypatch.delenv("MAC_API_TOKEN", raising=False)
     assert orchestrator.main([]) == 2
+
+
+def test_bound_credential_heartbeat_is_secret_free_and_preserves_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {
+        "MAC_WORKER_CREDENTIAL_AGENT_ID": "agent_k8s",
+        "MAC_WORKER_CREDENTIAL_ID": "worker-principal-v1",
+        "MAC_WORKER_CREDENTIAL_VERSION": "1",
+        "MAC_WORKER_CREDENTIAL_FINGERPRINT": "0123456789ab",
+        "MAC_WORKER_CREDENTIAL_SOURCE_COMMIT": "a" * 40,
+        "MAC_WORKER_CREDENTIAL_RUNTIME_DIGEST": "runtime-digest",
+        "MAC_WORKER_TOKEN": "mac_worker_raw_secret",
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    mac = _CredentialMac()
+
+    assert orchestrator._report_bound_worker_credential(
+        mac, "agent_k8s", logging.getLogger("test")
+    ) is True
+    heartbeat = mac.calls[-1]
+    assert heartbeat[0:2] == ("post", "/agents/agent_k8s/heartbeat")
+    payload = heartbeat[2]
+    assert payload["resources"]["hardware"] == {"cpu": "test"}
+    assert payload["resources"]["worker_credential"]["principal_id"] == "worker-principal-v1"
+    assert payload["resources"]["source_state"]["commit_sha"] == "a" * 40
+    assert payload["running_digest"] == "runtime-digest"
+    assert values["MAC_WORKER_TOKEN"] not in str(payload)
+
+
+def test_credential_heartbeat_refuses_local_agent_binding_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAC_WORKER_CREDENTIAL_AGENT_ID", "agent_other")
+    monkeypatch.setenv("MAC_WORKER_CREDENTIAL_ID", "worker-principal-v1")
+    monkeypatch.setenv("MAC_WORKER_CREDENTIAL_VERSION", "1")
+    monkeypatch.setenv("MAC_WORKER_CREDENTIAL_FINGERPRINT", "0123456789ab")
+    mac = _CredentialMac()
+
+    assert orchestrator._report_bound_worker_credential(
+        mac, "agent_k8s", logging.getLogger("test")
+    ) is False
+    assert mac.calls == []
 
 def test_controller_thread_is_daemon(
     baseline_env: None,

@@ -1,6 +1,10 @@
 schema: mac.repository_contract.v1
 project: mac
 canonical_remote_url: git@github.com:jordanhubbard/mac.git
+# Work-package certification/landing is intentionally not activated by a
+# placeholder. Add the atomic `landing_certification_policy_id` plus
+# `work_package_certification` extension only after provisioning the pinned
+# image and exact policy described in docs/work-package-pipeline-activation.md.
 platforms:
   - darwin
   - linux

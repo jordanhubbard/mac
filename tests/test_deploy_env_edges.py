@@ -144,6 +144,73 @@ def test_gateway_values_build_env_passthrough_and_write(tmp_path) -> None:
     assert written["MAC_SECRET_KEY"]
 
 
+def test_bound_worker_credential_never_falls_back_to_hub_admin_token(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg = deploy_env.DeployEnvConfig(
+        cfg.paths,
+        cfg.control,
+        cfg.gateway,
+        deploy_env.WorkerConfig(
+            "loop",
+            "python,work_package_v1",
+            "",
+            "",
+            "1",
+            token="mac_worker_distinct",
+            credential_id="worker-principal-v1",
+            credential_version="1",
+            credential_agent_id="agent_hub",
+            credential_fingerprint="0123456789ab",
+            credential_source_commit="a" * 40,
+            credential_runtime_digest="runtime-digest",
+        ),
+        cfg.services,
+        cfg.identity,
+    )
+
+    values = deploy_env.build_mac_env(
+        {"MAC_API_TOKEN": "hub-admin-token", "MAC_SECRET_KEY": "s" * 32},
+        cfg,
+        environ={},
+    )
+
+    assert values["MAC_API_TOKEN"] == "hub-admin-token"
+    assert values["MAC_WORKER_TOKEN"] == "mac_worker_distinct"
+    assert values["MAC_WORKER_TOKEN"] != values["MAC_API_TOKEN"]
+    assert values["MAC_WORKER_CREDENTIAL_AGENT_ID"] == "agent_hub"
+    assert values["MAC_WORKER_IDENTITY_MODE"] == "bound"
+    assert values["MAC_WORKER_RUNNING_DIGEST"] == "runtime-digest"
+
+
+def test_incomplete_worker_credential_stays_explicitly_in_compatibility_mode(tmp_path) -> None:
+    cfg = _cfg(tmp_path, agent="spoke", manager="hub")
+    cfg = deploy_env.DeployEnvConfig(
+        cfg.paths,
+        cfg.control,
+        cfg.gateway,
+        deploy_env.WorkerConfig(
+            "loop",
+            "python",
+            "",
+            "",
+            "1",
+            token="per-agent-but-not-confirmed",
+        ),
+        cfg.services,
+        cfg.identity,
+    )
+
+    values = deploy_env.build_mac_env(
+        {"MAC_API_TOKEN": "local-control", "MAC_SECRET_KEY": "s" * 32},
+        cfg,
+        environ={},
+    )
+
+    assert values["MAC_WORKER_TOKEN"] == "per-agent-but-not-confirmed"
+    assert values["MAC_WORKER_IDENTITY_MODE"] == "compatibility"
+    assert "MAC_WORKER_CREDENTIAL_ID" not in values
+
+
 def test_openclaw_worker_advertisement_uses_verified_runtime_file(tmp_path) -> None:
     cfg = _cfg(tmp_path)
     stale = str(tmp_path / "stale.json")
@@ -244,6 +311,47 @@ def test_repository_ref_reconciler_deploy_overrides_and_existing_values_win(tmp_
         environ={},
     )
     assert preserved["MAC_REPOSITORY_REF_RECONCILER_MODE"] == "off"
+
+
+def test_work_package_pipeline_deploy_is_hub_only_and_default_off(tmp_path):
+    hub = deploy_env.build_mac_env({}, _cfg(tmp_path), environ={})
+    assert hub["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] == "0"
+    assert hub["MAC_WORK_PACKAGE_LANDING_ENABLED"] == "0"
+    assert hub["MAC_WORK_PACKAGE_BUNDLE_DIR"] == str(
+        tmp_path / ".mac" / "work-package-bundles"
+    )
+
+    configured = deploy_env.build_mac_env(
+        {},
+        _cfg(tmp_path),
+        environ={
+            "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED": "1",
+            "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED": "1",
+            "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR": "/srv/mac/work-package-bundles",
+        },
+    )
+    assert configured["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] == "1"
+    assert configured["MAC_WORK_PACKAGE_LANDING_ENABLED"] == "1"
+    assert (
+        configured["MAC_WORK_PACKAGE_BUNDLE_DIR"]
+        == "/srv/mac/work-package-bundles"
+    )
+
+    spoke = deploy_env.build_mac_env(
+        {
+            "MAC_WORK_PACKAGE_PIPELINE_ENABLED": "1",
+            "MAC_WORK_PACKAGE_LANDING_ENABLED": "1",
+            "MAC_WORK_PACKAGE_BUNDLE_DIR": "/stale/hub/path",
+        },
+        _cfg(tmp_path, agent="spoke", manager="hub"),
+        environ={
+            "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED": "1",
+            "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED": "1",
+        },
+    )
+    assert spoke["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] == "0"
+    assert spoke["MAC_WORK_PACKAGE_LANDING_ENABLED"] == "0"
+    assert "MAC_WORK_PACKAGE_BUNDLE_DIR" not in spoke
 
 
 def test_legacy_argument_arity_defaults_and_main(monkeypatch, tmp_path) -> None:

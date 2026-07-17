@@ -363,7 +363,15 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     )
     ctx["delegate_agent_id"] = agent("bullwinkle-route", ["python"])["id"]
     ctx["delete_agent_id"] = agent("delete-route-agent", ["python"])["id"]
-    ctx["deregister_agent_id"] = agent("deregister-route-agent", ["python"])["id"]
+    # Keep the deregistration fixture out of dispatcher eligibility so the
+    # earlier dispatch-route cases cannot hand it a lease before its route is
+    # exercised.
+    ctx["deregister_agent_id"] = agent(
+        "deregister-route-agent", ["deregister-only"]
+    )["id"]
+    cp.set_agent_dispatch_hold(
+        ctx["deregister_agent_id"], "reserved for deregistration route coverage"
+    )
     ctx["disable_agent_id"] = agent("disable-route-agent", ["python"])["id"]
     ctx["bulk_agent_id"] = agent("bulk-route-agent", ["python"])["id"]
     ctx["claim_agent_id"] = agent("claim-route-agent", ["python"])["id"]
@@ -387,6 +395,8 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     ctx["attest_verify_agent_id"] = attest_verify["id"]
     ctx["attest_verify_key"] = attest_verify["attestation_key"]
     ctx["dispatch_hold_agent_id"] = agent("dispatch-hold-route-agent", ["python"])["id"]
+    ctx["transition_agent_id"] = agent("transition-route-agent", ["python"])["id"]
+    ctx["evidence_agent_id"] = agent("evidence-route-agent", ["python"])["id"]
 
     policy_text = """
 version: 1
@@ -544,12 +554,22 @@ network_policies:
     ctx["task_id"] = base_task["id"]
     ctx["delete_task_id"] = task("route delete task", caps=["delete-only"])["id"]
     ctx["parent_task_id"] = task("route parent task")["id"]
-    ctx["transition_task_id"] = task("route transition task")["id"]
+    transition_task = task("route transition task")
+    _, transition_lease = cp.claim_task(
+        transition_task["id"], ctx["transition_agent_id"], sync_beads=False
+    )
+    ctx["transition_task_id"] = transition_task["id"]
+    ctx["transition_lease_id"] = transition_lease.id
     ctx["reopen_task_id"] = task("route reopen task")["id"]
     ctx["force_complete_task_id"] = task("route force-complete task")["id"]
     ctx["claim_task_id"] = task("route claim task")["id"]
     ctx["claim_next_task_id"] = task("route claim-next task")["id"]
-    ctx["evidence_task_id"] = task("route evidence task")["id"]
+    evidence_task = task("route evidence task")
+    _, evidence_lease = cp.claim_task(
+        evidence_task["id"], ctx["evidence_agent_id"], sync_beads=False
+    )
+    ctx["evidence_task_id"] = evidence_task["id"]
+    ctx["evidence_lease_id"] = evidence_lease.id
     ctx["runtime_task_id"] = task("route runtime task")["id"]
     ctx["break_glass_task_id"] = task("route break-glass authorize task")["id"]
     revoke_break_glass_task = task("route break-glass revoke task")
@@ -1013,6 +1033,7 @@ network_policies:
             }
         ],
         sync_beads=False,
+        _trusted_internal=True,
     )
     runtime_run = _ok(
         client.post(
@@ -1184,6 +1205,10 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "draft_id": ctx["draft_id"],
         "env_id": ctx["env_id"],
         "evidence_id": ctx["runtime_evidence_id"],
+        "package_id": "wp_route_missing",
+        "batch_id": "wpbatch_route_missing",
+        "job_id": "wpcjob_route_missing",
+        "candidate_id": "wpcandidate_route_missing",
         "experiment_id": "route-review-experiment",
         "eval_set_id": ctx["eval_set_id"],
         "flag": "show_reasoning",
@@ -1240,6 +1265,12 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         # samples (400), observe of an unassigned task (404). The happy paths
         # for create/start are exercised by the ctx fixtures themselves.
         expected = (200, 400, 404)
+    if path_template.startswith(("/work-packages", "/work-package-")):
+        # The managed-stage happy paths are covered by their dedicated API and
+        # real-Git assembly-line suites.  This exhaustive inventory test sends
+        # schema-valid requests to explicit missing product identities and
+        # treats the fail-closed domain guard as successful route coverage.
+        expected = (200, 400, 404, 409)
     if method == "GET":
         if path_template == "/dashboard/service-links/tokenhub/sso":
             kwargs["follow_redirects"] = False
@@ -1399,7 +1430,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         },
         ("POST", "/tasks/{task_id}/transition"): {
             "target_state": "blocked",
-            "actor": "operator",
+            "actor": ctx["transition_agent_id"],
+            "lease_id": ctx["transition_lease_id"],
             "detail": {"reason": "route coverage transition"},
         },
         ("POST", "/tasks/{task_id}/reopen"): {
@@ -1419,8 +1451,88 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "kind": "test",
             "uri": "artifact://route-evidence",
             "summary": "route evidence summary",
-            "created_by": ctx["agent_id"],
+            "created_by": ctx["evidence_agent_id"],
+            "lease_id": ctx["evidence_lease_id"],
             "metadata": {"verification": _operator_manifest("route evidence summary is substantive")},
+        },
+        ("POST", "/work-package-pipeline/trigger"): {},
+        ("POST", "/work-packages"): {
+            "plan": {
+                "schema": "mac.work_package.plan.v1",
+                "package_id": "wp_route_missing",
+                "goal": "exercise managed route admission",
+                "project": ctx["project_name"],
+                "repository_id": "repo_route_missing",
+                "planning_base_ref": "refs/heads/main",
+                "planning_base_sha": "a" * 40,
+                "plan_generation": 1,
+                "nodes": [
+                    {
+                        "node_key": "change",
+                        "title": "Route coverage change",
+                        "kind": "mutation",
+                        "effects": {"writes": ["src/route_coverage.py"]},
+                        "expected_outputs": ["candidate"],
+                        "verification": {"profile": "repository-default"},
+                        "estimates": {"confidence": "high"},
+                    }
+                ],
+            },
+            "reason": "route coverage",
+        },
+        ("POST", "/work-packages/{package_id}/activate"): {
+            "expected_plan_version": 1,
+            "expected_epoch": 1,
+        },
+        ("POST", "/work-packages/{package_id}/replan-preview"): {
+            "plan": {},
+            "expected_plan_version": 1,
+            "expected_epoch": 1,
+            "reason": "route coverage preview",
+        },
+        ("POST", "/work-packages/{package_id}/pause"): {
+            "expected_plan_version": 1,
+            "expected_epoch": 1,
+            "reason": "route coverage Andon",
+        },
+        ("POST", "/work-packages/{package_id}/replan"): {
+            "plan": {},
+            "expected_plan_version": 1,
+            "expected_epoch": 1,
+            "reason": "route coverage replan",
+        },
+        ("POST", "/work-packages/{package_id}/integration-batches"): {
+            "integration_node_key": "integrate"
+        },
+        ("POST", "/work-packages/{package_id}/assemble"): {
+            "integration_node_key": "integrate"
+        },
+        ("POST", "/work-package-integration-batches/{batch_id}/claim"): {},
+        ("POST", "/work-package-integration-batches/{batch_id}/assemble"): {},
+        ("POST", "/work-package-integration-batches/{batch_id}/certification-jobs"): {
+            "bundle_path": "/tmp/route-coverage.bundle"
+        },
+        ("POST", "/work-package-certification-jobs/{job_id}/claim"): {},
+        ("POST", "/work-package-certification-jobs/{job_id}/ingest"): {
+            "result": {"schema": "route.coverage.v1"},
+            "owner": "route-certifier",
+            "fence": 1,
+        },
+        ("POST", "/work-package-certification-jobs/{job_id}/run"): {
+            "bundle_path": "/tmp/route-coverage.bundle"
+        },
+        ("POST", "/work-package-integration-batches/{batch_id}/reject-failed-certification"): {
+            "certification_id": "wpcert_route_missing"
+        },
+        ("POST", "/work-package-integration-batches/{batch_id}/accept-certification"): {
+            "certification_id": "wpcert_route_missing"
+        },
+        ("POST", "/work-package-integration-batches/{batch_id}/land"): {},
+        ("POST", "/work-package-integration-batches/{batch_id}/finalize-publication"): {},
+        ("POST", "/work-package-outputs/{evidence_id}/verify"): {},
+        ("POST", "/work-packages/candidates/{candidate_id}/accept"): {},
+        ("POST", "/work-packages/candidates/{candidate_id}/reject"): {
+            "reason": "route coverage rework"
         },
         ("POST", "/machines"): {"hostname": "route-host-case", "resources": {"cpu": 4}},
         ("POST", "/agents"): {
@@ -2025,10 +2137,6 @@ edges:
             "phase": "worker",
             "actor": "operator",
             "summary": "route coverage activity entry",
-        },
-        ("PUT", "/v1/agents/{agent_id}/deploy-config"): {
-            "document": {"route_coverage": True},
-            "schema_name": "agent.deploy_config.v1",
         },
     }
     query_cases: Dict[RouteKey, Dict[str, Any]] = {

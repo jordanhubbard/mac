@@ -116,6 +116,7 @@ def submit_review_verdict(
     summary: str = "",
     findings: Optional[list] = None,
     reviewer_llm_model: str = "test-reviewer-llm",
+    trusted_internal: bool = False,
 ) -> str:
     """Produce the reviewer's signed verdict evidence (mac-jqb).
 
@@ -176,6 +177,7 @@ def submit_review_verdict(
         "reviewer verdict: %s" % verdict,
         reviewer_agent_id,
         metadata={"returncode": 0, "verification": manifest},
+        _trusted_internal=trusted_internal,
     )
     return evidence.id
 

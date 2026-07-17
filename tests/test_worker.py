@@ -1,6 +1,5 @@
 import base64
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 import json
 import subprocess
 import sys
@@ -46,12 +45,14 @@ from mac.fleet_learning import (
 from mac.hermes_adapter import MacApiClient, MacApiError
 from mac.models import ReviewStatus, TaskState
 from mac.services import ControlPlane, sign_verification_manifest
+from mac.work_package_evidence import attempt_artifact_manifest_digest
 from mac.worker import (
     MacWorker,
     SubprocessExecutor,
     WorkerExecution,
     _detect_command_inventory,
     _openshell_containerfile_changed,
+    _publish_exact_work_package_attempt,
     build_parser,
     register_worker,
 )
@@ -149,6 +150,42 @@ def _git_fixture(tmp_path: Path) -> tuple[Path, Path]:
         capture_output=True,
     )
     return seed, work
+
+
+def test_protected_work_package_attempt_ref_is_create_only(tmp_path: Path) -> None:
+    _seed, work = _git_fixture(tmp_path)
+    _git(work, "config", "user.email", "mac-tests@example.invalid")
+    _git(work, "config", "user.name", "mac tests")
+    (work / "README.md").write_text("attempt one\n", encoding="utf-8")
+    _git(work, "add", "README.md")
+    _git(work, "commit", "-m", "attempt one")
+    head = _git(work, "rev-parse", "HEAD")
+    ref = "refs/mac/attempts/wp-test/epoch-1/node/attempt-1/lease-test"
+
+    first = _publish_exact_work_package_attempt(
+        work, str(tmp_path / "origin.git"), ref, head
+    )
+    assert first["ok"] is True
+    assert first["remote_verified"] is True
+    assert _git(work, "ls-remote", "origin", ref).split()[0] == head
+
+    # A crash retry may reuse the exact object, but a different object can
+    # never advance or overwrite the immutable attempt ref.
+    same = _publish_exact_work_package_attempt(
+        work, str(tmp_path / "origin.git"), ref, head
+    )
+    assert same["ok"] is True
+    assert same["already_present"] is True
+    (work / "README.md").write_text("different object\n", encoding="utf-8")
+    _git(work, "add", "README.md")
+    _git(work, "commit", "-m", "different object")
+    different = _git(work, "rev-parse", "HEAD")
+    collision = _publish_exact_work_package_attempt(
+        work, str(tmp_path / "origin.git"), ref, different
+    )
+    assert collision["ok"] is False
+    assert "different object" in collision["error"]
+    assert _git(work, "ls-remote", "origin", ref).split()[0] == head
 
 
 def _commit_fixture_update(seed: Path, text: str) -> str:
@@ -1330,7 +1367,7 @@ def test_worker_cancels_executor_tree_when_ledger_assignment_is_cancelled(tmp_pa
         time.sleep(0.01)
     assert executor.has_active_process()
 
-    cp.transition_task(
+    cp._transition_task_internal(
         task.id,
         TaskState.CANCELLED.value,
         "operator",
@@ -1656,6 +1693,101 @@ def test_mac_worker_finalizes_missing_repository_manifest(tmp_path: Path):
     assert _git(repo, "ls-remote", "origin", repo_anchor["remote_ref"]).startswith(
         repo_anchor["head_sha"]
     )
+
+
+def test_package_finalizer_publishes_only_exact_attempt_ref(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _seed, work = _git_fixture(tmp_path)
+    _git(work, "config", "user.email", "mac-tests@example.invalid")
+    _git(work, "config", "user.name", "mac tests")
+    base = _git(work, "rev-parse", "HEAD")
+    (work / "README.md").write_text("package attempt\n", encoding="utf-8")
+    task_id = "task_package_attempt"
+    lease_id = "lease_package_attempt"
+    agent_id = "agent_package_attempt"
+    attempt_ref = (
+        "refs/mac/attempts/wp-test/epoch-1/mutation/attempt-1/lease-package-attempt"
+    )
+    metadata = _repository_task_metadata(work)
+    metadata["work_package_assignment"] = {
+        "schema": "mac.work_package.assignment_projection.v1",
+        "package_id": "wp-test",
+        "plan_version": 1,
+        "epoch": 1,
+        "node_key": "mutation",
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "lease_id": lease_id,
+        "attempt_number": 1,
+        "attempt_ref": attempt_ref,
+        "attempt_base_ref": "refs/heads/main",
+        "attempt_base_sha": base,
+        "declared_effects_digest": "sha256:effects",
+        "acquired_wip_token_ids": ["wip-test"],
+    }
+    task = {
+        "id": task_id,
+        "title": "package mutation",
+        "owner_agent_id": agent_id,
+        "metadata": metadata,
+    }
+    task_dir = tmp_path / "workspace" / task_id
+    task_dir.mkdir(parents=True)
+    (task_dir / "task.json").write_text(
+        json.dumps({"task": task, "lease": {"id": lease_id}}),
+        encoding="utf-8",
+    )
+    context = {
+        "repository_worktree": str(work),
+        "repository_branch": "mac/mutable/task-branch",
+        "repository_lease_id": lease_id,
+        "repository_base_sha": base,
+        "repository_canonical_remote_url": str(tmp_path / "origin.git"),
+        "repository_origin_remote": str(tmp_path / "origin.git"),
+        "repository_canonical_branch": "main",
+    }
+    monkeypatch.setattr(
+        "mac.worker.run_codegraph_audit",
+        lambda _worktree, files: _codegraph_fixture(list(files)),
+    )
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=lambda *_args: {}),
+        agent_id,
+        tmp_path / "workspace",
+        lambda *_args: WorkerExecution(0, "unused"),
+    )
+
+    manifest = worker._finalize_missing_repository_evidence_manifest(
+        task_id,
+        task_dir,
+        WorkerExecution(0, "package output"),
+        context,
+    )
+
+    repo = manifest["repo"]
+    assert manifest.get("problems") is None
+    assert repo["remote_ref"] == attempt_ref
+    assert repo["base_sha"] == base
+    assert repo["pushed"] is True
+    assert _git(work, "ls-remote", "origin", attempt_ref).split()[0] == repo["head_sha"]
+    assert _git(work, "ls-remote", "origin", "refs/heads/mac/mutable/task-branch") == ""
+    digest = attempt_artifact_manifest_digest(
+        verification=manifest,
+        attempt_ref=attempt_ref,
+        attempt_base_sha=base,
+        attempt_head_sha=repo["head_sha"],
+        declared_effects_digest="sha256:effects",
+    )
+    assert digest.startswith("sha256:")
+    assert attempt_artifact_manifest_digest(
+        verification=manifest,
+        attempt_ref=attempt_ref,
+        attempt_base_sha=base,
+        attempt_head_sha="f" * 40,
+        declared_effects_digest="sha256:effects",
+    ) != digest
 
 
 def test_mac_worker_auto_rebases_when_canonical_advances_cleanly(
@@ -2470,12 +2602,20 @@ def test_mac_worker_does_not_mutate_task_after_losing_lease(tmp_path: Path):
     client = TestClient(create_app(control_plane=cp))
 
     def executor(_task_payload: Dict[str, Any], _task_dir: Path) -> WorkerExecution:
-        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(
-            timespec="microseconds"
+        current_lease_id = cp.get_task(task.id).lease_id
+        assert current_lease_id is not None
+        expired_at = "2000-01-01T00:00:00+00:00"
+        cp.store.execute(
+            "UPDATE leases SET expires_at = ?, updated_at = ? WHERE id = ?",
+            (expired_at, expired_at, current_lease_id),
         )
-        cp.expire_leases(now=future)
-        cp.claim_task(task.id, second.id)
-        cp.start_task(task.id, second.id)
+        cp.store.execute(
+            "UPDATE tasks SET leased_until = ?, updated_at = ? WHERE id = ?",
+            (expired_at, expired_at, task.id),
+        )
+        cp.expire_leases()
+        _, second_lease = cp.claim_task(task.id, second.id)
+        cp.start_task(task.id, second.id, lease_id=second_lease.id)
         return WorkerExecution(0, "late success", stdout="late success\n")
 
     worker = MacWorker(

@@ -45,6 +45,11 @@ for a in "$@"; do case "$a" in
 log(){ printf '[bootstrap-openshell] %s\n' "$*"; }
 truthy(){ case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in 1|true|yes|on) return 0;; *) return 1;; esac; }
 download(){ curl --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 -fsSL "$@"; }
+publish_openshell_cli(){
+  local cli="$1"
+  mkdir -p "$MAC_HOME/bin"
+  ln -sf "$cli" "$MAC_HOME/bin/openshell"
+}
 export PATH="$BIN:$PATH" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 mkdir -p "$OSH_DIR" "$BIN"
 
@@ -115,6 +120,7 @@ bootstrap_darwin() {
     log "installing openshell CLI $OPENSHELL_VERSION"; uv tool install --force "openshell==$OPENSHELL_VERSION" >/dev/null
   fi
   OSH_CLI="$(command -v openshell || echo "$BIN/openshell")"
+  publish_openshell_cli "$OSH_CLI"
   log "openshell CLI: $("$OSH_CLI" --version 2>&1 | head -1)"
   # 2. sandbox image (arch-native build against Docker Desktop)
   if [ "$SKIP_IMAGE" = 0 ]; then
@@ -388,6 +394,7 @@ if [ "$current_openshell_version" != "$OPENSHELL_VERSION" ]; then
     fi
   fi
 fi
+publish_openshell_cli "$BIN/openshell"
 log "openshell CLI: $(openshell --version 2>&1 | head -1)"
 
 # --- 2. openshell-gateway daemon (prebuilt per-arch release asset) ----------
