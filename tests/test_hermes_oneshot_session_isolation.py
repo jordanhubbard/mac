@@ -1,53 +1,47 @@
-"""Characterization tests: hermes -z one-shot session isolation regression.
+"""Regression tests: hermes -z one-shot session isolation (fix applied).
 
-Reported issue: ``hermes -z`` one-shot invocations inherit the persistent
+Original issue: ``hermes -z`` one-shot invocations inherited the persistent
 session context (persistent MEMORY.md/USER.md entries, and by extension the
-same HERMES_HOME state.db session store) rather than running in a clean,
+same HERMES_HOME state.db session store) instead of running in a clean,
 isolated state.
 
-This module characterizes the failure deterministically — using a temporary
-HERMES_HOME and no real model calls — so the regression is reproducible and
-the exact call path to patch is named by the test.
+This module now characterizes the FIXED behavior deterministically — using a
+temporary HERMES_HOME and no real model calls — and pins the exact call path
+so a future regression is caught by name.
 
-Call path under investigation:
+Call path:
   hermes_cli/main.py  main()
-      -> run_oneshot(prompt, ...)           (hermes_cli/oneshot.py:125)
-      -> _run_agent(prompt, ...)            (hermes_cli/oneshot.py:245)
-      -> AIAgent(skip_memory=???,           (run_agent.py / agent/agent_init.py)
-                 skip_context_files=???)
+      -> run_oneshot(prompt, ...)           (hermes_cli/oneshot.py)
+      -> _run_agent(prompt, ...)            (hermes_cli/oneshot.py)
+      -> AIAgent(skip_memory=True,          (run_agent.py / agent/agent_init.py)
+                 skip_context_files=True)
       -> agent.chat(prompt)
          -> agent/system_prompt.py build_system_prompt()
-            -> MemoryStore.load_from_disk()  (tools/memory_tool.py:132)
-               reads {HERMES_HOME}/memories/MEMORY.md  <-- PERSISTENT STATE
-               reads {HERMES_HOME}/memories/USER.md    <-- PERSISTENT STATE
+            -> MemoryStore.load_from_disk()  (tools/memory_tool.py)
+               reads {HERMES_HOME}/memories/MEMORY.md  <-- persistent state
+               reads {HERMES_HOME}/memories/USER.md    <-- persistent state
          -> _create_session_db_for_oneshot()
-               SessionDB()                  (hermes_state.py:377)
-               opens DEFAULT_DB_PATH        (hermes_state.py:34)
-               = get_hermes_home() / "state.db"   <-- PERSISTENT STATE
+               SessionDB()                  (hermes_state.py)
+               opens DEFAULT_DB_PATH        (hermes_state.py)
+               = get_hermes_home() / "state.db"
 
-Finding: ``_run_agent`` in ``hermes_cli/oneshot.py`` calls ``AIAgent()``
-without passing ``skip_memory=True`` or ``skip_context_files=True``.
-The interactive CLI path (``HermesCLI._init_agent()``) exposes
-``--ignore-rules`` which maps to these flags, but the oneshot path has no
-equivalent.  When a HERMES_HOME is shared between an interactive session and
-a ``hermes -z`` call (which is the default — both use the same
-``get_hermes_home()`` → ``~/.hermes``), the one-shot run inherits:
+Applied fix: ``_run_agent`` in ``hermes_cli/oneshot.py`` constructs
+``AIAgent()`` with ``skip_memory=True`` and ``skip_context_files=True`` so a
+one-shot run never inherits persistent memory or repo context files.  The
+interactive CLI path (``HermesCLI._init_agent()``) exposes ``--ignore-rules``,
+which maps to the same flags; the oneshot path always applies them (there is
+no separate opt-in flag for -z).  ``MemoryStore`` itself still loads MEMORY.md
+/ USER.md from HERMES_HOME when asked — that is expected behavior of the store;
+isolation is enforced by the agent NOT asking for it in one-shot mode.
 
-  1. Persistent memory entries from ``~/.hermes/memories/MEMORY.md``
-  2. User-profile entries from ``~/.hermes/memories/USER.md``
-  3. The shared ``~/.hermes/state.db`` session store (session_search recall)
+Patched file:
+  src/mac/_hermes/hermes_cli/oneshot.py  -- ``_run_agent()`` AIAgent call now
+                                            passes skip_memory=True and
+                                            skip_context_files=True.
 
-None of these are expected in an isolated one-shot invocation that is
-intended to be a "fresh" context for scripting / piping.
-
-Files to patch:
-  src/mac/_hermes/hermes_cli/oneshot.py  -- ``_run_agent()`` AIAgent call
-  src/mac/_hermes/hermes_cli/_parser.py  -- optionally add ``--no-memory``
-                                            / ``--isolated`` flag for -z
-
-The fix is to pass ``skip_memory=True`` and ``skip_context_files=True`` to
-``AIAgent`` inside ``_run_agent()``, OR introduce an ``isolated`` parameter
-to ``run_oneshot()`` that callers (main.py) can set when desired.
+These tests assert that the fix stays in place: the -z path is always
+isolated via the skip flags, without adding a new parser flag and without
+setting HERMES_IGNORE_RULES in main().
 """
 
 from __future__ import annotations
@@ -123,14 +117,19 @@ def hermes_home_with_memory(isolated_hermes_home):
 
 class TestOneshotCallPathAnalysis:
     """Static analysis of the call path — no imports from the vendored tree
-    required.  These tests characterize the STRUCTURE of the regression.
+    required.  These tests pin the STRUCTURE of the applied isolation fix.
     """
 
-    def test_run_oneshot_signature_has_no_skip_memory_param(self):
-        """_run_agent() in oneshot.py does not accept or pass skip_memory.
+    def test_run_oneshot_isolation_flows_through_aiagent_not_signature(self):
+        """The isolation fix lives in the AIAgent() call, not _run_agent()'s
+        signature.
 
-        This is the root cause: there is no way for a caller of run_oneshot()
-        to request that persistent memory be excluded from the one-shot run.
+        The fix passes ``skip_memory=True`` / ``skip_context_files=True`` inside
+        the ``AIAgent(...)`` construction in ``_run_agent()``; it deliberately
+        does NOT add a ``skip_memory`` parameter to ``_run_agent()`` itself
+        (one-shot runs are always isolated, with no per-call opt-in).  This test
+        documents that contract so nobody "fixes" it by threading a redundant
+        parameter through the public signature.
         """
         _ensure_hermes_on_path()
         try:
@@ -138,25 +137,49 @@ class TestOneshotCallPathAnalysis:
         except ImportError:
             pytest.skip("vendored hermes_cli not available")
 
+        import ast
         import inspect
+
+        # _run_agent() intentionally exposes no skip_memory parameter: isolation
+        # is unconditional for -z, applied internally at the AIAgent call site.
         params = inspect.signature(_run_agent).parameters
-        # Characterization: the parameter is ABSENT — this is the bug.
         assert "skip_memory" not in params, (
-            "skip_memory was added to _run_agent() — regression may be fixed; "
-            "update this characterization test."
+            "skip_memory was threaded into _run_agent()'s signature — the fix "
+            "applies isolation internally at the AIAgent() call, not as a "
+            "public parameter; update this test if the design changed."
         )
 
-    def test_run_oneshot_aiagent_call_missing_skip_memory(self):
-        """_run_agent() constructs AIAgent without skip_memory=True.
+        # And confirm the isolation actually happens inside _run_agent's body by
+        # locating the AIAgent(...) call and its skip_* keyword arguments.
+        source = textwrap.dedent(inspect.getsource(_run_agent))
+        tree = ast.parse(source)
+        aiagent_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "AIAgent"
+        ]
+        assert aiagent_calls, "No AIAgent() call found inside _run_agent()"
+        for call in aiagent_calls:
+            kwarg_names = {kw.arg for kw in call.keywords}
+            assert {"skip_memory", "skip_context_files"} <= kwarg_names, (
+                "_run_agent() constructs AIAgent() without skip_memory / "
+                "skip_context_files — the one-shot isolation fix has regressed."
+            )
 
-        Reading oneshot.py confirms AIAgent() is called at line ~335 with:
+    def test_oneshot_aiagent_call_passes_skip_memory_and_skip_context_files(self):
+        """_run_agent() constructs AIAgent with skip_memory=True and
+        skip_context_files=True.
+
+        The AIAgent() call in oneshot.py passes:
           api_key, base_url, provider, api_mode, model, enabled_toolsets,
           quiet_mode, platform, session_db, credential_pool, fallback_model,
-          clarify_callback.
+          skip_memory=True, skip_context_files=True, clarify_callback.
 
-        skip_memory and skip_context_files are NOT in the call — meaning
-        persistent memory IS loaded from HERMES_HOME/memories/ during
-        every one-shot run.
+        Because skip_memory / skip_context_files ARE in the call, persistent
+        memory and repo context files are NOT loaded from HERMES_HOME during a
+        one-shot run — the invocation is isolated.
         """
         import ast
         try:
@@ -198,11 +221,13 @@ class TestOneshotCallPathAnalysis:
                 "the one-shot isolation fix has regressed."
             )
 
-    def test_interactive_cli_has_skip_memory_flag_but_oneshot_does_not(self):
-        """The interactive CLI path supports --ignore-rules → skip_memory=True,
-        but the -z/oneshot path has no equivalent mechanism.
+    def test_both_interactive_and_oneshot_paths_reference_skip_memory(self):
+        """Both the interactive CLI path and the -z/oneshot path wire
+        skip_memory.
 
-        This documents the asymmetry between the two paths.
+        The interactive path exposes ``--ignore-rules`` → ``skip_memory=True``;
+        the oneshot path always applies ``skip_memory=True`` internally (fix
+        applied).  This confirms neither path lost its skip_memory wiring.
         """
         try:
             from mac import hermes_vendor
@@ -232,8 +257,13 @@ class TestOneshotCallPathAnalysis:
         """_create_session_db_for_oneshot() opens the default state.db under
         HERMES_HOME rather than a temporary/isolated database.
 
-        This means session_search results from prior interactive sessions are
-        visible inside a one-shot agent run — cross-contaminating context.
+        This documents the current one-shot session-store wiring, which is
+        SEPARATE from the memory/context-file isolation fix.  The applied fix
+        (skip_memory / skip_context_files on the AIAgent call) stops persistent
+        MEMORY.md / USER.md / context files from leaking into a one-shot run; it
+        does not repoint SessionDB, so ``SessionDB()`` still resolves to
+        DEFAULT_DB_PATH under HERMES_HOME.  This test pins that current wiring
+        so any future change to the one-shot session store is noticed.
         """
         try:
             from mac import hermes_vendor
@@ -247,11 +277,11 @@ class TestOneshotCallPathAnalysis:
 
         source = state_path.read_text(encoding="utf-8")
 
-        # Characterization: DEFAULT_DB_PATH is tied to get_hermes_home()
+        # DEFAULT_DB_PATH is tied to get_hermes_home()
         assert "DEFAULT_DB_PATH" in source, "hermes_state.py structure changed"
         assert "get_hermes_home()" in source, (
             "DEFAULT_DB_PATH no longer references get_hermes_home() — "
-            "check whether the isolation regression was fixed"
+            "the one-shot session-store wiring changed; review this test"
         )
 
         oneshot_path = Path(vendor_dir) / "hermes_cli" / "oneshot.py"
@@ -261,12 +291,12 @@ class TestOneshotCallPathAnalysis:
             # argument, so it gets DEFAULT_DB_PATH = get_hermes_home()/"state.db"
             assert "SessionDB()" in oneshot_source, (
                 "oneshot.py now passes a custom db_path to SessionDB() — "
-                "may be partially fixed; review isolation"
+                "the one-shot session-store wiring changed; review this test"
             )
 
 
 # ---------------------------------------------------------------------------
-# Functional characterization: memory IS loaded by the oneshot agent
+# Functional verification: the oneshot agent is isolated from persistent memory
 # ---------------------------------------------------------------------------
 
 
@@ -274,47 +304,72 @@ class TestOneshotCallPathAnalysis:
     not (Path(__file__).parent.parent / "src" / "mac" / "_hermes" / "SNAPSHOT_PIN").exists(),
     reason="vendored Hermes snapshot not present",
 )
-class TestOneshotMemoryInheritance:
-    """Verify at runtime that a oneshot run picks up persistent memory
-    from HERMES_HOME.  All real I/O (model calls, DB writes) is mocked.
+class TestOneshotMemoryIsolation:
+    """Verify at runtime that a oneshot run is isolated from persistent memory
+    under HERMES_HOME.  All real I/O (model calls, DB writes) is mocked.
 
-    These tests CONFIRM the regression is present and will FAIL once the
-    fix is applied.  At that point they should be converted to prove the
-    fix works (i.e. invert the assertions).
+    These tests prove the fix works: ``_run_agent()`` constructs AIAgent with
+    ``skip_memory=True`` / ``skip_context_files=True`` so persistent MEMORY.md /
+    USER.md entries do not leak into a one-shot run.  The two MemoryStore tests
+    below confirm the store CAN still load those files when asked directly —
+    which is expected behavior of MemoryStore itself, independent of the oneshot
+    isolation fix.
     """
 
-    def test_oneshot_agent_loads_persistent_memory_entries(
+    def test_oneshot_agent_constructs_aiagent_with_isolation_flags(
         self, hermes_home_with_memory, monkeypatch
     ):
-        """Characterization: AIAgent inside oneshot._run_agent() reads
-        MEMORY.md from the active HERMES_HOME.
+        """At runtime, ``_run_agent()`` constructs AIAgent with
+        ``skip_memory=True`` and ``skip_context_files=True``.
 
-        We intercept AIAgent.__init__ to capture the arguments it was
-        constructed with, then check whether skip_memory was False (the
-        default, meaning memory WILL be loaded).
+        We intercept ``AIAgent.__init__`` to capture the arguments it is
+        constructed with, then assert both isolation flags are True — proving a
+        one-shot run will NOT load persistent MEMORY.md / USER.md / context
+        files from the active HERMES_HOME.
+
+        To make the intercept robust, provider resolution (which would otherwise
+        raise on a fake provider/model before AIAgent is ever reached) is
+        stubbed so ``_run_agent()`` runs all the way to the AIAgent() call.
         """
         _ensure_hermes_on_path()
         try:
             from hermes_cli.oneshot import _run_agent
             import run_agent as ra
+            import hermes_cli.runtime_provider as runtime_provider
         except ImportError:
             pytest.skip("vendored hermes_cli not available")
 
         captured_kwargs: dict = {}
 
-        original_init = ra.AIAgent.__init__
-
-        def _capture_init(self, *args, **kwargs):
-            captured_kwargs.update(kwargs)
-            # Raise immediately to avoid any real work
-            raise _Sentinel("captured")
-
         class _Sentinel(Exception):
             pass
 
+        def _capture_init(self, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            # Raise immediately to avoid any real agent construction / I/O.
+            raise _Sentinel("captured")
+
         monkeypatch.setattr(ra.AIAgent, "__init__", _capture_init)
 
-        # Patch out the heavy imports inside _run_agent
+        # Stub provider resolution so _run_agent() reaches the AIAgent() call
+        # instead of bailing out on an unknown fake provider/model.  _run_agent
+        # imports resolve_runtime_provider locally from this module, so patching
+        # it here (the source module) reaches that local import.
+        def _fake_resolve_runtime_provider(*args, **kwargs):
+            return {
+                "api_key": "test-key",
+                "base_url": "http://localhost:0",
+                "provider": "openai",
+                "api_mode": "chat",
+                "credential_pool": None,
+            }
+
+        monkeypatch.setattr(
+            runtime_provider,
+            "resolve_runtime_provider",
+            _fake_resolve_runtime_provider,
+        )
+
         monkeypatch.setenv("HERMES_YOLO_MODE", "1")
         monkeypatch.setenv("HERMES_ACCEPT_HOOKS", "1")
 
@@ -322,18 +377,23 @@ class TestOneshotMemoryInheritance:
             _run_agent(
                 "what do you know about me?",
                 model="fake-model",
-                provider="fake-provider",
+                provider=None,
             )
         except _Sentinel:
-            pass  # Expected — we raised it intentionally
-        except Exception:
-            # _run_agent may fail for other reasons (missing config, etc.)
-            # before reaching AIAgent(); skip in that case.
+            pass  # Expected — we raised it from the intercepted __init__.
+        except Exception as exc:  # noqa: BLE001
+            # If _run_agent still fails before AIAgent() despite the stub, do not
+            # silently pass: surface a clear, correct skip reason.  The static
+            # AST tests above still assert the isolation contract in that case.
             if not captured_kwargs:
-                pytest.skip("_run_agent failed before constructing AIAgent")
+                pytest.skip(
+                    f"_run_agent failed before constructing AIAgent: {exc!r}"
+                )
 
-        if not captured_kwargs:
-            pytest.skip("AIAgent.__init__ was not called")
+        assert captured_kwargs, (
+            "AIAgent.__init__ was never called — the intercept did not run; "
+            "the oneshot call path may have changed."
+        )
 
         # Contract (post-fix): _run_agent() constructs AIAgent with
         # skip_memory=True and skip_context_files=True.
@@ -351,12 +411,14 @@ class TestOneshotMemoryInheritance:
     def test_memory_store_load_from_disk_reads_hermes_home(
         self, hermes_home_with_memory
     ):
-        """Characterization: MemoryStore.load_from_disk() reads from the
-        active HERMES_HOME/memories/ directory.
+        """MemoryStore.load_from_disk() reads from the active
+        HERMES_HOME/memories/ directory.
 
-        Because oneshot._run_agent() does not pass skip_memory=True,
-        the agent's system prompt receives the contents of MEMORY.md and
-        USER.md from the shared HERMES_HOME.
+        This is expected behavior of MemoryStore itself and is INDEPENDENT of
+        the oneshot isolation fix: when something asks the store to load, it
+        reads MEMORY.md / USER.md from the shared HERMES_HOME.  One-shot runs
+        stay isolated by NOT asking (skip_memory=True on the AIAgent call), not
+        by changing what MemoryStore does when invoked directly.
         """
         _ensure_hermes_on_path()
         try:
@@ -377,14 +439,21 @@ class TestOneshotMemoryInheritance:
             "set HERMES_HOME correctly."
         )
 
-    def test_oneshot_system_prompt_contains_persistent_memory(
+    def test_system_prompt_includes_memory_when_store_is_populated(
         self, hermes_home_with_memory, monkeypatch
     ):
-        """Characterization: the system prompt built for a oneshot agent
-        contains persistent memory entries.
+        """When an agent HAS a populated MemoryStore, build_system_prompt()
+        includes those memory entries in the prompt.
 
-        We call build_system_prompt() with a minimal mock agent that has
-        _memory_store populated (as it would be when skip_memory=False).
+        This exercises MemoryStore -> system_prompt behavior directly (again,
+        expected behavior of the store/prompt builder).  It shows WHY the
+        oneshot fix matters: if a one-shot agent were built WITHOUT
+        skip_memory=True, its populated store would inject these persistent
+        entries into the prompt.  The isolation fix prevents that store from
+        being populated in one-shot mode in the first place.
+
+        We build a lightweight stand-in agent with concrete attribute values so
+        no MagicMock leaks into the prompt's string joins.
         """
         _ensure_hermes_on_path()
         try:
@@ -396,50 +465,61 @@ class TestOneshotMemoryInheritance:
         store = MemoryStore()
         store.load_from_disk()
 
-        # Build a minimal mock agent
-        mock_agent = MagicMock()
-        mock_agent._memory_store = store
-        mock_agent._memory_enabled = True
-        mock_agent._user_profile_enabled = True
-        mock_agent._memory_manager = None
-        mock_agent.skip_context_files = False
-        mock_agent.load_soul_identity = False
-        mock_agent.platform = "cli"
-        mock_agent.tools = []
-        mock_agent._context_engine = None
-        mock_agent._cached_system_prompt = None
+        # A concrete stand-in agent.  build_system_prompt() joins many optional
+        # guidance blocks; supplying real (non-Mock) values keeps them out of
+        # the string joins so the memory (volatile) tier is what we assert on.
+        agent = types.SimpleNamespace(
+            _memory_store=store,
+            _memory_enabled=True,
+            _user_profile_enabled=True,
+            _memory_manager=None,
+            skip_context_files=True,
+            load_soul_identity=False,
+            platform="cli",
+            valid_tool_names=set(),
+            model="fake-model",
+            provider="fake-provider",
+            pass_session_id=False,
+            session_id=None,
+            _task_completion_guidance=False,
+            _tool_use_enforcement="false",
+            _environment_probe=False,
+            _kanban_worker_guidance="",
+        )
 
-        try:
-            prompt = build_system_prompt(mock_agent)
-        except Exception as exc:
-            # build_system_prompt may need more mock attributes; skip if so
-            pytest.skip(f"build_system_prompt raised {exc!r}")
+        prompt = build_system_prompt(agent)
 
-        # Characterization: persistent memory entries appear in the prompt
+        # Persistent memory entries appear in the prompt of an agent whose store
+        # was populated (the exact leak the oneshot fix prevents by skipping it).
         assert "should NOT appear in an isolated oneshot run" in prompt, (
-            "Memory entries did NOT appear in the system prompt. "
-            "The regression may not be present, or the test fixture is wrong."
+            "Memory entries did NOT appear in the system prompt even though the "
+            "store was populated — the fixture or prompt builder changed."
         )
 
 
 # ---------------------------------------------------------------------------
-# Proposed-fix contract tests
-# (These will FAIL until the fix is applied and should be inverted then.)
+# Isolation contract tests (fix applied)
 # ---------------------------------------------------------------------------
 
 
 class TestOneshotIsolationContract:
-    """Contract tests that SHOULD pass once the fix is applied.
+    """Contract tests that confirm the POST-FIX design of one-shot isolation.
 
-    Currently these tests verify the bug IS present. After patching
-    oneshot.py to pass skip_memory=True, flip the assertions.
+    The fix makes ``-z`` always isolated by passing skip_memory=True /
+    skip_context_files=True on the AIAgent call.  It does NOT add a new parser
+    flag and does NOT set HERMES_IGNORE_RULES in main().  These tests pin that
+    design so a future change that re-introduces memory inheritance (or an
+    unnecessary new flag) is caught.
     """
 
     def test_parser_exposes_no_isolated_flag_for_oneshot(self):
         """The -z / --oneshot flag has no isolation switch in the parser.
 
-        After the fix, ``-z`` should either always run isolated (default)
-        or expose ``--no-memory`` / ``--isolated`` to opt in.
+        The applied fix makes ``-z`` ALWAYS isolated by default (via the
+        skip_memory / skip_context_files flags on the AIAgent call), so no
+        ``--no-memory`` / ``--isolated`` opt-in flag was added.  This test pins
+        that decision: if such a flag appears later it is a design change that
+        must be reviewed here.
         """
         _ensure_hermes_on_path()
         try:
@@ -453,20 +533,23 @@ class TestOneshotIsolationContract:
         for action in parser._actions:
             option_strings.update(action.option_strings)
 
-        # Characterization: no isolation flag exists for -z yet
+        # The fix isolates -z unconditionally, so no dedicated flag exists.
         isolation_flags = {"--isolated", "--no-memory", "--fresh", "--clean"}
         found = option_strings & isolation_flags
         assert not found, (
             f"Isolation flag(s) {found} were added to the top-level parser — "
-            "the fix may be partially applied. Update this characterization test."
+            "the fix isolates -z unconditionally without a flag; update this "
+            "test if that design changed."
         )
 
     def test_main_py_oneshot_path_does_not_set_ignore_rules(self):
         """main() does not set HERMES_IGNORE_RULES before calling run_oneshot().
 
-        If it did, the existing --ignore-rules plumbing would propagate
-        skip_memory=True into the agent.  Confirming it does NOT do this
-        shows the exact gap the fix must close.
+        The fix wires skip_memory / skip_context_files directly at the AIAgent
+        call in ``_run_agent()`` rather than piggy-backing on the interactive
+        ``--ignore-rules`` / HERMES_IGNORE_RULES plumbing.  This test confirms
+        main() does NOT set that env var for the -z path, so isolation is
+        applied by the oneshot code itself, not by a side-channel env flag.
         """
         _ensure_hermes_on_path()
         try:
@@ -493,6 +576,7 @@ class TestOneshotIsolationContract:
         # Look at the 500 chars preceding the dispatch block
         preceding = source[max(0, oneshot_idx - 500): oneshot_idx]
         assert "HERMES_IGNORE_RULES" not in preceding, (
-            "HERMES_IGNORE_RULES was set before the oneshot dispatch — "
-            "the fix may already be partially applied. Update this test."
+            "HERMES_IGNORE_RULES was set before the oneshot dispatch — the fix "
+            "isolates -z via skip_memory/skip_context_files at the AIAgent "
+            "call, not via this env var; update this test if that changed."
         )
