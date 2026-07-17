@@ -80,6 +80,113 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
     assert 'launchctl kickstart -k "$domain/$label"' in service_control
 
 
+def test_darwin_deploy_preserves_an_active_system_control_plane_domain():
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    capture = node.split("capture_darwin_launchd_prestate() {", 1)[1].split(
+        "wait_for_system_launchd_job_unloaded() {", 1
+    )[0]
+    assert 'if ! sudo -n true; then' in capture
+    assert 'DARWIN_SYSTEM_LAUNCHD_ACTIVE=1' in capture
+    assert 'sudo -n test -r "$system_plist"' in capture
+    assert 'DARWIN_GUI_LAUNCHD_ACTIVE=1' in capture
+    assert 'DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE=1' in capture
+    assert 'control plane is loaded in both system and GUI launchd domains' in capture
+    assert "write_rollback_script" in capture
+
+    stop = node.split("stop_existing_services_for_deploy() {", 1)[1].split(
+        "load_drain_api_env() {", 1
+    )[0]
+    supervisor_bootout = stop.index(
+        'sudo -n launchctl bootout "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL"'
+    )
+    control_bootout = stop.index(
+        'sudo -n launchctl bootout "system/$MAC_LAUNCHD_LABEL"',
+        supervisor_bootout,
+    )
+    stopped = stop.index("wait_for_local_control_plane_stop", control_bootout)
+    assert supervisor_bootout < control_bootout < stopped
+    assert '|| [ "$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ]' in stop
+    assert '|| [ "$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ]' in stop
+
+    install = node.split("install_darwin_service() {", 1)[1].split(
+        "install_darwin_openclaw_service() {", 1
+    )[0]
+    assert 'sudo -n launchctl bootstrap system "$system_plist"' in install
+    assert 'sudo -n launchctl kickstart -k "system/$MAC_LAUNCHD_LABEL"' in install
+    assert 'wait_for_local_control_plane_health' in install
+    assert 'sudo -n launchctl bootstrap system "$system_supervisor_plist"' in install
+    atomic_install = install.index(
+        'sudo -n install -o root -g wheel -m 0644 '
+        '"$system_plist_staging" "$system_plist_tmp"'
+    )
+    atomic_replace = install.index(
+        'sudo -n mv -f "$system_plist_tmp" "$system_plist"', atomic_install
+    )
+    control_bootstrap = install.index(
+        'sudo -n launchctl bootstrap system "$system_plist"', atomic_replace
+    )
+    healthy = install.index("wait_for_local_control_plane_health", control_bootstrap)
+    supervisor_bootstrap = install.index(
+        'sudo -n launchctl bootstrap system "$system_supervisor_plist"', healthy
+    )
+    health_recheck = install.index(
+        "wait_for_local_control_plane_health", supervisor_bootstrap
+    )
+    assert atomic_install < atomic_replace < control_bootstrap < healthy < supervisor_bootstrap
+    assert supervisor_bootstrap < health_recheck
+    assert "com.${FLEET_NAME}.supervisor" not in install
+
+    capture_call = node.index('capture_darwin_launchd_prestate\n')
+    pre_manifest = node.index('write_deploy_manifest "pre"', capture_call)
+    service_stop = node.index("stop_existing_services_for_deploy\n", pre_manifest)
+    assert capture_call < pre_manifest < service_stop
+
+
+def test_darwin_rollback_restores_the_original_system_launchd_scope():
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    rollback = node.split("write_rollback_script() {", 1)[1].split(
+        "backup_existing_artifacts() {", 1
+    )[0]
+
+    assert "DARWIN_SYSTEM_PLIST_BACKUP='$DARWIN_SYSTEM_PLIST_BACKUP'" in rollback
+    assert "DARWIN_SYSTEM_LAUNCHD_ACTIVE='$DARWIN_SYSTEM_LAUNCHD_ACTIVE'" in rollback
+    assert (
+        'sudo -n cp -f "\\$DARWIN_SYSTEM_PLIST_BACKUP" '
+        '"/Library/LaunchDaemons/\\$MAC_LAUNCHD_LABEL.plist"'
+        in rollback
+    )
+    assert 'if [ "\\$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ]; then' in rollback
+    assert 'elif [ "\\$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ]; then' in rollback
+    rollback_stop = rollback.index("wait_control_plane_stopped\n")
+    restore_source = rollback.index(
+        'restore_dir "\\$SRC_BACKUP" "\\$SRC_DIR"', rollback_stop
+    )
+    assert rollback_stop < restore_source
+    assert 'wait_system_job_unloaded "\\$DARWIN_SYSTEM_SUPERVISOR_LABEL"' in rollback
+    assert 'wait_system_job_unloaded "\\$MAC_LAUNCHD_LABEL"' in rollback
+    system_bootstrap = rollback.index(
+        'sudo -n launchctl bootstrap system '
+        '"/Library/LaunchDaemons/\\$MAC_LAUNCHD_LABEL.plist"'
+    )
+    gui_fallback = rollback.index(
+        'launchctl bootstrap "gui/\\$uid" '
+        '"\\$HOME/Library/LaunchAgents/\\$MAC_LAUNCHD_LABEL.plist"',
+        system_bootstrap,
+    )
+    assert system_bootstrap < gui_fallback
+
+
+def test_deploy_manifest_records_system_launchd_backup_and_original_scope():
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'DARWIN_SYSTEM_PLIST_BACKUP="$DARWIN_SYSTEM_PLIST_BACKUP"' in node
+    assert 'DARWIN_SYSTEM_LAUNCHD_ACTIVE="$DARWIN_SYSTEM_LAUNCHD_ACTIVE"' in node
+    assert '"mac_system_plist": os.environ.get("DARWIN_SYSTEM_PLIST_BACKUP")' in node
+    assert '"mac_system_launchd_was_active": (' in node
+    assert '"control_plane_system": probe(' in node
+
+
 def test_remote_deploy_payload_is_materialized_before_execution():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")

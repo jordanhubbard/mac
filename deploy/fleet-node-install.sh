@@ -175,6 +175,7 @@ MAC_GEN_SERVICE_NAME="${FLEET_NAME}-gen-server.service"
 MAC_GEN_AUDIO_SERVICE_NAME="${FLEET_NAME}-gen-audio-server.service"
 MAC_GEN_VIDEO_SERVICE_NAME="${FLEET_NAME}-gen-video-server.service"
 MAC_LAUNCHD_LABEL="com.${FLEET_NAME}.control-plane"
+DARWIN_SYSTEM_SUPERVISOR_LABEL="com.${FLEET_NAME}.supervisor"
 HERMES_LAUNCHD_LABEL="com.${FLEET_NAME}.hermes-gateway"
 OPENCLAW_LAUNCHD_LABEL="com.${FLEET_NAME}.openclaw-gateway"
 MAC_AGENT_LAUNCHD_LABEL="com.${FLEET_NAME}.agent"
@@ -190,6 +191,11 @@ MAC_UNIT_BACKUP=""
 HERMES_UNIT_BACKUP=""
 MAC_AGENT_UNIT_BACKUP=""
 MAC_PLIST_BACKUP=""
+DARWIN_SYSTEM_PLIST_BACKUP=""
+DARWIN_SYSTEM_LAUNCHD_ACTIVE=0
+DARWIN_GUI_LAUNCHD_ACTIVE=0
+DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP=""
+DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE=0
 HERMES_PLIST_BACKUP=""
 MAC_AGENT_PLIST_BACKUP=""
 
@@ -1772,11 +1778,16 @@ write_deploy_manifest() {
   SRC_BACKUP="$SRC_BACKUP" VENV_BACKUP="$VENV_BACKUP" HERMES_BACKUP="$HERMES_BACKUP" \
   MAC_UNIT_BACKUP="$MAC_UNIT_BACKUP" HERMES_UNIT_BACKUP="$HERMES_UNIT_BACKUP" \
   MAC_AGENT_UNIT_BACKUP="$MAC_AGENT_UNIT_BACKUP" \
-  MAC_PLIST_BACKUP="$MAC_PLIST_BACKUP" HERMES_PLIST_BACKUP="$HERMES_PLIST_BACKUP" \
+  MAC_PLIST_BACKUP="$MAC_PLIST_BACKUP" DARWIN_SYSTEM_PLIST_BACKUP="$DARWIN_SYSTEM_PLIST_BACKUP" \
+  DARWIN_SYSTEM_LAUNCHD_ACTIVE="$DARWIN_SYSTEM_LAUNCHD_ACTIVE" \
+  DARWIN_GUI_LAUNCHD_ACTIVE="$DARWIN_GUI_LAUNCHD_ACTIVE" \
+  DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP="$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP" \
+  DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE="$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE" \
+  HERMES_PLIST_BACKUP="$HERMES_PLIST_BACKUP" \
   MAC_AGENT_PLIST_BACKUP="$MAC_AGENT_PLIST_BACKUP" \
   FLEET_NAME="$FLEET_NAME" \
   MAC_SERVICE_NAME="$MAC_SERVICE_NAME" HERMES_SERVICE_NAME="$HERMES_SERVICE_NAME" OPENCLAW_SERVICE_NAME="$OPENCLAW_SERVICE_NAME" MAC_AGENT_SERVICE_NAME="$MAC_AGENT_SERVICE_NAME" \
-  MAC_LAUNCHD_LABEL="$MAC_LAUNCHD_LABEL" HERMES_LAUNCHD_LABEL="$HERMES_LAUNCHD_LABEL" OPENCLAW_LAUNCHD_LABEL="$OPENCLAW_LAUNCHD_LABEL" MAC_AGENT_LAUNCHD_LABEL="$MAC_AGENT_LAUNCHD_LABEL" \
+  MAC_LAUNCHD_LABEL="$MAC_LAUNCHD_LABEL" DARWIN_SYSTEM_SUPERVISOR_LABEL="$DARWIN_SYSTEM_SUPERVISOR_LABEL" HERMES_LAUNCHD_LABEL="$HERMES_LAUNCHD_LABEL" OPENCLAW_LAUNCHD_LABEL="$OPENCLAW_LAUNCHD_LABEL" MAC_AGENT_LAUNCHD_LABEL="$MAC_AGENT_LAUNCHD_LABEL" \
   MAC_SUPERVISORD_PROG="$MAC_SUPERVISORD_PROG" HERMES_SUPERVISORD_PROG="$HERMES_SUPERVISORD_PROG" OPENCLAW_SUPERVISORD_PROG="$OPENCLAW_SUPERVISORD_PROG" AGENT_SUPERVISORD_PROG="$AGENT_SUPERVISORD_PROG" \
   "$PY" - "$stage" "$path" <<'PY'
 import json
@@ -1799,6 +1810,19 @@ def run(cmd):
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
     }
+
+
+def probe(cmd):
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": type(exc).__name__}
+    return {"ok": result.returncode == 0, "returncode": result.returncode}
 
 
 def py_version(path):
@@ -1842,6 +1866,9 @@ def service_summary():
     openclaw_svc = os.environ.get("OPENCLAW_SERVICE_NAME", fleet + "-openclaw-gateway.service")
     agent_svc = os.environ.get("MAC_AGENT_SERVICE_NAME", fleet + "-agent.service")
     mac_label = os.environ.get("MAC_LAUNCHD_LABEL", "com." + fleet + ".control-plane")
+    system_supervisor_label = os.environ.get(
+        "DARWIN_SYSTEM_SUPERVISOR_LABEL", "com." + fleet + ".supervisor"
+    )
     hermes_label = os.environ.get("HERMES_LAUNCHD_LABEL", "com." + fleet + ".hermes-gateway")
     openclaw_label = os.environ.get("OPENCLAW_LAUNCHD_LABEL", "com." + fleet + ".openclaw-gateway")
     agent_label = os.environ.get("MAC_AGENT_LAUNCHD_LABEL", "com." + fleet + ".agent")
@@ -1882,6 +1909,18 @@ def service_summary():
         return {
             "manager": "launchd",
             "control_plane": run(["launchctl", "list", mac_label]),
+            "control_plane_system": probe(
+                ["launchctl", "print", "system/" + mac_label]
+            ),
+            "control_plane_system_plist": file_ref(
+                "/Library/LaunchDaemons/" + mac_label + ".plist"
+            ),
+            "control_plane_system_supervisor": probe(
+                ["launchctl", "print", "system/" + system_supervisor_label]
+            ),
+            "control_plane_system_supervisor_plist": file_ref(
+                "/Library/LaunchDaemons/" + system_supervisor_label + ".plist"
+            ),
             "hermes_gateway": run(["launchctl", "list", hermes_label]),
             "openclaw_gateway": run(["launchctl", "list", openclaw_label]),
             "mac_agent": run(["launchctl", "list", agent_label]),
@@ -2082,6 +2121,19 @@ manifest = {
         "hermes_unit": os.environ.get("HERMES_UNIT_BACKUP") or None,
         "mac_agent_unit": os.environ.get("MAC_AGENT_UNIT_BACKUP") or None,
         "mac_plist": os.environ.get("MAC_PLIST_BACKUP") or None,
+        "mac_system_plist": os.environ.get("DARWIN_SYSTEM_PLIST_BACKUP") or None,
+        "mac_system_launchd_was_active": (
+            os.environ.get("DARWIN_SYSTEM_LAUNCHD_ACTIVE") == "1"
+        ),
+        "mac_gui_launchd_was_active": (
+            os.environ.get("DARWIN_GUI_LAUNCHD_ACTIVE") == "1"
+        ),
+        "mac_system_supervisor_plist": (
+            os.environ.get("DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP") or None
+        ),
+        "mac_system_supervisor_launchd_was_active": (
+            os.environ.get("DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE") == "1"
+        ),
         "hermes_plist": os.environ.get("HERMES_PLIST_BACKUP") or None,
         "mac_agent_plist": os.environ.get("MAC_AGENT_PLIST_BACKUP") or None,
     },
@@ -2113,6 +2165,7 @@ write_rollback_script() {
 set -euo pipefail
 
 MAC_HOME='$MAC_HOME'
+MAC_PORT='$MAC_PORT'
 SRC_DIR='$SRC_DIR'
 VENV='$VENV'
 HERMES_DIR='$HERMES_DIR'
@@ -2125,6 +2178,12 @@ MAC_UNIT_BACKUP='$MAC_UNIT_BACKUP'
 HERMES_UNIT_BACKUP='$HERMES_UNIT_BACKUP'
 MAC_AGENT_UNIT_BACKUP='$MAC_AGENT_UNIT_BACKUP'
 MAC_PLIST_BACKUP='$MAC_PLIST_BACKUP'
+DARWIN_SYSTEM_PLIST_BACKUP='$DARWIN_SYSTEM_PLIST_BACKUP'
+DARWIN_SYSTEM_LAUNCHD_ACTIVE='$DARWIN_SYSTEM_LAUNCHD_ACTIVE'
+DARWIN_GUI_LAUNCHD_ACTIVE='$DARWIN_GUI_LAUNCHD_ACTIVE'
+DARWIN_SYSTEM_SUPERVISOR_LABEL='$DARWIN_SYSTEM_SUPERVISOR_LABEL'
+DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP='$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP'
+DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE='$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE'
 HERMES_PLIST_BACKUP='$HERMES_PLIST_BACKUP'
 MAC_AGENT_PLIST_BACKUP='$MAC_AGENT_PLIST_BACKUP'
 MAC_SERVICE_NAME='$MAC_SERVICE_NAME'
@@ -2152,6 +2211,53 @@ restore_dir() {
   command cp -a "\$backup" "\$dest"
 }
 
+wait_control_plane_health() {
+  local deadline=\$(( \$(date +%s) + 60 ))
+  while :; do
+    if curl -fsS --max-time 2 "http://127.0.0.1:\$MAC_PORT/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "\$(date +%s)" -ge "\$deadline" ]; then
+      echo "rollback failed: restored control plane did not become healthy" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+wait_system_job_unloaded() {
+  local label="\$1" deadline=\$(( \$(date +%s) + 30 ))
+  while sudo -n launchctl print "system/\$label" >/dev/null 2>&1; do
+    if [ "\$(date +%s)" -ge "\$deadline" ]; then
+      echo "rollback failed: system launchd job remained loaded: \$label" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+wait_gui_job_unloaded() {
+  local uid="\$1" label="\$2" deadline=\$(( \$(date +%s) + 30 ))
+  while launchctl print "gui/\$uid/\$label" >/dev/null 2>&1; do
+    if [ "\$(date +%s)" -ge "\$deadline" ]; then
+      echo "rollback failed: GUI launchd job remained loaded: \$label" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+wait_control_plane_stopped() {
+  local deadline=\$(( \$(date +%s) + 30 ))
+  while /usr/bin/nc -z -w 1 127.0.0.1 "\$MAC_PORT" >/dev/null 2>&1; do
+    if [ "\$(date +%s)" -ge "\$deadline" ]; then
+      echo "rollback failed: control-plane port remained open" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 case "\${SUPERVISOR_KIND:-\$OS_KIND}" in
   systemd|linux)
     sudo systemctl stop "\$MAC_AGENT_SERVICE_NAME" "\$HERMES_SERVICE_NAME" "\$OPENCLAW_SERVICE_NAME" "\$MAC_SERVICE_NAME" >/dev/null 2>&1 || true
@@ -2162,10 +2268,22 @@ case "\${SUPERVISOR_KIND:-\$OS_KIND}" in
     ;;
   launchd|darwin)
     uid="\$(id -u)"
-    launchctl bootout "gui/\$uid/\$MAC_AGENT_LAUNCHD_LABEL" >/dev/null 2>&1 || true
-    launchctl bootout "gui/\$uid/\$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
-    launchctl bootout "gui/\$uid/\$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
-    launchctl bootout "gui/\$uid/\$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    sudo -n true
+    if sudo -n launchctl print "system/\$DARWIN_SYSTEM_SUPERVISOR_LABEL" >/dev/null 2>&1; then
+      sudo -n launchctl bootout "system/\$DARWIN_SYSTEM_SUPERVISOR_LABEL"
+      wait_system_job_unloaded "\$DARWIN_SYSTEM_SUPERVISOR_LABEL"
+    fi
+    for label in "\$MAC_AGENT_LAUNCHD_LABEL" "\$HERMES_LAUNCHD_LABEL" "\$OPENCLAW_LAUNCHD_LABEL" "\$MAC_LAUNCHD_LABEL"; do
+      if launchctl print "gui/\$uid/\$label" >/dev/null 2>&1; then
+        launchctl bootout "gui/\$uid/\$label"
+        wait_gui_job_unloaded "\$uid" "\$label"
+      fi
+    done
+    if sudo -n launchctl print "system/\$MAC_LAUNCHD_LABEL" >/dev/null 2>&1; then
+      sudo -n launchctl bootout "system/\$MAC_LAUNCHD_LABEL"
+      wait_system_job_unloaded "\$MAC_LAUNCHD_LABEL"
+    fi
+    wait_control_plane_stopped
     ;;
 esac
 
@@ -2190,12 +2308,46 @@ case "\${SUPERVISOR_KIND:-\$OS_KIND}" in
     ;;
   launchd|darwin)
     mkdir -p "\$HOME/Library/LaunchAgents"
-    [ -n "\$MAC_PLIST_BACKUP" ] && [ -f "\$MAC_PLIST_BACKUP" ] && cp -f "\$MAC_PLIST_BACKUP" "\$HOME/Library/LaunchAgents/\$MAC_LAUNCHD_LABEL.plist"
+    if [ -n "\$MAC_PLIST_BACKUP" ] && [ -f "\$MAC_PLIST_BACKUP" ]; then
+      cp -f "\$MAC_PLIST_BACKUP" "\$HOME/Library/LaunchAgents/\$MAC_LAUNCHD_LABEL.plist"
+    else
+      rm -f "\$HOME/Library/LaunchAgents/\$MAC_LAUNCHD_LABEL.plist"
+    fi
+    if [ -n "\$DARWIN_SYSTEM_PLIST_BACKUP" ] && [ -f "\$DARWIN_SYSTEM_PLIST_BACKUP" ]; then
+      sudo -n cp -f "\$DARWIN_SYSTEM_PLIST_BACKUP" "/Library/LaunchDaemons/\$MAC_LAUNCHD_LABEL.plist"
+      sudo -n chown root:wheel "/Library/LaunchDaemons/\$MAC_LAUNCHD_LABEL.plist"
+      sudo -n chmod 0644 "/Library/LaunchDaemons/\$MAC_LAUNCHD_LABEL.plist"
+    else
+      sudo -n rm -f "/Library/LaunchDaemons/\$MAC_LAUNCHD_LABEL.plist"
+    fi
+    if [ -n "\$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP" ] && [ -f "\$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP" ]; then
+      sudo -n cp -f "\$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP" "/Library/LaunchDaemons/\$DARWIN_SYSTEM_SUPERVISOR_LABEL.plist"
+      sudo -n chown root:wheel "/Library/LaunchDaemons/\$DARWIN_SYSTEM_SUPERVISOR_LABEL.plist"
+      sudo -n chmod 0644 "/Library/LaunchDaemons/\$DARWIN_SYSTEM_SUPERVISOR_LABEL.plist"
+    fi
     [ -n "\$HERMES_PLIST_BACKUP" ] && [ -f "\$HERMES_PLIST_BACKUP" ] && cp -f "\$HERMES_PLIST_BACKUP" "\$HOME/Library/LaunchAgents/\$HERMES_LAUNCHD_LABEL.plist"
     [ -n "\$MAC_AGENT_PLIST_BACKUP" ] && [ -f "\$MAC_AGENT_PLIST_BACKUP" ] && cp -f "\$MAC_AGENT_PLIST_BACKUP" "\$HOME/Library/LaunchAgents/\$MAC_AGENT_LAUNCHD_LABEL.plist"
     uid="\$(id -u)"
     launchctl disable "gui/\$uid/\$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
-    launchctl bootstrap "gui/\$uid" "\$HOME/Library/LaunchAgents/\$MAC_LAUNCHD_LABEL.plist" >/dev/null 2>&1 || launchctl kickstart -k "gui/\$uid/\$MAC_LAUNCHD_LABEL"
+    if [ "\$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ]; then
+      sudo -n launchctl bootstrap system "/Library/LaunchDaemons/\$MAC_LAUNCHD_LABEL.plist"
+      sudo -n launchctl kickstart -k "system/\$MAC_LAUNCHD_LABEL"
+    elif [ "\$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ]; then
+      launchctl bootstrap "gui/\$uid" "\$HOME/Library/LaunchAgents/\$MAC_LAUNCHD_LABEL.plist"
+      launchctl kickstart -k "gui/\$uid/\$MAC_LAUNCHD_LABEL"
+    fi
+    if [ "\$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ] || [ "\$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ]; then
+      wait_control_plane_health
+    fi
+    if [ "\$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE" = 1 ]; then
+      sudo -n launchctl bootstrap system "/Library/LaunchDaemons/\$DARWIN_SYSTEM_SUPERVISOR_LABEL.plist"
+      sudo -n launchctl kickstart -k "system/\$DARWIN_SYSTEM_SUPERVISOR_LABEL"
+      sudo -n launchctl print "system/\$DARWIN_SYSTEM_SUPERVISOR_LABEL" >/dev/null
+      if [ "\$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ]; then
+        sudo -n launchctl print "system/\$MAC_LAUNCHD_LABEL" >/dev/null
+      fi
+      wait_control_plane_health
+    fi
     launchctl bootstrap "gui/\$uid" "\$HOME/Library/LaunchAgents/\$HERMES_LAUNCHD_LABEL.plist" >/dev/null 2>&1 || launchctl kickstart -k "gui/\$uid/\$HERMES_LAUNCHD_LABEL"
     launchctl bootstrap "gui/\$uid" "\$HOME/Library/LaunchAgents/\$MAC_AGENT_LAUNCHD_LABEL.plist" >/dev/null 2>&1 || launchctl kickstart -k "gui/\$uid/\$MAC_AGENT_LAUNCHD_LABEL"
     ;;
@@ -2228,6 +2380,126 @@ backup_existing_artifacts() {
   write_rollback_script
 }
 
+capture_darwin_launchd_prestate() {
+  [ "$SUPERVISOR_KIND" = "launchd" ] || return 0
+  local uid system_plist system_supervisor_plist gui_plist
+  if ! sudo -n true; then
+    log "ERROR: passwordless sudo is required to inspect system launchd state"
+    return 1
+  fi
+  uid="$(id -u)"
+  system_plist="/Library/LaunchDaemons/${MAC_LAUNCHD_LABEL}.plist"
+  system_supervisor_plist="/Library/LaunchDaemons/${DARWIN_SYSTEM_SUPERVISOR_LABEL}.plist"
+  gui_plist="$HOME/Library/LaunchAgents/${MAC_LAUNCHD_LABEL}.plist"
+
+  if sudo -n launchctl print "system/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1; then
+    DARWIN_SYSTEM_LAUNCHD_ACTIVE=1
+  fi
+  if launchctl print "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1; then
+    DARWIN_GUI_LAUNCHD_ACTIVE=1
+  fi
+  if sudo -n launchctl print "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL" >/dev/null 2>&1; then
+    DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE=1
+  fi
+
+  if [ "$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ] && ! sudo -n test -r "$system_plist"; then
+    log "ERROR: loaded system control-plane service has no readable plist at $system_plist"
+    return 1
+  fi
+  if [ "$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ] && [ ! -r "$gui_plist" ]; then
+    log "ERROR: loaded GUI control-plane service has no readable plist at $gui_plist"
+    return 1
+  fi
+  if [ "$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE" = 1 ] \
+    && ! sudo -n test -r "$system_supervisor_plist"; then
+    log "ERROR: loaded system supervisor has no readable plist at $system_supervisor_plist"
+    return 1
+  fi
+  if [ "$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE" = 1 ] \
+    && [ "$DARWIN_SYSTEM_LAUNCHD_ACTIVE" != 1 ]; then
+    log "ERROR: system supervisor is active without its system control-plane target"
+    return 1
+  fi
+  if [ "$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ] && [ "$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ]; then
+    log "ERROR: control plane is loaded in both system and GUI launchd domains"
+    return 1
+  fi
+
+  if sudo -n test -f "$system_plist"; then
+    DARWIN_SYSTEM_PLIST_BACKUP="$MAC_HOME/backups/${MAC_LAUNCHD_LABEL}.${AGENT}.${DEPLOY_TS}.system.plist"
+    log "backing up system control-plane service to $DARWIN_SYSTEM_PLIST_BACKUP"
+    sudo -n cp -f "$system_plist" "$DARWIN_SYSTEM_PLIST_BACKUP"
+    sudo -n chown "$(id -u):$(id -g)" "$DARWIN_SYSTEM_PLIST_BACKUP"
+    chmod 0600 "$DARWIN_SYSTEM_PLIST_BACKUP"
+  fi
+  if [ -f "$gui_plist" ]; then
+    MAC_PLIST_BACKUP="$MAC_HOME/backups/${MAC_LAUNCHD_LABEL}.${AGENT}.${DEPLOY_TS}.plist"
+    log "backing up GUI control-plane service to $MAC_PLIST_BACKUP"
+    cp -f "$gui_plist" "$MAC_PLIST_BACKUP"
+    chmod 0600 "$MAC_PLIST_BACKUP"
+  fi
+  if sudo -n test -f "$system_supervisor_plist"; then
+    DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP="$MAC_HOME/backups/${DARWIN_SYSTEM_SUPERVISOR_LABEL}.${AGENT}.${DEPLOY_TS}.system.plist"
+    log "backing up system control-plane supervisor to $DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP"
+    sudo -n cp -f "$system_supervisor_plist" "$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP"
+    sudo -n chown "$(id -u):$(id -g)" "$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP"
+    chmod 0600 "$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP"
+  fi
+
+  # This first rollback version restores the original service topology.  It is
+  # rewritten with source/venv backup paths before artifact replacement.
+  write_rollback_script
+}
+
+wait_for_system_launchd_job_unloaded() {
+  local label="$1" deadline=$(( $(date +%s) + 30 ))
+  while sudo -n launchctl print "system/$label" >/dev/null 2>&1; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      log "ERROR: system launchd job remained loaded after bootout: $label"
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+wait_for_local_control_plane_stop() {
+  local deadline=$(( $(date +%s) + 30 ))
+  while :; do
+    if "$PY" - "$MAC_PORT" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.settimeout(0.25)
+    listening = sock.connect_ex(("127.0.0.1", port)) == 0
+raise SystemExit(1 if listening else 0)
+PY
+    then
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      log "ERROR: local control-plane port $MAC_PORT remained open after service stop"
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+wait_for_local_control_plane_health() {
+  local deadline=$(( $(date +%s) + 60 ))
+  while :; do
+    if curl -fsS --max-time 2 "http://127.0.0.1:${MAC_PORT}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      log "ERROR: local control plane did not become healthy on port $MAC_PORT"
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 stop_existing_services_for_deploy() {
   log "stopping existing mac services for artifact replacement"
   case "$SUPERVISOR_KIND" in
@@ -2240,10 +2512,28 @@ stop_existing_services_for_deploy() {
     launchd)
       local uid
       uid="$(id -u)"
+      if [ "$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE" = 1 ]; then
+        sudo -n launchctl bootout "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL"
+        wait_for_system_launchd_job_unloaded "$DARWIN_SYSTEM_SUPERVISOR_LABEL"
+      fi
       launchctl bootout "gui/$uid/$MAC_AGENT_LAUNCHD_LABEL" >/dev/null 2>&1 || true
       launchctl bootout "gui/$uid/$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
       launchctl bootout "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
       launchctl bootout "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+      if [ "$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ] \
+        && launchctl print "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1; then
+        log "ERROR: GUI control-plane job remained loaded after bootout"
+        return 1
+      fi
+      if [ "$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ]; then
+        sudo -n launchctl bootout "system/$MAC_LAUNCHD_LABEL"
+        wait_for_system_launchd_job_unloaded "$MAC_LAUNCHD_LABEL"
+      fi
+      if control_plane_enabled \
+        || [ "$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ] \
+        || [ "$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ]; then
+        wait_for_local_control_plane_stop
+      fi
       ;;
   esac
 }
@@ -3681,6 +3971,7 @@ log "selected supervisor: $SUPERVISOR_KIND (requested: ${SUPERVISOR_REQUESTED:-a
 disk_hygiene_report "before-cleanup" "$LOG_DIR/disk-before-cleanup-${DEPLOY_TS}.json"
 cleanup_obsolete_deploy_artifacts
 disk_hygiene_report "after-cleanup" "$LOG_DIR/disk-after-cleanup-${DEPLOY_TS}.json"
+capture_darwin_launchd_prestate
 write_deploy_manifest "pre" "$MANIFEST_PRE"
 # Resolve and verify repository auth before draining the worker or replacing
 # source, so a missing required credential leaves the existing node untouched.
@@ -5352,18 +5643,17 @@ EOF
 }
 
 install_darwin_service() {
-  local uid plist wrapper
+  local uid plist wrapper system_plist system_plist_staging system_plist_tmp system_supervisor_plist
   uid="$(id -u)"
   plist="$HOME/Library/LaunchAgents/${MAC_LAUNCHD_LABEL}.plist"
   wrapper="$MAC_HOME/bin/mac-service"
+  system_plist="/Library/LaunchDaemons/${MAC_LAUNCHD_LABEL}.plist"
+  system_plist_staging="$LOG_DIR/${MAC_LAUNCHD_LABEL}.${DEPLOY_TS}.system.plist"
+  system_plist_tmp="/Library/LaunchDaemons/.${MAC_LAUNCHD_LABEL}.${DEPLOY_TS}.tmp"
+  system_supervisor_plist="/Library/LaunchDaemons/${DARWIN_SYSTEM_SUPERVISOR_LABEL}.plist"
   install_hermes_gateway_wrapper
   install_mac_agent_wrapper
   mkdir -p "$MAC_HOME/bin" "$HOME/Library/LaunchAgents"
-  if [ -f "$plist" ]; then
-    MAC_PLIST_BACKUP="$MAC_HOME/backups/${MAC_LAUNCHD_LABEL}.${AGENT}.${DEPLOY_TS}.plist"
-    cp -f "$plist" "$MAC_PLIST_BACKUP"
-    write_rollback_script
-  fi
   if control_plane_enabled; then
     cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
@@ -5376,17 +5666,23 @@ export HERMES_REDACT_SECRETS=true
 exec "$HOME/.mac/venv/bin/uvicorn" mac.api:create_app --factory --host "${MAC_BIND_HOST:-127.0.0.1}" --port "${MAC_PORT:-8789}" --workers 1 --log-level info
 EOF
     chmod 700 "$wrapper"
-    cat > "$plist" <<EOF
+    log "installing headless system launchd control plane $MAC_LAUNCHD_LABEL"
+    cat > "$system_plist_staging" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$MAC_LAUNCHD_LABEL</string>
+  <key>UserName</key><string>$(id -un)</string>
+  <key>GroupName</key><string>$(id -gn)</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>HOME</key><string>$HOME</string></dict>
   <key>ProgramArguments</key>
   <array><string>$wrapper</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
   <key>WorkingDirectory</key><string>$MAC_HOME</string>
   <key>StandardOutPath</key><string>$LOG_DIR/mac-service.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/mac-service.log</string>
@@ -5394,23 +5690,42 @@ EOF
 </plist>
 EOF
     if command -v plutil >/dev/null 2>&1; then
-      plutil -lint "$plist"
+      plutil -lint "$system_plist_staging"
     fi
-    launchctl bootout "gui/$uid" "$plist" >/dev/null 2>&1 || true
-    launchctl bootout "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    sudo -n rm -f "$system_plist_tmp"
+    sudo -n install -o root -g wheel -m 0644 "$system_plist_staging" "$system_plist_tmp"
+    sudo -n plutil -lint "$system_plist_tmp"
+    sudo -n mv -f "$system_plist_tmp" "$system_plist"
+    rm -f "$system_plist_staging" "$plist"
     : > "$LOG_DIR/mac-service.log"
-    launchctl enable "gui/$uid/$MAC_LAUNCHD_LABEL"
-    if ! launchctl bootstrap "gui/$uid" "$plist"; then
-      launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
+    sudo -n launchctl enable "system/$MAC_LAUNCHD_LABEL"
+    sudo -n launchctl bootstrap system "$system_plist"
+    sudo -n launchctl kickstart -k "system/$MAC_LAUNCHD_LABEL"
+    sudo -n launchctl print "system/$MAC_LAUNCHD_LABEL" >/dev/null
+    if launchctl print "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1; then
+      log "ERROR: duplicate GUI control-plane job is still loaded"
+      return 1
     fi
-    launchctl kickstart -k "gui/$uid/$MAC_LAUNCHD_LABEL"
-    sleep 3
-    launchctl list "$MAC_LAUNCHD_LABEL" || true
+    wait_for_local_control_plane_health
+    if [ "$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE" = 1 ]; then
+      if ! sudo -n cmp -s "$DARWIN_SYSTEM_SUPERVISOR_PLIST_BACKUP" "$system_supervisor_plist"; then
+        log "ERROR: system supervisor plist changed during deployment"
+        return 1
+      fi
+      sudo -n launchctl bootstrap system "$system_supervisor_plist"
+      sudo -n launchctl kickstart -k "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL"
+      sudo -n launchctl print "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL" >/dev/null
+      sudo -n launchctl print "system/$MAC_LAUNCHD_LABEL" >/dev/null
+      wait_for_local_control_plane_health
+    fi
     escrow_router_provider_keys
   else
     log "spoke role: removing stale local control-plane launchd service"
     launchctl bootout "gui/$uid" "$plist" >/dev/null 2>&1 || true
     launchctl bootout "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    sudo -n launchctl bootout "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL" >/dev/null 2>&1 || true
+    sudo -n launchctl bootout "system/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    sudo -n rm -f "$system_supervisor_plist" "$system_plist"
     rm -f "$plist" "$wrapper"
     : > "$LOG_DIR/mac-service-not-installed.txt"
   fi
