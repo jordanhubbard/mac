@@ -208,3 +208,126 @@ def test_commit_dirty_worktree_is_idempotent_noop_when_clean(tmp_path: Path):
 
     assert problems == []
     assert head_after_first == head_after_second
+
+
+def test_staged_new_files_are_committed_before_dirty_gate(tmp_path: Path):
+    """A STAGED-BUT-NOT-COMMITTED new file (added to the index but never
+    committed) must also be committed by the finalizer before the dirty gate,
+    so it does not trip "repository worktree has uncommitted changes" and waste
+    an attempt on an otherwise-successful task."""
+    worktree = _init_worktree(tmp_path)
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    _write_task(task_dir, "task_staged")
+    _write_context(task_dir, worktree)
+
+    base_head = _git(worktree, "rev-parse", "HEAD")
+    # The agent created a NEW file and staged it, but never committed it.
+    (worktree / "staged_module.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(worktree, "add", "staged_module.py")
+    # Sanity: the file is staged-new (index add) and not yet committed.
+    porcelain = _git(worktree, "status", "--porcelain")
+    assert porcelain.startswith("A  ") and "staged_module.py" in porcelain
+
+    manifest = _manifest(base_head)
+    (task_dir / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+    w = _make_worker(tmp_path)
+    evidence = {"metadata": {"verification": manifest["verification"]}}
+    problems = w._execution_submission_problems(task_dir, evidence)
+
+    assert "repository worktree has uncommitted changes" not in problems
+    assert not any("head_sha does not match" in p for p in problems)
+    # The staged file was committed and the worktree is now clean.
+    assert _git(worktree, "status", "--porcelain") == ""
+    new_head = _git(worktree, "rev-parse", "HEAD")
+    assert new_head != base_head
+    tracked = _git(worktree, "ls-files")
+    assert "staged_module.py" in tracked
+    on_disk = json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert on_disk["repo"]["head_sha"] == new_head
+
+
+def test_mixed_untracked_staged_and_modified_are_committed_together(tmp_path: Path):
+    """A mix of an untracked new file + a staged-new file + a modified tracked
+    file must all be committed together in a SINGLE finalizer commit, so no
+    class of change is left behind to trip the dirty gate."""
+    worktree = _init_worktree(tmp_path)
+    task_dir = tmp_path / "task"
+    task_dir.mkdir()
+    _write_task(task_dir, "task_mixed")
+    _write_context(task_dir, worktree)
+
+    base_head = _git(worktree, "rev-parse", "HEAD")
+    # Untracked new file (never added).
+    (worktree / "untracked_module.py").write_text("U = 1\n", encoding="utf-8")
+    # Staged-new file (added to the index, not committed).
+    (worktree / "staged_module.py").write_text("S = 1\n", encoding="utf-8")
+    _git(worktree, "add", "staged_module.py")
+    # Modified tracked file (edited, uncommitted).
+    (worktree / "existing.txt").write_text("edited\n", encoding="utf-8")
+
+    manifest = _manifest(base_head)
+    (task_dir / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+    w = _make_worker(tmp_path)
+    evidence = {"metadata": {"verification": manifest["verification"]}}
+    problems = w._execution_submission_problems(task_dir, evidence)
+
+    assert "repository worktree has uncommitted changes" not in problems
+    assert not any("head_sha does not match" in p for p in problems)
+    # Everything committed; worktree clean afterwards.
+    assert _git(worktree, "status", "--porcelain") == ""
+    new_head = _git(worktree, "rev-parse", "HEAD")
+    assert new_head != base_head
+    # Exactly ONE new commit on top of base (single synchronized commit).
+    count = _git(worktree, "rev-list", "--count", "%s..%s" % (base_head, new_head))
+    assert count == "1"
+    # All three changes landed in that single commit.
+    committed = _git(worktree, "show", "--name-only", "--format=", new_head).split()
+    assert "untracked_module.py" in committed
+    assert "staged_module.py" in committed
+    assert "existing.txt" in committed
+    on_disk = json.loads((task_dir / "mac-evidence.json").read_text(encoding="utf-8"))
+    assert on_disk["repo"]["head_sha"] == new_head
+
+
+def test_split_repository_porcelain_status_classifies_lines():
+    """`_split_repository_porcelain_status` must classify porcelain lines into
+    (tracked, untracked, staged_new) consistently with how the finalizer commits
+    each class: untracked ("?? "), staged-new ("A "/"C " without rename), and
+    other tracked modifications."""
+    status_text = (
+        "?? untracked_module.py\n"
+        "A  staged_new.py\n"
+        "C  copied_new.py\n"
+        " M modified_tracked.txt\n"
+        "M  staged_modified.txt\n"
+        "R  old.txt -> renamed.txt\n"
+    )
+    tracked_lines, untracked_paths, staged_new_paths = (
+        worker._split_repository_porcelain_status(status_text)
+    )
+
+    assert untracked_paths == ["untracked_module.py"]
+    # Additions/copies without a rename marker are staged-new.
+    assert "staged_new.py" in staged_new_paths
+    assert "copied_new.py" in staged_new_paths
+    # A rename is a tracked change, not a staged-new addition.
+    assert all("renamed.txt" != p and "old.txt -> renamed.txt" != p for p in staged_new_paths)
+    # Everything that is not an untracked ("?? ") line is a tracked line.
+    assert "A  staged_new.py"[3:] not in untracked_paths
+    for expected_tracked in (
+        "A  staged_new.py",
+        "C  copied_new.py",
+        " M modified_tracked.txt",
+        "M  staged_modified.txt",
+        "R  old.txt -> renamed.txt",
+    ):
+        assert expected_tracked in tracked_lines
+    # The untracked line is NOT counted among tracked lines.
+    assert "?? untracked_module.py" not in tracked_lines
