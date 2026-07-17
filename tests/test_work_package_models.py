@@ -737,3 +737,254 @@ def test_effect_conflicts_encode_parallel_safety_rules() -> None:
     assert work_package_effect_conflicts(repository_lock, path_writer) == [
         "exclusive:repo:mac~src/api"
     ]
+
+
+# ---------------------------------------------------------------------------
+# Controller-owned composed-base station receipts
+# ---------------------------------------------------------------------------
+
+from mac.work_package_models import (  # noqa: E402
+    WorkPackageComposedBasePredecessor,
+    composed_base_lineage_digest,
+)
+
+
+def _composed_base_plan() -> dict:
+    """A staged plan where mutation ``backend`` composes mutation ``base``."""
+
+    return {
+        "schema": WORK_PACKAGE_PLAN_SCHEMA,
+        "package_id": "wp_composed",
+        "goal": "Stage a mutation on a composed predecessor",
+        "repository_id": "repo_composed",
+        "planning_base_ref": "refs/heads/main",
+        "planning_base_sha": "a" * 40,
+        "plan_generation": 1,
+        "nodes": [
+            {
+                "node_id": "base",
+                "title": "First mutation",
+                "node_type": "mutation",
+                "effects": {"writes": ["src/base"]},
+                "expected_outputs": ["base-patch"],
+                "verification": {"profile": "repository-default"},
+                "scope_confidence": 0.9,
+            },
+            {
+                "node_id": "backend",
+                "title": "Mutation on composed base",
+                "node_type": "mutation",
+                "depends_on": ["base"],
+                "effects": {"writes": ["src/backend"]},
+                "expected_outputs": ["backend-patch"],
+                "verification": {"profile": "repository-default"},
+                "scope_confidence": 0.9,
+            },
+        ],
+    }
+
+
+def _receipt(*, covers: list[str], **overrides) -> dict:
+    predecessors = [
+        WorkPackageComposedBasePredecessor(
+            node_key=key,
+            candidate_id="cand_%s" % key,
+            ref="refs/wp/candidate/%s" % key,
+            commit=str(index + 1) * 40,
+            tree=str(index + 5) * 40,
+        )
+        for index, key in enumerate(covers)
+    ]
+    merge_order = tuple(covers)
+    composed_base_ref = overrides.get(
+        "composed_base_ref", "refs/wp/composed-base/station-1"
+    )
+    composed_base_sha = overrides.get("composed_base_sha", "b" * 40)
+    merge_strategy = overrides.get("merge_strategy", "ort")
+    plan_version = overrides.get("plan_version", 1)
+    epoch = overrides.get("epoch", 7)
+    owner_fence = overrides.get("owner_fence", "controller:fence:1")
+    lineage_digest = composed_base_lineage_digest(
+        composed_base_ref=composed_base_ref,
+        composed_base_sha=composed_base_sha,
+        merge_strategy=merge_strategy,
+        merge_order=merge_order,
+        predecessors=tuple(predecessors),
+        plan_version=plan_version,
+        epoch=epoch,
+        owner_fence=owner_fence,
+    )
+    receipt = {
+        "station_id": overrides.get("station_id", "station-1"),
+        "composed_base_ref": composed_base_ref,
+        "composed_base_sha": composed_base_sha,
+        "merge_strategy": merge_strategy,
+        "merge_order": list(merge_order),
+        "predecessors": [item.to_dict() for item in predecessors],
+        "plan_version": plan_version,
+        "epoch": epoch,
+        "owner_fence": owner_fence,
+        "recovery": overrides.get("recovery", "none"),
+        "lineage_digest": overrides.get("lineage_digest", lineage_digest),
+    }
+    return receipt
+
+
+def test_composed_base_receipt_relaxes_flat_mutation_wave() -> None:
+    raw = _composed_base_plan()
+    with pytest.raises(ValidationError, match="flat mutation wave"):
+        compile_work_package_plan(raw)
+
+    raw["composed_bases"] = [_receipt(covers=["base"])]
+    compiled = compile_work_package_plan(raw)
+    assert "composed_bases" in compiled.definition
+    assert compiled.definition["composed_bases"][0]["station_id"] == "station-1"
+    # The compiled definition still fences on the persisted revalidation path.
+    validate_supported_work_package_topology(compiled.definition)
+
+
+def test_composed_base_lineage_digest_is_deterministic() -> None:
+    raw = _composed_base_plan()
+    raw["composed_bases"] = [_receipt(covers=["base"])]
+    first = compile_work_package_plan(raw)
+    second = compile_work_package_plan(copy.deepcopy(raw))
+    assert first.plan_digest == second.plan_digest
+    assert first.definition == second.definition
+
+
+def test_composed_base_receipt_rejects_tampered_lineage_digest() -> None:
+    raw = _composed_base_plan()
+    raw["composed_bases"] = [
+        _receipt(covers=["base"], lineage_digest="sha256:" + "0" * 64)
+    ]
+    with pytest.raises(ValidationError, match="lineage_digest does not match"):
+        compile_work_package_plan(raw)
+
+
+def test_composed_base_receipt_rejects_altered_readback_sha() -> None:
+    raw = _composed_base_plan()
+    receipt = _receipt(covers=["base"])
+    # Rewrite the protected read-back SHA without recomputing the digest.
+    receipt["composed_base_sha"] = "c" * 40
+    raw["composed_bases"] = [receipt]
+    with pytest.raises(ValidationError, match="lineage_digest does not match"):
+        compile_work_package_plan(raw)
+
+
+def test_composed_base_receipt_requires_exact_frontier_coverage() -> None:
+    raw = _composed_base_plan()
+    # ``backend`` has repository ancestor frontier {base}.  A receipt that also
+    # lists ``backend`` (a descendant of ``base``) is not an antichain and must
+    # be rejected so the station never double-merges an absorbed lineage.
+    raw["composed_bases"] = [_receipt(covers=["base", "backend"])]
+    with pytest.raises(ValidationError, match="antichain"):
+        compile_work_package_plan(raw)
+
+
+def test_composed_base_receipt_partial_frontier_still_fenced() -> None:
+    # Two independent mutation leaves fanned into an integration, then a further
+    # mutation staged on the integration candidate.  Its repository ancestor
+    # frontier is {left, right, assemble}; a receipt that covers only part of
+    # it does not relax the fence.
+    raw = {
+        "schema": WORK_PACKAGE_PLAN_SCHEMA,
+        "package_id": "wp_partial",
+        "goal": "Partial composed frontier",
+        "repository_id": "repo_partial",
+        "planning_base_ref": "refs/heads/main",
+        "planning_base_sha": "a" * 40,
+        "plan_generation": 1,
+        "nodes": [
+            {
+                "node_id": "left",
+                "title": "left mutation",
+                "node_type": "mutation",
+                "effects": {"writes": ["src/left"]},
+                "expected_outputs": ["left-patch"],
+                "verification": {"profile": "repository-default"},
+                "scope_confidence": 0.9,
+            },
+            {
+                "node_id": "right",
+                "title": "right mutation",
+                "node_type": "mutation",
+                "effects": {"writes": ["src/right"]},
+                "expected_outputs": ["right-patch"],
+                "verification": {"profile": "repository-default"},
+                "scope_confidence": 0.9,
+            },
+            {
+                "node_id": "assemble",
+                "title": "fan-in",
+                "kind": "integration",
+                "depends_on": ["left", "right"],
+                "expected_outputs": ["assemble-candidate"],
+                "verification": {"profile": "integration-default"},
+            },
+            {
+                "node_id": "staged",
+                "title": "mutation on composed base",
+                "node_type": "mutation",
+                "depends_on": ["assemble"],
+                "effects": {"writes": ["src/staged"]},
+                "expected_outputs": ["staged-patch"],
+                "verification": {"profile": "repository-default"},
+                "scope_confidence": 0.9,
+            },
+        ],
+    }
+    # Merging only one leaf leaves ``right`` and ``assemble`` uncovered, so the
+    # exact frontier {assemble, left, right} is not matched and the staged
+    # mutation stays fenced.
+    raw["composed_bases"] = [_receipt(covers=["left"])]
+    with pytest.raises(ValidationError, match="flat mutation wave"):
+        compile_work_package_plan(raw)
+
+    # Merging the integration candidate absorbs the whole antichain frontier
+    # (assemble transitively absorbs left and right), which relaxes the fence.
+    raw["composed_bases"] = [_receipt(covers=["assemble"])]
+    compiled = compile_work_package_plan(raw)
+    assert sorted(compiled.definition["composed_bases"][0]["covers"]) == [
+        "assemble",
+        "left",
+        "right",
+    ]
+
+
+def test_composed_base_receipt_rejects_non_repository_predecessor() -> None:
+    raw = _plan()
+    # ``contract`` is an analysis node, not a repository-producing candidate.
+    receipt = _receipt(covers=["contract"])
+    raw["composed_bases"] = [receipt]
+    with pytest.raises(ValidationError, match="not a repository-producing"):
+        compile_work_package_plan(raw)
+
+
+def test_composed_base_receipt_requires_crash_recovery_marker() -> None:
+    raw = _composed_base_plan()
+    receipt = _receipt(covers=["base"], recovery="bogus")
+    raw["composed_bases"] = [receipt]
+    with pytest.raises(ValidationError, match="recovery must be one of"):
+        compile_work_package_plan(raw)
+
+
+def test_composed_base_receipt_rejects_duplicate_protected_ref() -> None:
+    raw = _composed_base_plan()
+    receipt_a = _receipt(covers=["base"], station_id="station-a")
+    receipt_b = _receipt(covers=["base"], station_id="station-b")
+    raw["composed_bases"] = [receipt_a, receipt_b]
+    with pytest.raises(ValidationError, match="duplicate protected composed_base_ref"):
+        compile_work_package_plan(raw)
+
+
+def test_composed_base_receipt_survives_persisted_revalidation() -> None:
+    raw = _composed_base_plan()
+    raw["composed_bases"] = [_receipt(covers=["base"])]
+    definition = compile_work_package_plan(raw).definition
+    # Revalidation with the receipt present is accepted...
+    validate_supported_work_package_topology(definition)
+    # ...but stripping the receipt re-arms the flat mutation-wave fence.
+    stripped = copy.deepcopy(definition)
+    stripped.pop("composed_bases")
+    with pytest.raises(ValidationError, match="flat mutation wave"):
+        validate_supported_work_package_topology(stripped)

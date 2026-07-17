@@ -52,6 +52,7 @@ _TOP_LEVEL_FIELDS = {
     "max_mutation_wip",
     "mutation_wip",
     "integration",
+    "composed_bases",
     "metadata",
     "nodes",
 }
@@ -101,6 +102,71 @@ class WorkPackageEffects:
             "exclusive": list(self.exclusive),
             "external": list(self.external),
             "external_contract": _copy_json_object(self.external_contract or {}),
+        }
+
+
+@dataclass(frozen=True)
+class WorkPackageComposedBasePredecessor:
+    """One predecessor candidate bound into a composed-base station."""
+
+    node_key: str
+    candidate_id: str
+    ref: str
+    commit: str
+    tree: str
+
+    def to_dict(self) -> JsonDict:
+        return {
+            "node_key": self.node_key,
+            "candidate_id": self.candidate_id,
+            "ref": self.ref,
+            "commit": self.commit,
+            "tree": self.tree,
+        }
+
+
+@dataclass(frozen=True)
+class WorkPackageComposedBase:
+    """A controller-owned composed-base station receipt.
+
+    The station is the only sanctioned way to extend a managed work package
+    beyond the flat mutation-wave envelope.  A controller composes one or more
+    predecessor candidates into a protected, read-back base ref and records an
+    append-only receipt.  Mutation nodes may then execute from that composed
+    base without the executor having to reproduce an unattested repository
+    lineage.  The receipt is deterministic and self-verifying: the recorded
+    ``lineage_digest`` is a pure function of the composed predecessors, the
+    deterministic merge order/strategy, and the protected read-back SHA, so an
+    offline auditor can recompute and confirm it byte-for-byte.
+    """
+
+    station_id: str
+    composed_base_ref: str
+    composed_base_sha: str
+    merge_strategy: str
+    merge_order: Tuple[str, ...]
+    predecessors: Tuple[WorkPackageComposedBasePredecessor, ...]
+    covers: Tuple[str, ...]
+    plan_version: int
+    epoch: int
+    owner_fence: str
+    recovery: str
+    lineage_digest: str
+
+    def to_dict(self) -> JsonDict:
+        return {
+            "station_id": self.station_id,
+            "composed_base_ref": self.composed_base_ref,
+            "composed_base_sha": self.composed_base_sha,
+            "merge_strategy": self.merge_strategy,
+            "merge_order": list(self.merge_order),
+            "predecessors": [item.to_dict() for item in self.predecessors],
+            "covers": list(self.covers),
+            "plan_version": self.plan_version,
+            "epoch": self.epoch,
+            "owner_fence": self.owner_fence,
+            "recovery": self.recovery,
+            "lineage_digest": self.lineage_digest,
         }
 
 
@@ -277,7 +343,10 @@ def compile_work_package_plan(raw: Mapping[str, Any]) -> CompiledWorkPackagePlan
                 )
 
     order = _topological_order(parsed)
-    _validate_flat_mutation_wave(parsed, order)
+    composed_bases = _normalize_composed_bases(
+        raw.get("composed_bases"), parsed, _ancestor_sets(parsed, order)
+    )
+    _validate_flat_mutation_wave(parsed, order, composed_bases)
     _validate_integration_fan_in(parsed, order)
     _validate_external_waves(parsed, order)
     digested: Dict[str, WorkPackageNodeSpec] = {}
@@ -346,6 +415,10 @@ def compile_work_package_plan(raw: Mapping[str, Any]) -> CompiledWorkPackagePlan
         "metadata": metadata,
         "nodes": [node.to_dict() for node in ordered_nodes],
     }
+    if composed_bases:
+        definition["composed_bases"] = [
+            receipt.to_dict() for receipt in composed_bases
+        ]
     levels = _topological_levels(ordered_nodes)
     critical_path_rank = _critical_path_ranks(ordered_nodes, order)
     conflict_domains = _conflict_domains(ordered_nodes)
@@ -450,7 +523,10 @@ def validate_supported_work_package_topology(definition: Mapping[str, Any]) -> N
                     % (node.node_key, dependency)
                 )
     order = _topological_order(parsed)
-    _validate_flat_mutation_wave(parsed, order)
+    composed_bases = _normalize_composed_bases(
+        definition.get("composed_bases"), parsed, _ancestor_sets(parsed, order)
+    )
+    _validate_flat_mutation_wave(parsed, order, composed_bases)
 
 
 def validate_executable_work_package_effects(
@@ -1462,29 +1538,339 @@ def _ancestor_sets(
     return ancestors
 
 
+_COMPOSED_BASE_MERGE_STRATEGIES = frozenset(
+    {"ort", "recursive", "octopus", "rebase", "squash"}
+)
+_COMPOSED_BASE_RECOVERY_MODES = frozenset({"none", "resume", "recompose"})
+_COMPOSED_BASE_FIELDS = frozenset(
+    {
+        "station_id",
+        "composed_base_ref",
+        "composed_base_sha",
+        "merge_strategy",
+        "merge_order",
+        "predecessors",
+        "covers",
+        "plan_version",
+        "epoch",
+        "owner_fence",
+        "recovery",
+        "lineage_digest",
+    }
+)
+_COMPOSED_BASE_PREDECESSOR_FIELDS = frozenset(
+    {"node_key", "candidate_id", "ref", "commit", "tree"}
+)
+
+
+def composed_base_lineage_digest(
+    *,
+    composed_base_ref: str,
+    composed_base_sha: str,
+    merge_strategy: str,
+    merge_order: Tuple[str, ...],
+    predecessors: Tuple[WorkPackageComposedBasePredecessor, ...],
+    plan_version: int,
+    epoch: int,
+    owner_fence: str,
+) -> str:
+    """Deterministic lineage digest binding every attested station input.
+
+    The digest deliberately excludes ``covers`` and the receipt's own
+    ``lineage_digest`` so it is a pure function of the composed repository
+    state and its provenance.  Any change to a predecessor candidate, the
+    protected read-back SHA, the deterministic merge order/strategy, the plan
+    version, epoch, or owner fence yields a different digest, which lets any
+    auditor recompute and confirm the receipt offline.
+    """
+
+    payload = {
+        "composed_base_ref": composed_base_ref,
+        "composed_base_sha": composed_base_sha,
+        "merge_strategy": merge_strategy,
+        "merge_order": list(merge_order),
+        "predecessors": [
+            {
+                "node_key": item.node_key,
+                "candidate_id": item.candidate_id,
+                "ref": item.ref,
+                "commit": item.commit,
+                "tree": item.tree,
+            }
+            for item in predecessors
+        ],
+        "plan_version": plan_version,
+        "epoch": epoch,
+        "owner_fence": owner_fence,
+    }
+    return _digest(payload)
+
+
+def _parse_composed_base_predecessor(
+    raw: Any, *, path: str
+) -> WorkPackageComposedBasePredecessor:
+    if not isinstance(raw, Mapping):
+        raise ValidationError("%s must be an object" % path)
+    unknown = sorted(set(raw) - _COMPOSED_BASE_PREDECESSOR_FIELDS)
+    if unknown:
+        raise ValidationError(
+            "%s contains unknown fields: %s" % (path, ", ".join(unknown))
+        )
+    return WorkPackageComposedBasePredecessor(
+        node_key=_required_string(
+            raw.get("node_key"), "%s.node_key" % path, maximum=64
+        ),
+        candidate_id=_required_string(
+            raw.get("candidate_id"), "%s.candidate_id" % path, maximum=240
+        ),
+        ref=_normalize_ref(raw.get("ref"), "%s.ref" % path),
+        commit=_normalize_sha(raw.get("commit"), "%s.commit" % path),
+        tree=_normalize_sha(raw.get("tree"), "%s.tree" % path),
+    )
+
+
+def _normalize_composed_bases(
+    raw: Any,
+    nodes: Mapping[str, WorkPackageNodeSpec],
+    ancestors: Mapping[str, set[str]],
+) -> Tuple[WorkPackageComposedBase, ...]:
+    """Validate the append-only composed-base station receipts of a plan.
+
+    The receipts are controller-owned and append-only: this pure validator
+    never invents one, it only confirms each carries an internally consistent,
+    self-verifying attestation and covers a real antichain frontier of
+    repository-producing candidate nodes.  A crash-recovery marker is required
+    so a partially composed station is never silently promoted to authoritative.
+    """
+
+    path = "work package plan.composed_bases"
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValidationError("%s must be a list" % path)
+    if len(raw) > WORK_PACKAGE_MAX_NODES:
+        raise ValidationError(
+            "%s may contain at most %d receipts" % (path, WORK_PACKAGE_MAX_NODES)
+        )
+    repository_types = {"mutation", "integration"}
+    seen_stations: set[str] = set()
+    seen_refs: set[str] = set()
+    receipts: List[WorkPackageComposedBase] = []
+    for index, item in enumerate(raw):
+        item_path = "%s[%d]" % (path, index)
+        if not isinstance(item, Mapping):
+            raise ValidationError("%s must be an object" % item_path)
+        unknown = sorted(set(item) - _COMPOSED_BASE_FIELDS)
+        if unknown:
+            raise ValidationError(
+                "%s contains unknown fields: %s" % (item_path, ", ".join(unknown))
+            )
+        station_id = _required_string(
+            item.get("station_id"), "%s.station_id" % item_path, maximum=240
+        )
+        if station_id in seen_stations:
+            raise ValidationError(
+                "%s duplicate composed-base station_id: %s"
+                % (item_path, station_id)
+            )
+        seen_stations.add(station_id)
+        composed_base_ref = _normalize_ref(
+            item.get("composed_base_ref"), "%s.composed_base_ref" % item_path
+        )
+        if composed_base_ref in seen_refs:
+            raise ValidationError(
+                "%s duplicate protected composed_base_ref: %s"
+                % (item_path, composed_base_ref)
+            )
+        seen_refs.add(composed_base_ref)
+        composed_base_sha = _normalize_sha(
+            item.get("composed_base_sha"), "%s.composed_base_sha" % item_path
+        )
+        merge_strategy = _required_string(
+            item.get("merge_strategy"), "%s.merge_strategy" % item_path, maximum=40
+        )
+        if merge_strategy not in _COMPOSED_BASE_MERGE_STRATEGIES:
+            raise ValidationError(
+                "%s.merge_strategy must be one of: %s"
+                % (item_path, ", ".join(sorted(_COMPOSED_BASE_MERGE_STRATEGIES)))
+            )
+        recovery = _required_string(
+            item.get("recovery") or "none", "%s.recovery" % item_path, maximum=40
+        )
+        if recovery not in _COMPOSED_BASE_RECOVERY_MODES:
+            raise ValidationError(
+                "%s.recovery must be one of: %s"
+                % (item_path, ", ".join(sorted(_COMPOSED_BASE_RECOVERY_MODES)))
+            )
+        owner_fence = _required_string(
+            item.get("owner_fence"), "%s.owner_fence" % item_path, maximum=240
+        )
+        plan_version = _bounded_int(
+            item.get("plan_version"),
+            "%s.plan_version" % item_path,
+            minimum=1,
+            maximum=2_147_483_647,
+        )
+        epoch = _bounded_int(
+            item.get("epoch"),
+            "%s.epoch" % item_path,
+            minimum=0,
+            maximum=2_147_483_647,
+        )
+        raw_predecessors = item.get("predecessors")
+        if not isinstance(raw_predecessors, list) or not raw_predecessors:
+            raise ValidationError(
+                "%s.predecessors must be a non-empty list" % item_path
+            )
+        predecessors: List[WorkPackageComposedBasePredecessor] = []
+        predecessor_keys: List[str] = []
+        for predecessor_index, raw_predecessor in enumerate(raw_predecessors):
+            predecessor = _parse_composed_base_predecessor(
+                raw_predecessor,
+                path="%s.predecessors[%d]" % (item_path, predecessor_index),
+            )
+            if predecessor.node_key not in nodes:
+                raise ValidationError(
+                    "%s.predecessors references unknown node_key: %s"
+                    % (item_path, predecessor.node_key)
+                )
+            if nodes[predecessor.node_key].node_type not in repository_types:
+                raise ValidationError(
+                    "%s.predecessors node %s is not a repository-producing "
+                    "candidate" % (item_path, predecessor.node_key)
+                )
+            if predecessor.node_key in predecessor_keys:
+                raise ValidationError(
+                    "%s.predecessors has duplicate node_key: %s"
+                    % (item_path, predecessor.node_key)
+                )
+            predecessor_keys.append(predecessor.node_key)
+            predecessors.append(predecessor)
+        # Deterministic merge order must be a permutation of the predecessors.
+        raw_order = item.get("merge_order")
+        if raw_order is None:
+            merge_order = tuple(sorted(predecessor_keys))
+        else:
+            merge_order = _string_tuple(
+                raw_order, "%s.merge_order" % item_path, maximum=WORK_PACKAGE_MAX_NODES
+            )
+        if sorted(merge_order) != sorted(predecessor_keys):
+            raise ValidationError(
+                "%s.merge_order must be a permutation of the composed "
+                "predecessors" % item_path
+            )
+        # Ordered predecessors follow the deterministic merge order.
+        by_key = {predecessor.node_key: predecessor for predecessor in predecessors}
+        ordered_predecessors = tuple(by_key[key] for key in merge_order)
+        # The merged predecessors must be an antichain: no merged candidate may
+        # be a repository ancestor of another merged candidate, else the station
+        # would double-merge a lineage one predecessor already absorbs.
+        merged = set(predecessor_keys)
+        for key in predecessor_keys:
+            repo_overlap = sorted(
+                other
+                for other in (ancestors.get(key, set()) & merged) - {key}
+                if nodes[other].node_type in repository_types
+            )
+            if repo_overlap:
+                raise ValidationError(
+                    "%s composed predecessors must form an antichain: %s already "
+                    "absorbs %s" % (item_path, key, ", ".join(repo_overlap))
+                )
+        # The station *covers* the transitive repository lineage absorbed by the
+        # merged antichain: each merged predecessor plus every repository-
+        # producing candidate it descends from within the plan.  This is the
+        # exact frontier a downstream mutation must present to be relaxed.
+        covered = set(merged)
+        for key in predecessor_keys:
+            covered.update(
+                ancestor
+                for ancestor in ancestors.get(key, set())
+                if nodes[ancestor].node_type in repository_types
+            )
+        covers = tuple(sorted(covered))
+        if "covers" in item:
+            supplied_covers = _string_tuple(
+                item.get("covers"), "%s.covers" % item_path, maximum=WORK_PACKAGE_MAX_NODES
+            )
+            if tuple(sorted(supplied_covers)) != covers:
+                raise ValidationError(
+                    "%s.covers must equal the transitive repository frontier of "
+                    "the merged predecessors: expected %s"
+                    % (item_path, ", ".join(covers))
+                )
+        expected_digest = composed_base_lineage_digest(
+            composed_base_ref=composed_base_ref,
+            composed_base_sha=composed_base_sha,
+            merge_strategy=merge_strategy,
+            merge_order=merge_order,
+            predecessors=ordered_predecessors,
+            plan_version=plan_version,
+            epoch=epoch,
+            owner_fence=owner_fence,
+        )
+        lineage_digest = _normalize_sha256_digest(
+            item.get("lineage_digest"), "%s.lineage_digest" % item_path
+        )
+        if lineage_digest != expected_digest:
+            raise ValidationError(
+                "%s.lineage_digest does not match the attested composed base; "
+                "expected %s" % (item_path, expected_digest)
+            )
+        receipts.append(
+            WorkPackageComposedBase(
+                station_id=station_id,
+                composed_base_ref=composed_base_ref,
+                composed_base_sha=composed_base_sha,
+                merge_strategy=merge_strategy,
+                merge_order=merge_order,
+                predecessors=ordered_predecessors,
+                covers=covers,
+                plan_version=plan_version,
+                epoch=epoch,
+                owner_fence=owner_fence,
+                recovery=recovery,
+                lineage_digest=lineage_digest,
+            )
+        )
+    return tuple(receipts)
+
+
 def _validate_flat_mutation_wave(
-    nodes: Mapping[str, WorkPackageNodeSpec], order: Tuple[str, ...]
+    nodes: Mapping[str, WorkPackageNodeSpec],
+    order: Tuple[str, ...],
+    composed_bases: Tuple[WorkPackageComposedBase, ...] = (),
 ) -> None:
     """Reject mutation bases that the current executor cannot reproduce safely.
 
-    Worker assignments are pinned to the epoch planning base.  Until a
-    controller-owned composition station can create and attest an immutable
-    predecessor base before claim, a mutation must not consume any earlier
-    mutation or integration candidate.  The check is transitive so an
-    analysis/certification node cannot hide an unsupported repository lineage.
+    Worker assignments are pinned to the epoch planning base.  A mutation must
+    not consume any earlier mutation or integration candidate *unless* a
+    controller-owned composed-base station has already composed exactly those
+    predecessor candidates into an attested, protected, read-back base ref.
+    When such a receipt exists, the mutation's repository-producing ancestor
+    frontier is covered and the mutation may execute from the composed base;
+    otherwise every mutation must still execute from the epoch planning base.
+    The check is transitive so an analysis/certification node cannot hide an
+    unsupported repository lineage, and it is exact: a receipt that covers only
+    part of the ancestor frontier does not relax the fence.
     """
 
     ancestors = _ancestor_sets(nodes, order)
+    covered_frontiers = frozenset(receipt.covers for receipt in composed_bases)
     for key in order:
         node = nodes[key]
         if node.node_type != "mutation":
             continue
-        repository_ancestors = sorted(
-            ancestor
-            for ancestor in ancestors[key]
-            if nodes[ancestor].node_type in {"mutation", "integration"}
+        repository_ancestors = tuple(
+            sorted(
+                ancestor
+                for ancestor in ancestors[key]
+                if nodes[ancestor].node_type in {"mutation", "integration"}
+            )
         )
         if not repository_ancestors:
+            continue
+        if repository_ancestors in covered_frontiers:
             continue
         detail = ", ".join(
             "%s (%s)" % (ancestor, nodes[ancestor].node_type)
@@ -1493,7 +1879,9 @@ def _validate_flat_mutation_wave(
         raise ValidationError(
             "work package flat mutation wave cannot compose a predecessor base: "
             "mutation node %s has repository-producing ancestor(s): %s; every "
-            "mutation must execute from the epoch planning base" % (key, detail)
+            "mutation must execute from the epoch planning base or a "
+            "controller-owned composed-base station covering exactly that "
+            "frontier" % (key, detail)
         )
 
 
