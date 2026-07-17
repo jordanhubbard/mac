@@ -621,10 +621,33 @@ landing, and completion proof.
 Existing unlinked tasks are a compatibility path, not that fully migrated fast
 lane. They retain their current executor pre-push tests, CodeGraph audit,
 review, and publication rules, but they do not automatically acquire the new
-external exact-candidate certifier or work-package landing receipt. Describing
-the legacy path as if it already had those properties would be false. Migration
-is complete only when single-node package admission is the ordinary route or
+external exact-candidate certifier or work-package landing receipt. The legacy
+pre-push tests are **not** the external work-package certifier: they run in the
+executor's own worktree before publication, whereas the managed certifier is an
+independently pinned, credential-free exact-candidate station. Describing the
+legacy path as if it already had those properties would be false. Migration is
+complete only when single-node package admission is the ordinary route or
 equivalent exact-candidate guarantees are added to the legacy path.
+
+Every surface classifies a change the same way through
+`mac.publication_lane`. `classify_publication_lane` returns the `managed` lane
+only for a package-linked change whose worker is package-ready (mirroring the
+fail-closed actor policy in `mac.worker_credentials.evaluate_worker_actor`) and
+the `legacy` lane otherwise. `describe_lane` is the single source of truth for
+the guarantee vocabulary that the API, CLI, and Fleet IDE render, so no
+projection can call the legacy pre-push tests the external certifier:
+
+- managed lane guarantees: exact lease-specific attempt ref, controller
+  verification, independently pinned certification, compare-and-swap landing,
+  remote read-back receipt, and finalization proof;
+- legacy lane guarantees: executor pre-push tests, CodeGraph audit, review, and
+  publication rules -- and explicitly **no** external certifier or landing
+  receipt.
+
+The worker readiness inventory (`mac.worker_credential_readiness.v1`) carries
+`publication_lane` and `external_certifier` per worker so operators can see
+which workers publish through the managed lane and which remain on the legacy
+compatibility lane during a mixed-version rollout.
 
 ## Compatibility and migration
 

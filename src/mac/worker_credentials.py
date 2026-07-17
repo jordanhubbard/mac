@@ -39,6 +39,11 @@ from mac.client_principals import (
     _validate_agent_id,
 )
 from mac.models import TransitionError, json_dumps, json_loads, new_id
+from mac.publication_lane import (
+    PUBLICATION_LANE_LEGACY,
+    PUBLICATION_LANE_MANAGED,
+    lane_provides_external_certifier,
+)
 from mac.store import SQLiteStore, Store, StoreError, make_store_from_env
 
 
@@ -1049,6 +1054,14 @@ def build_readiness_inventory(
             readiness = _credential_readiness(agent, credential)
             reasons.extend(readiness["blockers"])
         ready = bool(credential and readiness["ready"])
+        # A ready worker is eligible for the managed exact-candidate lane;
+        # everything else can publish only through the legacy compatibility
+        # lane.  Classifying here keeps API/CLI/IDE projections consistent and
+        # prevents any surface from calling the legacy pre-push tests the
+        # external work-package certifier.
+        publication_lane = (
+            PUBLICATION_LANE_MANAGED if ready else PUBLICATION_LANE_LEGACY
+        )
         entries.append(
             {
                 "agent_id": agent_id,
@@ -1060,6 +1073,10 @@ def build_readiness_inventory(
                 "capability_ready": readiness["capability_ready"],
                 "package_linked_allowed": ready,
                 "legacy_fast_lane_allowed": bool(not ready and mode == MODE_COMPATIBILITY),
+                "publication_lane": publication_lane,
+                "external_certifier": lane_provides_external_certifier(
+                    publication_lane
+                ),
                 "ready": ready,
                 "blockers": reasons,
             }

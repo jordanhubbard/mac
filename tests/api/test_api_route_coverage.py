@@ -363,6 +363,14 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     )
     ctx["delegate_agent_id"] = agent("bullwinkle-route", ["python"])["id"]
     ctx["delete_agent_id"] = agent("delete-route-agent", ["python"])["id"]
+    # Keep the deletion fixture out of dispatcher eligibility. Otherwise an
+    # earlier dispatch/claim-next route case can hand this agent a lease, and
+    # the DELETE /agents/{agent_id} route then returns 400 ("agent cannot be
+    # deleted while holding an active lease") instead of the expected 200 --
+    # an order-dependent flake this route-coverage sweep must not carry.
+    cp.set_agent_dispatch_hold(
+        ctx["delete_agent_id"], "reserved for deletion route coverage"
+    )
     # Keep the deregistration fixture out of dispatcher eligibility so the
     # earlier dispatch-route cases cannot hand it a lease before its route is
     # exercised.

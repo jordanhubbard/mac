@@ -338,6 +338,10 @@ def test_inventory_and_package_membership_require_live_authenticated_exact_state
     inventory = build_readiness_inventory(_agents(cp), lifecycle.records())
     assert inventory["all_ready"] is True
     assert inventory["workers"][0]["credential_bound"] is True
+    # A ready worker is classified onto the managed exact-candidate lane and
+    # is the only lane that reports the external work-package certifier.
+    assert inventory["workers"][0]["publication_lane"] == "managed"
+    assert inventory["workers"][0]["external_certifier"] is True
 
     # Activation alone is insufficient: reviewed membership is a durable,
     # replica-shared control-plane decision.
@@ -354,6 +358,8 @@ def test_inventory_and_package_membership_require_live_authenticated_exact_state
     assert package_worker_readiness(cp.store, "agent_alpha")["ready"] is False
     degraded = build_readiness_inventory(_agents(cp), lifecycle.records())
     assert "authenticated_credential_not_observed" in degraded["workers"][0]["blockers"]
+    assert degraded["workers"][0]["publication_lane"] == "legacy"
+    assert degraded["workers"][0]["external_certifier"] is False
 
 
 def test_enforcement_policy_is_shared_across_replicas_and_refuses_partial(
