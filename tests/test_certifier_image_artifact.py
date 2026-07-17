@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -125,12 +127,75 @@ def test_publication_verifier_requires_exact_ghcr_digest_and_exact_policy_bytes(
 
     monkeypatch.setenv("DOCKER_CONFIG", "/credential-bearing/default")
     monkeypatch.setenv("DOCKER_AUTH_CONFIG", "secret")
+    monkeypatch.setenv("REGISTRY_AUTH_FILE", "/credential-bearing/registry.json")
     anonymous = publication._anonymous_docker_environment(tmp_path / "empty-docker")
     assert anonymous["DOCKER_CONFIG"] == str(tmp_path / "empty-docker")
     assert "DOCKER_AUTH_CONFIG" not in anonymous
+    assert "REGISTRY_AUTH_FILE" not in anonymous
     assert json.loads(
         (tmp_path / "empty-docker" / "config.json").read_text(encoding="utf-8")
     ) == {"auths": {}}
+
+
+def test_publication_verifier_finds_buildx_hidden_by_anonymous_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_config = tmp_path / "credential-bearing-docker"
+    plugin = original_config / "cli-plugins" / "docker-buildx"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    plugin.chmod(0o700)
+    monkeypatch.setenv("DOCKER_CONFIG", str(original_config))
+    anonymous = publication._anonymous_docker_environment(tmp_path / "anonymous")
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def fake_run(argv, *, check, capture_output, env, timeout):
+        calls.append((argv, env))
+        return subprocess.CompletedProcess(
+            argv,
+            0
+            if (Path(env["DOCKER_CONFIG"]) / "cli-plugins" / "docker-buildx").exists()
+            else 1,
+            stdout=b"",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(publication.subprocess, "run", fake_run)
+    command = publication._buildx_command(
+        "/usr/local/bin/docker", environment=anonymous
+    )
+
+    assert command == ["/usr/local/bin/docker", "buildx"]
+    assert calls[0][0] == ["/usr/local/bin/docker", "buildx", "version"]
+    assert calls[1][0] == ["/usr/local/bin/docker", "buildx", "version"]
+    linked_plugin = (
+        Path(anonymous["DOCKER_CONFIG"]) / "cli-plugins" / "docker-buildx"
+    )
+    assert linked_plugin.resolve() == plugin.resolve()
+    assert all(
+        call_env["DOCKER_CONFIG"] == anonymous["DOCKER_CONFIG"] for _, call_env in calls
+    )
+    assert all("DOCKER_AUTH_CONFIG" not in call_env for _, call_env in calls)
+    assert os.access(plugin, os.X_OK)
+
+
+def test_publication_verifier_fails_closed_when_buildx_cannot_start(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plugin = tmp_path / "docker-buildx"
+    plugin.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    plugin.chmod(0o700)
+    anonymous = publication._anonymous_docker_environment(tmp_path / "anonymous")
+    monkeypatch.setattr(publication, "_buildx_plugin_candidates", lambda: [plugin])
+
+    def broken_run(argv, *, check, capture_output, env, timeout):
+        raise OSError("buildx cannot start")
+
+    monkeypatch.setattr(publication.subprocess, "run", broken_run)
+    with pytest.raises(publication.VerificationError, match="buildx is required"):
+        publication._buildx_command("/usr/local/bin/docker", environment=anonymous)
 
 
 def test_certifier_container_is_pinned_nonroot_and_image_owned() -> None:

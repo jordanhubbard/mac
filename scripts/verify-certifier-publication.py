@@ -48,6 +48,86 @@ def _anonymous_docker_environment(config_root: Path) -> dict[str, str]:
     return environment
 
 
+def _buildx_plugin_candidates() -> list[Path]:
+    """Return standard local Buildx plugin locations without reading auth data."""
+
+    roots: list[Path] = []
+    configured = os.environ.get("DOCKER_CONFIG")
+    if configured:
+        roots.append(Path(configured).expanduser())
+    roots.extend(
+        [
+            Path.home() / ".docker",
+            Path("/usr/local/lib/docker"),
+            Path("/usr/local/libexec/docker"),
+            Path("/usr/lib/docker"),
+            Path("/usr/libexec/docker"),
+        ]
+    )
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        candidate = root / "cli-plugins" / "docker-buildx"
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
+    return candidates
+
+
+def _buildx_command(
+    docker: str,
+    *,
+    environment: dict[str, str],
+) -> list[str]:
+    """Resolve Buildx while keeping registry operations on an empty config.
+
+    Docker Desktop installs Buildx under the user's Docker config directory.
+    Replacing ``DOCKER_CONFIG`` is necessary for an anonymous registry
+    read-back, but it also hides that plugin from the Docker CLI.  Probe the
+    anonymous CLI first, then invoke only a known executable plugin path
+    through a symlink in the anonymous config; neither path reads or copies the
+    credential-bearing Docker config.
+    """
+
+    def probe() -> bool:
+        try:
+            completed = subprocess.run(
+                [docker, "buildx", "version"],
+                check=False,
+                capture_output=True,
+                env=environment,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return completed.returncode == 0
+
+    if probe():
+        return [docker, "buildx"]
+    anonymous_plugins = Path(environment["DOCKER_CONFIG"]) / "cli-plugins"
+    anonymous_plugins.mkdir(mode=0o700, parents=True, exist_ok=True)
+    anonymous_plugins.chmod(0o700)
+    anonymous_buildx = anonymous_plugins / "docker-buildx"
+    for candidate in _buildx_plugin_candidates():
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        if not resolved.is_file() or not os.access(resolved, os.X_OK):
+            continue
+        try:
+            anonymous_buildx.symlink_to(resolved)
+        except OSError:
+            continue
+        if probe():
+            return [docker, "buildx"]
+        anonymous_buildx.unlink(missing_ok=True)
+    raise VerificationError(
+        "docker buildx is required for anonymous registry read-back"
+    )
+
+
 def _host_linux_platform() -> str:
     machine = platform.machine().lower()
     if machine in {"x86_64", "amd64"}:
@@ -84,7 +164,8 @@ def verify_registry_digest(
         raise VerificationError(
             "image must be ghcr.io/jordanhubbard/mac-certifier@sha256:<64 lowercase hex>"
         )
-    if shutil.which("docker") is None:
+    docker = shutil.which("docker")
+    if docker is None:
         raise VerificationError("docker buildx is required for registry read-back")
     if expected_revision is not None and not re.fullmatch(
         r"[0-9a-f]{40}", expected_revision
@@ -94,8 +175,9 @@ def verify_registry_digest(
     linux_platform = _host_linux_platform()
     with tempfile.TemporaryDirectory(prefix="mac-certifier-anonymous-docker-") as raw:
         environment = _anonymous_docker_environment(Path(raw))
+        buildx = _buildx_command(docker, environment=environment)
         manifest = _run(
-            ["docker", "buildx", "imagetools", "inspect", "--raw", image_ref],
+            [*buildx, "imagetools", "inspect", "--raw", image_ref],
             environment=environment,
         )
         observed = "sha256:" + hashlib.sha256(manifest.stdout).hexdigest()
@@ -105,11 +187,11 @@ def verify_registry_digest(
                 f"requested={requested} observed={observed}"
             )
         _run(
-            ["docker", "pull", "--platform", linux_platform, image_ref],
+            [docker, "pull", "--platform", linux_platform, image_ref],
             environment=environment,
         )
         inspection = _run(
-            ["docker", "image", "inspect", image_ref], environment=environment
+            [docker, "image", "inspect", image_ref], environment=environment
         )
         try:
             values = json.loads(inspection.stdout)
@@ -135,7 +217,7 @@ def verify_registry_digest(
             raise VerificationError("anonymous pull did not preserve the exact digest")
         _run(
             [
-                "docker",
+                docker,
                 "run",
                 "--rm",
                 "--network",
