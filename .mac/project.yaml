@@ -1,10 +1,76 @@
 schema: mac.repository_contract.v1
 project: mac
 canonical_remote_url: git@github.com:jordanhubbard/mac.git
-# Work-package certification/landing is intentionally not activated by a
-# placeholder. Add the atomic `landing_certification_policy_id` plus
-# `work_package_certification` extension only after provisioning the pinned
-# image and exact policy described in docs/work-package-pipeline-activation.md.
+landing_certification_policy_id: mac-work-package-v1
+work_package_certification:
+  schema: mac.work_package.certification_contract.v1
+  policy:
+    policy_id: mac-work-package-v1
+    version: 1
+    checksum: sha256:91a8e74ec7cb73e8cd2e710c6c1312284816d46da3cd6ecb2ef235a05ac69977
+  policy_text: |
+    # OpenShell FAIL-CLOSED default policy for MAC / Hermes (bundled fallback).
+    #
+    # The task executor passes THIS policy to `openshell sandbox create` whenever
+    # MAC_OPENSHELL_SANDBOX is enabled but no policy is configured (no
+    # MAC_OPENSHELL_POLICY and no ~/.mac/openshell-policy.yaml). Its sole purpose is
+    # to guarantee that enabling sandboxing can NEVER silently fall back to
+    # OpenShell's own image-default profile — a known, reviewed policy is always
+    # applied.
+    #
+    # It is deliberately a LOCKDOWN and is NOT meant to be the production profile:
+    #   * filesystem confined to the OS + workdir + /tmp
+    #   * never root (run_as_user: sandbox)
+    #   * Landlock REQUIRED (hard_requirement) — fail if the kernel can't enforce it
+    #   * ALL network egress DENIED (empty network_policies => deny-by-default)
+    #
+    # Under this default the agent cannot reach the MAC hub, the model gateway, or
+    # the Hermes runtime under ~/.mac, so an unconfigured deployment FAILS CLOSED
+    # (tasks error) rather than running under an unknown or over-permissive profile.
+    #
+    # To run real networked agents, provide a proper policy: copy
+    # deploy/openshell/mac-hermes-policy.yaml, fill in your hub/gateway hosts and the
+    # agent's home paths, then either install it at ~/.mac/openshell-policy.yaml or
+    # point MAC_OPENSHELL_POLICY at it.
+
+    version: 1
+
+    filesystem_policy:
+      include_workdir: true
+      read_only:
+        - /usr
+        - /lib
+        - /lib64
+        - /bin
+        - /sbin
+        - /etc
+        - /proc
+      read_write:
+        - /tmp
+        # /dev as a directory (not individual device leaves): under hard_requirement
+        # on Landlock ABI >= 3 (kernel 6.x), a device FILE given a directory access
+        # right (ReadDir) is rejected as "incompatible directory-only access-rights".
+        # The /dev directory satisfies ReadDir and covers /dev/null + /dev/urandom;
+        # a rootless container's /dev is a minimal safe set (null/zero/urandom/tty).
+        - /dev
+
+    landlock:
+      # Fail closed: abort if the kernel lacks Landlock (5.13+) or a declared path
+      # is unenforceable, rather than running without filesystem confinement.
+      compatibility: hard_requirement
+
+    process:
+      run_as_user: sandbox
+      run_as_group: sandbox
+
+    # Empty => deny-by-default with nothing allowed == ALL network egress denied.
+    network_policies: {}
+  image_ref: ghcr.io/jordanhubbard/mac-certifier@sha256:9b5bc9f519e60b35181eeb4bd65d95e4436e5d5dadb49f4d77892387c314ccdf
+  controller_commands:
+    - command_id: contract-tests
+      argv:
+        - /opt/mac-certifier/bin/run-contract-tests
+      timeout_seconds: 3600
 platforms:
   - darwin
   - linux
