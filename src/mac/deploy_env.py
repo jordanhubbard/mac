@@ -82,6 +82,37 @@ EXECUTION_COHORT_RUNTIME_KEYS = (
     "MAC_EXECUTION_COHORT_SEED",
 )
 
+# Runtime settings written by deploy/openshell/bootstrap-openshell.sh.  An
+# explicit optional-node deployment with MAC_DEPLOY_OPENSHELL=0 is a teardown
+# request, not merely a request to skip a new bootstrap.  Keep this list in the
+# environment model so stale enforcement cannot survive a redeploy through the
+# existing mac.env file.
+OPENSHELL_MANAGED_RUNTIME_KEYS = (
+    "MAC_DEPLOY_OPENSHELL",
+    "MAC_DEPLOY_OPENSHELL_ARGS",
+    "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE",
+    "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD",
+    "MAC_OPENSHELL_SANDBOX",
+    "MAC_OPENSHELL_ALLOW_NO_LANDLOCK",
+    "MAC_OPENSHELL_GC",
+    "MAC_OPENSHELL_STALE_AFTER_SECONDS",
+    "MAC_HERMES_PYTHON",
+    "MAC_OPENSHELL_POLICY",
+    "MAC_OPENSHELL_BIN",
+    "MAC_OPENSHELL_CREATE_ARGS",
+    "MAC_ALLOW_UNSANDBOXED_YOLO",
+    "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT",
+    "MAC_OPENSHELL_GATEWAY",
+    "MAC_OPENSHELL_GATEWAY_POLICY",
+    "MAC_OPENSHELL_GATEWAY_CREATE_ARGS",
+    "MAC_OPENSHELL_GATEWAY_ENDPOINT",
+    "OPENSHELL_GATEWAY_ENDPOINT",
+    "OPENSHELL_GATEWAY",
+    "MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE",
+    "MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE",
+    "MAC_OPENSHELL_IMAGE_TAG",
+)
+
 
 def build_router_provider_spec(provider_env_values: Mapping[str, str]) -> str:
     """Build ``MAC_ROUTER_PROVIDERS`` from provider keys collected by setup."""
@@ -356,6 +387,33 @@ def _apply_execution_cohort_config(
         raise ValueError(
             "MAC_DEPLOY_EXECUTION_COHORT_SEED must be at least 32 characters"
         )
+
+
+def _apply_openshell_deploy_config(
+    values: MutableMapping[str, str],
+    env: Mapping[str, str],
+) -> bool:
+    """Apply an explicit optional-node OpenShell teardown request.
+
+    An absent/blank MAC_DEPLOY_OPENSHELL preserves the node's existing policy.
+    A false value clears every deploy-managed runtime setting, but only when
+    the role does not require OpenShell.  Pure code workers arrive with
+    MAC_DEPLOY_OPENSHELL_REQUIRED=true, so a caller cannot weaken them with a
+    conflicting ``MAC_DEPLOY_OPENSHELL=0``.
+    """
+
+    requested = str(env.get("MAC_DEPLOY_OPENSHELL") or "").strip().lower()
+    if requested not in {"0", "false", "no", "off"}:
+        return False
+    required = str(
+        env.get("MAC_DEPLOY_OPENSHELL_REQUIRED")
+        or values.get("MAC_OPENSHELL_REQUIRED")
+        or ""
+    ).strip().lower()
+    if required in {"1", "true", "yes", "on"}:
+        return False
+    _clear(values, OPENSHELL_MANAGED_RUNTIME_KEYS)
+    return True
 
 
 def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
@@ -1004,6 +1062,7 @@ def build_mac_env(
         _v = (env.get(_src) or "").strip()
         if _v:
             values[_dst] = _v
+    openshell_explicitly_disabled = _apply_openshell_deploy_config(values, env)
     if cfg.identity.is_hub:
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "prune")
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS", "86400")
@@ -1042,7 +1101,8 @@ def build_mac_env(
     # CLI (Claude Code, Codex, Cursor).  setdefault so an operator who has
     # provisioned a durable in-sandbox auth mechanism can override to "0" in
     # mac.env without it being clobbered on the next deploy/write-mac-env run.
-    values.setdefault("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
+    if not openshell_explicitly_disabled:
+        values.setdefault("MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT", "1")
     # NeMo Relay observability on by default for new nodes (nemo-relay ships via
     # the deploy's `relay` extra + the worker runtime-deps reconcile). setdefault
     # so an operator's explicit MAC_RELAY_OBSERVABILITY=0 is preserved across

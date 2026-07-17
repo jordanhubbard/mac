@@ -399,6 +399,7 @@ EOF
   GH="$OSH_DIR/ghome"; mkdir -p "$GH"
   "$OSH_DOCKER_BIN" rm -f openshell-gw >/dev/null 2>&1 || true
   "$OSH_DOCKER_BIN" run -d --name openshell-gw --restart unless-stopped \
+    --label mac.owner=mac --label mac.kind=openshell-gateway \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$OSH_DIR:/osh" -v "$GH:$GH" -e HOME="$GH" \
     -p 127.0.0.1:17670:17670 "$OSH_IMAGE_TAG" /osh/openshell-gateway --config /osh/gateway.toml >/dev/null
   sleep 5

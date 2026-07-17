@@ -866,6 +866,392 @@ reload_mac_env() {
   set +a
 }
 
+openshell_disable_requested() {
+  local requested required
+  requested="$(
+    printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" \
+      | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+      | tr '[:upper:]' '[:lower:]'
+  )"
+  case "$requested" in
+    0|false|no|off) ;;
+    *) return 1 ;;
+  esac
+  required="$(
+    printf '%s' "${MAC_DEPLOY_OPENSHELL_REQUIRED:-${MAC_OPENSHELL_REQUIRED:-}}" \
+      | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+      | tr '[:upper:]' '[:lower:]'
+  )"
+  case "$required" in
+    1|true|yes|on) return 1 ;;
+  esac
+  return 0
+}
+
+remove_openshell_firewall_chain() {
+  local ipt rule rules refreshed_rules inspected=0 parts=()
+  for ipt in iptables ip6tables; do
+    command -v "$ipt" >/dev/null 2>&1 || continue
+    inspected=1
+    if ! rules="$(sudo -n "$ipt" -S 2>/dev/null)"; then
+      die "could not inspect deploy-managed OpenShell firewall state in $ipt"
+    fi
+    while sudo -n "$ipt" -C INPUT -p tcp --dport 17670 -j MAC_OPENSH_GW >/dev/null 2>&1; do
+      sudo -n "$ipt" -D INPUT -p tcp --dport 17670 -j MAC_OPENSH_GW
+    done
+    if printf '%s\n' "$rules" | grep -Fqx -- '-N MAC_OPENSH_GW'; then
+      sudo -n "$ipt" -F MAC_OPENSH_GW
+      sudo -n "$ipt" -X MAC_OPENSH_GW
+    fi
+
+    # Historical MAC bootstraps installed one direct INPUT rule on the then
+    # current default NIC instead of the named chain. Remove only that exact
+    # legacy shape (interface-scoped TCP/17670 DROP), and only after the caller
+    # has proved this host contains MAC-owned OpenShell state.
+    while IFS= read -r rule; do
+      [ -n "$rule" ] || continue
+      read -r -a parts <<<"$rule"
+      parts[0]="-D"
+      sudo -n "$ipt" "${parts[@]}"
+    done < <(printf '%s\n' "$rules" | awk '
+        $1 == "-A" && $2 == "INPUT" && $3 == "-i" &&
+        $5 == "-p" && $6 == "tcp" &&
+        $(NF-3) == "--dport" && $(NF-2) == "17670" &&
+        $(NF-1) == "-j" && $NF == "DROP" { print }
+      ')
+    if ! refreshed_rules="$(sudo -n "$ipt" -S 2>/dev/null)"; then
+      die "could not verify deploy-managed OpenShell firewall removal in $ipt"
+    fi
+    if printf '%s\n' "$refreshed_rules" | grep -Eq -- \
+        '^-N MAC_OPENSH_GW$|^-A INPUT .*--dport 17670 .* -j MAC_OPENSH_GW$'; then
+      die "could not remove deploy-managed OpenShell firewall state from $ipt"
+    fi
+    if printf '%s\n' "$refreshed_rules" | awk '
+        $1 == "-A" && $2 == "INPUT" && $3 == "-i" &&
+        $5 == "-p" && $6 == "tcp" &&
+        $(NF-3) == "--dport" && $(NF-2) == "17670" &&
+        $(NF-1) == "-j" && $NF == "DROP" { found=1 }
+        END { exit found ? 0 : 1 }
+      '; then
+      die "could not remove legacy deploy-managed OpenShell firewall state from $ipt"
+    fi
+  done
+  [ "$inspected" = 1 ] \
+    || die "could not inspect deploy-managed OpenShell firewall state: iptables is unavailable"
+}
+
+openshell_firewall_state_present() {
+  local ipt rules
+  for ipt in iptables ip6tables; do
+    command -v "$ipt" >/dev/null 2>&1 || continue
+    if ! rules="$(sudo -n "$ipt" -S 2>/dev/null)"; then
+      return 2
+    fi
+    if printf '%s\n' "$rules" | grep -Eq -- \
+        '^-N MAC_OPENSH_GW$|^-A INPUT .*--dport 17670 .* -j MAC_OPENSH_GW$'; then
+      return 0
+    fi
+    if printf '%s\n' "$rules" | awk '
+        $1 == "-A" && $2 == "INPUT" && $3 == "-i" &&
+        $5 == "-p" && $6 == "tcp" &&
+        $(NF-3) == "--dport" && $(NF-2) == "17670" &&
+        $(NF-1) == "-j" && $NF == "DROP" { found=1 }
+        END { exit found ? 0 : 1 }
+      '; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+assert_no_openshell_gateway_listener() {
+  local listeners
+  if command -v ss >/dev/null 2>&1; then
+    if ! listeners="$(ss -H -ltn 2>/dev/null)"; then
+      die "could not inspect TCP listeners before removing the OpenShell firewall"
+    fi
+    if printf '%s\n' "$listeners" | awk '
+        $1 == "LISTEN" && $4 ~ /:17670$/ { found=1 }
+        END { exit found ? 0 : 1 }
+      '; then
+      die "refusing to remove the OpenShell firewall while TCP/17670 is listening"
+    fi
+    return 0
+  fi
+
+  # iproute2 supplies ss on supported Linux fleet nodes. Keep a socket-bind
+  # fallback for minimal images, and fail closed on any ambiguous result.
+  "$PY" - <<'PY'
+import errno
+import socket
+
+checks = (
+    (socket.AF_INET, ("0.0.0.0", 17670)),
+    (socket.AF_INET6, ("::", 17670)),
+)
+for family, address in checks:
+    try:
+        probe = socket.socket(family, socket.SOCK_STREAM)
+    except OSError as exc:
+        if exc.errno in {errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT}:
+            continue
+        raise SystemExit("could not create listener probe: %s" % exc)
+    try:
+        if family == socket.AF_INET6:
+            probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        probe.bind(address)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            raise SystemExit("TCP/17670 is still in use")
+        if family == socket.AF_INET6 and exc.errno in {
+            errno.EADDRNOTAVAIL,
+            errno.EAFNOSUPPORT,
+        }:
+            continue
+        raise SystemExit("could not prove TCP/17670 is unused: %s" % exc)
+    finally:
+        probe.close()
+PY
+}
+
+reconcile_disabled_optional_openshell() {
+  openshell_disable_requested || return 0
+  log "explicitly disabling optional OpenShell runtime and removing deploy-managed service state"
+
+  local openshell_dir="$MAC_HOME/openshell" cli="" docker_bin="" registration_json=""
+  local systemd_gateway="" systemd_firewall="" supervisor_gateway=""
+  local supervisor_firewall="" firewall_script="" expected_gateway_command=""
+  local gateway_process_pattern=""
+  local managed_state=0 gateway_owned=0 firewall_owned=0 firewall_probe_status=0
+  local systemd_gateway_owned=0 supervisor_gateway_owned=0
+  local systemd_firewall_owned=0 supervisor_firewall_owned=0
+  if [ -e "$openshell_dir/gateway.toml" ] \
+      || [ -e "$openshell_dir/run-gateway.sh" ] \
+      || [ -e "$openshell_dir/runtime-image-ref" ] \
+      || [ -e "$openshell_dir/image-source-sha" ]; then
+    managed_state=1
+  fi
+  if [ "$OS_KIND" = "darwin" ]; then
+    for docker_bin in \
+      "$(command -v docker 2>/dev/null || true)" \
+      /Applications/Docker.app/Contents/Resources/bin/docker \
+      /opt/homebrew/bin/docker \
+      /usr/local/bin/docker; do
+      [ -n "$docker_bin" ] && [ -x "$docker_bin" ] && break
+      docker_bin=""
+    done
+    if [ -n "$docker_bin" ]; then
+      if "$docker_bin" info >/dev/null 2>&1; then
+        if "$docker_bin" inspect openshell-gw >/dev/null 2>&1; then
+          # Current deployments carry explicit ownership labels. Accept the
+          # old unlabeled container only when its immutable shape proves the
+          # legacy MAC gateway: /osh is this MAC_HOME, port 17670 is loopback
+          # only, and the command uses the MAC-owned gateway config.
+          if [ "$("$docker_bin" inspect --format '{{ index .Config.Labels "mac.owner" }}:{{ index .Config.Labels "mac.kind" }}' openshell-gw 2>/dev/null || true)" = "mac:openshell-gateway" ] \
+              || { [ "$managed_state" = 1 ] \
+                && "$docker_bin" inspect openshell-gw | "$PY" -c '
+import json
+import os
+import sys
+
+container = json.load(sys.stdin)[0]
+expected = os.path.abspath(sys.argv[1])
+mount_ok = any(
+    os.path.abspath(str(item.get("Source") or "")) == expected
+    and item.get("Destination") == "/osh"
+    for item in container.get("Mounts") or []
+)
+ports = ((container.get("NetworkSettings") or {}).get("Ports") or {}).get("17670/tcp") or []
+port_ok = len(ports) == 1 and ports[0].get("HostIp") == "127.0.0.1" and ports[0].get("HostPort") == "17670"
+command = (container.get("Config") or {}).get("Cmd") or []
+command_ok = command == ["/osh/openshell-gateway", "--config", "/osh/gateway.toml"]
+raise SystemExit(0 if mount_ok and port_ok and command_ok else 1)
+' "$openshell_dir"; }; then
+            managed_state=1
+            gateway_owned=1
+            "$docker_bin" rm -f openshell-gw >/dev/null
+          else
+            log "leaving non-MAC Docker container named openshell-gw untouched"
+          fi
+        fi
+        if [ "$gateway_owned" = 1 ] \
+            && "$docker_bin" inspect openshell-gw >/dev/null 2>&1; then
+          die "deploy-managed Darwin OpenShell gateway container is still present"
+        fi
+      elif [ "$managed_state" = 1 ]; then
+        die "cannot verify deploy-managed Darwin OpenShell gateway removal because Docker is unavailable"
+      fi
+    elif [ "$managed_state" = 1 ]; then
+      die "cannot remove deploy-managed Darwin OpenShell gateway because Docker is unavailable"
+    fi
+  else
+    # Linux bootstrap creates root-owned firewall persistence and may use
+    # either a user systemd gateway or supervisord. Fleet provisioning already
+    # requires non-interactive sudo; fail instead of leaving a plaintext stale
+    # gateway reachable when that authority is unavailable.
+    sudo -n true >/dev/null
+
+    systemd_gateway="$HOME/.config/systemd/user/openshell-gateway.service"
+    systemd_firewall="/etc/systemd/system/mac-openshell-firewall.service"
+    supervisor_gateway="/etc/supervisor/conf.d/openshell-gateway.conf"
+    supervisor_firewall="/etc/supervisor/conf.d/mac-openshell-firewall.conf"
+    firewall_script="/usr/local/sbin/mac-openshell-firewall.sh"
+    expected_gateway_command="$HOME/.local/bin/openshell-gateway --config $openshell_dir/gateway.toml"
+    gateway_process_pattern="$(
+      "$PY" -c 'import re, sys; print("^" + re.escape(sys.argv[1]) + "$")' \
+        "$expected_gateway_command"
+    )"
+
+    if [ -f "$systemd_gateway" ] \
+        && { grep -Fqx 'ExecStart=%h/.mac/openshell/run-gateway.sh' "$systemd_gateway" \
+          || grep -Fqx "ExecStart=$openshell_dir/run-gateway.sh" "$systemd_gateway" \
+          || grep -Fqx 'ExecStart=%h/.local/bin/openshell-gateway --config %h/.mac/openshell/gateway.toml' "$systemd_gateway" \
+          || grep -Fqx "ExecStart=$expected_gateway_command" "$systemd_gateway"; }; then
+      gateway_owned=1
+      systemd_gateway_owned=1
+      managed_state=1
+    fi
+    if sudo -n test -f "$supervisor_gateway" \
+        && { sudo -n grep -Fqx "command=$openshell_dir/run-gateway.sh" "$supervisor_gateway" \
+          || sudo -n grep -Fqx "command=$expected_gateway_command" "$supervisor_gateway"; }; then
+      gateway_owned=1
+      supervisor_gateway_owned=1
+      managed_state=1
+    fi
+    if sudo -n test -f "$systemd_firewall" \
+        && sudo -n grep -Fqx 'ExecStart=/usr/local/sbin/mac-openshell-firewall.sh' "$systemd_firewall"; then
+      firewall_owned=1
+      systemd_firewall_owned=1
+      managed_state=1
+    fi
+    if sudo -n test -f "$supervisor_firewall" \
+        && sudo -n grep -Fqx 'command=/usr/local/sbin/mac-openshell-firewall.sh' "$supervisor_firewall"; then
+      firewall_owned=1
+      supervisor_firewall_owned=1
+      managed_state=1
+    fi
+    if sudo -n test -f "$firewall_script" \
+        && sudo -n grep -Eq 'MAC_OPENSH_GW|--dport 17670' "$firewall_script"; then
+      firewall_owned=1
+      managed_state=1
+    fi
+
+    # A pre-service-manager bootstrap may have left only the durable MAC
+    # markers plus the exact gateway process.  Treat that immutable command
+    # shape as owned when (and only when) the marker has already established
+    # MAC ownership, so removing an old unit file cannot strand the listener.
+    if [ "$managed_state" = 1 ] \
+        && pgrep -f "$gateway_process_pattern" >/dev/null 2>&1; then
+      gateway_owned=1
+    fi
+    if [ "$managed_state" = 1 ]; then
+      if openshell_firewall_state_present; then
+        firewall_owned=1
+      else
+        firewall_probe_status=$?
+        [ "$firewall_probe_status" = 1 ] \
+          || die "could not inspect existing OpenShell firewall state"
+      fi
+    fi
+
+    if [ "$systemd_gateway_owned" = 1 ]; then
+      if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        systemctl --user disable --now openshell-gateway.service >/dev/null 2>&1 \
+          || die "could not stop deploy-managed OpenShell systemd gateway"
+        if systemctl --user is-active --quiet openshell-gateway.service; then
+          die "deploy-managed OpenShell systemd gateway is still active"
+        fi
+      fi
+      rm -f "$systemd_gateway"
+      if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        systemctl --user daemon-reload >/dev/null 2>&1 \
+          || die "could not reload the user systemd manager after OpenShell removal"
+      fi
+    fi
+    if [ "$supervisor_gateway_owned" = 1 ]; then
+      command -v supervisorctl >/dev/null 2>&1 \
+        || die "cannot stop deploy-managed OpenShell supervisor gateway: supervisorctl is unavailable"
+      sudo -n supervisorctl stop openshell-gateway >/dev/null 2>&1 || true
+      sudo -n rm -f "$supervisor_gateway"
+      sudo -n supervisorctl reread >/dev/null
+      sudo -n supervisorctl update >/dev/null
+      if sudo -n supervisorctl status openshell-gateway 2>/dev/null \
+          | grep -q '[[:space:]]RUNNING[[:space:]]'; then
+        die "deploy-managed OpenShell supervisord gateway is still running"
+      fi
+    fi
+
+    if [ "$gateway_owned" = 1 ]; then
+      sudo -n pkill -f "$gateway_process_pattern" >/dev/null 2>&1 || true
+      if pgrep -f "$gateway_process_pattern" >/dev/null 2>&1; then
+        die "deploy-managed OpenShell gateway process is still running"
+      fi
+    fi
+    if [ "$managed_state" = 1 ]; then
+      assert_no_openshell_gateway_listener
+    fi
+    if [ "$firewall_owned" = 1 ]; then
+      if [ "$systemd_firewall_owned" = 1 ]; then
+        if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+          sudo -n systemctl disable --now mac-openshell-firewall.service >/dev/null 2>&1 \
+            || die "could not stop deploy-managed OpenShell firewall service"
+          if sudo -n systemctl is-active --quiet mac-openshell-firewall.service; then
+            die "deploy-managed OpenShell firewall service is still active"
+          fi
+        fi
+        sudo -n rm -f "$systemd_firewall"
+        if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+          sudo -n systemctl daemon-reload >/dev/null
+        fi
+      fi
+      if [ "$supervisor_firewall_owned" = 1 ]; then
+        command -v supervisorctl >/dev/null 2>&1 \
+          || die "cannot remove deploy-managed OpenShell supervisor firewall: supervisorctl is unavailable"
+        sudo -n rm -f "$supervisor_firewall"
+        sudo -n supervisorctl reread >/dev/null
+        sudo -n supervisorctl update >/dev/null
+      fi
+      # Persistence is now disabled while the proven listener-free rules are
+      # still in place. Remove the live rules last so no manager can race this
+      # transaction by reinstalling them after verification.
+      remove_openshell_firewall_chain
+      sudo -n rm -f "$firewall_script"
+    fi
+  fi
+
+  if [ "$managed_state" = 1 ]; then
+    for cli in "$MAC_HOME/bin/openshell" "$HOME/.local/bin/openshell"; do
+      [ -x "$cli" ] || continue
+      registration_json="$(
+        env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
+          "$cli" gateway list --output json
+      )" || die "could not inspect OpenShell gateway registrations during disable"
+      if printf '%s\n' "$registration_json" | "$PY" -c '
+import json
+import sys
+
+items = json.load(sys.stdin)
+raise SystemExit(0 if any(
+    item.get("name") == "openshell"
+    and item.get("endpoint") == "http://127.0.0.1:17670"
+    for item in items
+) else 1)
+'; then
+        env -u OPENSHELL_GATEWAY_ENDPOINT -u OPENSHELL_GATEWAY \
+          "$cli" gateway remove openshell >/dev/null
+      fi
+      break
+    done
+  fi
+
+  rm -f \
+    "$openshell_dir/runtime-image-ref" \
+    "$openshell_dir/image-source-sha" \
+    "$openshell_dir/gateway.toml" \
+    "$openshell_dir/run-gateway.sh"
+  log "optional OpenShell runtime disabled"
+}
+
 prepare_work_package_pipeline_storage() {
   case "$(printf '%s' "${MAC_WORK_PACKAGE_PIPELINE_ENABLED:-0}" | tr 'A-Z' 'a-z')" in
     1|true|yes|on) ;;
@@ -3370,6 +3756,7 @@ PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.deploy_env write-mac-env 
 normalize_hermes_redaction_env
 
 reload_mac_env
+reconcile_disabled_optional_openshell
 prepare_work_package_pipeline_storage
 # gketun-02: the hub (shared-services manager) owns the reverse-tunnel keypair it
 # uses to dial spokes, so it generates that key (ensure_hub_tunnel_key). Every

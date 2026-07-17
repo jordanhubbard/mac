@@ -238,6 +238,7 @@ def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
     assert 'gateway add --name openshell "$OPENSHELL_LOCAL_GATEWAY_ENDPOINT"' in bootstrap
     assert 'gateway select openshell' in bootstrap
     assert 'gateway list --output json' in bootstrap
+    assert '--label mac.owner=mac --label mac.kind=openshell-gateway' in bootstrap
     assert 'matches[0].get("endpoint") != endpoint' in bootstrap
     assert (
         "gateway add http://127.0.0.1:17670 >/dev/null 2>&1 || true"

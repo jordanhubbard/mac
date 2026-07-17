@@ -497,6 +497,7 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/openshell_supervisor.py"
     ],
@@ -1555,7 +1556,8 @@
     "name": "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "bool"
   },
@@ -1603,6 +1605,17 @@
       "deploy/deploy-mac-fleet.sh",
       "deploy/openshell/install-certifier-gateway-tunnel.sh",
       "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy clear repo update blocker.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -2492,7 +2505,9 @@
     "name": "MAC_DEPLOY_OPENSHELL",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -2503,7 +2518,8 @@
     "name": "MAC_DEPLOY_OPENSHELL_ARGS",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -2515,6 +2531,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "bool"
@@ -2526,7 +2543,8 @@
     "name": "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -3990,7 +4008,8 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/openshell/bootstrap-openshell.sh"
+      "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -5826,6 +5845,7 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
@@ -5842,6 +5862,7 @@
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/install-certifier-gateway-tunnel.sh",
       "src/mac/cli.py",
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_gateway.py",
       "src/mac/openshell_certifier.py",
@@ -5892,6 +5913,7 @@
     "sources": [
       "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py"
     ],
     "type": "str"
@@ -5936,6 +5958,7 @@
     "name": "MAC_OPENSHELL_GATEWAY",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/hermes_gateway.py",
       "src/mac/openshell/gateway-default-policy.yaml"
     ],
@@ -5948,6 +5971,7 @@
     "name": "MAC_OPENSHELL_GATEWAY_CREATE_ARGS",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/hermes_gateway.py"
     ],
     "type": "str"
@@ -5959,7 +5983,8 @@
     "name": "MAC_OPENSHELL_GATEWAY_ENDPOINT",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -5970,6 +5995,7 @@
     "name": "MAC_OPENSHELL_GATEWAY_POLICY",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/hermes_gateway.py",
       "src/mac/openshell/gateway-default-policy.yaml"
     ],
@@ -5983,6 +6009,7 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/services.py"
     ],
@@ -6006,6 +6033,7 @@
     "name": "MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -6017,6 +6045,7 @@
     "name": "MAC_OPENSHELL_IMAGE_TAG",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -6044,6 +6073,7 @@
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
       "src/mac/acp/permission.py",
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/openshell/default-policy.yaml",
       "src/mac/openshell_service.py",
@@ -6094,6 +6124,7 @@
     "name": "MAC_OPENSHELL_REQUIRED",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/nemoclaw/install-nemoclaw-gateway.sh",
       "deploy/systemd/mac-openshell-supervisor.service",
@@ -6111,6 +6142,7 @@
     "name": "MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE",
     "retired": false,
     "sources": [
+      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -6125,6 +6157,7 @@
       "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "deploy/openshell/mac-hermes-policy.yaml",
+      "src/mac/deploy_env.py",
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
@@ -6165,6 +6198,7 @@
     "retired": false,
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/deploy_env.py",
       "src/mac/executor_sandbox.py",
       "src/mac/services.py"
     ],
@@ -6189,6 +6223,7 @@
     "name": "MAC_OPENSH_GW",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh"
     ],
     "type": "str"
@@ -6767,6 +6802,7 @@
     "name": "MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/worker.py"
     ],

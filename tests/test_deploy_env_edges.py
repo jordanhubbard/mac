@@ -361,6 +361,47 @@ def test_work_package_pipeline_deploy_is_hub_only_and_default_off(tmp_path):
     assert "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT" not in spoke
 
 
+def test_explicit_optional_openshell_disable_scrubs_stale_runtime_env(tmp_path):
+    stale = {name: "stale" for name in deploy_env.OPENSHELL_MANAGED_RUNTIME_KEYS}
+    stale["MAC_OPENSHELL_SANDBOX"] = "1"
+    stale["MAC_ALLOW_UNSANDBOXED_YOLO"] = "0"
+
+    values = deploy_env.build_mac_env(
+        stale,
+        _cfg(tmp_path, agent="spoke", manager="hub"),
+        environ={
+            "MAC_DEPLOY_OPENSHELL": " FaLsE ",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": " off ",
+        },
+    )
+
+    assert values["MAC_OPENSHELL_REQUIRED"] == "off"
+    assert not (set(deploy_env.OPENSHELL_MANAGED_RUNTIME_KEYS) & set(values))
+
+
+def test_required_worker_cannot_be_weakened_by_explicit_openshell_disable(tmp_path):
+    stale = {
+        "MAC_OPENSHELL_SANDBOX": "1",
+        "MAC_OPENSHELL_BIN": "/managed/openshell",
+        "MAC_OPENSHELL_POLICY": "/managed/policy.yaml",
+        "MAC_OPENSHELL_CREATE_ARGS": "--from managed-runtime",
+        "MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE": "/managed/runtime-image-ref",
+    }
+
+    values = deploy_env.build_mac_env(
+        stale,
+        _cfg(tmp_path, agent="worker", manager="hub"),
+        environ={
+            "MAC_DEPLOY_OPENSHELL": "0",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": "true",
+        },
+    )
+
+    assert values["MAC_OPENSHELL_REQUIRED"] == "true"
+    for name, expected in stale.items():
+        assert values[name] == expected
+
+
 def test_execution_cohort_pilot_deploy_is_hub_only_and_secret_safe(tmp_path):
     seed = "stable-pilot-assignment-seed-32-bytes-minimum"
     deploy_values = {

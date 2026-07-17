@@ -2332,7 +2332,13 @@ def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene()
     assert ".acc/hermes-agent" in cleanup_plan
 
 
-def _run_reconcile_remote_deploy(tmp_path, *, deploy_ts="20260707T182907Z"):
+def _run_reconcile_remote_deploy(
+    tmp_path,
+    *,
+    deploy_ts="20260707T182907Z",
+    deploy_rev="a" * 40,
+    clear_repo_update_blocker=False,
+):
     script = deploy_script_text()
     function_text = "reconcile_remote_deploy() {" + script.split(
         "reconcile_remote_deploy() {", 1
@@ -2341,7 +2347,8 @@ def _run_reconcile_remote_deploy(tmp_path, *, deploy_ts="20260707T182907Z"):
     (mac_home / "logs").mkdir(parents=True, exist_ok=True)
     snippet = f"""
 set -euo pipefail
-TS={deploy_ts}
+TS={shlex.quote(deploy_ts)}
+GIT_REV={shlex.quote(deploy_rev)}
 shell_quote() {{
   python3 - "$1" <<'PY'
 import shlex
@@ -2357,12 +2364,13 @@ ssh() {{
   bash -c "$remote_cmd"
 }}
 {function_text}
-reconcile_remote_deploy rocky fake-target
+reconcile_remote_deploy rocky fake-target {int(clear_repo_update_blocker)}
 """
     env = {
         **os.environ,
         "HOME": str(tmp_path),
         "MAC_HOME": str(mac_home),
+        "MAC_DEPLOY_RECONCILE_MAX_RETRIES": "1",
         "PATH": os.environ.get("PATH", ""),
     }
     return subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, env=env)
@@ -2377,9 +2385,14 @@ def test_remote_deploy_reconciliation_fails_when_zero_exit_left_no_post_manifest
 
 def test_remote_deploy_reconciliation_validates_latest_manifest_structure(tmp_path):
     deploy_ts = "20260707T182907Z"
+    deploy_rev = "a" * 40
     log_dir = tmp_path / ".mac" / "logs"
     log_dir.mkdir(parents=True)
-    manifest = {"stage": "post", "agent": "rocky", "deploy": {"timestamp": deploy_ts}}
+    manifest = {
+        "stage": "post",
+        "agent": "rocky",
+        "deploy": {"timestamp": deploy_ts, "mac_git_rev": deploy_rev},
+    }
     (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
         json.dumps(manifest), encoding="utf-8"
     )
@@ -2387,8 +2400,13 @@ def test_remote_deploy_reconciliation_validates_latest_manifest_structure(tmp_pa
         json.dumps({**manifest, "stage": "pre"}), encoding="utf-8"
     )
     (log_dir / f"deploy-{deploy_ts}.log").write_text("deploy complete\n", encoding="utf-8")
+    (tmp_path / ".mac" / "deployed-source-revision").write_text(
+        deploy_rev + "\n", encoding="utf-8"
+    )
 
-    result = _run_reconcile_remote_deploy(tmp_path, deploy_ts=deploy_ts)
+    result = _run_reconcile_remote_deploy(
+        tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev
+    )
 
     assert result.returncode != 0
     assert "latest manifest stage is 'pre'" in result.stderr
@@ -2396,9 +2414,14 @@ def test_remote_deploy_reconciliation_validates_latest_manifest_structure(tmp_pa
 
 def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests(tmp_path):
     deploy_ts = "20260707T182907Z"
+    deploy_rev = "b" * 40
     log_dir = tmp_path / ".mac" / "logs"
     log_dir.mkdir(parents=True)
-    manifest = {"stage": "post", "agent": "rocky", "deploy": {"timestamp": deploy_ts}}
+    manifest = {
+        "stage": "post",
+        "agent": "rocky",
+        "deploy": {"timestamp": deploy_ts, "mac_git_rev": deploy_rev},
+    }
     (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
         json.dumps(manifest), encoding="utf-8"
     )
@@ -2408,11 +2431,107 @@ def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests
     # plane. Reconciliation must rely on the role-aware remote health gate and
     # matching durable manifests instead of probing 127.0.0.1:8789.
     (tmp_path / ".mac" / "mac.env").write_text("MAC_PORT=9\n", encoding="utf-8")
+    (tmp_path / ".mac" / "deployed-source-revision").write_text(
+        deploy_rev + "\n", encoding="utf-8"
+    )
 
-    result = _run_reconcile_remote_deploy(tmp_path, deploy_ts=deploy_ts)
+    result = _run_reconcile_remote_deploy(
+        tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev
+    )
 
     assert result.returncode == 0, result.stderr
     assert "remote reconciliation succeeded for rocky" in result.stdout
+
+
+def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
+    mac_home = tmp_path / ".mac"
+    log_dir = mac_home / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "stage": "post",
+        "agent": "rocky",
+        "deploy": {"timestamp": deploy_ts, "mac_git_rev": deploy_rev},
+    }
+    (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    (log_dir / "deploy-manifest-latest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    (log_dir / f"deploy-{deploy_ts}.log").write_text(
+        "deploy complete\n", encoding="utf-8"
+    )
+    (mac_home / "deployed-source-revision").write_text(
+        deploy_rev + "\n", encoding="utf-8"
+    )
+    return mac_home
+
+
+def test_remote_deploy_reconciliation_clears_holds_only_after_exact_revision(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    deploy_rev = "c" * 40
+    mac_home = _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev)
+    default_blocker = mac_home / "repo-update-dispatch-blocked.json"
+    configured_blocker = mac_home / "state" / "custom blocker.json"
+    configured_blocker.parent.mkdir()
+    default_blocker.write_text("blocked\n", encoding="utf-8")
+    configured_blocker.write_text("blocked\n", encoding="utf-8")
+    (mac_home / "mac.env").write_text(
+        'MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE="state/custom blocker.json"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_reconcile_remote_deploy(
+        tmp_path,
+        deploy_ts=deploy_ts,
+        deploy_rev=deploy_rev,
+        clear_repo_update_blocker=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not default_blocker.exists()
+    assert not configured_blocker.exists()
+    assert "dispatch hold cleared after exact deployment reconciliation" in result.stdout
+
+
+def test_remote_deploy_reconciliation_preserves_hold_on_revision_mismatch(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    deploy_rev = "d" * 40
+    mac_home = _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev)
+    blocker = mac_home / "repo-update-dispatch-blocked.json"
+    blocker.write_text("blocked\n", encoding="utf-8")
+    (mac_home / "deployed-source-revision").write_text("e" * 40 + "\n", encoding="utf-8")
+
+    result = _run_reconcile_remote_deploy(
+        tmp_path,
+        deploy_ts=deploy_ts,
+        deploy_rev=deploy_rev,
+        clear_repo_update_blocker=True,
+    )
+
+    assert result.returncode != 0
+    assert "deployed source revision does not match requested revision" in result.stderr
+    assert blocker.exists()
+
+
+def test_remote_deploy_reconciliation_preserves_hold_when_env_file_cannot_load(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    deploy_rev = "f" * 40
+    mac_home = _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev)
+    blocker = mac_home / "repo-update-dispatch-blocked.json"
+    blocker.write_text("blocked\n", encoding="utf-8")
+    (mac_home / "mac.env").write_text("this is not valid shell (\n", encoding="utf-8")
+
+    result = _run_reconcile_remote_deploy(
+        tmp_path,
+        deploy_ts=deploy_ts,
+        deploy_rev=deploy_rev,
+        clear_repo_update_blocker=True,
+    )
+
+    assert result.returncode != 0
+    assert "could not resolve repository-update blocker path" in result.stderr
+    assert blocker.exists()
 
 
 def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
@@ -2432,7 +2551,10 @@ def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
     assert "ssh -A -o BatchMode=yes" in ssh_section
     assert "if ! ssh -A -o BatchMode=yes" not in ssh_section
     assert 'echo "==> ${agent}: validating remote post-deploy manifest"' in deploy_host_tail
-    assert 'if ! reconcile_remote_deploy "$agent" "$target"; then' in deploy_host_tail
+    assert (
+        'if ! reconcile_remote_deploy "$agent" "$target" '
+        '"$openshell_disable_requested"; then' in deploy_host_tail
+    )
     assert "remote deploy returned success but post manifest validation failed" in deploy_host_tail
     assert 'echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"' in deploy_host_tail
 
@@ -2634,6 +2756,21 @@ def test_source_install_pins_exact_rev_not_ff_only():
     assert 'deployed_source_revision_file="$MAC_HOME/deployed-source-revision"' in script
     assert 'printf \'%s\\n\' "$DEPLOY_REV" > "$deployed_source_revision_tmp"' in script
     assert 'chmod 0600 "$deployed_source_revision_tmp"' in script
+
+
+def test_deploy_archive_is_pinned_to_captured_revision():
+    """Archive fallback and deploy proof must describe the same immutable tree.
+
+    The deploy driver captures GIT_REV once.  Archiving symbolic HEAD after
+    that point races with concurrent commits in the shared operator checkout
+    and can otherwise label different source as the captured revision.
+    """
+    script = deploy_script_text()
+    assert (
+        'git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" "$GIT_REV"'
+        in script
+    )
+    assert 'git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" HEAD' not in script
 
 
 def test_media_key_escrow_has_no_chat_key_fallback():
@@ -2845,6 +2982,633 @@ def test_fleet_deploy_forwards_fail_closed_work_package_activation():
         encoding="utf-8"
     )
     assert 'ln -sf "$cli" "$MAC_HOME/bin/openshell"' in bootstrap
+
+
+def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
+    script = deploy_script_text()
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'add_remote_env MAC_DEPLOY_OPENSHELL "${MAC_DEPLOY_OPENSHELL:-}"' in script
+    assert "reconcile_disabled_optional_openshell" in installer
+    main_after_disable = installer.split(
+        "reload_mac_env\nreconcile_disabled_optional_openshell", 1
+    )[1]
+    assert main_after_disable.index("prepare_work_package_pipeline_storage") < (
+        main_after_disable.index('case "$SUPERVISOR_KIND" in')
+    )
+    for owned_state in (
+        "openshell-gw",
+        "openshell-gateway.service",
+        "/etc/supervisor/conf.d/openshell-gateway.conf",
+        "mac-openshell-firewall.service",
+        "MAC_OPENSH_GW",
+        '"$openshell_dir/runtime-image-ref"',
+        '"$openshell_dir/image-source-sha"',
+    ):
+        assert owned_state in installer
+    disable_function = installer.split(
+        "reconcile_disabled_optional_openshell() {", 1
+    )[1].split("\n}\n\nprepare_work_package_pipeline_storage", 1)[0]
+    darwin_block = disable_function.split('if [ "$OS_KIND" = "darwin" ]; then', 1)[
+        1
+    ]
+    assert 'mac.owner" }}:{{ index .Config.Labels "mac.kind' in darwin_block
+    assert 'log "leaving non-MAC Docker container named openshell-gw untouched"' in darwin_block
+    assert '"$cli" gateway list --output json' in disable_function
+    assert 'item.get("endpoint") == "http://127.0.0.1:17670"' in disable_function
+    assert '"$cli" gateway remove openshell' in disable_function
+    assert "gateway remove --all" not in disable_function
+    assert 'pgrep -f "$gateway_process_pattern"' in disable_function
+    assert "re.escape(sys.argv[1])" in disable_function
+    assert 'parts[0]="-D"' in installer
+
+
+@pytest.mark.parametrize(
+    ("requested", "required", "expected_disable"),
+    [
+        (" false ", " off ", True),
+        (" NO ", "", True),
+        (" false ", " TRUE ", False),
+        ("", "false", False),
+        ("1", "false", False),
+    ],
+)
+def test_optional_openshell_disable_guard_normalizes_boolean_tokens(
+    requested, required, expected_disable
+):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("openshell_disable_requested() {")
+    end = installer.index("\n}\n\nremove_openshell_firewall_chain", start) + len("\n}\n")
+    helper = installer[start:end]
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            helper + "\nopenshell_disable_requested\n",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "MAC_DEPLOY_OPENSHELL": requested,
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": required,
+        },
+    )
+
+    assert (result.returncode == 0) is expected_disable, result.stderr
+
+
+def test_optional_openshell_disable_leaves_unowned_darwin_container(tmp_path):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("openshell_disable_requested() {")
+    end = installer.index("\n}\n\nprepare_work_package_pipeline_storage", start) + len("\n}\n")
+    helpers = installer[start:end]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "docker-calls"
+    docker = fake_bin / "docker"
+    docker.write_text(
+        """#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+case "$1" in
+  info) exit 0 ;;
+  inspect)
+    if [ "$2" = "--format" ]; then
+      printf '%s\\n' 'someone-else:unmanaged'
+    fi
+    exit 0
+    ;;
+esac
+exit 0
+""",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    mac_home = tmp_path / "mac-home"
+    mac_home.mkdir()
+    snippet = f"""
+set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+OS_KIND=darwin
+PY={shlex.quote(sys.executable)}
+log() {{ printf '%s\\n' "$*"; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{helpers}
+reconcile_disabled_optional_openshell
+"""
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "MAC_DEPLOY_OPENSHELL": " false ",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": " no ",
+            "DOCKER_CALLS": str(calls),
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "leaving non-MAC Docker container named openshell-gw untouched" in result.stdout
+    assert "rm -f openshell-gw" not in calls.read_text(encoding="utf-8")
+
+
+def test_optional_openshell_disable_is_idempotent_without_managed_state(tmp_path):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("openshell_disable_requested() {")
+    end = installer.index("\n}\n\nprepare_work_package_pipeline_storage", start) + len("\n}\n")
+    helpers = installer[start:end]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    docker.chmod(0o755)
+    mac_home = tmp_path / "mac-home"
+    mac_home.mkdir()
+    snippet = f"""
+set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+OS_KIND=darwin
+PY={shlex.quote(sys.executable)}
+log() {{ :; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{helpers}
+reconcile_disabled_optional_openshell
+reconcile_disabled_optional_openshell
+"""
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "MAC_DEPLOY_OPENSHELL": " OFF ",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": "false",
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_optional_openshell_disable_removes_labeled_darwin_gateway(tmp_path):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("openshell_disable_requested() {")
+    end = installer.index("\n}\n\nprepare_work_package_pipeline_storage", start) + len("\n}\n")
+    helpers = installer[start:end]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "docker-calls"
+    removed = tmp_path / "docker-removed"
+    docker = fake_bin / "docker"
+    docker.write_text(
+        """#!/bin/sh
+printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+case "$1" in
+  info) exit 0 ;;
+  inspect)
+    [ ! -e "$DOCKER_REMOVED" ] || exit 1
+    if [ "$2" = "--format" ]; then
+      printf '%s\\n' 'mac:openshell-gateway'
+    else
+      printf '%s\\n' '[]'
+    fi
+    exit 0
+    ;;
+  rm)
+    : > "$DOCKER_REMOVED"
+    exit 0
+    ;;
+esac
+exit 0
+""",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    mac_home = tmp_path / "mac-home"
+    mac_home.mkdir()
+    snippet = f"""
+set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+OS_KIND=darwin
+PY={shlex.quote(sys.executable)}
+log() {{ :; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{helpers}
+reconcile_disabled_optional_openshell
+"""
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "MAC_DEPLOY_OPENSHELL": " no ",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": "0",
+            "DOCKER_CALLS": str(calls),
+            "DOCKER_REMOVED": str(removed),
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert removed.exists()
+    assert "rm -f openshell-gw" in calls.read_text(encoding="utf-8")
+
+
+def test_optional_openshell_disable_preserves_marker_when_owned_gateway_rm_fails(
+    tmp_path,
+):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("openshell_disable_requested() {")
+    end = installer.index("\n}\n\nprepare_work_package_pipeline_storage", start) + len("\n}\n")
+    helpers = installer[start:end]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        """#!/bin/sh
+case "$1" in
+  info) exit 0 ;;
+  inspect)
+    if [ "$2" = "--format" ]; then
+      printf '%s\\n' 'mac:openshell-gateway'
+    else
+      printf '%s\\n' '[]'
+    fi
+    exit 0
+    ;;
+  rm) exit 42 ;;
+esac
+exit 0
+""",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    mac_home = tmp_path / "mac-home"
+    marker = mac_home / "openshell" / "gateway.toml"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("managed\n", encoding="utf-8")
+    snippet = f"""
+set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+OS_KIND=darwin
+PY={shlex.quote(sys.executable)}
+log() {{ :; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{helpers}
+reconcile_disabled_optional_openshell
+"""
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "MAC_DEPLOY_OPENSHELL": "false",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": "false",
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        },
+    )
+
+    assert result.returncode != 0
+    assert marker.exists()
+
+
+def test_owned_legacy_openshell_firewall_rule_cleanup_executes_exact_delete(tmp_path):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("remove_openshell_firewall_chain() {")
+    end = installer.index("\n}\n\nopenshell_firewall_state_present", start) + len("\n}\n")
+    helper = installer[start:end]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    calls = tmp_path / "iptables-calls"
+    state = tmp_path / "legacy-rule-present"
+    state.write_text("present\n", encoding="utf-8")
+    sudo = fake_bin / "sudo"
+    sudo.write_text(
+        """#!/bin/sh
+[ "$1" = "-n" ] && shift
+exec "$@"
+""",
+        encoding="utf-8",
+    )
+    sudo.chmod(0o755)
+    iptables = fake_bin / "iptables"
+    iptables.write_text(
+        """#!/bin/sh
+printf '%s\\n' "$*" >> "$IPTABLES_CALLS"
+if [ "$1" = "-C" ]; then
+  exit 1
+fi
+if [ "$1" = "-S" ] && [ "$#" = 1 ]; then
+  if [ -e "$IPTABLES_STATE" ]; then
+    printf '%s\\n' '-A INPUT -i eth0 -p tcp --dport 17670 -j DROP'
+  fi
+  printf '%s\\n' '-A INPUT -i eth0 -p tcp --dport 9999 -j DROP'
+  exit 0
+fi
+if [ "$1" = "-D" ] && [ "$2" = "INPUT" ] \
+    && [ "$7" = "--dport" ] && [ "$8" = "17670" ]; then
+  rm -f "$IPTABLES_STATE"
+  exit 0
+fi
+exit 1
+""",
+        encoding="utf-8",
+    )
+    iptables.chmod(0o755)
+    snippet = f"""
+set -euo pipefail
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{helper}
+remove_openshell_firewall_chain
+"""
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "IPTABLES_CALLS": str(calls),
+            "IPTABLES_STATE": str(state),
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not state.exists()
+    recorded = calls.read_text(encoding="utf-8")
+    assert "-D INPUT -i eth0 -p tcp --dport 17670 -j DROP" in recorded
+    assert "-D INPUT -i eth0 -p tcp --dport 9999 -j DROP" not in recorded
+
+
+def _run_linux_optional_openshell_disable(
+    tmp_path,
+    *,
+    listener=False,
+    historical_systemd_gateway=False,
+    firewall_inspection_fails=False,
+    managed_firewall=True,
+):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("openshell_disable_requested() {")
+    end = installer.index(
+        "\n}\n\nprepare_work_package_pipeline_storage", start
+    ) + len("\n}\n")
+    helpers = installer[start:end]
+
+    test_root = tmp_path / "root"
+    systemd_firewall = test_root / "etc/systemd/system/mac-openshell-firewall.service"
+    supervisor_gateway = test_root / "etc/supervisor/conf.d/openshell-gateway.conf"
+    supervisor_firewall = (
+        test_root / "etc/supervisor/conf.d/mac-openshell-firewall.conf"
+    )
+    firewall_script = test_root / "usr/local/sbin/mac-openshell-firewall.sh"
+    for original, replacement in (
+        (
+            'systemd_firewall="/etc/systemd/system/mac-openshell-firewall.service"',
+            "systemd_firewall=%s" % shlex.quote(str(systemd_firewall)),
+        ),
+        (
+            'supervisor_gateway="/etc/supervisor/conf.d/openshell-gateway.conf"',
+            "supervisor_gateway=%s" % shlex.quote(str(supervisor_gateway)),
+        ),
+        (
+            'supervisor_firewall="/etc/supervisor/conf.d/mac-openshell-firewall.conf"',
+            "supervisor_firewall=%s" % shlex.quote(str(supervisor_firewall)),
+        ),
+        (
+            'firewall_script="/usr/local/sbin/mac-openshell-firewall.sh"',
+            "firewall_script=%s" % shlex.quote(str(firewall_script)),
+        ),
+    ):
+        helpers = helpers.replace(original, replacement)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    supervisor_calls = tmp_path / "supervisor-calls"
+    iptables_calls = tmp_path / "iptables-calls"
+    firewall_state = tmp_path / "legacy-rule-present"
+    if managed_firewall:
+        firewall_state.write_text("present\n", encoding="utf-8")
+
+    scripts = {
+        "sudo": """#!/bin/sh
+[ "$1" = "-n" ] && shift
+exec "$@"
+""",
+        "supervisorctl": """#!/bin/sh
+printf '%s\n' "$*" >> "$SUPERVISOR_CALLS"
+exit 91
+""",
+        "pgrep": "#!/bin/sh\nexit 1\n",
+        "pkill": "#!/bin/sh\nexit 0\n",
+        "ss": (
+            "#!/bin/sh\nprintf '%s\\n' "
+            + shlex.quote(
+                "LISTEN 0 4096 0.0.0.0:17670 0.0.0.0:*" if listener else ""
+            )
+            + "\n"
+        ),
+        "iptables": """#!/bin/sh
+printf '%s\n' "$*" >> "$IPTABLES_CALLS"
+if [ "$1" = "-S" ]; then
+  [ "$FIREWALL_INSPECTION_FAILS" = 0 ] || exit 73
+  if [ -e "$IPTABLES_STATE" ]; then
+    printf '%s\n' '-A INPUT -i eth0 -p tcp --dport 17670 -j DROP'
+  fi
+  exit 0
+fi
+if [ "$1" = "-C" ]; then
+  exit 1
+fi
+if [ "$1" = "-D" ] && [ "$2" = "INPUT" ]; then
+  rm -f "$IPTABLES_STATE"
+  exit 0
+fi
+exit 1
+""",
+    }
+    for name, body in scripts.items():
+        path = fake_bin / name
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openshell_dir = mac_home / "openshell"
+    openshell_dir.mkdir(parents=True)
+    marker = openshell_dir / "gateway.toml"
+    marker.write_text("managed\n", encoding="utf-8")
+    systemd_gateway = home / ".config/systemd/user/openshell-gateway.service"
+    if historical_systemd_gateway:
+        systemd_gateway.parent.mkdir(parents=True)
+        systemd_gateway.write_text(
+            "[Service]\n"
+            "ExecStart=%h/.local/bin/openshell-gateway "
+            "--config %h/.mac/openshell/gateway.toml\n",
+            encoding="utf-8",
+        )
+    if managed_firewall:
+        systemd_firewall.parent.mkdir(parents=True)
+        systemd_firewall.write_text(
+            "[Service]\nExecStart=/usr/local/sbin/mac-openshell-firewall.sh\n",
+            encoding="utf-8",
+        )
+        firewall_script.parent.mkdir(parents=True)
+        firewall_script.write_text(
+            "#!/bin/sh\niptables -I INPUT -i eth0 -p tcp --dport 17670 -j DROP\n",
+            encoding="utf-8",
+        )
+
+    snippet = f"""
+set -euo pipefail
+MAC_HOME={shlex.quote(str(mac_home))}
+OS_KIND=linux
+PY={shlex.quote(sys.executable)}
+log() {{ :; }}
+die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+{helpers}
+reconcile_disabled_optional_openshell
+"""
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "MAC_DEPLOY_OPENSHELL": " false ",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": "false",
+            "FIREWALL_INSPECTION_FAILS": (
+                "1" if firewall_inspection_fails else "0"
+            ),
+            "IPTABLES_CALLS": str(iptables_calls),
+            "IPTABLES_STATE": str(firewall_state),
+            "SUPERVISOR_CALLS": str(supervisor_calls),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+    )
+    return {
+        "result": result,
+        "firewall_script": firewall_script,
+        "firewall_state": firewall_state,
+        "iptables_calls": iptables_calls,
+        "marker": marker,
+        "supervisor_calls": supervisor_calls,
+        "systemd_firewall": systemd_firewall,
+        "systemd_gateway": systemd_gateway,
+    }
+
+
+def test_systemd_owned_optional_disable_does_not_touch_inactive_supervisor(tmp_path):
+    evidence = _run_linux_optional_openshell_disable(
+        tmp_path, historical_systemd_gateway=True
+    )
+
+    result = evidence["result"]
+    assert result.returncode == 0, result.stderr
+    assert not evidence["supervisor_calls"].exists()
+    assert not evidence["systemd_gateway"].exists()
+    assert not evidence["systemd_firewall"].exists()
+    assert not evidence["firewall_script"].exists()
+    assert not evidence["firewall_state"].exists()
+    assert not evidence["marker"].exists()
+
+
+def test_optional_disable_preserves_firewall_when_listener_remains(tmp_path):
+    evidence = _run_linux_optional_openshell_disable(tmp_path, listener=True)
+
+    result = evidence["result"]
+    assert result.returncode != 0
+    assert "while TCP/17670 is listening" in result.stderr
+    assert evidence["systemd_firewall"].exists()
+    assert evidence["firewall_script"].exists()
+    assert evidence["firewall_state"].exists()
+    assert evidence["marker"].exists()
+    assert "-D INPUT" not in evidence["iptables_calls"].read_text(encoding="utf-8")
+
+
+def test_managed_optional_disable_rejects_listener_without_owned_firewall(tmp_path):
+    evidence = _run_linux_optional_openshell_disable(
+        tmp_path, listener=True, managed_firewall=False
+    )
+
+    result = evidence["result"]
+    assert result.returncode != 0
+    assert "while TCP/17670 is listening" in result.stderr
+    assert evidence["marker"].exists()
+    assert "-D INPUT" not in evidence["iptables_calls"].read_text(encoding="utf-8")
+
+
+def test_optional_disable_preserves_firewall_when_inspection_fails(tmp_path):
+    evidence = _run_linux_optional_openshell_disable(
+        tmp_path, firewall_inspection_fails=True
+    )
+
+    result = evidence["result"]
+    assert result.returncode != 0
+    assert "could not inspect existing OpenShell firewall state" in result.stderr
+    assert evidence["systemd_firewall"].exists()
+    assert evidence["firewall_script"].exists()
+    assert evidence["firewall_state"].exists()
+    assert evidence["marker"].exists()
+    assert "-D INPUT" not in evidence["iptables_calls"].read_text(encoding="utf-8")
+
+
+def test_required_worker_forces_openshell_despite_explicit_zero():
+    script = deploy_script_text()
+    required_block = script.split(
+        'case "$openshell_required_normalized" in', 1
+    )[1].split("  esac\n  if [ \"$openshell_enabled\"", 1)[0]
+
+    assert "openshell_enabled=1" in required_block
+    assert "openshell_disable_requested=0" in required_block
+    assert "--enable" in required_block
+    assert "--fail-closed" in required_block
+
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    disable_guard = installer.split("openshell_disable_requested() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert "MAC_DEPLOY_OPENSHELL_REQUIRED" in disable_guard
+    assert "1|true|yes|on) return 1" in disable_guard
 
 
 def test_fleet_deploy_forwards_execution_cohort_only_to_hub_and_hides_seed():

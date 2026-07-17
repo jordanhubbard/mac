@@ -135,6 +135,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_API_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy api timeout seconds. |
 | `MAC_DEPLOY_ARCHIVE` | str | consumer-defined | deployment | Deployment setting: deploy archive. |
 | `MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | deployment | Deployment setting: deploy certifier openshell gateway endpoint. |
+| `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |
 | `MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy codegraph init timeout seconds. |
 | `MAC_DEPLOY_CONFIGURED_AGENT_IDS` | str | consumer-defined | deployment | Deployment setting: deploy configured agent ids. |
 | `MAC_DEPLOY_CONTROL_BIND_HOST` | str | consumer-defined | deployment | Deployment setting: deploy control bind host. |

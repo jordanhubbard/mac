@@ -156,6 +156,12 @@ die() {
   exit 1
 }
 
+normalize_boolean_token() {
+  printf '%s' "${1:-}" \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+    | tr '[:upper:]' '[:lower:]'
+}
+
 resolve_python_bin() {
   local candidate
   for candidate in "${PYTHON:-}" "${MAC_PYTHON:-}" "$ROOT/.venv/bin/python" python3.11 python3 python; do
@@ -1121,13 +1127,18 @@ fleet_scoped_env() {
 
 make_archive() {
   mkdir -p "$TMPDIR_LOCAL"
-  git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" HEAD
+  # Archive the same immutable revision advertised to the remote installer.
+  # HEAD can advance after GIT_REV is captured (for example, when another
+  # operator or agent commits in this shared checkout); packaging symbolic
+  # HEAD would make the archive contents disagree with every deployment proof.
+  git -C "$ROOT" archive --format=tar.gz --output="$ARCHIVE" "$GIT_REV"
   fleet_config_query sanitized-registry > "$SANITIZED_FLEET_REGISTRY"
   chmod 0644 "$SANITIZED_FLEET_REGISTRY"
 }
 
 reconcile_remote_deploy() {
-  local agent="$1" target="$2" ssh_parts=() ssh_args=() ssh_target item last_index
+  local agent="$1" target="$2" clear_repo_update_blocker="${3:-0}"
+  local ssh_parts=() ssh_args=() ssh_target item last_index
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
@@ -1141,15 +1152,18 @@ reconcile_remote_deploy() {
       sleep "$_sleep_interval"
     fi
     if ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") bash -s" <<'REMOTE'
+      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") bash -s" <<'REMOTE'
 set -euo pipefail
 agent="${MAC_DEPLOY_AGENT:?}"
 deploy_ts="${MAC_DEPLOY_TS:?}"
+expected_rev="${MAC_DEPLOY_GIT_REV:?}"
+clear_repo_update_blocker="${MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER:-0}"
 mac_home="${MAC_HOME:-$HOME/.mac}"
 log_dir="$mac_home/logs"
 manifest="$log_dir/deploy-manifest-${deploy_ts}-post.json"
 latest="$log_dir/deploy-manifest-latest.json"
 deploy_log="$log_dir/deploy-${deploy_ts}.log"
+source_revision_file="$mac_home/deployed-source-revision"
 python_bin="${PYTHON_BIN:-}"
 if [ -z "$python_bin" ] || ! command -v "$python_bin" >/dev/null 2>&1; then
   python_bin=""
@@ -1176,10 +1190,30 @@ if ! grep -q "deploy complete" "$deploy_log"; then
   echo "remote reconciliation failed: deploy log lacks completion marker" >&2
   exit 1
 fi
-"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" <<'PY'
+if ! [[ "$expected_rev" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "remote reconciliation failed: expected source revision is invalid" >&2
+  exit 1
+fi
+if [ ! -s "$source_revision_file" ]; then
+  echo "remote reconciliation failed: missing deployed source revision $source_revision_file" >&2
+  exit 1
+fi
+deployed_rev="$(cat "$source_revision_file")"
+if [ "$deployed_rev" != "$expected_rev" ]; then
+  echo "remote reconciliation failed: deployed source revision does not match requested revision" >&2
+  exit 1
+fi
+if [ -e "$mac_home/src/mac/.git" ]; then
+  checkout_rev="$(git -C "$mac_home/src/mac" rev-parse HEAD 2>/dev/null || true)"
+  if [ "$checkout_rev" != "$expected_rev" ]; then
+    echo "remote reconciliation failed: deployed Git checkout does not match requested revision" >&2
+    exit 1
+  fi
+fi
+"$python_bin" - "$manifest" "$latest" "$agent" "$deploy_ts" "$expected_rev" <<'PY'
 import json
 import sys
-manifest_path, latest_path, expected_agent, expected_ts = sys.argv[1:]
+manifest_path, latest_path, expected_agent, expected_ts, expected_rev = sys.argv[1:]
 for label, path in (("post manifest", manifest_path), ("latest manifest", latest_path)):
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
@@ -1195,7 +1229,60 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
             "remote reconciliation failed: %s deploy timestamp is %r"
             % (label, deploy.get("timestamp"))
         )
+    if deploy.get("mac_git_rev") != expected_rev:
+        raise SystemExit(
+            "remote reconciliation failed: %s source revision is %r"
+            % (label, deploy.get("mac_git_rev"))
+        )
 PY
+# An explicit optional OpenShell disable scrubs the stale runtime enforcement
+# settings during the remote transaction.  Clear a repository-update hold only
+# here, after the outer controller has independently proved exact source and
+# matching durable post manifests.  A partial or stale deployment must remain
+# fail-closed.
+if [ "$clear_repo_update_blocker" = 1 ]; then
+  configured_blocker="${MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE:-}"
+  env_file="$mac_home/mac.env"
+  if [ -z "$configured_blocker" ] && [ -f "$env_file" ]; then
+    if ! configured_blocker="$(
+      set +u
+      # shellcheck disable=SC1090 -- this is the managed worker environment.
+      if ! . "$env_file" >/dev/null 2>&1; then
+        exit 1
+      fi
+      printf '%s' "${MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE:-}"
+    )"; then
+      echo "remote reconciliation failed: could not resolve repository-update blocker path" >&2
+      exit 1
+    fi
+  fi
+  "$python_bin" - "$mac_home" "$configured_blocker" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+mac_home = Path(sys.argv[1]).expanduser()
+configured = sys.argv[2].strip()
+raw_paths = [str(mac_home / "repo-update-dispatch-blocked.json")]
+if configured:
+    raw_paths.append(configured)
+
+seen = set()
+for raw in raw_paths:
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = mac_home / path
+    key = os.path.abspath(os.fspath(path))
+    if key in seen:
+        continue
+    seen.add(key)
+    try:
+        Path(key).unlink()
+    except FileNotFoundError:
+        pass
+PY
+  echo "repository-update dispatch hold cleared after exact deployment reconciliation"
+fi
 # The remote transaction already performed the role-aware health check before
 # writing the post manifest.  Do not unconditionally probe loopback here: a
 # spoke intentionally has no local control plane, so 127.0.0.1:8789 is not a
@@ -1424,13 +1511,19 @@ deploy_host() {
   scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$SANITIZED_FLEET_REGISTRY" "${scp_target}:${remote_registry}"
 
   echo "==> ${agent}: running one-time deploy"
-  local remote_env=() remote_secret_env=() remote_cmd openshell_enabled=0 effective_openshell_args="${MAC_DEPLOY_OPENSHELL_ARGS:-}"
-  case "$(printf '%s' "${MAC_DEPLOY_OPENSHELL:-}" | tr 'A-Z' 'a-z')" in
+  local remote_env=() remote_secret_env=() remote_cmd openshell_enabled=0
+  local openshell_disable_requested=0 openshell_request openshell_required_normalized
+  local effective_openshell_args="${MAC_DEPLOY_OPENSHELL_ARGS:-}"
+  openshell_request="$(normalize_boolean_token "${MAC_DEPLOY_OPENSHELL:-}")"
+  case "$openshell_request" in
     1|true|yes|on) openshell_enabled=1 ;;
+    0|false|no|off) openshell_disable_requested=1 ;;
   esac
-  case "$(printf '%s' "$openshell_required" | tr 'A-Z' 'a-z')" in
+  openshell_required_normalized="$(normalize_boolean_token "$openshell_required")"
+  case "$openshell_required_normalized" in
     1|true|yes|on)
       openshell_enabled=1
+      openshell_disable_requested=0
       # Required workers may not accidentally turn a bootstrap into setup-only
       # mode.  Add both enforcement flags unless the caller already supplied
       # them; other caller flags (for example --skip-image) are preserved.
@@ -1494,6 +1587,11 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_WORKER_ALLOWED_PROJECTS "$worker_allowed_projects"
   add_remote_env MAC_DEPLOY_WORKER_REQUIRED_METADATA "$worker_required_metadata"
   add_remote_env MAC_DEPLOY_WORKER_REQUIRE_CANARY "$worker_require_canary"
+  # Preserve the caller's three-state intent: blank means keep an optional
+  # node's existing OpenShell state, true bootstraps it, and explicit false
+  # tears down stale deploy-managed state.  The independently derived required
+  # flag below still wins for pure workers.
+  add_remote_env MAC_DEPLOY_OPENSHELL "${MAC_DEPLOY_OPENSHELL:-}"
   add_remote_env MAC_DEPLOY_OPENSHELL_REQUIRED "$openshell_required"
   add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED "$github_credentials_required"
   add_remote_env MAC_DEPLOY_SUPERVISOR "$supervisor"
@@ -1649,13 +1747,13 @@ deploy_host() {
     ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" "$remote_cmd"
   then
     echo "==> ${agent}: validating remote post-deploy manifest"
-    if ! reconcile_remote_deploy "$agent" "$target"; then
+    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then
       echo "==> ${agent}: remote deploy returned success but post manifest validation failed" >&2
       return 1
     fi
   else
     echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"
-    reconcile_remote_deploy "$agent" "$target"
+    reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"
   fi
   if [ "$openshell_enabled" = "1" ]; then
     echo "==> ${agent}: keeping mac-agent stopped while OpenShell validates"
