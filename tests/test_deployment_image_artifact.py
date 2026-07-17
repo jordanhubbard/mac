@@ -68,6 +68,22 @@ def test_deployment_image_ci_proves_nonroot_state_volume_writes() -> None:
     assert "test -x /opt/mac-venv/bin/mac-git-askpass" in docker_job
 
 
+def test_all_image_publication_smokes_use_valid_docker_label_templates() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    valid_template = (
+        "--format='{{ index .Config.Labels "
+        '"org.opencontainers.image.revision" }}\''
+    )
+    invalid_template = (
+        "--format='{{ index .Config.Labels "
+        r'\"org.opencontainers.image.revision\" }}\''
+    )
+
+    assert invalid_template not in workflow
+    for job_name in ("docker", "openshell-runtime-image", "certifier-image"):
+        assert _workflow_job(workflow, job_name).count(valid_template) == 1
+
+
 def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 

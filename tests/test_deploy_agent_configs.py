@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -1365,6 +1366,82 @@ def test_direct_fleet_deploy_loads_authoritative_env_before_defaults():
         "deploy-mac-fleet.sh must call load_env_file_with_caller_precedence to load the env file"
     )
     assert script.index(call) < script.index('GIT_BRANCH="${MAC_DEPLOY_GIT_BRANCH:-main}"')
+
+
+def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_output(
+    tmp_path,
+):
+    script = deploy_script_text()
+    function = script.split("load_env_file_with_caller_precedence() {", 1)[1].split(
+        "\n}\n\n# Resolve the GitHub credential", 1
+    )[0]
+    function = "load_env_file_with_caller_precedence() {" + function + "\n}"
+    env_file = tmp_path / "deploy.env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "MAC_DEPLOY_OPENSHELL=0",
+                "MAC_DEPLOY_OPENSHELL_ARGS=from-file",
+                "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=from-file-runtime",
+                "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD=1",
+                "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0",
+                "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0",
+                "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR=/from/file",
+                "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:1",
+                "MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS=0",
+                "MAC_DEPLOY_EXECUTION_COHORT_REVISION=99",
+                "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT=0",
+                "MAC_DEPLOY_EXECUTION_COHORT_SEED=file-secret-must-never-be-printed",
+                "MAC_DEPLOY_GH_TOKEN=file-github-secret-must-never-be-printed",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    expected = {
+        "MAC_DEPLOY_OPENSHELL": "1",
+        "MAC_DEPLOY_OPENSHELL_ARGS": "--enable --fail-closed",
+        "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": "caller-runtime",
+        "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD": "0",
+        "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED": "1",
+        "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED": "1",
+        "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR": "/caller/bundles",
+        "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT": "http://127.0.0.1:17671",
+        "MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS": "30",
+        "MAC_DEPLOY_EXECUTION_COHORT_REVISION": "1",
+        "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT": "50",
+        "MAC_DEPLOY_EXECUTION_COHORT_SEED": "caller-secret-must-never-be-printed",
+        "MAC_DEPLOY_GH_TOKEN": "caller-github-secret-must-never-be-printed",
+    }
+    assertions = "\n".join(
+        '[ "${%s}" = %s ]' % (name, shlex.quote(value))
+        for name, value in expected.items()
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            function
+            + '\nload_env_file_with_caller_precedence "$1"\n'
+            + assertions
+            + "\nprintf '%s\\n' precedence-ok\n",
+            "bash",
+            str(env_file),
+        ],
+        env={"PATH": "/usr/bin:/bin", **expected},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "precedence-ok\n"
+    combined = result.stdout + result.stderr
+    assert "secret-must-never-be-printed" not in combined
+
+    precedence = script.split("local -a _PRECEDENCE_VARS=(", 1)[1].split(")", 1)[0]
+    for name in expected:
+        assert name in precedence
 
 
 def test_fleet_deploy_reuses_gh_keyring_token_with_explicit_precedence(tmp_path):

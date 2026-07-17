@@ -343,7 +343,7 @@ jobs:
             docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
             DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
             test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
-            test "$(docker inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$exact_ref")" = "$GITHUB_SHA"
+            test "$(docker inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$exact_ref")" = "$GITHUB_SHA"
             DOCKER_CONFIG="$empty_config" docker run --rm --network none \
               --platform "$platform" --entrypoint /bin/sh "$exact_ref" -ec '
                 test "$(id -u)" = 10001
@@ -467,7 +467,7 @@ jobs:
             docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
             DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
             test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
-            test "$(docker inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$exact_ref")" = "$GITHUB_SHA"
+            test "$(docker inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$exact_ref")" = "$GITHUB_SHA"
             DOCKER_CONFIG="$empty_config" docker run --rm --platform "$platform" \
               --entrypoint /bin/bash "$exact_ref" -lc '
                 /usr/local/bin/mac-verify-bash-contract
@@ -616,7 +616,7 @@ jobs:
             docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
             DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
             test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
-            test "$(docker inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$exact_ref")" = "$GITHUB_SHA"
+            test "$(docker inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$exact_ref")" = "$GITHUB_SHA"
             test "$(docker inspect --format='{{ .Config.User }}' "$exact_ref")" = sandbox
             DOCKER_CONFIG="$empty_config" docker run --rm --network none \
               --platform "$platform" "$exact_ref" \

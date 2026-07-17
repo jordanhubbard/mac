@@ -63,26 +63,54 @@ hub credentials, or landing credentials.
    translates it to the OpenShell CLI's `OPENSHELL_GATEWAY_ENDPOINT`; arbitrary
    remote plaintext endpoints are rejected.
 
-## Mandatory pre-activation proof
+## Mandatory cut-over proof
 
-Before enabling either work-package pipeline or landing:
+First keep both work-package switches disabled, pause the project, and hold all
+workers. In that fail-closed state:
 
 - `openshell status` must succeed through the loopback endpoint from the exact
   service HOME and CLI used by the hub.
 - A sandbox using the checked-in certification policy must create and delete
   successfully on the Linux gateway.
 - The certification image must be referenced by an immutable registry digest.
+
+The canary helper requires the managed pipeline to be alive, so enable pipeline
+and landing together only after those gateway proofs pass, while the project is
+still paused and every worker remains held:
+
+```bash
+MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=1 \
+MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=1 \
+  deploy/deploy-mac-fleet.sh --hub <hub-agent> <hub-agent>
+```
+
+Keep ordinary task ingress frozen for both canaries. Admit one canary at a time,
+open only the selected mutation worker's claim window, and restore its agent
+hold plus the project pause immediately after the mutation task is claimed. The
+already-claimed mutation may finish, while no unrelated work can cross the
+one-way certification/landing boundary.
+
 - The negative canary must pass candidate-owned tests but fail the image-owned
   frozen contract, with no landing receipt and no movement of the canonical
   ref.
 - The positive canary must certify, land exactly once, finalize, and leave the
   remote canonical ref at the receipt SHA.
-- During both canaries, ordinary task ingress must remain frozen so no
-  unreviewed workload crosses the one-way certification/landing boundary.
 
-Only after all proofs pass may the hub be redeployed with
-`MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=1` and
-`MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=1`.
+If either canary fails, keep every worker held and the project paused. Raise the
+Andon on any still-active canary package, then redeploy the hub with both
+switches explicitly disabled:
+
+```bash
+mac work-package pause <package-id> --plan-version 1 --epoch 1 \
+  --reason "cut-over canary failed" --actor cutover-canary
+MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0 \
+MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0 \
+  deploy/deploy-mac-fleet.sh --hub <hub-agent> <hub-agent>
+```
+
+Do not remove the tunnel, discard the canary evidence, or unfreeze ordinary
+task ingress during failure handling. Only after the negative and positive
+receipts both pass may the project be activated and the worker holds removed.
 
 ## Operations and removal
 
