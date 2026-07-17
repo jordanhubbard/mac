@@ -514,3 +514,177 @@ def test_real_git_preview_and_admission_independently_attest_path_parallelism(
         ]
     finally:
         store.close()
+
+
+# --- Broadened secret scanning -------------------------------------------
+
+_GHP_TOKEN = "ghp_" + "A" * 36
+_GITHUB_PAT = "github_pat_" + "1" * 22 + "_" + "B" * 30
+_GLPAT = "glpat-" + "C" * 20
+_AWS_KEY = "AKIA" + "Q" * 16
+_GOOGLE_KEY = "AIza" + "d" * 35
+_SLACK_TOKEN = "xoxb-" + "1" * 12 + "-aBcDeF012345"
+_STRIPE_KEY = "sk_live_" + "e" * 24
+_PROVIDER_KEY = "sk-proj-" + "f" * 40
+_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF123456"
+_RSA_PRIVATE_KEY = (
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA0\n"
+    "-----END RSA PRIVATE KEY-----"
+)
+_OPENSSH_PRIVATE_KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1r\n"
+_PKCS8_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nMIIBVQIBADANBg\n"
+_AUTH_URL = "https://octocat:s3cr3tpw@github.com/org/repo.git"
+_XACCESS_URL = "https://x-access-token:" + _GHP_TOKEN + "@github.com/org/repo.git"
+_NETRC = "machine github.com login octocat password s3cr3tpw"
+_NETRC_LINE = "\nmachine github.com login octocat password s3cr3tpw\n"
+_AUTHZ_HEADER = "Authorization: Bearer sometoken.value-1234567890"
+
+
+_RAW_SECRET_CASES = [
+    ("github_ghp", _GHP_TOKEN, "GitHub token"),
+    ("github_pat", _GITHUB_PAT, "GitHub token"),
+    ("gitlab_pat", _GLPAT, "GitLab token"),
+    ("aws_key", _AWS_KEY, "AWS access key"),
+    ("google_key", _GOOGLE_KEY, "Google API key"),
+    ("slack_token", _SLACK_TOKEN, "Slack token"),
+    ("stripe_key", _STRIPE_KEY, "Stripe secret key"),
+    ("provider_key", _PROVIDER_KEY, "provider secret key"),
+    ("jwt", _JWT, "JSON Web Token"),
+    ("rsa_private_key", _RSA_PRIVATE_KEY, "private-key block"),
+    ("openssh_private_key", _OPENSSH_PRIVATE_KEY, "private-key block"),
+    ("pkcs8_private_key", _PKCS8_PRIVATE_KEY, "private-key block"),
+    ("authenticated_url", _AUTH_URL, "authenticated git URL"),
+    ("x_access_token_url", _XACCESS_URL, "authenticated git URL"),
+    ("netrc", _NETRC, "netrc credential"),
+    ("authorization_header", _AUTHZ_HEADER, "authorization header"),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "secret", "_kind"),
+    _RAW_SECRET_CASES,
+    ids=[case[0] for case in _RAW_SECRET_CASES],
+)
+def test_preview_rejects_raw_secret_material_in_free_text(
+    managed_bridge, label, secret, _kind
+) -> None:
+    _store, _resolver, _packages, bridge = managed_bridge
+    proposal = _proposal()
+    # Embed inside ordinary planner prose to exercise the deterministic scan.
+    injected = _NETRC_LINE if label == "netrc" else secret
+    proposal["nodes"][0]["description"] = (
+        "Change the backend slice.\n%s\nMore detail." % injected
+    )
+    with pytest.raises(ValidationError) as excinfo:
+        bridge.preview(proposal, request={"goal": "Ship", "project": "mac"})
+    # The redaction-safe error must never echo the matched secret span.
+    assert secret not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("label", "secret", "_kind"),
+    _RAW_SECRET_CASES,
+    ids=[case[0] for case in _RAW_SECRET_CASES],
+)
+def test_preview_rejects_raw_secret_material_deeply_nested(
+    managed_bridge, label, secret, _kind
+) -> None:
+    _store, _resolver, _packages, bridge = managed_bridge
+    proposal = _proposal()
+    injected = _NETRC_LINE if label == "netrc" else secret
+    proposal["metadata"] = {
+        "notes": [
+            {"context": {"deep": ["harmless", {"leaked": injected}]}},
+        ]
+    }
+    with pytest.raises(ValidationError) as excinfo:
+        bridge.preview(proposal, request={"goal": "Ship", "project": "mac"})
+    assert secret not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("label", "secret", "_kind"),
+    _RAW_SECRET_CASES,
+    ids=[case[0] for case in _RAW_SECRET_CASES],
+)
+def test_accept_rejects_raw_secret_material_injected_after_preview(
+    managed_bridge, label, secret, _kind
+) -> None:
+    store, _resolver, _packages, bridge = managed_bridge
+    plan = bridge.preview(
+        _proposal(),
+        request={"goal": "Ship", "project": "mac", "package_id": "wp_secret"},
+    ).plan
+    # Simulate an operator edit that smuggles a raw secret into the held plan.
+    injected = _NETRC_LINE if label == "netrc" else secret
+    plan["nodes"][0]["description"] = "Edited backend note.\n%s\nDone." % injected
+    with pytest.raises(ValidationError) as excinfo:
+        bridge.accept(plan, actor="operator", reason="edited plan")
+    assert secret not in str(excinfo.value)
+    # Nothing may be materialized when acceptance fails closed.
+    assert store.query_one("SELECT COUNT(*) AS n FROM work_packages")["n"] == 0
+    assert store.query_one("SELECT COUNT(*) AS n FROM tasks")["n"] == 0
+
+
+_BENIGN_STRINGS = [
+    "Implement the backend slice under src/backend and run pytest tests/backend.",
+    "Coordinate UI and API changes; see https://github.com/org/repo for context.",
+    "The mutation_wip token bucket allows max_tokens of 2 concurrent mutations.",
+    "Rotate the deploy credential via the secret-reference handle, not inline.",
+    "Reference public docs at https://example.com/guide?page=2&tab=overview.",
+    "Follow the AGPL-3.0 license header and keep authorization checks intact.",
+    "Public certificate bundle -----BEGIN CERTIFICATE----- lives in deploy/.",
+    "Short ids like ghp_short or AKIASHORT are not vendor-shaped secrets.",
+    "Machine learning pipeline design notes and password reset UX copy.",
+    "Clone with git clone https://github.com/org/repo.git before building.",
+]
+
+
+@pytest.mark.parametrize("benign", _BENIGN_STRINGS)
+def test_preview_admits_benign_prose_without_false_positive(
+    managed_bridge, benign
+) -> None:
+    _store, _resolver, _packages, bridge = managed_bridge
+    proposal = _proposal()
+    proposal["nodes"][0]["description"] = benign
+    proposal["metadata"] = {"analyst_notes": [benign, {"detail": benign}]}
+    # Must compile and preview cleanly: benign prose is not secret material.
+    result = bridge.preview(
+        proposal, request={"goal": "Ship", "project": "mac"}
+    ).to_dict()
+    assert result["mode"] == "managed"
+
+
+def test_secret_scan_is_identical_at_preview_and_acceptance(managed_bridge) -> None:
+    """The same scalar must be rejected on both paths with the same contract."""
+
+    _store, _resolver, _packages, bridge = managed_bridge
+    proposal = _proposal()
+    proposal["nodes"][0]["description"] = "auth via %s" % _GHP_TOKEN
+    with pytest.raises(ValidationError) as preview_err:
+        bridge.preview(proposal, request={"goal": "Ship", "project": "mac"})
+
+    clean = bridge.preview(
+        _proposal(),
+        request={"goal": "Ship", "project": "mac", "package_id": "wp_parity"},
+    ).plan
+    clean["nodes"][0]["description"] = "auth via %s" % _GHP_TOKEN
+    with pytest.raises(ValidationError) as accept_err:
+        bridge.accept(clean, actor="operator", reason="edited plan")
+
+    assert str(preview_err.value) == str(accept_err.value)
+    assert _GHP_TOKEN not in str(preview_err.value)
+
+
+def test_secret_scan_never_echoes_matched_value_across_families() -> None:
+    from mac.work_plan_admission import _reject_secret_material
+
+    for label, secret, _kind in _RAW_SECRET_CASES:
+        injected = _NETRC_LINE if label == "netrc" else secret
+        payload = {"nodes": [{"description": "prefix\n%s\nsuffix" % injected}]}
+        with pytest.raises(ValidationError) as excinfo:
+            _reject_secret_material(payload)
+        message = str(excinfo.value)
+        assert secret not in message
+        # The contract message is a fixed redaction-safe string.
+        assert message.startswith("managed work plan may not contain")

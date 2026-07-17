@@ -11,6 +11,15 @@ Activation is intentionally outside this bridge.  The existing control-plane
 activation command performs worker-credential readiness checks and a
 plan-version/epoch CAS, so an accepted plan cannot accidentally become
 dispatchable merely because it was previewed or persisted.
+
+Both preview and acceptance run one deterministic, redaction-safe secret scan
+(:func:`_reject_secret_material`) over the entire nested plan.  It rejects
+secret-like fields, credential-bearing URLs, raw bearer/API tokens, private-key
+and PEM blocks, and authenticated Git/config fragments.  Rejections raise
+:class:`~mac.models.ValidationError` with a fixed, category-only message; a
+matched value is never logged, echoed, or embedded in an error.  Plans must
+reference credentials by control-plane secret name instead of embedding them;
+see ``docs/secrets-management-guide.md`` for the accepted reference mechanism.
 """
 
 from __future__ import annotations
@@ -57,6 +66,109 @@ _SECRET_QUERY_KEYS = frozenset(
         "signature",
         "token",
     }
+)
+
+# High-confidence secret detectors that operate on scalar strings.
+#
+# Each entry pairs a compiled pattern with a fully-formed, redaction-safe
+# message.  The message is the only thing ever surfaced in a
+# :class:`ValidationError`; the matched span is never logged, echoed, or
+# embedded in an error.  Patterns are deliberately anchored on vendor-issued
+# prefixes, structural markers, or explicit credential syntax so that ordinary
+# planner prose (task titles, descriptions, file paths, license headers) does
+# not trip them, keeping the false-positive surface measurable and bounded.
+#
+# Ordering: authenticated URLs and headers are matched before generic raw
+# tokens so that a token embedded inside an authenticated URL is reported with
+# the more specific, still redaction-safe, contract.
+_SECRET_STRING_PATTERNS: Tuple[Tuple[re.Pattern[str], str], ...] = (
+    # --- Authenticated Git / config fragments (credential outside a URL) ---
+    # HTTP Authorization headers carrying a live credential.
+    (
+        re.compile(r"(?im)^\s*authorization\s*:\s*(?:bearer|basic|token)\s+\S+"),
+        "managed work plan may not contain authorization-header credentials",
+    ),
+    # git-credential-store / helper lines and userinfo URLs: scheme://user:pass@host.
+    (
+        re.compile(r"(?i)\b(?:https?|ssh|git)://[^\s/@:]+:[^\s/@]+@[^\s/]+"),
+        "managed work plan may not contain authenticated git URLs",
+    ),
+    # GitHub Actions x-access-token style credential embedding.
+    (
+        re.compile(r"(?i)\bx-access-token:[^\s@/]+@"),
+        "managed work plan may not contain authenticated git URLs",
+    ),
+    # .netrc credential fragments: a machine line that also carries a password.
+    (
+        re.compile(
+            r"(?im)^\s*machine\s+\S+\s+(?:login|account)\s+\S+\s+password\s+\S+"
+        ),
+        "managed work plan may not contain netrc credentials",
+    ),
+    (
+        re.compile(r"(?im)^\s*machine\s+\S+\s+password\s+\S+"),
+        "managed work plan may not contain netrc credentials",
+    ),
+    # --- PEM / private-key blocks (RSA, EC, OpenSSH, PKCS#8, PGP) ---
+    (
+        re.compile(r"-----BEGIN[ A-Z0-9]*PRIVATE KEY-----"),
+        "managed work plan may not contain a private-key block",
+    ),
+    (
+        re.compile(r"-----BEGIN PGP PRIVATE KEY BLOCK-----"),
+        "managed work plan may not contain a private-key block",
+    ),
+    (
+        re.compile(r"PuTTY-User-Key-File-\d"),
+        "managed work plan may not contain a private-key block",
+    ),
+    # --- Vendor-issued raw bearer / API tokens ---
+    # GitHub personal-access / app / OAuth / refresh tokens.
+    (
+        re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b"),
+        "managed work plan may not contain a raw GitHub token",
+    ),
+    (
+        re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b"),
+        "managed work plan may not contain a raw GitHub token",
+    ),
+    # GitLab personal-access tokens.
+    (
+        re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
+        "managed work plan may not contain a raw GitLab token",
+    ),
+    # AWS access-key IDs.
+    (
+        re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA)[0-9A-Z]{16}\b"),
+        "managed work plan may not contain a raw AWS access key",
+    ),
+    # Google API keys.
+    (
+        re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
+        "managed work plan may not contain a raw Google API key",
+    ),
+    # Slack tokens (bot, user, app, legacy, refresh, config).
+    (
+        re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b"),
+        "managed work plan may not contain a raw Slack token",
+    ),
+    # Stripe live/test secret keys.
+    (
+        re.compile(r"\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}\b"),
+        "managed work plan may not contain a raw Stripe secret key",
+    ),
+    # OpenAI / Anthropic style project keys.
+    (
+        re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{24,}\b"),
+        "managed work plan may not contain a raw provider secret key",
+    ),
+    # JSON Web Tokens (three base64url segments; second segment carries claims).
+    (
+        re.compile(
+            r"\beyJ[A-Za-z0-9_-]{6,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b"
+        ),
+        "managed work plan may not contain a raw JSON Web Token",
+    ),
 )
 _MODEL_PROPOSAL_FIELDS = frozenset(
     {
@@ -670,8 +782,23 @@ def _reject_secret_material(value: Any, path: str = "plan") -> None:
         return
     if not isinstance(value, str):
         return
+    _reject_secret_string(value)
+
+
+def _reject_secret_string(value: str) -> None:
+    """Reject a scalar string that carries high-confidence secret material.
+
+    Only redaction-safe labels reach the raised :class:`ValidationError`; the
+    matched span itself is never included, logged, or echoed.  Detection is
+    deterministic and identical at preview and acceptance because both paths
+    funnel every scalar through this helper.
+    """
+
     if _BEARER_RE.search(value):
         raise ValidationError("managed work plan may not contain bearer credentials")
+    for pattern, message in _SECRET_STRING_PATTERNS:
+        if pattern.search(value):
+            raise ValidationError(message)
     for candidate in re.findall(r"(?:https?|ssh|git)://[^\s<>]+", value):
         parsed = urlsplit(candidate.rstrip(".,);]"))
         if parsed.username is not None or parsed.password is not None:

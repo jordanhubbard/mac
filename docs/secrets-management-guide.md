@@ -403,3 +403,74 @@ allow the name to be reclaimed later.
 - **Operational memory is not a secret store**: repository-access learnings may
   name `env:GH_TOKEN` or another mechanism, but must never contain token values,
   authenticated URLs, or raw secret-bearing Git output.
+
+---
+
+## Managed Work-Plan Secret Scanning
+
+Managed work plans are proposed by a language model and edited by an operator
+before acceptance. Neither the proposal nor the edited plan may carry secret
+material into the durable work-package/task rows. `ManagedWorkPlanBridge` runs
+one deterministic, redaction-safe scan (`_reject_secret_material`) at **both**
+preview and acceptance, so a payload that is rejected on preview is rejected
+identically on acceptance and vice versa.
+
+### What the scan rejects
+
+The scan walks every nested mapping, list, and scalar string in the plan and
+fails closed on high-confidence secret forms:
+
+- **Secret-like fields** — keys such as `token`, `password`, `secret`,
+  `api_key`, `apikey`, `credential`, `authorization`, or any `*PrivateKey*`
+  field (case/style-insensitive).
+- **Credential-bearing URLs** — `scheme://user:pass@host` userinfo, or query
+  strings carrying `access_token`, `api_key`, `authorization`, `client_secret`,
+  `password`, `signature`, `token`, and similar keys.
+- **Raw bearer / API tokens** carried in free text (not a URL or secret field):
+  GitHub (`ghp_…`, `gho_…`, `github_pat_…`), GitLab (`glpat-…`), AWS access-key
+  IDs (`AKIA…`, `ASIA…`, …), Google API keys (`AIza…`), Slack (`xox[baprs]-…`),
+  Stripe (`sk_live_…`, `rk_test_…`), provider project keys (`sk-proj-…`,
+  `sk-ant-…`), and JSON Web Tokens (`eyJ….eyJ….…`).
+- **Private-key / PEM blocks** — `-----BEGIN … PRIVATE KEY-----`, OpenSSH,
+  PKCS#8, PGP private-key blocks, and PuTTY user-key files.
+- **Authenticated Git / config fragments** — `Authorization:` headers,
+  `x-access-token:<token>@host` embeddings, and `.netrc` machine lines that
+  carry a password.
+
+### Redaction-safe error contract
+
+When the scan trips, it raises `ValidationError` with a **fixed, generic
+message** that names only the *category* of the offending material (for example
+`managed work plan may not contain a raw GitHub token`). The matched value, its
+surrounding text, and its byte offset are **never** logged, echoed, or embedded
+in the error. Callers may surface these messages to operators safely.
+
+### False-positive bounds
+
+Patterns are anchored on vendor-issued prefixes, structural markers, or explicit
+credential syntax. Ordinary planner prose — task titles, descriptions, file
+paths, public repository URLs, license headers, or the words "token" and
+"password" used descriptively — does not trip the scan. The
+`tests/test_work_plan_admission.py` suite pins both the positive detections
+(each secret family, including deeply nested payloads) and a benign-prose
+corpus that must preview cleanly, keeping the false-positive surface measurable
+and bounded.
+
+### Accepted secret-reference mechanism
+
+Because raw secret material is rejected, a managed plan that needs a credential
+must **reference** it, never embed it. The supported reference is a control-plane
+secret **name** resolved at execution time through the scope/handle flow
+described above:
+
+1. An operator creates the secret once with `create_secret(name, value, scopes,
+   created_by)` and scopes it to the executing agent, capability, or tenant.
+2. The plan (or a node's contract) refers to the secret only by its **name**
+   (for example `deploy-credential`) — a plain identifier with no secret value.
+3. At execution time the worker requests the secret by name through
+   `request_secret` → `reveal_secret` (single-use, TTL-bounded handle), or an
+   in-process control-plane caller uses `resolve_secret_value`.
+
+Never inline a token, private key, authenticated URL, or `.netrc` fragment into
+a plan node, description, or metadata field; use the secret name reference and
+let the control plane gate, audit, and reveal the value.
