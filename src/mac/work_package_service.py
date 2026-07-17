@@ -35,6 +35,7 @@ from mac.work_package_models import (
     validate_executable_work_package_effects,
     validate_supported_work_package_topology,
 )
+from mac.work_package_telemetry import WorkPackageTelemetryService
 
 
 WORK_PACKAGE_MATERIALIZER_VERSION = "work-package-materializer-v1"
@@ -91,7 +92,9 @@ class GitRepositoryBaseVerifier:
     def __init__(self, *, timeout_seconds: int = 30) -> None:
         timeout = int(timeout_seconds)
         if timeout < 1 or timeout > 300:
-            raise ValidationError("repository verification timeout must be 1..300 seconds")
+            raise ValidationError(
+                "repository verification timeout must be 1..300 seconds"
+            )
         self.timeout_seconds = timeout
 
     def verify(
@@ -223,10 +226,12 @@ class WorkPackageService:
         *,
         repository_verifier: Optional[RepositoryBaseVerifier] = None,
         external_lineage_verifier: Optional[ExternalLineageVerifier] = None,
+        telemetry: Optional[WorkPackageTelemetryService] = None,
     ) -> None:
         self.store = store
         self.repository_verifier = repository_verifier or GitRepositoryBaseVerifier()
         self.external_lineage_verifier = external_lineage_verifier
+        self.telemetry = telemetry or WorkPackageTelemetryService(store)
 
     def get(self, package_id: str) -> WorkPackage:
         """Return one exact package identity and its current pointers."""
@@ -259,7 +264,11 @@ class WorkPackageService:
         sql = "SELECT * FROM work_packages"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY id LIMIT ?" if order_by_id else " ORDER BY updated_at DESC, id LIMIT ?"
+        sql += (
+            " ORDER BY id LIMIT ?"
+            if order_by_id
+            else " ORDER BY updated_at DESC, id LIMIT ?"
+        )
         params.append(limit_value)
         return tuple(
             self._package_from_row(row)
@@ -349,6 +358,7 @@ class WorkPackageService:
         tenant_id: Optional[str] = None,
         root_task_id: Optional[str] = None,
         _controller_task_identity: Optional[Tuple[str, str]] = None,
+        _cohort_assignment: Optional[Mapping[str, Any]] = None,
     ) -> WorkPackageAdmissionResult:
         """Atomically persist a compiled DAG as held canonical tasks.
 
@@ -357,6 +367,7 @@ class WorkPackageService:
         reusing a package id for a different digest fails closed.
         """
 
+        admission_started_at = utcnow()
         compiled = compile_work_package_plan(raw_plan)
         validate_executable_work_package_effects(compiled)
         materialization_map = self._materialization_map(
@@ -437,14 +448,25 @@ class WorkPackageService:
                 (repository_id,),
             )
             if lock.rowcount != 1:
-                raise ValidationError("work package repository disappeared during admission")
+                raise ValidationError(
+                    "work package repository disappeared during admission"
+                )
             current_repository_row = conn.execute(
                 "SELECT * FROM project_repositories WHERE id = ?", (repository_id,)
             ).fetchone()
             if current_repository_row is None:
-                raise ValidationError("work package repository disappeared during admission")
+                raise ValidationError(
+                    "work package repository disappeared during admission"
+                )
             current_repository = dict(current_repository_row)
-            for field_name in ("id", "source", "path", "project", "enabled", "updated_at"):
+            for field_name in (
+                "id",
+                "source",
+                "path",
+                "project",
+                "enabled",
+                "updated_at",
+            ):
                 if current_repository.get(field_name) != repository.get(field_name):
                     raise ValidationError(
                         "work package repository changed during base attestation"
@@ -583,6 +605,98 @@ class WorkPackageService:
                 },
                 now=now,
             )
+            rollout = conn.execute(
+                "SELECT revision FROM managed_task_publication_rollout "
+                "WHERE singleton_key = ?",
+                ("fleet",),
+            ).fetchone()
+            rollout_revision = int(rollout["revision"]) if rollout is not None else 0
+            cohort = dict(_cohort_assignment or {})
+            cohort_route = str(cohort.get("treatment_route") or "managed_synchronized")
+            if cohort_route != "managed_synchronized":
+                raise ValidationError(
+                    "an admitted work package requires managed cohort treatment"
+                )
+            cohort_eligibility = str(cohort.get("eligibility") or "ineligible")
+            cohort_revision = int(cohort.get("rollout_revision") or rollout_revision)
+            cohort_key = str(
+                cohort.get("cohort_key") or "managed_nonprimary_r%d" % cohort_revision
+            )
+            cohort_reason = str(
+                cohort.get("reason") or "managed_plan_excluded_primary_cohort"
+            )
+            cohort_detail = dict(cohort.get("detail") or {})
+            cohort_detail.setdefault("schema", "mac.execution_cohort.prospective.v3")
+            cohort_detail.setdefault("primary_analysis_eligible", False)
+            cohort_detail.setdefault(
+                "eligibility_contract", "non_atomic_managed_plan_excluded_v1"
+            )
+            cohort_detail.setdefault("randomization", None)
+            # Atomic task randomization is persisted by the controller before
+            # treatment-specific managed admission begins.  Keep the task row's
+            # immutable payload byte-for-byte compatible with that prospective
+            # assignment; package-only planning evidence is attached to the
+            # separate package assignment below.
+            task_cohort_detail = dict(cohort_detail)
+            cohort_detail.update(
+                {
+                    "plan_digest": compiled.plan_digest,
+                    "planning_base_sha": definition["planning_base_sha"],
+                }
+            )
+            self.telemetry.assign_cohort(
+                task_id=None,
+                package_id=package_id,
+                eligibility=cohort_eligibility,
+                treatment_route=cohort_route,
+                rollout_revision=cohort_revision,
+                cohort_key=cohort_key,
+                reason=cohort_reason,
+                actor="execution-cohort-controller",
+                detail=cohort_detail,
+                assigned_at=now,
+                conn=conn,
+            )
+            # The package is the managed treatment authority.  A root task is
+            # merely lineage and must never have an earlier immutable cohort
+            # rewritten.  The controller-created atomic mutation task is a
+            # separate randomization unit and receives its own matching row.
+            if _controller_task_identity is not None:
+                self.telemetry.assign_cohort(
+                    task_id=_controller_task_identity[1],
+                    package_id=None,
+                    eligibility=cohort_eligibility,
+                    treatment_route=cohort_route,
+                    rollout_revision=cohort_revision,
+                    cohort_key=cohort_key,
+                    reason=cohort_reason,
+                    actor="execution-cohort-controller",
+                    detail=task_cohort_detail,
+                    assigned_at=now,
+                    conn=conn,
+                )
+            self.telemetry.record_station_attempt(
+                package_id=package_id,
+                station="admission",
+                operation="materialize",
+                attempted=True,
+                terminal_status="succeeded",
+                queued_at=admission_started_at,
+                started_at=admission_started_at,
+                completed_at=now,
+                actor=actor_value,
+                plan_version=1,
+                epoch=1,
+                pipeline_run_id="admission:%s:1:1:materialize" % package_id,
+                outcome_index=0,
+                reason_code="work_package_admitted_held",
+                detail={
+                    "held": True,
+                    "task_ids": list(task_ids),
+                    "reason": reason_value,
+                },
+                conn=conn,
+            )
 
         package = self._get_package(package_id)
         return WorkPackageAdmissionResult(
@@ -628,10 +742,9 @@ class WorkPackageService:
             ).fetchone()
             if package is None:
                 raise ValidationError("work package not found")
-            if (
-                int(package["current_plan_version"]) != int(expected_plan_version)
-                or int(package["current_epoch"]) != int(expected_epoch)
-            ):
+            if int(package["current_plan_version"]) != int(
+                expected_plan_version
+            ) or int(package["current_epoch"]) != int(expected_epoch):
                 raise ValidationError("work package activation CAS did not match")
             plan_row = conn.execute(
                 "SELECT definition FROM work_package_plan_versions "
@@ -664,7 +777,9 @@ class WorkPackageService:
                 ),
             ).fetchall()
             if not root_rows:
-                raise ValidationError("work package has no dependency-free activation roots")
+                raise ValidationError(
+                    "work package has no dependency-free activation roots"
+                )
             released_task_ids = []
             controller_task_ids = []
             for row in root_rows:
@@ -742,8 +857,7 @@ class WorkPackageService:
     ) -> None:
         task_id = str(materialized["task_id"])
         internal_ids = [
-            str(materialization_map[key]["task_id"])
-            for key in node.depends_on
+            str(materialization_map[key]["task_id"]) for key in node.depends_on
         ]
         external_ids = [str(item["task_id"]) for item in node.external_dependencies]
         dependencies = sorted(set(internal_ids + external_ids))
@@ -855,7 +969,9 @@ class WorkPackageService:
             attestation.planning_base_sha.lower(),
         )
         if observed != expected or attestation.canonical_ref_sha.lower() != expected[2]:
-            raise ValidationError("repository base attestation does not match compiled plan")
+            raise ValidationError(
+                "repository base attestation does not match compiled plan"
+            )
         planned_namespace = definition.get("resource_namespace") or {}
         if planned_namespace.get("status") == "resolved":
             attested_namespace = attestation.resource_namespace or {}
@@ -891,7 +1007,10 @@ class WorkPackageService:
 
     @staticmethod
     def _require_task(conn: Any, task_id: str, label: str) -> None:
-        if conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
+        if (
+            conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            is None
+        ):
             raise ValidationError("work package %s was not found" % label)
 
     def _idempotent_result(
@@ -902,17 +1021,20 @@ class WorkPackageService:
         conn: Optional[Any] = None,
     ) -> WorkPackageAdmissionResult:
         if conn is None:
+
             def query_one(sql: str, params: Sequence[Any] = ()) -> Any:
                 return self.store.query_one(sql, params)
 
             def query_all(sql: str, params: Sequence[Any] = ()) -> Any:
                 return self.store.query_all(sql, params)
         else:
+
             def query_one(sql: str, params: Sequence[Any] = ()) -> Any:
                 return conn.execute(sql, params).fetchone()
 
             def query_all(sql: str, params: Sequence[Any] = ()) -> Any:
                 return conn.execute(sql, params).fetchall()
+
         package_id = str(compiled.definition["package_id"])
         plan = query_one(
             "SELECT plan_digest FROM work_package_plan_versions "
@@ -958,7 +1080,9 @@ class WorkPackageService:
             for row in rows
         )
         if observed != expected:
-            raise ValidationError("work package materialization is incomplete or incoherent")
+            raise ValidationError(
+                "work package materialization is incomplete or incoherent"
+            )
         package_row = query_one(
             "SELECT * FROM work_packages WHERE id = ?", (package_id,)
         )
@@ -1037,8 +1161,7 @@ class WorkPackageService:
         """
 
         result: JsonDict = {
-            key: dict(value)
-            for key, value in compiled.materialization_map.items()
+            key: dict(value) for key, value in compiled.materialization_map.items()
         }
         override_node = ""
         override_task_id = ""
@@ -1047,13 +1170,12 @@ class WorkPackageService:
                 not isinstance(controller_task_identity, tuple)
                 or len(controller_task_identity) != 2
             ):
-                raise ValidationError("controller task identity must be a node/task pair")
+                raise ValidationError(
+                    "controller task identity must be a node/task pair"
+                )
             override_node = str(controller_task_identity[0] or "").strip()
             override_task_id = str(controller_task_identity[1] or "").strip()
-            node_specs = {
-                node.node_key: node
-                for node in compiled.task_specs
-            }
+            node_specs = {node.node_key: node for node in compiled.task_specs}
             node = node_specs.get(override_node)
             if node is None:
                 raise ValidationError(
@@ -1112,7 +1234,9 @@ class WorkPackageService:
         )
 
     def _get_package(self, package_id: str) -> WorkPackage:
-        row = self.store.query_one("SELECT * FROM work_packages WHERE id = ?", (package_id,))
+        row = self.store.query_one(
+            "SELECT * FROM work_packages WHERE id = ?", (package_id,)
+        )
         if row is None:
             raise ValidationError("work package not found")
         return self._package_from_row(row)

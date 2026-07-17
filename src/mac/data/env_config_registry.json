@@ -530,6 +530,7 @@
       "scripts/escrow-upstream-key.sh",
       "scripts/migrate-tokenhub-vault.sh",
       "scripts/setup-fleet.py",
+      "scripts/work-package-canary.py",
       "src/mac/_hermes/tools/embedding_tool.py",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/agent_migrate.py",
@@ -784,6 +785,84 @@
     "retired": false,
     "sources": [
       "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: certifier candidate src.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_CANDIDATE_SRC",
+    "retired": false,
+    "sources": [
+      "deploy/certifier/sitecustomize.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: certifier context digest.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_CONTEXT_DIGEST",
+    "retired": false,
+    "sources": [
+      "scripts/build-certifier-image.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: certifier image.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_IMAGE",
+    "retired": false,
+    "sources": [
+      "scripts/build-certifier-image.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: certifier openshell gateway endpoint.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/openshell_certifier.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: certifier phase manifest json.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_PHASE_MANIFEST_JSON",
+    "retired": false,
+    "sources": [
+      "src/mac/openshell_certifier.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: certifier platform.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_PLATFORM",
+    "retired": false,
+    "sources": [
+      "scripts/build-certifier-image.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: certifier source revision.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_SOURCE_REVISION",
+    "retired": false,
+    "sources": [
+      "scripts/build-certifier-image.sh"
     ],
     "type": "str"
   },
@@ -1293,6 +1372,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: deployed source revision file.",
+    "family": "core",
+    "name": "MAC_DEPLOYED_SOURCE_REVISION_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/openshell/bootstrap-openshell.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy agent.",
     "family": "deployment",
     "name": "MAC_DEPLOY_AGENT",
@@ -1460,6 +1550,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy allow local openshell image build.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy allow sample config.",
     "family": "deployment",
     "name": "MAC_DEPLOY_ALLOW_SAMPLE_CONFIG",
@@ -1489,6 +1590,19 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy certifier openshell gateway endpoint.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/openshell/install-certifier-gateway-tunnel.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -1632,6 +1746,42 @@
       "deploy/deploy-mac-fleet.sh",
       "scripts/purge-dead-tokenhub-keys.sh",
       "src/mac/dispatch.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy execution cohort revision.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_EXECUTION_COHORT_REVISION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy execution cohort seed.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_EXECUTION_COHORT_SEED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy execution cohort treatment percent.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -2371,6 +2521,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy openshell runtime image.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy os.",
     "family": "deployment",
     "name": "MAC_DEPLOY_OS",
@@ -2554,6 +2715,18 @@
     "retired": false,
     "sources": [
       "deploy/mac-crash-observer.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy reviewed tool assets.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REVIEWED_TOOL_ASSETS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -3266,6 +3439,42 @@
       "src/mac/worker.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: execution cohort revision.",
+    "family": "core",
+    "name": "MAC_EXECUTION_COHORT_REVISION",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: execution cohort seed.",
+    "family": "core",
+    "name": "MAC_EXECUTION_COHORT_SEED",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: execution cohort treatment percent.",
+    "family": "core",
+    "name": "MAC_EXECUTION_COHORT_TREATMENT_PERCENT",
+    "retired": false,
+    "sources": [
+      "src/mac/deploy_env.py",
+      "src/mac/services.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -5631,9 +5840,11 @@
       "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
+      "deploy/openshell/install-certifier-gateway-tunnel.sh",
       "src/mac/cli.py",
       "src/mac/executor_sandbox.py",
       "src/mac/hermes_gateway.py",
+      "src/mac/openshell_certifier.py",
       "src/mac/openshell_supervisor.py",
       "src/mac/services.py"
     ],
@@ -5895,6 +6106,17 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell runtime image ref file.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell sandbox.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_SANDBOX",
@@ -5959,6 +6181,17 @@
       "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: opensh gw.",
+    "family": "core",
+    "name": "MAC_OPENSH_GW",
+    "retired": false,
+    "sources": [
+      "deploy/openshell/bootstrap-openshell.sh"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -6529,6 +6762,18 @@
   },
   {
     "default": null,
+    "description": "Core setting: repo update dispatch blocker file.",
+    "family": "core",
+    "name": "MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/openshell/bootstrap-openshell.sh",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: repo update self test.",
     "family": "core",
     "name": "MAC_REPO_UPDATE_SELF_TEST",
@@ -6653,6 +6898,43 @@
       "src/mac/services.py"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: reviewed codegraph version.",
+    "family": "core",
+    "name": "MAC_REVIEWED_CODEGRAPH_VERSION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/openshell/prepare-runtime-image-assets.sh",
+      "deploy/reviewed-tool-assets.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: reviewed python version.",
+    "family": "core",
+    "name": "MAC_REVIEWED_PYTHON_VERSION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/reviewed-tool-assets.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: reviewed uv version.",
+    "family": "core",
+    "name": "MAC_REVIEWED_UV_VERSION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/reviewed-tool-assets.sh"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -8185,8 +8467,7 @@
     "retired": false,
     "sources": [
       "src/mac/fleet_learning.py",
-      "src/mac/gitops.py",
-      "src/mac/work_package_pipeline_runtime.py"
+      "src/mac/gitops.py"
     ],
     "type": "str"
   },
@@ -8518,6 +8799,7 @@
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "deploy/k8s/mac-runner/deployment.yaml",
       "deploy/mac-crash-observer.py",
+      "scripts/work-package-canary.py",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",

@@ -354,12 +354,16 @@ class ProductRejectionStation(Protocol):
 class PipelineOutcome:
     item_key: str
     package_id: str
+    plan_version: int
+    epoch: int
     station: str
     status: str
     attempted: bool
     batch_id: str = ""
     job_id: str = ""
     code: str = ""
+    started_at: str = ""
+    completed_at: str = ""
     detail: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -367,12 +371,16 @@ class PipelineOutcome:
             "schema": WORK_PACKAGE_PIPELINE_OUTCOME_SCHEMA,
             "item_key": self.item_key,
             "package_id": self.package_id,
+            "plan_version": self.plan_version,
+            "epoch": self.epoch,
             "batch_id": self.batch_id,
             "job_id": self.job_id,
             "station": self.station,
             "status": self.status,
             "attempted": self.attempted,
             "code": self.code,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
             "detail": dict(self.detail),
         }
 
@@ -417,15 +425,53 @@ def control_plane_pipeline_observer(control_plane: Any) -> PipelineObserver:
             if status in {"failed", "partial_failure", "completed_with_contention"}
             else "info"
         )
-        control_plane.record_log(
-            "work_package.pipeline.run",
-            layer="control_plane",
-            source="work-package-pipeline",
-            level=level,
-            subject_type="service",
-            subject_id="work-package-pipeline",
-            detail=dict(report),
+        try:
+            control_plane.record_log(
+                "work_package.pipeline.run",
+                layer="control_plane",
+                source="work-package-pipeline",
+                level=level,
+                subject_type="service",
+                subject_id="work-package-pipeline",
+                detail=dict(report),
+            )
+        except Exception:  # noqa: BLE001 - measurement must still be attempted.
+            _log.warning(
+                "work-package pipeline ordinary log write failed", exc_info=True
+            )
+        recorder = getattr(
+            control_plane, "record_work_package_pipeline_telemetry", None
         )
+        if callable(recorder):
+            try:
+                recorder(report)
+            except Exception as exc:  # noqa: BLE001 - controller progress is isolated.
+                failure_recorder = getattr(
+                    control_plane, "record_work_package_telemetry_failure", None
+                )
+                if callable(failure_recorder):
+                    try:
+                        failure_recorder("pipeline_report", exc)
+                    except Exception:  # noqa: BLE001 - no recursive telemetry.
+                        _log.error(
+                            "work-package telemetry failure counter write failed",
+                            exc_info=True,
+                        )
+                _log.error(
+                    "work-package pipeline telemetry write failed", exc_info=True
+                )
+            else:
+                success_recorder = getattr(
+                    control_plane, "record_work_package_telemetry_success", None
+                )
+                if callable(success_recorder):
+                    try:
+                        success_recorder()
+                    except Exception:  # noqa: BLE001 - health is best effort only.
+                        _log.warning(
+                            "work-package telemetry success marker write failed",
+                            exc_info=True,
+                        )
 
     return observe
 
@@ -565,6 +611,8 @@ class WorkPackagePipelineController:
                     PipelineOutcome(
                         item_key="inventory",
                         package_id="",
+                        plan_version=0,
+                        epoch=0,
                         station="inventory",
                         status="failed",
                         attempted=False,
@@ -587,7 +635,14 @@ class WorkPackagePipelineController:
                 scanned += 1
                 with self._state_lock:
                     self._after_key = snapshot.key
+                action_started = self._now_utc()
                 outcome = self._advance(snapshot)
+                action_completed = self._now_utc()
+                outcome = replace(
+                    outcome,
+                    started_at=_iso(action_started),
+                    completed_at=_iso(action_completed),
+                )
                 outcomes.append(outcome)
                 if outcome.attempted:
                     actions += 1
@@ -954,13 +1009,25 @@ class WorkPackagePipelineController:
                 if isinstance(observed, str):
                     observed = _bounded_identity(observed)
                 detail["station_%s" % name if name == "status" else name] = observed
-        return self._outcome(
+        outcome = self._outcome(
             snapshot,
             station,
             "advanced",
             True,
             "station_advanced",
             **detail,
+        )
+        job_id = value.get("job_id") or value.get("certification_job_id")
+        if station == "certification_prepare":
+            # Certification preparation returns its durable job identity as
+            # ``id``.  Preserve it on the same station outcome so telemetry
+            # can use the job's immutable creation time as the queue boundary
+            # without waiting for a later inventory pass.
+            job_id = job_id or value.get("id")
+        return replace(
+            outcome,
+            batch_id=_bounded_identity(value.get("batch_id") or outcome.batch_id),
+            job_id=_bounded_identity(job_id or outcome.job_id),
         )
 
     def _failure(
@@ -995,6 +1062,8 @@ class WorkPackagePipelineController:
         return PipelineOutcome(
             item_key=_bounded_identity(snapshot.key),
             package_id=_bounded_identity(snapshot.package_id),
+            plan_version=int(snapshot.plan_version),
+            epoch=int(snapshot.epoch),
             batch_id=_bounded_identity(snapshot.batch_id),
             job_id=_bounded_identity(snapshot.certification_job_id),
             station=station,
@@ -1018,7 +1087,9 @@ class WorkPackagePipelineController:
             try:
                 pruner()
             except Exception:  # noqa: BLE001 - rebuildable cache maintenance is isolated.
-                _log.warning("could not prune certification bundle cache", exc_info=True)
+                _log.warning(
+                    "could not prune certification bundle cache", exc_info=True
+                )
         statuses = {item.status for item in outcomes}
         if "failed" in statuses:
             status = "partial_failure" if len(outcomes) > 1 else "failed"
@@ -1440,7 +1511,8 @@ class ServicePipelineInventory:
         blocker: str,
     ) -> PipelineSnapshot:
         return PipelineSnapshot(
-            key="%s:%d:%d:~catalog" % (
+            key="%s:%d:%d:~catalog"
+            % (
                 package_id,
                 int(plan_version),
                 int(epoch),

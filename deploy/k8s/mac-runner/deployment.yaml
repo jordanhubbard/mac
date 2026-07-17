@@ -30,9 +30,12 @@ spec:
       serviceAccountName: mac-k8s-orchestrator
       automountServiceAccountToken: true   # needed for in-cluster K8s API
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
+        # Dockerfile creates the mac account with this exact identity. fsGroup
+        # makes the crash-spool emptyDir writable by the non-root observer.
+        runAsUser: 10001
+        runAsGroup: 10001
         runAsNonRoot: true
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:

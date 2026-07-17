@@ -33,10 +33,13 @@ spec:
       # no node affinity. Schedule wherever.
       automountServiceAccountToken: false
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
+        # Dockerfile creates the mac account with this exact identity. Keep
+        # pod-level volume ownership aligned with the image instead of relying
+        # on a host- or distribution-specific default UID.
+        runAsUser: 10001
+        runAsGroup: 10001
         runAsNonRoot: true
-        fsGroup: 1000
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:

@@ -110,6 +110,9 @@ def test_every_deployment_supervisor_uses_external_crash_observer():
     assert "- kubernetes" in manifest
     assert "MAC_CRASH_SPOOL_DIR" in manifest
     assert "mountPath: /var/lib/mac/crash-spool" in manifest
+    assert "runAsUser: 10001" in manifest
+    assert "runAsGroup: 10001" in manifest
+    assert "fsGroup: 10001" in manifest
 
 
 def test_filesystem_core_is_retained_with_bounded_permissions(tmp_path):

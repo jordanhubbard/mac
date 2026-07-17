@@ -398,6 +398,96 @@ def test_repo_update_exact_sha_fetches_proves_and_fast_forwards(monkeypatch, tmp
     assert ["merge", "--ff-only", target] in calls
 
 
+def test_repo_update_rejects_exact_source_before_managed_runtime_diverges(
+    monkeypatch, tmp_path
+) -> None:
+    instance = _instance(tmp_path)
+    old = "a" * 40
+    target = "b" * 40
+    runtime_ref = tmp_path / "runtime-image-ref"
+    source_marker = tmp_path / "image-source-sha"
+    blocker = tmp_path / "dispatch-blocked.json"
+    runtime_ref.write_text(
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "c" * 64 + "\n"
+    )
+    source_marker.write_text(old + "\n")
+    monkeypatch.setenv("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE", str(runtime_ref))
+    monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(source_marker))
+    monkeypatch.setenv("MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE", str(blocker))
+    calls = []
+    results = iter(
+        [
+            _cp(stdout="true"),
+            _cp(),
+            _cp(stdout=old),
+            _cp(stdout="fetched"),
+            _cp(),
+            _cp(),
+            _cp(),
+        ]
+    )
+
+    def run(_repo, args, **_kwargs):
+        calls.append(args)
+        return next(results)
+
+    monkeypatch.setattr(worker, "_run_git", run)
+    result = instance._execute_repo_update(
+        {"branch": "main", "target_sha": target}, "stream"
+    )
+    assert result["status"] == "error"
+    assert "rejected before checkout" in result["summary"]
+    assert result["after_sha"] == old
+    assert not any(call[:2] == ["merge", "--ff-only"] for call in calls)
+    assert not blocker.exists(), "a safe preflight rejection must not drain the worker"
+
+
+def test_repo_update_rolls_back_nonexact_managed_runtime_mismatch(
+    monkeypatch, tmp_path
+) -> None:
+    instance = _instance(tmp_path)
+    old = "a" * 40
+    target = "b" * 40
+    results = iter(
+        [
+            _cp(stdout="true"),
+            _cp(),
+            _cp(stdout=old),
+            _cp(stdout="pulled"),
+            _cp(stdout=target),
+            _cp(stdout="reset"),
+            _cp(stdout=old),
+            _cp(),
+        ]
+    )
+    monkeypatch.setattr(worker, "_run_git", lambda *_a, **_k: next(results))
+    monkeypatch.setattr(instance, "_repo_update_self_test", lambda _repo: {"ok": True})
+    monkeypatch.setattr(
+        instance,
+        "_maybe_rebuild_openshell_image_after_update",
+        lambda *_a: {"status": "managed_image_stale"},
+    )
+
+    result = instance._execute_repo_update({}, "stream")
+    assert result["status"] == "rolled_back"
+    assert result["after_sha"] == old
+    assert result["attempted_after_sha"] == target
+    assert result["rollback_ok"] is True
+
+
+def test_repo_update_dispatch_blocker_is_persistent(monkeypatch, tmp_path) -> None:
+    instance = _instance(tmp_path)
+    blocker = tmp_path / "dispatch-blocked.json"
+    monkeypatch.setenv("MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE", str(blocker))
+    instance._write_repo_update_dispatch_blocker(
+        {"reason": "rollback failed", "fatal": True}
+    )
+    assert blocker.stat().st_mode & 0o777 == 0o600
+    loaded = instance._local_repo_update_dispatch_blocker()
+    assert loaded is not None
+    assert loaded["reason"] == "rollback failed"
+
+
 def test_worker_source_state_reports_commit_tree_and_dirty(monkeypatch, tmp_path) -> None:
     results = iter(
         [
@@ -431,6 +521,39 @@ def test_openshell_image_rebuild_gates_and_drift(monkeypatch, tmp_path) -> None:
     marker.unlink()
     monkeypatch.setattr(worker, "_resolve_openshell_docker_bin", lambda: None)
     assert instance._maybe_rebuild_openshell_image_after_update(tmp_path, "a", "b")["status"] == "drift"
+
+
+def test_digest_managed_openshell_image_never_rebuilds_locally(
+    monkeypatch, tmp_path
+) -> None:
+    instance = _instance(tmp_path)
+    monkeypatch.setenv("MAC_OPENSHELL_SANDBOX", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE", "1")
+    source_marker = tmp_path / "image-source-sha"
+    managed_marker = tmp_path / "runtime-image-ref"
+    source_marker.write_text("old-sha\n")
+    managed_marker.write_text(
+        "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64 + "\n"
+    )
+    monkeypatch.setenv("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE", str(source_marker))
+    monkeypatch.setenv("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE", str(managed_marker))
+
+    result = instance._maybe_rebuild_openshell_image_after_update(
+        tmp_path, "old-sha", "new-sha"
+    )
+    assert result == {
+        "status": "managed_image_stale",
+        "runtime_image_ref": (
+            "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+        ),
+        "marked_sha": "old-sha",
+        "after_sha": "new-sha",
+    }
+
+    managed_marker.write_text("mutable:latest\n")
+    assert instance._maybe_rebuild_openshell_image_after_update(
+        tmp_path, "old-sha", "new-sha"
+    ) == {"status": "managed_image_invalid", "marker": str(managed_marker)}
 
 
 def test_openshell_image_rebuild_failures_and_success(monkeypatch, tmp_path) -> None:

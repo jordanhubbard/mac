@@ -92,6 +92,9 @@ mac-evidence = "mac.evidence_cli:main"
 mac-hermes-gateway = "mac.hermes_gateway:main"
 mac-openshell-supervisor = "mac.openshell_supervisor:main"
 mac-openshell-collector = "mac.openshell_collector:main"
+# Controller-only GitHub HTTPS credential bridge. The executable reads GH_TOKEN
+# from its child environment; no credential is accepted on argv or persisted.
+mac-git-askpass = "mac.git_askpass:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "plugin"]

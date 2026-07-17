@@ -139,6 +139,7 @@ def _replayable_plan(definition: Mapping[str, Any]) -> JsonDict:
                     dependency.pop("carry_forward_eligible", None)
     return replay
 
+
 # High-confidence secret detectors that operate on scalar strings.
 #
 # Each entry pairs a compiled pattern with a fully-formed, redaction-safe
@@ -301,7 +302,9 @@ class GitCanonicalBaseResolver:
     def __init__(self, *, timeout_seconds: int = 30) -> None:
         timeout = int(timeout_seconds)
         if timeout < 1 or timeout > 300:
-            raise ValidationError("canonical base timeout must be between 1 and 300 seconds")
+            raise ValidationError(
+                "canonical base timeout must be between 1 and 300 seconds"
+            )
         self.timeout_seconds = timeout
 
     def resolve(
@@ -552,6 +555,7 @@ class ManagedWorkPlanBridge:
         tenant_id: Optional[str] = None,
         root_task_id: Optional[str] = None,
         controller_task_identity: Optional[Tuple[str, str]] = None,
+        controller_cohort_assignment: Optional[Mapping[str, Any]] = None,
     ) -> ManagedWorkPlanAcceptance:
         """Private controller path shared by generic and single-task admission."""
 
@@ -580,9 +584,12 @@ class ManagedWorkPlanBridge:
             tenant_id=tenant_id,
             root_task_id=root_task_id,
             _controller_task_identity=controller_task_identity,
+            _cohort_assignment=controller_cohort_assignment,
         )
         if admission.package.state not in {"admitted", "active"}:
-            raise ValidationError("managed work plan admission returned an invalid package state")
+            raise ValidationError(
+                "managed work plan admission returned an invalid package state"
+            )
         return ManagedWorkPlanAcceptance(admission=admission)
 
     def admit_single_task(
@@ -600,6 +607,7 @@ class ManagedWorkPlanBridge:
         actor: str,
         reason: str,
         tenant_id: Optional[str] = None,
+        cohort_assignment: Optional[Mapping[str, Any]] = None,
     ) -> ManagedWorkPlanAcceptance:
         """Admit one atomic repository task without a planner round trip.
 
@@ -617,9 +625,7 @@ class ManagedWorkPlanBridge:
             raise ValidationError(
                 "managed single-task task_id must be a canonical task id"
             )
-        exact_title = _required_text(
-            title, "managed single-task title", maximum=240
-        )
+        exact_title = _required_text(title, "managed single-task title", maximum=240)
         exact_description = str(description or "")
         if len(exact_description) > 100_000:
             raise ValidationError(
@@ -663,18 +669,17 @@ class ManagedWorkPlanBridge:
         if existing is not None:
             definition = json_loads(existing["definition"], {})
             plan_metadata = (
-                definition.get("metadata")
-                if isinstance(definition, Mapping)
-                else None
+                definition.get("metadata") if isinstance(definition, Mapping) else None
             )
             marker = (
                 plan_metadata.get("single_task_fast_lane")
                 if isinstance(plan_metadata, Mapping)
                 else None
             )
-            if not isinstance(marker, Mapping) or str(
-                marker.get("intent_digest") or ""
-            ) != intent_digest:
+            if (
+                not isinstance(marker, Mapping)
+                or str(marker.get("intent_digest") or "") != intent_digest
+            ):
                 raise ValidationError(
                     "managed single-task package already belongs to different intent"
                 )
@@ -687,6 +692,7 @@ class ManagedWorkPlanBridge:
                     MANAGED_SINGLE_TASK_MUTATION_NODE_KEY,
                     exact_task_id,
                 ),
+                _cohort_assignment=cohort_assignment,
             )
             return ManagedWorkPlanAcceptance(admission=admission)
 
@@ -756,6 +762,7 @@ class ManagedWorkPlanBridge:
                 MANAGED_SINGLE_TASK_MUTATION_NODE_KEY,
                 exact_task_id,
             ),
+            controller_cohort_assignment=cohort_assignment,
         )
 
     def _compile_managed(self, plan: Mapping[str, Any]) -> CompiledWorkPackagePlan:
@@ -942,8 +949,7 @@ def _require_explicit_node_contracts(plan: Mapping[str, Any]) -> None:
             "expected_outputs"
         ):
             raise ValidationError(
-                "managed work plan.nodes[%d].expected_outputs must be non-empty"
-                % index
+                "managed work plan.nodes[%d].expected_outputs must be non-empty" % index
             )
         if not isinstance(node.get("verification"), Mapping) or not node.get(
             "verification"
@@ -1013,7 +1019,11 @@ def _validate_managed_station_topology(compiled: CompiledWorkPackagePlan) -> Non
             "managed work plan must be one connected DAG terminating at certification"
         )
     for station in (integration, certification):
-        if station.effects.writes or station.effects.exclusive or station.effects.external:
+        if (
+            station.effects.writes
+            or station.effects.exclusive
+            or station.effects.external
+        ):
             raise ValidationError(
                 "managed controller stations may declare reads but not write, exclusive, or external effects"
             )
@@ -1071,8 +1081,7 @@ def _reject_secret_string(value: str) -> None:
                 "managed work plan may not contain credential-bearing URLs"
             )
         query_keys = {
-            key.lower()
-            for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
+            key.lower() for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
         }
         if query_keys & _SECRET_QUERY_KEYS:
             raise ValidationError(

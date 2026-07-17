@@ -49,7 +49,7 @@ provides all of the following as one reviewed unit:
 1. a reachable, independently managed OpenShell certification runtime and its
    CLI in the API image;
 2. an existing `ReadWriteMany` PVC mounted at an absolute
-   `MAC_WORK_PACKAGE_BUNDLE_DIR`, owned by UID/GID 1000 and restricted to mode
+   `MAC_WORK_PACKAGE_BUNDLE_DIR`, owned by UID/GID 10001 and restricted to mode
    `0700` (bundle files are forced to `0400` by MAC);
 3. controller-only Git credentials capable of reading protected candidate refs
    and compare-and-swap pushing the canonical ref; never expose these to the

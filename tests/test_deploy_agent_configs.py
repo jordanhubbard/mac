@@ -479,23 +479,60 @@ def test_fleet_deploy_never_forces_an_unverified_github_review_key():
 
 def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
     script = deploy_script_text()
+    assets = (ROOT / "deploy" / "reviewed-tool-assets.sh").read_text(encoding="utf-8")
     install_window = script.split('mv "$SRC_DIR.new" "$SRC_DIR"', 1)[1].split(
         'log "creating/updating mac environment file"', 1
     )[0]
 
     assert "install_codegraph_cli()" in script
     assert "initialize_codegraph_repository()" in script
-    assert "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh" in script
-    assert "codegraph install --yes" in script
+    assert "mac_install_reviewed_codegraph" in script
+    assert 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"' in assets
+    for name in (
+        "codegraph-linux-x64.tar.gz",
+        "codegraph-linux-arm64.tar.gz",
+        "codegraph-darwin-x64.tar.gz",
+        "codegraph-darwin-arm64.tar.gz",
+    ):
+        assert name in assets
+    assert "codegraph/main/install.sh" not in script
+    assert "astral.sh/uv/install.sh" not in script
+    assert "| sh" not in assets
+    assert 'env -i PATH="${PATH:-/usr/bin:/bin}"' in assets
+    assert "GH_TOKEN=" not in assets
+    assert "MAC_DEPLOY_HUB_TOKEN=" not in assets
+    assert '"$target" install --yes' in script
+    assert "run_without_deploy_credentials" in script
     assert "codegraph init" in script
     assert 'install_codegraph_cli\ninitialize_codegraph_repository "$SRC_DIR"' in install_window
     assert 'install_codegraph_cli || true' not in install_window
     assert 'initialize_codegraph_repository "$SRC_DIR" || true' not in install_window
-    assert "ERROR: curl unavailable; cannot install CodeGraph CLI" in script
+    assert "ERROR: reviewed CodeGraph asset installation failed" in script
     assert "ERROR: codegraph install failed" in script
     assert "mac.codegraph_background_init.v1" in script
     assert "CodeGraph index initialization queued" in script
     assert 'grep -qxF ".codegraph/"' in script
+
+
+def test_fleet_deploy_transports_reviewed_tool_contract_outside_secret_stdin():
+    driver = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "copying reviewed native-tool checksum contract" in driver
+    assert 'reviewed_tool_assets="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh"' in driver
+    assert "MAC_DEPLOY_REVIEWED_TOOL_ASSETS=" in driver
+    assert r'_mac_tool_assets=\$3' in driver
+    assert r'\$_mac_tool_assets' in driver
+    assert 'REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-' in installer
+    assert '. "$REVIEWED_TOOL_ASSETS"' in installer
+    assert 'MAC_REVIEWED_UV_VERSION="0.8.22"' in (
+        ROOT / "deploy" / "reviewed-tool-assets.sh"
+    ).read_text(encoding="utf-8")
+    assert 'MAC_REVIEWED_PYTHON_VERSION="3.12.11"' in (
+        ROOT / "deploy" / "reviewed-tool-assets.sh"
+    ).read_text(encoding="utf-8")
 
 
 def _deploy_function(script: str, name: str, next_name: str) -> str:
@@ -503,36 +540,8 @@ def _deploy_function(script: str, name: str, next_name: str) -> str:
     return f"{name}() {{{body}\n"
 
 
-def _isolated_codegraph_resolver(script: str, tmp_path: Path) -> str:
-    return _deploy_function(script, "resolve_codegraph_cli", "install_codegraph_cli").replace(
-        "/opt/homebrew/bin/codegraph /usr/local/bin/codegraph",
-        "%s %s" % (tmp_path / "missing-homebrew-codegraph", tmp_path / "missing-local-codegraph"),
-    )
-
-
 def test_codegraph_installer_function_links_installed_binary(tmp_path):
     script = deploy_script_text()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    curl = bin_dir / "curl"
-    curl.write_text(
-        """#!/bin/sh
-cat <<'SH'
-mkdir -p "$HOME/.local/bin"
-cat > "$HOME/.local/bin/codegraph" <<'EOF'
-#!/bin/sh
-case "$1" in
-  install) echo installed; exit 0 ;;
-  --version) echo codegraph-test; exit 0 ;;
-  *) exit 0 ;;
-esac
-EOF
-chmod +x "$HOME/.local/bin/codegraph"
-SH
-""",
-        encoding="utf-8",
-    )
-    curl.chmod(0o755)
     runner = tmp_path / "run-install.sh"
     runner.write_text(
         "\n".join(
@@ -544,7 +553,20 @@ SH
                 'LOG_DIR="$PWD/logs"',
                 "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
-                _isolated_codegraph_resolver(script, tmp_path),
+                'run_without_deploy_credentials() { "$@"; }',
+                'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"',
+                "mac_install_reviewed_codegraph() {",
+                '  mkdir -p "$(dirname "$2")"',
+                "  cat > \"$2\" <<'EOF'",
+                "#!/bin/sh",
+                'case "$1" in',
+                "  install) echo installed; exit 0 ;;",
+                "  --version) echo 1.1.6; exit 0 ;;",
+                "  *) exit 0 ;;",
+                "esac",
+                "EOF",
+                '  chmod +x "$2"',
+                "}",
                 _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
                 "install_codegraph_cli",
                 'test -x "$MAC_HOME/bin/codegraph"',
@@ -559,7 +581,7 @@ SH
     result = subprocess.run(
         [str(runner)],
         cwd=tmp_path,
-        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"},
+        env={**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
         capture_output=True,
         text=True,
     )
@@ -572,11 +594,6 @@ SH
 
 def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
     script = deploy_script_text()
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    curl = bin_dir / "curl"
-    curl.write_text("#!/bin/sh\nexit 22\n", encoding="utf-8")
-    curl.chmod(0o755)
     runner = tmp_path / "run-install-fail.sh"
     runner.write_text(
         "\n".join(
@@ -588,7 +605,9 @@ def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
                 'LOG_DIR="$PWD/logs"',
                 "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
-                _isolated_codegraph_resolver(script, tmp_path),
+                'run_without_deploy_credentials() { "$@"; }',
+                'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"',
+                "mac_install_reviewed_codegraph() { return 1; }",
                 _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
                 "install_codegraph_cli",
                 "",
@@ -601,15 +620,108 @@ def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
     result = subprocess.run(
         [str(runner)],
         cwd=tmp_path,
-        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"},
+        env={**os.environ, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
         capture_output=True,
         text=True,
     )
 
     assert result.returncode != 0
-    assert "ERROR: CodeGraph CLI installer failed" in (
+    assert "ERROR: reviewed CodeGraph asset installation failed" in (
         tmp_path / "logs" / "log.txt"
     ).read_text(encoding="utf-8")
+
+
+def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
+    assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
+    payload = tmp_path / "asset.tgz"
+    payload.write_bytes(b"not the reviewed release")
+
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            '. "$1"; mac_verify_reviewed_asset "$2" "$3"',
+            "bash",
+            str(assets),
+            str(payload),
+            "0" * 64,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "SHA-256 mismatch for reviewed asset" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("tool", "os_name", "architecture", "filename"),
+    [
+        ("uv", "Linux", "x86_64", "uv-x86_64-unknown-linux-gnu.tar.gz"),
+        ("uv", "Linux", "aarch64", "uv-aarch64-unknown-linux-gnu.tar.gz"),
+        ("uv", "Darwin", "x86_64", "uv-x86_64-apple-darwin.tar.gz"),
+        ("uv", "Darwin", "arm64", "uv-aarch64-apple-darwin.tar.gz"),
+        ("codegraph", "Linux", "x86_64", "codegraph-linux-x64.tar.gz"),
+        ("codegraph", "Linux", "aarch64", "codegraph-linux-arm64.tar.gz"),
+        ("codegraph", "Darwin", "x86_64", "codegraph-darwin-x64.tar.gz"),
+        ("codegraph", "Darwin", "arm64", "codegraph-darwin-arm64.tar.gz"),
+    ],
+)
+def test_reviewed_tool_asset_matrix_covers_fleet_platforms(
+    tool, os_name, architecture, filename
+):
+    assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            '. "$1"; mac_reviewed_asset_spec "$2" "$3" "$4"',
+            "bash",
+            str(assets),
+            tool,
+            os_name,
+            architecture,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    observed_name, digest, url, root = result.stdout.strip().split()
+    assert observed_name == filename
+    assert re.fullmatch(r"[0-9a-f]{64}", digest)
+    assert url.startswith("https://github.com/") and url.endswith(filename)
+    assert root == filename.removesuffix(".tar.gz")
+
+
+@pytest.mark.parametrize(
+    ("tool", "os_name", "architecture"),
+    [("uv", "Plan9", "x86_64"), ("codegraph", "Linux", "riscv64")],
+)
+def test_reviewed_tool_asset_unsupported_platform_fails_closed(
+    tool, os_name, architecture
+):
+    assets = ROOT / "deploy" / "reviewed-tool-assets.sh"
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            '. "$1"; mac_reviewed_asset_spec "$2" "$3" "$4"',
+            "bash",
+            str(assets),
+            tool,
+            os_name,
+            architecture,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "unsupported reviewed-tool" in result.stderr
 
 
 def test_codegraph_init_function_skips_archive_source_without_git_worktree(tmp_path):
@@ -2426,6 +2538,12 @@ def test_source_install_pins_exact_rev_not_ff_only():
     assert 'reset --hard --quiet "$DEPLOY_REV"' in script
     # the ff-only merge *command* must be gone (a comment mentioning it is fine)
     assert 'merge --ff-only "$DEPLOY_REV"' not in script
+    assert "install_archive_source=1" in script
+    assert "using the exact deployment archive" in script
+    assert 'actual_rev" = "$DEPLOY_REV"' in script
+    assert 'deployed_source_revision_file="$MAC_HOME/deployed-source-revision"' in script
+    assert 'printf \'%s\\n\' "$DEPLOY_REV" > "$deployed_source_revision_tmp"' in script
+    assert 'chmod 0600 "$deployed_source_revision_tmp"' in script
 
 
 def test_media_key_escrow_has_no_chat_key_fallback():
@@ -2622,6 +2740,7 @@ def test_fleet_deploy_forwards_fail_closed_work_package_activation():
         "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED",
         "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED",
         "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR",
+        "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
     ):
         assert 'add_remote_env %s "${%s:-}"' % (name, name) in script
 
@@ -2636,6 +2755,57 @@ def test_fleet_deploy_forwards_fail_closed_work_package_activation():
         encoding="utf-8"
     )
     assert 'ln -sf "$cli" "$MAC_HOME/bin/openshell"' in bootstrap
+
+
+def test_fleet_deploy_forwards_execution_cohort_only_to_hub_and_hides_seed():
+    script = deploy_script_text()
+    pilot_block = script.split(
+        "# The randomized execution pilot belongs to the control-plane hub only.", 1
+    )[1].split('  local img_key="', 1)[0]
+
+    assert 'if [ "$agent" = "$shared_services_manager" ]; then' in pilot_block
+    assert (
+        'add_remote_env MAC_DEPLOY_EXECUTION_COHORT_REVISION '
+        '"${MAC_DEPLOY_EXECUTION_COHORT_REVISION:-1}"'
+    ) in pilot_block
+    assert (
+        'add_remote_env MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT '
+        '"${MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT:-50}"'
+    ) in pilot_block
+    assert (
+        'add_remote_secret_env MAC_DEPLOY_EXECUTION_COHORT_SEED '
+        '"${MAC_DEPLOY_EXECUTION_COHORT_SEED:-}"'
+    ) in pilot_block
+    assert "add_remote_env MAC_DEPLOY_EXECUTION_COHORT_SEED" not in script
+    precedence = script.split("local -a _PRECEDENCE_VARS=(", 1)[1].split(")", 1)[0]
+    for name in (
+        "MAC_DEPLOY_EXECUTION_COHORT_REVISION",
+        "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT",
+        "MAC_DEPLOY_EXECUTION_COHORT_SEED",
+    ):
+        assert name in precedence
+
+
+def test_fleet_deploy_pins_one_openshell_runtime_digest_across_nodes():
+    script = deploy_script_text()
+    bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" in script
+    assert "mac-openshell-runtime@sha256:" in script
+    assert "OSH_RUNTIME_IMAGE_REF=$(shell_quote" in script
+    assert "OSH_RUNTIME_IMAGE_REF" in bootstrap
+    assert '"$OSH_DOCKER_BIN" pull "$OSH_RUNTIME_IMAGE_REF"' in bootstrap
+    assert 'image_source_sha="$(resolve_deployed_source_revision)" || return 1' in bootstrap
+    assert "DEPLOYED_SOURCE_REVISION_FILE" in bootstrap
+    assert "runtime image revision does not match deployed source commit" in bootstrap
+    assert '"$OSH_DOCKER_BIN" tag "$OSH_RUNTIME_IMAGE_REF" "$OSH_IMAGE_TAG"' in bootstrap
+    assert 'runtime_ref_file="$OSH_DIR/runtime-image-ref"' in bootstrap
+    assert 'printf \'%s\\n\' "$OSH_RUNTIME_IMAGE_REF" > "$runtime_ref_tmp"' in bootstrap
+    assert "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD" in script
+    assert "production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" in script
+    assert "--skip-image is incompatible with a digest-managed OpenShell deployment" in script
 
 
 def _startup_self_test_source() -> str:

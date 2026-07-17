@@ -10,6 +10,8 @@ import yaml
 
 from mac.k8s.runner import (
     DEFAULT_TASK_IMAGE,
+    MAC_CONTAINER_GID,
+    MAC_CONTAINER_UID,
     RunnerConfig,
     _job_is_terminal,
     _job_name_for,
@@ -186,6 +188,9 @@ class TestBuildJobSpec:
         assert pod["automountServiceAccountToken"] is False
         sc = pod["securityContext"]
         assert sc["runAsNonRoot"] is True
+        assert sc["runAsUser"] == MAC_CONTAINER_UID == 10001
+        assert sc["runAsGroup"] == MAC_CONTAINER_GID == 10001
+        assert sc["fsGroup"] == MAC_CONTAINER_GID
         container = pod["containers"][0]
         csec = container["securityContext"]
         assert csec["readOnlyRootFilesystem"] is True

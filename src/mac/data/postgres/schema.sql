@@ -1596,6 +1596,8 @@ CREATE INDEX IF NOT EXISTS idx_work_packages_project
     ON work_packages (project, state, updated_at);
 CREATE INDEX IF NOT EXISTS idx_work_packages_repository
     ON work_packages (repository_id, state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_work_packages_root_task
+    ON work_packages (root_task_id);
 
 CREATE OR REPLACE FUNCTION trg_work_packages_initial_state()
 RETURNS trigger AS $$
@@ -4353,6 +4355,554 @@ CREATE TRIGGER trg_work_package_history_immutable
     BEFORE UPDATE OR DELETE ON work_package_history
     FOR EACH ROW EXECUTE FUNCTION trg_work_package_history_immutable();
 
+-- One-time, append-only data-migration receipts keep schema startup from
+-- rescanning the historical task/package catalogs after a backfill succeeds.
+CREATE TABLE IF NOT EXISTS telemetry_data_migrations (
+    version TEXT PRIMARY KEY,
+    component TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(detail::jsonb) = 'object'),
+    applied_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE OR REPLACE FUNCTION trg_telemetry_data_migration_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'telemetry data migrations are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_telemetry_data_migration_append_only
+    ON telemetry_data_migrations;
+CREATE TRIGGER trg_telemetry_data_migration_append_only
+    BEFORE UPDATE OR DELETE ON telemetry_data_migrations
+    FOR EACH ROW EXECUTE FUNCTION trg_telemetry_data_migration_append_only();
+
+CREATE TABLE IF NOT EXISTS execution_cohort_configurations (
+    rollout_revision INTEGER PRIMARY KEY CHECK (rollout_revision >= 1),
+    algorithm TEXT NOT NULL,
+    treatment_percentage INTEGER NOT NULL
+        CHECK (treatment_percentage BETWEEN 0 AND 100),
+    assignment_key_fingerprint TEXT NOT NULL CHECK (
+        assignment_key_fingerprint ~ '^sha256:[0-9a-f]{64}$'
+    ),
+    created_at TEXT NOT NULL
+);
+
+CREATE OR REPLACE FUNCTION trg_execution_cohort_configuration_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'execution cohort configurations are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_execution_cohort_configuration_append_only
+    ON execution_cohort_configurations;
+CREATE TRIGGER trg_execution_cohort_configuration_append_only
+    BEFORE UPDATE OR DELETE ON execution_cohort_configurations
+    FOR EACH ROW EXECUTE FUNCTION trg_execution_cohort_configuration_append_only();
+
+-- Prospective treatment assignment for managed-versus-legacy evaluation.
+-- Historical package route is synchronized only when an immutable publication
+-- finalization proves the complete controller pipeline; otherwise its managed
+-- execution mode is explicitly unknown.
+CREATE TABLE IF NOT EXISTS execution_cohort_assignments (
+    id TEXT PRIMARY KEY,
+    -- Soft identities are intentional: lifecycle cleanup must not erase or
+    -- block immutable experiment assignment history.
+    task_id TEXT UNIQUE,
+    package_id TEXT UNIQUE,
+    eligibility TEXT NOT NULL CHECK (
+        eligibility IN ('eligible', 'ineligible', 'unknown')
+    ),
+    treatment_route TEXT NOT NULL,
+    rollout_revision INTEGER NOT NULL CHECK (rollout_revision >= 0),
+    cohort_key TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(detail::jsonb) = 'object'),
+    assigned_by TEXT NOT NULL,
+    assigned_at TEXT NOT NULL,
+    CHECK (task_id IS NOT NULL OR package_id IS NOT NULL),
+    CONSTRAINT execution_cohort_assignments_treatment_route_check CHECK (
+        treatment_route IN (
+            'legacy_async', 'managed_synchronized', 'unknown_managed_mode'
+        )
+    )
+);
+
+-- Upgrade the preliminary two-route CHECK in place.  Catalog inspection is
+-- constant-size and only rewrites the constraint when the v3 route is absent.
+DO $execution_cohort_route_contract$
+DECLARE
+    route_constraint RECORD;
+BEGIN
+    FOR route_constraint IN
+        SELECT constraint_row.oid, constraint_row.conname,
+               pg_get_constraintdef(constraint_row.oid) AS definition
+        FROM pg_constraint AS constraint_row
+        WHERE constraint_row.conrelid =
+                  'execution_cohort_assignments'::regclass
+          AND constraint_row.contype = 'c'
+          AND pg_get_constraintdef(constraint_row.oid) LIKE '%treatment_route%'
+    LOOP
+        IF route_constraint.definition NOT LIKE '%unknown_managed_mode%' THEN
+            EXECUTE format(
+                'ALTER TABLE execution_cohort_assignments DROP CONSTRAINT %I',
+                route_constraint.conname
+            );
+        END IF;
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint AS constraint_row
+        WHERE constraint_row.conrelid =
+                  'execution_cohort_assignments'::regclass
+          AND constraint_row.contype = 'c'
+          AND pg_get_constraintdef(constraint_row.oid)
+              LIKE '%unknown_managed_mode%'
+    ) THEN
+        ALTER TABLE execution_cohort_assignments
+            ADD CONSTRAINT execution_cohort_assignments_treatment_route_check
+            CHECK (treatment_route IN (
+                'legacy_async', 'managed_synchronized',
+                'unknown_managed_mode'
+            ));
+    END IF;
+END;
+$execution_cohort_route_contract$;
+CREATE INDEX IF NOT EXISTS idx_execution_cohort_route
+    ON execution_cohort_assignments (
+        treatment_route, eligibility, assigned_at, id
+    );
+
+CREATE OR REPLACE FUNCTION trg_execution_cohort_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'execution cohort assignments are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_execution_cohort_append_only
+    ON execution_cohort_assignments;
+
+CREATE TABLE IF NOT EXISTS work_package_station_attempts (
+    id TEXT PRIMARY KEY,
+    assignment_id TEXT NOT NULL
+        REFERENCES execution_cohort_assignments(id) ON DELETE RESTRICT,
+    package_id TEXT NOT NULL REFERENCES work_packages(id) ON DELETE RESTRICT,
+    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+    epoch INTEGER NOT NULL CHECK (epoch >= 1),
+    station TEXT NOT NULL CHECK (station IN (
+        'controller', 'admission', 'integration', 'certification',
+        'landing', 'finalization'
+    )),
+    operation TEXT NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    attempted INTEGER NOT NULL CHECK (attempted IN (0, 1)),
+    pipeline_run_id TEXT NOT NULL DEFAULT '',
+    outcome_index INTEGER NOT NULL DEFAULT 0 CHECK (outcome_index >= 0),
+    batch_id TEXT NOT NULL DEFAULT '',
+    job_id TEXT NOT NULL DEFAULT '',
+    queued_at TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT NOT NULL,
+    queue_duration_ms INTEGER NOT NULL CHECK (queue_duration_ms >= 0),
+    execution_duration_ms INTEGER NOT NULL CHECK (execution_duration_ms >= 0),
+    terminal_status TEXT NOT NULL CHECK (terminal_status IN (
+        'succeeded', 'failed', 'busy', 'held', 'stale',
+        'rejected', 'skipped'
+    )),
+    reason_code TEXT NOT NULL DEFAULT '',
+    failure_class TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(detail::jsonb) = 'object'),
+    recorded_at TEXT NOT NULL,
+    UNIQUE (package_id, station, attempt_number),
+    UNIQUE (pipeline_run_id, outcome_index),
+    FOREIGN KEY (package_id, epoch, plan_version)
+        REFERENCES work_package_epochs(package_id, epoch, plan_version)
+        ON DELETE RESTRICT
+);
+DO $work_package_station_contract$
+DECLARE
+    station_constraint RECORD;
+BEGIN
+    FOR station_constraint IN
+        SELECT constraint_row.conname,
+               pg_get_constraintdef(constraint_row.oid) AS definition
+        FROM pg_constraint AS constraint_row
+        WHERE constraint_row.conrelid =
+                  'work_package_station_attempts'::regclass
+          AND constraint_row.contype = 'c'
+          AND pg_get_constraintdef(constraint_row.oid) LIKE '%station%'
+    LOOP
+        IF station_constraint.definition NOT LIKE '%controller%' THEN
+            EXECUTE format(
+                'ALTER TABLE work_package_station_attempts DROP CONSTRAINT %I',
+                station_constraint.conname
+            );
+        END IF;
+    END LOOP;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint AS constraint_row
+        WHERE constraint_row.conrelid =
+                  'work_package_station_attempts'::regclass
+          AND constraint_row.contype = 'c'
+          AND pg_get_constraintdef(constraint_row.oid) LIKE '%station%'
+          AND pg_get_constraintdef(constraint_row.oid) LIKE '%controller%'
+    ) THEN
+        ALTER TABLE work_package_station_attempts
+            ADD CONSTRAINT work_package_station_attempts_station_check
+            CHECK (station IN (
+                'controller', 'admission', 'integration', 'certification',
+                'landing', 'finalization'
+            ));
+    END IF;
+END;
+$work_package_station_contract$;
+CREATE INDEX IF NOT EXISTS idx_work_package_station_attempts_package
+    ON work_package_station_attempts (package_id, station, completed_at, id);
+CREATE INDEX IF NOT EXISTS idx_work_package_station_attempts_status
+    ON work_package_station_attempts (
+        terminal_status, failure_class, completed_at, id
+    );
+
+CREATE OR REPLACE FUNCTION trg_work_package_station_attempt_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'work-package station attempts are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_station_attempt_append_only
+    ON work_package_station_attempts;
+CREATE TRIGGER trg_work_package_station_attempt_append_only
+    BEFORE UPDATE OR DELETE ON work_package_station_attempts
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_station_attempt_append_only();
+
+CREATE TABLE IF NOT EXISTS work_package_controller_outcomes (
+    id TEXT PRIMARY KEY,
+    pipeline_run_id TEXT NOT NULL,
+    outcome_index INTEGER NOT NULL CHECK (outcome_index >= -1),
+    package_id TEXT NOT NULL DEFAULT '',
+    plan_version INTEGER NOT NULL CHECK (plan_version >= 0),
+    epoch INTEGER NOT NULL CHECK (epoch >= 0),
+    operation TEXT NOT NULL,
+    attempted INTEGER NOT NULL CHECK (attempted IN (0, 1)),
+    batch_id TEXT NOT NULL DEFAULT '',
+    job_id TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL,
+    completed_at TEXT NOT NULL,
+    execution_duration_ms INTEGER NOT NULL CHECK (execution_duration_ms >= 0),
+    status TEXT NOT NULL,
+    terminal_status TEXT NOT NULL CHECK (terminal_status IN (
+        'succeeded', 'failed', 'busy', 'held', 'stale',
+        'rejected', 'skipped'
+    )),
+    reason_code TEXT NOT NULL DEFAULT '',
+    failure_class TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(detail::jsonb) = 'object'),
+    recorded_at TEXT NOT NULL,
+    UNIQUE (pipeline_run_id, outcome_index)
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_controller_outcomes_package
+    ON work_package_controller_outcomes (package_id, completed_at, id);
+CREATE INDEX IF NOT EXISTS idx_work_package_controller_outcomes_status
+    ON work_package_controller_outcomes (
+        terminal_status, failure_class, completed_at, id
+    );
+
+CREATE OR REPLACE FUNCTION trg_work_package_controller_outcome_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'work-package controller outcomes are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_controller_outcome_append_only
+    ON work_package_controller_outcomes;
+CREATE TRIGGER trg_work_package_controller_outcome_append_only
+    BEFORE UPDATE OR DELETE ON work_package_controller_outcomes
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_controller_outcome_append_only();
+
+CREATE TABLE IF NOT EXISTS work_package_telemetry_health (
+    singleton_key TEXT PRIMARY KEY CHECK (singleton_key = 'pipeline'),
+    failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+    last_failure_operation TEXT NOT NULL DEFAULT '',
+    last_error_type TEXT NOT NULL DEFAULT '',
+    last_error_fingerprint TEXT NOT NULL DEFAULT '',
+    last_failed_at TEXT,
+    last_success_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_package_finalization_outcomes (
+    id TEXT PRIMARY KEY,
+    finalization_id TEXT NOT NULL
+        REFERENCES work_package_publication_finalizations(id) ON DELETE RESTRICT,
+    package_id TEXT NOT NULL REFERENCES work_packages(id) ON DELETE RESTRICT,
+    outcome_type TEXT NOT NULL CHECK (outcome_type IN ('revert', 'incident')),
+    external_id TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(detail::jsonb) = 'object'),
+    created_at TEXT NOT NULL,
+    UNIQUE (finalization_id, outcome_type, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_work_package_finalization_outcomes_package
+    ON work_package_finalization_outcomes (
+        package_id, outcome_type, observed_at, id
+    );
+
+CREATE OR REPLACE FUNCTION trg_work_package_finalization_outcome_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'work-package finalization outcomes are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_work_package_finalization_outcome_append_only
+    ON work_package_finalization_outcomes;
+CREATE TRIGGER trg_work_package_finalization_outcome_append_only
+    BEFORE UPDATE OR DELETE ON work_package_finalization_outcomes
+    FOR EACH ROW EXECUTE FUNCTION trg_work_package_finalization_outcome_append_only();
+
+-- Schema execution is one transaction, and this conditional block additionally
+-- makes the intended atomic boundary explicit: the marker is written only
+-- after both historical cohorts complete.  Once present, no task/package scan
+-- statement is entered on later startups.
+DO $execution_cohort_historical_backfill_v2$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM telemetry_data_migrations
+        WHERE version = 'execution_cohort_historical_backfill_v2'
+    ) THEN
+        -- Repair assignments produced by the preliminary backfill before the
+        -- append-only trigger is restored below.  A finalization is the strict
+        -- proof because its lifecycle trigger binds landing plus exact
+        -- integration/certification controller receipts.
+        UPDATE execution_cohort_assignments AS assignment
+        SET eligibility = 'unknown',
+            treatment_route = CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = assignment.package_id
+            ) THEN 'managed_synchronized' ELSE 'unknown_managed_mode' END,
+            cohort_key = CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = assignment.package_id
+            ) THEN 'managed_receipted_pre_instrumentation'
+              ELSE 'managed_mode_unknown_pre_instrumentation' END,
+            reason = CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = assignment.package_id
+            ) THEN 'historical_synchronized_pipeline_receipt'
+              ELSE 'historical_package_mode_unproven' END,
+            detail = jsonb_build_object(
+                'schema', 'mac.execution_cohort.backfill.v2',
+                'eligibility_source', 'unavailable',
+                'route_source', CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM work_package_publication_finalizations AS finalization
+                    WHERE finalization.package_id = assignment.package_id
+                ) THEN 'publication_finalization_receipt' ELSE 'unavailable' END,
+                'route_receipt_id', COALESCE((
+                    SELECT finalization.id
+                    FROM work_package_publication_finalizations AS finalization
+                    WHERE finalization.package_id = assignment.package_id
+                    ORDER BY finalization.finalized_at, finalization.id
+                    LIMIT 1
+                ), '')
+            )::text
+        WHERE assignment.package_id IS NOT NULL
+          AND (
+              assignment.assigned_by = 'schema-migration'
+              OR COALESCE(assignment.detail::jsonb ->> 'schema', '') NOT IN (
+                  'mac.execution_cohort.prospective.v2',
+                  'mac.execution_cohort.prospective.v3'
+              )
+          );
+
+        INSERT INTO execution_cohort_assignments (
+            id, task_id, package_id, eligibility, treatment_route,
+            rollout_revision, cohort_key, reason, detail, assigned_by,
+            assigned_at
+        )
+        SELECT
+            'cohort_hist_managed_' || package.id,
+            NULL,
+            package.id,
+            'unknown',
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = package.id
+            ) THEN 'managed_synchronized' ELSE 'unknown_managed_mode' END,
+            COALESCE((
+                SELECT revision FROM managed_task_publication_rollout
+                WHERE singleton_key = 'fleet'
+            ), 0),
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = package.id
+            ) THEN 'managed_receipted_pre_instrumentation'
+              ELSE 'managed_mode_unknown_pre_instrumentation' END,
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = package.id
+            ) THEN 'historical_synchronized_pipeline_receipt'
+              ELSE 'historical_package_mode_unproven' END,
+            jsonb_build_object(
+                'schema', 'mac.execution_cohort.backfill.v2',
+                'eligibility_source', 'unavailable',
+                'route_source', CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM work_package_publication_finalizations AS finalization
+                    WHERE finalization.package_id = package.id
+                ) THEN 'publication_finalization_receipt' ELSE 'unavailable' END,
+                'route_receipt_id', COALESCE((
+                    SELECT finalization.id
+                    FROM work_package_publication_finalizations AS finalization
+                    WHERE finalization.package_id = package.id
+                    ORDER BY finalization.finalized_at, finalization.id
+                    LIMIT 1
+                ), '')
+            )::text,
+            'schema-migration',
+            package.created_at
+        FROM work_packages AS package
+        ON CONFLICT DO NOTHING;
+
+        INSERT INTO execution_cohort_assignments (
+            id, task_id, package_id, eligibility, treatment_route,
+            rollout_revision, cohort_key, reason, detail, assigned_by,
+            assigned_at
+        )
+        SELECT
+            'cohort_hist_legacy_' || task.id,
+            task.id,
+            NULL,
+            'unknown',
+            'legacy_async',
+            0,
+            CASE WHEN task.metadata::jsonb
+                           #>> '{managed_fast_lane,activation}'
+                       = 'legacy_compatibility'
+                 THEN 'legacy_atomic_shape_pre_instrumentation'
+                 ELSE 'legacy_pre_instrumentation_unknown' END,
+            CASE WHEN task.metadata::jsonb
+                           #>> '{managed_fast_lane,activation}'
+                       = 'legacy_compatibility'
+                 THEN 'historical_control_plane_route_projection'
+                 ELSE 'historical_absence_of_package_linkage' END,
+            jsonb_build_object(
+                'schema', 'mac.execution_cohort.backfill.v2',
+                'eligibility_source', 'unavailable',
+                'shape_eligibility_source', CASE
+                    WHEN task.metadata::jsonb
+                             #>> '{managed_fast_lane,activation}'
+                         = 'legacy_compatibility'
+                    THEN 'control_plane_managed_fast_lane_projection'
+                    ELSE 'unavailable'
+                END,
+                'route_source', 'absence_of_work_package_link'
+            )::text,
+            'schema-migration',
+            task.created_at
+        FROM tasks AS task
+        WHERE NOT EXISTS (
+            SELECT 1 FROM work_package_task_links AS link
+            WHERE link.task_id = task.id
+        )
+          AND NOT EXISTS (
+            SELECT 1 FROM work_packages AS package
+            WHERE package.root_task_id = task.id
+        )
+        ON CONFLICT DO NOTHING;
+
+        INSERT INTO telemetry_data_migrations (
+            version, component, detail, applied_at
+        ) VALUES (
+            'execution_cohort_historical_backfill_v2',
+            'execution_cohort_assignments',
+            '{"schema":"mac.telemetry_data_migration.v1","historical_backfill":"mac.execution_cohort.backfill.v2"}',
+            clock_timestamp()
+        );
+    END IF;
+END;
+$execution_cohort_historical_backfill_v2$;
+
+-- A preliminary deployment could already have the v2 marker while retaining
+-- package assignments created before the prospective-v2 identity contract.
+-- The v2 guard correctly prevents another catalog backfill, so repair only
+-- those package rows under a separately versioned, one-time receipt while the
+-- append-only trigger is still suspended.
+DO $execution_cohort_preliminary_package_repair_v3$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM telemetry_data_migrations
+        WHERE version = 'execution_cohort_preliminary_package_repair_v3'
+    ) THEN
+        UPDATE execution_cohort_assignments AS assignment
+        SET eligibility = 'unknown',
+            treatment_route = CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = assignment.package_id
+            ) THEN 'managed_synchronized' ELSE 'unknown_managed_mode' END,
+            cohort_key = CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = assignment.package_id
+            ) THEN 'managed_receipted_pre_instrumentation'
+              ELSE 'managed_mode_unknown_pre_instrumentation' END,
+            reason = CASE WHEN EXISTS (
+                SELECT 1
+                FROM work_package_publication_finalizations AS finalization
+                WHERE finalization.package_id = assignment.package_id
+            ) THEN 'historical_synchronized_pipeline_receipt'
+              ELSE 'historical_package_mode_unproven' END,
+            detail = jsonb_build_object(
+                'schema', 'mac.execution_cohort.backfill.v2',
+                'eligibility_source', 'unavailable',
+                'route_source', CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM work_package_publication_finalizations AS finalization
+                    WHERE finalization.package_id = assignment.package_id
+                ) THEN 'publication_finalization_receipt' ELSE 'unavailable' END,
+                'route_receipt_id', COALESCE((
+                    SELECT finalization.id
+                    FROM work_package_publication_finalizations AS finalization
+                    WHERE finalization.package_id = assignment.package_id
+                    ORDER BY finalization.finalized_at, finalization.id
+                    LIMIT 1
+                ), '')
+            )::text
+        WHERE assignment.package_id IS NOT NULL
+          AND COALESCE(assignment.detail::jsonb ->> 'schema', '') NOT IN (
+              'mac.execution_cohort.prospective.v2',
+              'mac.execution_cohort.prospective.v3'
+          );
+
+        INSERT INTO telemetry_data_migrations (
+            version, component, detail, applied_at
+        ) VALUES (
+            'execution_cohort_preliminary_package_repair_v3',
+            'execution_cohort_assignments',
+            '{"schema":"mac.telemetry_data_migration.v1","repair":"mac.execution_cohort.preliminary-package.v3"}',
+            clock_timestamp()
+        );
+    END IF;
+END;
+$execution_cohort_preliminary_package_repair_v3$;
+
+CREATE TRIGGER trg_execution_cohort_append_only
+    BEFORE UPDATE OR DELETE ON execution_cohort_assignments
+    FOR EACH ROW EXECUTE FUNCTION trg_execution_cohort_append_only();
+
 CREATE TABLE IF NOT EXISTS agent_provisioning_requests (
     id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
@@ -4449,6 +4999,127 @@ CREATE OR REPLACE VIEW events AS
     SELECT id, 'agent' AS subject_type, agent_id AS subject_id,
            event_type, actor, detail, created_at
     FROM agent_events
+    UNION ALL
+    SELECT
+        id,
+        'work_package' AS subject_type,
+        package_id AS subject_id,
+        event_type,
+        actor,
+        (
+            COALESCE(NULLIF(detail, '')::jsonb, '{}'::jsonb)
+            || jsonb_build_object(
+                'plan_version', plan_version,
+                'epoch', epoch
+            )
+        )::text AS detail,
+        created_at
+    FROM work_package_history
+    UNION ALL
+    SELECT
+        id,
+        CASE WHEN package_id IS NULL THEN 'task' ELSE 'work_package' END
+            AS subject_type,
+        COALESCE(package_id, task_id) AS subject_id,
+        'execution.cohort_assigned' AS event_type,
+        assigned_by AS actor,
+        (
+            COALESCE(NULLIF(detail, '')::jsonb, '{}'::jsonb)
+            || jsonb_build_object(
+                'task_id', task_id,
+                'package_id', package_id,
+                'eligibility', eligibility,
+                'treatment_route', treatment_route,
+                'rollout_revision', rollout_revision,
+                'cohort_key', cohort_key,
+                'reason', reason
+            )
+        )::text AS detail,
+        assigned_at AS created_at
+    FROM execution_cohort_assignments
+    UNION ALL
+    SELECT
+        id,
+        'work_package' AS subject_type,
+        package_id AS subject_id,
+        'work_package.station.' || station || '.' || terminal_status AS event_type,
+        actor,
+        (
+            COALESCE(NULLIF(detail, '')::jsonb, '{}'::jsonb)
+            || jsonb_build_object(
+                'assignment_id', assignment_id,
+                'plan_version', plan_version,
+                'epoch', epoch,
+                'station', station,
+                'operation', operation,
+                'attempt_number', attempt_number,
+                'attempted', attempted = 1,
+                'pipeline_run_id', pipeline_run_id,
+                'outcome_index', outcome_index,
+                'batch_id', batch_id,
+                'job_id', job_id,
+                'queued_at', queued_at,
+                'started_at', started_at,
+                'completed_at', completed_at,
+                'queue_duration_ms', queue_duration_ms,
+                'execution_duration_ms', execution_duration_ms,
+                'terminal_status', terminal_status,
+                'reason_code', reason_code,
+                'failure_class', failure_class
+            )
+        )::text AS detail,
+        completed_at AS created_at
+    FROM work_package_station_attempts
+    UNION ALL
+    SELECT
+        id,
+        CASE WHEN package_id = '' THEN 'service' ELSE 'work_package' END
+            AS subject_type,
+        CASE WHEN package_id = '' THEN 'work-package-pipeline' ELSE package_id END
+            AS subject_id,
+        'work_package.controller.' || operation || '.' || terminal_status
+            AS event_type,
+        'work-package-pipeline' AS actor,
+        (
+            COALESCE(NULLIF(detail, '')::jsonb, '{}'::jsonb)
+            || jsonb_build_object(
+                'pipeline_run_id', pipeline_run_id,
+                'outcome_index', outcome_index,
+                'plan_version', plan_version,
+                'epoch', epoch,
+                'operation', operation,
+                'attempted', attempted = 1,
+                'batch_id', batch_id,
+                'job_id', job_id,
+                'started_at', started_at,
+                'completed_at', completed_at,
+                'execution_duration_ms', execution_duration_ms,
+                'status', status,
+                'terminal_status', terminal_status,
+                'reason_code', reason_code,
+                'failure_class', failure_class
+            )
+        )::text AS detail,
+        completed_at AS created_at
+    FROM work_package_controller_outcomes
+    UNION ALL
+    SELECT
+        id,
+        'work_package' AS subject_type,
+        package_id AS subject_id,
+        'work_package.finalization.' || outcome_type AS event_type,
+        actor,
+        (
+            COALESCE(NULLIF(detail, '')::jsonb, '{}'::jsonb)
+            || jsonb_build_object(
+                'finalization_id', finalization_id,
+                'outcome_type', outcome_type,
+                'external_id', external_id,
+                'observed_at', observed_at
+            )
+        )::text AS detail,
+        observed_at AS created_at
+    FROM work_package_finalization_outcomes
     UNION ALL
     SELECT
         id,

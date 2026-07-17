@@ -1,0 +1,99 @@
+# Trusted external certifier for the MAC work-package assembly line.
+#
+# Both source images are immutable multi-platform OCI indexes. Rebuilding from
+# a reviewed commit therefore starts from the same Python and uv bytes on
+# linux/amd64 and linux/arm64; uv.lock freezes the Python dependency graph.
+FROM ghcr.io/astral-sh/uv@sha256:9874eb7afe5ca16c363fe80b294fe700e460df29a55532bbfea234a0f12eddb1 AS uv
+
+FROM docker.io/library/python@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
+
+ARG MAC_CERTIFIER_SOURCE_REVISION
+ARG MAC_CERTIFIER_CONTEXT_DIGEST
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/mac-venv \
+    UV_PYTHON_DOWNLOADS=never
+
+COPY --from=uv /uv /usr/local/bin/uv
+
+# The suite exercises Git publication, Bash deploy contracts, and a small
+# JavaScript syntax slice. No network credential or repository remote is
+# installed. OpenShell separately applies an empty network policy at runtime.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       bash ca-certificates curl gh git make nodejs openssh-client \
+    && git version \
+    && bash --version | head -1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/mac-certifier/build
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --extra dev --no-install-project \
+    && /opt/mac-venv/bin/python -m pytest --version \
+    && /opt/mac-venv/bin/python -m coverage --version
+
+RUN groupadd --system sandbox \
+    && useradd --system --gid sandbox --create-home --home-dir /home/sandbox sandbox \
+    && install -d -o sandbox -g sandbox -m 0755 /sandbox/work/repo \
+    && install -d -o root -g root -m 0755 \
+       /opt/mac-certifier/bin /opt/mac-certifier/libexec \
+       /opt/mac-certifier/share /opt/mac-certifier/trusted/plugin \
+       /opt/mac-certifier/trusted/scripts
+
+# Freeze the complete reviewed repository baseline under root ownership. Tests
+# execute directly from this read-only tree against candidate source; tests
+# that inspect repository files also have the full reviewed baseline available.
+COPY . /opt/mac-certifier/trusted
+COPY --chmod=0555 deploy/certifier/harness_manifest.py /opt/mac-certifier/libexec/harness_manifest.py
+COPY --chmod=0555 deploy/certifier/select-tests.py /opt/mac-certifier/libexec/select-tests.py
+COPY --chmod=0555 deploy/certifier/run-contract-tests /opt/mac-certifier/bin/run-contract-tests
+COPY --chmod=0555 deploy/certifier/authoritative-contract-tests /opt/mac-certifier/libexec/authoritative-contract-tests
+COPY --chmod=0555 deploy/certifier/supplemental-contract-tests /opt/mac-certifier/libexec/supplemental-contract-tests
+COPY --chmod=0444 deploy/certifier/sitecustomize.py /tmp/mac-certifier-sitecustomize.py
+
+RUN { printf '%s' "${MAC_CERTIFIER_SOURCE_REVISION}" | grep -Eq '^[0-9a-f]{40}$'; } \
+       || { echo "MAC_CERTIFIER_SOURCE_REVISION must be a 40-character lowercase Git SHA" >&2; exit 2; } \
+    && { printf '%s' "${MAC_CERTIFIER_CONTEXT_DIGEST}" | grep -Eq '^sha256:[0-9a-f]{64}$'; } \
+       || { echo "MAC_CERTIFIER_CONTEXT_DIGEST must be an exact sha256 digest" >&2; exit 2; } \
+    && git -C /opt/mac-certifier/trusted init -q -b main \
+    && git -C /opt/mac-certifier/trusted config user.email mac-certifier@example.invalid \
+    && git -C /opt/mac-certifier/trusted config user.name "MAC trusted certifier" \
+    && git -C /opt/mac-certifier/trusted add -f -A \
+    && GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' GIT_COMMITTER_DATE='2000-01-01T00:00:00Z' \
+       git -C /opt/mac-certifier/trusted commit -q -m "trusted baseline ${MAC_CERTIFIER_SOURCE_REVISION}" \
+    && find /opt/mac-certifier/trusted -type d -exec chmod 0555 {} + \
+    && find /opt/mac-certifier/trusted -type f -exec chmod 0444 {} + \
+    && site_packages="$(/opt/mac-venv/bin/python -c 'import site; print(site.getsitepackages()[0])')" \
+    && install -o root -g root -m 0444 /tmp/mac-certifier-sitecustomize.py "$site_packages/sitecustomize.py" \
+    && rm -f /tmp/mac-certifier-sitecustomize.py \
+    && /opt/mac-venv/bin/python /opt/mac-certifier/libexec/harness_manifest.py build \
+       --root /opt/mac-certifier/trusted \
+       --source-revision "${MAC_CERTIFIER_SOURCE_REVISION}" \
+       --output /opt/mac-certifier/share/trusted-harness.json \
+    && /opt/mac-venv/bin/python /opt/mac-certifier/libexec/harness_manifest.py verify \
+       --root /opt/mac-certifier/trusted \
+       --manifest /opt/mac-certifier/share/trusted-harness.json \
+    && chown -R root:root /opt/mac-certifier /opt/mac-venv \
+    && chmod -R a-w /opt/mac-certifier /opt/mac-venv \
+    && rm -rf /opt/mac-certifier/build /root/.cache
+
+ENV VIRTUAL_ENV=/opt/mac-venv \
+    PATH=/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin
+
+USER sandbox
+WORKDIR /sandbox/work/repo
+
+# Prove the final non-root image can read and verify its own immutable harness.
+RUN /opt/mac-certifier/bin/run-contract-tests --image-self-test
+
+LABEL org.opencontainers.image.title="MAC external work-package certifier" \
+      org.opencontainers.image.description="Credential-free frozen-baseline certifier for exact MAC candidates" \
+      org.opencontainers.image.source="https://github.com/jordanhubbard/mac" \
+      org.opencontainers.image.revision="${MAC_CERTIFIER_SOURCE_REVISION}" \
+      io.mac.certifier.context-digest="${MAC_CERTIFIER_CONTEXT_DIGEST}" \
+      org.opencontainers.image.licenses="MIT"
+
+CMD ["/bin/true"]

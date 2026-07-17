@@ -15,6 +15,12 @@ log = logging.getLogger(__name__)
 
 DEFAULT_TASK_IMAGE = "ghcr.io/anthropics/mac:CHANGE-ME@sha256:CHANGE-ME"
 
+# The deployment image creates the mac account with this stable identity.
+# Generated Jobs must match it so Kubernetes can make emptyDir-backed runtime
+# paths writable without running the task process as root.
+MAC_CONTAINER_UID = 10001
+MAC_CONTAINER_GID = 10001
+
 DEFAULT_BACKOFF_LIMIT = 0  # retries owned by mac-api lease-expiry, not K8s
 DEFAULT_ACTIVE_DEADLINE_SECONDS = 1800  # 30 min, override per task
 DEFAULT_TTL_SECONDS_AFTER_FINISHED = 3600  # 1h post-finish before TTL GC
@@ -404,10 +410,10 @@ def _build_executor_pod_template(
             "serviceAccountName": cfg.service_account,
             "automountServiceAccountToken": False,
             "securityContext": {
-                "runAsUser": 1000,
-                "runAsGroup": 1000,
+                "runAsUser": MAC_CONTAINER_UID,
+                "runAsGroup": MAC_CONTAINER_GID,
                 "runAsNonRoot": True,
-                "fsGroup": 1000,
+                "fsGroup": MAC_CONTAINER_GID,
                 "seccompProfile": {"type": "RuntimeDefault"},
             },
             "containers": [

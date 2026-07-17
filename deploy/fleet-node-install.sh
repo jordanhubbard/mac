@@ -141,6 +141,13 @@ DEFER_CLEAR_DRAIN="${MAC_DEPLOY_DEFER_CLEAR_DRAIN:-0}"
 DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
+REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh}"
+[ -r "$REVIEWED_TOOL_ASSETS" ] || {
+  echo "ERROR: reviewed tool asset contract is unavailable: $REVIEWED_TOOL_ASSETS" >&2
+  exit 1
+}
+# shellcheck disable=SC1090 -- copied from the same reviewed deploy revision.
+. "$REVIEWED_TOOL_ASSETS"
 SRC_DIR="$MAC_HOME/src/mac"
 VENV="$MAC_HOME/venv"
 HERMES_DIR="$MAC_HOME/hermes-agent"
@@ -205,6 +212,16 @@ die() {
   exit 1
 }
 
+run_without_deploy_credentials() {
+  # Reviewed bootstrap tools need ordinary filesystem/network context only.
+  # Never project hub, GitHub, provider, or worker secrets into child tools.
+  env -i HOME="$HOME" PATH="$MAC_HOME/bin:${PATH:-/usr/bin:/bin}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    HTTPS_PROXY="${HTTPS_PROXY:-}" HTTP_PROXY="${HTTP_PROXY:-}" \
+    NO_PROXY="${NO_PROXY:-}" \
+    "$@"
+}
+
 if [ -n "$FLEET_REGISTRY_FILE" ] && [ -f "$FLEET_REGISTRY_FILE" ]; then
   mkdir -p "$MAC_HOME"
   cp -f "$FLEET_REGISTRY_FILE" "$MAC_HOME/fleets.yaml"
@@ -235,30 +252,30 @@ PY
   done
   # No host Python >= 3.11. Rather than depend on whatever the host/base image
   # happens to ship (host Python bleeding through — a generic Ubuntu pod is 3.10),
-  # provision a PINNED interpreter with uv, the same host-independent approach CI
-  # uses (`uv python install`). uv is a static binary needing no Python to bootstrap,
-  # so this works on a bare base image. Matches the production Dockerfile (3.12.x).
+  # provision an exact interpreter with a SHA256-reviewed native uv release.
+  # No remote installer script is executed in this credential-bearing process.
   local uv_bin managed
-  uv_bin="$(command -v uv 2>/dev/null || true)"
-  if [ -z "$uv_bin" ] && command -v curl >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh >/dev/null 2>&1 || true
-    uv_bin="$(command -v uv 2>/dev/null || true)"
-    [ -n "$uv_bin" ] || { [ -x "$HOME/.local/bin/uv" ] && uv_bin="$HOME/.local/bin/uv"; }
+  uv_bin="$MAC_HOME/bin/uv-bootstrap"
+  if ! mac_install_reviewed_uv "$uv_bin" "$MAC_HOME/cache/reviewed-assets"; then
+    log "ERROR: checksum-verified uv $MAC_REVIEWED_UV_VERSION installation failed"
+    exit 1
   fi
-  if [ -n "$uv_bin" ]; then
-    log "no host Python >= 3.11; provisioning a pinned interpreter with uv ($uv_bin)"
-    # NOT masked with `|| true`: a failed/partial download must not be treated as
-    # success (uv python find can return the would-be path before the binary is
-    # fully written). Verify the interpreter actually RUNS at >=3.11 rather than
-    # trusting `-x` on a possibly-incomplete file.
-    "$uv_bin" python install 3.12 >/dev/null 2>&1
-    managed="$("$uv_bin" python find 3.12 2>/dev/null || true)"
-    if [ -n "$managed" ] && "$managed" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
-      printf '%s\n' "$managed"
-      return
-    fi
+  log "no host Python >= 3.11; provisioning exact Python $MAC_REVIEWED_PYTHON_VERSION with reviewed uv $MAC_REVIEWED_UV_VERSION"
+  run_without_deploy_credentials \
+    "$uv_bin" python install "$MAC_REVIEWED_PYTHON_VERSION" >/dev/null 2>&1
+  managed="$(run_without_deploy_credentials \
+    "$uv_bin" python find "$MAC_REVIEWED_PYTHON_VERSION" 2>/dev/null || true)"
+  if [ -n "$managed" ] && run_without_deploy_credentials \
+      "$managed" - "$MAC_REVIEWED_PYTHON_VERSION" <<'PY' >/dev/null 2>&1
+import sys
+expected = tuple(int(part) for part in sys.argv[1].split("."))
+raise SystemExit(0 if sys.version_info[:3] == expected else 1)
+PY
+  then
+    printf '%s\n' "$managed"
+    return
   fi
-  log "ERROR: no Python >= 3.11 found and uv provisioning failed (mac requires-python >=3.11)"
+  log "ERROR: reviewed uv did not provision exact Python $MAC_REVIEWED_PYTHON_VERSION"
   exit 1
 }
 
@@ -2078,52 +2095,24 @@ install_github_cli() {
   log "GitHub CLI ready at $target"
 }
 
-resolve_codegraph_cli() {
-  local existing=""
-  existing="$(command -v codegraph 2>/dev/null || true)"
-  if [ -n "$existing" ] && [ -x "$existing" ]; then
-    printf '%s\n' "$existing"
-    return 0
-  fi
-  for candidate in "$MAC_HOME/bin/codegraph" "$HOME/.codegraph/bin/codegraph" "$HOME/.local/bin/codegraph" "$HOME/.cargo/bin/codegraph" "$HOME/bin/codegraph" /opt/homebrew/bin/codegraph /usr/local/bin/codegraph; do
-    if [ -x "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
 install_codegraph_cli() {
-  local target="$MAC_HOME/bin/codegraph" existing=""
+  local target="$MAC_HOME/bin/codegraph"
+  local bundle="$MAC_HOME/lib/codegraph/versions/$MAC_REVIEWED_CODEGRAPH_VERSION"
   mkdir -p "$MAC_HOME/bin"
-  existing="$(resolve_codegraph_cli || true)"
-  if [ -z "$existing" ]; then
-    if ! command -v curl >/dev/null 2>&1; then
-      log "ERROR: curl unavailable; cannot install CodeGraph CLI"
-      return 1
-    fi
-    log "installing CodeGraph CLI"
-    if ! curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh; then
-      log "ERROR: CodeGraph CLI installer failed"
-      return 1
-    fi
-    existing="$(resolve_codegraph_cli || true)"
-  fi
-  if [ -z "$existing" ] || [ ! -x "$existing" ]; then
-    log "ERROR: CodeGraph CLI unavailable after installer"
+  log "installing reviewed CodeGraph $MAC_REVIEWED_CODEGRAPH_VERSION native bundle"
+  if ! mac_install_reviewed_codegraph \
+      "$bundle" "$target" "$MAC_HOME/cache/reviewed-assets"; then
+    log "ERROR: reviewed CodeGraph asset installation failed"
     return 1
   fi
-  if [ "$existing" != "$target" ]; then
-    if ln -sf "$existing" "$target" 2>/dev/null; then
-      :
-    else
-      cp -f "$existing" "$target"
-      chmod 0755 "$target"
-    fi
-  fi
-  if PATH="$MAC_HOME/bin:$PATH" codegraph install --yes > "$LOG_DIR/codegraph-install.txt" 2>&1; then
-    PATH="$MAC_HOME/bin:$PATH" codegraph --version > "$LOG_DIR/codegraph-version.txt" 2>&1 || true
+  if run_without_deploy_credentials \
+      "$target" install --yes > "$LOG_DIR/codegraph-install.txt" 2>&1; then
+    run_without_deploy_credentials \
+      "$target" --version > "$LOG_DIR/codegraph-version.txt" 2>&1
+    grep -qx "${MAC_REVIEWED_CODEGRAPH_VERSION#v}" "$LOG_DIR/codegraph-version.txt" || {
+      log "ERROR: installed CodeGraph version differs from reviewed version"
+      return 1
+    }
     log "CodeGraph CLI ready at $target"
   else
     log "ERROR: codegraph install failed; see $LOG_DIR/codegraph-install.txt"
@@ -3316,6 +3305,7 @@ stop_existing_services_for_deploy
 backup_existing_artifacts
 log "installing mac source"
 rm -rf "$SRC_DIR.new"
+install_archive_source=0
 if [ -n "$DEPLOY_GIT_URL" ] && git clone --quiet --branch "$DEPLOY_GIT_BRANCH" "$DEPLOY_GIT_URL" "$SRC_DIR.new"; then
   actual_rev="$(git -C "$SRC_DIR.new" rev-parse HEAD)"
   if [ "$actual_rev" != "$DEPLOY_REV" ]; then
@@ -3325,18 +3315,39 @@ if [ -n "$DEPLOY_GIT_URL" ] && git clone --quiet --branch "$DEPLOY_GIT_BRANCH" "
     # — e.g. origin/$DEPLOY_GIT_BRANCH advanced past the operator's local HEAD
     # (someone else merged mid-session), which leaves the spoke half-deployed.
     # We want exactly $DEPLOY_REV regardless of how it relates to the branch tip.
-    if git -C "$SRC_DIR.new" fetch --quiet origin "$DEPLOY_REV"; then
-      git -C "$SRC_DIR.new" reset --hard --quiet "$DEPLOY_REV"
+    if git -C "$SRC_DIR.new" fetch --quiet origin "$DEPLOY_REV" \
+        && git -C "$SRC_DIR.new" reset --hard --quiet "$DEPLOY_REV"; then
+      actual_rev="$(git -C "$SRC_DIR.new" rev-parse HEAD)"
     else
-      log "WARNING: could not fetch deploy rev $DEPLOY_REV from origin; using clone HEAD $actual_rev"
+      log "WARNING: could not install exact deploy rev $DEPLOY_REV from origin; using the exact deployment archive"
+      install_archive_source=1
     fi
   fi
 else
   log "WARNING: git clone failed or was not configured; installing archive without self-update worktree"
+  install_archive_source=1
+fi
+if [ "$install_archive_source" = 1 ]; then
+  rm -rf "$SRC_DIR.new"
   mkdir -p "$SRC_DIR.new"
   tar -xzf "$ARCHIVE" -C "$SRC_DIR.new"
 fi
+if [ "$install_archive_source" = 0 ]; then
+  actual_rev="$(git -C "$SRC_DIR.new" rev-parse HEAD)"
+  [ "$actual_rev" = "$DEPLOY_REV" ] || die \
+    "installed Git source revision $actual_rev does not match deploy revision $DEPLOY_REV"
+fi
 mv "$SRC_DIR.new" "$SRC_DIR"
+
+# Archive installs intentionally have no .git directory. Preserve the
+# operator's exact git-archive revision outside the replaced source tree so
+# runtime-image bootstrap can enforce the same source/image identity contract
+# on every node and every subsequent bootstrap invocation.
+deployed_source_revision_file="$MAC_HOME/deployed-source-revision"
+deployed_source_revision_tmp="${deployed_source_revision_file}.tmp.$$"
+printf '%s\n' "$DEPLOY_REV" > "$deployed_source_revision_tmp"
+chmod 0600 "$deployed_source_revision_tmp"
+mv -f "$deployed_source_revision_tmp" "$deployed_source_revision_file"
 rm -f "$ARCHIVE"
 
 install_codegraph_cli

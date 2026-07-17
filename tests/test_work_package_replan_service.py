@@ -250,6 +250,7 @@ def _configure_ready_downstream(
             }
         )
     )
+    control.work_package_certifications.validate_runtime_binding = lambda: None
     assert control.work_package_pipeline_runtime_config.enabled is True
 
 

@@ -206,6 +206,38 @@ class _ExternalCertificationRunner:
             )
             for command in job.controller_commands
         )
+        changed_files = ["docs/canaries/e2e.md"]
+        digest_json = lambda value: "sha256:" + hashlib.sha256(  # noqa: E731
+            json.dumps(
+                value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+            ).encode("utf-8")
+        ).hexdigest()
+        phase_manifest = {
+            "schema": "mac.certifier_phase_manifest.v1",
+            "trusted_source_revision": "f" * 40,
+            "assembly_base_sha": job.assembly_base_sha,
+            "candidate_sha": job.candidate_sha,
+            "changed_files": changed_files,
+            "changed_file_count": 1,
+            "changed_files_digest": digest_json(changed_files),
+            "selection_mode": "documentation_fast_lane",
+            "authoritative": {
+                "mode": "focused",
+                "reason": "documentation_only_invariants",
+                "tests": [
+                    "tests/test_openshell_certifier.py",
+                    "tests/test_publication_lane.py",
+                    "tests/test_repository_contract_certification.py",
+                ],
+            },
+            "supplemental": {
+                "mode": "skipped",
+                "reason": "documentation_only",
+                "tests": [],
+            },
+            "full_suite_count": 0,
+        }
+        phase_manifest["manifest_digest"] = digest_json(phase_manifest)
         return OpenShellCertificationResult(
             job_id=job.job_id,
             job_digest=job.job_digest,
@@ -226,6 +258,7 @@ class _ExternalCertificationRunner:
             commands_digest=job.commands_digest,
             sandbox_name="mac-cert-e2e",
             checks=checks,
+            phase_manifest=phase_manifest,
             isolation={
                 "schema": CERTIFICATION_ISOLATION_SCHEMA,
                 "network": "disabled",
@@ -239,6 +272,7 @@ class _ExternalCertificationRunner:
                 "run_as_user": "non_root",
                 "launcher_environment": ["PATH"],
                 "input_format": "credential_free_git_bundle",
+                "assembly_base_transport": "controller_bound_argv",
             },
             started_at="2026-07-17T12:00:00.000000+00:00",
             completed_at="2026-07-17T12:00:01.000000+00:00",
@@ -351,6 +385,9 @@ def _run_to_certification(
     packages = control.work_packages
     fast_lane_task_id = None
     if via_fast_lane:
+        # Keep this an exogenously assigned primary-cohort treatment while
+        # making the E2E route deterministic and independent of test order.
+        control._execution_cohort_treatment_percentage = 100
         monkeypatch.setattr(
             control,
             "_managed_single_task_rollout",
@@ -376,7 +413,11 @@ def _run_to_certification(
             "Create the product change",
             description="Create one exact local Git candidate.",
             project="mac",
-            metadata={"no_decompose": True, "no_dispatch": True},
+            metadata={
+                "no_decompose": True,
+                "no_dispatch": True,
+                "publication_lane_policy": "auto",
+            },
         )
         fast_lane_task_id = created.id
         link = store.query_one(
@@ -691,6 +732,16 @@ def test_managed_work_package_reaches_exact_landed_completed_product(
             assert route["route_state"] == "managed_completed"
             assert route["landing_receipt_id"] == str(landed.detail["id"])
             assert route["finalization_id"] == finalized.finalization_id
+            outcome = line.control.work_package_telemetry.comparable_atomic_outcomes(
+                package_id=line.package_id
+            )
+            assert len(outcome) == 1
+            assert outcome[0]["canonical_publication_outcome"] == "succeeded"
+            assert outcome[0]["canonical_publication_success"] is True
+            assert outcome[0]["canonical_publication_proof"] == {
+                "type": "managed_publication_finalization",
+                "id": finalized.finalization_id,
+            }
         tasks = line.store.query_all(
             "SELECT link.node_key, link.node_state, task.state AS task_state "
             "FROM work_package_task_links AS link JOIN tasks AS task "
@@ -732,7 +783,12 @@ def test_failed_external_certification_never_lands_and_raises_andon(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    line = _run_to_certification(tmp_path, monkeypatch, passed=False)
+    line = _run_to_certification(
+        tmp_path,
+        monkeypatch,
+        passed=False,
+        via_fast_lane=True,
+    )
     try:
         assert line.certification.status == "failed"
         proof = WorkPackageCertificationService(
@@ -798,6 +854,17 @@ def test_failed_external_certification_never_lands_and_raises_andon(
             "WHERE package_id = ? AND state = 'held'",
             (line.package_id,),
         )["count"] == 0
+        outcome = line.control.work_package_telemetry.comparable_atomic_outcomes(
+            package_id=line.package_id
+        )
+        assert len(outcome) == 1
+        assert outcome[0]["canonical_publication_outcome"] == "failed"
+        assert outcome[0]["canonical_publication_failure_class"] == (
+            "managed_certification_rejected_final"
+        )
+        assert outcome[0]["canonical_publication_proof"]["type"] == (
+            "managed_certification_rejection"
+        )
         assert line.store.query_all("PRAGMA foreign_key_check") == []
     finally:
         line.close()

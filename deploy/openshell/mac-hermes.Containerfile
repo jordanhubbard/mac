@@ -16,9 +16,14 @@
 # comments): a `sandbox` user/group, `iproute2` (the egress proxy's `ip`), the
 # hermes_cli path hook, and a sandbox-writable /sandbox for the Docker driver.
 
-FROM docker.io/library/python:3.12-slim-bookworm
+FROM ghcr.io/astral-sh/uv@sha256:9874eb7afe5ca16c363fe80b294fe700e460df29a55532bbfea234a0f12eddb1 AS uv
 
-ENV DEBIAN_FRONTEND=noninteractive
+FROM docker.io/library/python@sha256:60d9996b6a8a3689d36db740b49f4327be3be09a21122bd02fb8895abb38b50d
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/mac-venv \
+    UV_PYTHON_DOWNLOADS=never
 
 # iproute2: OpenShell's network-isolation proxy requires `ip` ("trusted ip
 #   helper not found" otherwise). git/curl/gh: task work + git push egress.
@@ -42,25 +47,35 @@ ENV DEBIAN_FRONTEND=noninteractive
 # sandbox user/group: OpenShell refuses any image lacking a `sandbox` user.
 ARG GH_VERSION="2.95.0"
 ARG CODEGRAPH_VERSION="v1.1.6"
+ARG NODE_VERSION="22.23.1"
+ARG PNPM_VERSION="11.13.1"
+ARG CODEX_VERSION="0.140.0"
+ARG TARGETARCH
 COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
 COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
+COPY --from=uv /uv /usr/local/bin/uv
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash ca-certificates curl tar \
+    && apt-get install -y --no-install-recommends bash ca-certificates curl tar xz-utils \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
-    && /bin/bash /tmp/mac-openshell-build-assets/nodesource_setup.sh \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends iproute2 iptables git make build-essential libssl-dev nodejs openjdk-17-jre-headless \
-    && gh_arch="$(dpkg --print-architecture)" \
-    && tar -xzf /tmp/mac-openshell-build-assets/gh.tgz -C /tmp \
+    && apt-get install -y --no-install-recommends iproute2 iptables git make build-essential libssl-dev openjdk-17-jre-headless \
+    && (cd /tmp/mac-openshell-build-assets && sha256sum -c SHA256SUMS) \
+    && case "$TARGETARCH" in \
+         amd64) asset_arch=amd64; gh_arch=amd64; codegraph_arch=amd64 ;; \
+         arm64) asset_arch=arm64; gh_arch=arm64; codegraph_arch=arm64 ;; \
+         *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 2 ;; \
+       esac \
+    && tar -xJf "/tmp/mac-openshell-build-assets/node-${asset_arch}.tar.xz" -C /usr/local --strip-components=1 \
+    && test "$(node --version)" = "v${NODE_VERSION}" \
+    && tar -xzf "/tmp/mac-openshell-build-assets/gh-${asset_arch}.tgz" -C /tmp \
     && install -m755 "/tmp/gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" /usr/local/bin/gh \
     && rm -rf "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" \
-    && npm install -g @openai/codex@0.140.0 \
-    && npm install -g pnpm \
+    && npm install -g "@openai/codex@${CODEX_VERSION}" "pnpm@${PNPM_VERSION}" \
+    && test "$(pnpm --version)" = "$PNPM_VERSION" \
     && install -m755 /tmp/mac-openshell-build-assets/lein /usr/local/bin/lein \
     && CG_HOME="/usr/local/lib/codegraph/versions/${CODEGRAPH_VERSION}" \
     && mkdir -p "$CG_HOME" \
-    && tar -xzf /tmp/mac-openshell-build-assets/codegraph.tgz -C "$CG_HOME" --strip-components=1 \
+    && tar -xzf "/tmp/mac-openshell-build-assets/codegraph-${codegraph_arch}.tgz" -C "$CG_HOME" --strip-components=1 \
     && ln -sfn "$CG_HOME" /usr/local/lib/codegraph/current \
     && printf '#!/bin/sh\nexec "%s/node" --liftoff-only "%s/lib/dist/bin/codegraph.js" "$@"\n' "$CG_HOME" "$CG_HOME" > /usr/local/bin/codegraph \
     && chown -R root:root /usr/local/lib/codegraph /usr/local/bin/codegraph \
@@ -96,20 +111,19 @@ ENV NPM_CONFIG_GLOBALCONFIG=/etc/npmrc \
     npm_config_fetch_timeout=300000 \
     npm_config_minimum_release_age=0
 
-RUN python3 -m venv /opt/mac-venv && /opt/mac-venv/bin/pip install --no-cache-dir --upgrade pip
-
 # Install the mac runtime into the in-image venv. The vendored Hermes lives at
 # mac/_hermes/hermes_cli, which `import hermes_cli` only finds if mac/_hermes is
 # on sys.path — so drop a .pth that adds it (the executor runs
 # `python -m hermes_cli.main chat`).
-COPY . /tmp/mac-src
+COPY pyproject.toml uv.lock README.md /tmp/mac-src/
+COPY src /tmp/mac-src/src
 # Install the [dev] extra (pytest, coverage, psycopg, kubernetes) so the task
 # sandbox can RUN the repository contract test — scripts/run-contract-tests.sh
 # collects the full suite, which imports those at collection time. Without it,
 # in-sandbox verification of a repo-coupled code task fails to execute
 # (ModuleNotFoundError) and the substance gate can never pass, so no autonomous
 # code change can land through OpenShell.
-RUN /opt/mac-venv/bin/pip install --no-cache-dir "/tmp/mac-src[dev]" \
+RUN uv sync --frozen --no-editable --extra dev --project /tmp/mac-src \
     && HP="$(/opt/mac-venv/bin/python -c 'import mac,os;print(os.path.join(os.path.dirname(mac.__file__),"_hermes"))')" \
     && SP="$(/opt/mac-venv/bin/python -c 'import site;print(site.getsitepackages()[0])')" \
     && printf '%s\n' "$HP" > "$SP/zz_hermes_vendor.pth" \

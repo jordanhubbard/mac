@@ -88,7 +88,8 @@ using Docker on macOS, under these constraints:
   *sibling* containers. The gateway's data dir is mounted at an **identical host
   path** (`-e HOME=$DIR -v $DIR:$DIR`) so the supervisor-binary bind mounts it
   emits resolve on the Docker host. The host-side `openshell` CLI (a Python
-  package, `uv tool install`) drives it over a published loopback port.
+  reviewed, SHA-256-pinned native release asset drives it over a published
+  loopback port.
 - **Landlock is waived on macOS.** Docker Desktop's LinuxKit kernel does not
   surface `/sys/kernel/security/lsm` to containers, so the operator policy's
   `landlock: best_effort` filesystem confinement is not enforced. seccomp,

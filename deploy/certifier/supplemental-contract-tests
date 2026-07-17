@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Exercise the frozen full test inventory from the candidate-root scratch tree.
+# This phase exists only for tests that inspect deploy/config/root-level files;
+# the root-owned direct phase remains the independent authority.
+set -euo pipefail
+
+readonly PYTHON=/opt/mac-venv/bin/python
+
+[ "$#" -eq 2 ] || {
+    echo "usage: supplemental-contract-tests SCRATCH_ROOT OUTPUT_DIR" >&2
+    exit 2
+}
+scratch_root="$1"
+output_dir="$2"
+[ -d "$scratch_root/src" ] || { echo "supplemental candidate source is unavailable" >&2; exit 2; }
+mkdir -p "$output_dir/pytest-cache"
+
+cd "$scratch_root"
+exec /usr/bin/env -i \
+    HOME=/tmp \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin \
+    TMPDIR=/tmp \
+    PYTHONHASHSEED=0 \
+    PYTHONNOUSERSITE=1 \
+    PYTHONPYCACHEPREFIX="$output_dir/pycache" \
+    PYTHONSAFEPATH=1 \
+    PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+    MAC_CERTIFIER_CANDIDATE_SRC="$scratch_root/src" \
+    "$PYTHON" -m pytest \
+      -c "$scratch_root/pyproject.toml" \
+      --rootdir "$scratch_root" \
+      -o "cache_dir=$output_dir/pytest-cache" \
+      -o "pythonpath=$scratch_root/src" \
+      "$scratch_root/tests" "$scratch_root/plugin/test_tools.py"

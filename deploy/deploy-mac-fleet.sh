@@ -26,6 +26,11 @@ load_env_file_with_caller_precedence() {
     MAC_SECRET_KEY
     MAC_API_TOKEN
     MAC_WORKER_TOKEN
+    MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE
+    MAC_DEPLOY_EXECUTION_COHORT_REVISION
+    MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT
+    MAC_DEPLOY_EXECUTION_COHORT_SEED
+    MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD
   )
 
   # Also snapshot any fleet-scoped token variables already present.
@@ -123,6 +128,18 @@ NEW_HUB_HEADSCALE_LOGIN_SERVER="${MAC_DEPLOY_NEW_HUB_HEADSCALE_LOGIN_SERVER:-}"
 NEW_HUB_HEADSCALE_PREAUTH_KEY="${MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY:-}"
 REQUESTED_AGENTS=()
 
+if [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ]; then
+  [[ "$MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" =~ ^ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}$ ]] || {
+    echo "ERROR: MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE must be the immutable repository-owned GHCR digest" >&2
+    exit 2
+  }
+  _runtime_digest="${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE##*@sha256:}"
+  [ "${#_runtime_digest}" -eq 64 ] || {
+    echo "ERROR: MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE digest must contain 64 lowercase hex characters" >&2
+    exit 2
+  }
+fi
+
 # Keep fatal errors consistent in both the local launcher and the generated
 # remote deploy script.  Remote deployments execute selected functions in a
 # fresh shell, so relying on a caller-defined `die` silently turns a required
@@ -171,6 +188,11 @@ Each host gets:
   - a mac-agent service that registers against the configured hub
   - rollback script and structured deploy manifests under ~/.mac/logs
   - one-time ACC SQLite dry-run and import reports under ~/.mac/logs
+
+Production OpenShell deployments require
+MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:<digest>.
+Only isolated development hosts may opt back into per-host builds with
+MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD=1.
 
 The hub name selects the fleet. Agent arguments may be agent names from that
 fleet. With no agent arguments, all enabled agents in the selected fleet are
@@ -1190,14 +1212,23 @@ REMOTE
 # nodes remain opt-in through MAC_DEPLOY_OPENSHELL=1. A bootstrap failure leaves
 # the worker stopped and drained instead of exposing an unconfined executor.
 run_openshell_bootstrap() {
-  local agent="$1" target="$2" bootstrap_args="${3:-}" ssh_parts=() ssh_args=() ssh_target last_index
+  local agent="$1" target="$2" bootstrap_args="${3:-}" ssh_parts=() ssh_args=() ssh_target last_index local_build_allowed
+  local runtime_image="${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
+  case "$(printf '%s' "${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-}" | tr 'A-Z' 'a-z')" in
+    1|true|yes|on) local_build_allowed=1 ;;
+    *) local_build_allowed=0 ;;
+  esac
+  if [ -z "$runtime_image" ] && [ "$local_build_allowed" != 1 ]; then
+    echo "==> ${agent}: ERROR: OpenShell requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE with an immutable digest" >&2
+    return 1
+  fi
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   echo "==> ${agent}: OpenShell bootstrap (args='${bootstrap_args}')"
   ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-    "MAC_DEPLOY_OPENSHELL_ARGS=$(shell_quote "$bootstrap_args") bash -s" <<'REMOTE'
+    "MAC_DEPLOY_OPENSHELL_ARGS=$(shell_quote "$bootstrap_args") OSH_RUNTIME_IMAGE_REF=$(shell_quote "$runtime_image") bash -s" <<'REMOTE'
 set -euo pipefail
 mac_home="${MAC_HOME:-$HOME/.mac}"
 bs="$mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh"
@@ -1406,6 +1437,23 @@ deploy_host() {
       esac
       ;;
   esac
+  if [ "$openshell_enabled" = "1" ]; then
+    case "$(printf '%s' "${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-}" | tr 'A-Z' 'a-z')" in
+      1|true|yes|on) ;;
+      *)
+        [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ] || {
+          echo "==> ${agent}: ERROR: production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" >&2
+          return 1
+        }
+        case " $effective_openshell_args " in
+          *" --skip-image "*)
+            echo "==> ${agent}: ERROR: --skip-image is incompatible with a digest-managed OpenShell deployment" >&2
+            return 1
+            ;;
+        esac
+        ;;
+    esac
+  fi
   add_remote_env() { remote_env+=("$1=$(shell_quote "$2")"); }
   # Secret values are streamed over SSH stdin into a mode-0600, one-use file;
   # they must never appear in the ssh remote command or process argv.
@@ -1545,6 +1593,15 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED "${MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED:-}"
   add_remote_env MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED "${MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED:-}"
   add_remote_env MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR "${MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR:-}"
+  add_remote_env MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT "${MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT:-}"
+  # The randomized execution pilot belongs to the control-plane hub only.
+  # Revision/percentage are ordinary configuration. The HMAC seed uses the
+  # one-use secret stdin channel so it never appears in SSH argv or on spokes.
+  if [ "$agent" = "$shared_services_manager" ]; then
+    add_remote_env MAC_DEPLOY_EXECUTION_COHORT_REVISION "${MAC_DEPLOY_EXECUTION_COHORT_REVISION:-1}"
+    add_remote_env MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT "${MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT:-50}"
+    add_remote_secret_env MAC_DEPLOY_EXECUTION_COHORT_SEED "${MAC_DEPLOY_EXECUTION_COHORT_SEED:-}"
+  fi
   local img_key="${NVIDIA_IMAGE_API_KEY:-}" aud_key="${NVIDIA_AUDIO_API_KEY:-}" vid_key="${NVIDIA_VIDEO_API_KEY:-}"
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
     img_key="" ; aud_key="" ; vid_key=""
@@ -1567,14 +1624,20 @@ deploy_host() {
   # heredoc and its interaction with child processes that read from stdin.
   unset -f add_remote_env add_remote_secret_env
   local remote_node_script="/tmp/mac-node-install-${agent}-${TS}.sh"
+  local remote_tool_assets="/tmp/mac-reviewed-tool-assets-${agent}-${TS}.sh"
   local remote_secret_file="/tmp/mac-node-install-${agent}-${TS}.env"
-  local deploy_script
+  local deploy_script reviewed_tool_assets
   deploy_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fleet-node-install.sh"
+  reviewed_tool_assets="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh"
   echo "==> ${agent}: copying fleet-node-install.sh"
   scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" \
     "$deploy_script" "${scp_target}:${remote_node_script}"
+  echo "==> ${agent}: copying reviewed native-tool checksum contract"
+  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" \
+    "$reviewed_tool_assets" "${scp_target}:${remote_tool_assets}"
+  remote_env+=("MAC_DEPLOY_REVIEWED_TOOL_ASSETS=$(shell_quote "$remote_tool_assets")")
   local remote_cmd
-  remote_cmd="${remote_env[*]} sh -c 'umask 077; _mac_secret_file=\$1; _mac_script=\$2; trap \"rm -f \\\"\$_mac_secret_file\\\" \\\"\$_mac_script\\\"\" EXIT HUP INT TERM; cat > \"\$_mac_secret_file\"; set -a; . \"\$_mac_secret_file\"; set +a; rm -f \"\$_mac_secret_file\"; bash \"\$_mac_script\"' sh $(shell_quote "$remote_secret_file") $(shell_quote "$remote_node_script")"
+  remote_cmd="${remote_env[*]} sh -c 'umask 077; _mac_secret_file=\$1; _mac_script=\$2; _mac_tool_assets=\$3; trap \"rm -f \\\"\$_mac_secret_file\\\" \\\"\$_mac_script\\\" \\\"\$_mac_tool_assets\\\"\" EXIT HUP INT TERM; cat > \"\$_mac_secret_file\"; set -a; . \"\$_mac_secret_file\"; set +a; rm -f \"\$_mac_secret_file\"; bash \"\$_mac_script\"' sh $(shell_quote "$remote_secret_file") $(shell_quote "$remote_node_script") $(shell_quote "$remote_tool_assets")"
   if printf '%s\n' "${remote_secret_env[@]}" | \
     ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" "$remote_cmd"
   then

@@ -70,3 +70,45 @@ def test_enabled_pipeline_follows_app_lifecycle_and_trigger_is_wake_only(
         assert not (tmp_path / "bundles").exists()
 
     assert pipeline.status()["thread_alive"] is False
+
+
+def test_execution_cohort_export_is_readable_and_outcome_links_are_admin_only() -> None:
+    cp = ControlPlane.in_memory()
+    task = cp.create_task("Telemetry API control task")
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={"reader": ["read"], "admin": ["admin"]},
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/work-package-telemetry",
+            params={"treatment_route": "legacy_async", "limit": 100},
+            headers={"Authorization": "Bearer reader"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["schema"] == "mac.work_package.telemetry_export.v1"
+        assignment = next(
+            row for row in payload["cohort_assignments"] if row["task_id"] == task.id
+        )
+        assert assignment["treatment_route"] == "legacy_async"
+        assert assignment["eligibility"] == "ineligible"
+        assert payload["measurement_health"]["failure_count"] == 0
+
+        comparable = client.get(
+            "/work-package-telemetry/comparable-atomic-outcomes",
+            headers={"Authorization": "Bearer reader"},
+        )
+        assert comparable.status_code == 200
+        assert comparable.json() == []
+
+        refused = client.post(
+            "/work-package-finalizations/finalization_missing/outcomes",
+            json={
+                "outcome_type": "incident",
+                "external_id": "incident-1",
+                "observed_at": "2026-07-17T00:00:00+00:00",
+            },
+            headers={"Authorization": "Bearer reader"},
+        )
+        assert refused.status_code == 403

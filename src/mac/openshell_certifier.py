@@ -30,6 +30,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Tuple
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -37,6 +38,7 @@ import yaml
 CERTIFICATION_JOB_SCHEMA = "mac.openshell_certification_job.v1"
 CERTIFICATION_RESULT_SCHEMA = "mac.openshell_certification_result.v1"
 CERTIFICATION_ISOLATION_SCHEMA = "mac.certification_isolation.v1"
+CERTIFIER_PHASE_MANIFEST_SCHEMA = "mac.certifier_phase_manifest.v1"
 CLEANUP_ALERT_SCHEMA = "mac.openshell_certification_cleanup_alert.v1"
 
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -48,7 +50,17 @@ _IMAGE_RE = re.compile(
 )
 _REF_RE = re.compile(r"^refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,240}$")
 _SAFE_LAUNCH_ENV = frozenset(
-    {"HOME", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "SYSTEMROOT", "TMPDIR", "TZ"}
+    {
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "OPENSHELL_GATEWAY_ENDPOINT",
+        "PATH",
+        "SYSTEMROOT",
+        "TMPDIR",
+        "TZ",
+    }
 )
 _POLICY_KEYS = frozenset(
     {"version", "filesystem_policy", "landlock", "process", "network_policies"}
@@ -61,6 +73,33 @@ _DEFAULT_LAUNCH_ENV = {"HOME": "/tmp", "PATH": "/usr/bin:/bin"}
 _DEFAULT_SANDBOX_PATH = "/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
 _OUTPUT_LIMIT = 16_000
 _CERTIFIER_COMMAND_PREFIX = "/opt/mac-certifier/bin/"
+CERTIFIER_PRIMARY_COMMAND = "/opt/mac-certifier/bin/run-contract-tests"
+_CERTIFIER_PHASE_PREFIX = "MAC_CERTIFIER_PHASE_MANIFEST_JSON="
+_PHASE_MANIFEST_KEYS = frozenset(
+    {
+        "schema",
+        "trusted_source_revision",
+        "assembly_base_sha",
+        "candidate_sha",
+        "changed_files",
+        "changed_file_count",
+        "changed_files_digest",
+        "selection_mode",
+        "authoritative",
+        "supplemental",
+        "full_suite_count",
+        "manifest_digest",
+    }
+)
+_PHASE_KEYS = frozenset({"mode", "reason", "tests"})
+_CERTIFIER_FULL_TARGETS = ["plugin/test_tools.py", "tests"]
+_CERTIFIER_INVARIANT_TESTS = frozenset(
+    {
+        "tests/test_openshell_certifier.py",
+        "tests/test_publication_lane.py",
+        "tests/test_repository_contract_certification.py",
+    }
+)
 
 
 class OpenShellCertificationError(RuntimeError):
@@ -110,6 +149,133 @@ def validate_certifier_controller_command(command: "ControllerCommand") -> None:
             "certification command executable must be image-owned under "
             "/opt/mac-certifier/bin/"
         )
+
+
+def validate_certifier_phase_manifest(
+    value: Any,
+    *,
+    assembly_base_sha: str,
+    candidate_sha: str,
+) -> Mapping[str, Any]:
+    """Validate the image-owned proportional-execution receipt exactly."""
+
+    if not isinstance(value, Mapping) or set(value) != _PHASE_MANIFEST_KEYS:
+        raise CertificationValidationError("certifier phase manifest fields are invalid")
+    manifest = dict(value)
+    if manifest.get("schema") != CERTIFIER_PHASE_MANIFEST_SCHEMA:
+        raise CertificationValidationError("certifier phase manifest schema is invalid")
+    if manifest.get("assembly_base_sha") != assembly_base_sha:
+        raise CertificationValidationError("certifier phase manifest base changed")
+    if manifest.get("candidate_sha") != candidate_sha:
+        raise CertificationValidationError("certifier phase manifest candidate changed")
+    if not _SHA40_RE.fullmatch(str(manifest.get("trusted_source_revision") or "")):
+        raise CertificationValidationError(
+            "certifier phase manifest trusted revision is invalid"
+        )
+
+    changed = manifest.get("changed_files")
+    if (
+        not isinstance(changed, list)
+        or not changed
+        or len(changed) > 4096
+        or any(not isinstance(path, str) for path in changed)
+        or changed != sorted(set(changed))
+    ):
+        raise CertificationValidationError("certifier changed-file inventory is invalid")
+    for path in changed:
+        if (
+            not isinstance(path, str)
+            or not path
+            or len(path.encode("utf-8")) > 1024
+            or path.startswith("/")
+            or ".." in path.split("/")
+            or any(ord(character) < 32 or ord(character) == 127 for character in path)
+        ):
+            raise CertificationValidationError(
+                "certifier changed-file inventory is unsafe"
+            )
+    count = manifest.get("changed_file_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count != len(changed):
+        raise CertificationValidationError("certifier changed-file count is invalid")
+    if manifest.get("changed_files_digest") != _sha256_json(changed):
+        raise CertificationValidationError("certifier changed-file digest is invalid")
+
+    phases: list[Mapping[str, Any]] = []
+    for name in ("authoritative", "supplemental"):
+        phase = manifest.get(name)
+        if not isinstance(phase, Mapping) or set(phase) != _PHASE_KEYS:
+            raise CertificationValidationError("certifier %s phase is malformed" % name)
+        mode = phase.get("mode")
+        allowed = (
+            {"focused", "full", "rejected"}
+            if name == "authoritative"
+            else {"skipped", "full"}
+        )
+        if mode not in allowed:
+            raise CertificationValidationError("certifier %s phase mode is invalid" % name)
+        reason = phase.get("reason")
+        if not isinstance(reason, str) or not reason or len(reason) > 256:
+            raise CertificationValidationError("certifier %s phase reason is invalid" % name)
+        tests = phase.get("tests")
+        if (
+            not isinstance(tests, list)
+            or len(tests) > 4096
+            or any(not isinstance(path, str) for path in tests)
+            or tests != sorted(set(tests))
+            or any(
+                not path
+                or path.startswith("/")
+                or ".." in path.split("/")
+                for path in tests
+            )
+        ):
+            raise CertificationValidationError("certifier %s tests are invalid" % name)
+        if mode in {"focused", "full"} and not tests:
+            raise CertificationValidationError("certifier %s phase has no tests" % name)
+        if mode in {"skipped", "rejected"} and tests:
+            raise CertificationValidationError(
+                "certifier inactive phase unexpectedly names tests"
+            )
+        if mode == "full" and tests != _CERTIFIER_FULL_TARGETS:
+            raise CertificationValidationError(
+                "certifier full phase does not name the exact frozen suite"
+            )
+        if (
+            name == "authoritative"
+            and mode == "focused"
+            and not _CERTIFIER_INVARIANT_TESTS.issubset(tests)
+        ):
+            raise CertificationValidationError(
+                "certifier focused phase lacks root-owned invariants"
+            )
+        phases.append(phase)
+
+    full_count = manifest.get("full_suite_count")
+    observed_full = sum(phase.get("mode") == "full" for phase in phases)
+    if (
+        isinstance(full_count, bool)
+        or not isinstance(full_count, int)
+        or full_count != observed_full
+        or full_count > 1
+    ):
+        raise CertificationValidationError(
+            "certifier phase manifest exceeds the one-full-suite limit"
+        )
+    selection_mode = manifest.get("selection_mode")
+    if not isinstance(selection_mode, str) or not re.fullmatch(
+        r"[a-z][a-z0-9_]{0,79}", selection_mode
+    ):
+        raise CertificationValidationError("certifier selection mode is invalid")
+    rejected = phases[0].get("mode") == "rejected"
+    if rejected != selection_mode.endswith("_rejected"):
+        raise CertificationValidationError("certifier rejected selection is incoherent")
+
+    claimed_digest = str(manifest.get("manifest_digest") or "")
+    unsigned = dict(manifest)
+    unsigned.pop("manifest_digest", None)
+    if claimed_digest != _sha256_json(unsigned):
+        raise CertificationValidationError("certifier phase manifest digest is invalid")
+    return manifest
 
 
 @dataclass(frozen=True)
@@ -355,11 +521,38 @@ class OpenShellCertificationJob:
         if not self.controller_commands:
             raise CertificationValidationError("certification requires controller commands")
         seen = set()
+        primary_commands = 0
         for command in self.controller_commands:
             validate_certifier_controller_command(command)
             if command.command_id in seen:
                 raise CertificationValidationError("controller command ids must be unique")
             seen.add(command.command_id)
+            base_flags = [
+                index
+                for index, item in enumerate(command.argv)
+                if item == "--base-sha" or item.startswith("--base-sha=")
+            ]
+            if (
+                base_flags != [len(command.argv) - 2]
+                or command.argv[-2:] != ("--base-sha", self.assembly_base_sha)
+            ):
+                raise CertificationValidationError(
+                    "controller command must end with the exact controller-owned assembly base"
+                )
+            if command.argv[0] == CERTIFIER_PRIMARY_COMMAND:
+                primary_commands += 1
+                if command.argv != (
+                    CERTIFIER_PRIMARY_COMMAND,
+                    "--base-sha",
+                    self.assembly_base_sha,
+                ):
+                    raise CertificationValidationError(
+                        "primary certifier command accepts only the controller-owned base"
+                    )
+        if primary_commands != 1:
+            raise CertificationValidationError(
+                "certification requires exactly one primary frozen test command"
+            )
         if (
             isinstance(self.lifecycle_timeout_seconds, bool)
             or not 5 <= int(self.lifecycle_timeout_seconds) <= 600
@@ -438,6 +631,7 @@ class OpenShellCertificationResult:
     commands_digest: str
     sandbox_name: str
     checks: Tuple[CertificationCheckResult, ...]
+    phase_manifest: Mapping[str, Any]
     isolation: Mapping[str, Any]
     started_at: str
     completed_at: str
@@ -468,6 +662,7 @@ class OpenShellCertificationResult:
             "commands_digest": self.commands_digest,
             "sandbox_name": self.sandbox_name,
             "checks": [item.to_dict() for item in self.checks],
+            "phase_manifest": dict(self.phase_manifest),
             "isolation": dict(self.isolation),
             "started_at": self.started_at,
             "completed_at": self.completed_at,
@@ -509,6 +704,99 @@ class CleanupAlert:
 
 class OpenShellCertificationRunner:
     """Run one exact certification job without hub or landing authority."""
+
+    @classmethod
+    def from_environment(
+        cls,
+        environ: Optional[Mapping[str, str]] = None,
+        *,
+        command_runner: Optional[CommandRunner] = None,
+        **kwargs: Any,
+    ) -> "OpenShellCertificationRunner":
+        """Bind production execution to the deployed OpenShell service identity.
+
+        Fleet bootstrap publishes an exact CLI path through
+        ``MAC_OPENSHELL_BIN``.  Do not fall back to ambient ``PATH`` lookup: the
+        certifier deliberately replaces its subprocess environment, and such a
+        fallback previously made a configured ``~/.mac/bin/openshell``
+        unreachable.  The host CLI keeps the service user's real ``HOME`` so it
+        can resolve the selected gateway; candidate processes still receive the
+        isolated ``HOME=/tmp`` environment built below.
+        """
+
+        source = os.environ if environ is None else environ
+        raw_binary = str(source.get("MAC_OPENSHELL_BIN") or "").strip()
+        if not raw_binary or "\x00" in raw_binary:
+            raise CertificationValidationError(
+                "MAC_OPENSHELL_BIN must name an absolute executable"
+            )
+        configured_binary = Path(raw_binary)
+        if not configured_binary.is_absolute():
+            raise CertificationValidationError(
+                "MAC_OPENSHELL_BIN must name an absolute executable"
+            )
+        try:
+            binary = configured_binary.resolve(strict=True)
+        except OSError as exc:
+            raise CertificationValidationError(
+                "MAC_OPENSHELL_BIN is unavailable"
+            ) from exc
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise CertificationValidationError(
+                "MAC_OPENSHELL_BIN is not an executable file"
+            )
+
+        raw_home = str(source.get("HOME") or "").strip()
+        if not raw_home or "\x00" in raw_home:
+            raise CertificationValidationError(
+                "OpenShell host launcher HOME must be an absolute directory"
+            )
+        configured_home = Path(raw_home)
+        if not configured_home.is_absolute():
+            raise CertificationValidationError(
+                "OpenShell host launcher HOME must be an absolute directory"
+            )
+        try:
+            home = configured_home.resolve(strict=True)
+        except OSError as exc:
+            raise CertificationValidationError(
+                "OpenShell host launcher HOME is unavailable"
+            ) from exc
+        if not home.is_dir():
+            raise CertificationValidationError(
+                "OpenShell host launcher HOME must be an absolute directory"
+            )
+
+        launch_environment = {
+            "HOME": str(home),
+            "PATH": str(source.get("PATH") or "/usr/bin:/bin"),
+        }
+        for name in ("LANG", "LC_ALL", "LC_CTYPE", "SYSTEMROOT", "TMPDIR", "TZ"):
+            value = source.get(name)
+            if value not in (None, ""):
+                launch_environment[name] = str(value)
+
+        # A Darwin control plane cannot meet the certifier's hard-Landlock
+        # contract through Docker Desktop's LinuxKit VM. Production may point
+        # only the certifier CLI at a loopback endpoint backed by a durable SSH
+        # tunnel to a Linux OpenShell gateway. Keep this separate from the
+        # ordinary agent gateway and reject arbitrary plaintext remote URLs.
+        raw_gateway_endpoint = str(
+            source.get("MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT") or ""
+        ).strip()
+        if raw_gateway_endpoint:
+            launch_environment["OPENSHELL_GATEWAY_ENDPOINT"] = (
+                _validated_loopback_gateway_endpoint(raw_gateway_endpoint)
+            )
+
+        runner = cls(
+            command_runner=command_runner,
+            openshell_bin=str(binary),
+            launcher_environment=launch_environment,
+            **kwargs,
+        )
+        runner.preflight()
+        return runner
 
     def __init__(
         self,
@@ -553,6 +841,7 @@ class OpenShellCertificationRunner:
             raise CertificationValidationError("sandbox name factory returned an unsafe name")
         started_at = _iso(self._now())
         checks: list[CertificationCheckResult] = []
+        phase_manifest: Mapping[str, Any] = {}
         failure_class = ""
         failure_reason = ""
         create_attempted = False
@@ -592,28 +881,58 @@ class OpenShellCertificationRunner:
                                 self._command_exec_argv(sandbox_name, command),
                                 timeout_seconds=command.timeout_seconds + 30,
                             )
+                            effective_returncode = outcome.returncode
+                            if command.argv[0] == CERTIFIER_PRIMARY_COMMAND:
+                                try:
+                                    if phase_manifest:
+                                        raise CertificationValidationError(
+                                            "certifier emitted more than one phase manifest"
+                                        )
+                                    phase_manifest = _phase_manifest_from_output(
+                                        outcome.stdout,
+                                        assembly_base_sha=job.assembly_base_sha,
+                                        candidate_sha=job.candidate_sha,
+                                    )
+                                    if (
+                                        outcome.returncode == 0
+                                        and phase_manifest["authoritative"]["mode"]
+                                        == "rejected"
+                                    ):
+                                        raise CertificationValidationError(
+                                            "certifier returned success for a rejected selection"
+                                        )
+                                except CertificationValidationError as exc:
+                                    effective_returncode = 78
+                                    failure_class = "certifier_phase_manifest_invalid"
+                                    failure_reason = str(exc)
                             checks.append(
                                 CertificationCheckResult(
                                     command.command_id,
                                     command.argv,
-                                    outcome.returncode,
-                                    "pass" if outcome.returncode == 0 else "fail",
+                                    effective_returncode,
+                                    "pass" if effective_returncode == 0 else "fail",
                                     _clip(outcome.stdout),
                                     _clip(outcome.stderr),
-                                    outcome.timed_out,
+                                    outcome.timed_out and effective_returncode == 124,
                                 )
                             )
-                            if outcome.returncode != 0:
-                                failure_class = (
-                                    "controller_command_timed_out"
-                                    if outcome.timed_out
-                                    else "controller_command_failed"
-                                )
-                                failure_reason = "%s: %s" % (
-                                    command.command_id,
-                                    _outcome_detail(outcome),
-                                )
+                            if effective_returncode != 0:
+                                if not failure_class:
+                                    failure_class = (
+                                        "controller_command_timed_out"
+                                        if outcome.timed_out
+                                        else "controller_command_failed"
+                                    )
+                                    failure_reason = "%s: %s" % (
+                                        command.command_id,
+                                        _outcome_detail(outcome),
+                                    )
                                 break
+                        if not failure_class and not phase_manifest:
+                            failure_class = "certifier_phase_manifest_missing"
+                            failure_reason = (
+                                "primary frozen test command emitted no phase manifest"
+                            )
                         if not failure_class:
                             postcheck = self._invoke(
                                 self._identity_exec_argv(job, sandbox_name, setup=False),
@@ -630,6 +949,7 @@ class OpenShellCertificationRunner:
                 job,
                 sandbox_name=sandbox_name,
                 checks=tuple(checks),
+                phase_manifest=phase_manifest,
                 started_at=started_at,
                 cleanup_status="pending",
                 failure_class=failure_class,
@@ -687,6 +1007,37 @@ class OpenShellCertificationRunner:
             ).with_digest()
             _write_result(result_path, result)
             return result
+
+    def preflight(self) -> None:
+        """Prove the bound host CLI can execute before claiming product work.
+
+        This proves both the binary binding and the selected/direct gateway is
+        reachable. A particular certifier image and hard isolation policy are
+        still covered by the real sandbox create/delete canary.
+        """
+
+        try:
+            outcome = self._invoke(
+                (self.openshell_bin, "--version"), timeout_seconds=15
+            )
+        except OSError as exc:
+            raise CertificationValidationError(
+                "OpenShell certifier CLI preflight could not execute"
+            ) from exc
+        if outcome.returncode != 0 or outcome.timed_out:
+            raise CertificationValidationError(
+                "OpenShell certifier CLI preflight failed"
+            )
+        try:
+            gateway = self._invoke((self.openshell_bin, "status"), timeout_seconds=15)
+        except OSError as exc:
+            raise CertificationValidationError(
+                "OpenShell certifier gateway preflight could not execute"
+            ) from exc
+        if gateway.returncode != 0 or gateway.timed_out:
+            raise CertificationValidationError(
+                "OpenShell certifier gateway preflight failed"
+            )
 
     def _stage_bundle(
         self,
@@ -859,6 +1210,7 @@ class OpenShellCertificationRunner:
         *,
         sandbox_name: str,
         checks: Tuple[CertificationCheckResult, ...],
+        phase_manifest: Mapping[str, Any],
         started_at: str,
         cleanup_status: str,
         failure_class: str,
@@ -878,6 +1230,7 @@ class OpenShellCertificationRunner:
             "run_as_user": "non_root",
             "launcher_environment": sorted(self.launcher_environment),
             "input_format": "credential_free_git_bundle",
+            "assembly_base_transport": "controller_bound_argv",
         }
         return OpenShellCertificationResult(
             job_id=job.job_id,
@@ -899,6 +1252,7 @@ class OpenShellCertificationRunner:
             commands_digest=job.commands_digest,
             sandbox_name=sandbox_name,
             checks=checks,
+            phase_manifest=phase_manifest,
             isolation=isolation,
             started_at=started_at,
             completed_at=_iso(self._now()),
@@ -955,6 +1309,34 @@ if head != sha or tree != expected_tree:
 '''
 
 
+def _phase_manifest_from_output(
+    stdout: str,
+    *,
+    assembly_base_sha: str,
+    candidate_sha: str,
+) -> Mapping[str, Any]:
+    lines = [
+        line[len(_CERTIFIER_PHASE_PREFIX) :]
+        for line in str(stdout or "").splitlines()
+        if line.startswith(_CERTIFIER_PHASE_PREFIX)
+    ]
+    if len(lines) != 1:
+        raise CertificationValidationError(
+            "primary certifier output must contain exactly one phase manifest"
+        )
+    try:
+        payload = json.loads(lines[0])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CertificationValidationError(
+            "primary certifier phase manifest is not valid JSON"
+        ) from exc
+    return validate_certifier_phase_manifest(
+        payload,
+        assembly_base_sha=assembly_base_sha,
+        candidate_sha=candidate_sha,
+    )
+
+
 def _sanitized_launcher_environment(
     supplied: Optional[Mapping[str, str]],
 ) -> Mapping[str, str]:
@@ -971,10 +1353,41 @@ def _sanitized_launcher_environment(
         text = str(value)
         if "\x00" in text:
             raise CertificationValidationError("certifier launcher environment is invalid")
+        if name == "OPENSHELL_GATEWAY_ENDPOINT":
+            text = _validated_loopback_gateway_endpoint(text)
         values[name] = text
     for name, value in _DEFAULT_LAUNCH_ENV.items():
         values.setdefault(name, value)
     return values
+
+
+def _validated_loopback_gateway_endpoint(value: str) -> str:
+    if not value or "\x00" in value or any(character.isspace() for character in value):
+        raise CertificationValidationError(
+            "certifier OpenShell gateway endpoint must be a loopback HTTP URL"
+        )
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise CertificationValidationError(
+            "certifier OpenShell gateway endpoint must be a loopback HTTP URL"
+        ) from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or port is None
+        or not (1 <= port <= 65535)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise CertificationValidationError(
+            "certifier OpenShell gateway endpoint must be a loopback HTTP URL"
+        )
+    return "http://127.0.0.1:%d" % port
 
 
 def _write_result(path: Path, result: OpenShellCertificationResult) -> None:

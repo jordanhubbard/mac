@@ -181,3 +181,65 @@ def test_postgres_store_exposes_initialize_and_ensure_column() -> None:
 
     params = list(inspect.signature(PostgresStore.ensure_column).parameters)
     assert params == ["self", "table", "column", "definition"]
+
+
+def test_execution_cohort_backfill_is_versioned_and_receipt_strict(
+    schema_sql: str,
+) -> None:
+    assert "CREATE TABLE IF NOT EXISTS telemetry_data_migrations" in schema_sql
+    assert "execution_cohort_historical_backfill_v2" in schema_sql
+    assert "execution_cohort_preliminary_package_repair_v3" in schema_sql
+    assert "unknown_managed_mode" in schema_sql
+    assert "historical_package_mode_unproven" in schema_sql
+    assert "historical_synchronized_pipeline_receipt" in schema_sql
+    assert "FROM work_package_publication_finalizations AS finalization" in schema_sql
+
+    block = re.search(
+        r"DO \$execution_cohort_historical_backfill_v2\$(?P<body>.*?)"
+        r"\$execution_cohort_historical_backfill_v2\$;",
+        schema_sql,
+        re.DOTALL,
+    )
+    assert block, "versioned cohort backfill block is missing"
+    body = block.group("body")
+    assert body.index("IF NOT EXISTS") < body.index("FROM work_packages AS package")
+    assert body.index("FROM work_packages AS package") < body.index(
+        "FROM tasks AS task"
+    )
+    assert body.index("FROM tasks AS task") < body.index(
+        "INSERT INTO telemetry_data_migrations"
+    )
+
+    # Existing preliminary deployments get the expanded route CHECK before the
+    # v2 repair writes unknown_managed_mode; the append-only trigger is restored
+    # only after the atomic repair/backfill block.
+    assert schema_sql.index("$execution_cohort_route_contract$;") < schema_sql.index(
+        "$execution_cohort_historical_backfill_v2$;"
+    )
+    trigger_position = schema_sql.index(
+        "CREATE TRIGGER trg_execution_cohort_append_only",
+        schema_sql.index("$execution_cohort_historical_backfill_v2$;"),
+    )
+    assert trigger_position > schema_sql.index(
+        "$execution_cohort_historical_backfill_v2$;"
+    )
+    repair_position = schema_sql.index(
+        "$execution_cohort_preliminary_package_repair_v3$;"
+    )
+    assert repair_position > schema_sql.index(
+        "$execution_cohort_historical_backfill_v2$;"
+    )
+    assert trigger_position > repair_position
+
+
+def test_postgres_telemetry_keeps_lossless_controller_and_health_records(
+    schema_sql: str,
+) -> None:
+    assert "CREATE TABLE IF NOT EXISTS execution_cohort_configurations" in schema_sql
+    assert "trg_execution_cohort_configuration_append_only" in schema_sql
+    assert "CREATE TABLE IF NOT EXISTS work_package_controller_outcomes" in schema_sql
+    assert "outcome_index INTEGER NOT NULL CHECK (outcome_index >= -1)" in schema_sql
+    assert "trg_work_package_controller_outcome_append_only" in schema_sql
+    assert "CREATE TABLE IF NOT EXISTS work_package_telemetry_health" in schema_sql
+    assert "'controller', 'admission', 'integration', 'certification'" in schema_sql
+    assert "FROM work_package_controller_outcomes" in schema_sql

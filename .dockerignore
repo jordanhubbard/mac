@@ -1,3 +1,19 @@
+# Both repository-owned images use an explicit COPY allowlist. Keep the Docker
+# context aligned with it so generated indexes, test portfolios, vendor
+# worktrees, credentials, and unrelated UI artifacts can never enter build
+# provenance or consume transfer time.
+*
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+!deploy/
+!deploy/**
+!.mac-openshell-build-assets/
+!.mac-openshell-build-assets/**
+
 .venv
 __pycache__
 *.pyc
@@ -8,7 +24,34 @@ __pycache__
 *.sqlite
 dist
 .git
+.env
+.env.*
+.aws
+.gnupg
+.ssh
+.netrc
+.npmrc
+.pypirc
+**/credentials*
+**/id_ed25519*
+**/id_rsa*
+**/*.key
+**/*.p12
+**/*.pem
+**/*.pfx
+.codex
+.tickets
 .mac-openshell-build.lock
+.codegraph
+.vendor-check-work
+.test-portfolio
+.coverage
+coverage.json
+coverage.xml
+htmlcov
+.ruff_cache
+.mypy_cache
+.tox
 .github
 tests
 docs

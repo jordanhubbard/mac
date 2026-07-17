@@ -8,15 +8,21 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      publish_images:
+        description: Publish tested main and certifier images from this commit
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   dead-code:
     name: Dead-code contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Dead-code contract (vulture >=90%, _hermes excluded, allowlisted)
         run: scripts/dead-code-check.sh
 
@@ -26,11 +32,11 @@ jobs:
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Set up primary Python
         run: uv python install 3.11
       - name: Sync dependencies
@@ -39,14 +45,16 @@ jobs:
         run: scripts/run-sanity-tests.sh --base origin/${{ github.base_ref }}
 
   mainline:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
     runs-on: ubuntu-latest
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Set up primary Python
         run: uv python install 3.11
       - name: Sync dependencies
@@ -54,26 +62,62 @@ jobs:
       - name: Run full statement, branch, and subprocess coverage gate once
         run: scripts/run-contract-tests.sh
       - name: Upload coverage policy evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: mainline-coverage
           path: coverage.json
 
   compatibility:
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    if: >-
+      github.event_name == 'pull_request' || github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
     runs-on: ubuntu-latest
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Set up secondary Python
         run: uv python install 3.12
       - name: Sync dependencies
         run: uv sync --extra dev --python 3.12
       - name: Run secondary-version public/process compatibility slice
         run: scripts/run-compatibility-tests.sh
+
+  postgres-contract:
+    name: Live PostgreSQL contract
+    if: >-
+      github.event_name == 'pull_request' || github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: docker.io/library/postgres@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
+        env:
+          POSTGRES_USER: mac_ci
+          POSTGRES_PASSWORD: mac-ci-postgres-password
+          POSTGRES_DB: mac_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mac_ci -d mac_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+      MAC_TEST_PG_URL: postgresql://mac_ci:mac-ci-postgres-password@127.0.0.1:5432/mac_ci
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+      - name: Set up primary Python
+        run: uv python install 3.11
+      - name: Sync PostgreSQL test dependencies
+        run: uv sync --extra dev --python 3.11
+      - name: Run live PostgreSQL schema, migration, and concurrency contracts
+        run: uv run --extra dev pytest -q -m postgres tests/test_postgres_live.py
 
   nightly:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -85,11 +129,11 @@ jobs:
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
       - name: Sync dependencies
@@ -106,9 +150,9 @@ jobs:
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Set up primary Python
         run: uv python install 3.11
       - name: Sync dependencies
@@ -118,7 +162,7 @@ jobs:
           MAC_TEST_PORTFOLIO: "1"
         run: scripts/run-contract-tests.sh
       - name: Upload portfolio evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: test-portfolio
           path: .test-portfolio/
@@ -127,9 +171,9 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Sync dependencies
         run: uv sync --extra dev --python 3.11
       - name: Run in-container OpenShell and relay contracts
@@ -137,21 +181,96 @@ jobs:
           TEST_CONTAINER_CONTRACT: "1"
         run: uv run --extra dev pytest -q -m container_contract tests/e2e/test_openshell_nemo_relay.py
 
-  docker:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  publication-scope:
+    name: Resolve image publication scope
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
     runs-on: ubuntu-latest
-    needs: [mainline, compatibility]
+    permissions:
+      contents: read
+    outputs:
+      certifier_changed: ${{ steps.scope.outputs.certifier_changed }}
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - id: scope
+        name: Detect frozen-certifier input changes
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          MANUAL_PUBLISH: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images }}
+        run: |
+          if [ "$MANUAL_PUBLISH" = "true" ]; then
+            changed=true
+          elif ! printf '%s' "$BEFORE_SHA" | grep -Eq '^[0-9a-f]{40}$' \
+               || printf '%s' "$BEFORE_SHA" | grep -Eq '^0{40}$' \
+               || ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            changed=true
+          elif git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" -- \
+                 deploy/certifier \
+                 tests plugin \
+                 conftest.py pyproject.toml uv.lock test-policy.toml \
+                 scripts/run-contract-tests.sh \
+                 scripts/coverage-policy.py \
+                 scripts/test-portfolio.py \
+                 scripts/certifier-context-manifest.py; then
+            changed=false
+          else
+            changed=true
+          fi
+          echo "certifier_changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "certifier frozen inputs changed: $changed"
+
+  docker:
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
+    runs-on: ubuntu-latest
+    needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up QEMU for cross-architecture image execution
+        # docker/setup-qemu-action v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        with:
+          platforms: arm64
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        # docker/setup-buildx-action v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Build container image (smoke build, not pushed)
-        uses: docker/build-push-action@v6
+        # docker/build-push-action v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           push: false
           tags: mac:ci-${{ github.sha }}
           load: true
+      - name: Prove the image identity can write mounted database and crash state
+        run: |
+          state_volume="mac-ci-state-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker volume create "$state_volume" >/dev/null
+          cleanup_volume() { docker volume rm -f "$state_volume" >/dev/null 2>&1 || true; }
+          trap cleanup_volume EXIT
+          docker run --rm \
+            --mount "type=volume,src=$state_volume,dst=/var/lib/mac" \
+            --entrypoint /bin/sh mac:ci-${{ github.sha }} -ec '
+              test "$(id -u)" = 10001
+              test "$(id -g)" = 10001
+              : > /var/lib/mac/mac.db
+              mkdir -p /var/lib/mac/crash-spool
+              : > /var/lib/mac/crash-spool/nonroot-write-probe.json
+              test -w /var/lib/mac/mac.db
+              test -w /var/lib/mac/crash-spool/nonroot-write-probe.json
+              test -x /opt/mac-venv/bin/mac-git-askpass
+            '
       - name: Black-box deployed hub authentication and task round trip
         env:
           MAC_BLACKBOX_TOKEN: ci-blackbox-token-with-at-least-32-characters
@@ -171,3 +290,358 @@ jobs:
           python3 scripts/blackbox-hub-smoke.py \
             --url http://127.0.0.1:8000 \
             --token "$MAC_BLACKBOX_TOKEN"
+      - name: Authenticate to repository-owned GHCR namespace
+        # docker/login-action v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: publish
+        name: Publish multi-platform MAC deployment image
+        # docker/build-push-action v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/jordanhubbard/mac:git-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/jordanhubbard/mac
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=mac-deployment-image
+          cache-to: type=gha,mode=max,scope=mac-deployment-image
+      - name: Require the inherited package visibility to be public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          visibility=""
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            visibility="$(gh api /user/packages/container/mac \
+              --jq .visibility 2>/dev/null || true)"
+            if [ "$visibility" = public ]; then
+              break
+            fi
+            sleep 5
+          done
+          test "$visibility" = public
+      - name: Prove anonymous exact-digest readback and deployment identity
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          test -n "$IMAGE_DIGEST"
+          exact_ref="ghcr.io/jordanhubbard/mac@$IMAGE_DIGEST"
+          empty_config="$RUNNER_TEMP/mac-deployment-public-readback-docker-config"
+          rm -rf "$empty_config"
+          install -d -m 0700 "$empty_config"
+          printf '{"auths":{}}\n' > "$empty_config/config.json"
+          for platform in linux/amd64 linux/arm64; do
+            expected_arch="${platform#linux/}"
+            docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
+            DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
+            test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
+            test "$(docker inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$exact_ref")" = "$GITHUB_SHA"
+            DOCKER_CONFIG="$empty_config" docker run --rm --network none \
+              --platform "$platform" --entrypoint /bin/sh "$exact_ref" -ec '
+                test "$(id -u)" = 10001
+                test "$(id -g)" = 10001
+                test -x /usr/local/bin/mac-crash-observer
+                test -x /opt/mac-venv/bin/mac-git-askpass
+                python -c "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml"
+              '
+          done
+      - name: Sign GitHub build provenance
+        # actions/attest-build-provenance v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-name: ghcr.io/jordanhubbard/mac
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+      - name: Record immutable MAC image reference
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          test -n "$IMAGE_DIGEST"
+          printf '%s@%s\n' 'ghcr.io/jordanhubbard/mac' "$IMAGE_DIGEST" \
+            | tee mac-image-ref.txt
+          cat mac-image-ref.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload MAC publication receipt
+        # actions/upload-artifact v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mac-image-publication
+          path: mac-image-ref.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  openshell-runtime-image:
+    name: Publish OpenShell worker runtime image
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
+    runs-on: ubuntu-latest
+    needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Prepare checksum-locked multi-platform runtime assets
+        env:
+          GH_VERSION: "2.95.0"
+          CODEGRAPH_VERSION: "v1.1.6"
+          NODE_VERSION: "22.23.1"
+          PNPM_VERSION: "11.13.1"
+          CODEX_VERSION: "0.140.0"
+        run: deploy/openshell/prepare-runtime-image-assets.sh
+      - name: Set up QEMU for cross-architecture image execution
+        # docker/setup-qemu-action v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        # docker/setup-buildx-action v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Authenticate to repository-owned GHCR namespace
+        # docker/login-action v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: publish
+        name: Publish immutable multi-platform OpenShell runtime
+        # docker/build-push-action v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: deploy/openshell/mac-hermes.Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/jordanhubbard/mac-openshell-runtime:git-${{ github.sha }}
+          build-args: |
+            GH_VERSION=2.95.0
+            CODEGRAPH_VERSION=v1.1.6
+            NODE_VERSION=22.23.1
+            PNPM_VERSION=11.13.1
+            CODEX_VERSION=0.140.0
+          labels: |
+            org.opencontainers.image.source=https://github.com/jordanhubbard/mac
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=mac-openshell-runtime-image
+          cache-to: type=gha,mode=max,scope=mac-openshell-runtime-image
+      - name: Require the inherited package visibility to be public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          visibility=""
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            visibility="$(gh api /user/packages/container/mac-openshell-runtime \
+              --jq .visibility 2>/dev/null || true)"
+            if [ "$visibility" = public ]; then
+              break
+            fi
+            sleep 5
+          done
+          test "$visibility" = public
+      - name: Prove anonymous exact-digest readback and runtime identity
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          test -n "$IMAGE_DIGEST"
+          exact_ref="ghcr.io/jordanhubbard/mac-openshell-runtime@$IMAGE_DIGEST"
+          empty_config="$RUNNER_TEMP/mac-public-readback-docker-config"
+          rm -rf "$empty_config"
+          install -d -m 0700 "$empty_config"
+          printf '{"auths":{}}\n' > "$empty_config/config.json"
+          for platform in linux/amd64 linux/arm64; do
+            expected_arch="${platform#linux/}"
+            docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
+            DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
+            test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
+            test "$(docker inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$exact_ref")" = "$GITHUB_SHA"
+            DOCKER_CONFIG="$empty_config" docker run --rm --platform "$platform" \
+              --entrypoint /bin/bash "$exact_ref" -lc '
+                /usr/local/bin/mac-verify-bash-contract
+                test "$(node --version)" = v22.23.1
+                test "$(pnpm --version)" = 11.13.1
+                gh --version
+                codex --version
+                codegraph --version
+                python3 --version
+                getent passwd sandbox
+                test -x /opt/mac-venv/bin/mac-git-askpass
+              '
+          done
+      - name: Sign GitHub build provenance
+        # actions/attest-build-provenance v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-name: ghcr.io/jordanhubbard/mac-openshell-runtime
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+      - name: Record immutable runtime image and build metadata
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          BUILD_METADATA: ${{ steps.publish.outputs.metadata }}
+        run: |
+          test -n "$IMAGE_DIGEST"
+          printf '%s@%s\n' 'ghcr.io/jordanhubbard/mac-openshell-runtime' "$IMAGE_DIGEST" \
+            | tee openshell-runtime-image-ref.txt
+          printf '%s\n' "$BUILD_METADATA" > openshell-runtime-build-metadata.json
+          python3 -m json.tool openshell-runtime-build-metadata.json >/dev/null
+          cat openshell-runtime-image-ref.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload runtime digest, provenance, and SBOM receipt
+        # actions/upload-artifact v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openshell-runtime-image-publication
+          path: |
+            openshell-runtime-image-ref.txt
+            openshell-runtime-build-metadata.json
+          if-no-files-found: error
+          retention-days: 30
+
+  certifier-image:
+    name: Publish trusted certifier image
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.publication-scope.outputs.certifier_changed == 'true'
+    runs-on: ubuntu-latest
+    needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      # actions/checkout v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up QEMU for cross-architecture image execution
+        # docker/setup-qemu-action v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        # docker/setup-buildx-action v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - id: context
+        name: Audit and digest trusted certifier context
+        run: |
+          context_dir="$RUNNER_TEMP/mac-certifier-context"
+          digest="$(scripts/certifier-context-manifest.py \
+            --materialize "$context_dir" --print-digest)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "path=$context_dir" >> "$GITHUB_OUTPUT"
+      - name: Build and inspect local certifier
+        # docker/build-push-action v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: ${{ steps.context.outputs.path }}
+          file: ${{ steps.context.outputs.path }}/deploy/certifier/Containerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: mac-certifier:ci-${{ github.sha }}
+          build-args: |
+            MAC_CERTIFIER_SOURCE_REVISION=${{ github.sha }}
+            MAC_CERTIFIER_CONTEXT_DIGEST=${{ steps.context.outputs.digest }}
+          cache-from: type=gha,scope=mac-certifier-image
+      - name: Verify final non-root image and frozen baseline
+        run: |
+          docker run --rm mac-certifier:ci-${{ github.sha }} \
+            /opt/mac-certifier/bin/run-contract-tests --image-self-test
+          test "$(docker run --rm --entrypoint id mac-certifier:ci-${{ github.sha }} -u)" != 0
+      - name: Authenticate to repository-owned GHCR namespace
+        # docker/login-action v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: publish
+        name: Publish multi-platform trusted certifier
+        # docker/build-push-action v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: ${{ steps.context.outputs.path }}
+          file: ${{ steps.context.outputs.path }}/deploy/certifier/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/jordanhubbard/mac-certifier:git-${{ github.sha }}
+          build-args: |
+            MAC_CERTIFIER_SOURCE_REVISION=${{ github.sha }}
+            MAC_CERTIFIER_CONTEXT_DIGEST=${{ steps.context.outputs.digest }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/jordanhubbard/mac
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=mac-certifier-image
+          cache-to: type=gha,mode=max,scope=mac-certifier-image
+      - name: Require the inherited package visibility to be public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          visibility=""
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            visibility="$(gh api /user/packages/container/mac-certifier \
+              --jq .visibility 2>/dev/null || true)"
+            if [ "$visibility" = public ]; then
+              break
+            fi
+            sleep 5
+          done
+          test "$visibility" = public
+      - name: Prove anonymous exact-digest certifier readback
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          test -n "$IMAGE_DIGEST"
+          exact_ref="ghcr.io/jordanhubbard/mac-certifier@$IMAGE_DIGEST"
+          empty_config="$RUNNER_TEMP/mac-certifier-public-readback-docker-config"
+          rm -rf "$empty_config"
+          install -d -m 0700 "$empty_config"
+          printf '{"auths":{}}\n' > "$empty_config/config.json"
+          for platform in linux/amd64 linux/arm64; do
+            expected_arch="${platform#linux/}"
+            docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
+            DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
+            test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
+            test "$(docker inspect --format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$exact_ref")" = "$GITHUB_SHA"
+            test "$(docker inspect --format='{{ .Config.User }}' "$exact_ref")" = sandbox
+            DOCKER_CONFIG="$empty_config" docker run --rm --network none \
+              --platform "$platform" "$exact_ref" \
+              /opt/mac-certifier/bin/run-contract-tests --image-self-test
+          done
+      - name: Sign GitHub build provenance
+        # actions/attest-build-provenance v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-name: ghcr.io/jordanhubbard/mac-certifier
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+      - name: Record immutable certifier image reference
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          test -n "$IMAGE_DIGEST"
+          printf '%s@%s\n' 'ghcr.io/jordanhubbard/mac-certifier' "$IMAGE_DIGEST" \
+            | tee certifier-image-ref.txt
+          cat certifier-image-ref.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload certifier publication receipt
+        # actions/upload-artifact v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certifier-image-publication
+          path: certifier-image-ref.txt
+          if-no-files-found: error
+          retention-days: 30

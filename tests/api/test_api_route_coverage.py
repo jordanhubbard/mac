@@ -1217,6 +1217,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "batch_id": "wpbatch_route_missing",
         "job_id": "wpcjob_route_missing",
         "candidate_id": "wpcandidate_route_missing",
+        "finalization_id": "wpfinal_route_missing",
         "experiment_id": "route-review-experiment",
         "eval_set_id": ctx["eval_set_id"],
         "flag": "show_reasoning",
@@ -1537,6 +1538,12 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         },
         ("POST", "/work-package-integration-batches/{batch_id}/land"): {},
         ("POST", "/work-package-integration-batches/{batch_id}/finalize-publication"): {},
+        ("POST", "/work-package-finalizations/{finalization_id}/outcomes"): {
+            "outcome_type": "incident",
+            "external_id": "route-incident-missing",
+            "observed_at": "2026-07-17T00:00:00+00:00",
+            "detail": {"source": "route-coverage"},
+        },
         ("POST", "/work-package-outputs/{evidence_id}/verify"): {},
         ("POST", "/work-packages/candidates/{candidate_id}/accept"): {},
         ("POST", "/work-packages/candidates/{candidate_id}/reject"): {

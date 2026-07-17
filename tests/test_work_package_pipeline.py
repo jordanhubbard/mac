@@ -93,7 +93,7 @@ class _Certification:
 
     def prepare(self, batch_id: str, bundle_path: Path, *, actor: str) -> dict:
         self.calls.append("prepare:%s" % batch_id)
-        return {"status": "queued", "created": True}
+        return {"id": "job_prepared", "status": "queued", "created": True}
 
     def run(
         self,
@@ -333,6 +333,7 @@ def test_pipeline_advances_one_durable_station_per_item_per_pass(
         "landing",
         "product_finalization",
     ]
+    assert reports[2].outcomes[0].job_id == "job_prepared"
 
 
 def test_downstream_release_gate_blocks_upstream_wip_but_not_independent_peer(

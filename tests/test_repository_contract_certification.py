@@ -99,6 +99,13 @@ def test_repository_loader_rejects_partial_or_mutable_certification() -> None:
     with pytest.raises(ValidationError, match="certification command is invalid"):
         _normalize_repository_contract(candidate_owned, ".mac/project.yaml")
 
+    repository_base = _contract()
+    repository_base["work_package_certification"]["controller_commands"][0][
+        "argv"
+    ] += ["--base-sha", "b" * 40]
+    with pytest.raises(ValidationError, match="reserved for the controller"):
+        _normalize_repository_contract(repository_base, ".mac/project.yaml")
+
     credential_remote = _contract()
     credential_remote["canonical_remote_url"] = (
         "https://token@github.com/jordanhubbard/mac.git"

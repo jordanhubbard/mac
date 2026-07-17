@@ -213,6 +213,13 @@ def _setup(
     )["task_id"]
 
     control = ControlPlane(store, secret_key="output-service-test-secret-key-0001")
+    # This fixture exercises output receipts, not the host OpenShell install;
+    # explicitly satisfy the independent production-runtime pull gate.
+    monkeypatch.setattr(
+        control.work_package_certifications,
+        "validate_runtime_binding",
+        lambda: None,
+    )
     machine = control.register_machine("candidate-host")
     agent = control.register_agent(
         machine.id,

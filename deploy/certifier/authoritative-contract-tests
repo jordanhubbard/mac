@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Run the root-owned frozen suite directly from /opt against candidate source.
+# Candidate code can observe these tests, but the sandbox UID cannot chmod,
+# unlink, replace, or add a conftest beside them.
+set -euo pipefail
+
+readonly TRUSTED_ROOT=/opt/mac-certifier/trusted
+readonly PYTHON=/opt/mac-venv/bin/python
+
+[ "$#" -ge 3 ] || {
+    echo "usage: authoritative-contract-tests CANDIDATE_SRC OUTPUT_DIR TEST..." >&2
+    exit 2
+}
+candidate_src="$1"
+output_dir="$2"
+shift 2
+[ -d "$candidate_src" ] || { echo "candidate source directory is unavailable" >&2; exit 2; }
+mkdir -p "$output_dir/pytest-cache"
+
+targets=()
+for relative in "$@"; do
+    case "$relative" in
+        tests|tests/*|plugin/test_tools.py) ;;
+        *) echo "authoritative test target is outside the frozen inventory" >&2; exit 2 ;;
+    esac
+    case "$relative" in
+        *..*|/*) echo "authoritative test target is not canonical" >&2; exit 2 ;;
+    esac
+    target="$TRUSTED_ROOT/$relative"
+    [ -e "$target" ] && [ ! -L "$target" ] || {
+        echo "authoritative test target is unavailable" >&2
+        exit 2
+    }
+    targets+=("$target")
+done
+
+cd "$TRUSTED_ROOT"
+exec /usr/bin/env -i \
+    HOME=/tmp \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin \
+    TMPDIR=/tmp \
+    PYTHONHASHSEED=0 \
+    PYTHONNOUSERSITE=1 \
+    PYTHONPYCACHEPREFIX="$output_dir/pycache" \
+    PYTHONSAFEPATH=1 \
+    PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+    MAC_CERTIFIER_CANDIDATE_SRC="$candidate_src" \
+    "$PYTHON" -m pytest \
+      -c "$TRUSTED_ROOT/pyproject.toml" \
+      --rootdir "$TRUSTED_ROOT" \
+      -o "cache_dir=$output_dir/pytest-cache" \
+      -o "pythonpath=$candidate_src" \
+      "${targets[@]}"

@@ -271,9 +271,9 @@ def test_release_gate_requires_contract_landing_and_secret_free_endpoint(
 
         invalid = RepositoryPipelineReleaseGateResolver(
             store,
-            validate_certification_contract=lambda _repository_id: (_ for _ in ()).throw(
-                ValidationError("bad token=must-not-leak")
-            ),
+            validate_certification_contract=lambda _repository_id: (
+                _ for _ in ()
+            ).throw(ValidationError("bad token=must-not-leak")),
             landing_config=LandingServiceConfig(enabled=True),
         ).resolve(_snapshot())
         assert invalid.ready is False
@@ -300,7 +300,9 @@ def test_exact_bundle_is_rebuildable_and_contains_only_exact_candidate(
         provider = ExactCandidateBundleProvider(store, cache_dir=cache)
         first = provider.ensure_bundle(_snapshot())
         first_digest = hashlib.sha256(first.read_bytes()).hexdigest()
-        assert first.read_bytes().startswith((b"# v2 git bundle\n", b"# v3 git bundle\n"))
+        assert first.read_bytes().startswith(
+            (b"# v2 git bundle\n", b"# v3 git bundle\n")
+        )
         assert candidate_sha in _git(tmp_path, "bundle", "list-heads", str(first))
         assert stat_mode(first) == 0o400
 
@@ -417,15 +419,50 @@ def test_bundle_cache_prunes_only_finalized_unreferenced_known_entry(
 def test_controller_git_environment_is_allowlisted_and_never_persisted() -> None:
     env = controller_git_credential_environment(
         "read",
-        {},
+        {"source": "https://github.com/jordanhubbard/mac.git"},
         environ={
             "SSH_AUTH_SOCK": "/tmp/agent.sock",
             "GH_TOKEN": "secret",
+            "GITHUB_TOKEN": "wrong-token-source",
+            "GIT_ASKPASS": "/tmp/ambient-askpass",
+            "GIT_CONFIG_COUNT": "1",
             "UNRELATED": "not-forwarded",
         },
     )
-    assert env == {"GH_TOKEN": "secret", "SSH_AUTH_SOCK": "/tmp/agent.sock"}
+    assert env["GH_TOKEN"] == "secret"
+    assert Path(env["GIT_ASKPASS"]).name == "mac-git-askpass"
+    assert env["GIT_ASKPASS"] != "/tmp/ambient-askpass"
+    assert "SSH_AUTH_SOCK" not in env
+    assert "GITHUB_TOKEN" not in env
+    assert "GIT_CONFIG_COUNT" not in env
     assert "UNRELATED" not in env
+
+    ssh = controller_git_credential_environment(
+        "write",
+        RepositoryEndpoint("repo", "git@github.com:jordanhubbard/mac.git"),
+        environ={
+            "GH_TOKEN": "must-not-enter-ssh",
+            "SSH_AUTH_SOCK": "/tmp/agent.sock",
+            "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+            "GIT_ASKPASS": "/tmp/ambient-askpass",
+        },
+    )
+    assert ssh == {"SSH_AUTH_SOCK": "/tmp/agent.sock"}
+
+
+def test_controller_git_environment_rejects_unsupported_or_missing_https_auth() -> None:
+    with pytest.raises(ValidationError, match="only github.com"):
+        controller_git_credential_environment(
+            "write",
+            {"source": "https://gitlab.example.invalid/owner/repo.git"},
+            environ={"GH_TOKEN": "secret"},
+        )
+    with pytest.raises(ValidationError, match="credential is unavailable"):
+        controller_git_credential_environment(
+            "write",
+            {"source": "https://github.com/jordanhubbard/mac.git"},
+            environ={"GITHUB_TOKEN": "not-an-allowed-fallback"},
+        )
 
 
 def test_runtime_configuration_is_default_off_and_fails_closed_when_incomplete(
@@ -475,6 +512,7 @@ def test_live_runtime_reuses_control_plane_station_services(monkeypatch) -> None
     monkeypatch.delenv("MAC_WORK_PACKAGE_PIPELINE_ENABLED", raising=False)
     monkeypatch.delenv("MAC_WORK_PACKAGE_LANDING_ENABLED", raising=False)
     monkeypatch.setenv("GH_TOKEN", "private-repository-token")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/controller-agent.sock")
     monkeypatch.setenv("UNRELATED_HUB_SECRET", "must-not-forward")
     cp = ControlPlane.in_memory()
     runtime = build_work_package_pipeline_runtime(cp)
@@ -487,8 +525,14 @@ def test_live_runtime_reuses_control_plane_station_services(monkeypatch) -> None
     landing_credentials = runtime.landing.credential_environment(
         "write", RepositoryEndpoint("repo", "git@example.invalid:org/repo.git")
     )
-    assert landing_credentials["GH_TOKEN"] == "private-repository-token"
+    assert landing_credentials == {"SSH_AUTH_SOCK": "/tmp/controller-agent.sock"}
     assert "UNRELATED_HUB_SECRET" not in landing_credentials
+    https_credentials = runtime.landing.credential_environment(
+        "write", RepositoryEndpoint("repo", "https://github.com/org/repo.git")
+    )
+    assert https_credentials["GH_TOKEN"] == "private-repository-token"
+    assert Path(https_credentials["GIT_ASKPASS"]).name == "mac-git-askpass"
+    assert "SSH_AUTH_SOCK" not in https_credentials
 
 
 def stat_mode(path: Path) -> int:

@@ -26,7 +26,7 @@ import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib.parse import quote, urlencode
 
 from mac.agentbus_control import (
@@ -75,7 +75,7 @@ from mac.repository_contract import (
     remote_branch_from_ref as _remote_branch_from_ref,
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
 )
-from mac.models import metadata_declares_report_deliverable
+from mac.models import metadata_declares_report_deliverable, utcnow
 from mac.hermes_config_surface import apply_hermes_surface_payload
 from mac.gitops import (
     guarded_push,
@@ -709,6 +709,24 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 error=control_result.get("summary"),
             )
         self._heartbeat()
+        local_update_blocker = self._local_repo_update_dispatch_blocker()
+        if local_update_blocker is not None:
+            reason = str(
+                local_update_blocker.get("reason")
+                or "source/runtime consistency requires a fleet redeploy"
+            )
+            self._observe_log(
+                "worker.dispatch_held.source_runtime_inconsistent",
+                level="error",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail=local_update_blocker,
+            )
+            return WorkerRunResult(
+                status="held",
+                evidence=local_update_blocker,
+                error=reason,
+            )
         self._maybe_start_workspace_gc()
         self._maybe_sync_service_claims()
         self._maintain_openclaw_gateway_leases()
@@ -2303,6 +2321,32 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     request, repo_path=str(repo), before_sha=before_sha,
                     target_sha=target_sha,
                 )
+            managed_guard = self._managed_openshell_source_update_guard(
+                current_sha=before_sha,
+                target_sha=target_sha,
+            )
+            if managed_guard is not None:
+                if managed_guard.get("fatal"):
+                    self._write_repo_update_dispatch_blocker(managed_guard)
+                self._observe_log(
+                    "worker.openshell.source_update_blocked",
+                    level="error",
+                    subject_type="agent",
+                    subject_id=self.agent_id,
+                    detail=managed_guard,
+                )
+                return self._repo_update_result(
+                    stream_id,
+                    "error",
+                    "source update rejected before checkout: %s"
+                    % managed_guard["reason"],
+                    request,
+                    repo_path=str(repo),
+                    before_sha=before_sha,
+                    after_sha=before_sha,
+                    target_sha=target_sha,
+                    openshell_image_rebuild=managed_guard,
+                )
             pulled = _run_git(repo, ["merge", "--ff-only", target_sha])
             failure_summary = "git merge --ff-only to target_sha failed"
         else:
@@ -2343,6 +2387,47 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             self_test = self._repo_update_self_test(repo)
             if not self_test.get("ok"):
                 rollback = _run_git(repo, ["reset", "--hard", before_sha])
+                rollback_head = _run_git(repo, ["rev-parse", "HEAD"])
+                rollback_dirty = _run_git(repo, ["status", "--porcelain"])
+                rollback_ok = bool(
+                    rollback.returncode == 0
+                    and rollback_head.returncode == 0
+                    and rollback_head.stdout.strip() == before_sha
+                    and rollback_dirty.returncode == 0
+                    and not rollback_dirty.stdout.strip()
+                )
+                if not rollback_ok:
+                    blocker = {
+                        "status": "self_test_rollback_failed",
+                        "fatal": True,
+                        "reason": (
+                            "checkout rollback failed after post-update self-test failure"
+                        ),
+                        "before_sha": before_sha,
+                        "attempted_after_sha": after_sha,
+                        "rollback_ok": False,
+                        "rollback_returncode": rollback.returncode,
+                        "rollback_head": rollback_head.stdout.strip(),
+                        "rollback_dirty": rollback_dirty.stdout.strip(),
+                    }
+                    self._write_repo_update_dispatch_blocker(blocker)
+                    return self._repo_update_result(
+                        stream_id,
+                        "error",
+                        "post-update self-test failed and checkout rollback could not "
+                        "be verified; local dispatch is held",
+                        request,
+                        repo_path=str(repo),
+                        before_sha=before_sha,
+                        after_sha=rollback_head.stdout.strip(),
+                        attempted_after_sha=after_sha,
+                        self_test=self_test,
+                        rollback_ok=False,
+                        rollback_stderr=rollback.stderr,
+                        rollback_head_stderr=rollback_head.stderr,
+                        rollback_status_stderr=rollback_dirty.stderr,
+                        restart_requested=False,
+                    )
                 return self._repo_update_result(
                     stream_id,
                     "rolled_back",
@@ -2351,10 +2436,11 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     request,
                     repo_path=str(repo),
                     before_sha=before_sha,
-                    after_sha=after_sha,
+                    after_sha=before_sha,
+                    attempted_after_sha=after_sha,
                     self_test=self_test,
-                    rollback_ok=rollback.returncode == 0,
-                    rollback_stderr=rollback.stderr if rollback.returncode != 0 else "",
+                    rollback_ok=True,
+                    restart_requested=False,
                 )
 
         summary = "repo already current"
@@ -2362,8 +2448,74 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             repo, before_sha, after_sha
         )
         image_rebuild_failed = bool(
-            image_rebuild and image_rebuild.get("status") in {"drift", "failed"}
+            image_rebuild
+            and image_rebuild.get("status")
+            in {"drift", "failed", "managed_image_invalid", "managed_image_stale"}
         )
+        managed_image_failure = bool(
+            image_rebuild
+            and image_rebuild.get("status")
+            in {"managed_image_invalid", "managed_image_stale"}
+        )
+        if updated and managed_image_failure:
+            attempted_after_sha = after_sha
+            rollback = _run_git(repo, ["reset", "--hard", before_sha])
+            rollback_head = _run_git(repo, ["rev-parse", "HEAD"])
+            rollback_dirty = _run_git(repo, ["status", "--porcelain"])
+            rollback_ok = bool(
+                rollback.returncode == 0
+                and rollback_head.returncode == 0
+                and rollback_head.stdout.strip() == before_sha
+                and rollback_dirty.returncode == 0
+                and not rollback_dirty.stdout.strip()
+            )
+            fatal = bool(
+                image_rebuild.get("status") == "managed_image_invalid"
+                or not rollback_ok
+            )
+            if fatal:
+                self._write_repo_update_dispatch_blocker(
+                    {
+                        **image_rebuild,
+                        "fatal": True,
+                        "reason": (
+                            "managed runtime marker is invalid"
+                            if image_rebuild.get("status") == "managed_image_invalid"
+                            else "checkout rollback failed after managed runtime mismatch"
+                        ),
+                        "before_sha": before_sha,
+                        "attempted_after_sha": attempted_after_sha,
+                        "rollback_ok": rollback_ok,
+                    }
+                )
+            if rollback_ok and not fatal:
+                return self._repo_update_result(
+                    stream_id,
+                    "rolled_back",
+                    "source update required a new published runtime digest; checkout rolled back",
+                    request,
+                    repo_path=str(repo),
+                    before_sha=before_sha,
+                    after_sha=before_sha,
+                    attempted_after_sha=attempted_after_sha,
+                    rollback_ok=True,
+                    restart_requested=False,
+                    openshell_image_rebuild=image_rebuild,
+                )
+            return self._repo_update_result(
+                stream_id,
+                "error",
+                "source/runtime consistency could not be restored; local dispatch is held",
+                request,
+                repo_path=str(repo),
+                before_sha=before_sha,
+                after_sha=rollback_head.stdout.strip(),
+                attempted_after_sha=attempted_after_sha,
+                rollback_ok=rollback_ok,
+                rollback_stderr=rollback.stderr,
+                restart_requested=False,
+                openshell_image_rebuild=image_rebuild,
+            )
         if updated:
             summary = "repo updated"
             if restart and not image_rebuild_failed:
@@ -2477,6 +2629,139 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self._run_repo_update_service_restarts(result)
         return result
 
+    def _repo_update_dispatch_blocker_path(self) -> Path:
+        configured = str(
+            os.environ.get("MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE") or ""
+        ).strip()
+        if configured:
+            return Path(configured).expanduser()
+        mac_home = Path(
+            os.environ.get("MAC_HOME") or Path.home() / ".mac"
+        ).expanduser()
+        return mac_home / "repo-update-dispatch-blocked.json"
+
+    def _write_repo_update_dispatch_blocker(
+        self, detail: Mapping[str, Any]
+    ) -> None:
+        payload = {
+            "schema": "mac.worker.source_runtime_dispatch_block.v1",
+            "agent_id": self.agent_id,
+            "reason": str(
+                detail.get("reason")
+                or "source/runtime consistency requires a fleet redeploy"
+            )[:1000],
+            "detail": dict(detail),
+            "observed_at": utcnow(),
+        }
+        self._in_memory_repo_update_dispatch_blocker = payload
+        path = self._repo_update_dispatch_blocker_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name("%s.tmp.%d" % (path.name, os.getpid()))
+            temporary.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            temporary.chmod(0o600)
+            os.replace(temporary, path)
+        except OSError as exc:
+            self._observe_log(
+                "worker.dispatch_block.persist_failed",
+                level="error",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail={"path": str(path), "error": str(exc)},
+            )
+
+    def _local_repo_update_dispatch_blocker(self) -> Optional[JsonDict]:
+        in_memory = getattr(
+            self, "_in_memory_repo_update_dispatch_blocker", None
+        )
+        if isinstance(in_memory, dict):
+            return dict(in_memory)
+        path = self._repo_update_dispatch_blocker_path()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError) as exc:
+            return {
+                "schema": "mac.worker.source_runtime_dispatch_block.v1",
+                "reason": "source/runtime dispatch blocker is unreadable",
+                "path": str(path),
+                "error_type": type(exc).__name__,
+            }
+        if not isinstance(payload, dict) or payload.get("schema") != (
+            "mac.worker.source_runtime_dispatch_block.v1"
+        ):
+            return {
+                "schema": "mac.worker.source_runtime_dispatch_block.v1",
+                "reason": "source/runtime dispatch blocker is malformed",
+                "path": str(path),
+            }
+        return payload
+
+    def _managed_openshell_source_update_guard(
+        self, *, current_sha: str, target_sha: str
+    ) -> Optional[JsonDict]:
+        mac_home = Path(
+            os.environ.get("MAC_HOME") or Path.home() / ".mac"
+        ).expanduser()
+        runtime_ref_file = Path(
+            os.environ.get("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
+            or mac_home / "openshell" / "runtime-image-ref"
+        ).expanduser()
+        if not runtime_ref_file.exists():
+            return None
+        source_marker = Path(
+            os.environ.get("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE")
+            or mac_home / "openshell" / "image-source-sha"
+        ).expanduser()
+        try:
+            runtime_ref = runtime_ref_file.read_text(encoding="utf-8").strip()
+            marked_sha = source_marker.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            return {
+                "status": "managed_image_invalid",
+                "fatal": True,
+                "reason": "digest-managed runtime markers are unreadable",
+                "error_type": type(exc).__name__,
+                "runtime_ref_file": str(runtime_ref_file),
+                "source_marker": str(source_marker),
+            }
+        if not re.fullmatch(
+            r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}",
+            runtime_ref,
+        ) or not re.fullmatch(r"[0-9a-f]{40}", marked_sha):
+            return {
+                "status": "managed_image_invalid",
+                "fatal": True,
+                "reason": "digest-managed runtime markers are malformed",
+                "runtime_ref_file": str(runtime_ref_file),
+                "source_marker": str(source_marker),
+            }
+        if marked_sha != current_sha:
+            return {
+                "status": "managed_image_invalid",
+                "fatal": True,
+                "reason": "current source does not match the digest-managed runtime revision",
+                "runtime_image_ref": runtime_ref,
+                "marked_sha": marked_sha,
+                "current_sha": current_sha,
+                "target_sha": target_sha,
+            }
+        if target_sha != marked_sha:
+            return {
+                "status": "managed_image_stale",
+                "fatal": False,
+                "reason": "target source requires a matching published runtime digest",
+                "runtime_image_ref": runtime_ref,
+                "marked_sha": marked_sha,
+                "current_sha": current_sha,
+                "target_sha": target_sha,
+            }
+        return None
+
     def _repo_update_self_test(self, repo: Path) -> JsonDict:
         """Prove the updated tree can at least import before adopting it."""
         if not _env_truthy(os.environ.get("MAC_REPO_UPDATE_SELF_TEST", "1")):
@@ -2543,6 +2828,57 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             marked_sha = ""
         if after_sha and marked_sha == after_sha:
             return None
+        managed_ref_file = Path(
+            os.environ.get("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
+            or Path(os.environ.get("MAC_HOME") or Path.home() / ".mac")
+            / "openshell"
+            / "runtime-image-ref"
+        ).expanduser()
+        try:
+            managed_ref = managed_ref_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            managed_ref = ""
+        if managed_ref_file.exists():
+            if not re.fullmatch(
+                r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}",
+                managed_ref,
+            ):
+                self._observe_log(
+                    "worker.openshell.managed_image_invalid",
+                    level="error",
+                    subject_type="agent",
+                    subject_id=self.agent_id,
+                    detail={
+                        "reason": "digest-managed runtime marker is invalid",
+                        "marker": str(managed_ref_file),
+                        "before_sha": before_sha,
+                        "after_sha": after_sha,
+                    },
+                )
+                return {"status": "managed_image_invalid", "marker": str(managed_ref_file)}
+            # A published runtime is bound to one exact source revision. Source
+            # adoption must wait for a fleet deploy carrying the corresponding
+            # new digest; rebuilding this tag locally would silently destroy the
+            # single-image identity required by synchronized execution.
+            self._observe_log(
+                "worker.openshell.managed_image_stale",
+                level="error",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail={
+                    "reason": "source update requires a matching published runtime image",
+                    "runtime_image_ref": managed_ref,
+                    "marked_sha": marked_sha,
+                    "before_sha": before_sha,
+                    "after_sha": after_sha,
+                },
+            )
+            return {
+                "status": "managed_image_stale",
+                "runtime_image_ref": managed_ref,
+                "marked_sha": marked_sha,
+                "after_sha": after_sha,
+            }
         containerfile = repo / _OPENSHELL_CONTAINERFILE_RELPATH
         image_builder = repo / "deploy/openshell/build-runtime-image.sh"
         tag = (os.environ.get("MAC_OPENSHELL_IMAGE_TAG") or "").strip() or "localhost/mac-hermes:net"

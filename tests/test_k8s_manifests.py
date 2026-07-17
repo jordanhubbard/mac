@@ -83,6 +83,9 @@ def test_mac_api_runs_as_nonroot() -> None:
     deploy = _load(ROOT / "mac-api" / "deployment.yaml")[0]
     pod_sec = deploy["spec"]["template"]["spec"]["securityContext"]
     assert pod_sec["runAsNonRoot"] is True
+    assert pod_sec["runAsUser"] == 10001
+    assert pod_sec["runAsGroup"] == 10001
+    assert pod_sec["fsGroup"] == 10001
     container = deploy["spec"]["template"]["spec"]["containers"][0]
     csec = container["securityContext"]
     assert csec["readOnlyRootFilesystem"] is True
@@ -131,6 +134,10 @@ def test_orchestrator_deployment_uses_orchestrator_sa_and_runs_correct_binary() 
     pod = deploy["spec"]["template"]["spec"]
     assert pod["serviceAccountName"] == "mac-k8s-orchestrator"
     assert pod["automountServiceAccountToken"] is True
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    assert pod["securityContext"]["runAsUser"] == 10001
+    assert pod["securityContext"]["runAsGroup"] == 10001
+    assert pod["securityContext"]["fsGroup"] == 10001
     container = pod["containers"][0]
     assert container["command"] == [
         "/usr/local/bin/mac-crash-observer",

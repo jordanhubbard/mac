@@ -221,6 +221,10 @@ from mac.work_package_scheduler import (
     WorkPackageClaimGate,
 )
 from mac.work_package_service import WorkPackageService
+from mac.work_package_telemetry import (
+    WorkPackageTelemetryService,
+    deterministic_cohort_assignment,
+)
 from mac.work_plan_admission import ManagedWorkPlanBridge
 from mac.publication_lane import (
     PUBLICATION_LANE_LEGACY,
@@ -1213,6 +1217,41 @@ class ControlPlane:
                     "MAC_SECRET_KEY appears to be a placeholder (%r). "
                     "Generate one with: openssl rand -base64 48" % marker
                 )
+        cohort_seed = os.environ.get("MAC_EXECUTION_COHORT_SEED") or raw_key
+        if len(cohort_seed) < 32:
+            raise ValidationError(
+                "MAC_EXECUTION_COHORT_SEED must be at least 32 characters"
+            )
+        try:
+            cohort_revision = int(
+                os.environ.get("MAC_EXECUTION_COHORT_REVISION", "1")
+            )
+            cohort_treatment_percentage = int(
+                os.environ.get("MAC_EXECUTION_COHORT_TREATMENT_PERCENT", "50")
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                "execution cohort revision and treatment percentage must be integers"
+            ) from exc
+        if cohort_revision < 1:
+            raise ValidationError("MAC_EXECUTION_COHORT_REVISION must be positive")
+        if not 0 <= cohort_treatment_percentage <= 100:
+            raise ValidationError(
+                "MAC_EXECUTION_COHORT_TREATMENT_PERCENT must be between 0 and 100"
+            )
+        self._execution_cohort_revision = cohort_revision
+        self._execution_cohort_treatment_percentage = (
+            cohort_treatment_percentage
+        )
+        self._execution_cohort_assignment_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=b"mac.execution_cohort_assignment.v1",
+            info=b"atomic-fast-lane-randomization",
+        ).derive(cohort_seed.encode("utf-8"))
+        self._execution_cohort_key_fingerprint = "sha256:%s" % hashlib.sha256(
+            self._execution_cohort_assignment_key
+        ).hexdigest()
         fernet_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -1372,7 +1411,27 @@ class ControlPlane:
         )
         self.work_package_outputs = WorkPackageOutputService(self.store)
         self.work_package_replans = WorkPackageReplanService(self.store)
-        self.work_packages = WorkPackageService(self.store)
+        self.work_package_telemetry = WorkPackageTelemetryService(self.store)
+        if self.store.query_one(
+            "SELECT 1 FROM execution_cohort_configurations "
+            "WHERE rollout_revision = ?",
+            (self._execution_cohort_revision,),
+        ) is not None:
+            # A restarted or newly promoted hub must reject a stale percentage
+            # or seed before it can serve any traffic. Waiting for the next
+            # eligible task would preserve assignment integrity but create a
+            # delayed, request-path outage that is harder to diagnose.
+            self.work_package_telemetry.assert_primary_cohort_configuration(
+                rollout_revision=self._execution_cohort_revision,
+                treatment_percentage=self._execution_cohort_treatment_percentage,
+                assignment_key_fingerprint=(
+                    self._execution_cohort_key_fingerprint
+                ),
+            )
+        self.work_packages = WorkPackageService(
+            self.store,
+            telemetry=self.work_package_telemetry,
+        )
         self.managed_work_plans = ManagedWorkPlanBridge(
             self.store,
             self.work_packages,
@@ -3960,6 +4019,100 @@ class ControlPlane:
             "current_observation_blockers": observation_blockers,
         }
 
+    def _single_task_cohort_assignment(
+        self,
+        *,
+        task_id: str,
+        fast_lane_shape: Mapping[str, Any],
+        publication_policy: str,
+        rollout: Mapping[str, Any],
+    ) -> JsonDict:
+        """Preassign one atomic request before route outcomes are observable."""
+
+        shape_eligible = bool(fast_lane_shape.get("eligible"))
+        rollout_ready = bool(rollout.get("ready"))
+        primary_eligible = bool(
+            shape_eligible
+            and rollout_ready
+            and publication_policy == "auto"
+        )
+        revision = self._execution_cohort_revision
+        percentage = self._execution_cohort_treatment_percentage
+        randomization: Optional[JsonDict] = None
+        if primary_eligible:
+            self.work_package_telemetry.assert_primary_cohort_configuration(
+                rollout_revision=revision,
+                treatment_percentage=percentage,
+                assignment_key_fingerprint=(
+                    self._execution_cohort_key_fingerprint
+                ),
+            )
+            randomization = deterministic_cohort_assignment(
+                key=self._execution_cohort_assignment_key,
+                unit_id=task_id,
+                rollout_revision=revision,
+                treatment_percentage=percentage,
+            )
+            treatment_route = str(randomization["treatment_route"])
+            reason = "concurrent_exogenous_assignment"
+            cohort_key = "primary_atomic_r%d_p%d_%s" % (
+                revision,
+                percentage,
+                "treatment"
+                if treatment_route == "managed_synchronized"
+                else "control",
+            )
+            exclusion_reasons: list[str] = []
+        else:
+            treatment_route = (
+                "managed_synchronized"
+                if shape_eligible
+                and rollout_ready
+                and publication_policy == PUBLICATION_LANE_MANAGED
+                else "legacy_async"
+            )
+            if not shape_eligible:
+                reason = "atomic_fast_lane_shape_ineligible"
+                exclusion_reasons = list(fast_lane_shape.get("blockers") or [])
+            elif not rollout_ready:
+                reason = "managed_rollout_not_crossed"
+                exclusion_reasons = ["managed_rollout_not_crossed"]
+            else:
+                reason = "operator_policy_excluded_primary_cohort"
+                exclusion_reasons = [
+                    "publication_lane_policy_%s" % publication_policy
+                ]
+            cohort_key = "excluded_atomic_r%d_%s" % (
+                revision,
+                "managed"
+                if treatment_route == "managed_synchronized"
+                else "legacy",
+            )
+        return {
+            "eligibility": "eligible" if primary_eligible else "ineligible",
+            "treatment_route": treatment_route,
+            "rollout_revision": revision,
+            "cohort_key": cohort_key,
+            "reason": reason,
+            "detail": {
+                "schema": "mac.execution_cohort.prospective.v3",
+                "primary_analysis_eligible": primary_eligible,
+                "estimand": (
+                    "intention_to_treat_canonical_publication_outcome"
+                ),
+                "eligibility_contract": "atomic_auto_policy_rollout_ready_v1",
+                "randomization": randomization,
+                "publication_lane_policy": publication_policy,
+                "shape_eligible": shape_eligible,
+                "shape_blockers": list(fast_lane_shape.get("blockers") or []),
+                "exclusion_reasons": exclusion_reasons,
+                "managed_lane_rollout_revision": int(
+                    rollout.get("revision") or 0
+                ),
+                "managed_lane_rollout_ready": rollout_ready,
+            },
+        }
+
     def _reserve_task_create_idempotency(
         self,
         *,
@@ -4114,6 +4267,7 @@ class ControlPlane:
         actor: str,
         repository_id: str,
         readiness: Mapping[str, Any],
+        cohort_assignment: Mapping[str, Any],
     ) -> Task:
         package_id = "wp_fast_%s" % task_id.removeprefix("task_")
         operator_held = bool(metadata.get("no_dispatch"))
@@ -4133,6 +4287,7 @@ class ControlPlane:
             actor=actor,
             reason="ordinary atomic repository task admitted to managed fast lane",
             tenant_id=tenant_id,
+            cohort_assignment=cohort_assignment,
         )
         admission = accepted.admission
         if admission.package.id != package_id or task_id not in admission.task_ids:
@@ -4142,6 +4297,35 @@ class ControlPlane:
             and readiness.get("ready")
             and not operator_held
         )
+        if not should_activate and admission.package.state == "admitted":
+            observed_at = utcnow()
+            blockers = list(readiness.get("blockers") or [])
+            reason_code = (
+                "operator_no_dispatch_hold"
+                if operator_held
+                else str((blockers[0] if blockers else {}).get("code") or "activation_hold")
+            )
+            self.work_package_telemetry.record_station_attempt(
+                package_id=admission.package.id,
+                station="admission",
+                operation="activation",
+                attempted=False,
+                terminal_status="held",
+                queued_at=admission.package.created_at,
+                started_at=observed_at,
+                completed_at=observed_at,
+                actor=actor,
+                plan_version=admission.plan_version,
+                epoch=admission.epoch,
+                pipeline_run_id=new_id("activation_observation"),
+                outcome_index=0,
+                reason_code=reason_code,
+                failure_class="activation_hold",
+                detail={
+                    "operator_held": operator_held,
+                    "readiness_blockers": blockers,
+                },
+            )
         if should_activate:
             try:
                 self.activate_work_package(
@@ -4281,16 +4465,46 @@ class ControlPlane:
                 "managed publication requires an atomic repository task: %s"
                 % ", ".join(fast_lane_shape["blockers"])
             )
+        rollout: JsonDict = {}
         if fast_lane_shape["eligible"]:
             rollout = self._managed_single_task_rollout()
-            use_managed = publication_policy != PUBLICATION_LANE_LEGACY and bool(
+            if publication_policy == PUBLICATION_LANE_MANAGED and not bool(
                 rollout["ready"]
-            )
-            if publication_policy == PUBLICATION_LANE_MANAGED and not use_managed:
+            ):
                 raise ValidationError(
                     "managed publication rollout is unavailable: %s"
                     % json_dumps(rollout["blockers"])
                 )
+        cohort_assignment = self._single_task_cohort_assignment(
+            task_id=task_id,
+            fast_lane_shape=fast_lane_shape,
+            publication_policy=publication_policy,
+            rollout=rollout,
+        )
+        # Persist randomization before either route performs treatment-specific
+        # work.  In particular, managed admission performs remote base
+        # attestation while the legacy route can materialize locally.  Deferring
+        # this write until the selected route succeeded would silently drop
+        # treatment-assigned admission failures and bias the comparison toward
+        # managed successes.  Task/package identities in the measurement plane
+        # are deliberately soft, so a failed materialization remains an
+        # observable, right-censored assignment instead of disappearing.
+        self.work_package_telemetry.assign_cohort(
+            task_id=task_id,
+            package_id=None,
+            eligibility=str(cohort_assignment["eligibility"]),
+            treatment_route=str(cohort_assignment["treatment_route"]),
+            rollout_revision=int(cohort_assignment["rollout_revision"]),
+            cohort_key=str(cohort_assignment["cohort_key"]),
+            reason=str(cohort_assignment["reason"]),
+            actor="execution-cohort-controller",
+            detail=ensure_json_object(cohort_assignment["detail"]),
+            assigned_at=now,
+        )
+        use_managed = bool(
+            cohort_assignment["treatment_route"] == "managed_synchronized"
+        )
+        if fast_lane_shape["eligible"]:
             if use_managed:
                 readiness = self._managed_single_task_readiness(
                     repository_id=str(fast_lane_shape["repository_id"]),
@@ -4317,6 +4531,7 @@ class ControlPlane:
                     actor=actor,
                     repository_id=str(fast_lane_shape["repository_id"]),
                     readiness=readiness,
+                    cohort_assignment=cohort_assignment,
                 )
             normalized_metadata["publication_lane"] = classify_publication_lane(
                 package_linked=False,
@@ -4426,6 +4641,23 @@ class ControlPlane:
                     )
                     if optimizer_assignment is not None:
                         self.optimizer.insert_assignment(conn, optimizer_assignment)
+                    self.work_package_telemetry.assign_cohort(
+                        task_id=task_id,
+                        package_id=None,
+                        eligibility=str(cohort_assignment["eligibility"]),
+                        treatment_route=str(
+                            cohort_assignment["treatment_route"]
+                        ),
+                        rollout_revision=int(
+                            cohort_assignment["rollout_revision"]
+                        ),
+                        cohort_key=str(cohort_assignment["cohort_key"]),
+                        reason=str(cohort_assignment["reason"]),
+                        actor="execution-cohort-controller",
+                        detail=ensure_json_object(cohort_assignment["detail"]),
+                        assigned_at=now,
+                        conn=conn,
+                    )
                     created = True
         if (
             created
@@ -6860,6 +7092,8 @@ class ControlPlane:
         "agent",
         "project",
         "fleet",
+        "work_package",
+        "service",
     )
 
     def _list_recent_events_bounded(self, limit: int) -> List[JsonDict]:
@@ -6919,6 +7153,176 @@ class ControlPlane:
                 row["actor"],
                 detail,
                 row["created_at"],
+            )
+
+        work_package_rows = self.store.query_all(
+            """
+            SELECT id, package_id, event_type, actor, plan_version, epoch,
+                   detail, created_at
+            FROM work_package_history
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in work_package_rows:
+            detail = ensure_json_object(json_loads(row["detail"], {}))
+            detail.update(
+                {"plan_version": row["plan_version"], "epoch": row["epoch"]}
+            )
+            add(
+                row["id"],
+                "work_package",
+                row["package_id"],
+                row["event_type"],
+                row["actor"],
+                detail,
+                row["created_at"],
+            )
+
+        cohort_rows = self.store.query_all(
+            """
+            SELECT * FROM execution_cohort_assignments
+            ORDER BY assigned_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in cohort_rows:
+            detail = ensure_json_object(json_loads(row["detail"], {}))
+            detail.update(
+                {
+                    "task_id": row["task_id"],
+                    "package_id": row["package_id"],
+                    "eligibility": row["eligibility"],
+                    "treatment_route": row["treatment_route"],
+                    "rollout_revision": int(row["rollout_revision"]),
+                    "cohort_key": row["cohort_key"],
+                    "reason": row["reason"],
+                }
+            )
+            package_id = row["package_id"]
+            add(
+                row["id"],
+                "work_package" if package_id else "task",
+                package_id or row["task_id"],
+                "execution.cohort_assigned",
+                row["assigned_by"],
+                detail,
+                row["assigned_at"],
+            )
+
+        station_rows = self.store.query_all(
+            """
+            SELECT * FROM work_package_station_attempts
+            ORDER BY completed_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in station_rows:
+            detail = ensure_json_object(json_loads(row["detail"], {}))
+            detail.update(
+                {
+                    "assignment_id": row["assignment_id"],
+                    "plan_version": int(row["plan_version"]),
+                    "epoch": int(row["epoch"]),
+                    "station": row["station"],
+                    "operation": row["operation"],
+                    "attempt_number": int(row["attempt_number"]),
+                    "attempted": bool(row["attempted"]),
+                    "pipeline_run_id": row["pipeline_run_id"],
+                    "outcome_index": int(row["outcome_index"]),
+                    "batch_id": row["batch_id"],
+                    "job_id": row["job_id"],
+                    "queued_at": row["queued_at"],
+                    "started_at": row["started_at"],
+                    "completed_at": row["completed_at"],
+                    "queue_duration_ms": int(row["queue_duration_ms"]),
+                    "execution_duration_ms": int(row["execution_duration_ms"]),
+                    "terminal_status": row["terminal_status"],
+                    "reason_code": row["reason_code"],
+                    "failure_class": row["failure_class"],
+                }
+            )
+            add(
+                row["id"],
+                "work_package",
+                row["package_id"],
+                "work_package.station.%s.%s"
+                % (row["station"], row["terminal_status"]),
+                row["actor"],
+                detail,
+                row["completed_at"],
+            )
+
+        controller_rows = self.store.query_all(
+            """
+            SELECT * FROM work_package_controller_outcomes
+            ORDER BY completed_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in controller_rows:
+            detail = ensure_json_object(json_loads(row["detail"], {}))
+            detail.update(
+                {
+                    "pipeline_run_id": row["pipeline_run_id"],
+                    "outcome_index": int(row["outcome_index"]),
+                    "plan_version": int(row["plan_version"]),
+                    "epoch": int(row["epoch"]),
+                    "operation": row["operation"],
+                    "attempted": bool(row["attempted"]),
+                    "batch_id": row["batch_id"],
+                    "job_id": row["job_id"],
+                    "started_at": row["started_at"],
+                    "completed_at": row["completed_at"],
+                    "execution_duration_ms": int(row["execution_duration_ms"]),
+                    "status": row["status"],
+                    "terminal_status": row["terminal_status"],
+                    "reason_code": row["reason_code"],
+                    "failure_class": row["failure_class"],
+                }
+            )
+            package_id = str(row["package_id"] or "")
+            add(
+                row["id"],
+                "work_package" if package_id else "service",
+                package_id or "work-package-pipeline",
+                "work_package.controller.%s.%s"
+                % (row["operation"], row["terminal_status"]),
+                "work-package-pipeline",
+                detail,
+                row["completed_at"],
+            )
+
+        finalization_outcome_rows = self.store.query_all(
+            """
+            SELECT * FROM work_package_finalization_outcomes
+            ORDER BY observed_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        for row in finalization_outcome_rows:
+            detail = ensure_json_object(json_loads(row["detail"], {}))
+            detail.update(
+                {
+                    "finalization_id": row["finalization_id"],
+                    "outcome_type": row["outcome_type"],
+                    "external_id": row["external_id"],
+                    "observed_at": row["observed_at"],
+                }
+            )
+            add(
+                row["id"],
+                "work_package",
+                row["package_id"],
+                "work_package.finalization.%s" % row["outcome_type"],
+                row["actor"],
+                detail,
+                row["observed_at"],
             )
 
         simple_sources = (
@@ -7125,11 +7529,11 @@ class ControlPlane:
         until: Optional[str] = None,
         limit: int = 100,
     ) -> List[JsonDict]:
-        """Query the unified audit stream across task/rollout/eval_set/secret events.
+        """Query the unified audit stream, including work-package measurements.
 
         Filters compose with AND. Results are newest-first; cap is 1000 to keep
         a single page bounded. Operators asking "what happened" should reach for
-        this method instead of joining the four per-resource audit tables.
+        this method instead of joining per-resource audit tables.
         """
         if subject_type is not None and subject_type not in self.EVENT_SUBJECT_TYPES:
             raise ValidationError(
@@ -10224,6 +10628,73 @@ class ControlPlane:
     def describe_work_package(self, package_id: str) -> JsonDict:
         return self.work_packages.describe(package_id)
 
+    def work_package_telemetry_export(
+        self,
+        *,
+        package_id: Optional[str] = None,
+        treatment_route: Optional[str] = None,
+        eligibility: Optional[str] = None,
+        station: Optional[str] = None,
+        since: Optional[str] = None,
+        limit: int = 1000,
+    ) -> JsonDict:
+        return self.work_package_telemetry.export(
+            package_id=package_id,
+            treatment_route=treatment_route,
+            eligibility=eligibility,
+            station=station,
+            since=since,
+            limit=limit,
+        )
+
+    def comparable_atomic_execution_outcomes(
+        self,
+        *,
+        treatment_route: Optional[str] = None,
+        since: Optional[str] = None,
+        limit: int = 1000,
+    ) -> List[JsonDict]:
+        return self.work_package_telemetry.comparable_atomic_outcomes(
+            treatment_route=treatment_route,
+            since=since,
+            limit=limit,
+        )
+
+    def record_work_package_pipeline_telemetry(
+        self, report: Mapping[str, Any]
+    ) -> List[JsonDict]:
+        return self.work_package_telemetry.record_pipeline_report(report)
+
+    def record_work_package_telemetry_failure(
+        self, operation: str, error: BaseException
+    ) -> JsonDict:
+        return self.work_package_telemetry.record_measurement_failure(
+            operation=operation,
+            error=error,
+        )
+
+    def record_work_package_telemetry_success(self) -> None:
+        self.work_package_telemetry.record_measurement_success()
+
+    def record_work_package_finalization_outcome(
+        self,
+        finalization_id: str,
+        *,
+        outcome_type: str,
+        external_id: str,
+        observed_at: str,
+        actor: str,
+        detail: Optional[Mapping[str, Any]] = None,
+    ) -> JsonDict:
+        return self.work_package_telemetry.record_finalization_outcome(
+            finalization_id,
+            outcome_type=outcome_type,
+            external_id=external_id,
+            observed_at=observed_at,
+            actor=actor,
+            detail=detail,
+        )
+
     def work_package_activation_readiness(self, package_id: str) -> JsonDict:
         """Prove every worker and downstream controller station is ready."""
 
@@ -10494,22 +10965,121 @@ class ControlPlane:
         expected_epoch: int,
         actor: str,
     ) -> JsonDict:
+        attempt_started_at = utcnow()
+        package_before = self.work_packages.get(package_id)
+        attempt_id = new_id("activation_attempt")
         readiness = self.work_package_activation_readiness(package_id)
         if (
             int(readiness["plan_version"]) != int(expected_plan_version)
             or int(readiness["epoch"]) != int(expected_epoch)
         ):
+            completed_at = utcnow()
+            self.work_package_telemetry.record_station_attempt(
+                package_id=package_id,
+                station="admission",
+                operation="activation",
+                attempted=False,
+                terminal_status="stale",
+                queued_at=package_before.created_at,
+                started_at=attempt_started_at,
+                completed_at=completed_at,
+                actor=actor,
+                plan_version=package_before.current_plan_version,
+                epoch=package_before.current_epoch,
+                pipeline_run_id=attempt_id,
+                outcome_index=0,
+                reason_code="activation_generation_changed",
+                failure_class="stale_generation",
+                detail={
+                    "expected_plan_version": int(expected_plan_version),
+                    "expected_epoch": int(expected_epoch),
+                    "observed_plan_version": int(readiness["plan_version"]),
+                    "observed_epoch": int(readiness["epoch"]),
+                },
+            )
             raise ValidationError("work package activation generation changed")
         if not readiness["ready"]:
+            completed_at = utcnow()
+            blockers = list(readiness.get("blockers") or [])
+            self.work_package_telemetry.record_station_attempt(
+                package_id=package_id,
+                station="admission",
+                operation="activation",
+                attempted=False,
+                terminal_status="held",
+                queued_at=package_before.created_at,
+                started_at=attempt_started_at,
+                completed_at=completed_at,
+                actor=actor,
+                plan_version=expected_plan_version,
+                epoch=expected_epoch,
+                pipeline_run_id=attempt_id,
+                outcome_index=0,
+                reason_code=str(
+                    (blockers[0] if blockers else {}).get("code")
+                    or "activation_readiness_failed"
+                ),
+                failure_class="activation_hold",
+                detail={"readiness_blockers": blockers},
+            )
             raise ValidationError(
                 "work package activation readiness failed: %s"
                 % json_dumps(readiness["blockers"])
             )
-        package = self.work_packages.activate(
-            package_id,
-            expected_plan_version=expected_plan_version,
-            expected_epoch=expected_epoch,
+        try:
+            package = self.work_packages.activate(
+                package_id,
+                expected_plan_version=expected_plan_version,
+                expected_epoch=expected_epoch,
+                actor=actor,
+            )
+        except Exception as exc:
+            completed_at = utcnow()
+            self.work_package_telemetry.record_station_attempt(
+                package_id=package_id,
+                station="admission",
+                operation="activation",
+                attempted=True,
+                terminal_status="failed",
+                queued_at=package_before.created_at,
+                started_at=attempt_started_at,
+                completed_at=completed_at,
+                actor=actor,
+                plan_version=expected_plan_version,
+                epoch=expected_epoch,
+                pipeline_run_id=attempt_id,
+                outcome_index=0,
+                reason_code="activation_failed",
+                failure_class=type(exc).__name__,
+                detail={"error_type": type(exc).__name__},
+            )
+            raise
+        completed_at = utcnow()
+        self.work_package_telemetry.record_station_attempt(
+            package_id=package_id,
+            station="admission",
+            operation="activation",
+            attempted=True,
+            terminal_status="succeeded",
+            queued_at=package_before.created_at,
+            started_at=attempt_started_at,
+            completed_at=completed_at,
             actor=actor,
+            plan_version=expected_plan_version,
+            epoch=expected_epoch,
+            pipeline_run_id=attempt_id,
+            outcome_index=0,
+            reason_code="work_package_activated",
+            detail={
+                "released": True,
+                "eligible_agent_count": sum(
+                    1
+                    for value in ensure_json_object(
+                        readiness.get("agent_readiness")
+                    ).values()
+                    if isinstance(value, Mapping) and value.get("ready")
+                ),
+            },
         )
         return {
             "package": package.to_dict(),

@@ -53,17 +53,74 @@ class RecordingRunner:
         if not self.returncodes:
             raise AssertionError("unexpected certifier command: %r" % (command,))
         returncode = self.returncodes.pop(0)
+        stdout = "ok\n" if returncode == 0 else ""
+        if "/opt/mac-certifier/bin/run-contract-tests" in command:
+            stdout = _phase_output(command) + stdout
         return CommandOutcome(
             command,
             returncode,
-            stdout="ok\n" if returncode == 0 else "",
+            stdout=stdout,
             stderr="failed\n" if returncode else "",
             timed_out=returncode == 124,
         )
 
 
+class MissingPhaseRunner(RecordingRunner):
+    def run(self, argv, *, env, timeout_seconds):
+        outcome = super().run(argv, env=env, timeout_seconds=timeout_seconds)
+        if "/opt/mac-certifier/bin/run-contract-tests" not in outcome.argv:
+            return outcome
+        return CommandOutcome(
+            outcome.argv,
+            outcome.returncode,
+            "ok\n",
+            outcome.stderr,
+            outcome.timed_out,
+        )
+
+
 def _digest_bytes(value: bytes) -> str:
     return "sha256:%s" % hashlib.sha256(value).hexdigest()
+
+
+def _digest_json(value: object) -> str:
+    return _digest_bytes(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    )
+
+
+def _phase_output(command: tuple[str, ...]) -> str:
+    base = command[command.index("--base-sha") + 1]
+    changed = ["docs/canaries/test.md"]
+    payload = {
+        "schema": "mac.certifier_phase_manifest.v1",
+        "trusted_source_revision": "f" * 40,
+        "assembly_base_sha": base,
+        "candidate_sha": "a" * 40,
+        "changed_files": changed,
+        "changed_file_count": 1,
+        "changed_files_digest": _digest_json(changed),
+        "selection_mode": "documentation_fast_lane",
+        "authoritative": {
+            "mode": "focused",
+            "reason": "documentation_only_invariants",
+            "tests": [
+                "tests/test_openshell_certifier.py",
+                "tests/test_publication_lane.py",
+                "tests/test_repository_contract_certification.py",
+            ],
+        },
+        "supplemental": {
+            "mode": "skipped",
+            "reason": "documentation_only",
+            "tests": [],
+        },
+        "full_suite_count": 0,
+    }
+    payload["manifest_digest"] = _digest_json(payload)
+    return "MAC_CERTIFIER_PHASE_MANIFEST_JSON=" + json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    ) + "\n"
 
 
 def _policy(text: str = POLICY_TEXT) -> CertificationPolicy:
@@ -106,7 +163,11 @@ def _job(tmp_path: Path, **changes) -> OpenShellCertificationJob:
         "controller_commands": (
             ControllerCommand(
                 "contract-tests",
-                ("/opt/mac-certifier/bin/run-contract-tests",),
+                (
+                    "/opt/mac-certifier/bin/run-contract-tests",
+                    "--base-sha",
+                    "c" * 40,
+                ),
                 300,
             ),
         ),
@@ -157,6 +218,7 @@ def test_runner_enforces_exact_identity_and_captures_result(tmp_path: Path) -> N
         "run_as_user": "non_root",
         "launcher_environment": ["HOME", "LANG", "PATH"],
         "input_format": "credential_free_git_bundle",
+        "assembly_base_transport": "controller_bound_argv",
     }
     captured = json.loads(result_path.read_text(encoding="utf-8"))
     assert captured == result.to_dict()
@@ -189,6 +251,7 @@ def test_runner_enforces_exact_identity_and_captures_result(tmp_path: Path) -> N
         "PATH=/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin",
         "/opt/mac-certifier/bin/run-contract-tests",
     )
+    assert check[-2:] == ("--base-sha", job.assembly_base_sha)
     assert "/bin/bash" not in check
     assert postcheck[1:3] == ("sandbox", "exec")
     assert cleanup == (
@@ -279,11 +342,182 @@ def test_job_rejects_candidate_owned_controller_commands(
         _job(tmp_path, controller_commands=(command,)).validate()
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("/opt/mac-certifier/bin/run-contract-tests",),
+        (
+            "/opt/mac-certifier/bin/run-contract-tests",
+            "--base-sha",
+            "d" * 40,
+        ),
+        (
+            "/opt/mac-certifier/bin/run-contract-tests",
+            "--base-sha",
+            "c" * 40,
+            "--base-sha",
+            "c" * 40,
+        ),
+        (
+            "/opt/mac-certifier/bin/run-contract-tests",
+            "--base-sha=" + "c" * 40,
+        ),
+    ],
+)
+def test_job_requires_one_exact_controller_owned_base_argument(
+    tmp_path: Path, argv: tuple[str, ...]
+) -> None:
+    command = ControllerCommand("contract-tests", argv, 30)
+
+    with pytest.raises(CertificationValidationError, match="controller-owned assembly base"):
+        _job(tmp_path, controller_commands=(command,)).validate()
+
+
 def test_launcher_environment_rejects_credentials() -> None:
     with pytest.raises(CertificationValidationError, match="forbidden names"):
         OpenShellCertificationRunner(
             command_runner=RecordingRunner([]),
             launcher_environment={"PATH": "/safe", "LANDING_PUSH_SECRET": "secret"},
+        )
+
+    with pytest.raises(CertificationValidationError, match="loopback HTTP URL"):
+        OpenShellCertificationRunner(
+            command_runner=RecordingRunner([]),
+            launcher_environment={
+                "PATH": "/safe",
+                "OPENSHELL_GATEWAY_ENDPOINT": "http://10.0.0.4:17670",
+            },
+        )
+
+
+def test_production_binding_uses_absolute_cli_and_service_home_but_isolates_candidate(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "service-home"
+    home.mkdir()
+    binary = tmp_path / "openshell"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    commands = RecordingRunner([0, 0, 0, 0, 0, 0, 0])
+
+    runner = OpenShellCertificationRunner.from_environment(
+        {
+            "MAC_OPENSHELL_BIN": str(binary),
+            "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT": "http://127.0.0.1:17671/",
+            "HOME": str(home),
+            "PATH": "/managed/service/path:/usr/bin:/bin",
+            "LANG": "C",
+        },
+        command_runner=commands,
+        name_factory=lambda: "mac-cert-production-binding",
+    )
+    result = runner.run(_job(tmp_path), result_path=tmp_path / "bound-result.json")
+
+    assert result.status == "passed"
+    assert runner.openshell_bin == str(binary.resolve())
+    assert runner.launcher_environment["HOME"] == str(home.resolve())
+    assert (
+        runner.launcher_environment["OPENSHELL_GATEWAY_ENDPOINT"]
+        == "http://127.0.0.1:17671"
+    )
+    assert commands.calls[0][0] == (str(binary.resolve()), "--version")
+    assert commands.calls[1][0] == (str(binary.resolve()), "status")
+    assert all(call[1]["HOME"] == str(home.resolve()) for call in commands.calls)
+    assert all(
+        call[1]["OPENSHELL_GATEWAY_ENDPOINT"] == "http://127.0.0.1:17671"
+        for call in commands.calls
+    )
+    create = commands.calls[2][0]
+    assert create[create.index("--env") + 1] == "HOME=/tmp"
+    check = commands.calls[4][0]
+    assert check[check.index("--") + 1 : check.index("--") + 4] == (
+        "/usr/bin/env",
+        "-i",
+        "HOME=/tmp",
+    )
+
+
+@pytest.mark.parametrize(
+    ("binary_value", "problem"),
+    [
+        ("", "absolute executable"),
+        ("relative/openshell", "absolute executable"),
+        ("missing", "unavailable"),
+        ("present", "not an executable"),
+    ],
+)
+def test_production_binding_rejects_invalid_cli(
+    tmp_path: Path,
+    binary_value: str,
+    problem: str,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    if binary_value in {"missing", "present"}:
+        binary = tmp_path / binary_value
+        if binary_value == "present":
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary_value = str(binary)
+
+    with pytest.raises(CertificationValidationError, match=problem):
+        OpenShellCertificationRunner.from_environment(
+            {
+                "MAC_OPENSHELL_BIN": binary_value,
+                "HOME": str(home),
+                "PATH": "/usr/bin:/bin",
+            }
+        )
+
+
+def test_production_binding_fails_closed_when_cli_preflight_fails(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    binary = tmp_path / "openshell"
+    binary.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    with pytest.raises(CertificationValidationError, match="preflight failed"):
+        OpenShellCertificationRunner.from_environment(
+            {
+                "MAC_OPENSHELL_BIN": str(binary),
+                "HOME": str(home),
+                "PATH": "/usr/bin:/bin",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://127.0.0.1:17671",
+        "http://localhost:17671",
+        "http://100.121.27.109:17670",
+        "http://user@127.0.0.1:17671",
+        "http://127.0.0.1:17671/path",
+        "http://127.0.0.1:17671?token=secret",
+        "http://127.0.0.1",
+        "http://127.0.0.1:99999",
+    ],
+)
+def test_production_binding_rejects_non_loopback_gateway_endpoint(
+    tmp_path: Path, endpoint: str
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    binary = tmp_path / "openshell"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    with pytest.raises(CertificationValidationError, match="loopback HTTP URL"):
+        OpenShellCertificationRunner.from_environment(
+            {
+                "MAC_OPENSHELL_BIN": str(binary),
+                "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT": endpoint,
+                "HOME": str(home),
+                "PATH": "/usr/bin:/bin",
+            }
         )
 
 
@@ -336,6 +570,19 @@ def test_controller_failure_is_a_captured_failed_certification(tmp_path: Path) -
     assert len(commands.calls) == 4  # post-identity check is not trusted after failure
 
 
+def test_missing_phase_manifest_fails_even_when_tests_return_zero(tmp_path: Path) -> None:
+    commands = MissingPhaseRunner([0, 0, 0, 0])
+
+    result = _runner(commands).run(
+        _job(tmp_path), result_path=tmp_path / "missing-phase.json"
+    )
+
+    assert result.status == "failed"
+    assert result.failure_class == "certifier_phase_manifest_invalid"
+    assert result.checks[0].returncode == 78
+    assert result.phase_manifest == {}
+
+
 def test_identity_mismatch_is_captured_and_never_runs_controller_commands(
     tmp_path: Path,
 ) -> None:
@@ -371,11 +618,18 @@ def test_cleanup_failure_alerts_records_failure_and_raises(tmp_path: Path) -> No
 def test_command_timeout_is_bounded_and_captured(tmp_path: Path) -> None:
     commands = RecordingRunner([0, 0, 124, 0])
     command = ControllerCommand(
-        "bounded", ("/opt/mac-certifier/bin/run-bounded-tests",), 11
+        "bounded",
+        ("/opt/mac-certifier/bin/run-bounded-tests", "--base-sha", "c" * 40),
+        11,
+    )
+    primary = ControllerCommand(
+        "contract-tests",
+        ("/opt/mac-certifier/bin/run-contract-tests", "--base-sha", "c" * 40),
+        300,
     )
 
     result = _runner(commands).run(
-        _job(tmp_path, controller_commands=(command,)),
+        _job(tmp_path, controller_commands=(command, primary)),
         result_path=tmp_path / "timeout.json",
     )
 

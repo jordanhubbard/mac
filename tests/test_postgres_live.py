@@ -60,6 +60,28 @@ def _install_pipeline_repository_contract(
     assert changed.rowcount == 1
 
 
+class _NonExecutingCertificationRunner:
+    """Explicit runtime seam for claim-only PostgreSQL portability tests."""
+
+    def run(self, job, *, result_path):  # pragma: no cover - must not execute here
+        raise AssertionError("claim portability test unexpectedly ran certification")
+
+
+def _bind_nonexecuting_pipeline_certifier(*control_planes) -> None:
+    """Keep contract validation real without probing a host OpenShell gateway."""
+
+    from mac.work_package_certification_service import (
+        WorkPackageCertificationService,
+    )
+
+    for index, control_plane in enumerate(control_planes):
+        control_plane.work_package_certifications = WorkPackageCertificationService(
+            control_plane.store,
+            owner="postgres-claim-test-certifier-%s" % index,
+            runner=_NonExecutingCertificationRunner(),
+        )
+
+
 def _insert_task(store, **overrides) -> str:
     cols = {
         "id": "task-1",
@@ -126,6 +148,199 @@ def test_schema_applied_with_all_bundled_base_tables(postgres_store) -> None:
         ("BASE TABLE",),
     )
     assert row["n"] == expected
+
+
+def test_postgres_execution_cohort_backfill_marker_and_route_contract(
+    postgres_store,
+) -> None:
+    marker_version = "execution_cohort_historical_backfill_v2"
+    marker = postgres_store.query_one(
+        "SELECT * FROM telemetry_data_migrations WHERE version = ?",
+        (marker_version,),
+    )
+    assert marker is not None
+
+    # A task created after the one-time migration marker must not be swept into
+    # a historical cohort when schema initialization runs again.
+    _insert_task(postgres_store, id="post-marker-task")
+    postgres_store.initialize()
+    assert postgres_store.query_one(
+        "SELECT 1 FROM execution_cohort_assignments WHERE task_id = ?",
+        ("post-marker-task",),
+    ) is None
+
+    postgres_store.execute(
+        "INSERT INTO execution_cohort_assignments ("
+        "id, task_id, package_id, eligibility, treatment_route, "
+        "rollout_revision, cohort_key, reason, detail, assigned_by, assigned_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "cohort-unknown-managed-mode",
+            "post-marker-task",
+            None,
+            "unknown",
+            "unknown_managed_mode",
+            0,
+            "contract-test",
+            "contract-test",
+            "{}",
+            "postgres-test",
+            "2026-07-17T00:00:00Z",
+        ),
+    )
+    with pytest.raises(StoreError, match="append-only"):
+        postgres_store.execute(
+            "UPDATE execution_cohort_assignments SET reason = ? WHERE id = ?",
+            ("changed", "cohort-unknown-managed-mode"),
+        )
+    with pytest.raises(StoreError, match="append-only"):
+        postgres_store.execute(
+            "DELETE FROM telemetry_data_migrations WHERE version = ?",
+            (marker_version,),
+        )
+
+
+def test_postgres_repairs_preliminary_package_after_v2_marker(
+    postgres_store,
+) -> None:
+    package_id = "wp-preliminary-cohort"
+    postgres_store.execute(
+        "INSERT INTO work_packages ("
+        "id, goal, state, current_plan_version, current_epoch, metadata, "
+        "created_by, created_at, updated_at"
+        ") VALUES (?,?,?,?,?,?,?,?,?)",
+        (package_id, "repair", "draft", 0, 0, "{}", "test", "now", "now"),
+    )
+    postgres_store.execute(
+        "INSERT INTO execution_cohort_assignments ("
+        "id, task_id, package_id, eligibility, treatment_route, "
+        "rollout_revision, cohort_key, reason, detail, assigned_by, assigned_at"
+        ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "cohort-preliminary-package",
+            None,
+            package_id,
+            "eligible",
+            "managed_synchronized",
+            1,
+            "preliminary-managed",
+            "preliminary-package-linkage",
+            json.dumps({"schema": "mac.execution_cohort.prospective.v1"}),
+            "test-preliminary-controller",
+            "2026-07-17T00:00:00Z",
+        ),
+    )
+    postgres_store.execute(
+        "DROP TRIGGER trg_telemetry_data_migration_append_only "
+        "ON telemetry_data_migrations"
+    )
+    postgres_store.execute(
+        "DELETE FROM telemetry_data_migrations WHERE version = ?",
+        ("execution_cohort_preliminary_package_repair_v3",),
+    )
+
+    # The v2 marker remains, so only the separately guarded v3 repair can
+    # correct this preliminary assignment.
+    assert postgres_store.query_one(
+        "SELECT 1 FROM telemetry_data_migrations WHERE version = ?",
+        ("execution_cohort_historical_backfill_v2",),
+    )
+    postgres_store.initialize()
+
+    assignment = postgres_store.query_one(
+        "SELECT * FROM execution_cohort_assignments WHERE package_id = ?",
+        (package_id,),
+    )
+    assert assignment["eligibility"] == "unknown"
+    assert assignment["treatment_route"] == "unknown_managed_mode"
+    assert assignment["reason"] == "historical_package_mode_unproven"
+    assert json.loads(assignment["detail"]) == {
+        "schema": "mac.execution_cohort.backfill.v2",
+        "eligibility_source": "unavailable",
+        "route_source": "unavailable",
+        "route_receipt_id": "",
+    }
+    assert postgres_store.query_one(
+        "SELECT 1 FROM telemetry_data_migrations WHERE version = ?",
+        ("execution_cohort_preliminary_package_repair_v3",),
+    )
+    with pytest.raises(StoreError, match="append-only"):
+        postgres_store.execute(
+            "UPDATE execution_cohort_assignments SET reason = ? WHERE package_id = ?",
+            ("changed", package_id),
+        )
+
+
+def test_postgres_prospective_cohort_retains_unmaterialized_assignment_and_raw_run(
+    postgres_store,
+) -> None:
+    from mac.work_package_telemetry import WorkPackageTelemetryService
+
+    telemetry = WorkPackageTelemetryService(postgres_store)
+    task_id = "task_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    assignment = telemetry.assign_cohort(
+        task_id=task_id,
+        package_id=None,
+        eligibility="eligible",
+        treatment_route="managed_synchronized",
+        rollout_revision=1,
+        cohort_key="postgres-primary-treatment",
+        reason="concurrent_exogenous_assignment",
+        actor="execution-cohort-controller",
+        assigned_at="2026-07-17T00:00:00Z",
+        detail={
+            "schema": "mac.execution_cohort.prospective.v3",
+            "primary_analysis_eligible": True,
+            "estimand": "intention_to_treat_canonical_publication_outcome",
+            "randomization": {
+                "algorithm": "hmac_sha256_bucket_v1",
+                "treatment_route": "managed_synchronized",
+            },
+        },
+    )
+    assert assignment["task_id"] == task_id
+    projected = telemetry.comparable_atomic_outcomes()
+    assert [row["task_id"] for row in projected] == [task_id]
+    assert projected[0]["task_materialized"] is False
+    assert projected[0]["canonical_publication_outcome"] == "censored"
+    assert projected[0]["canonical_publication_terminal"] is False
+    assert projected[0]["canonical_publication_success"] is None
+
+    report = {
+        "run_id": "wppipe_postgres_lossless_probe",
+        "status": "partial_failure",
+        "started_at": "2026-07-17T00:00:01Z",
+        "completed_at": "2026-07-17T00:00:02Z",
+        "outcomes": [
+            {
+                "package_id": "",
+                "station": "future_controller_station",
+                "status": "failed",
+                "attempted": False,
+                "code": "future_failure",
+            }
+        ],
+    }
+    assert telemetry.record_pipeline_report(report) == []
+    assert telemetry.record_pipeline_report(report) == []
+    raw = postgres_store.query_all(
+        "SELECT outcome_index, operation, failure_class "
+        "FROM work_package_controller_outcomes WHERE pipeline_run_id = ? "
+        "ORDER BY outcome_index",
+        (report["run_id"],),
+    )
+    assert [dict(row) for row in raw] == [
+        {
+            "outcome_index": -1,
+            "operation": "controller_run",
+            "failure_class": "controller_run_failure",
+        },
+        {
+            "outcome_index": 0,
+            "operation": "future_controller_station",
+            "failure_class": "unmapped_controller_operation",
+        },
+    ]
 
 
 def test_delegated_agent_foreign_key_is_installed_after_agents(postgres_store) -> None:
@@ -474,6 +689,7 @@ def test_postgres_work_package_admission_activation_and_claim_are_portable(
         "ssh://git@example.invalid/mac.git",
     )
     cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    _bind_nonexecuting_pipeline_certifier(cp)
     machine = cp.register_machine("postgres-package-host")
     agent = cp.register_agent(
         machine.id,
@@ -643,6 +859,7 @@ def test_postgres_concurrent_work_package_wip_claims_are_fenced(
     )
     first_cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
     second_cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    _bind_nonexecuting_pipeline_certifier(first_cp, second_cp)
     agents = []
     for suffix in ("one", "two"):
         machine = first_cp.register_machine("postgres-package-%s-host" % suffix)
@@ -736,6 +953,7 @@ def test_postgres_full_work_package_assembly_line_is_portable(
         monkeypatch,
         passed=passed,
         expire_first_claim=expire_first_claim,
+        via_fast_lane=True,
     )
     endpoint = assembly_e2e.RepositoryEndpoint("repo_e2e", str(line.remote))
 
@@ -769,6 +987,15 @@ def test_postgres_full_work_package_assembly_line_is_portable(
             "WHERE package_id = ? AND state = ?",
             (line.package_id, "held"),
         )["n"] == 0
+        outcome = line.control.work_package_telemetry.comparable_atomic_outcomes(
+            package_id=line.package_id
+        )
+        assert len(outcome) == 1
+        assert outcome[0]["canonical_publication_outcome"] == "succeeded"
+        assert outcome[0]["canonical_publication_success"] is True
+        assert outcome[0]["canonical_publication_proof"]["id"] == (
+            finalized.finalization_id
+        )
         if expire_first_claim:
             assert line.expired_lease_id is not None
             assert line.worker_lease_id != line.expired_lease_id
@@ -787,6 +1014,14 @@ def test_postgres_full_work_package_assembly_line_is_portable(
         assert postgres_store.query_one(
             "SELECT COUNT(*) AS n FROM work_package_landing_intents"
         )["n"] == 0
+        outcome = line.control.work_package_telemetry.comparable_atomic_outcomes(
+            package_id=line.package_id
+        )
+        assert len(outcome) == 1
+        assert outcome[0]["canonical_publication_outcome"] == "failed"
+        assert outcome[0]["canonical_publication_failure_class"] == (
+            "managed_certification_rejected_final"
+        )
         assert postgres_store.query_one(
             "SELECT COUNT(*) AS n FROM work_package_landing_receipts"
         )["n"] == 0

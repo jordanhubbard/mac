@@ -71,6 +71,17 @@ UPSTREAM_PROVIDER_KEYS = tuple(upstream_provider_env_vars())
 
 INPROC_MANAGED_KEYS = tuple(dict.fromkeys([*ROUTER_KEYS, *GATEWAY_ROUTING_KEYS, *UPSTREAM_PROVIDER_KEYS]))
 
+EXECUTION_COHORT_DEPLOY_KEYS = (
+    "MAC_DEPLOY_EXECUTION_COHORT_REVISION",
+    "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT",
+    "MAC_DEPLOY_EXECUTION_COHORT_SEED",
+)
+EXECUTION_COHORT_RUNTIME_KEYS = (
+    "MAC_EXECUTION_COHORT_REVISION",
+    "MAC_EXECUTION_COHORT_TREATMENT_PERCENT",
+    "MAC_EXECUTION_COHORT_SEED",
+)
+
 
 def build_router_provider_spec(provider_env_values: Mapping[str, str]) -> str:
     """Build ``MAC_ROUTER_PROVIDERS`` from provider keys collected by setup."""
@@ -290,6 +301,61 @@ def _mac_hub_url(cfg: DeployEnvConfig) -> str:
 def _ensure_secret_values(values: MutableMapping[str, str]) -> None:
     values.setdefault("MAC_SECRET_KEY", secrets.token_urlsafe(48))
     values.setdefault("MAC_API_TOKEN", secrets.token_urlsafe(32))
+
+
+def _apply_execution_cohort_config(
+    values: MutableMapping[str, str],
+    cfg: DeployEnvConfig,
+    env: Mapping[str, str],
+) -> None:
+    """Materialize the randomized pilot only on the control-plane hub.
+
+    Deployment inputs are never persisted under their ``MAC_DEPLOY_*`` names.
+    In particular, the seed arrives over the secret-input channel and is
+    written only to the hub's owner-only runtime environment file.  A former
+    hub becoming a spoke has every runtime cohort value removed.
+    """
+
+    _clear(values, EXECUTION_COHORT_DEPLOY_KEYS)
+    if not cfg.identity.is_hub:
+        _clear(values, EXECUTION_COHORT_RUNTIME_KEYS)
+        return
+
+    revision_raw = (
+        env.get("MAC_DEPLOY_EXECUTION_COHORT_REVISION")
+        or values.get("MAC_EXECUTION_COHORT_REVISION")
+        or "1"
+    ).strip()
+    percentage_raw = (
+        env.get("MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT")
+        or values.get("MAC_EXECUTION_COHORT_TREATMENT_PERCENT")
+        or "50"
+    ).strip()
+    try:
+        revision = int(revision_raw)
+        percentage = int(percentage_raw)
+    except ValueError as exc:
+        raise ValueError(
+            "MAC_DEPLOY_EXECUTION_COHORT_REVISION and "
+            "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT must be integers"
+        ) from exc
+    if revision < 1:
+        raise ValueError("MAC_DEPLOY_EXECUTION_COHORT_REVISION must be positive")
+    if not 0 <= percentage <= 100:
+        raise ValueError(
+            "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT must be between 0 and 100"
+        )
+    values["MAC_EXECUTION_COHORT_REVISION"] = str(revision)
+    values["MAC_EXECUTION_COHORT_TREATMENT_PERCENT"] = str(percentage)
+
+    deploy_seed = env.get("MAC_DEPLOY_EXECUTION_COHORT_SEED")
+    if deploy_seed is not None and str(deploy_seed):
+        values["MAC_EXECUTION_COHORT_SEED"] = str(deploy_seed)
+    seed = values.get("MAC_EXECUTION_COHORT_SEED", "")
+    if seed and len(seed) < 32:
+        raise ValueError(
+            "MAC_DEPLOY_EXECUTION_COHORT_SEED must be at least 32 characters"
+        )
 
 
 def _path_values(cfg: DeployEnvConfig) -> Dict[str, str]:
@@ -820,6 +886,7 @@ def build_mac_env(
         )
     _ensure_secret_values(values)
     values.update(_path_values(cfg))
+    _apply_execution_cohort_config(values, cfg, env)
     if cfg.identity.is_hub:
         # Evidence artifact bytes live in a hub-local blob store so ledger DB
         # growth decouples from artifact volume (mac.evidence_blobs). setdefault
@@ -920,6 +987,13 @@ def build_mac_env(
             "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR",
             "MAC_WORK_PACKAGE_BUNDLE_DIR",
         ),
+        # A Darwin hub can keep the certifier's hard-Landlock execution on a
+        # Linux OpenShell gateway through a loopback-only SSH tunnel. The
+        # certifier validates the endpoint and never exposes it to candidates.
+        (
+            "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
+            "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT",
+        ),
         # OpenShell sandbox requirement, data-driven from the agent's resources
         # (no hardcoded agent list). The deploy orchestrator derives this from the
         # agent's DB resources["openshell_required"]; it lands in mac.env and the
@@ -955,6 +1029,7 @@ def build_mac_env(
         values["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] = "0"
         values["MAC_WORK_PACKAGE_LANDING_ENABLED"] = "0"
         values.pop("MAC_WORK_PACKAGE_BUNDLE_DIR", None)
+        values.pop("MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT", None)
     values.setdefault("MAC_REQUIRE_HERMES_STARTUP_READY", "0")
     values.setdefault("MAC_WORKER_WORKSPACE", str(cfg.paths.mac_home / "agent-workspaces"))
     values.setdefault("MAC_WORKER_HEARTBEAT_INTERVAL", "30")

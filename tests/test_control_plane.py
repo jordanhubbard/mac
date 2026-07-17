@@ -5096,6 +5096,7 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
 def test_atomic_repository_task_uses_managed_fast_lane_when_ready(
     cp, tmp_path, monkeypatch
 ):
+    cp._execution_cohort_treatment_percentage = 100
     repo = tmp_path / "managed-fast-lane"
     repo.mkdir()
     _write_beads(repo, [])
@@ -5207,6 +5208,23 @@ def test_atomic_repository_task_uses_managed_fast_lane_when_ready(
     assert route["lane"] == "managed"
     assert route["route_state"] == "managed_active"
     assert route["package_id"] == link["package_id"]
+    task_cohort = cp.store.query_one(
+        "SELECT * FROM execution_cohort_assignments WHERE task_id = ?",
+        (task.id,),
+    )
+    package_cohort = cp.store.query_one(
+        "SELECT * FROM execution_cohort_assignments WHERE package_id = ?",
+        (link["package_id"],),
+    )
+    assert task_cohort["id"] != package_cohort["id"]
+    assert task_cohort["eligibility"] == "eligible"
+    assert task_cohort["treatment_route"] == "managed_synchronized"
+    assert package_cohort["task_id"] is None
+    cohort_detail = json.loads(task_cohort["detail"])
+    assert cohort_detail["primary_analysis_eligible"] is True
+    assert cohort_detail["randomization"]["treatment_percentage"] == 100
+    comparable = cp.comparable_atomic_execution_outcomes()
+    assert [row["task_id"] for row in comparable] == [task.id]
     for package_state in ("paused", "active", "completed"):
         cp.store.execute(
             "UPDATE work_packages SET state = ? WHERE id = ?",
@@ -5225,6 +5243,7 @@ def test_atomic_repository_task_uses_managed_fast_lane_when_ready(
 def test_managed_fast_lane_holds_without_downgrading_and_releases_normally(
     cp, tmp_path, monkeypatch, activation_ready, operator_held
 ):
+    cp._execution_cohort_treatment_percentage = 100
     repo = tmp_path / ("held-fast-lane-%s" % operator_held)
     repo.mkdir()
     _write_beads(repo, [])

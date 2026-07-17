@@ -111,19 +111,27 @@ network first; do not deploy to a guessed host.
 - [ ] `MAC_WORKER_WORKSPACE_GC_ENABLED` is not disabled accidentally, and a
       `worker.workspace_gc.disk_low` warning is treated as a dispatch blocker.
 - [ ] A pinned Python meeting the repository requirement is available. Fresh
-      hosts use the deployer's `uv`-provisioned interpreter instead of inheriting
-      an old base-image Python.
+      hosts use the deployer's checksum-reviewed `uv 0.8.22` native asset to
+      provision exact Python `3.12.11` instead of inheriting an old base-image
+      Python. The reviewed asset matrix covers Linux amd64/arm64 and Darwin
+      x86_64/arm64; an unknown OS/architecture or SHA-256 mismatch stops deploy.
 - [ ] `git`, `gh`, `codegraph`, the selected coding CLIs, container runtime, and
       OpenShell prerequisites are present in the worker's service PATH, not only
       an interactive login shell.
-- [ ] CodeGraph installation succeeds. Index initialization is asynchronous and
-      bounded; it must not block heartbeats indefinitely.
+- [ ] CodeGraph `v1.1.6` is installed from its versioned native release archive
+      after SHA-256 verification. No fleet credential-bearing process executes
+      a downloaded installer script. Verified archives are cached under
+      `~/.mac/cache/reviewed-assets`; checksum verification is repeated before
+      reuse. Index initialization is asynchronous and bounded; it must not block
+      heartbeats indefinitely.
 - [ ] The crash observer is installed outside the MAC virtualenv and the native
       supervisor has restart enabled.
 
 **Stop conditions:** low disk/inodes, failed workspace GC, unsupported Python,
+unsupported tool OS/architecture, reviewed-asset download or checksum failure,
 missing supervisor control, or a required tool visible only in an interactive
-shell. A credential sync does not repair any of these failures.
+shell. Do not bypass a checksum failure with an ambient `curl | sh` installer.
+A credential sync does not repair any of these failures.
 
 ## Phase 3: secrets and credential projection
 
@@ -407,6 +415,8 @@ mac repo refs audit --repo .
 | Pure worker deploy asks for Slack/persona/gateway | role coupling | Set and honor `gateway_impl=none`; skip all chat setup and checks. |
 | Fresh pure worker reports every coding route failed and `openshell` is absent | ephemeral runtime prerequisite missing | Treat `gateway_impl=none` as OpenShell-required, bootstrap it during deploy, keep the worker drained on failure, then repeat the sandbox sentinel. |
 | Fresh pod rejects Python requirement | base-image Python bleed-through | Use the deployer's pinned `uv` interpreter. |
+| Native uv or CodeGraph bootstrap reports a SHA-256 mismatch | corrupt cache, incomplete download, or upstream asset drift | Keep the node drained, remove only the named file under `~/.mac/cache/reviewed-assets`, retry once, and investigate if the reviewed digest still differs. Never run the upstream installer script. |
+| Native tool bootstrap rejects the OS or CPU | unsupported onboarding target | Add and review the exact versioned asset plus SHA-256 in `deploy/reviewed-tool-assets.sh`, with executable coverage, before onboarding that platform. |
 | `supervisorctl` returns permission errors | root-only supervisord socket | Use the supported passwordless `sudo supervisorctl` path. |
 | Qdrant panics spawning threads | PID cap too low on high-core host | Raise `QDRANT_PIDS_LIMIT`, redeploy, and require HTTP 200 readiness. |
 | Hub-local sandbox request is cancelled | missing host-bridge egress | Allow the exact `host.openshell.internal:<port>` route for the required binaries. |

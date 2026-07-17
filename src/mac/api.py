@@ -656,6 +656,14 @@ class WorkPackagePublicationFinalize(BaseModel):
     receipt_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
 
 
+class WorkPackageFinalizationOutcome(BaseModel):
+    outcome_type: Literal["revert", "incident"]
+    external_id: str = Field(min_length=1, max_length=512)
+    observed_at: str = Field(min_length=1, max_length=80)
+    actor: str = Field(default="human", min_length=1, max_length=256)
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
 class WorkPackageCandidateAccept(BaseModel):
     actor: str = Field(
         default="work-package-acceptance-controller",
@@ -5352,6 +5360,36 @@ def create_app(
     ) -> List[Dict[str, Any]]:
         return cp.list_work_packages(state=state, project=project, limit=limit)
 
+    @app.get("/work-package-telemetry")
+    def export_work_package_telemetry(
+        package_id: Optional[str] = Query(default=None),
+        treatment_route: Optional[str] = Query(default=None),
+        eligibility: Optional[str] = Query(default=None),
+        station: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        limit: int = Query(default=1000, ge=1, le=10000),
+    ) -> Dict[str, Any]:
+        return cp.work_package_telemetry_export(
+            package_id=package_id,
+            treatment_route=treatment_route,
+            eligibility=eligibility,
+            station=station,
+            since=since,
+            limit=limit,
+        )
+
+    @app.get("/work-package-telemetry/comparable-atomic-outcomes")
+    def comparable_atomic_execution_outcomes(
+        treatment_route: Optional[str] = Query(default=None),
+        since: Optional[str] = Query(default=None),
+        limit: int = Query(default=1000, ge=1, le=10000),
+    ) -> List[Dict[str, Any]]:
+        return cp.comparable_atomic_execution_outcomes(
+            treatment_route=treatment_route,
+            since=since,
+            limit=limit,
+        )
+
     @app.post("/work-packages")
     def admit_work_package(
         body: WorkPackageAdmit,
@@ -5370,6 +5408,13 @@ def create_app(
     @app.get("/work-packages/{package_id}")
     def describe_work_package(package_id: str) -> Dict[str, Any]:
         return cp.describe_work_package(package_id)
+
+    @app.get("/work-packages/{package_id}/telemetry")
+    def describe_work_package_telemetry(package_id: str) -> Dict[str, Any]:
+        # Validate the package identity first so an empty export is not
+        # ambiguous with a typo.
+        cp.describe_work_package(package_id)
+        return cp.work_package_telemetry_export(package_id=package_id)
 
     @app.get("/work-packages/{package_id}/activation-readiness")
     def work_package_activation_readiness(package_id: str) -> Dict[str, Any]:
@@ -5601,6 +5646,23 @@ def create_app(
             actor=body.actor,
             receipt_id=body.receipt_id,
         ).to_dict()
+
+    @app.post("/work-package-finalizations/{finalization_id}/outcomes")
+    def record_work_package_finalization_outcome(
+        finalization_id: str,
+        body: WorkPackageFinalizationOutcome,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        _ensure_payload_bounded(body.detail, "work_package.finalization_outcome.detail")
+        return cp.record_work_package_finalization_outcome(
+            finalization_id,
+            outcome_type=body.outcome_type,
+            external_id=body.external_id,
+            observed_at=body.observed_at,
+            actor=body.actor,
+            detail=body.detail,
+        )
 
     @app.post("/work-package-outputs/{evidence_id}/verify")
     def verify_work_package_output(

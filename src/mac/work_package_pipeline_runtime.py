@@ -21,18 +21,23 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+from urllib.parse import urlsplit
 
 from mac.gitops import validate_git_ref
 from mac.landing_service import LandingService, LandingServiceConfig, RepositoryEndpoint
 from mac.models import ValidationError, json_loads, new_id
 from mac.openshell_certifier import OpenShellCertificationRunner
 from mac.repository_hygiene import redact_repository_hygiene_text
-from mac.repository_contract import resolve_repository_canonical_remote
+from mac.repository_contract import (
+    resolve_repository_canonical_remote,
+    validate_secret_free_git_remote,
+)
 from mac.store import Store
 from mac.work_package_certification_service import WorkPackageCertificationService
 from mac.work_package_pipeline import (
@@ -59,19 +64,7 @@ def _parse_timestamp(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
-_CONTROLLER_GIT_ENV_NAMES = frozenset(
-    {
-        "GIT_ASKPASS",
-        "GIT_SSH",
-        "GIT_SSH_COMMAND",
-        "GH_TOKEN",
-        "GITHUB_TOKEN",
-        "GITEA_TOKEN",
-        "MAC_TASK_GIT_TOKEN",
-        "SSH_ASKPASS",
-        "SSH_AUTH_SOCK",
-    }
-)
+_CONTROLLER_SSH_ENV_NAMES = frozenset({"SSH_AUTH_SOCK"})
 
 CredentialEnvironment = Callable[[str, Mapping[str, Any]], Mapping[str, str]]
 CertificationContractValidator = Callable[..., Any]
@@ -120,15 +113,11 @@ class WorkPackagePipelineRuntimeConfig:
                 errors.append("%s must be an integer" % name)
                 return default
             if not minimum <= value <= maximum:
-                errors.append(
-                    "%s must be between %d and %d" % (name, minimum, maximum)
-                )
+                errors.append("%s must be between %d and %d" % (name, minimum, maximum))
                 return default
             return value
 
-        def number(
-            name: str, default: float, minimum: float, maximum: float
-        ) -> float:
+        def number(name: str, default: float, minimum: float, maximum: float) -> float:
             raw = source.get(name)
             if raw is None or not raw.strip():
                 return default
@@ -138,22 +127,15 @@ class WorkPackagePipelineRuntimeConfig:
                 errors.append("%s must be numeric" % name)
                 return default
             if not minimum <= value <= maximum:
-                errors.append(
-                    "%s must be between %s and %s"
-                    % (name, minimum, maximum)
-                )
+                errors.append("%s must be between %s and %s" % (name, minimum, maximum))
                 return default
             return value
 
         # WorkPackagePipelineConfig already owns scheduler bounds.  Supply the
         # selected mapping temporarily so tests and embedded construction do not
         # need to mutate process environment.
-        max_actions = integer(
-            "MAC_WORK_PACKAGE_PIPELINE_MAX_ACTIONS", 8, 1, 1_000
-        )
-        max_items = integer(
-            "MAC_WORK_PACKAGE_PIPELINE_MAX_ITEMS", 128, 1, 10_000
-        )
+        max_actions = integer("MAC_WORK_PACKAGE_PIPELINE_MAX_ACTIONS", 8, 1, 1_000)
+        max_items = integer("MAC_WORK_PACKAGE_PIPELINE_MAX_ITEMS", 128, 1, 10_000)
         if max_items < max_actions:
             errors.append(
                 "MAC_WORK_PACKAGE_PIPELINE_MAX_ITEMS must be at least MAX_ACTIONS"
@@ -197,17 +179,13 @@ class WorkPackagePipelineRuntimeConfig:
         try:
             landing = LandingServiceConfig(**landing_values)
         except (TypeError, ValueError) as exc:
-            errors.append(
-                "MAC work-package landing configuration is invalid: %s" % exc
-            )
+            errors.append("MAC work-package landing configuration is invalid: %s" % exc)
             landing = LandingServiceConfig(
                 enabled=False,
                 lease_seconds=int(landing_values["lease_seconds"]),
                 git_timeout_seconds=int(landing_values["git_timeout_seconds"]),
             )
-        raw_bundle_dir = str(
-            source.get("MAC_WORK_PACKAGE_BUNDLE_DIR") or ""
-        ).strip()
+        raw_bundle_dir = str(source.get("MAC_WORK_PACKAGE_BUNDLE_DIR") or "").strip()
         bundle_dir = Path(raw_bundle_dir).expanduser() if raw_bundle_dir else None
         bundle_retention_seconds = int(
             number(
@@ -229,11 +207,7 @@ class WorkPackagePipelineRuntimeConfig:
                 "MAC_WORK_PACKAGE_LANDING_ENABLED must be true when the pipeline is enabled"
             )
         return cls(
-            pipeline=(
-                replace(pipeline, enabled=False)
-                if errors
-                else pipeline
-            ),
+            pipeline=(replace(pipeline, enabled=False) if errors else pipeline),
             landing=landing,
             bundle_dir=bundle_dir,
             bundle_retention_seconds=bundle_retention_seconds,
@@ -258,21 +232,65 @@ class WorkPackagePipelineRuntimeConfig:
 
 def controller_git_credential_environment(
     _operation: str,
-    _repository: Mapping[str, Any],
+    repository: Any,
     *,
     environ: Optional[Mapping[str, str]] = None,
 ) -> Mapping[str, str]:
-    """Forward only explicitly supported ambient Git credential inputs.
+    """Construct a nonpersistent credential environment for one exact remote.
 
-    Values are passed directly to controller-owned Git subprocesses and are
-    never persisted or returned in status.  A configured askpass helper may
-    consume one of the token variables; SSH deployments normally need only
-    ``SSH_AUTH_SOCK`` and, optionally, ``GIT_SSH_COMMAND``.
+    HTTPS publication is supported only for a validated ``github.com`` remote.
+    The package-owned askpass executable receives ``GH_TOKEN`` in the child
+    environment, so neither the token nor an authenticated URL enters argv or
+    durable repository metadata.  SSH remotes retain the narrow agent/command
+    variables used by existing fleet deployments.  Ambient askpass and Git
+    configuration variables are never forwarded.
     """
 
     source = os.environ if environ is None else environ
+    if isinstance(repository, Mapping):
+        remote_value = repository.get("source") or repository.get("remote_url")
+    else:
+        remote_value = getattr(repository, "remote_url", None)
+    try:
+        remote = validate_secret_free_git_remote(remote_value)
+    except ValueError as exc:
+        raise ValidationError("controller Git remote is invalid") from exc
+
+    if remote.startswith("/") or remote.startswith("file://"):
+        return {}
+    if "://" not in remote:
+        return _controller_ssh_environment(source)
+
+    parsed = urlsplit(remote)
+    scheme = parsed.scheme.lower()
+    if scheme == "ssh":
+        return _controller_ssh_environment(source)
+    if scheme != "https" or (parsed.hostname or "").lower() != "github.com":
+        raise ValidationError(
+            "controller Git HTTPS credentials support only github.com"
+        )
+    if parsed.port not in {None, 443}:
+        raise ValidationError("controller GitHub HTTPS remote uses an invalid port")
+
+    token = source.get("GH_TOKEN", "")
+    if (
+        not token
+        or token != token.strip()
+        or any(character in token for character in ("\x00", "\r", "\n"))
+    ):
+        raise ValidationError("controller GitHub HTTPS credential is unavailable")
+    askpass = Path(sys.executable).with_name("mac-git-askpass")
+    if not askpass.is_file() or not os.access(askpass, os.X_OK):
+        raise ValidationError("controller GitHub HTTPS askpass helper is unavailable")
+    return {
+        "GH_TOKEN": token,
+        "GIT_ASKPASS": str(askpass),
+    }
+
+
+def _controller_ssh_environment(source: Mapping[str, str]) -> Mapping[str, str]:
     result: dict[str, str] = {}
-    for name in sorted(_CONTROLLER_GIT_ENV_NAMES):
+    for name in sorted(_CONTROLLER_SSH_ENV_NAMES):
         value = source.get(name)
         if value is None or value == "":
             continue
@@ -366,9 +384,7 @@ class RepositoryPipelineReleaseGateResolver:
             bool(self.landing_config.enabled),
             endpoint=endpoint,
             reason=(
-                "canonical landing endpoint is unavailable"
-                if endpoint is None
-                else ""
+                "canonical landing endpoint is unavailable" if endpoint is None else ""
             ),
         )
 
@@ -465,7 +481,9 @@ class ExactCandidateBundleProvider:
             repository_dir = root / "repository.git"
             bundle = root / "candidate.bundle"
             environment = self._git_environment(repository, root, source)
-            self._git(["init", "--bare", str(repository_dir)], cwd=None, env=environment)
+            self._git(
+                ["init", "--bare", str(repository_dir)], cwd=None, env=environment
+            )
             self._git(
                 [
                     "fetch",
@@ -493,9 +511,12 @@ class ExactCandidateBundleProvider:
             if "git-tree:%s" % tree != candidate_tree_digest:
                 raise ValidationError("assembled candidate tree identity changed")
 
-            bundle_ref = "refs/mac/certification/%s" % hashlib.sha256(
-                (str(batch["id"]) + "\0" + candidate_sha).encode("utf-8")
-            ).hexdigest()[:32]
+            bundle_ref = (
+                "refs/mac/certification/%s"
+                % hashlib.sha256(
+                    (str(batch["id"]) + "\0" + candidate_sha).encode("utf-8")
+                ).hexdigest()[:32]
+            )
             self._git(
                 ["update-ref", bundle_ref, candidate_sha],
                 cwd=repository_dir,
@@ -539,9 +560,7 @@ class ExactCandidateBundleProvider:
         if not self.cache_dir.exists():
             return 0
         self._ensure_cache_dir()
-        cutoff = datetime.now(timezone.utc) - timedelta(
-            seconds=self.retention_seconds
-        )
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self.retention_seconds)
         rows = self.store.query_all(
             "SELECT batch.*, finalization.finalized_at "
             "FROM work_package_integration_batches AS batch "
@@ -611,7 +630,9 @@ class ExactCandidateBundleProvider:
             (batch_id,),
         )
         if len(rows) > 1:
-            raise ValidationError("multiple certification jobs exist for one exact batch")
+            raise ValidationError(
+                "multiple certification jobs exist for one exact batch"
+            )
         return str(rows[0]["bundle_digest"] or "") if rows else ""
 
     def _validate_regular_bundle(

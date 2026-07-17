@@ -402,7 +402,9 @@ def test_repository_contract_validator_accepts_valid_and_rejects_invalid(
     tmp_path: Path,
 ) -> None:
     store, _bundle = _seed(tmp_path)
-    service = WorkPackageCertificationService(store)
+    service = WorkPackageCertificationService(
+        store, runner=_RecordingCertificationRunner()
+    )
 
     assert service.validate_repository_contract(REPOSITORY_ID) is None
 
@@ -412,6 +414,22 @@ def test_repository_contract_validator_accepts_valid_and_rejects_invalid(
     )
     with pytest.raises(ValidationError, match="metadata is malformed"):
         service.validate_repository_contract(REPOSITORY_ID)
+
+
+def test_repository_contract_gate_rejects_missing_production_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MAC_OPENSHELL_BIN", raising=False)
+    store, _bundle = _seed(tmp_path)
+    try:
+        service = WorkPackageCertificationService(store)
+        with pytest.raises(
+            ValidationError, match="OpenShell certifier runtime is unavailable"
+        ):
+            service.validate_repository_contract(REPOSITORY_ID)
+    finally:
+        store.close()
 
 
 def test_repository_contract_validator_rejects_unpinned_image_before_prepare(
@@ -460,6 +478,47 @@ def _result_from_job(job: Any, *, passed: bool) -> OpenShellCertificationResult:
         "" if passed else "failed\n",
         False,
     )
+    changed_files = ["docs/canaries/test.md"]
+    phase_manifest = {
+        "schema": "mac.certifier_phase_manifest.v1",
+        "trusted_source_revision": "f" * 40,
+        "assembly_base_sha": job.assembly_base_sha,
+        "candidate_sha": job.candidate_sha,
+        "changed_files": changed_files,
+        "changed_file_count": len(changed_files),
+        "changed_files_digest": _digest_bytes(
+            json.dumps(
+                changed_files,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("utf-8")
+        ),
+        "selection_mode": "documentation_fast_lane",
+        "authoritative": {
+            "mode": "focused",
+            "reason": "documentation_only_invariants",
+            "tests": [
+                "tests/test_openshell_certifier.py",
+                "tests/test_publication_lane.py",
+                "tests/test_repository_contract_certification.py",
+            ],
+        },
+        "supplemental": {
+            "mode": "skipped",
+            "reason": "documentation_only",
+            "tests": [],
+        },
+        "full_suite_count": 0,
+    }
+    phase_manifest["manifest_digest"] = _digest_bytes(
+        json.dumps(
+            phase_manifest,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+    )
     return OpenShellCertificationResult(
         job_id=job.job_id,
         job_digest=job.job_digest,
@@ -480,6 +539,7 @@ def _result_from_job(job: Any, *, passed: bool) -> OpenShellCertificationResult:
         commands_digest=job.commands_digest,
         sandbox_name="mac-cert-focused",
         checks=(check,),
+        phase_manifest=phase_manifest,
         isolation={
             "schema": CERTIFICATION_ISOLATION_SCHEMA,
             "network": "disabled",
@@ -493,6 +553,7 @@ def _result_from_job(job: Any, *, passed: bool) -> OpenShellCertificationResult:
             "run_as_user": "non_root",
             "launcher_environment": ["PATH"],
             "input_format": "credential_free_git_bundle",
+            "assembly_base_transport": "controller_bound_argv",
         },
         started_at=NOW_TEXT,
         completed_at=(NOW + timedelta(seconds=1)).isoformat(timespec="microseconds"),
@@ -526,7 +587,7 @@ def test_prepare_binds_exact_certification_successor_and_is_idempotent(
     store, bundle = _seed(tmp_path)
     try:
         service = _service(store)
-        first, _job = _prepared_job(service, bundle)
+        first, prepared_job = _prepared_job(service, bundle)
         second = service.prepare(BATCH_ID, bundle, actor="retrying-controller")
 
         assert first["created"] is True
@@ -544,6 +605,13 @@ def test_prepare_binds_exact_certification_successor_and_is_idempotent(
         )
         assert definition["prepared_by"] == "pipeline-controller"
         assert definition["certification_task_id"] == CERTIFICATION_TASK_ID
+        expected_argv = [
+            "/opt/mac-certifier/bin/run-contract-tests",
+            "--base-sha",
+            BASE_SHA,
+        ]
+        assert definition["job"]["controller_commands"][0]["argv"] == expected_argv
+        assert list(prepared_job.controller_commands[0].argv) == expected_argv
 
         changed = tmp_path / "changed.bundle"
         changed.write_bytes(bundle.read_bytes() + b"changed")
@@ -604,6 +672,19 @@ def test_result_integrity_station_projection_and_idempotent_ingestion(
                 public["id"], malformed, owner=claim.owner, fence=claim.fence
             )
 
+        wrong_base = json.loads(json.dumps(payload))
+        wrong_base["phase_manifest"]["assembly_base_sha"] = "d" * 40
+        unsigned_phase = dict(wrong_base["phase_manifest"])
+        unsigned_phase.pop("manifest_digest")
+        wrong_base["phase_manifest"]["manifest_digest"] = _digest_json(
+            unsigned_phase
+        )
+        wrong_base = _redigest(wrong_base)
+        with pytest.raises(ValidationError, match="phase manifest"):
+            service.ingest(
+                public["id"], wrong_base, owner=claim.owner, fence=claim.fence
+            )
+
         first = service.ingest(
             public["id"], payload, owner=claim.owner, fence=claim.fence
         )
@@ -615,6 +696,21 @@ def test_result_integrity_station_projection_and_idempotent_ingestion(
         assert second.certification_id == first.certification_id
         assert first.batch_state == "verifying"
         assert first.package_state == "active"
+        receipt_detail = json.loads(
+            store.query_one(
+                "SELECT detail FROM work_package_controller_station_receipts WHERE id = ?",
+                (first.controller_station_receipt_id,),
+            )["detail"]
+        )
+        assert receipt_detail["assembly_base_sha"] == BASE_SHA
+        assert receipt_detail["selection_mode"] == "documentation_fast_lane"
+        assert receipt_detail["full_suite_count"] == 0
+        assert receipt_detail["phase_manifest_digest"] == payload[
+            "phase_manifest"
+        ]["manifest_digest"]
+        assert receipt_detail["changed_files_digest"] == payload[
+            "phase_manifest"
+        ]["changed_files_digest"]
         task = store.query_one(
             "SELECT state FROM tasks WHERE id = ?", (CERTIFICATION_TASK_ID,)
         )
@@ -716,6 +812,16 @@ class _RecordingCertificationRunner:
         return _result_from_job(job, passed=True)
 
 
+class _RacingCertificationRunner:
+    def __init__(self, before_failure: Any = None) -> None:
+        self.before_failure = before_failure
+
+    def run(self, job: Any, *, result_path: Path) -> OpenShellCertificationResult:
+        if self.before_failure is not None:
+            self.before_failure(job)
+        raise OSError("openshell disappeared after preflight")
+
+
 def test_run_uses_private_result_directory_and_checks_bundle_before_claim(
     tmp_path: Path,
 ) -> None:
@@ -740,6 +846,146 @@ def test_run_uses_private_result_directory_and_checks_bundle_before_claim(
         with pytest.raises(ValidationError, match="does not match"):
             service.run(public["id"], wrong, owner="controller")
         assert service.get(public["id"])["state"] == "queued"
+    finally:
+        store.close()
+
+
+def test_default_runner_binding_fails_before_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MAC_OPENSHELL_BIN", raising=False)
+    store, bundle = _seed(tmp_path)
+    try:
+        service = _service(store)
+        public, _job = _prepared_job(service, bundle)
+
+        with pytest.raises(
+            ValidationError, match="OpenShell certifier runtime is unavailable"
+        ):
+            service.run(public["id"], bundle, owner="controller")
+
+        assert service.get(public["id"])["state"] == "queued"
+    finally:
+        store.close()
+
+
+def test_cached_production_runner_repreflights_each_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    count = tmp_path / "preflight-count"
+    binary = tmp_path / "openshell"
+    binary.write_text(
+        "#!/bin/sh\n"
+        "n=0\n"
+        f"test ! -f {count!s} || n=$(cat {count!s})\n"
+        "n=$((n + 1))\n"
+        f"printf '%s\\n' \"$n\" > {count!s}\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    monkeypatch.setenv("MAC_OPENSHELL_BIN", str(binary))
+    monkeypatch.setenv("HOME", str(home))
+
+    store = SQLiteStore(":memory:")
+    try:
+        service = WorkPackageCertificationService(store)
+        service.validate_runtime_binding()
+        service.validate_runtime_binding()
+
+        # Each gate probes the exact binary and its selected/direct gateway.
+        assert count.read_text(encoding="utf-8").strip() == "4"
+    finally:
+        store.close()
+
+
+def test_post_preflight_runtime_race_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    store, bundle = _seed(tmp_path)
+    try:
+        service = _service(store, runner=_RacingCertificationRunner())
+        public, _job = _prepared_job(service, bundle)
+
+        with pytest.raises(
+            ValidationError, match="OpenShell certifier runtime became unavailable"
+        ):
+            service.run(public["id"], bundle, owner="controller")
+
+        released = service.get(public["id"])
+        assert released["state"] == "running"
+        assert released["lease_owner"] == "controller"
+        assert released["lease_fence"] == 1
+        assert released["lease_expires_at"] == NOW_TEXT
+
+        retry = _service(
+            store,
+            runner=_RecordingCertificationRunner(),
+        ).claim(public["id"], owner="replacement-controller")
+        assert retry.fence == 2
+        assert retry.owner == "replacement-controller"
+    finally:
+        store.close()
+
+
+def test_runtime_failure_release_does_not_clobber_newer_claim(
+    tmp_path: Path,
+) -> None:
+    store, bundle = _seed(tmp_path)
+    try:
+        replacement: dict[str, Any] = {}
+
+        def reclaim(job: Any) -> None:
+            replacement["claim"] = _service(
+                store,
+                now=NOW + timedelta(days=2),
+                runner=_RecordingCertificationRunner(),
+            ).claim(job.job_id, owner="replacement-controller")
+
+        service = _service(
+            store,
+            runner=_RacingCertificationRunner(before_failure=reclaim),
+        )
+        public, _job = _prepared_job(service, bundle)
+
+        with pytest.raises(
+            ValidationError, match="OpenShell certifier runtime became unavailable"
+        ):
+            service.run(public["id"], bundle, owner="original-controller")
+
+        current = service.get(public["id"])
+        claim = replacement["claim"]
+        assert current["state"] == "running"
+        assert current["lease_owner"] == "replacement-controller"
+        assert current["lease_fence"] == claim.fence == 2
+        assert current["lease_expires_at"] == claim.expires_at
+    finally:
+        store.close()
+
+
+def test_retryable_claim_expiry_reports_exact_fence_rowcount(
+    tmp_path: Path,
+) -> None:
+    store, bundle = _seed(tmp_path)
+    try:
+        service = _service(store, runner=_RecordingCertificationRunner())
+        public, _job = _prepared_job(service, bundle)
+        original = service.claim(public["id"], owner="original-controller")
+
+        assert service._expire_retryable_claim(original) is True
+
+        replacement = service.claim(public["id"], owner="replacement-controller")
+        assert replacement.fence == original.fence + 1
+        assert service._expire_retryable_claim(original) is False
+
+        current = service.get(public["id"])
+        assert current["lease_owner"] == replacement.owner
+        assert current["lease_fence"] == replacement.fence
+        assert current["lease_expires_at"] == replacement.expires_at
     finally:
         store.close()
 

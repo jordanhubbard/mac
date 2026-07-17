@@ -176,12 +176,12 @@ network_policies:
   # is paired with the system node binaries (+ the npm/npx/corepack wrappers).
   #
   # Scope note: registry.npmjs.org ONLY — deliberately NOT nodejs.org. The image
-  # ships Node 18; the toolchain provisioner pins a Node-18-compatible pnpm
-  # (pnpm@9) installed from this registry and runs it under the *system* node at
-  # the known /usr/bin/node path, so no Node tarball download (nodejs.org) and no
-  # dynamic per-task toolchain-node path need to be allowlisted. If a repo ever
-  # genuinely requires a newer Node, install it to a FIXED, allowlisted path and
-  # add that path here rather than opening nodejs.org + a writable /tmp binary.
+  # ships pinned Node 22.23.1 and pnpm 11.13.1 and runs pnpm under the *system*
+  # node at the known /usr/bin/node path, so no Node tarball download
+  # (nodejs.org) and no dynamic per-task toolchain-node path need to be
+  # allowlisted. If a repo ever genuinely requires another Node, install it to a
+  # FIXED, allowlisted path and add that path here rather than opening nodejs.org
+  # plus a writable /tmp binary.
   node_packages:
     name: node-packages
     endpoints:

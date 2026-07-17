@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Image-owned external certification launcher. Candidate code cannot replace
+# this file, the selector, or the frozen baseline under /opt/mac-certifier.
+set -euo pipefail
+
+readonly CERTIFIER_ROOT=/opt/mac-certifier
+readonly TRUSTED_ROOT="$CERTIFIER_ROOT/trusted"
+readonly MANIFEST="$CERTIFIER_ROOT/share/trusted-harness.json"
+readonly PYTHON=/opt/mac-venv/bin/python
+readonly PHASE_PREFIX=MAC_CERTIFIER_PHASE_MANIFEST_JSON=
+
+die() {
+    printf 'mac-certifier: %s\n' "$*" >&2
+    exit 78
+}
+
+[ "$(id -u)" -ne 0 ] || die "certification must run as a non-root user"
+[ -x "$PYTHON" ] || die "frozen certifier interpreter is unavailable"
+[ -r "$MANIFEST" ] || die "trusted harness manifest is unavailable"
+[ -x "$CERTIFIER_ROOT/libexec/select-tests.py" ] \
+    || die "image-owned frozen selector is unavailable"
+[ -x "$CERTIFIER_ROOT/libexec/authoritative-contract-tests" ] \
+    || die "root-owned authoritative harness is unavailable"
+[ -x "$CERTIFIER_ROOT/libexec/supplemental-contract-tests" ] \
+    || die "image-owned supplemental harness is unavailable"
+
+if [ "${1:-}" = "--image-self-test" ]; then
+    [ "$#" -eq 1 ] || die "--image-self-test takes no arguments"
+    exec "$PYTHON" "$CERTIFIER_ROOT/libexec/harness_manifest.py" verify \
+        --root "$TRUSTED_ROOT" --manifest "$MANIFEST"
+fi
+
+[ "$#" -eq 2 ] && [ "$1" = "--base-sha" ] \
+    || die "certification requires exactly --base-sha SHA"
+assembly_base_sha="$2"
+case "$assembly_base_sha" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]* ) ;;
+    *) die "assembly base is not a lowercase Git SHA" ;;
+esac
+[ "${#assembly_base_sha}" -eq 40 ] \
+    || die "assembly base is not a 40-character lowercase Git SHA"
+case "$assembly_base_sha" in *[!0-9a-f]*) die "assembly base is not a lowercase Git SHA" ;; esac
+
+candidate_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$candidate_root" ] || die "candidate worktree is not a Git repository"
+[ "$candidate_root" = "$(pwd -P)" ] || die "certification must start at the candidate root"
+[ -d "$candidate_root/src" ] || die "candidate source tree is unavailable"
+
+# Verify the image's complete frozen baseline before reading candidate code.
+"$PYTHON" "$CERTIFIER_ROOT/libexec/harness_manifest.py" verify \
+    --root "$TRUSTED_ROOT" --manifest "$MANIFEST"
+
+selection_root="$(mktemp -d /tmp/mac-certifier-selection.XXXXXX)"
+selection_manifest="$selection_root/phase-manifest.json"
+selection_modes="$selection_root/modes"
+selection_tests="$selection_root/authoritative-tests"
+cleanup_selection() { rm -rf "$selection_root"; }
+trap cleanup_selection EXIT INT TERM
+
+# The frozen selector proves the exact controller-provided base exists, is a
+# candidate ancestor, and scopes base...HEAD. It never imports candidate code.
+"$PYTHON" "$CERTIFIER_ROOT/libexec/select-tests.py" \
+    --candidate-root "$candidate_root" \
+    --trusted-root "$TRUSTED_ROOT" \
+    --trusted-manifest "$MANIFEST" \
+    --base-sha "$assembly_base_sha" \
+    --output "$selection_manifest" \
+    --modes-output "$selection_modes" \
+    --authoritative-tests-output "$selection_tests"
+
+mapfile -t modes < "$selection_modes"
+[ "${#modes[@]}" -eq 3 ] || die "selector returned an invalid phase plan"
+authoritative_mode="${modes[0]}"
+supplemental_mode="${modes[1]}"
+selection_mode="${modes[2]}"
+mapfile -t authoritative_tests < "$selection_tests"
+
+# This first structured line is parsed and revalidated by the controller, then
+# stored in the signed result/evidence receipt. A duplicate marker is rejected.
+printf '%s%s\n' "$PHASE_PREFIX" "$(tr -d '\n' < "$selection_manifest")"
+if [ "$authoritative_mode" = "rejected" ]; then
+    die "frozen selector rejected inseparable unmapped mixed scope: $selection_mode"
+fi
+[ "$authoritative_mode" = "focused" ] || [ "$authoritative_mode" = "full" ] \
+    || die "selector returned an invalid authoritative phase"
+[ "${#authoritative_tests[@]}" -gt 0 ] \
+    || die "selector returned no authoritative tests"
+
+# Independent verdict: execute the selected frozen tests directly from the
+# root-owned read-only image tree against candidate production source.
+authoritative_output="$(mktemp -d /tmp/mac-certifier-authoritative.XXXXXX)"
+authoritative_cleanup() { rm -rf "$authoritative_output"; }
+trap 'authoritative_cleanup; cleanup_selection' EXIT INT TERM
+"$CERTIFIER_ROOT/libexec/authoritative-contract-tests" \
+    "$candidate_root/src" "$authoritative_output" "${authoritative_tests[@]}"
+authoritative_cleanup
+
+if [ "$supplemental_mode" = "skipped" ]; then
+    cleanup_selection
+    trap - EXIT INT TERM
+    exit 0
+fi
+[ "$supplemental_mode" = "full" ] \
+    || die "selector returned an invalid supplemental phase"
+
+# Clone the exact local candidate into a credential-free scratch repository.
+# This one optional full phase is reserved for tests that must inspect candidate
+# deploy/config/root files. No external coverage pass is duplicated here.
+run_root="$(mktemp -d /tmp/mac-certifier-run.XXXXXX)"
+scratch="$run_root/repo"
+cleanup() { rm -rf "$run_root"; }
+trap 'cleanup; cleanup_selection' EXIT INT TERM
+git clone --quiet --no-hardlinks "$candidate_root" "$scratch" \
+    || die "candidate scratch clone failed"
+
+rm -rf "$scratch/tests"
+cp -Rf "$TRUSTED_ROOT/tests" "$scratch/tests"
+
+if [ -d "$scratch/plugin" ]; then
+    find "$scratch/plugin" \( -type f -o -type l \) \
+        \( -name 'test*.py' -o -name 'conftest.py' \) -delete
+else
+    mkdir -p "$scratch/plugin"
+fi
+cp -f "$TRUSTED_ROOT/plugin/test_tools.py" "$scratch/plugin/test_tools.py"
+
+for path in \
+    conftest.py \
+    pyproject.toml \
+    test-policy.toml \
+    scripts/run-contract-tests.sh \
+    scripts/coverage-policy.py \
+    scripts/test-portfolio.py
+do
+    mkdir -p "$scratch/$(dirname "$path")"
+    cp -f "$TRUSTED_ROOT/$path" "$scratch/$path"
+done
+for path in .coveragerc pytest.ini setup.cfg sitecustomize.py tox.ini usercustomize.py
+do
+    rm -rf "$scratch/$path"
+done
+
+"$PYTHON" "$CERTIFIER_ROOT/libexec/harness_manifest.py" verify \
+    --root "$scratch" --manifest "$MANIFEST"
+chmod -R a-w "$scratch/tests" "$scratch/plugin/test_tools.py" \
+    "$scratch/conftest.py" "$scratch/pyproject.toml" "$scratch/test-policy.toml" \
+    "$scratch/scripts/run-contract-tests.sh" \
+    "$scratch/scripts/coverage-policy.py" "$scratch/scripts/test-portfolio.py"
+
+supplemental_output="$(mktemp -d /tmp/mac-certifier-supplemental.XXXXXX)"
+supplemental_cleanup() { rm -rf "$supplemental_output"; }
+trap 'supplemental_cleanup; cleanup; cleanup_selection' EXIT INT TERM
+"$CERTIFIER_ROOT/libexec/supplemental-contract-tests" \
+    "$scratch" "$supplemental_output"
+supplemental_cleanup
+cleanup
+cleanup_selection
+trap - EXIT INT TERM

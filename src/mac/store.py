@@ -188,9 +188,346 @@ class SQLiteStore:
         with self._lock:
             return self._conn.execute(sql, params).fetchall()
 
+    def _migrate_execution_cohort_route_contract(self) -> None:
+        """Upgrade the preliminary cohort route CHECK without losing receipts.
+
+        The telemetry schema was exercised before cut-over with a two-value
+        route contract.  SQLite cannot alter a CHECK constraint in place, so
+        repair that preliminary table once before the main schema/backfill runs.
+        Only pre-v2 package assignments are reclassified; prospective v2/v3
+        assignments retain their original identity.
+        """
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("execution_cohort_assignments",),
+        ).fetchone()
+        if row is None or "unknown_managed_mode" in str(row["sql"] or ""):
+            return
+
+        has_finalizations = (
+            self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("work_package_publication_finalizations",),
+            ).fetchone()
+            is not None
+        )
+        receipt_exists = (
+            "EXISTS (SELECT 1 FROM work_package_publication_finalizations AS "
+            "finalization WHERE finalization.package_id = old.package_id)"
+            if has_finalizations
+            else "0"
+        )
+        receipt_id = (
+            "COALESCE((SELECT finalization.id FROM "
+            "work_package_publication_finalizations AS finalization "
+            "WHERE finalization.package_id = old.package_id "
+            "ORDER BY finalization.finalized_at, finalization.id LIMIT 1), '')"
+            if has_finalizations
+            else "''"
+        )
+        historical_package = (
+            "old.package_id IS NOT NULL AND ("
+            "old.assigned_by = 'schema-migration' OR "
+            "CASE WHEN json_valid(old.detail) "
+            "THEN COALESCE(json_extract(old.detail, '$.schema'), '') "
+            "ELSE '' END NOT IN ("
+            "'mac.execution_cohort.prospective.v2', "
+            "'mac.execution_cohort.prospective.v3'))"
+        )
+
+        self._conn.execute("PRAGMA foreign_keys = OFF")
+        self._conn.execute("PRAGMA legacy_alter_table = ON")
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(
+                """
+                CREATE TABLE execution_cohort_assignments_v2 (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT UNIQUE,
+                    package_id TEXT UNIQUE,
+                    eligibility TEXT NOT NULL CHECK (
+                        eligibility IN ('eligible', 'ineligible', 'unknown')
+                    ),
+                    treatment_route TEXT NOT NULL CHECK (
+                        treatment_route IN (
+                            'legacy_async', 'managed_synchronized',
+                            'unknown_managed_mode'
+                        )
+                    ),
+                    rollout_revision INTEGER NOT NULL CHECK (rollout_revision >= 0),
+                    cohort_key TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    assigned_by TEXT NOT NULL,
+                    assigned_at TEXT NOT NULL,
+                    CHECK (task_id IS NOT NULL OR package_id IS NOT NULL)
+                )
+                """
+            )
+            self._conn.execute(
+                f"""
+                INSERT INTO execution_cohort_assignments_v2 (
+                    id, task_id, package_id, eligibility, treatment_route,
+                    rollout_revision, cohort_key, reason, detail, assigned_by,
+                    assigned_at
+                )
+                SELECT
+                    old.id,
+                    old.task_id,
+                    old.package_id,
+                    CASE WHEN {historical_package}
+                         THEN 'unknown' ELSE old.eligibility END,
+                    CASE WHEN {historical_package}
+                         THEN CASE WHEN {receipt_exists}
+                              THEN 'managed_synchronized'
+                              ELSE 'unknown_managed_mode' END
+                         ELSE old.treatment_route END,
+                    old.rollout_revision,
+                    CASE WHEN {historical_package}
+                         THEN CASE WHEN {receipt_exists}
+                              THEN 'managed_receipted_pre_instrumentation'
+                              ELSE 'managed_mode_unknown_pre_instrumentation' END
+                         ELSE old.cohort_key END,
+                    CASE WHEN {historical_package}
+                         THEN CASE WHEN {receipt_exists}
+                              THEN 'historical_synchronized_pipeline_receipt'
+                              ELSE 'historical_package_mode_unproven' END
+                         ELSE old.reason END,
+                    CASE WHEN {historical_package}
+                         THEN json_object(
+                             'schema', 'mac.execution_cohort.backfill.v2',
+                             'eligibility_source', 'unavailable',
+                             'route_source', CASE WHEN {receipt_exists}
+                                 THEN 'publication_finalization_receipt'
+                                 ELSE 'unavailable' END,
+                             'route_receipt_id', {receipt_id}
+                         )
+                         ELSE old.detail END,
+                    old.assigned_by,
+                    old.assigned_at
+                FROM execution_cohort_assignments AS old
+                """
+            )
+            self._conn.execute("DROP TABLE execution_cohort_assignments")
+            self._conn.execute(
+                "ALTER TABLE execution_cohort_assignments_v2 "
+                "RENAME TO execution_cohort_assignments"
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._conn.execute("PRAGMA legacy_alter_table = OFF")
+            self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def _repair_preliminary_package_cohorts(self) -> None:
+        """One-time strict repair for stores that already recorded v2.
+
+        A short-lived preliminary schema could write package assignments before
+        the receipt-strict route contract existed, then record the v2 backfill
+        marker.  Such a database no longer enters the guarded v2 scan.  Repair
+        those package rows exactly once while the append-only triggers are
+        transactionally suspended, and record a separate immutable receipt.
+        """
+
+        version = "execution_cohort_preliminary_package_repair_v3"
+        if (
+            self._conn.execute(
+                "SELECT 1 FROM telemetry_data_migrations WHERE version = ?",
+                (version,),
+            ).fetchone()
+            is not None
+        ):
+            return
+
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            if (
+                self._conn.execute(
+                    "SELECT 1 FROM telemetry_data_migrations WHERE version = ?",
+                    (version,),
+                ).fetchone()
+                is None
+            ):
+                self._conn.execute("DROP TRIGGER trg_execution_cohort_immutable")
+                self._conn.execute("DROP TRIGGER trg_execution_cohort_no_delete")
+                self._conn.execute(
+                    """
+                    UPDATE execution_cohort_assignments
+                    SET eligibility = 'unknown',
+                        treatment_route = CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM work_package_publication_finalizations AS finalization
+                            WHERE finalization.package_id =
+                                  execution_cohort_assignments.package_id
+                        ) THEN 'managed_synchronized'
+                          ELSE 'unknown_managed_mode' END,
+                        cohort_key = CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM work_package_publication_finalizations AS finalization
+                            WHERE finalization.package_id =
+                                  execution_cohort_assignments.package_id
+                        ) THEN 'managed_receipted_pre_instrumentation'
+                          ELSE 'managed_mode_unknown_pre_instrumentation' END,
+                        reason = CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM work_package_publication_finalizations AS finalization
+                            WHERE finalization.package_id =
+                                  execution_cohort_assignments.package_id
+                        ) THEN 'historical_synchronized_pipeline_receipt'
+                          ELSE 'historical_package_mode_unproven' END,
+                        detail = json_object(
+                            'schema', 'mac.execution_cohort.backfill.v2',
+                            'eligibility_source', 'unavailable',
+                            'route_source', CASE WHEN EXISTS (
+                                SELECT 1
+                                FROM work_package_publication_finalizations AS finalization
+                                WHERE finalization.package_id =
+                                      execution_cohort_assignments.package_id
+                            ) THEN 'publication_finalization_receipt'
+                              ELSE 'unavailable' END,
+                            'route_receipt_id', COALESCE((
+                                SELECT finalization.id
+                                FROM work_package_publication_finalizations AS finalization
+                                WHERE finalization.package_id =
+                                      execution_cohort_assignments.package_id
+                                ORDER BY finalization.finalized_at, finalization.id
+                                LIMIT 1
+                            ), '')
+                        )
+                    WHERE package_id IS NOT NULL
+                      AND CASE WHEN json_valid(detail)
+                          THEN COALESCE(json_extract(detail, '$.schema'), '')
+                          ELSE '' END NOT IN (
+                              'mac.execution_cohort.prospective.v2',
+                              'mac.execution_cohort.prospective.v3'
+                          )
+                    """
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO telemetry_data_migrations (
+                        version, component, detail, applied_at
+                    ) VALUES (?, 'execution_cohort_assignments', ?,
+                              strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                    """,
+                    (
+                        version,
+                        '{"schema":"mac.telemetry_data_migration.v1",'
+                        '"repair":"mac.execution_cohort.preliminary-package.v3"}',
+                    ),
+                )
+                self._conn.execute(
+                    """
+                    CREATE TRIGGER trg_execution_cohort_immutable
+                    BEFORE UPDATE ON execution_cohort_assignments
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT, 'execution cohort assignments are immutable'
+                        );
+                    END
+                    """
+                )
+                self._conn.execute(
+                    """
+                    CREATE TRIGGER trg_execution_cohort_no_delete
+                    BEFORE DELETE ON execution_cohort_assignments
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT, 'execution cohort assignments are append-only'
+                        );
+                    END
+                    """
+                )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK")
+            raise
+
+    def _migrate_station_controller_contract(self) -> None:
+        """Add the controller station to preliminary telemetry databases."""
+
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("work_package_station_attempts",),
+        ).fetchone()
+        table_sql = str(row["sql"] or "") if row is not None else ""
+        if row is None or "'controller'" in table_sql:
+            return
+        self._conn.execute("PRAGMA foreign_keys = OFF")
+        self._conn.execute("PRAGMA legacy_alter_table = ON")
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(
+                """
+                CREATE TABLE work_package_station_attempts_v2 (
+                    id TEXT PRIMARY KEY,
+                    assignment_id TEXT NOT NULL
+                        REFERENCES execution_cohort_assignments(id) ON DELETE RESTRICT,
+                    package_id TEXT NOT NULL
+                        REFERENCES work_packages(id) ON DELETE RESTRICT,
+                    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+                    epoch INTEGER NOT NULL CHECK (epoch >= 1),
+                    station TEXT NOT NULL CHECK (station IN (
+                        'controller', 'admission', 'integration', 'certification',
+                        'landing', 'finalization'
+                    )),
+                    operation TEXT NOT NULL,
+                    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+                    attempted INTEGER NOT NULL CHECK (attempted IN (0, 1)),
+                    pipeline_run_id TEXT NOT NULL DEFAULT '',
+                    outcome_index INTEGER NOT NULL DEFAULT 0 CHECK (outcome_index >= 0),
+                    batch_id TEXT NOT NULL DEFAULT '',
+                    job_id TEXT NOT NULL DEFAULT '',
+                    queued_at TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL,
+                    queue_duration_ms INTEGER NOT NULL CHECK (queue_duration_ms >= 0),
+                    execution_duration_ms INTEGER NOT NULL
+                        CHECK (execution_duration_ms >= 0),
+                    terminal_status TEXT NOT NULL CHECK (terminal_status IN (
+                        'succeeded', 'failed', 'busy', 'held', 'stale',
+                        'rejected', 'skipped'
+                    )),
+                    reason_code TEXT NOT NULL DEFAULT '',
+                    failure_class TEXT NOT NULL DEFAULT '',
+                    actor TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    recorded_at TEXT NOT NULL,
+                    UNIQUE (package_id, station, attempt_number),
+                    UNIQUE (pipeline_run_id, outcome_index),
+                    FOREIGN KEY (package_id, epoch, plan_version)
+                        REFERENCES work_package_epochs(package_id, epoch, plan_version)
+                        ON DELETE RESTRICT
+                )
+                """
+            )
+            self._conn.execute(
+                "INSERT INTO work_package_station_attempts_v2 SELECT * "
+                "FROM work_package_station_attempts"
+            )
+            self._conn.execute("DROP TABLE work_package_station_attempts")
+            self._conn.execute(
+                "ALTER TABLE work_package_station_attempts_v2 "
+                "RENAME TO work_package_station_attempts"
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._conn.execute("PRAGMA legacy_alter_table = OFF")
+            self._conn.execute("PRAGMA foreign_keys = ON")
+
     def _initialize(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys = ON")
+            self._migrate_execution_cohort_route_contract()
+            self._migrate_station_controller_contract()
             self._conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS tenants (
@@ -1727,6 +2064,8 @@ class SQLiteStore:
                     ON work_packages (project, state, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_work_packages_repository
                     ON work_packages (repository_id, state, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_work_packages_root_task
+                    ON work_packages (root_task_id);
 
                 CREATE TRIGGER IF NOT EXISTS trg_work_packages_initial_state
                 BEFORE INSERT ON work_packages
@@ -4520,6 +4859,392 @@ class SQLiteStore:
                     SELECT RAISE(ABORT, 'work package history is append-only');
                 END;
 
+                -- One-time, append-only data-migration receipts.  Keeping the
+                -- marker separate from the assignment rows lets startup prove
+                -- a historical scan already completed without scanning the
+                -- task and package catalogs again.
+                CREATE TABLE IF NOT EXISTS telemetry_data_migrations (
+                    version TEXT PRIMARY KEY,
+                    component TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    applied_at TEXT NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS trg_telemetry_data_migration_immutable
+                BEFORE UPDATE ON telemetry_data_migrations
+                BEGIN
+                    SELECT RAISE(ABORT, 'telemetry data migrations are immutable');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_telemetry_data_migration_no_delete
+                BEFORE DELETE ON telemetry_data_migrations
+                BEGIN
+                    SELECT RAISE(ABORT, 'telemetry data migrations are append-only');
+                END;
+
+                CREATE TABLE IF NOT EXISTS execution_cohort_configurations (
+                    rollout_revision INTEGER PRIMARY KEY
+                        CHECK (rollout_revision >= 1),
+                    algorithm TEXT NOT NULL,
+                    treatment_percentage INTEGER NOT NULL
+                        CHECK (treatment_percentage BETWEEN 0 AND 100),
+                    assignment_key_fingerprint TEXT NOT NULL CHECK (
+                        length(assignment_key_fingerprint) = 71 AND
+                        assignment_key_fingerprint LIKE 'sha256:%' AND
+                        substr(assignment_key_fingerprint, 8)
+                            NOT GLOB '*[^0-9a-f]*'
+                    ),
+                    created_at TEXT NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS trg_execution_cohort_configuration_immutable
+                BEFORE UPDATE ON execution_cohort_configurations
+                BEGIN
+                    SELECT RAISE(ABORT, 'execution cohort configurations are immutable');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_execution_cohort_configuration_no_delete
+                BEFORE DELETE ON execution_cohort_configurations
+                BEGIN
+                    SELECT RAISE(ABORT, 'execution cohort configurations are append-only');
+                END;
+
+                -- Immutable treatment assignment for prospective comparison of
+                -- legacy asynchronous tasks with managed synchronized work.
+                -- Historical package route is synchronized only when an exact
+                -- publication finalization receipt proves the full pipeline;
+                -- otherwise its managed execution mode is explicitly unknown.
+                CREATE TABLE IF NOT EXISTS execution_cohort_assignments (
+                    id TEXT PRIMARY KEY,
+                    -- Soft identities are intentional: task/package lifecycle
+                    -- cleanup must not erase or block immutable experiment
+                    -- assignment history.
+                    task_id TEXT UNIQUE,
+                    package_id TEXT UNIQUE,
+                    eligibility TEXT NOT NULL CHECK (
+                        eligibility IN ('eligible', 'ineligible', 'unknown')
+                    ),
+                    treatment_route TEXT NOT NULL CHECK (
+                        treatment_route IN (
+                            'legacy_async', 'managed_synchronized',
+                            'unknown_managed_mode'
+                        )
+                    ),
+                    rollout_revision INTEGER NOT NULL CHECK (rollout_revision >= 0),
+                    cohort_key TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    assigned_by TEXT NOT NULL,
+                    assigned_at TEXT NOT NULL,
+                    CHECK (task_id IS NOT NULL OR package_id IS NOT NULL)
+                );
+                CREATE INDEX IF NOT EXISTS idx_execution_cohort_route
+                    ON execution_cohort_assignments (
+                        treatment_route, eligibility, assigned_at, id
+                    );
+                CREATE TRIGGER IF NOT EXISTS trg_execution_cohort_immutable
+                BEFORE UPDATE ON execution_cohort_assignments
+                BEGIN
+                    SELECT RAISE(ABORT, 'execution cohort assignments are immutable');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_execution_cohort_no_delete
+                BEFORE DELETE ON execution_cohort_assignments
+                BEGIN
+                    SELECT RAISE(ABORT, 'execution cohort assignments are append-only');
+                END;
+
+                CREATE TABLE IF NOT EXISTS work_package_station_attempts (
+                    id TEXT PRIMARY KEY,
+                    assignment_id TEXT NOT NULL
+                        REFERENCES execution_cohort_assignments(id) ON DELETE RESTRICT,
+                    package_id TEXT NOT NULL
+                        REFERENCES work_packages(id) ON DELETE RESTRICT,
+                    plan_version INTEGER NOT NULL CHECK (plan_version >= 1),
+                    epoch INTEGER NOT NULL CHECK (epoch >= 1),
+                    station TEXT NOT NULL CHECK (station IN (
+                        'controller', 'admission', 'integration', 'certification',
+                        'landing', 'finalization'
+                    )),
+                    operation TEXT NOT NULL,
+                    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+                    attempted INTEGER NOT NULL CHECK (attempted IN (0, 1)),
+                    pipeline_run_id TEXT NOT NULL DEFAULT '',
+                    outcome_index INTEGER NOT NULL DEFAULT 0 CHECK (outcome_index >= 0),
+                    batch_id TEXT NOT NULL DEFAULT '',
+                    job_id TEXT NOT NULL DEFAULT '',
+                    queued_at TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL,
+                    queue_duration_ms INTEGER NOT NULL CHECK (queue_duration_ms >= 0),
+                    execution_duration_ms INTEGER NOT NULL
+                        CHECK (execution_duration_ms >= 0),
+                    terminal_status TEXT NOT NULL CHECK (terminal_status IN (
+                        'succeeded', 'failed', 'busy', 'held', 'stale',
+                        'rejected', 'skipped'
+                    )),
+                    reason_code TEXT NOT NULL DEFAULT '',
+                    failure_class TEXT NOT NULL DEFAULT '',
+                    actor TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    recorded_at TEXT NOT NULL,
+                    UNIQUE (package_id, station, attempt_number),
+                    UNIQUE (pipeline_run_id, outcome_index),
+                    FOREIGN KEY (package_id, epoch, plan_version)
+                        REFERENCES work_package_epochs(package_id, epoch, plan_version)
+                        ON DELETE RESTRICT
+                );
+                CREATE INDEX IF NOT EXISTS idx_work_package_station_attempts_package
+                    ON work_package_station_attempts (
+                        package_id, station, completed_at, id
+                    );
+                CREATE INDEX IF NOT EXISTS idx_work_package_station_attempts_status
+                    ON work_package_station_attempts (
+                        terminal_status, failure_class, completed_at, id
+                    );
+                CREATE TRIGGER IF NOT EXISTS trg_work_package_station_attempt_immutable
+                BEFORE UPDATE ON work_package_station_attempts
+                BEGIN
+                    SELECT RAISE(ABORT, 'work-package station attempts are immutable');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_work_package_station_attempt_no_delete
+                BEFORE DELETE ON work_package_station_attempts
+                BEGIN
+                    SELECT RAISE(ABORT, 'work-package station attempts are append-only');
+                END;
+
+                -- Lossless controller projection.  Unlike normalized station
+                -- attempts it permits package-less inventory/run outcomes and
+                -- retains unknown future operations explicitly.
+                CREATE TABLE IF NOT EXISTS work_package_controller_outcomes (
+                    id TEXT PRIMARY KEY,
+                    pipeline_run_id TEXT NOT NULL,
+                    outcome_index INTEGER NOT NULL CHECK (outcome_index >= -1),
+                    package_id TEXT NOT NULL DEFAULT '',
+                    plan_version INTEGER NOT NULL CHECK (plan_version >= 0),
+                    epoch INTEGER NOT NULL CHECK (epoch >= 0),
+                    operation TEXT NOT NULL,
+                    attempted INTEGER NOT NULL CHECK (attempted IN (0, 1)),
+                    batch_id TEXT NOT NULL DEFAULT '',
+                    job_id TEXT NOT NULL DEFAULT '',
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL,
+                    execution_duration_ms INTEGER NOT NULL
+                        CHECK (execution_duration_ms >= 0),
+                    status TEXT NOT NULL,
+                    terminal_status TEXT NOT NULL CHECK (terminal_status IN (
+                        'succeeded', 'failed', 'busy', 'held', 'stale',
+                        'rejected', 'skipped'
+                    )),
+                    reason_code TEXT NOT NULL DEFAULT '',
+                    failure_class TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    recorded_at TEXT NOT NULL,
+                    UNIQUE (pipeline_run_id, outcome_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_work_package_controller_outcomes_package
+                    ON work_package_controller_outcomes (
+                        package_id, completed_at, id
+                    );
+                CREATE INDEX IF NOT EXISTS idx_work_package_controller_outcomes_status
+                    ON work_package_controller_outcomes (
+                        terminal_status, failure_class, completed_at, id
+                    );
+                CREATE TRIGGER IF NOT EXISTS trg_work_package_controller_outcome_immutable
+                BEFORE UPDATE ON work_package_controller_outcomes
+                BEGIN
+                    SELECT RAISE(ABORT, 'work-package controller outcomes are immutable');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_work_package_controller_outcome_no_delete
+                BEFORE DELETE ON work_package_controller_outcomes
+                BEGIN
+                    SELECT RAISE(ABORT, 'work-package controller outcomes are append-only');
+                END;
+
+                -- This health record is intentionally outside the telemetry
+                -- writer path.  The observer increments it only after a
+                -- measurement failure, avoiding recursive telemetry.
+                CREATE TABLE IF NOT EXISTS work_package_telemetry_health (
+                    singleton_key TEXT PRIMARY KEY CHECK (singleton_key = 'pipeline'),
+                    failure_count INTEGER NOT NULL DEFAULT 0
+                        CHECK (failure_count >= 0),
+                    last_failure_operation TEXT NOT NULL DEFAULT '',
+                    last_error_type TEXT NOT NULL DEFAULT '',
+                    last_error_fingerprint TEXT NOT NULL DEFAULT '',
+                    last_failed_at TEXT,
+                    last_success_at TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS work_package_finalization_outcomes (
+                    id TEXT PRIMARY KEY,
+                    finalization_id TEXT NOT NULL
+                        REFERENCES work_package_publication_finalizations(id)
+                        ON DELETE RESTRICT,
+                    package_id TEXT NOT NULL
+                        REFERENCES work_packages(id) ON DELETE RESTRICT,
+                    outcome_type TEXT NOT NULL CHECK (
+                        outcome_type IN ('revert', 'incident')
+                    ),
+                    external_id TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    UNIQUE (finalization_id, outcome_type, external_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_work_package_finalization_outcomes_package
+                    ON work_package_finalization_outcomes (
+                        package_id, outcome_type, observed_at, id
+                    );
+                CREATE TRIGGER IF NOT EXISTS trg_work_package_finalization_outcome_immutable
+                BEFORE UPDATE ON work_package_finalization_outcomes
+                BEGIN
+                    SELECT RAISE(ABORT, 'work-package finalization outcomes are immutable');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_work_package_finalization_outcome_no_delete
+                BEFORE DELETE ON work_package_finalization_outcomes
+                BEGIN
+                    SELECT RAISE(ABORT, 'work-package finalization outcomes are append-only');
+                END;
+
+                -- The two catalog scans and their marker commit atomically.  A
+                -- marker-first CROSS JOIN makes the left side empty after v2
+                -- has run, so later startups do not visit packages or tasks.
+                BEGIN IMMEDIATE;
+                INSERT INTO execution_cohort_assignments (
+                    id, task_id, package_id, eligibility, treatment_route,
+                    rollout_revision, cohort_key, reason, detail, assigned_by,
+                    assigned_at
+                )
+                SELECT
+                    'cohort_hist_managed_' || package.id,
+                    NULL,
+                    package.id,
+                    'unknown',
+                    CASE WHEN EXISTS (
+                        SELECT 1
+                        FROM work_package_publication_finalizations AS finalization
+                        WHERE finalization.package_id = package.id
+                    ) THEN 'managed_synchronized'
+                      ELSE 'unknown_managed_mode'
+                    END,
+                    COALESCE((
+                        SELECT revision FROM managed_task_publication_rollout
+                        WHERE singleton_key = 'fleet'
+                    ), 0),
+                    CASE WHEN EXISTS (
+                        SELECT 1
+                        FROM work_package_publication_finalizations AS finalization
+                        WHERE finalization.package_id = package.id
+                    ) THEN 'managed_receipted_pre_instrumentation'
+                      ELSE 'managed_mode_unknown_pre_instrumentation'
+                    END,
+                    CASE WHEN EXISTS (
+                        SELECT 1
+                        FROM work_package_publication_finalizations AS finalization
+                        WHERE finalization.package_id = package.id
+                    ) THEN 'historical_synchronized_pipeline_receipt'
+                      ELSE 'historical_package_mode_unproven'
+                    END,
+                    json_object(
+                        'schema', 'mac.execution_cohort.backfill.v2',
+                        'eligibility_source', 'unavailable',
+                        'route_source', CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM work_package_publication_finalizations AS finalization
+                            WHERE finalization.package_id = package.id
+                        ) THEN 'publication_finalization_receipt'
+                          ELSE 'unavailable'
+                        END,
+                        'route_receipt_id', COALESCE((
+                            SELECT finalization.id
+                            FROM work_package_publication_finalizations AS finalization
+                            WHERE finalization.package_id = package.id
+                            ORDER BY finalization.finalized_at, finalization.id
+                            LIMIT 1
+                        ), '')
+                    ),
+                    'schema-migration',
+                    package.created_at
+                FROM (
+                    SELECT 1 AS run
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM telemetry_data_migrations
+                        WHERE version = 'execution_cohort_historical_backfill_v2'
+                    )
+                ) AS migration_needed
+                CROSS JOIN work_packages AS package
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM execution_cohort_assignments AS assignment
+                    WHERE assignment.package_id = package.id
+                );
+
+                INSERT INTO execution_cohort_assignments (
+                    id, task_id, package_id, eligibility, treatment_route,
+                    rollout_revision, cohort_key, reason, detail, assigned_by,
+                    assigned_at
+                )
+                SELECT
+                    'cohort_hist_legacy_' || task.id,
+                    task.id,
+                    NULL,
+                    'unknown',
+                    'legacy_async',
+                    0,
+                    CASE
+                        WHEN json_extract(
+                            task.metadata, '$.managed_fast_lane.activation'
+                        ) = 'legacy_compatibility'
+                        THEN 'legacy_atomic_shape_pre_instrumentation'
+                        ELSE 'legacy_pre_instrumentation_unknown'
+                    END,
+                    CASE
+                        WHEN json_extract(
+                            task.metadata, '$.managed_fast_lane.activation'
+                        ) = 'legacy_compatibility'
+                        THEN 'historical_control_plane_route_projection'
+                        ELSE 'historical_absence_of_package_linkage'
+                    END,
+                    json_object(
+                        'schema', 'mac.execution_cohort.backfill.v2',
+                        'eligibility_source', 'unavailable',
+                        'shape_eligibility_source', CASE
+                            WHEN json_extract(
+                                task.metadata, '$.managed_fast_lane.activation'
+                            ) = 'legacy_compatibility'
+                            THEN 'control_plane_managed_fast_lane_projection'
+                            ELSE 'unavailable'
+                        END,
+                        'route_source', 'absence_of_work_package_link'
+                    ),
+                    'schema-migration',
+                    task.created_at
+                FROM (
+                    SELECT 1 AS run
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM telemetry_data_migrations
+                        WHERE version = 'execution_cohort_historical_backfill_v2'
+                    )
+                ) AS migration_needed
+                CROSS JOIN tasks AS task
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM work_package_task_links AS link
+                    WHERE link.task_id = task.id
+                )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM work_packages AS package
+                    WHERE package.root_task_id = task.id
+                )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM execution_cohort_assignments AS assignment
+                    WHERE assignment.task_id = task.id
+                );
+                INSERT OR IGNORE INTO telemetry_data_migrations (
+                    version, component, detail, applied_at
+                ) VALUES (
+                    'execution_cohort_historical_backfill_v2',
+                    'execution_cohort_assignments',
+                    '{"schema":"mac.telemetry_data_migration.v1","historical_backfill":"mac.execution_cohort.backfill.v2"}',
+                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                );
+                COMMIT;
+
                 -- Provisioning requests: durable record of "the swarm needs
                 -- an agent it does not have." Surfaced by the dispatcher
                 -- and the default-review workflow when no eligible agent
@@ -4600,6 +5325,113 @@ class SQLiteStore:
                     UNION ALL
                     SELECT id, 'agent', agent_id, event_type, actor, detail, created_at
                     FROM agent_events
+                    UNION ALL
+                    SELECT
+                        id,
+                        'work_package',
+                        package_id,
+                        event_type,
+                        actor,
+                        json_set(
+                            COALESCE(NULLIF(detail, ''), '{}'),
+                            '$.plan_version', plan_version,
+                            '$.epoch', epoch
+                        ),
+                        created_at
+                    FROM work_package_history
+                    UNION ALL
+                    SELECT
+                        id,
+                        CASE WHEN package_id IS NULL THEN 'task' ELSE 'work_package' END,
+                        COALESCE(package_id, task_id),
+                        'execution.cohort_assigned',
+                        assigned_by,
+                        json_set(
+                            COALESCE(NULLIF(detail, ''), '{}'),
+                            '$.task_id', task_id,
+                            '$.package_id', package_id,
+                            '$.eligibility', eligibility,
+                            '$.treatment_route', treatment_route,
+                            '$.rollout_revision', rollout_revision,
+                            '$.cohort_key', cohort_key,
+                            '$.reason', reason
+                        ),
+                        assigned_at
+                    FROM execution_cohort_assignments
+                    UNION ALL
+                    SELECT
+                        id,
+                        'work_package',
+                        package_id,
+                        'work_package.station.' || station || '.' || terminal_status,
+                        actor,
+                        json_set(
+                            COALESCE(NULLIF(detail, ''), '{}'),
+                            '$.assignment_id', assignment_id,
+                            '$.plan_version', plan_version,
+                            '$.epoch', epoch,
+                            '$.station', station,
+                            '$.operation', operation,
+                            '$.attempt_number', attempt_number,
+                            '$.attempted', json(CASE WHEN attempted = 1 THEN 'true' ELSE 'false' END),
+                            '$.pipeline_run_id', pipeline_run_id,
+                            '$.outcome_index', outcome_index,
+                            '$.batch_id', batch_id,
+                            '$.job_id', job_id,
+                            '$.queued_at', queued_at,
+                            '$.started_at', started_at,
+                            '$.completed_at', completed_at,
+                            '$.queue_duration_ms', queue_duration_ms,
+                            '$.execution_duration_ms', execution_duration_ms,
+                            '$.terminal_status', terminal_status,
+                            '$.reason_code', reason_code,
+                            '$.failure_class', failure_class
+                        ),
+                        completed_at
+                    FROM work_package_station_attempts
+                    UNION ALL
+                    SELECT
+                        id,
+                        CASE WHEN package_id = '' THEN 'service' ELSE 'work_package' END,
+                        CASE WHEN package_id = '' THEN 'work-package-pipeline' ELSE package_id END,
+                        'work_package.controller.' || operation || '.' || terminal_status,
+                        'work-package-pipeline',
+                        json_set(
+                            COALESCE(NULLIF(detail, ''), '{}'),
+                            '$.pipeline_run_id', pipeline_run_id,
+                            '$.outcome_index', outcome_index,
+                            '$.plan_version', plan_version,
+                            '$.epoch', epoch,
+                            '$.operation', operation,
+                            '$.attempted', json(CASE WHEN attempted = 1 THEN 'true' ELSE 'false' END),
+                            '$.batch_id', batch_id,
+                            '$.job_id', job_id,
+                            '$.started_at', started_at,
+                            '$.completed_at', completed_at,
+                            '$.execution_duration_ms', execution_duration_ms,
+                            '$.status', status,
+                            '$.terminal_status', terminal_status,
+                            '$.reason_code', reason_code,
+                            '$.failure_class', failure_class
+                        ),
+                        completed_at
+                    FROM work_package_controller_outcomes
+                    UNION ALL
+                    SELECT
+                        id,
+                        'work_package',
+                        package_id,
+                        'work_package.finalization.' || outcome_type,
+                        actor,
+                        json_set(
+                            COALESCE(NULLIF(detail, ''), '{}'),
+                            '$.finalization_id', finalization_id,
+                            '$.outcome_type', outcome_type,
+                            '$.external_id', external_id,
+                            '$.observed_at', observed_at
+                        ),
+                        observed_at
+                    FROM work_package_finalization_outcomes
                     UNION ALL
                     SELECT
                         id,
@@ -4915,6 +5747,7 @@ class SQLiteStore:
                     ON human_groups (group_name);
                 """
             )
+            self._repair_preliminary_package_cohorts()
             self._migrate()
             self._conn.commit()
 

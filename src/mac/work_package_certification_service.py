@@ -27,6 +27,7 @@ from mac.models import (
     new_id,
 )
 from mac.openshell_certifier import (
+    CERTIFIER_PRIMARY_COMMAND,
     CERTIFICATION_ISOLATION_SCHEMA,
     CERTIFICATION_RESULT_SCHEMA,
     CertificationCleanupError,
@@ -38,6 +39,7 @@ from mac.openshell_certifier import (
     OpenShellCertificationRunner,
     validate_certifier_controller_command,
     validate_certifier_image_ref,
+    validate_certifier_phase_manifest,
 )
 from mac.store import Store
 
@@ -67,6 +69,7 @@ _RESULT_KEYS = frozenset(
         "commands_digest",
         "sandbox_name",
         "checks",
+        "phase_manifest",
         "isolation",
         "started_at",
         "completed_at",
@@ -93,10 +96,21 @@ _ISOLATION_KEYS = frozenset(
         "run_as_user",
         "launcher_environment",
         "input_format",
+        "assembly_base_transport",
     }
 )
 _SAFE_LAUNCH_ENV_NAMES = frozenset(
-    {"HOME", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "SYSTEMROOT", "TMPDIR", "TZ"}
+    {
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "OPENSHELL_GATEWAY_ENDPOINT",
+        "PATH",
+        "SYSTEMROOT",
+        "TMPDIR",
+        "TZ",
+    }
 )
 _CONTRACT_KEYS = frozenset(
     {"schema", "policy", "policy_text", "image_ref", "controller_commands"}
@@ -148,6 +162,7 @@ def normalize_repository_certification_contract(
         raise ValidationError("certification contract has no controller commands")
     normalized_commands = []
     command_ids = set()
+    primary_commands = 0
     for item in commands:
         if (
             not isinstance(item, Mapping)
@@ -160,6 +175,13 @@ def normalize_repository_certification_contract(
             isinstance(value, str) for value in argv
         ):
             raise ValidationError("certification command argv is malformed")
+        if any(
+            value == "--base-sha" or value.startswith("--base-sha=")
+            for value in argv
+        ):
+            raise ValidationError(
+                "certification assembly base is reserved for the controller"
+            )
         timeout = item.get("timeout_seconds", 900)
         if isinstance(timeout, bool):
             raise ValidationError("certification command timeout must be positive")
@@ -181,7 +203,17 @@ def normalize_repository_certification_contract(
         if command.command_id in command_ids:
             raise ValidationError("certification command ids must be unique")
         command_ids.add(command.command_id)
+        if command.argv[0] == CERTIFIER_PRIMARY_COMMAND:
+            primary_commands += 1
+            if command.argv != (CERTIFIER_PRIMARY_COMMAND,):
+                raise ValidationError(
+                    "primary certification command does not accept repository arguments"
+                )
         normalized_commands.append(command.to_dict())
+    if primary_commands != 1:
+        raise ValidationError(
+            "certification contract requires exactly one primary frozen test command"
+        )
 
     value = {
         "policy": {
@@ -204,6 +236,24 @@ def normalize_repository_certification_contract(
     except CertificationValidationError as exc:
         raise ValidationError("certification contract is invalid") from exc
     return value
+
+
+def _bind_controller_assembly_base(
+    contract: Mapping[str, Any], assembly_base_sha: str
+) -> JsonDict:
+    """Materialize the reserved base once so command/job/result digests bind it."""
+
+    if not re.fullmatch(r"[0-9a-f]{40}", str(assembly_base_sha or "")):
+        raise ValidationError("certification assembly base is invalid")
+    resolved = dict(contract)
+    resolved["controller_commands"] = [
+        {
+            **dict(item),
+            "argv": [*item["argv"], "--base-sha", assembly_base_sha],
+        }
+        for item in contract["controller_commands"]
+    ]
+    return resolved
 
 
 @dataclass(frozen=True)
@@ -275,18 +325,37 @@ class WorkPackageCertificationService:
             raise ValueError("certification controller owner is required")
         self.store = store
         self.owner = owner_value
-        self.runner = runner or OpenShellCertificationRunner()
+        # Resolve the production runner lazily.  Control-plane processes keep
+        # certification services available while the default-off pipeline is
+        # unconfigured; the first executable certification boundary performs a
+        # fail-closed binding/preflight before it claims the durable job fence.
+        self.runner = runner
+        self._runner_from_environment = runner is None
         self._now = now or (lambda: datetime.now(timezone.utc))
+
+    def validate_runtime_binding(self) -> None:
+        """Fail closed unless the production OpenShell CLI binding is usable."""
+
+        try:
+            self._runtime_runner()
+        except CertificationValidationError as exc:
+            raise ValidationError(
+                "OpenShell certifier runtime is unavailable"
+            ) from exc
 
     def validate_repository_contract(
         self, repository_id: str, *, source: Optional[Any] = None
     ) -> None:
-        """Fail closed unless an enabled repository has a valid certifier contract."""
+        """Fail closed unless repository and production certifier are both ready."""
 
         self._certification_contract(
             self._required(repository_id, "certification repository id"),
             source=source,
         )
+        # This validator is the downstream pull gate used before package
+        # activation and again before integration transfers WIP.  Prove the
+        # host CLI binding here, not only after a candidate has been assembled.
+        self.validate_runtime_binding()
 
     def prepare(
         self,
@@ -303,6 +372,9 @@ class WorkPackageCertificationService:
             raise TransitionError("only a verifying exact candidate can be certified")
         successor = self._certification_successor(self.store, batch)
         contract = self._certification_contract(batch["repository_id"])
+        resolved_contract = _bind_controller_assembly_base(
+            contract, str(batch["assembly_base_sha"])
+        )
         bundle = Path(bundle_path)
         bundle_digest = self._sha256_file(bundle)
         seed = {
@@ -311,6 +383,7 @@ class WorkPackageCertificationService:
             "candidate_tree_digest": batch["candidate_tree_digest"],
             "candidate_ref": batch["candidate_ref"],
             "candidate_fence": int(batch["candidate_fence"]),
+            "assembly_base_sha": batch["assembly_base_sha"],
             "policy": contract["policy"],
             "image_ref": contract["image_ref"],
             "controller_commands": contract["controller_commands"],
@@ -319,7 +392,9 @@ class WorkPackageCertificationService:
             "certification_node_key": successor["node_key"],
         }
         job_id = "wpcjob_%s" % self._sha256_json(seed).split(":", 1)[1][:32]
-        job = self._job_from_values(job_id, batch, contract, bundle, bundle_digest)
+        job = self._job_from_values(
+            job_id, batch, resolved_contract, bundle, bundle_digest
+        )
         self._validate_job(job)
         definition = {
             "schema": CERTIFICATION_JOB_RECORD_SCHEMA,
@@ -484,6 +559,12 @@ class WorkPackageCertificationService:
         self._validate_job(job)
         if self._sha256_file(bundle) != str(row["bundle_digest"]):
             raise ValidationError("certification bundle does not match the prepared job")
+        try:
+            runner = self._runtime_runner()
+        except CertificationValidationError as exc:
+            raise ValidationError(
+                "OpenShell certifier runtime is unavailable"
+            ) from exc
         temporary = (
             tempfile.TemporaryDirectory(prefix="mac-certification-result-")
             if result_path is None
@@ -499,10 +580,21 @@ class WorkPackageCertificationService:
             row = self._job_row(job_id)
             job = self._job_from_row(row, bundle)
             try:
-                result = self.runner.run(job, result_path=target)
+                result = runner.run(job, result_path=target)
                 payload = result.to_dict()
             except CertificationValidationError as exc:
                 raise ValidationError("certification job or bundle is invalid") from exc
+            except OSError as exc:
+                # The absolute CLI may disappear or its gateway transport may
+                # fail after the just-completed preflight.  Keep that race at
+                # the fail-closed service boundary instead of surfacing a raw
+                # process exception through the API. Expire only this exact
+                # owner/fence so another controller can retry immediately;
+                # a newer claim must remain untouched.
+                self._expire_retryable_claim(claim)
+                raise ValidationError(
+                    "OpenShell certifier runtime became unavailable"
+                ) from exc
             except CertificationCleanupError:
                 if not target.is_file():
                     raise
@@ -526,6 +618,34 @@ class WorkPackageCertificationService:
         finally:
             if temporary is not None:
                 temporary.cleanup()
+
+    def _expire_retryable_claim(self, claim: CertificationJobClaim) -> bool:
+        """Make this exact claim immediately reclaimable without fencing a successor."""
+
+        with self.store.transaction() as conn:
+            now = self._iso(self._authority_now(conn))
+            changed = conn.execute(
+                "UPDATE work_package_certification_jobs "
+                "SET lease_expires_at = ?, updated_at = ? "
+                "WHERE id = ? AND state = 'running' AND lease_owner = ? "
+                "AND lease_fence = ?",
+                (now, now, claim.job_id, claim.owner, claim.fence),
+            )
+            return changed.rowcount == 1
+
+    def _runtime_runner(self) -> OpenShellCertificationRunner:
+        runner = self.runner
+        if runner is None:
+            runner = OpenShellCertificationRunner.from_environment()
+            self.runner = runner
+        elif self._runner_from_environment:
+            # A production binding is cached so every station uses the same
+            # absolute binary and service HOME, but readiness is not cached.
+            # Re-probe at each activation/release gate and immediately before
+            # each certification claim. Explicitly injected test/embedding
+            # runners remain an intentional seam and need not expose preflight.
+            runner.preflight()
+        return runner
 
     def ingest(
         self,
@@ -730,6 +850,7 @@ class WorkPackageCertificationService:
                 station=station,
                 certification_id=certification_id,
                 result_digest=result_digest,
+                phase_manifest=payload.get("phase_manifest") or {},
                 outcome=(
                     "certified" if certification_status == "passed" else "rejected"
                 ),
@@ -1124,6 +1245,7 @@ class WorkPackageCertificationService:
         station: Mapping[str, Any],
         certification_id: str,
         result_digest: str,
+        phase_manifest: Mapping[str, Any],
         outcome: str,
         actor: str,
         now: str,
@@ -1142,8 +1264,13 @@ class WorkPackageCertificationService:
                 "integration_station_receipt_id"
             ],
             "candidate_sha": job["candidate_sha"],
+            "assembly_base_sha": job["assembly_base_sha"],
             "job_digest": job["job_digest"],
             "result_digest": result_digest,
+            "phase_manifest_digest": phase_manifest.get("manifest_digest"),
+            "selection_mode": phase_manifest.get("selection_mode"),
+            "changed_files_digest": phase_manifest.get("changed_files_digest"),
+            "full_suite_count": phase_manifest.get("full_suite_count"),
             "outcome": outcome,
         }
         identity = {
@@ -1241,6 +1368,15 @@ class WorkPackageCertificationService:
             "provenance_digest": receipt["provenance_digest"],
             "node_key": station["node_key"],
             "node_state": node_state,
+            "assembly_base_sha": receipt["detail"].get("assembly_base_sha"),
+            "phase_manifest_digest": receipt["detail"].get(
+                "phase_manifest_digest"
+            ),
+            "selection_mode": receipt["detail"].get("selection_mode"),
+            "changed_files_digest": receipt["detail"].get(
+                "changed_files_digest"
+            ),
+            "full_suite_count": receipt["detail"].get("full_suite_count"),
         }
         self._append_task_transition(
             conn,
@@ -1798,6 +1934,7 @@ class WorkPackageCertificationService:
             "landlock": "hard_requirement",
             "run_as_user": "non_root",
             "input_format": "credential_free_git_bundle",
+            "assembly_base_transport": "controller_bound_argv",
         }
         if (
             not isinstance(isolation, Mapping)
@@ -1822,6 +1959,25 @@ class WorkPackageCertificationService:
             )
         ):
             raise ValidationError("certification launcher environment is invalid")
+        phase_manifest = payload.get("phase_manifest")
+        if not isinstance(phase_manifest, Mapping):
+            raise ValidationError("certifier phase manifest is malformed")
+        if phase_manifest:
+            try:
+                validate_certifier_phase_manifest(
+                    phase_manifest,
+                    assembly_base_sha=str(row["assembly_base_sha"]),
+                    candidate_sha=str(row["candidate_sha"]),
+                )
+            except CertificationValidationError as exc:
+                raise ValidationError("certifier phase manifest is invalid") from exc
+        elif payload.get("status") == "passed":
+            raise ValidationError("passed certification lacks a phase manifest")
+        if (
+            payload.get("status") == "passed"
+            and phase_manifest.get("authoritative", {}).get("mode") == "rejected"
+        ):
+            raise ValidationError("passed certification used a rejected test selection")
         definition = self._definition(row)
         commands = definition["job"]["controller_commands"]
         checks = payload.get("checks")

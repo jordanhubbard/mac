@@ -66,6 +66,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_BIND_HOST` | str | consumer-defined | core | Core setting: bind host. |
 | `MAC_BLOCKED_ATTEMPT_RETRY_BACKOFF_SECONDS` | int | consumer-defined | core | Core setting: blocked attempt retry backoff seconds. |
 | `MAC_BREAK_GLASS_HOST_PATH` | str | consumer-defined | core | Core setting: break glass host path. |
+| `MAC_CERTIFIER_CANDIDATE_SRC` | str | consumer-defined | core | Core setting: certifier candidate src. |
+| `MAC_CERTIFIER_CONTEXT_DIGEST` | str | consumer-defined | core | Core setting: certifier context digest. |
+| `MAC_CERTIFIER_IMAGE` | str | consumer-defined | core | Core setting: certifier image. |
+| `MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | core | Core setting: certifier openshell gateway endpoint. |
+| `MAC_CERTIFIER_PHASE_MANIFEST_JSON` | str | consumer-defined | core | Core setting: certifier phase manifest json. |
+| `MAC_CERTIFIER_PLATFORM` | str | consumer-defined | core | Core setting: certifier platform. |
+| `MAC_CERTIFIER_SOURCE_REVISION` | str | consumer-defined | core | Core setting: certifier source revision. |
 | `MAC_CHAT_GATEWAY_IMPL` | str | consumer-defined | core | Core setting: chat gateway impl. |
 | `MAC_CLIENT_CREDENTIALS_DIR` | str | consumer-defined | core | Core setting: client credentials dir. |
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |
@@ -108,6 +115,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEBUG_TERMINAL_SESSION_ID` | str | consumer-defined | core | Core setting: debug terminal session id. |
 | `MAC_DEFAULT_PUBLICATION_TARGET` | str | consumer-defined | core | Core setting: default publication target. |
 | `MAC_DEFAULT_REVIEWER_STALE_AFTER_SECONDS` | int | consumer-defined | core | Core setting: default reviewer stale after seconds. |
+| `MAC_DEPLOYED_SOURCE_REVISION_FILE` | str | consumer-defined | core | Core setting: deployed source revision file. |
 | `MAC_DEPLOY_AGENT` | str | consumer-defined | deployment | Deployment setting: deploy agent. |
 | `MAC_DEPLOY_AGENT_GEN_AUDIO_MODELS` | str | consumer-defined | deploy-agent-generation | Deploy Agent Generation setting: deploy agent gen audio models. |
 | `MAC_DEPLOY_AGENT_GEN_AUDIO_PORT` | int | consumer-defined | deploy-agent-generation | Deploy Agent Generation setting: deploy agent gen audio port. |
@@ -122,9 +130,11 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_AGENT_MEDIA_ROUTES` | str | consumer-defined | deployment | Deployment setting: deploy agent media routes. |
 | `MAC_DEPLOY_ALLOW_DEGRADED_SERVICES` | bool | consumer-defined | deployment | Deployment setting: deploy allow degraded services. |
 | `MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN` | bool | consumer-defined | deployment | Deployment setting: deploy allow legacy worker token. |
+| `MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD` | bool | consumer-defined | deployment | Deployment setting: deploy allow local openshell image build. |
 | `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG` | bool | consumer-defined | deployment | Deployment setting: deploy allow sample config. |
 | `MAC_DEPLOY_API_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy api timeout seconds. |
 | `MAC_DEPLOY_ARCHIVE` | str | consumer-defined | deployment | Deployment setting: deploy archive. |
+| `MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | deployment | Deployment setting: deploy certifier openshell gateway endpoint. |
 | `MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy codegraph init timeout seconds. |
 | `MAC_DEPLOY_CONFIGURED_AGENT_IDS` | str | consumer-defined | deployment | Deployment setting: deploy configured agent ids. |
 | `MAC_DEPLOY_CONTROL_BIND_HOST` | str | consumer-defined | deployment | Deployment setting: deploy control bind host. |
@@ -137,6 +147,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_DRAIN_POLL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy drain poll seconds. |
 | `MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy drain timeout seconds. |
 | `MAC_DEPLOY_ENV_FILE` | str | consumer-defined | deployment | Deployment setting: deploy env file. |
+| `MAC_DEPLOY_EXECUTION_COHORT_REVISION` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort revision. |
+| `MAC_DEPLOY_EXECUTION_COHORT_SEED` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort seed. |
+| `MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort treatment percent. |
 | `MAC_DEPLOY_FIRECRAWL_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy firecrawl bind addr. |
 | `MAC_DEPLOY_FIRECRAWL_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy firecrawl install. |
 | `MAC_DEPLOY_FIRECRAWL_PORT` | int | consumer-defined | deployment | Deployment setting: deploy firecrawl port. |
@@ -198,6 +211,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_OPENSHELL` | str | consumer-defined | deployment | Deployment setting: deploy openshell. |
 | `MAC_DEPLOY_OPENSHELL_ARGS` | str | consumer-defined | deployment | Deployment setting: deploy openshell args. |
 | `MAC_DEPLOY_OPENSHELL_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy openshell required. |
+| `MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime image. |
 | `MAC_DEPLOY_OS` | str | consumer-defined | deployment | Deployment setting: deploy os. |
 | `MAC_DEPLOY_QDRANT_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant bind addr. |
 | `MAC_DEPLOY_QDRANT_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant data dir. |
@@ -214,6 +228,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_REQUIRE_FIRECRAWL` | bool | consumer-defined | deployment | Deployment setting: deploy require firecrawl. |
 | `MAC_DEPLOY_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | deployment | Deployment setting: deploy require qdrant memory. |
 | `MAC_DEPLOY_REV` | str | consumer-defined | deployment | Deployment setting: deploy rev. |
+| `MAC_DEPLOY_REVIEWED_TOOL_ASSETS` | str | consumer-defined | deployment | Deployment setting: deploy reviewed tool assets. |
 | `MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router audio upstream. |
 | `MAC_DEPLOY_ROUTER_BACKEND` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router backend. |
 | `MAC_DEPLOY_ROUTER_DEFAULT_MODEL` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router default model. |
@@ -274,6 +289,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_EVIDENCE_INLINE_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence inline max bytes. |
 | `MAC_EVIDENCE_MEDIA_MAX_FILES` | str | consumer-defined | evidence | Evidence setting: evidence media max files. |
 | `MAC_EVIDENCE_MEDIA_TOTAL_MAX_BYTES` | int | consumer-defined | evidence | Evidence setting: evidence media total max bytes. |
+| `MAC_EXECUTION_COHORT_REVISION` | str | consumer-defined | core | Core setting: execution cohort revision. |
+| `MAC_EXECUTION_COHORT_SEED` | str | consumer-defined | core | Core setting: execution cohort seed. |
+| `MAC_EXECUTION_COHORT_TREATMENT_PERCENT` | str | consumer-defined | core | Core setting: execution cohort treatment percent. |
 | `MAC_EXECUTOR_AGENT_TIMEOUT` | int | consumer-defined | core | Core setting: executor agent timeout. |
 | `MAC_EXECUTOR_BACKEND` | str | consumer-defined | core | Core setting: executor backend. |
 | `MAC_EXTENSIONS` | str | consumer-defined | core | Core setting: extensions. |
@@ -486,11 +504,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell rebuild on source update. |
 | `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell repo requires coding agent. |
 | `MAC_OPENSHELL_REQUIRED` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell required. |
+| `MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell runtime image ref file. |
 | `MAC_OPENSHELL_SANDBOX` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox. |
 | `MAC_OPENSHELL_SANDBOX_ID` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox id. |
 | `MAC_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox name. |
 | `MAC_OPENSHELL_STALE_AFTER_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell stale after seconds. |
 | `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell upload codex auth. |
+| `MAC_OPENSH_GW` | str | consumer-defined | core | Core setting: opensh gw. |
 | `MAC_PG_POOL_SIZE` | int | consumer-defined | core | Core setting: pg pool size. |
 | `MAC_PLIST_BACKUP` | str | consumer-defined | core | Core setting: plist backup. |
 | `MAC_PLUGIN_DOCKERFILE` | str | consumer-defined | core | Core setting: plugin dockerfile. |
@@ -538,6 +558,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REPO_BOOTSTRAP_SETUP_STATUS` | str | consumer-defined | core | Core setting: repo bootstrap setup status. |
 | `MAC_REPO_REQUIRED_COMMANDS` | bool | consumer-defined | core | Core setting: repo required commands. |
 | `MAC_REPO_TEST_COMMAND` | str | consumer-defined | core | Core setting: repo test command. |
+| `MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE` | str | consumer-defined | core | Core setting: repo update dispatch blocker file. |
 | `MAC_REPO_UPDATE_SELF_TEST` | str | consumer-defined | core | Core setting: repo update self test. |
 | `MAC_REPO_UPDATE_SELF_TEST_PYTHON` | str | consumer-defined | core | Core setting: repo update self test python. |
 | `MAC_REQUIRE_FIRECRAWL` | bool | consumer-defined | core | Core setting: require firecrawl. |
@@ -549,6 +570,9 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_RETENTION_MAX_BATCHES_PER_TICK` | str | consumer-defined | core | Core setting: retention max batches per tick. |
 | `MAC_RETENTION_TELEMETRY_DAYS` | str | consumer-defined | core | Core setting: retention telemetry days. |
 | `MAC_RETENTION_TICK_ENABLED` | bool | consumer-defined | core | Core setting: retention tick enabled. |
+| `MAC_REVIEWED_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: reviewed codegraph version. |
+| `MAC_REVIEWED_PYTHON_VERSION` | str | consumer-defined | core | Core setting: reviewed python version. |
+| `MAC_REVIEWED_UV_VERSION` | str | consumer-defined | core | Core setting: reviewed uv version. |
 | `MAC_REVIEW_HUB_VERIFY` | str | consumer-defined | review | Review setting: review hub verify. |
 | `MAC_REVIEW_ID` | str | consumer-defined | review | Review setting: review id. |
 | `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | int | consumer-defined | review | Review setting: review nudge max attempts. |

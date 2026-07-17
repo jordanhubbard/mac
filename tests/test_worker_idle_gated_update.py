@@ -153,8 +153,18 @@ def test_failed_self_test_rolls_back_to_prior_sha(tmp_path, monkeypatch):
     # reset succeeds instead of consuming the exhausted iterator.
     inner = worker._run_git
 
+    rollback_started = False
+
     def wrapper(repo, args, **kwargs):
+        nonlocal rollback_started
         if args[:2] == ["reset", "--hard"]:
+            rollback_started = True
+            calls.append(args)
+            return _cp()
+        if rollback_started and args == ["rev-parse", "HEAD"]:
+            calls.append(args)
+            return _cp(stdout=OLD)
+        if rollback_started and args == ["status", "--porcelain"]:
             calls.append(args)
             return _cp()
         return inner(repo, args, **kwargs)
@@ -168,9 +178,59 @@ def test_failed_self_test_rolls_back_to_prior_sha(tmp_path, monkeypatch):
     result = instance._execute_repo_update({}, "s1")
     assert result["status"] == "rolled_back"
     assert result["rollback_ok"] is True
+    assert result["after_sha"] == OLD
+    assert result["attempted_after_sha"] == NEW
     assert result["restart_requested"] is False
     assert ["reset", "--hard", OLD] in calls
     assert "ImportError" in result["self_test"]["stderr"]
+
+
+@pytest.mark.parametrize("failure", ["reset", "head", "dirty"])
+def test_failed_self_test_unverified_rollback_persists_dispatch_hold(
+    tmp_path, monkeypatch, failure
+):
+    instance = _instance(tmp_path, _Client({"current_task_id": None}))
+    calls = _git_ok_sequence(monkeypatch)
+    inner = worker._run_git
+    rollback_started = False
+    blocker = tmp_path / "repo-update-dispatch-blocked.json"
+    monkeypatch.setenv("MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE", str(blocker))
+
+    def wrapper(repo, args, **kwargs):
+        nonlocal rollback_started
+        if args[:2] == ["reset", "--hard"]:
+            rollback_started = True
+            calls.append(args)
+            return _cp(returncode=1, stderr="reset failed") if failure == "reset" else _cp()
+        if rollback_started and args == ["rev-parse", "HEAD"]:
+            calls.append(args)
+            return _cp(stdout=NEW if failure == "head" else OLD)
+        if rollback_started and args == ["status", "--porcelain"]:
+            calls.append(args)
+            return _cp(stdout=" M poisoned.py" if failure == "dirty" else "")
+        return inner(repo, args, **kwargs)
+
+    monkeypatch.setattr(worker, "_run_git", wrapper)
+    monkeypatch.setattr(
+        instance,
+        "_repo_update_self_test",
+        lambda _repo: {"ok": False, "stderr": "broken new checkout"},
+    )
+
+    result = instance._execute_repo_update({}, "s1")
+
+    assert result["status"] == "error"
+    assert result["rollback_ok"] is False
+    assert result["restart_requested"] is False
+    assert "local dispatch is held" in result["summary"]
+    assert blocker.exists()
+    assert blocker.stat().st_mode & 0o777 == 0o600
+    hold = instance._local_repo_update_dispatch_blocker()
+    assert hold is not None
+    assert hold["reason"] == (
+        "checkout rollback failed after post-update self-test failure"
+    )
+    assert hold["detail"]["attempted_after_sha"] == NEW
 
 
 def test_self_test_runs_real_python_and_can_be_disabled(tmp_path, monkeypatch):

@@ -328,6 +328,7 @@ def test_work_package_pipeline_deploy_is_hub_only_and_default_off(tmp_path):
             "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED": "1",
             "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED": "1",
             "MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR": "/srv/mac/work-package-bundles",
+            "MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT": "http://127.0.0.1:17671",
         },
     )
     assert configured["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] == "1"
@@ -336,12 +337,17 @@ def test_work_package_pipeline_deploy_is_hub_only_and_default_off(tmp_path):
         configured["MAC_WORK_PACKAGE_BUNDLE_DIR"]
         == "/srv/mac/work-package-bundles"
     )
+    assert (
+        configured["MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT"]
+        == "http://127.0.0.1:17671"
+    )
 
     spoke = deploy_env.build_mac_env(
         {
             "MAC_WORK_PACKAGE_PIPELINE_ENABLED": "1",
             "MAC_WORK_PACKAGE_LANDING_ENABLED": "1",
             "MAC_WORK_PACKAGE_BUNDLE_DIR": "/stale/hub/path",
+            "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT": "http://127.0.0.1:17671",
         },
         _cfg(tmp_path, agent="spoke", manager="hub"),
         environ={
@@ -352,6 +358,59 @@ def test_work_package_pipeline_deploy_is_hub_only_and_default_off(tmp_path):
     assert spoke["MAC_WORK_PACKAGE_PIPELINE_ENABLED"] == "0"
     assert spoke["MAC_WORK_PACKAGE_LANDING_ENABLED"] == "0"
     assert "MAC_WORK_PACKAGE_BUNDLE_DIR" not in spoke
+    assert "MAC_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT" not in spoke
+
+
+def test_execution_cohort_pilot_deploy_is_hub_only_and_secret_safe(tmp_path):
+    seed = "stable-pilot-assignment-seed-32-bytes-minimum"
+    deploy_values = {
+        "MAC_DEPLOY_EXECUTION_COHORT_REVISION": "7",
+        "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT": "40",
+        "MAC_DEPLOY_EXECUTION_COHORT_SEED": seed,
+    }
+    hub = deploy_env.build_mac_env(
+        {"MAC_DEPLOY_EXECUTION_COHORT_SEED": "must-not-be-persisted"},
+        _cfg(tmp_path),
+        environ=deploy_values,
+    )
+    assert hub["MAC_EXECUTION_COHORT_REVISION"] == "7"
+    assert hub["MAC_EXECUTION_COHORT_TREATMENT_PERCENT"] == "40"
+    assert hub["MAC_EXECUTION_COHORT_SEED"] == seed
+    assert not any(name in hub for name in deploy_values)
+
+    spoke = deploy_env.build_mac_env(
+        {
+            "MAC_EXECUTION_COHORT_REVISION": "6",
+            "MAC_EXECUTION_COHORT_TREATMENT_PERCENT": "90",
+            "MAC_EXECUTION_COHORT_SEED": "stale-hub-seed-that-must-be-removed",
+            "MAC_DEPLOY_EXECUTION_COHORT_SEED": "stale-deploy-seed",
+        },
+        _cfg(tmp_path, agent="spoke", manager="hub"),
+        environ=deploy_values,
+    )
+    for name in (*deploy_env.EXECUTION_COHORT_DEPLOY_KEYS, *deploy_env.EXECUTION_COHORT_RUNTIME_KEYS):
+        assert name not in spoke
+
+
+@pytest.mark.parametrize(
+    ("environ", "message"),
+    [
+        ({"MAC_DEPLOY_EXECUTION_COHORT_REVISION": "0"}, "must be positive"),
+        (
+            {"MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT": "101"},
+            "must be between 0 and 100",
+        ),
+        (
+            {"MAC_DEPLOY_EXECUTION_COHORT_SEED": "too-short"},
+            "must be at least 32 characters",
+        ),
+    ],
+)
+def test_execution_cohort_pilot_deploy_rejects_invalid_hub_config(
+    tmp_path, environ, message
+):
+    with pytest.raises(ValueError, match=message):
+        deploy_env.build_mac_env({}, _cfg(tmp_path), environ=environ)
 
 
 def test_legacy_argument_arity_defaults_and_main(monkeypatch, tmp_path) -> None:
