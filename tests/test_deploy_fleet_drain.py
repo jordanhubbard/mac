@@ -898,14 +898,16 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
     phase_one = main.index("phase 1/3 holding", required)
     assert masters < required < remote_secret_read < phase_one
     assert "-o ControlMaster=yes -o ControlPersist=no" in deploy
-    assert "-S \"$control_path\" -O proxy" in deploy
     pinned = deploy.split("pinned_fleet_route_args() {", 1)[1].split(
         "\n}\n\nssh_target_args() {", 1
     )[0]
     assert "pinned SSH control socket is unavailable" in pinned
     assert pinned.index("pinned SSH control socket is unavailable") < pinned.index(
-        '-S "$control_path" -O proxy'
+        "printf '%s\\0' -S \"$control_path\""
     )
+    assert 'ProxyCommand=/usr/bin/false' in pinned
+    assert "printf '%s\\0' -S \"$control_path\" -O proxy" not in pinned
+    assert 'printf \'%s\\0\' -F /dev/null' in pinned
     assert "return 1" not in pinned
     assert "scp -O" not in deploy
     assert "MAC_DEPLOY_FENCE_READY:" in deploy
@@ -914,6 +916,42 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
     )[0]
     assert "fenced_remote_upload" in credential
     assert "worker credential manifest" in credential
+
+
+def test_pinned_route_executes_a_normal_mux_session_and_has_no_network_fallback():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    pinned = "pinned_fleet_route_args() {" + deploy.split(
+        "pinned_fleet_route_args() {", 1
+    )[1].split("\n}\n\nssh_target_args() {", 1)[0] + "\n}"
+    snippet = (
+        "set -euo pipefail\n"
+        "SSH_CONTROL_REQUIRED=1\n"
+        "fleet_ssh_route_args() { "
+        "printf '%s\\0' -F /dev/null -J jump@example -i /tmp/key user@target; }\n"
+        "ssh_control_path_for_agent() { printf '%s\\n' /tmp/pinned.sock; }\n"
+        + pinned
+        + "\npinned_fleet_route_args worker\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout.split(b"\0")[:-1] == [
+        b"-F",
+        b"/dev/null",
+        b"-S",
+        b"/tmp/pinned.sock",
+        b"-o",
+        b"ControlMaster=no",
+        b"-o",
+        b"ControlPersist=no",
+        b"-o",
+        b"ProxyCommand=/usr/bin/false",
+        b"user@target",
+    ]
+    assert b"pinned SSH control socket is unavailable" in result.stderr
 
 
 def test_required_openshell_image_is_rejected_before_any_remote_fleet_action():

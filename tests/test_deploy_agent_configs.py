@@ -2351,7 +2351,9 @@ def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene()
     assert "fleet_ssh_route_args()" in script
     assert "--port-override" in script
     assert "fenced_remote_upload()" in script
-    assert '-S "$control_path" -O proxy' in script
+    assert '-S "$control_path"' in script
+    assert "ProxyCommand=/usr/bin/false" in script
+    assert "printf '%s\\0' -S \"$control_path\" -O proxy" not in script
     assert "scp -O" not in script
     assert "ssh -A -o BatchMode=yes -o ConnectTimeout=10" in script
     assert script.count("-o ServerAliveInterval=30 -o ServerAliveCountMax=6") >= 10

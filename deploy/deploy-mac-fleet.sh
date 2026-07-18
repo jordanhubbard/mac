@@ -1169,9 +1169,9 @@ start_ssh_control_master() {
   last_index=$((${#route_parts[@]} - 1))
   target="${route_parts[$last_index]}"
   route_args=("${route_parts[@]:0:$last_index}")
-  # Keep the master in this controller's process tree. Every later session uses
-  # explicit mux proxy mode (-O proxy), which cannot fall back to a fresh TCP
-  # connection if this socket or process disappears.
+  # Keep the master in this controller's process tree. Every later session
+  # reuses this exact socket and carries a failing ProxyCommand fallback, so it
+  # cannot open a fresh TCP connection if this socket or process disappears.
   ssh -A -MN -o BatchMode=yes -o ConnectTimeout=10 \
     -o ControlMaster=yes -o ControlPersist=no -o ControlPath="$control_path" \
     "${route_args[@]}" "$target" </dev/null >"$log_path" 2>&1 &
@@ -1201,19 +1201,25 @@ pinned_fleet_route_args() {
     return 0
   fi
   control_path="$(ssh_control_path_for_agent "$agent")"
-  # Always emit the explicit mux-proxy route, even if the socket has already
+  # Always emit the explicit pinned-multiplex route, even if the socket has already
   # disappeared.  This function is normally consumed through process
   # substitution, whose exit status is not propagated to the caller.  An
-  # early return could therefore leave the caller with an unpinned route;
-  # ``-O proxy`` instead makes ssh itself fail closed without reconnecting.
+  # early return could therefore leave the caller with an unpinned route.
   if [ ! -S "$control_path" ]; then
     echo "ERROR: ${agent}: pinned SSH control socket is unavailable" >&2
   fi
   last_index=$((${#route_parts[@]} - 1))
-  printf '%s\0' "${route_parts[@]:0:$last_index}"
-  # Unlike ordinary ControlPath reuse, explicit mux proxy mode is fail-closed:
-  # OpenSSH exits if the existing master is unavailable instead of reconnecting.
-  printf '%s\0' -S "$control_path" -O proxy
+  # ``ssh -O proxy`` is a control command: when used as the outer invocation it
+  # creates a raw proxy stream and does not execute the requested remote
+  # command.  Reuse the master as a normal multiplexed session instead.  The
+  # deliberately failing ProxyCommand is ignored while the master is alive,
+  # but makes the fallback connection fail closed if the socket disappears.
+  # The master already froze the complete route (jump, identity, host keys and
+  # target), so a reused session needs only the socket and original target.
+  printf '%s\0' -F /dev/null
+  printf '%s\0' -S "$control_path"
+  printf '%s\0' -o ControlMaster=no -o ControlPersist=no
+  printf '%s\0' -o ProxyCommand=/usr/bin/false
   printf '%s\0' "${route_parts[$last_index]}"
 }
 
