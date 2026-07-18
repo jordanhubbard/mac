@@ -4,6 +4,7 @@ import re
 import stat
 import subprocess
 import sys
+import types
 
 import pytest
 
@@ -277,6 +278,85 @@ def test_remote_ssh_heredocs_keep_stdin_open():
         "REMOTE_REPORT_EXECUTOR_APPROVAL",
         "REMOTE_RELEASE_EPOCH",
     ]
+
+
+def test_legacy_hub_gate_does_not_import_post_upgrade_model_helpers(
+    monkeypatch, capsys
+):
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    gate_start = deploy.index("hub_agent_restart_gate() {")
+    python_marker = '"$HOME/.mac/venv/bin/python" - <<\'PY\'\n'
+    python_start = deploy.index(python_marker, gate_start) + len(python_marker)
+    gate = deploy[python_start : deploy.index("\nPY\nREMOTE_HUB_GATE", python_start)]
+
+    row = {
+        "id": AGENT,
+        "dispatch_hold": True,
+        "dispatch_hold_reason": "synchronized cut-over hold",
+        "deleted_at": None,
+        "last_seen_at": "2026-07-18T00:00:00+00:00",
+        "status": "idle",
+        "health_status": "healthy",
+        "current_task_id": None,
+        "resources": {},
+    }
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def urlopen(request, timeout=0):
+        del timeout
+        if request.full_url.endswith("/tasks?state=claimed") or request.full_url.endswith(
+            "/tasks?state=running"
+        ):
+            return Response([])
+        if request.full_url.endswith("/agents/" + AGENT):
+            if request.get_method() == "PUT":
+                row.update(json.loads(request.data))
+            return Response(dict(row))
+        raise AssertionError("unexpected legacy bootstrap request: " + request.full_url)
+
+    environment = {
+        "MAC_DEPLOY_GATE_PHASE": "legacy-bootstrap",
+        "MAC_DEPLOY_GATE_AGENT_ID": AGENT,
+        "MAC_DEPLOY_GATE_HOLD_REASON": "deployment hold",
+        "MAC_DEPLOY_GATE_PRIOR_HOLD_REASON": "synchronized cut-over hold",
+        "MAC_DEPLOY_GATE_PRIOR_OWNED": "0",
+        "MAC_DEPLOY_GATE_ALLOW_MISSING": "0",
+        "MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED": "0",
+        "MAC_DEPLOY_GATE_REQUIRE_OWNED": "0",
+        "MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR": "0",
+        "MAC_DEPLOY_GATE_TIMEOUT": "1",
+        "MAC_HUB_URL": "http://legacy-hub",
+        "MAC_DEPLOY_GATE_ADMIN_TOKEN": "redacted-test-token",
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    monkeypatch.setitem(sys.modules, "mac.models", types.ModuleType("mac.models"))
+
+    with pytest.raises(SystemExit) as stopped:
+        exec(compile(gate, "<embedded-legacy-hub-gate>", "exec"), {"__name__": "__main__"})
+
+    assert stopped.value.code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result == {
+        "baseline_seen": "2026-07-18T00:00:00+00:00",
+        "exists": True,
+        "owns_hold": False,
+    }
+    assert row["dispatch_hold"] is True
+    assert row["status"] == "draining"
 
 
 @pytest.mark.parametrize(

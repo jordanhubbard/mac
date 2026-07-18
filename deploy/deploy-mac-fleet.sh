@@ -1847,8 +1847,6 @@ import time
 import urllib.error
 import urllib.request
 
-from mac.models import agent_has_read_only_report_repository_executor
-
 phase = os.environ["MAC_DEPLOY_GATE_PHASE"]
 agent_id = os.environ["MAC_DEPLOY_GATE_AGENT_ID"]
 generation = os.environ.get("MAC_DEPLOY_GATE_GENERATION", "")
@@ -1924,6 +1922,11 @@ def parse_seen(value):
 def report_executor_ready(resources):
     if not require_report_executor:
         return True
+    # The one-time held-hub bootstrap executes this embedded gate with the
+    # previously deployed MAC package, which predates report-executor support.
+    # Import the new validator only on post-upgrade paths that require it.
+    from mac.models import agent_has_read_only_report_repository_executor
+
     startup = resources.get("startup_self_test")
     checks = startup.get("checks") if isinstance(startup, dict) else None
     attestation = resources.get("report_repository_executor_attestation")
