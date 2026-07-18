@@ -64,6 +64,36 @@ def fleet_config_query_source() -> str:
     return match.group("source")
 
 
+def gateway_log_classifier_source() -> str:
+    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    match = re.search(
+        r"classify_gateway_logs\(\) \{.*?<<'PY'\n(?P<source>.*?)\nPY\n\}",
+        script,
+        re.DOTALL,
+    )
+    assert match is not None
+    return match.group("source")
+
+
+def run_gateway_log_classifier(tmp_path: Path, text: str):
+    input_path = tmp_path / "gateway.log"
+    output_path = tmp_path / "summary.json"
+    input_path.write_text(text, encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            gateway_log_classifier_source(),
+            str(input_path),
+            str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, json.loads(output_path.read_text(encoding="utf-8"))
+
+
 def deploy_env_config(
     tmp_path,
     *,
@@ -2638,6 +2668,167 @@ def test_fleet_deploy_treats_unconfigured_discord_startup_as_benign():
     assert "actionable_text" in classifier
     assert 'if spec["severity"] != "info"' in classifier
     assert 'if spec["severity"] == "info"' in classifier
+
+
+def test_gateway_log_classifier_accepts_exact_recovered_rocky_startup(tmp_path):
+    request_id = "a9ee718d-708b-4426-b155-9f28c3c29f92"
+    truncated_request_id = "a9ee718d-708b-4426-b155-9f28c3c29"
+    deferred_block = [
+        (
+            "openclaw cron deferred until device approval: gateway connect failed: "
+            "GatewayClientRequestError: scope upgrade pending approval "
+            f"(requestId: {request_id})"
+        ),
+        (
+            "GatewayTransportError: gateway closed (1008): pairing required: "
+            "device is asking for more scopes than currently approved "
+            f"(requestId: {truncated_request_id}"
+        ),
+        "Gateway target: ws://127.0.0.1:18789",
+        "Source: local loopback",
+        "Config: /home/sandbox/.config/mac-openclaw/openclaw.json",
+        "Bind: lan",
+    ]
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "\n".join(
+            [
+                "Error:   × sandbox 'mac-openclaw-rocky' already exists",
+                "Error:   × sandbox 'mac-openclaw-rocky' already exists",
+                (
+                    "\x1b[1m\x1b[36mCreated sandbox:\x1b[39m\x1b[0m "
+                    "\x1b[1mmac-openclaw-rocky\x1b[0m"
+                ),
+                "2026-07-18T01:02:03.456Z [gateway] ready",
+                *deferred_block,
+                *deferred_block,
+                *deferred_block,
+                *deferred_block,
+            ]
+        )
+        + "\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert summary["actionable_count"] == 0
+    assert summary["classes"] == [
+        {"count": 2, "name": "openclaw_sandbox_create_recovered", "severity": "info"},
+        {"count": 4, "name": "openclaw_cron_device_approval_deferred", "severity": "info"},
+    ]
+
+
+def test_gateway_log_classifier_classifies_sanitized_cron_deferrals(tmp_path):
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "\n".join(
+            [
+                "openclaw cron deferred until device approval: scope_upgrade_pending_approval",
+                "openclaw cron deferred until device approval: pairing_required",
+            ]
+        )
+        + "\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert summary["actionable_count"] == 0
+    assert summary["classes"] == [
+        {"count": 2, "name": "openclaw_cron_device_approval_deferred", "severity": "info"},
+    ]
+
+
+def test_gateway_log_classifier_requires_later_create_and_readiness(tmp_path):
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "\n".join(
+            [
+                "Created sandbox: mac-openclaw-rocky",
+                "2026-07-18T01:02:03.456Z [gateway] ready",
+                "Error:   × sandbox 'mac-openclaw-rocky' already exists",
+                "Error:   × sandbox 'mac-openclaw-natasha' already exists",
+                "Created sandbox: mac-openclaw-natasha",
+            ]
+        )
+        + "\n",
+    )
+
+    assert result.returncode == 1
+    assert summary["actionable_count"] == 1
+    assert {item["name"] for item in summary["classes"]} == {"traceback"}
+    assert next(item for item in summary["classes"] if item["name"] == "traceback")[
+        "count"
+    ] == 2
+
+
+def test_gateway_log_classifier_only_blanks_positionally_recovered_collision(tmp_path):
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "\n".join(
+            [
+                "Error:   × sandbox 'mac-openclaw-rocky' already exists",
+                "Created sandbox: mac-openclaw-rocky",
+                "2026-07-18T01:02:03.456Z [gateway] ready",
+                "Error:   × sandbox 'mac-openclaw-rocky' already exists",
+            ]
+        )
+        + "\n",
+    )
+
+    assert result.returncode == 1
+    assert summary["actionable_count"] == 1
+    assert summary["classes"] == [
+        {"count": 1, "name": "openclaw_sandbox_create_recovered", "severity": "info"},
+        {"count": 1, "name": "traceback", "severity": "error"},
+    ]
+
+
+def test_gateway_log_classifier_rejects_mismatched_or_tainted_cron_deferral(tmp_path):
+    result, summary = run_gateway_log_classifier(
+        tmp_path,
+        "\n".join(
+            [
+                (
+                    "openclaw cron deferred until device approval: gateway connect failed: "
+                    "GatewayClientRequestError: scope upgrade pending approval "
+                    "(requestId: a9ee718d-708b-4426-b155-9f28c3c29f92)"
+                ),
+                (
+                    "GatewayTransportError: gateway closed (1008): pairing required: "
+                    "device is asking for more scopes than currently approved "
+                    "(requestId: deadbeef-708b-4426-b155-9f28c3c29"
+                ),
+                (
+                    "openclaw cron deferred until device approval: gateway connect failed: "
+                    "GatewayClientRequestError: scope upgrade pending approval "
+                    "(requestId: a9ee718d-708b-4426-b155-9f28c3c29f92) "
+                    "ERROR database failed"
+                ),
+                (
+                    "GatewayTransportError: gateway closed (1008): pairing required: "
+                    "device is asking for more scopes than currently approved "
+                    "(requestId: a9ee718d-708b-4426-b155-9f28c3c29"
+                ),
+                "ERROR pairing required outside the owned warning",
+                "Exception scope upgrade pending approval outside the owned warning",
+                "Traceback (most recent call last):",
+            ]
+        )
+        + "\n",
+    )
+
+    assert result.returncode == 1
+    assert summary["actionable_count"] == 1
+    assert {item["name"] for item in summary["classes"]} == {"traceback"}
+
+
+def test_darwin_openclaw_launchd_bootstrap_starts_gateway_once():
+    script = deploy_script_text()
+    installer = script.split("install_darwin_openclaw_service() {", 1)[1].split(
+        "install_darwin_hermes_service() {", 1
+    )[0]
+
+    assert "<key>RunAtLoad</key><true/>" in installer
+    assert 'launchctl bootstrap "gui/$uid" "$plist"' in installer
+    assert 'launchctl kickstart -k "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"' not in installer
 
 
 def test_launchd_worker_wrapper_marks_agent_offline_on_controlled_shutdown():

@@ -7,6 +7,8 @@ import {spawnSync} from "node:child_process";
 
 const planPath = process.argv[2];
 if (!planPath) process.exit(0);
+const openclawBin = process.env.MAC_OPENCLAW_BIN || "/usr/local/bin/openclaw";
+const ansiEscape = /\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])/g;
 
 let plan;
 try {
@@ -19,8 +21,52 @@ if (plan?.schema !== "mac.openclaw_cron_migration.v1" || !Array.isArray(plan.job
   throw new Error("invalid MAC OpenClaw cron migration plan");
 }
 
+function deviceApprovalDeferralReason(rawDetail) {
+  const lines = rawDetail
+    .replace(ansiEscape, "")
+    .replace(/\r\n?/g, "\n")
+    .trim()
+    .split("\n");
+
+  // The OpenClaw gateway may append this fixed diagnostic footer.  Accept it
+  // only as a complete block with MAC's loopback gateway/config shape; an
+  // arbitrary extra line (including a second failure) must remain fatal.
+  let core = lines;
+  if (lines.length >= 4) {
+    const footer = lines.slice(-4);
+    if (
+      /^Gateway target: ws:\/\/127\.0\.0\.1:\d+$/.test(footer[0]) &&
+      footer[1] === "Source: local loopback" &&
+      /^Config: \/[^\r\n]+\/openclaw\.json$/.test(footer[2]) &&
+      /^(?:Bind: lan|Bind: loopback)$/.test(footer[3])
+    ) {
+      core = lines.slice(0, -4);
+    }
+  }
+
+  if (core.length === 2) {
+    const request = core[0].match(
+      /^gateway connect failed: GatewayClientRequestError: scope upgrade pending approval \(requestId: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)$/,
+    );
+    const transport = core[1].match(
+      /^GatewayTransportError: gateway closed \(1008\): pairing required: device is asking for more scopes than currently approved \(requestId: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{9})$/,
+    );
+    if (request && transport && request[1].startsWith(transport[1])) {
+      return "scope_upgrade_pending_approval";
+    }
+  }
+
+  if (
+    core.length === 1 &&
+    /^(?:gateway connect failed: )?GatewayTransportError: gateway closed(?: \(1008\))?: pairing required$/.test(core[0])
+  ) {
+    return "pairing_required";
+  }
+  return null;
+}
+
 function openclaw(args, {json = false} = {}) {
-  const result = spawnSync("/usr/local/bin/openclaw", args, {
+  const result = spawnSync(openclawBin, args, {
     encoding: "utf8",
     env: process.env,
     maxBuffer: 16 * 1024 * 1024,
@@ -31,16 +77,27 @@ function openclaw(args, {json = false} = {}) {
     // channel. Cron installation must not terminate an otherwise healthy
     // gateway when the CLI asks for an operator scope upgrade; the plan stays
     // on disk and can be applied after approval is provisioned.
-    if (/scope upgrade pending approval|pairing required/i.test(detail)) {
-      console.warn(`openclaw cron deferred until device approval: ${detail}`);
-      return null;
+    const deferralReason = deviceApprovalDeferralReason(detail);
+    if (deferralReason) {
+      console.warn(`openclaw cron deferred until device approval: ${deferralReason}`);
+      return {
+        outcome: "device_approval_deferred",
+        reason: deferralReason,
+        value: null,
+      };
     }
     throw new Error(`openclaw ${args.join(" ")} failed: ${detail}`);
   }
-  return json ? JSON.parse(result.stdout) : result.stdout;
+  return {
+    outcome: "success",
+    value: json ? JSON.parse(result.stdout) : result.stdout,
+  };
 }
 
-const listed = openclaw(["cron", "list", "--json"], {json: true}) || {jobs: []};
+const listedResult = openclaw(["cron", "list", "--json"], {json: true});
+const listed = listedResult.outcome === "success" ? listedResult.value : {jobs: []};
+const inventoryDeviceApprovalDeferred =
+  listedResult.outcome === "device_approval_deferred";
 const byName = new Map((listed.jobs || []).map((job) => [String(job.name || ""), job]));
 const primarySlackAccount = process.env.MAC_OPENCLAW_SLACK_ACCOUNT_ID || "default";
 
@@ -62,6 +119,8 @@ function deliveryArgs(job) {
 }
 
 let deferredScriptJobs = 0;
+let appliedJobs = 0;
+let deviceApprovalDeferredJobs = 0;
 // Script-backed jobs are installed DISABLED here (they cannot run their host
 // pre-run script inside the sandbox). We ALSO emit a host-runner spec for each
 // so the two-stage flow can be restored on the HOST, where the scripts and the
@@ -112,11 +171,31 @@ for (const job of plan.jobs) {
     "--exact",
     ...deliveryArgs(job),
   ];
+  // Without a trustworthy inventory an add is not safe: approval could arrive
+  // between the failed list and this mutation, turning a guessed add into a
+  // duplicate.  Preserve the host-runner spec above, but defer every gateway
+  // mutation until a later run can reconcile against a real inventory.
+  if (inventoryDeviceApprovalDeferred) {
+    deviceApprovalDeferredJobs += 1;
+    continue;
+  }
   const existing = byName.get(name);
+  let applyResult;
   if (existing?.id) {
-    openclaw(["cron", "edit", String(existing.id), ...common, enable ? "--enable" : "--disable"]);
+    applyResult = openclaw([
+      "cron", "edit", String(existing.id), ...common, enable ? "--enable" : "--disable",
+    ]);
   } else {
-    openclaw(["cron", "add", ...common, ...(enable ? [] : ["--disabled"]), "--json"]);
+    applyResult = openclaw([
+      "cron", "add", ...common, ...(enable ? [] : ["--disabled"]), "--json",
+    ]);
+  }
+  if (applyResult.outcome === "success") {
+    appliedJobs += 1;
+  } else if (applyResult.outcome === "device_approval_deferred") {
+    deviceApprovalDeferredJobs += 1;
+  } else {
+    throw new Error(`unknown OpenClaw cron application outcome: ${applyResult.outcome}`);
   }
 }
 
@@ -145,7 +224,7 @@ try {
 
 if (deferredScriptJobs > 0) {
   console.warn(
-    `apply-cron-plan: ${deferredScriptJobs} script-backed Hermes job(s) installed DISABLED ` +
+    `apply-cron-plan: ${deferredScriptJobs} script-backed Hermes job(s) targeted for DISABLED OpenClaw installation ` +
     `(pre-run script runs host-side via mac-cron-script-runner; spec at ${hostScriptJobsPath}). ` +
     `See task_c8bb46ec.`,
   );
@@ -154,7 +233,9 @@ if (deferredScriptJobs > 0) {
 process.stdout.write(
   JSON.stringify({
     schema: plan.schema,
-    applied: plan.jobs.length,
+    applied: appliedJobs,
+    inventory_device_approval_deferred: inventoryDeviceApprovalDeferred,
+    device_approval_deferred_jobs: deviceApprovalDeferredJobs,
     deferred_script_jobs: deferredScriptJobs,
     host_script_jobs: hostScriptJobs.length,
   }) + "\n",

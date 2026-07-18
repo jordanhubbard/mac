@@ -5764,7 +5764,8 @@ EOF
   : > "$LOG_DIR/openclaw-gateway.log"
   launchctl enable "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"
   launchctl bootstrap "gui/$uid" "$plist"
-  launchctl kickstart -k "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"
+  # RunAtLoad starts the wrapper as part of a successful bootstrap.  A second
+  # unconditional kickstart races that wrapper's stop/delete/create lifecycle.
   sleep 8
   if ! verify_openclaw_gateway; then
     log "ERROR: stock OpenClaw verification failed under launchd; restoring Hermes gateway"
@@ -5892,6 +5893,11 @@ try:
 except OSError:
     text = ""
 
+# OpenShell uses terminal styling even when its output is redirected to the
+# launchd log.  Classify the visible message, not the ANSI control bytes.
+ansi_escape = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])")
+classification_text = ansi_escape.sub("", text)
+
 patterns = {
     "controlled_restart": {
         "severity": "info",
@@ -5905,28 +5911,97 @@ patterns = {
         "severity": "info",
         "regex": r"\[Discord\] No bot token configured|discord failed to connect",
     },
+    "openclaw_sandbox_create_recovered": {
+        "severity": "info",
+        "regex": (
+            r"(?<![a-z0-9_])Error:[ \t]+×[ \t]+sandbox "
+            r"'(?P<sandbox>mac-openclaw-[a-z0-9][a-z0-9._-]*)' "
+            r"already exists[ \t]*$"
+        ),
+        "requires_regex": (
+            r"Created sandbox:[ \t]*"
+            r"(?P<sandbox>mac-openclaw-[a-z0-9][a-z0-9._-]*)[ \t]*$"
+        ),
+        "requires_then_regex": r"\[gateway\] ready\b",
+        "match_key": "sandbox",
+    },
+    "openclaw_cron_device_approval_deferred": {
+        "severity": "info",
+        "regex": (
+            r"(?:^[ \t]*openclaw cron deferred until device approval: "
+            r"(?:scope_upgrade_pending_approval|pairing_required)[ \t]*$|"
+            r"^[ \t]*openclaw cron deferred until device approval: gateway connect failed: "
+            r"GatewayClientRequestError: scope upgrade pending approval \(requestId: "
+            r"(?P<request_prefix>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+            r"[0-9a-f]{4}-)(?P<request_tail>[0-9a-f]{9})[0-9a-f]{3}\)[ \t]*\r?\n"
+            r"GatewayTransportError: gateway closed \(1008\): pairing required: "
+            r"device is asking for more scopes than currently approved \(requestId: "
+            r"(?P=request_prefix)(?P=request_tail)[ \t]*$)"
+        ),
+    },
     "secret_redaction_disabled": {
         "severity": "critical",
         "regex": r"Secret redaction: DISABLED|HERMES_REDACT_SECRETS=false",
     },
     "traceback": {
         "severity": "error",
-        "regex": r"Traceback \(most recent call last\)|\bERROR\b|Exception",
+        "regex": (
+            r"Traceback \(most recent call last\)|\bERROR\b|Exception|"
+            r"Gateway(?:ClientRequest|Transport)Error"
+        ),
     },
 }
 classes = []
-actionable_text = text
+actionable_text = classification_text
+info_flags = re.IGNORECASE | re.MULTILINE
+
+
+def blank_matches(source, matches):
+    chars = list(source)
+    for match in matches:
+        for index in range(match.start(), match.end()):
+            if chars[index] not in {"\r", "\n"}:
+                chars[index] = " "
+    return "".join(chars)
+
+
 for name, spec in patterns.items():
     if spec["severity"] != "info":
         continue
-    matches = re.findall(spec["regex"], text, flags=re.IGNORECASE)
+    matches = list(re.finditer(spec["regex"], actionable_text, flags=info_flags))
+    match_key = spec.get("match_key")
+    requires_regex = spec.get("requires_regex")
+    requires_then_regex = spec.get("requires_then_regex")
+    if match_key and requires_regex:
+        required_matches = list(
+            re.finditer(requires_regex, actionable_text, flags=info_flags)
+        )
+        then_matches = (
+            list(re.finditer(requires_then_regex, actionable_text, flags=info_flags))
+            if requires_then_regex
+            else []
+        )
+
+        def has_ordered_recovery(candidate):
+            candidate_key = candidate.group(match_key).lower()
+            for required in required_matches:
+                if required.start() <= candidate.end():
+                    continue
+                if required.group(match_key).lower() != candidate_key:
+                    continue
+                if requires_then_regex and not any(
+                    then.start() > required.end() for then in then_matches
+                ):
+                    continue
+                return True
+            return False
+
+        matches = [
+            match for match in matches if has_ordered_recovery(match)
+        ]
     if matches:
         classes.append({"name": name, "severity": spec["severity"], "count": len(matches)})
-        actionable_text = "\n".join(
-            line
-            for line in actionable_text.splitlines()
-            if not re.search(spec["regex"], line, flags=re.IGNORECASE)
-        )
+        actionable_text = blank_matches(actionable_text, matches)
 
 for name, spec in patterns.items():
     if spec["severity"] == "info":

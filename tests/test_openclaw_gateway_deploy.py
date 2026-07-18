@@ -17,6 +17,107 @@ DEPLOY = ROOT / "deploy" / "deploy-mac-fleet.sh"
 NODE_INSTALL_SCRIPT = ROOT / "deploy" / "fleet-node-install.sh"
 FLEET_CONFIG = ROOT / "deploy" / "fleet" / "config.yaml"
 SYSTEMD_UNIT = ROOT / "deploy" / "systemd" / "mac-openclaw-gateway.service"
+APPLY_CRON_PLAN = OPENCLAW_DIR / "apply-cron-plan.mjs"
+
+
+def _run_apply_cron_plan(
+    tmp_path: Path, scenario: str
+) -> tuple[subprocess.CompletedProcess[str], dict]:
+    plan_path = tmp_path / "cron-plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "schema": "mac.openclaw_cron_migration.v1",
+                "jobs": [
+                    {
+                        "name": "existing-job",
+                        "legacy_id": "legacy-existing",
+                        "cron": "0 * * * *",
+                        "message": "existing",
+                        "enabled": True,
+                    },
+                    {
+                        "name": "script-job",
+                        "legacy_id": "legacy-script",
+                        "cron": "30 * * * *",
+                        "message": "script",
+                        "legacy_script": "/opt/hermes/dream-cycle.sh",
+                        "enabled": True,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls_path = tmp_path / "openclaw-calls.jsonl"
+    fake_openclaw = tmp_path / "openclaw"
+    fake_openclaw.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+with Path(os.environ["FAKE_OPENCLAW_CALLS"]).open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(args) + "\\n")
+
+scenario = os.environ["FAKE_OPENCLAW_SCENARIO"]
+is_list = args[:3] == ["cron", "list", "--json"]
+name = args[args.index("--name") + 1] if "--name" in args else ""
+if scenario == "fatal" and not is_list:
+    print("gateway database unavailable", file=sys.stderr)
+    raise SystemExit(1)
+if scenario in {"deferred", "tainted-deferral"}:
+    print(
+        "gateway connect failed: GatewayClientRequestError: scope upgrade pending approval "
+        "(requestId: a9ee718d-708b-4426-b155-9f28c3c29f92)",
+        file=sys.stderr,
+    )
+    print(
+        "GatewayTransportError: gateway closed (1008): pairing required: device is asking "
+        "for more scopes than currently approved "
+        "(requestId: a9ee718d-708b-4426-b155-9f28c3c29",
+        file=sys.stderr,
+    )
+    print("Gateway target: ws://127.0.0.1:18789", file=sys.stderr)
+    print("Source: local loopback", file=sys.stderr)
+    print("Config: /home/sandbox/.config/mac-openclaw/openclaw.json", file=sys.stderr)
+    print("Bind: lan", file=sys.stderr)
+    if scenario == "tainted-deferral":
+        print("ERROR gateway database unavailable", file=sys.stderr)
+    raise SystemExit(1)
+if scenario == "mixed" and name == "script-job":
+    print("GatewayTransportError: gateway closed: pairing required", file=sys.stderr)
+    raise SystemExit(1)
+if is_list:
+    print(json.dumps({"jobs": [{"name": "existing-job", "id": "job-1"}]}))
+else:
+    print("{}")
+""",
+        encoding="utf-8",
+    )
+    fake_openclaw.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "MAC_OPENCLAW_BIN": str(fake_openclaw),
+            "FAKE_OPENCLAW_CALLS": str(calls_path),
+            "FAKE_OPENCLAW_SCENARIO": scenario,
+        }
+    )
+    result = subprocess.run(
+        ["node", str(APPLY_CRON_PLAN), str(plan_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    calls = [
+        json.loads(line)
+        for line in calls_path.read_text(encoding="utf-8").splitlines()
+    ]
+    return result, {"calls": calls, "plan_path": plan_path}
 
 
 def test_mac_continuity_plugin_mirrors_fleet_conversation_to_home_channel() -> None:
@@ -508,6 +609,86 @@ def test_apply_cron_plan_defers_script_backed_jobs() -> None:
     assert "hasScript" not in losslessline
     # Surfaces how many jobs were deferred (operator + summary visibility).
     assert "deferred_script_jobs" in apply
+
+
+def test_apply_cron_plan_receipt_counts_only_successful_cli_mutations(tmp_path: Path) -> None:
+    result, evidence = _run_apply_cron_plan(tmp_path, "success")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "schema": "mac.openclaw_cron_migration.v1",
+        "applied": 2,
+        "inventory_device_approval_deferred": False,
+        "device_approval_deferred_jobs": 0,
+        "deferred_script_jobs": 1,
+        "host_script_jobs": 1,
+    }
+    assert evidence["calls"][0] == ["cron", "list", "--json"]
+    assert evidence["calls"][1][:3] == ["cron", "edit", "job-1"]
+    assert evidence["calls"][2][:2] == ["cron", "add"]
+
+
+def test_apply_cron_plan_receipt_reports_device_approval_deferrals(tmp_path: Path) -> None:
+    result, evidence = _run_apply_cron_plan(tmp_path, "deferred")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "schema": "mac.openclaw_cron_migration.v1",
+        "applied": 0,
+        "inventory_device_approval_deferred": True,
+        "device_approval_deferred_jobs": 2,
+        "deferred_script_jobs": 1,
+        "host_script_jobs": 1,
+    }
+    assert evidence["calls"] == [["cron", "list", "--json"]]
+    assert result.stderr.count("deferred until device approval") == 1
+    assert result.stderr.count("scope_upgrade_pending_approval") == 1
+    assert "GatewayClientRequestError" not in result.stderr
+    assert "a9ee718d-708b-4426-b155-9f28c3c29f92" not in result.stderr
+    host_spec = json.loads(
+        (evidence["plan_path"].parent / "host-script-jobs.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert host_spec["schema"] == "mac.openclaw_host_script_jobs.v1"
+    assert [job["name"] for job in host_spec["jobs"]] == ["script-job"]
+
+
+def test_apply_cron_plan_receipt_distinguishes_mixed_outcomes(tmp_path: Path) -> None:
+    result, _ = _run_apply_cron_plan(tmp_path, "mixed")
+
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(result.stdout)
+    assert receipt["applied"] == 1
+    assert receipt["inventory_device_approval_deferred"] is False
+    assert receipt["device_approval_deferred_jobs"] == 1
+    assert receipt["deferred_script_jobs"] == 1
+    assert receipt["host_script_jobs"] == 1
+    assert (
+        "openclaw cron deferred until device approval: pairing_required"
+        in result.stderr
+    )
+    assert "GatewayTransportError" not in result.stderr
+
+
+def test_apply_cron_plan_still_fails_on_non_approval_cli_errors(tmp_path: Path) -> None:
+    result, evidence = _run_apply_cron_plan(tmp_path, "fatal")
+
+    assert result.returncode != 0
+    assert "gateway database unavailable" in result.stderr
+    assert "device approval" not in result.stderr
+    assert result.stdout == ""
+    assert len(evidence["calls"]) == 2
+
+
+def test_apply_cron_plan_rejects_tainted_device_approval_error(tmp_path: Path) -> None:
+    result, evidence = _run_apply_cron_plan(tmp_path, "tainted-deferral")
+
+    assert result.returncode != 0
+    assert "scope upgrade pending approval" in result.stderr
+    assert "gateway database unavailable" in result.stderr
+    assert result.stdout == ""
+    assert evidence["calls"] == [["cron", "list", "--json"]]
 
 
 def test_headless_agents_have_a_human_voice() -> None:
