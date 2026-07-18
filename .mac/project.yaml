@@ -65,7 +65,7 @@ work_package_certification:
 
     # Empty => deny-by-default with nothing allowed == ALL network egress denied.
     network_policies: {}
-  image_ref: ghcr.io/jordanhubbard/mac-certifier@sha256:657f1aaf3904059354e9c81d327dffc9aaf3e66c0331a4b1269313362ed8b681
+  image_ref: ghcr.io/jordanhubbard/mac-certifier@sha256:4a697db08a850ccdc7303679f7ad3ce33d4f5b6007c1bb81a90df526ff58e667
   controller_commands:
     - command_id: contract-tests
       argv:
