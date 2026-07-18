@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from mac.store import SQLiteStore
 from mac.worker_credentials import (
     AUTHENTICATED_PROOF_SCHEMA,
     DESTINATION_VERIFICATION_SCHEMA,
+    FLEET_SOURCE_RUNTIME_SCHEMA,
     INSTALL_MANIFEST_SCHEMA,
     MODE_COMPATIBILITY,
     MODE_ENFORCED,
@@ -30,6 +32,7 @@ from mac.worker_credentials import (
     build_readiness_inventory,
     credential_resource_from_env,
     evaluate_worker_actor,
+    ensure_fleet_source_runtime,
     install_vm_manifest,
     installation_manifest,
     main,
@@ -549,6 +552,7 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     rollout = script.split("provision_bound_worker_credential() (", 1)[1].split(
         "enforce_bound_worker_credentials() {", 1
     )[0]
+    assert "mac.worker_credentials ensure-runtime" in rollout
     assert "mac.worker_credentials issue" in rollout
     assert "mac.worker_credentials install-vm" in rollout
     assert "mac.worker_credentials activate" in rollout
@@ -558,6 +562,10 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     assert "--manifest-out" in rollout
     assert "--package-capable" in rollout
     assert "MAC_WORKER_TOKEN" not in rollout
+    assert "mac-source:" not in rollout
+    assert rollout.index("mac.worker_credentials ensure-runtime") < rollout.index(
+        "mac.worker_credentials issue"
+    )
 
     main_body = script.split("main() {", 1)[1]
     assert main_body.index("provision_bound_worker_credential") < main_body.index(
@@ -568,21 +576,172 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     assert 'add_remote_env MAC_DEPLOY_HUB_TOKEN "$hub_token"' not in script
 
 
+def test_fleet_source_runtime_registration_is_idempotent_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    source_commit = "b" * 40
+
+    first = ensure_fleet_source_runtime(cp.store, source_commit)
+    second = ensure_fleet_source_runtime(cp.store, source_commit)
+    normal_runtime = cp.create_runtime(
+        "fleet-source-digest-parity",
+        {
+            "schema": FLEET_SOURCE_RUNTIME_SCHEMA,
+            "source_commit": source_commit,
+            "kind": "mac-fleet-source",
+            "provisioner_contract": "mac-fleet-deploy-v1",
+        },
+        "test",
+    )
+
+    assert first["schema"] == FLEET_SOURCE_RUNTIME_SCHEMA
+    assert first["status"] == "ready"
+    assert first["created"] is True
+    assert second == {**first, "created": False}
+    assert len(first["runtime_digest"]) == 64
+    assert first["runtime_digest"] == normal_runtime.digest
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
+        (first["runtime_name"],),
+    )["count"] == 1
+    row = cp.store.query_one(
+        "SELECT manifest, digest FROM runtime_environments WHERE id = ?",
+        (first["runtime_id"],),
+    )
+    assert json.loads(row["manifest"]) == {
+        "schema": FLEET_SOURCE_RUNTIME_SCHEMA,
+        "source_commit": source_commit,
+        "kind": "mac-fleet-source",
+        "provisioner_contract": "mac-fleet-deploy-v1",
+    }
+    assert row["digest"] == first["runtime_digest"]
+
+    cp.store.execute(
+        "UPDATE runtime_environments SET digest = ? WHERE id = ?",
+        ("0" * 64, first["runtime_id"]),
+    )
+    with pytest.raises(WorkerCredentialError, match="different identity"):
+        ensure_fleet_source_runtime(cp.store, source_commit)
+    cp.store.execute(
+        "UPDATE runtime_environments SET digest = ? WHERE id = ?",
+        (first["runtime_digest"], first["runtime_id"]),
+    )
+    cp.store.execute(
+        "UPDATE runtime_environments SET manifest = ? WHERE id = ?",
+        (json.dumps({"schema": "conflict"}), first["runtime_id"]),
+    )
+    with pytest.raises(WorkerCredentialError, match="different identity"):
+        ensure_fleet_source_runtime(cp.store, source_commit)
+
+
+def test_fleet_source_runtime_concurrent_replays_create_one_row(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "mac.db"
+    cp = _plane(db)
+    source_commit = "d" * 40
+    barrier = threading.Barrier(8)
+    results = []
+    errors = []
+    result_lock = threading.Lock()
+
+    def register() -> None:
+        store = SQLiteStore(str(db), initialize_schema=False)
+        try:
+            barrier.wait(timeout=10)
+            result = ensure_fleet_source_runtime(store, source_commit)
+            with result_lock:
+                results.append(result)
+        except Exception as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+        finally:
+            store.close()
+
+    threads = [threading.Thread(target=register) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+        assert not thread.is_alive()
+
+    assert not errors
+    assert len(results) == 8
+    assert [result["created"] for result in results].count(True) == 1
+    assert len({result["runtime_id"] for result in results}) == 1
+    assert len({result["runtime_digest"] for result in results}) == 1
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
+        (results[0]["runtime_name"],),
+    )["count"] == 1
+
+
+@pytest.mark.parametrize("source_commit", ["", "A" * 40, "a" * 39, "g" * 40])
+def test_fleet_source_runtime_rejects_noncanonical_commit(
+    tmp_path: Path,
+    source_commit: str,
+) -> None:
+    cp = _plane(tmp_path / ("invalid-%s.db" % (len(source_commit) or 0)))
+    with pytest.raises(WorkerCredentialError, match="lowercase 40-character"):
+        ensure_fleet_source_runtime(cp.store, source_commit)
+
+
+def test_ensure_runtime_cli_emits_only_registered_runtime_receipt(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db = tmp_path / "mac.db"
+    _plane(db).store.close()
+    source_commit = "c" * 40
+
+    assert main(
+        [
+            "--db",
+            str(db),
+            "ensure-runtime",
+            "--source-commit",
+            source_commit,
+            "--created-by",
+            "test-deploy",
+        ]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == FLEET_SOURCE_RUNTIME_SCHEMA
+    assert payload["status"] == "ready"
+    assert payload["source_commit"] == source_commit
+    assert set(payload) == {
+        "schema",
+        "status",
+        "source_commit",
+        "runtime_id",
+        "runtime_name",
+        "runtime_digest",
+        "created",
+    }
+
+
 def test_api_authenticates_db_worker_heartbeat_and_enforcement_blocks_shared_actor(
     tmp_path: Path,
 ) -> None:
     cp = _plane(tmp_path / "mac.db")
     lifecycle = WorkerCredentialLifecycle(cp.store)
-    issue = _package_issue(lifecycle)
+    runtime = ensure_fleet_source_runtime(cp.store, "a" * 40)
+    issue = lifecycle.issue(
+        "agent_alpha",
+        fleet="test",
+        environment="vm",
+        expected_source_commit="a" * 40,
+        expected_runtime_digest=runtime["runtime_digest"],
+        required_capabilities=[PACKAGE_CAPABILITY, "python"],
+        package_capable=True,
+    )
     manifest = installation_manifest(issue)
     receipt = install_vm_manifest(
         manifest, tmp_path / "mac.env", expected_agent_id="agent_alpha"
     )
     values = read_env_file(tmp_path / "mac.env")
-    cp.store.execute(
-        "UPDATE agents SET running_digest = ? WHERE id = ?",
-        ("sha256:runtime-a", "agent_alpha"),
-    )
     app = create_app(
         control_plane=cp,
         auth_tokens={"shared-admin": {"scopes": ["admin"]}},
@@ -593,6 +752,7 @@ def test_api_authenticates_db_worker_heartbeat_and_enforcement_blocks_shared_act
             headers={"Authorization": "Bearer " + issue.token},
             json={
                 "status": "idle",
+                "running_digest": runtime["runtime_digest"],
                 "resources": {
                     "source_state": {
                         "commit_sha": "a" * 40,
@@ -605,6 +765,7 @@ def test_api_authenticates_db_worker_heartbeat_and_enforcement_blocks_shared_act
             },
         )
         assert heartbeat.status_code == 200
+        assert heartbeat.json()["running_digest"] == runtime["runtime_digest"]
         authenticated = heartbeat.json()["resources"][
             "worker_credential_authenticated"
         ]

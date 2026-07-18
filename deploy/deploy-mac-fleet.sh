@@ -2092,7 +2092,6 @@ provision_bound_worker_credential() (
 
   local agent_id runtime_digest principal_id
   agent_id="$(stable_worker_agent_id "$agent")"
-  runtime_digest="mac-source:${GIT_REV}"
   local local_manifest="$TMPDIR_LOCAL/worker-credential-${agent_id}.json"
   local local_receipt="$TMPDIR_LOCAL/worker-credential-${agent_id}-receipt.json"
   local hub_manifest="/tmp/mac-worker-credential-${agent_id}-${TS}.json"
@@ -2121,6 +2120,34 @@ provision_bound_worker_credential() (
   last_index=$((${#worker_scp_parts[@]} - 1))
   worker_scp_target="${worker_scp_parts[$last_index]}"
   worker_scp_args=("${worker_scp_parts[@]:0:$last_index}")
+
+  local runtime_cmd runtime_result
+  runtime_cmd='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials ensure-runtime'
+  runtime_cmd+=" --source-commit $(shell_quote "$GIT_REV") --created-by fleet-deploy"
+  echo "==> ${agent}: registering exact fleet source runtime"
+  runtime_result="$(
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${hub_ssh_args[@]}" "$hub_ssh_target" "$runtime_cmd"
+  )"
+  runtime_digest="$(
+    printf '%s' "$runtime_result" | "$PYTHON_BIN" -c '
+import json
+import re
+import sys
+
+payload = json.load(sys.stdin)
+expected_commit = sys.argv[1]
+digest = str(payload.get("runtime_digest") or "")
+if (
+    payload.get("schema") != "mac.fleet_source_runtime.v1"
+    or payload.get("status") != "ready"
+    or payload.get("source_commit") != expected_commit
+    or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+):
+    raise SystemExit("hub returned an invalid fleet source runtime receipt")
+print(digest)
+' "$GIT_REV"
+  )"
 
   cleanup_worker_relay() {
     rm -f "$local_manifest" "$local_receipt"

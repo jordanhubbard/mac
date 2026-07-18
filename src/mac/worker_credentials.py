@@ -50,6 +50,7 @@ AUTHENTICATED_PROOF_SCHEMA = "mac.worker_credential_authenticated.v1"
 DESTINATION_VERIFICATION_SCHEMA = "mac.worker_credential_destination_verification.v1"
 INVENTORY_SCHEMA = "mac.worker_credential_readiness.v1"
 POLICY_SCHEMA = "mac.worker_credential_policy.v1"
+FLEET_SOURCE_RUNTIME_SCHEMA = "mac.fleet_source_runtime.v1"
 
 MODE_COMPATIBILITY = "compatibility"
 MODE_ENFORCED = "enforced"
@@ -60,6 +61,7 @@ WORKER_SCOPES = ("agent", "dispatch", "read", "write")
 ACTIVE_AGENT_STATUSES = frozenset({"idle", "busy", "draining"})
 
 _K8S_NAME = re.compile(r"[^a-z0-9-]+")
+_SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}")
 
 # In the compatibility bootstrap these gateway aliases may carry the same
 # shared hub bearer as MAC_WORKER_TOKEN.  A successful bound-token install must
@@ -77,6 +79,84 @@ _HUB_FACING_WORKER_TOKEN_ALIASES = (
 
 class WorkerCredentialError(ValueError):
     """A worker credential or rollout invariant was violated."""
+
+
+def ensure_fleet_source_runtime(
+    store: Store,
+    source_commit: str,
+    *,
+    created_by: str = "fleet-deploy",
+) -> Dict[str, Any]:
+    """Register the exact source checkout a fleet heartbeat will declare.
+
+    Heartbeats deliberately reject unknown runtime digests. Fleet deploy must
+    therefore create this durable runtime authority before issuing a bound
+    credential that requires it. The deterministic name and manifest make the
+    operation safe to replay and safe for concurrent deploys; an existing name
+    with different content fails closed instead of silently changing identity.
+    """
+
+    exact_commit = str(source_commit or "").strip()
+    if _SOURCE_COMMIT.fullmatch(exact_commit) is None:
+        raise WorkerCredentialError(
+            "fleet source runtime requires a lowercase 40-character commit SHA"
+        )
+    actor = str(created_by or "").strip()
+    if not actor:
+        raise WorkerCredentialError("fleet source runtime created_by is required")
+
+    runtime_name = "mac-fleet-source-%s" % exact_commit
+    manifest = {
+        "schema": FLEET_SOURCE_RUNTIME_SCHEMA,
+        "source_commit": exact_commit,
+        "kind": "mac-fleet-source",
+        "provisioner_contract": "mac-fleet-deploy-v1",
+    }
+    manifest_json = json_dumps(manifest)
+    runtime_digest = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
+    runtime_id = new_id("runtime")
+    created_at = _timestamp()
+
+    with store.transaction() as conn:
+        insert = conn.execute(
+            "INSERT INTO runtime_environments "
+            "(id, name, manifest, digest, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO NOTHING",
+            (
+                runtime_id,
+                runtime_name,
+                manifest_json,
+                runtime_digest,
+                actor,
+                created_at,
+            ),
+        )
+        created = bool(int(getattr(insert, "rowcount", 0) or 0))
+        row = conn.execute(
+            "SELECT id, name, manifest, digest, created_by, created_at "
+            "FROM runtime_environments WHERE name = ?",
+            (runtime_name,),
+        ).fetchone()
+        if row is None:
+            raise WorkerCredentialError(
+                "fleet source runtime registration did not become visible"
+            )
+        stored_manifest = json_loads(_row_value(row, "manifest", "{}"), {})
+        stored_digest = str(_row_value(row, "digest", ""))
+        if stored_manifest != manifest or stored_digest != runtime_digest:
+            raise WorkerCredentialError(
+                "fleet source runtime name already exists with different identity"
+            )
+
+    return {
+        "schema": FLEET_SOURCE_RUNTIME_SCHEMA,
+        "status": "ready",
+        "source_commit": exact_commit,
+        "runtime_id": str(_row_value(row, "id", "")),
+        "runtime_name": runtime_name,
+        "runtime_digest": runtime_digest,
+        "created": created,
+    }
 
 
 def _utcnow() -> datetime:
@@ -1410,6 +1490,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    ensure_runtime = sub.add_parser("ensure-runtime")
+    ensure_runtime.add_argument("--source-commit", required=True)
+    ensure_runtime.add_argument("--created-by", default="fleet-deploy")
+
     issue = sub.add_parser("issue")
     issue.add_argument("--agent-id", required=True)
     issue.add_argument("--fleet", default="")
@@ -1481,6 +1565,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return lifecycle
 
     try:
+        if args.command == "ensure-runtime":
+            result = ensure_fleet_source_runtime(
+                authority().store,
+                args.source_commit,
+                created_by=args.created_by,
+            )
+            _safe_print(result)
+            return 0
         if args.command == "issue":
             issued = authority().issue(
                 args.agent_id,

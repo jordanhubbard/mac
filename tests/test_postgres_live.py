@@ -125,6 +125,45 @@ def test_postgres_store_satisfies_protocol(postgres_store) -> None:
     assert isinstance(postgres_store, Store)
 
 
+def test_postgres_fleet_source_runtime_registration_converges_concurrently(
+    postgres_store,
+) -> None:
+    from mac.worker_credentials import ensure_fleet_source_runtime
+
+    source_commit = "d" * 40
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+    result_lock = threading.Lock()
+
+    def register() -> None:
+        try:
+            barrier.wait(timeout=10)
+            result = ensure_fleet_source_runtime(postgres_store, source_commit)
+            with result_lock:
+                results.append(result)
+        except Exception as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=register) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+        assert not thread.is_alive()
+
+    assert not errors
+    assert len(results) == 2
+    assert {result["created"] for result in results} == {True, False}
+    assert len({result["runtime_id"] for result in results}) == 1
+    assert len({result["runtime_digest"] for result in results}) == 1
+    assert postgres_store.query_one(
+        "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
+        (results[0]["runtime_name"],),
+    )["count"] == 1
+
+
 def test_schema_applied_with_all_bundled_base_tables(postgres_store) -> None:
     schema_path = (
         Path(__file__).resolve().parent.parent
