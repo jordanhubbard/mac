@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
@@ -245,6 +246,37 @@ def test_deploy_contract_has_explicit_adoption_and_exact_release_mode():
     assert "returned_ids != requested_ids" in release
     assert "selected agent remained held after exact fleet release" in release
     assert 'receipt["operator_holds_preserved"] == 0' in release
+
+
+def test_remote_ssh_heredocs_keep_stdin_open():
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    lines = deploy.splitlines()
+    sites = []
+    marker = re.compile(r"<<'(REMOTE(?:_[A-Z_]+)?|HUBSCRIPT)'")
+    for index, line in enumerate(lines):
+        match = marker.search(line)
+        if match is None:
+            continue
+        context = "\n".join(lines[max(0, index - 4) : index + 1])
+        ssh_start = context.rfind("ssh ")
+        assert ssh_start >= 0, match.group(1)
+        invocation = context[ssh_start:]
+        assert not re.search(r"(?:^|\s)-n(?:\s|$)", invocation), match.group(1)
+        sites.append(match.group(1))
+
+    assert sites == [
+        "REMOTE",
+        "REMOTE_HOLD_PREFLIGHT",
+        "REMOTE_HUB_GATE",
+        "REMOTE",
+        "REMOTE_RELEASE",
+        "REMOTE_RESTORE",
+        "HUBSCRIPT",
+        "REMOTE_ATTESTATION_RECOVERY",
+        "REMOTE_ATTESTATION_SECOND_PROOF",
+        "REMOTE_REPORT_EXECUTOR_APPROVAL",
+        "REMOTE_RELEASE_EPOCH",
+    ]
 
 
 @pytest.mark.parametrize(

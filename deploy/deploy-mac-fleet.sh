@@ -1670,7 +1670,10 @@ PY
   last_index=$((${#hub_ssh_parts[@]} - 1))
   hub_ssh_target="${hub_ssh_parts[$last_index]}"
   hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
-  rows_json="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+  # This remote bash consumes the local heredoc.  ``ssh -n`` would replace
+  # stdin with /dev/null and silently turn the live cohort snapshot into an
+  # empty response.
+  rows_json="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
     "MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64=$(shell_quote "$request_b64") bash -s" <<'REMOTE_HOLD_PREFLIGHT'
 set -euo pipefail
@@ -1827,7 +1830,7 @@ hub_agent_restart_gate() {
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
     "MAC_DEPLOY_GATE_PHASE=$(shell_quote "$phase") MAC_DEPLOY_GATE_AGENT_ID=$(shell_quote "$agent_id") MAC_DEPLOY_GATE_GENERATION=$(shell_quote "$generation") MAC_DEPLOY_GATE_BASELINE=$(shell_quote "$baseline_seen") MAC_DEPLOY_GATE_HOLD_REASON=$(shell_quote "$hold_reason") MAC_DEPLOY_GATE_PRIOR_HOLD_REASON=$(shell_quote "$prior_hold_reason") MAC_DEPLOY_GATE_PRIOR_OWNED=$(shell_quote "$prior_owned") MAC_DEPLOY_GATE_ALLOW_MISSING=$(shell_quote "$allow_missing") MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED=$(shell_quote "$require_authenticated") MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID=$(shell_quote "$expected_principal_id") MAC_DEPLOY_GATE_ADOPT_REASON=$(shell_quote "$authorized_prior_reason") MAC_DEPLOY_GATE_REQUIRE_OWNED=$(shell_quote "$require_owned_after_prepare") MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR=$(shell_quote "$require_report_executor") MAC_DEPLOY_GATE_TIMEOUT=$(shell_quote "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}") bash -s" <<'REMOTE_HUB_GATE'
 set -euo pipefail
@@ -2778,7 +2781,7 @@ REMOTE
     # hold remains until a worker-generated idle heartbeat advances the hub
     # clock and the hub clears only this deployment's own hold.
     release_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 bash -s)"
-    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
       "MAC_DEPLOY_RELEASE_GENERATION=$(shell_quote "$generation") $release_fence" <<'REMOTE_RELEASE'
 set -euo pipefail
 generation="${MAC_DEPLOY_RELEASE_GENERATION:?}"
@@ -2805,7 +2808,7 @@ REMOTE_RELEASE
     if ! release_result="$(hub_agent_restart_gate "$release_gate_phase" "$agent_id" "$generation" "$release_baseline" \
       "$hold_reason" "$prior_owned" 0 "$require_authenticated" "$hold_reason" "$expected_principal_id" "" "$require_owned_after_prepare" "$require_report_executor")"; then
       restore_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 bash -s)"
-      ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+      ssh -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
         "MAC_DEPLOY_RELEASE_GENERATION=$(shell_quote "$generation") $restore_fence" <<'REMOTE_RESTORE'
 set -euo pipefail
 generation="${MAC_DEPLOY_RELEASE_GENERATION:?}"
@@ -4208,7 +4211,7 @@ print(base64.b64encode(open(sys.argv[1], "rb").read()).decode("ascii"))
 PY
 )"
   echo "==> ${agent}: attestation key probe state=${probe_state}; validating with hub"
-  recovery_result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+  recovery_result="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
     "MAC_DEPLOY_ATTESTATION_PROBE_B64=$(shell_quote "$probe_b64") MAC_DEPLOY_ATTESTATION_MANIFEST=$(shell_quote "$hub_manifest") bash -s" <<'REMOTE_ATTESTATION_RECOVERY'
 set -euo pipefail
@@ -4326,7 +4329,7 @@ import sys
 print(base64.b64encode(open(sys.argv[1], "rb").read()).decode("ascii"))
 PY
 )"
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+  ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
     "MAC_DEPLOY_ATTESTATION_PROBE_B64=$(shell_quote "$probe_b64") MAC_DEPLOY_ATTESTATION_MANIFEST=$(shell_quote "$hub_manifest") bash -s" <<'REMOTE_ATTESTATION_SECOND_PROOF'
 set -euo pipefail
@@ -4390,7 +4393,7 @@ reconcile_report_repository_executor_approval() (
   last_index=$((${#hub_ssh_parts[@]} - 1))
   hub_ssh_target="${hub_ssh_parts[$last_index]}"
   hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+  ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
     "MAC_DEPLOY_REPORT_AGENT_ID=$(shell_quote "$agent_id") MAC_DEPLOY_REPORT_REQUIRED=$(shell_quote "$required") bash -s" <<'REMOTE_REPORT_EXECUTOR_APPROVAL'
 set -euo pipefail
@@ -4828,7 +4831,7 @@ PY
   hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
   echo "==> fleet: committing synchronized release epoch ${epoch_id}"
   for attempt in $(seq 1 "${MAC_DEPLOY_RELEASE_COMMIT_RETRIES:-3}"); do
-    if receipt="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    if receipt="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
     "MAC_DEPLOY_RELEASE_PLAN_B64=$(shell_quote "$plan_b64") MAC_DEPLOY_RELEASE_TS=$(shell_quote "$TS") bash -s" <<'REMOTE_RELEASE_EPOCH'
 set -euo pipefail
