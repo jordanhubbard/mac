@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 
@@ -1440,6 +1441,7 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
                 "MAC_DEPLOY_EXECUTION_COHORT_REVISION=99",
                 "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT=0",
                 "MAC_DEPLOY_EXECUTION_COHORT_SEED=file-secret-must-never-be-printed",
+                "MAC_DEPLOY_SUCCESSOR_HOLD_REASON=from-file-successor",
                 "MAC_DEPLOY_GH_TOKEN=file-github-secret-must-never-be-printed",
             )
         )
@@ -1459,6 +1461,7 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
         "MAC_DEPLOY_EXECUTION_COHORT_REVISION": "1",
         "MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT": "50",
         "MAC_DEPLOY_EXECUTION_COHORT_SEED": "caller-secret-must-never-be-printed",
+        "MAC_DEPLOY_SUCCESSOR_HOLD_REASON": "caller-successor-hold",
         "MAC_DEPLOY_GH_TOKEN": "caller-github-secret-must-never-be-printed",
     }
     assertions = "\n".join(
@@ -1467,9 +1470,10 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
     )
     result = subprocess.run(
         [
-            "bash",
+            shutil.which("bash") or "bash",
             "-c",
-            function
+            "set -e\n"
+            + function
             + '\nload_env_file_with_caller_precedence "$1"\n'
             + assertions
             + "\nprintf '%s\\n' precedence-ok\n",
@@ -1490,6 +1494,42 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
     precedence = script.split("local -a _PRECEDENCE_VARS=(", 1)[1].split(")", 1)[0]
     for name in expected:
         assert name in precedence
+
+
+def test_empty_caller_successor_hold_clears_env_file_default(tmp_path):
+    script = deploy_script_text()
+    function = script.split("load_env_file_with_caller_precedence() {", 1)[1].split(
+        "\n}\n\n# Resolve the GitHub credential", 1
+    )[0]
+    function = "load_env_file_with_caller_precedence() {" + function + "\n}"
+    env_file = tmp_path / "deploy.env"
+    env_file.write_text(
+        "MAC_DEPLOY_SUCCESSOR_HOLD_REASON=stale-file-successor\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            shutil.which("bash") or "bash",
+            "-c",
+            "set -e\n"
+            + function
+            + '\nload_env_file_with_caller_precedence "$1"\n'
+            + '[ -z "${MAC_DEPLOY_SUCCESSOR_HOLD_REASON}" ]\n',
+            "bash",
+            str(env_file),
+        ],
+        env={"PATH": "/usr/bin:/bin", "MAC_DEPLOY_SUCCESSOR_HOLD_REASON": ""},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    initialization = script.split(
+        'SUCCESSOR_HOLD_REASON_RAW="${MAC_DEPLOY_SUCCESSOR_HOLD_REASON:-}"', 1
+    )[0]
+    assert 'if [ -n "${MAC_DEPLOY_SUCCESSOR_HOLD_REASON:-}" ]; then' in initialization
 
 
 def test_fleet_deploy_reuses_gh_keyring_token_with_explicit_precedence(tmp_path):

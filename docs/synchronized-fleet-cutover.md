@@ -1,9 +1,27 @@
 # Synchronized Fleet Cut-over
 
 The fleet deployer uses a three-phase epoch: hold and drain the complete
-selected cohort, deploy and prove every new generation, then release the exact
-cohort in one hub transaction. A worker that cannot join the epoch remains
-held; the deployer never degrades an exact cut-over into partial release.
+selected cohort, deploy and prove every new generation, then atomically hand
+the deployment holds to one successor hold in the hub transaction. No selected
+worker becomes dispatchable between deployment and synchronized-pipeline
+activation. A worker that cannot join the epoch remains held; the deployer
+never degrades an exact cut-over into a partial transition.
+
+## Architecture and acceptance invariants
+
+The cut-over is complete only when all of these invariants hold together. A
+change that does not advance or protect one of them belongs outside the
+cut-over.
+
+| Invariant | Enforcement boundary | Required evidence |
+| --- | --- | --- |
+| Immutable release | Source commit, certifier image, and worker runtime are exact digest-pinned identities | CI publication receipts and local anonymous-pull verification name the same commit |
+| Exact cohort | Stable agent IDs and current targets come from the frozen fleet registry | Selected set and release receipt contain the same IDs exactly once |
+| Quiescent boundary | Every selected agent is held, idle, healthy, task-free, and service-claim-free before commit | Per-agent arm records and the hub transaction revalidate the frozen readiness expectations |
+| Atomic ownership handoff | Deployment holds become one successor hold in a single database transaction | No committed row is unheld; stale ownership rolls back the entire cohort |
+| Idempotent epoch | Epoch identity binds holds, outcome, successor reason, generation, credential principal, and report-executor expectations | Same request replays one receipt; any changed input is rejected |
+| Attested generation | Every worker proves the deployed generation, bound principal, startup self-test, and read-only report executor | Exact post-deploy rows and controller approval match the immutable runtime |
+| Controlled activation | Pipeline and landing stay disabled during deployment; successor holds remain through activation | Runtime health passes before any explicitly selected canary is released |
 
 ## 1. Bootstrap an older hub by itself
 
@@ -23,11 +41,12 @@ deploy/deploy-mac-fleet.sh --hub <hub-agent> <hub-agent>
 
 Legacy bootstrap preserves the existing operator hold. It rejects hold
 adoption, exact-full-cohort mode, and any non-hub target. Afterward, confirm the
-hub OpenAPI document contains all six routes required by the cohort deployer:
+hub OpenAPI document contains all seven routes required by the cohort deployer:
 
 - `/agents/{agent_id}/dispatch-hold/acquire`
 - `/agents/{agent_id}/dispatch-hold/release`
 - `/agents/dispatch-hold/release-batch`
+- `/agents/dispatch-hold/transition-batch`
 - `/agents/{agent_id}/attestation-key/recover`
 - `/agents/{agent_id}/report-repository-executor/approve`
 - `/agents/{agent_id}/report-repository-executor/revoke`
@@ -81,6 +100,7 @@ MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE='ghcr.io/jordanhubbard/mac-openshell-runtime@
 deploy/deploy-mac-fleet.sh \
   --hub <hub-agent> \
   --hold-adoptions /path/to/hold-adoptions.json \
+  --successor-hold-reason 'synchronized pipeline activation refreeze <exact-tested-main-commit>' \
   <hub-agent> <agent-2> <agent-3> <agent-4> <agent-5>
 ```
 
@@ -91,16 +111,27 @@ stop. During phase 1, each authorized hold is replaced only by an
 operator hold or stale controller state fails before drain.
 
 Phase 3 accepts only readiness records whose stable IDs exactly equal the
-frozen selected set and, in exact mode, whose holds are all owned by this
-deployment. The hub batch response must carry the same epoch and IDs. The
-deployer then re-reads every selected row and requires every hold to be clear.
+frozen selected set and whose holds are all owned by this deployment. The hub
+batch response must carry the same epoch and IDs. The transaction replaces
+every deployment hold directly with the exact successor reason, withdraws any
+service claims, and never commits an unheld row. The deployer then re-reads
+every selected row and requires every agent to remain held by that successor.
 The durable receipt must show:
 
 ```text
+schema == mac.fleet_release_receipt.v2
+outcome == successor_hold
 cohort_size == deployment_holds_released
+cohort_size == successor_holds_installed
 operator_holds_preserved == 0
 agent_ids == exact selected stable ids
+successor_hold_reason == exact requested reason
 ```
+
+Omitting `--successor-hold-reason` retains the legacy atomic-release behavior
+and its `mac.fleet_release_receipt.v1` receipt. Use that mode only when the
+pipeline is already active and immediate dispatch is intended; it is not the
+pre-activation synchronized cut-over path.
 
 If a response is lost, retrying the same epoch is safe because the hub records
 an idempotent lifecycle receipt. If an earlier agent was adopted before a later
@@ -126,8 +157,9 @@ current `report_repository_executor_attestation` plus the matching startup
 self-test timestamp and installs approval with an admin-only compare-and-set.
 The hub derives `report_repository_executor`; workers cannot submit that marker
 or its approval themselves. A mismatch or failed approval explicitly revokes
-eligibility. Both the per-node arm gate and the atomic fleet release transaction
-revalidate the derived marker and its matching startup proof. This path is the
+eligibility. Both the per-node arm gate and the atomic fleet
+release-or-transition transaction revalidate the derived marker and its
+matching startup proof. This path is the
 same for launchd, systemd, supervisord, and the SSH-managed selected GKE worker
 pods; a selected target that cannot complete it remains held.
 
@@ -135,5 +167,7 @@ pods; a selected target that cannot complete it remains held.
 
 Keep pipeline and landing disabled during the fleet cut-over. Once all agents
 report the new source commit, generation, bound worker principal, idle/healthy
-state, and an exact zero-preserved-hold receipt, follow
+state, and the exact successor-hold receipt, follow
 `docs/work-package-pipeline-activation.md` for the separate activation deploy.
+Retain the successor holds through activation and release only the intended
+canary or work cohort after the enabled pipeline has passed its runtime checks.

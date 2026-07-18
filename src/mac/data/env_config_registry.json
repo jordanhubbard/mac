@@ -3430,6 +3430,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy successor hold reason.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_SUCCESSOR_HOLD_REASON",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy supervisor.",
     "family": "deployment",
     "name": "MAC_DEPLOY_SUPERVISOR",

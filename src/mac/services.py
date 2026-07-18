@@ -15117,18 +15117,37 @@ class ControlPlane:
         epoch_id: str,
         actor: str = "fleet-deploy",
         expectations: Optional[Mapping[str, Mapping[str, Any]]] = None,
+        successor_reason: Optional[str] = None,
     ) -> List["Agent"]:
-        """Atomically release one exact deployment hold across a fleet cohort.
+        """Atomically release or hand off one exact fleet-cohort hold epoch.
 
         Every reason comparison and every update shares one transaction.  A
         stale or replaced hold therefore rolls the entire cohort back instead
         of exposing a mixed-generation interval in which early workers can
-        claim while later workers remain fenced.
+        claim while later workers remain fenced.  When ``successor_reason`` is
+        supplied, every deployment hold is replaced directly by that successor
+        hold without any committed or observable unheld state.
         """
 
         epoch_id = str(epoch_id or "").strip()
         if not epoch_id:
             raise ValidationError("fleet release epoch id is required")
+        successor_reason_value: Optional[str] = None
+        if successor_reason is not None:
+            successor_reason_raw = str(successor_reason or "")
+            if any(not character.isprintable() for character in successor_reason_raw):
+                raise ValidationError(
+                    "successor dispatch hold reason must be at most 512 UTF-8 "
+                    "bytes and contain no control characters"
+                )
+            successor_reason_value = successor_reason_raw.strip()
+            if not successor_reason_value:
+                raise ValidationError("successor dispatch hold reason is required")
+            if len(successor_reason_value.encode("utf-8")) > 512:
+                raise ValidationError(
+                    "successor dispatch hold reason must be at most 512 UTF-8 "
+                    "bytes and contain no control characters"
+                )
         normalized: List[Tuple[str, str]] = []
         seen: set[str] = set()
         try:
@@ -15155,6 +15174,12 @@ class ControlPlane:
             normalized.append((agent_id, reason))
         if not normalized:
             raise ValidationError("fleet release epoch requires at least one hold")
+        if successor_reason_value is not None and any(
+            reason == successor_reason_value for _agent_id, reason in normalized
+        ):
+            raise ValidationError(
+                "successor dispatch hold reason must differ from every current hold"
+            )
         # A stable lock order avoids two concurrent cohort releases deadlocking
         # merely because their callers supplied the same set in a different
         # order.  Epoch identity is set-based, so response ordering is likewise
@@ -15164,8 +15189,34 @@ class ControlPlane:
         now = utcnow()
         agents: List[Agent] = []
         expected_by_agent = dict(expectations or {})
+        requested_expectations: List[Dict[str, Any]] = []
+        for agent_id, _reason in normalized:
+            expected = ensure_json_object(expected_by_agent.get(agent_id))
+            if not expected:
+                continue
+            requested_expectations.append(
+                {
+                    "agent_id": agent_id,
+                    "generation": expected.get("generation"),
+                    "baseline_seen": str(expected.get("baseline_seen") or "").strip(),
+                    "principal_id": expected.get("principal_id"),
+                    "require_authenticated": bool(
+                        expected.get("require_authenticated")
+                    ),
+                    "require_report_executor": bool(
+                        expected.get("require_report_executor")
+                    ),
+                }
+            )
 
-        receipt_event_type = "agent.dispatch_hold_epoch_released"
+        epoch_outcome = (
+            "successor_hold" if successor_reason_value is not None else "released"
+        )
+        receipt_event_type = (
+            "agent.dispatch_hold_epoch_transitioned"
+            if successor_reason_value is not None
+            else "agent.dispatch_hold_epoch_released"
+        )
         epoch_event_type = "agent.dispatch_hold_epoch_committed"
         epoch_receipt_id = "alce_epoch_%s" % hashlib.sha256(
             epoch_id.encode("utf-8")
@@ -15188,25 +15239,44 @@ class ControlPlane:
                     json_loads(marker["detail"], {})
                 )
                 marker_holds = marker_detail.get("holds")
+                marker_successor_reason = marker_detail.get(
+                    "successor_hold_reason"
+                )
+                if marker_successor_reason is not None:
+                    marker_successor_reason = str(marker_successor_reason).strip()
+                marker_outcome = str(marker_detail.get("outcome") or "released")
+                marker_expectations = marker_detail.get("expectations")
+                expectations_match = (
+                    marker_expectations == requested_expectations
+                    if isinstance(marker_expectations, list)
+                    else not requested_expectations
+                )
                 marker_matches = (
                     str(marker_detail.get("epoch_id") or "") == epoch_id
                     and isinstance(marker_holds, list)
                     and marker_holds == requested_holds
+                    and marker_outcome == epoch_outcome
+                    and marker_successor_reason == successor_reason_value
+                    and expectations_match
                 )
             if not marker_matches:
                 raise ValidationError(
                     "fleet release epoch id was already used with a different "
-                    "or incomplete hold set"
+                    "or incomplete hold set, successor outcome, or expectations"
                 )
 
             if marker is None:
                 # Compatibility for a commit created before deterministic epoch
-                # markers existed. This is the only path that needs a historical
-                # event-type scan.
+                # markers existed. Scan both outcomes so an old released epoch
+                # cannot be reused once as a successor transition (or vice
+                # versa) merely because the requested receipt type differs.
                 receipt_rows = conn.execute(
-                    "SELECT agent_id, detail FROM agent_lifecycle_events "
-                    "WHERE event_type = ?",
-                    (receipt_event_type,),
+                    "SELECT agent_id, event_type, detail "
+                    "FROM agent_lifecycle_events WHERE event_type IN (?, ?)",
+                    (
+                        "agent.dispatch_hold_epoch_released",
+                        "agent.dispatch_hold_epoch_transitioned",
+                    ),
                 ).fetchall()
             else:
                 # Normal retries have a marker whose full hold set already
@@ -15216,7 +15286,8 @@ class ControlPlane:
                 for agent_id, _reason in normalized:
                     receipt_rows.extend(
                         conn.execute(
-                            "SELECT agent_id, detail FROM agent_lifecycle_events "
+                            "SELECT agent_id, event_type, detail "
+                            "FROM agent_lifecycle_events "
                             "WHERE agent_id = ? AND event_type = ?",
                             (agent_id, receipt_event_type),
                         ).fetchall()
@@ -15226,6 +15297,17 @@ class ControlPlane:
                 detail = ensure_json_object(json_loads(receipt_row["detail"], {}))
                 if str(detail.get("epoch_id") or "") != epoch_id:
                     continue
+                if str(receipt_row["event_type"] or "") != receipt_event_type:
+                    raise ValidationError(
+                        "fleet release epoch id was already used with a different "
+                        "successor outcome"
+                    )
+                if successor_reason_value is not None and str(
+                    detail.get("successor_hold_reason") or ""
+                ) != successor_reason_value:
+                    raise ValidationError(
+                        "fleet release epoch receipt has a different successor outcome"
+                    )
                 observed_holds.append(
                     {
                         "agent_id": str(receipt_row["agent_id"] or ""),
@@ -15239,7 +15321,11 @@ class ControlPlane:
             if observed_holds != requested_holds:
                 raise ValidationError(
                     "fleet release epoch id was already used with a different "
-                    "or incomplete hold set"
+                    "or incomplete hold set or successor outcome"
+                )
+            if marker is None and requested_expectations:
+                raise ValidationError(
+                    "legacy fleet release epoch receipt lacks expectation identity"
                 )
 
             replayed: List[Agent] = []
@@ -15296,6 +15382,9 @@ class ControlPlane:
                             "actor": actor,
                             "epoch_id": epoch_id,
                             "holds": requested_holds,
+                            "outcome": epoch_outcome,
+                            "successor_hold_reason": successor_reason_value,
+                            "expectations": requested_expectations,
                         }
                     ),
                     now,
@@ -15367,24 +15456,46 @@ class ControlPlane:
                             "fleet release epoch lost report executor proof for %s"
                             % agent_id
                         )
-                released = conn.execute(
-                    """
-                    UPDATE agents
-                    SET dispatch_hold = 0, dispatch_hold_reason = NULL,
-                        dispatch_hold_at = NULL, updated_at = ?
-                    WHERE id = ? AND deleted_at IS NULL
-                        AND dispatch_hold = 1 AND dispatch_hold_reason = ?
-                    """,
-                    (now, agent_id, reason),
-                )
+                if successor_reason_value is None:
+                    committed = conn.execute(
+                        """
+                        UPDATE agents
+                        SET dispatch_hold = 0, dispatch_hold_reason = NULL,
+                            dispatch_hold_at = NULL, updated_at = ?
+                        WHERE id = ? AND deleted_at IS NULL
+                            AND dispatch_hold = 1 AND dispatch_hold_reason = ?
+                        """,
+                        (now, agent_id, reason),
+                    )
+                else:
+                    committed = conn.execute(
+                        """
+                        UPDATE agents
+                        SET dispatch_hold = 1, dispatch_hold_reason = ?,
+                            dispatch_hold_at = ?, updated_at = ?
+                        WHERE id = ? AND deleted_at IS NULL
+                            AND dispatch_hold = 1 AND dispatch_hold_reason = ?
+                        """,
+                        (
+                            successor_reason_value,
+                            now,
+                            now,
+                            agent_id,
+                            reason,
+                        ),
+                    )
                 row = conn.execute(
                     "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
                     (agent_id,),
                 ).fetchone()
-                if released.rowcount != 1:
+                if committed.rowcount != 1:
                     raise ValidationError(
                         "fleet release epoch lost dispatch-hold ownership for %s"
                         % agent_id
+                    )
+                if successor_reason_value is not None:
+                    self._withdraw_service_claims_for_dispatch_hold(
+                        conn, agent_id, now
                     )
                 self._record_agent_lifecycle_event(
                     conn,
@@ -15395,6 +15506,8 @@ class ControlPlane:
                         "agent_id": agent_id,
                         "epoch_id": epoch_id,
                         "hold_reason": reason,
+                        "outcome": epoch_outcome,
+                        "successor_hold_reason": successor_reason_value,
                     },
                     now,
                 )

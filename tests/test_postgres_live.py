@@ -126,6 +126,78 @@ def test_postgres_store_satisfies_protocol(postgres_store) -> None:
     assert isinstance(postgres_store, Store)
 
 
+def test_postgres_successor_hold_epoch_converges_under_concurrent_retry(
+    postgres_store,
+) -> None:
+    """Two same-epoch controllers commit one continuously held outcome."""
+
+    from mac.services import ControlPlane
+
+    first_cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    second_cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    machine = first_cp.register_machine("postgres-successor-hold-host")
+    first = first_cp.register_agent(
+        machine.id,
+        "postgres-successor-hold-first",
+        agent_id="agent_postgres_successor_hold_first",
+    )
+    second = first_cp.register_agent(
+        machine.id,
+        "postgres-successor-hold-second",
+        agent_id="agent_postgres_successor_hold_second",
+    )
+    first_cp.set_agent_dispatch_hold(first.id, "deployment-first")
+    first_cp.set_agent_dispatch_hold(second.id, "deployment-second")
+    holds = ((first.id, "deployment-first"), (second.id, "deployment-second"))
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+    result_lock = threading.Lock()
+
+    def transition(control_plane, requested_holds) -> None:
+        try:
+            barrier.wait(timeout=10)
+            result = control_plane.release_agent_dispatch_holds_batch(
+                requested_holds,
+                epoch_id="postgres-successor-hold-concurrent-epoch",
+                successor_reason="synchronized successor hold",
+            )
+            with result_lock:
+                results.append(result)
+        except Exception as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    threads = [
+        threading.Thread(target=transition, args=(first_cp, holds)),
+        threading.Thread(target=transition, args=(second_cp, tuple(reversed(holds)))),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+        assert not thread.is_alive()
+
+    assert not errors
+    assert len(results) == 2
+    for result in results:
+        assert {agent.id for agent in result} == {first.id, second.id}
+        assert all(agent.dispatch_hold is True for agent in result)
+        assert {
+            agent.dispatch_hold_reason for agent in result
+        } == {"synchronized successor hold"}
+    assert postgres_store.query_one(
+        "SELECT COUNT(*) AS count FROM agent_lifecycle_events "
+        "WHERE event_type = ?",
+        ("agent.dispatch_hold_epoch_committed",),
+    )["count"] == 1
+    assert postgres_store.query_one(
+        "SELECT COUNT(*) AS count FROM agent_lifecycle_events "
+        "WHERE event_type = ?",
+        ("agent.dispatch_hold_epoch_transitioned",),
+    )["count"] == 2
+
+
 def test_postgres_fleet_source_runtime_registration_converges_concurrently(
     postgres_store,
 ) -> None:

@@ -290,6 +290,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_STATE_OWNS` | str | consumer-defined | deployment | Deployment setting: deploy state owns. |
 | `MAC_DEPLOY_STATE_REASON` | str | consumer-defined | deployment | Deployment setting: deploy state reason. |
 | `MAC_DEPLOY_STATE_REQUIRE_OWNED` | bool | consumer-defined | deployment | Deployment setting: deploy state require owned. |
+| `MAC_DEPLOY_SUCCESSOR_HOLD_REASON` | str | consumer-defined | deployment | Deployment setting: deploy successor hold reason. |
 | `MAC_DEPLOY_SUPERVISOR` | str | consumer-defined | deployment | Deployment setting: deploy supervisor. |
 | `MAC_DEPLOY_SUPERVISOR_CONF_DIR` | str | consumer-defined | deployment | Deployment setting: deploy supervisor conf dir. |
 | `MAC_DEPLOY_TAILSCALE_AUTH_KEY` | str | consumer-defined | deployment | Deployment setting: deploy tailscale auth key. |

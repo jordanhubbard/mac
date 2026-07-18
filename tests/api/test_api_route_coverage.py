@@ -459,6 +459,21 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
         health_status="healthy",
         resources={"deployment_generation": "route-coverage-generation"},
     )
+    ctx["dispatch_hold_transition_agent_id"] = agent(
+        "dispatch-hold-transition-route-agent", ["python"]
+    )["id"]
+    cp.set_agent_dispatch_hold(
+        ctx["dispatch_hold_transition_agent_id"],
+        "route-coverage transition deployment",
+    )
+    cp.heartbeat_agent(
+        ctx["dispatch_hold_transition_agent_id"],
+        status="idle",
+        health_status="healthy",
+        resources={
+            "deployment_generation": "route-coverage-transition-generation"
+        },
+    )
     ctx["transition_agent_id"] = agent("transition-route-agent", ["python"])["id"]
     ctx["evidence_agent_id"] = agent("evidence-route-agent", ["python"])["id"]
 
@@ -1204,6 +1219,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
         ("POST", "/agents/bulk"): {},
         ("POST", "/agents/dispatch-hold/release-batch"): {},
+        ("POST", "/agents/dispatch-hold/transition-batch"): {},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("POST", "/agents/{agent_id}/dispatch-hold/acquire"): {
@@ -1680,6 +1696,20 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                     "agent_id": ctx["dispatch_hold_batch_agent_id"],
                     "reason": "route-coverage batch deployment",
                     "generation": "route-coverage-generation",
+                    "baseline_seen": "2000-01-01T00:00:00+00:00",
+                    "principal_id": None,
+                    "require_authenticated": False,
+                }
+            ],
+        },
+        ("POST", "/agents/dispatch-hold/transition-batch"): {
+            "epoch_id": "route-coverage-transition-epoch",
+            "successor_reason": "route-coverage synchronized successor",
+            "holds": [
+                {
+                    "agent_id": ctx["dispatch_hold_transition_agent_id"],
+                    "reason": "route-coverage transition deployment",
+                    "generation": "route-coverage-transition-generation",
                     "baseline_seen": "2000-01-01T00:00:00+00:00",
                     "principal_id": None,
                     "require_authenticated": False,

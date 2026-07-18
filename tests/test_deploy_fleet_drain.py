@@ -562,8 +562,10 @@ def test_deployment_controller_is_fenced_across_every_restart_and_release():
     commit = deploy.split("commit_fleet_release_epoch() {", 1)[1].split(
         "enforce_bound_worker_credentials() {", 1
     )[0]
+    batch_transition = commit.index('"/agents/dispatch-hold/transition-batch"')
     batch_release = commit.index('"/agents/dispatch-hold/release-batch"')
     lock_release = commit.index("finalize_remote_deployment_release", batch_release)
+    assert batch_transition < lock_release
     assert batch_release < lock_release
 
 
@@ -1397,12 +1399,16 @@ def test_deferred_release_arms_each_worker_then_uses_one_batch_commit():
         in credential[release_call : release_call + 240]
     )
     assert '"/agents/dispatch-hold/release-batch"' in commit
+    assert '"/agents/dispatch-hold/transition-batch"' in commit
+    assert '"successor_reason": successor_hold_reason' in commit
     assert '"generation": item["generation"]' in commit
     assert '"baseline_seen": item["baseline_seen"]' in commit
     assert '"principal_id": item.get("principal_id") or None' in commit
     assert '"require_authenticated": bool(item.get("require_authenticated"))' in commit
     batch_release = commit.index('"/agents/dispatch-hold/release-batch"')
+    batch_transition = commit.index('"/agents/dispatch-hold/transition-batch"')
     cleanup = commit.index("finalize_remote_deployment_release", batch_release)
+    assert batch_transition < cleanup
     assert batch_release < cleanup
 
 

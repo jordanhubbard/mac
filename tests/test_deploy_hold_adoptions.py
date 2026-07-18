@@ -1,4 +1,6 @@
+import base64
 import json
+import os
 from pathlib import Path
 import re
 import stat
@@ -247,6 +249,249 @@ def test_deploy_contract_has_explicit_adoption_and_exact_release_mode():
     assert "returned_ids != requested_ids" in release
     assert "selected agent remained held after exact fleet release" in release
     assert 'receipt["operator_holds_preserved"] == 0' in release
+
+
+def test_successor_hold_is_frozen_and_proved_before_any_cohort_mutation():
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    assert "MAC_DEPLOY_SUCCESSOR_HOLD_REASON" in deploy
+    assert "--successor-hold-reason" in deploy
+    assert "readonly HOLD_ADOPTIONS_FILE REQUIRE_RELEASE_ALL_SELECTED SUCCESSOR_HOLD_REASON" in deploy
+
+    parser = deploy.split('while [ "$#" -gt 0 ]; do', 1)[1].split(
+        'if ! PYTHON_BIN="$(resolve_python_bin)"', 1
+    )[0]
+    assert 'SUCCESSOR_HOLD_REASON_RAW="$2"' in parser
+    assert 'SUCCESSOR_HOLD_REASON_RAW="${1#--successor-hold-reason=}"' in parser
+    normalization = deploy.split('if ! PYTHON_BIN="$(resolve_python_bin)"', 1)[1].split(
+        'DEPLOY_CONTROLLER_NONCE=', 1
+    )[0]
+    assert "raw_reason = sys.argv[1]" in normalization
+    assert "if not reason:" in normalization
+    assert 'len(reason.encode("utf-8")) > 512' in normalization
+    assert "not character.isprintable()" in normalization
+    assert "REQUIRE_RELEASE_ALL_SELECTED=1" in normalization
+
+    availability = deploy.split(
+        "hub_dispatch_hold_transition_available() {", 1
+    )[1].split("preflight_cohort_hold_adoptions() {", 1)[0]
+    assert 'paths.get("/agents/dispatch-hold/transition-batch")' in availability
+    assert 'operation.get("post")' in availability
+
+    main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
+    transition_preflight = main.index("hub_dispatch_hold_transition_available")
+    phase_one = main.index("phase 1/3 holding and draining")
+    assert transition_preflight < phase_one
+    assert '"$REQUIRE_RELEASE_ALL_SELECTED" "$SUCCESSOR_HOLD_REASON"' in main
+
+
+@pytest.mark.parametrize(
+    (
+        "successor_reason",
+        "endpoint",
+        "schema",
+        "response_flag",
+        "reported_hold",
+        "expected_error",
+    ),
+    [
+        (
+            "synchronized pipeline activation refreeze",
+            "/agents/dispatch-hold/transition-batch",
+            "mac.fleet_release_receipt.v2",
+            True,
+            True,
+            None,
+        ),
+        (
+            "",
+            "/agents/dispatch-hold/release-batch",
+            "mac.fleet_release_receipt.v1",
+            True,
+            False,
+            None,
+        ),
+        (
+            "synchronized pipeline activation refreeze",
+            "/agents/dispatch-hold/transition-batch",
+            "mac.fleet_release_receipt.v2",
+            "true",
+            True,
+            "hub rejected the atomic fleet successor-hold epoch",
+        ),
+        (
+            "synchronized pipeline activation refreeze",
+            "/agents/dispatch-hold/transition-batch",
+            "mac.fleet_release_receipt.v2",
+            True,
+            "true",
+            "transition receipt lacks the exact successor hold",
+        ),
+        (
+            "",
+            "/agents/dispatch-hold/release-batch",
+            "mac.fleet_release_receipt.v1",
+            1,
+            False,
+            "hub rejected the atomic fleet release epoch",
+        ),
+        (
+            "",
+            "/agents/dispatch-hold/release-batch",
+            "mac.fleet_release_receipt.v1",
+            True,
+            0,
+            "release receipt still reports a selected hold",
+        ),
+    ],
+)
+def test_embedded_epoch_commit_atomically_transitions_or_releases(
+    tmp_path,
+    monkeypatch,
+    capsys,
+    successor_reason,
+    endpoint,
+    schema,
+    response_flag,
+    reported_hold,
+    expected_error,
+):
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    function_start = deploy.index("commit_fleet_release_epoch() {")
+    marker = '"$HOME/.mac/venv/bin/python" - <<\'PY\'\n'
+    python_start = deploy.index(marker, function_start) + len(marker)
+    embedded = deploy[python_start : deploy.index("\nPY\nREMOTE_RELEASE_EPOCH", python_start)]
+
+    generation = "generation-1"
+    baseline = "2026-07-18T00:00:00+00:00"
+    deployment_reason = "mac fleet deployment test"
+    epoch_id = "1" * 40 + ":20260718T000000Z:nonce"
+    row = {
+        "id": AGENT,
+        "status": "idle",
+        "health_status": "healthy",
+        "current_task_id": None,
+        "dispatch_hold": True,
+        "dispatch_hold_reason": deployment_reason,
+        "last_seen_at": "2026-07-18T00:00:01+00:00",
+        "resources": {"deployment_generation": generation},
+    }
+    plan = {
+        "schema": "mac.fleet_release_epoch.v1",
+        "epoch_id": epoch_id,
+        "source_commit": "1" * 40,
+        "require_release_all_selected": True,
+        "successor_hold_reason": successor_reason or None,
+        "agents": [
+            {
+                "schema": "mac.deploy_release_ready.v1",
+                "agent_id": AGENT,
+                "generation": generation,
+                "baseline_seen": baseline,
+                "hold_reason": deployment_reason,
+                "owns_hold": True,
+                "principal_id": "",
+                "require_authenticated": False,
+                "require_report_executor": False,
+            }
+        ],
+    }
+    calls = []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def urlopen(request, timeout=0):
+        del timeout
+        path = request.full_url.removeprefix("http://mock-hub")
+        calls.append((request.get_method(), path))
+        if request.get_method() == "GET" and path == "/agents/" + AGENT:
+            return Response(dict(row))
+        if request.get_method() == "POST" and path == endpoint:
+            body = json.loads(request.data)
+            assert body["epoch_id"] == epoch_id
+            assert body["holds"][0]["agent_id"] == AGENT
+            if successor_reason:
+                assert body["successor_reason"] == successor_reason
+                row["dispatch_hold"] = reported_hold
+                row["dispatch_hold_reason"] = successor_reason
+                return Response(
+                    {
+                        "transitioned": response_flag,
+                        "epoch_id": epoch_id,
+                        "successor_reason": successor_reason,
+                        "agents": [dict(row)],
+                    }
+                )
+            assert "successor_reason" not in body
+            row["dispatch_hold"] = reported_hold
+            row["dispatch_hold_reason"] = None
+            return Response(
+                {
+                    "released": response_flag,
+                    "epoch_id": epoch_id,
+                    "agents": [dict(row)],
+                }
+            )
+        raise AssertionError("unexpected epoch request: %s %s" % calls[-1])
+
+    models = types.ModuleType("mac.models")
+    models.agent_has_read_only_report_repository_executor = lambda _resources: True
+    models.valid_read_only_report_repository_executor_attestation = lambda _value: True
+    monkeypatch.setitem(sys.modules, "mac.models", models)
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAC_HUB_URL", "http://mock-hub")
+    monkeypatch.setenv("MAC_DEPLOY_GATE_ADMIN_TOKEN", "redacted-test-token")
+    monkeypatch.setenv("MAC_DEPLOY_RELEASE_TS", "20260718T000000Z")
+    monkeypatch.setenv(
+        "MAC_DEPLOY_RELEASE_PLAN_B64",
+        base64.b64encode(json.dumps(plan).encode("utf-8")).decode("ascii"),
+    )
+
+    if expected_error:
+        with pytest.raises(RuntimeError, match=expected_error):
+            exec(
+                compile(embedded, "<embedded-fleet-epoch>", "exec"),
+                {"__name__": "__main__"},
+            )
+        assert not (
+            tmp_path / ".mac" / "logs" / "fleet-release-epoch-20260718T000000Z.json"
+        ).exists()
+        return
+
+    exec(compile(embedded, "<embedded-fleet-epoch>", "exec"), {"__name__": "__main__"})
+
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["schema"] == schema
+    assert receipt["deployment_holds_released"] == 1
+    assert receipt["operator_holds_preserved"] == 0
+    assert row["dispatch_hold"] is reported_hold
+    assert ("POST", endpoint) in calls
+    assert not any(
+        method == "POST" and path != endpoint for method, path in calls
+    )
+    if successor_reason:
+        assert receipt["outcome"] == "successor_hold"
+        assert receipt["successor_hold_reason"] == successor_reason
+        assert receipt["successor_holds_installed"] == 1
+        assert row["dispatch_hold_reason"] == successor_reason
+    else:
+        assert "outcome" not in receipt
+        assert "successor_holds_installed" not in receipt
+        assert row["dispatch_hold_reason"] is None
+    durable = tmp_path / ".mac" / "logs" / "fleet-release-epoch-20260718T000000Z.json"
+    assert json.loads(durable.read_text(encoding="utf-8")) == receipt
+    assert os.stat(durable).st_mode & 0o777 == 0o600
 
 
 def test_remote_ssh_heredocs_keep_stdin_open():

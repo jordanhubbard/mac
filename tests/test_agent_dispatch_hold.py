@@ -10,6 +10,8 @@ Covers:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -332,6 +334,257 @@ def test_dispatch_hold_batch_release_exact_epoch_retry_returns_committed_receipt
     )
 
 
+def test_dispatch_hold_epoch_retry_binds_readiness_expectations():
+    cp = _make_cp()
+    agent = _register_agent(cp, "agent-epoch-expectations")
+    cp.heartbeat_agent(
+        agent.id,
+        status="idle",
+        health_status="healthy",
+        resources={"deployment_generation": "generation-one"},
+    )
+    cp.set_agent_dispatch_hold(agent.id, "deployment-expectations")
+    holds = ((agent.id, "deployment-expectations"),)
+    expectations = {
+        agent.id: {
+            "generation": "generation-one",
+            "baseline_seen": "2000-01-01T00:00:00+00:00",
+            "principal_id": None,
+            "require_authenticated": False,
+            "require_report_executor": False,
+        }
+    }
+
+    cp.release_agent_dispatch_holds_batch(
+        holds,
+        epoch_id="epoch-expectations",
+        expectations=expectations,
+    )
+    replayed = cp.release_agent_dispatch_holds_batch(
+        holds,
+        epoch_id="epoch-expectations",
+        expectations=expectations,
+    )
+    assert replayed[0].dispatch_hold is False
+
+    stricter = {agent.id: {**expectations[agent.id], "require_authenticated": True}}
+    with pytest.raises(ValidationError, match="successor outcome, or expectations"):
+        cp.release_agent_dispatch_holds_batch(
+            holds,
+            epoch_id="epoch-expectations",
+            expectations=stricter,
+        )
+    marker = cp.store.query_one(
+        "SELECT detail FROM agent_lifecycle_events "
+        "WHERE event_type = 'agent.dispatch_hold_epoch_committed'"
+    )
+    assert json.loads(marker["detail"])["expectations"] == [
+        {"agent_id": agent.id, **expectations[agent.id]}
+    ]
+
+
+def test_dispatch_hold_batch_transition_is_atomic_and_idempotent():
+    cp = _make_cp()
+    first = _register_agent(cp, "agent-transition-first")
+    second = _register_agent(cp, "agent-transition-second")
+    cp.set_agent_dispatch_hold(first.id, "deployment-first")
+    cp.set_agent_dispatch_hold(second.id, "deployment-second")
+    holds = (
+        (first.id, "deployment-first"),
+        (second.id, "deployment-second"),
+    )
+
+    transitioned = cp.release_agent_dispatch_holds_batch(
+        holds,
+        epoch_id="epoch-successor-idempotent",
+        successor_reason="synchronized successor hold",
+    )
+
+    assert {agent.id for agent in transitioned} == {first.id, second.id}
+    assert all(agent.dispatch_hold is True for agent in transitioned)
+    assert {
+        agent.dispatch_hold_reason for agent in transitioned
+    } == {"synchronized successor hold"}
+    receipt_rows = cp.store.query_all(
+        "SELECT detail FROM agent_lifecycle_events "
+        "WHERE event_type = 'agent.dispatch_hold_epoch_transitioned'"
+    )
+    assert len(receipt_rows) == 2
+    assert {
+        json.loads(row["detail"])["successor_hold_reason"] for row in receipt_rows
+    } == {"synchronized successor hold"}
+    marker = cp.store.query_one(
+        "SELECT detail FROM agent_lifecycle_events "
+        "WHERE event_type = 'agent.dispatch_hold_epoch_committed'"
+    )
+    marker_detail = json.loads(marker["detail"])
+    assert marker_detail["outcome"] == "successor_hold"
+    assert marker_detail["successor_hold_reason"] == "synchronized successor hold"
+
+    replayed = cp.release_agent_dispatch_holds_batch(
+        reversed(holds),
+        epoch_id="epoch-successor-idempotent",
+        successor_reason="synchronized successor hold",
+    )
+
+    assert {agent.id for agent in replayed} == {first.id, second.id}
+    assert all(agent.dispatch_hold is True for agent in replayed)
+    assert all(
+        agent.dispatch_hold_reason == "synchronized successor hold"
+        for agent in replayed
+    )
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM agent_lifecycle_events "
+            "WHERE event_type = 'agent.dispatch_hold_epoch_transitioned'"
+        )["count"]
+        == 2
+    )
+
+
+def test_dispatch_hold_batch_transition_rolls_back_when_any_reason_is_stale():
+    cp = _make_cp()
+    first = _register_agent(cp, "agent-transition-rollback-first")
+    second = _register_agent(cp, "agent-transition-rollback-second")
+    cp.set_agent_dispatch_hold(first.id, "deployment-first")
+    cp.set_agent_dispatch_hold(second.id, "operator-replaced-second")
+
+    with pytest.raises(
+        ValidationError,
+        match="lost dispatch-hold ownership for %s" % second.id,
+    ):
+        cp.release_agent_dispatch_holds_batch(
+            (
+                (first.id, "deployment-first"),
+                (second.id, "stale-deployment-second"),
+            ),
+            epoch_id="epoch-successor-rollback",
+            successor_reason="synchronized successor hold",
+        )
+
+    first_after = cp.get_agent(first.id)
+    second_after = cp.get_agent(second.id)
+    assert first_after.dispatch_hold is True
+    assert first_after.dispatch_hold_reason == "deployment-first"
+    assert second_after.dispatch_hold is True
+    assert second_after.dispatch_hold_reason == "operator-replaced-second"
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM agent_lifecycle_events "
+            "WHERE event_type IN "
+            "('agent.dispatch_hold_epoch_transitioned', "
+            "'agent.dispatch_hold_epoch_committed')"
+        )["count"]
+        == 0
+    )
+
+
+def test_dispatch_hold_batch_epoch_reuse_separates_release_and_successor_outcomes():
+    cp = _make_cp()
+    transitioned_agent = _register_agent(cp, "agent-transition-epoch-mode")
+    cp.set_agent_dispatch_hold(transitioned_agent.id, "deployment-transition")
+    transitioned_holds = ((transitioned_agent.id, "deployment-transition"),)
+    cp.release_agent_dispatch_holds_batch(
+        transitioned_holds,
+        epoch_id="epoch-transition-mode",
+        successor_reason="successor-one",
+    )
+
+    with pytest.raises(ValidationError, match="successor outcome"):
+        cp.release_agent_dispatch_holds_batch(
+            transitioned_holds,
+            epoch_id="epoch-transition-mode",
+            successor_reason="successor-two",
+        )
+    with pytest.raises(ValidationError, match="successor outcome"):
+        cp.release_agent_dispatch_holds_batch(
+            transitioned_holds,
+            epoch_id="epoch-transition-mode",
+        )
+
+    released_agent = _register_agent(cp, "agent-release-epoch-mode")
+    cp.set_agent_dispatch_hold(released_agent.id, "deployment-release")
+    released_holds = ((released_agent.id, "deployment-release"),)
+    cp.release_agent_dispatch_holds_batch(
+        released_holds,
+        epoch_id="epoch-release-mode",
+    )
+    with pytest.raises(ValidationError, match="successor outcome"):
+        cp.release_agent_dispatch_holds_batch(
+            released_holds,
+            epoch_id="epoch-release-mode",
+            successor_reason="late-successor",
+        )
+
+
+@pytest.mark.parametrize("first_outcome", ["released", "successor_hold"])
+def test_legacy_unmarked_epoch_reuse_rejects_opposite_outcome(first_outcome):
+    cp = _make_cp()
+    agent = _register_agent(cp, "agent-legacy-unmarked-epoch-" + first_outcome)
+    original_reason = "deployment-legacy-unmarked"
+    successor_reason = "successor-legacy-unmarked"
+    epoch_id = "epoch-legacy-unmarked-" + first_outcome
+    cp.set_agent_dispatch_hold(agent.id, original_reason)
+    cp.release_agent_dispatch_holds_batch(
+        ((agent.id, original_reason),),
+        epoch_id=epoch_id,
+        successor_reason=(
+            successor_reason if first_outcome == "successor_hold" else None
+        ),
+    )
+    cp.store.execute(
+        "DELETE FROM agent_lifecycle_events "
+        "WHERE event_type = 'agent.dispatch_hold_epoch_committed'"
+    )
+    cp.set_agent_dispatch_hold(agent.id, original_reason)
+
+    with pytest.raises(ValidationError, match="successor outcome"):
+        cp.release_agent_dispatch_holds_batch(
+            ((agent.id, original_reason),),
+            epoch_id=epoch_id,
+            successor_reason=(
+                None if first_outcome == "successor_hold" else successor_reason
+            ),
+        )
+
+    held = cp.get_agent(agent.id)
+    assert held.dispatch_hold is True
+    assert held.dispatch_hold_reason == original_reason
+
+
+def test_dispatch_hold_batch_transition_requires_distinct_nonblank_successor():
+    cp = _make_cp()
+    agent = _register_agent(cp, "agent-transition-reason-validation")
+    cp.set_agent_dispatch_hold(agent.id, "deployment-hold")
+
+    with pytest.raises(ValidationError, match="successor.*required"):
+        cp.release_agent_dispatch_holds_batch(
+            ((agent.id, "deployment-hold"),),
+            epoch_id="epoch-blank-successor",
+            successor_reason="  ",
+        )
+    with pytest.raises(ValidationError, match="must differ"):
+        cp.release_agent_dispatch_holds_batch(
+            ((agent.id, "deployment-hold"),),
+            epoch_id="epoch-same-successor",
+            successor_reason="deployment-hold",
+        )
+    for invalid_reason in (
+        "successor\ncontrol",
+        "successor\n",
+        "\u0085successor",
+        "successor\u0085control",
+        "x" * 513,
+    ):
+        with pytest.raises(ValidationError, match="512 UTF-8 bytes"):
+            cp.release_agent_dispatch_holds_batch(
+                ((agent.id, "deployment-hold"),),
+                epoch_id="epoch-invalid-successor",
+                successor_reason=invalid_reason,
+            )
+    assert cp.get_agent(agent.id).dispatch_hold_reason == "deployment-hold"
+
+
 def test_dispatch_hold_batch_release_rejects_partial_or_mismatched_epoch_reuse():
     cp = _make_cp()
     first = _register_agent(cp, "agent-epoch-reuse-first")
@@ -461,6 +714,92 @@ def test_dispatch_hold_batch_release_http_route_is_admin_only():
             "WHERE event_type = 'agent.dispatch_hold_epoch_released'"
         )["count"]
         == receipt_count
+    )
+
+
+def test_dispatch_hold_batch_transition_http_route_is_admin_only():
+    cp = _make_cp()
+    worker = _register_agent(cp, "batch-transition-worker-principal")
+    first = _register_agent(cp, "batch-transition-first")
+    second = _register_agent(cp, "batch-transition-second")
+    cp.set_agent_dispatch_hold(first.id, "fleet-transition-first")
+    cp.set_agent_dispatch_hold(second.id, "fleet-transition-second")
+    cp.heartbeat_agent(
+        first.id,
+        status="idle",
+        health_status="healthy",
+        resources={"deployment_generation": "fleet-transition-generation-first"},
+    )
+    cp.heartbeat_agent(
+        second.id,
+        status="idle",
+        health_status="healthy",
+        resources={"deployment_generation": "fleet-transition-generation-second"},
+    )
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "worker": {
+                    "scopes": ["agent", "dispatch", "read", "write"],
+                    "tenant_id": None,
+                    "agent_id": worker.id,
+                    "principal_kind": "worker",
+                },
+                "admin": ["admin"],
+            },
+        )
+    )
+    path = "/agents/dispatch-hold/transition-batch"
+    payload = {
+        "epoch_id": "epoch-http-transition-admin",
+        "successor_reason": "synchronized successor hold",
+        "holds": [
+            {
+                "agent_id": first.id,
+                "reason": "fleet-transition-first",
+                "generation": "fleet-transition-generation-first",
+                "baseline_seen": "2000-01-01T00:00:00+00:00",
+                "principal_id": None,
+                "require_authenticated": False,
+            },
+            {
+                "agent_id": second.id,
+                "reason": "fleet-transition-second",
+                "generation": "fleet-transition-generation-second",
+                "baseline_seen": "2000-01-01T00:00:00+00:00",
+                "principal_id": None,
+                "require_authenticated": False,
+            },
+        ],
+    }
+
+    rejected = client.post(
+        path,
+        headers={"Authorization": "Bearer worker"},
+        json=payload,
+    )
+    assert rejected.status_code == 403
+    assert cp.get_agent(first.id).dispatch_hold_reason == "fleet-transition-first"
+    assert cp.get_agent(second.id).dispatch_hold_reason == "fleet-transition-second"
+
+    transitioned = client.post(
+        path,
+        headers={"Authorization": "Bearer admin"},
+        json=payload,
+    )
+    assert transitioned.status_code == 200
+    assert transitioned.json()["transitioned"] is True
+    assert transitioned.json()["epoch_id"] == "epoch-http-transition-admin"
+    assert transitioned.json()["successor_reason"] == "synchronized successor hold"
+    assert {agent["id"] for agent in transitioned.json()["agents"]} == {
+        first.id,
+        second.id,
+    }
+    assert all(
+        agent["dispatch_hold"] is True
+        and agent["dispatch_hold_reason"] == "synchronized successor hold"
+        for agent in transitioned.json()["agents"]
     )
 
 

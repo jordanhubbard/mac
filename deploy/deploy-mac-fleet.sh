@@ -40,6 +40,7 @@ load_env_file_with_caller_precedence() {
     MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD
     MAC_DEPLOY_HOLD_ADOPTIONS_FILE
     MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED
+    MAC_DEPLOY_SUCCESSOR_HOLD_REASON
   )
 
   # Also snapshot any fleet-scoped token variables already present.
@@ -128,6 +129,14 @@ HOLD_ADOPTIONS_SOURCE="${MAC_DEPLOY_HOLD_ADOPTIONS_FILE:-}"
 HOLD_ADOPTIONS_FILE=""
 REQUIRE_RELEASE_ALL_SELECTED_RAW="${MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED:-0}"
 REQUIRE_RELEASE_ALL_SELECTED=0
+if [ -n "${MAC_DEPLOY_SUCCESSOR_HOLD_REASON:-}" ]; then
+  SUCCESSOR_HOLD_REASON_RAW="$MAC_DEPLOY_SUCCESSOR_HOLD_REASON"
+  SUCCESSOR_HOLD_REASON_SUPPLIED=1
+else
+  SUCCESSOR_HOLD_REASON_RAW=""
+  SUCCESSOR_HOLD_REASON_SUPPLIED=0
+fi
+SUCCESSOR_HOLD_REASON=""
 NEW_HUB_NAME=""
 NEW_HUB_TARGET=""
 NEW_HUB_OS="${MAC_DEPLOY_NEW_HUB_OS:-linux}"
@@ -186,7 +195,8 @@ usage() {
 Usage:
   deploy/deploy-mac-fleet.sh --hub <hub-node> [--ssh-port <port>]
                             [--hold-adoptions <owner-only-json>]
-                            [--require-release-all-selected] [agent ...]
+                            [--require-release-all-selected]
+                            [--successor-hold-reason <reason>] [agent ...]
   deploy/deploy-mac-fleet.sh --new-hub <hub-node> --target user@host[:port] [--ssh-port <port>]
                             [--fleet-name <name>] [--control-port <port>]
                             [--hub-url <url>] [--home-channel <channel>]
@@ -224,6 +234,11 @@ An adoption file explicitly authorizes exact-reason CAS replacement of every
 pre-existing hold in the selected cohort. Supplying one always enables
 --require-release-all-selected: phase 3 must release the exact full cohort or
 remain fail-closed. Legacy single-node CAS bootstrap rejects this authority.
+
+A successor hold atomically replaces every deployment-owned hold in phase 3,
+without exposing an unheld claim window. It also requires exact full-cohort
+ownership and may be supplied by MAC_DEPLOY_SUCCESSOR_HOLD_REASON. The live hub
+must advertise the distinct POST /agents/dispatch-hold/transition-batch route.
 USAGE
 }
 
@@ -271,6 +286,20 @@ while [ "$#" -gt 0 ]; do
       ;;
     --require-release-all-selected)
       REQUIRE_RELEASE_ALL_SELECTED_RAW=1
+      shift
+      ;;
+    --successor-hold-reason)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --successor-hold-reason requires a non-empty reason" >&2
+        exit 2
+      fi
+      SUCCESSOR_HOLD_REASON_RAW="$2"
+      SUCCESSOR_HOLD_REASON_SUPPLIED=1
+      shift 2
+      ;;
+    --successor-hold-reason=*)
+      SUCCESSOR_HOLD_REASON_RAW="${1#--successor-hold-reason=}"
+      SUCCESSOR_HOLD_REASON_SUPPLIED=1
       shift
       ;;
     --ssh-port)
@@ -466,6 +495,26 @@ if ! PYTHON_BIN="$(resolve_python_bin)"; then
   echo "ERROR: Python 3.11+ is required (.venv/bin/python, python3.11, python3, or python)" >&2
   exit 127
 fi
+if [ "$SUCCESSOR_HOLD_REASON_SUPPLIED" = 1 ]; then
+  if ! SUCCESSOR_HOLD_REASON="$("$PYTHON_BIN" - "$SUCCESSOR_HOLD_REASON_RAW" <<'PY'
+import sys
+
+raw_reason = sys.argv[1]
+if any(not character.isprintable() for character in raw_reason):
+    raise SystemExit(2)
+reason = raw_reason.strip()
+if not reason:
+    raise SystemExit(1)
+if len(reason.encode("utf-8")) > 512:
+    raise SystemExit(2)
+print(reason, end="")
+PY
+)"; then
+    echo "ERROR: successor hold reason must be nonblank, at most 512 UTF-8 bytes, and contain no control characters" >&2
+    exit 2
+  fi
+  REQUIRE_RELEASE_ALL_SELECTED=1
+fi
 DEPLOY_CONTROLLER_NONCE="$("$PYTHON_BIN" -c 'import secrets; print(secrets.token_hex(16))')"
 readonly DEPLOY_CONTROLLER_NONCE
 SSH_CONTROL_DIR="/tmp/mac-fleet-ssh-${UID:-0}-${DEPLOY_CONTROLLER_NONCE:0:12}"
@@ -504,7 +553,7 @@ if [ -n "$HOLD_ADOPTIONS_SOURCE" ]; then
     "$HOLD_ADOPTIONS_SOURCE" "$HOLD_ADOPTIONS_FILE" \
     --source-commit "$GIT_REV"
 fi
-readonly HOLD_ADOPTIONS_FILE REQUIRE_RELEASE_ALL_SELECTED
+readonly HOLD_ADOPTIONS_FILE REQUIRE_RELEASE_ALL_SELECTED SUCCESSOR_HOLD_REASON
 
 if [ -n "$NEW_HUB_NAME" ]; then
   if [ -z "$NEW_HUB_TARGET" ]; then
@@ -1581,6 +1630,43 @@ required = {
     "/agents/dispatch-hold/release-batch",
 }
 if not isinstance(paths, dict) or not required.issubset(paths):
+    raise SystemExit(1)
+PY'
+}
+
+hub_dispatch_hold_transition_available() {
+  # Successor-hold cutover depends on a distinct atomic operation. A hub that
+  # only exposes release-batch would recreate the release/refreeze claim race,
+  # so prove the POST operation itself before phase 1 mutates any worker.
+  local hub_agent ssh_parts=() ssh_args=() ssh_target last_index item
+  hub_agent="$(fleet_hub_agent)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    'set -euo pipefail; set -a; . "$HOME/.mac/mac.env"; set +a; export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"; "$HOME/.mac/venv/bin/python" - <<'"'"'PY'"'"'
+import json
+import os
+import urllib.request
+
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+request = urllib.request.Request(
+    hub_url + "/openapi.json",
+    headers={
+        "Authorization": "Bearer " + os.environ["MAC_DEPLOY_GATE_ADMIN_TOKEN"],
+        "Accept": "application/json",
+    },
+)
+with urllib.request.urlopen(request, timeout=15) as response:
+    payload = json.load(response)
+paths = payload.get("paths") if isinstance(payload, dict) else None
+operation = (
+    paths.get("/agents/dispatch-hold/transition-batch")
+    if isinstance(paths, dict)
+    else None
+)
+if not isinstance(operation, dict) or not isinstance(operation.get("post"), dict):
     raise SystemExit(1)
 PY'
 }
@@ -4760,10 +4846,11 @@ PY"
 commit_fleet_release_epoch() {
   local expected_count="$1" hub_agent="$2" selected_plan="$3"
   local require_release_all_selected="${4:-0}"
+  local successor_hold_reason="${5:-}"
   local plan="$TMPDIR_LOCAL/fleet-release-plan.json"
   local epoch_id="${GIT_REV}:${TS}:${DEPLOY_CONTROLLER_NONCE}"
   "$PYTHON_BIN" - "$plan" "$expected_count" "$epoch_id" "$TMPDIR_LOCAL" \
-    "$selected_plan" "$require_release_all_selected" <<'PY'
+    "$selected_plan" "$require_release_all_selected" "$successor_hold_reason" <<'PY'
 import json
 import os
 import sys
@@ -4776,8 +4863,11 @@ epoch_id = sys.argv[3]
 root = Path(sys.argv[4])
 selected_plan = json.load(open(sys.argv[5], encoding="utf-8"))
 require_release_all_selected = sys.argv[6] == "1"
+successor_hold_reason = sys.argv[7]
 if bool(selected_plan.get("require_release_all_selected")) != require_release_all_selected:
     raise SystemExit("selected hold plan and release policy disagree")
+if successor_hold_reason and not require_release_all_selected:
+    raise SystemExit("successor hold requires exact full-cohort release")
 entries = []
 for path in sorted(root.glob("release-ready-agent_*.json")):
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -4804,6 +4894,7 @@ payload = {
     "epoch_id": epoch_id,
     "source_commit": epoch_id.split(":", 1)[0],
     "require_release_all_selected": require_release_all_selected,
+    "successor_hold_reason": successor_hold_reason or None,
     "agents": entries,
 }
 fd, raw = tempfile.mkstemp(prefix=output.name + ".", dir=str(output.parent))
@@ -4863,8 +4954,11 @@ if plan.get("schema") != "mac.fleet_release_epoch.v1":
 epoch_id = str(plan.get("epoch_id") or "")
 entries = plan.get("agents")
 require_release_all_selected = bool(plan.get("require_release_all_selected"))
+successor_hold_reason = str(plan.get("successor_hold_reason") or "")
 if not epoch_id or not isinstance(entries, list) or not entries:
     raise SystemExit("fleet release epoch plan is incomplete")
+if successor_hold_reason and not require_release_all_selected:
+    raise SystemExit("successor hold requires exact full-cohort release")
 entry_ids = [str(item.get("agent_id") or "") for item in entries]
 if any(not value for value in entry_ids) or len(set(entry_ids)) != len(entry_ids):
     raise SystemExit("fleet release epoch has missing or duplicate agent ids")
@@ -4979,27 +5073,58 @@ holds = [
 if require_release_all_selected and len(holds) != len(entries):
     raise RuntimeError("exact full-cohort release does not own every selected hold")
 if holds:
-    response = api(
-        "POST",
-        "/agents/dispatch-hold/release-batch",
-        {"epoch_id": epoch_id, "holds": holds},
-    )
-    if not isinstance(response, dict) or not response.get("released"):
-        raise RuntimeError("hub rejected the atomic fleet release epoch")
+    if successor_hold_reason:
+        response = api(
+            "POST",
+            "/agents/dispatch-hold/transition-batch",
+            {
+                "epoch_id": epoch_id,
+                "successor_reason": successor_hold_reason,
+                "holds": holds,
+            },
+        )
+        if (
+            not isinstance(response, dict)
+            or response.get("transitioned") is not True
+        ):
+            raise RuntimeError("hub rejected the atomic fleet successor-hold epoch")
+        if response.get("successor_reason") != successor_hold_reason:
+            raise RuntimeError("hub returned the wrong successor hold reason")
+    else:
+        response = api(
+            "POST",
+            "/agents/dispatch-hold/release-batch",
+            {"epoch_id": epoch_id, "holds": holds},
+        )
+        if not isinstance(response, dict) or response.get("released") is not True:
+            raise RuntimeError("hub rejected the atomic fleet release epoch")
     if response.get("epoch_id") != epoch_id:
         raise RuntimeError("hub returned the wrong fleet release epoch id")
-    released_agents = response.get("agents")
-    if not isinstance(released_agents, list):
+    committed_agents = response.get("agents")
+    if not isinstance(committed_agents, list):
         raise RuntimeError("hub returned an invalid fleet release receipt")
     requested_ids = sorted(item["agent_id"] for item in holds)
     returned_ids = sorted(
         str(item.get("id") or "")
-        for item in released_agents
+        for item in committed_agents
         if isinstance(item, dict)
     )
-    if returned_ids != requested_ids or len(released_agents) != len(holds):
+    if returned_ids != requested_ids or len(committed_agents) != len(holds):
         raise RuntimeError("hub returned the wrong fleet release agent set")
-    if any(bool(item.get("dispatch_hold")) for item in released_agents):
+    if successor_hold_reason:
+        if any(
+            item.get("dispatch_hold") is not True
+            or item.get("dispatch_hold_reason") != successor_hold_reason
+            for item in committed_agents
+        ):
+            raise RuntimeError(
+                "hub transition receipt lacks the exact successor hold"
+            )
+    elif any(
+        item.get("dispatch_hold") is not False
+        or item.get("dispatch_hold_reason") is not None
+        for item in committed_agents
+    ):
         raise RuntimeError("hub release receipt still reports a selected hold")
 
 if require_release_all_selected:
@@ -5008,13 +5133,28 @@ if require_release_all_selected:
         row = api("GET", "/agents/%s" % agent_id)
         if not isinstance(row, dict) or row.get("id") != agent_id:
             raise RuntimeError("post-release verification received the wrong agent")
-        if row.get("dispatch_hold") or row.get("dispatch_hold_reason"):
+        if successor_hold_reason:
+            if (
+                row.get("dispatch_hold") is not True
+                or row.get("dispatch_hold_reason") != successor_hold_reason
+            ):
+                raise RuntimeError(
+                    "selected agent lacks the exact successor hold after fleet transition"
+                )
+        elif (
+            row.get("dispatch_hold") is not False
+            or row.get("dispatch_hold_reason") is not None
+        ):
             raise RuntimeError("selected agent remained held after exact fleet release")
         post_rows[agent_id] = row
     rows = post_rows
 
 receipt = {
-    "schema": "mac.fleet_release_receipt.v1",
+    "schema": (
+        "mac.fleet_release_receipt.v2"
+        if successor_hold_reason
+        else "mac.fleet_release_receipt.v1"
+    ),
     "epoch_id": epoch_id,
     "source_commit": plan.get("source_commit"),
     "committed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -5023,12 +5163,27 @@ receipt = {
     "operator_holds_preserved": len(entries) - len(holds),
     "agent_ids": sorted(rows),
 }
+if successor_hold_reason:
+    receipt.update(
+        {
+            "outcome": "successor_hold",
+            "successor_hold_reason": successor_hold_reason,
+            "successor_holds_installed": len(holds),
+        }
+    )
 if require_release_all_selected and not (
     receipt["deployment_holds_released"] == receipt["cohort_size"]
     and receipt["operator_holds_preserved"] == 0
     and receipt["agent_ids"] == sorted(entry_ids)
 ):
     raise RuntimeError("exact full-cohort release receipt failed its postconditions")
+if successor_hold_reason and not (
+    receipt["schema"] == "mac.fleet_release_receipt.v2"
+    and receipt["outcome"] == "successor_hold"
+    and receipt["successor_hold_reason"] == successor_hold_reason
+    and receipt["successor_holds_installed"] == receipt["cohort_size"]
+):
+    raise RuntimeError("successor-hold fleet receipt failed its postconditions")
 log_dir = Path.home() / ".mac" / "logs"
 log_dir.mkdir(parents=True, exist_ok=True)
 path = log_dir / ("fleet-release-epoch-%s.json" % os.environ["MAC_DEPLOY_RELEASE_TS"])
@@ -5077,7 +5232,11 @@ PY
       echo "==> ${agent}: WARNING: epoch committed but deployment lock cleanup failed" >&2
     fi
   done
-  echo "==> fleet: synchronized release epoch committed for ${expected_count} agent(s)"
+  if [ -n "$successor_hold_reason" ]; then
+    echo "==> fleet: synchronized successor-hold epoch committed for ${expected_count} agent(s)"
+  else
+    echo "==> fleet: synchronized release epoch committed for ${expected_count} agent(s)"
+  fi
 }
 
 enforce_bound_worker_credentials() {
@@ -5166,6 +5325,11 @@ main() {
       echo "ERROR: the live hub lacks dispatch-hold CAS; deploy only ${hub_agent} without adoption using the explicit legacy bootstrap, then rerun the full cohort" >&2
       exit 1
     fi
+  fi
+  if [ -n "$SUCCESSOR_HOLD_REASON" ] \
+    && ! hub_dispatch_hold_transition_available; then
+    echo "ERROR: the live hub lacks POST /agents/dispatch-hold/transition-batch required for atomic successor-hold cutover" >&2
+    exit 1
   fi
 
   preflight_cohort_hold_adoptions \
@@ -5304,10 +5468,14 @@ main() {
     exit 1
   fi
   enforce_bound_worker_credentials "$hub_agent"
-  echo "==> fleet: phase 3/3 atomically releasing the proved cohort"
+  if [ -n "$SUCCESSOR_HOLD_REASON" ]; then
+    echo "==> fleet: phase 3/3 atomically handing the proved cohort to its successor hold"
+  else
+    echo "==> fleet: phase 3/3 atomically releasing the proved cohort"
+  fi
   commit_fleet_release_epoch \
     "$deployed_count" "$hub_agent" "$hold_adoption_plan" \
-    "$REQUIRE_RELEASE_ALL_SELECTED"
+    "$REQUIRE_RELEASE_ALL_SELECTED" "$SUCCESSOR_HOLD_REASON"
   rm -rf "$TMPDIR_LOCAL"
 }
 

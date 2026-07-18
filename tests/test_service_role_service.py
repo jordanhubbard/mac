@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from mac.models import HealthStatus
+from mac.models import HealthStatus, ValidationError
 from mac.services import ControlPlane
 from mac.store import SQLiteStore
 
@@ -178,6 +178,78 @@ def test_dispatch_hold_cas_withdraws_service_claim_before_arm_returns():
     assert changed is True
     assert held.dispatch_hold is True
     assert cp.service_roles.list_active_claims(agent_id=agent.id) == []
+
+
+def test_successor_hold_epoch_withdraws_service_claims_and_rolls_them_back_atomically():
+    cp = ControlPlane.in_memory()
+    _seed(cp)
+    agents = sorted(
+        (
+            _gpu_agent(cp, "successor-service-first", capacity=1),
+            _gpu_agent(cp, "successor-service-second", capacity=1),
+        ),
+        key=lambda item: item.id,
+    )
+    cp.sync_agent_service_claims(agents[0].id, ["image.generate"])
+    cp.sync_agent_service_claims(agents[1].id, ["audio.tts"])
+    claims = [
+        cp.service_roles.list_active_claims(agent_id=agent.id)[0]
+        for agent in agents
+    ]
+    for index, agent in enumerate(agents):
+        cp.store.execute(
+            "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ? "
+            "WHERE id = ?",
+            ("deployment-%s" % index, agent.id),
+        )
+
+    transitioned = cp.release_agent_dispatch_holds_batch(
+        [
+            (agents[0].id, "deployment-0"),
+            (agents[1].id, "deployment-1"),
+        ],
+        epoch_id="successor-service-commit",
+        successor_reason="synchronized successor service hold",
+    )
+    assert all(agent.dispatch_hold is True for agent in transitioned)
+    assert all(
+        agent.dispatch_hold_reason == "synchronized successor service hold"
+        for agent in transitioned
+    )
+    assert cp.service_roles.list_active_claims(agent_id=agents[0].id) == []
+    assert cp.service_roles.list_active_claims(agent_id=agents[1].id) == []
+
+    for index, (agent, claim) in enumerate(zip(agents, claims)):
+        cp.store.execute(
+            "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ? "
+            "WHERE id = ?",
+            ("rollback-deployment-%s" % index, agent.id),
+        )
+        cp.store.execute(
+            "UPDATE service_claims SET status = 'active' WHERE id = ?",
+            (claim.id,),
+        )
+
+    with pytest.raises(ValidationError, match="lost dispatch-hold ownership"):
+        cp.release_agent_dispatch_holds_batch(
+            [
+                (agents[0].id, "rollback-deployment-0"),
+                (agents[1].id, "stale-rollback-deployment-1"),
+            ],
+            epoch_id="successor-service-rollback",
+            successor_reason="second synchronized successor service hold",
+        )
+
+    assert {
+        row["status"]
+        for row in cp.store.query_all(
+            "SELECT status FROM service_claims WHERE id IN (?, ?)",
+            (claims[0].id, claims[1].id),
+        )
+    } == {"active"}
+    assert [
+        cp.get_agent(agent.id).dispatch_hold_reason for agent in agents
+    ] == ["rollback-deployment-0", "rollback-deployment-1"]
 
 
 @pytest.mark.parametrize(

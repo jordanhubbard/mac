@@ -550,3 +550,60 @@ def test_atomic_release_revalidates_report_executor_proof():
             },
         )
     assert cp.get_agent(agent_id).dispatch_hold is True
+
+
+def test_atomic_successor_hold_revalidates_report_executor_proof():
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("transition-host")
+    attestation = _report_attestation()
+    agent_id = "agent_transition-worker"
+    resources = {
+        "openshell_required": True,
+        "deployment_generation": "generation-transition",
+        REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY: attestation,
+        "startup_self_test": _startup(agent_id, attestation),
+    }
+    cp.register_agent(
+        machine.id,
+        "transition-worker",
+        agent_id=agent_id,
+        resources=resources,
+    )
+    cp.approve_agent_report_repository_executor(
+        agent_id, attestation, "2026-07-18T12:00:00Z"
+    )
+    cp.set_agent_dispatch_hold(agent_id, "deployment-transition-one")
+    transitioned = cp.release_agent_dispatch_holds_batch(
+        [(agent_id, "deployment-transition-one")],
+        epoch_id="epoch-transition-one",
+        successor_reason="successor-transition-one",
+        expectations={
+            agent_id: {
+                "generation": "generation-transition",
+                "baseline_seen": "2020-01-01T00:00:00+00:00",
+                "require_authenticated": False,
+                "require_report_executor": True,
+            }
+        },
+    )
+    assert transitioned[0].dispatch_hold is True
+    assert transitioned[0].dispatch_hold_reason == "successor-transition-one"
+
+    cp.revoke_agent_report_repository_executor(agent_id, "artifact drift")
+    with pytest.raises(ValidationError, match="lost report executor proof"):
+        cp.release_agent_dispatch_holds_batch(
+            [(agent_id, "successor-transition-one")],
+            epoch_id="epoch-transition-two",
+            successor_reason="successor-transition-two",
+            expectations={
+                agent_id: {
+                    "generation": "generation-transition",
+                    "baseline_seen": "2020-01-01T00:00:00+00:00",
+                    "require_authenticated": False,
+                    "require_report_executor": True,
+                }
+            },
+        )
+    held = cp.get_agent(agent_id)
+    assert held.dispatch_hold is True
+    assert held.dispatch_hold_reason == "successor-transition-one"
