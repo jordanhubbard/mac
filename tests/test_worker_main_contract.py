@@ -375,6 +375,18 @@ def test_startup_clear_hold_disabled(worker_main, monkeypatch, capsys):
     assert out["hold_cleared"] is False
 
 
+def test_startup_clear_hold_defaults_fail_closed(worker_main, monkeypatch, capsys):
+    monkeypatch.delenv("MAC_STARTUP_CLEAR_HOLD", raising=False)
+    monkeypatch.setattr(worker, "register_worker", lambda *_a, **_kw: _fake_register())
+    assert worker.main(_register_args()) == 0
+    client = worker_main[-1]
+    assert not any(
+        method == "DELETE" and "/dispatch-hold" in path
+        for method, path, _body in client.requests
+    )
+    assert json.loads(capsys.readouterr().out)["hold_cleared"] is False
+
+
 # ---------------------------------------------------------------------------
 # 3. MAC_STARTUP_EMIT_CHECKOUT_SHA=1 → checkout_sha present in output
 # ---------------------------------------------------------------------------

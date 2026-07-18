@@ -55,8 +55,10 @@ def test_deploy_script_wires_proxyjump():
     assert '--kind "$kind"' in SCRIPT
     assert "--nul" in SCRIPT
     assert 'ssh_target_args "$agent"' in SCRIPT
-    assert 'scp_target_args "$agent"' in SCRIPT
-    assert 'scp -O -q -o BatchMode=yes' in SCRIPT
+    assert "pinned_fleet_route_args" in SCRIPT
+    assert '-S "$control_path" -O proxy' in SCRIPT
+    assert "fenced_remote_upload" in SCRIPT
+    assert "scp -O" not in SCRIPT
     assert "$SSH_CONN_OPTS" not in SCRIPT
 
 

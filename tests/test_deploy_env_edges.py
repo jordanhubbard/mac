@@ -230,20 +230,23 @@ def test_openclaw_worker_advertisement_uses_verified_runtime_file(tmp_path) -> N
         environ={"HERMES_GATEWAY_IMPL": "hermes"},
     )
     assert rollback["MAC_CHAT_GATEWAY_IMPL"] == "hermes"
-    assert "MAC_WORKER_RESOURCES_FILE" not in rollback
+    assert rollback["MAC_WORKER_RESOURCES_FILE"] == str(
+        tmp_path / ".mac" / "worker-resources.json"
+    )
 
 
 def test_gateway_impl_none_is_a_pure_worker_no_openclaw(tmp_path) -> None:
     # Worker/gateway decoupling: gateway_impl=none => MAC_CHAT_GATEWAY_IMPL=none,
-    # no OpenClaw advertisement/resources at all. The startup self-test keys off
-    # MAC_CHAT_GATEWAY_IMPL, so a none worker skips every OpenClaw check and can
-    # start with no gateway installed.
+    # no OpenClaw advertisement. It still gets a generic worker-resources file
+    # so its startup health verdict is present in first registration.
     cfg = _cfg(tmp_path)
     worker = deploy_env.build_mac_env(
         {}, cfg, environ={"HERMES_GATEWAY_IMPL": "none"},
     )
     assert worker["MAC_CHAT_GATEWAY_IMPL"] == "none"
-    assert "MAC_WORKER_RESOURCES_FILE" not in worker
+    assert worker["MAC_WORKER_RESOURCES_FILE"] == str(
+        tmp_path / ".mac" / "worker-resources.json"
+    )
     assert not any(k.startswith("MAC_OPENCLAW_") for k in worker)
 
 
@@ -452,6 +455,28 @@ def test_execution_cohort_pilot_deploy_rejects_invalid_hub_config(
 ):
     with pytest.raises(ValueError, match=message):
         deploy_env.build_mac_env({}, _cfg(tmp_path), environ=environ)
+
+
+def test_deploy_generation_is_projected_to_exact_worker_barrier(tmp_path):
+    cfg = _cfg(tmp_path)
+    values = deploy_env.build_mac_env(
+        {
+            "MAC_WORKER_DEPLOY_GENERATION": "stale-generation",
+            "MAC_WORKER_DEPLOY_BARRIER_FILE": "/stale/barrier",
+        },
+        cfg,
+        environ={"MAC_DEPLOY_GENERATION": "revision:hub:attempt-2"},
+    )
+
+    assert values["MAC_WORKER_DEPLOY_GENERATION"] == "revision:hub:attempt-2"
+    assert values["MAC_WORKER_DEPLOY_BARRIER_FILE"] == str(
+        cfg.paths.mac_home / "deploy-start-barrier"
+    )
+    assert "MAC_DEPLOY_GENERATION" not in values
+
+    cleared = deploy_env.build_mac_env(values, cfg, environ={})
+    assert "MAC_WORKER_DEPLOY_GENERATION" not in cleared
+    assert "MAC_WORKER_DEPLOY_BARRIER_FILE" not in cleared
 
 
 def test_legacy_argument_arity_defaults_and_main(monkeypatch, tmp_path) -> None:

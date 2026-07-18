@@ -350,6 +350,27 @@ def test_media_bindings_from_agents_skips_unhealthy():
     assert media_bindings_from_agents(agents) == {}
 
 
+def test_media_bindings_from_agents_skips_dispatch_held_agent():
+    agents = [
+        {
+            "name": "armed-gpu",
+            "status": "idle",
+            "health_status": "healthy",
+            "dispatch_hold": True,
+            "resources": {
+                "media_routes": [
+                    {
+                        "op": "image.generate",
+                        "base_url": "http://armed:8189",
+                    }
+                ]
+            },
+        }
+    ]
+
+    assert media_bindings_from_agents(agents) == {}
+
+
 def test_compose_prefers_live_agent_then_static():
     static = {"image.generate": [MediaBinding("nvidia", "https://nv", "secret:k", "m", "nvidia_genai", 180.0)]}
     agent = {"image.generate": [MediaBinding("bw", "http://bw:8189", "", "sdxl", "openai_images", 180.0)]}
@@ -714,7 +735,7 @@ def test_media_endpoint_video_async_submit_then_poll(monkeypatch):
     from mac import router_app
 
     def fake_urlopen(req, timeout=60.0):
-        url, method = req.full_url, (req.get_method() if hasattr(req, "get_method") else "POST")
+        url = req.full_url
 
         class _Headers:
             @staticmethod

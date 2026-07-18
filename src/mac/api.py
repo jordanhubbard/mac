@@ -841,6 +841,8 @@ class AgentRegister(BaseModel):
     hermes_instance_id: Optional[str] = None
     fleet_id: Optional[str] = None
     actor: str = "human"
+    status: Optional[str] = None
+    health_status: Optional[str] = None
 
 
 class AgentAttestationKeyVerify(BaseModel):
@@ -1143,6 +1145,26 @@ class DispatchRequest(BaseModel):
 
 class DispatchHoldRequest(BaseModel):
     reason: str
+
+
+class DispatchHoldAcquireRequest(BaseModel):
+    reason: str
+    expected_dispatch_hold: bool
+    expected_reason: Optional[str] = None
+
+
+class DispatchHoldBatchItem(BaseModel):
+    agent_id: str
+    reason: str
+    generation: str
+    baseline_seen: str
+    principal_id: Optional[str] = None
+    require_authenticated: bool = True
+
+
+class DispatchHoldBatchReleaseRequest(BaseModel):
+    epoch_id: str
+    holds: List[DispatchHoldBatchItem] = Field(default_factory=list)
 
 
 class BreakGlassAuthorizeRequest(BaseModel):
@@ -5994,7 +6016,10 @@ def create_app(
         data["resources"] = resources
         fleet_id = data.pop("fleet_id", None)
         actor = str(data.get("actor") or "human")
-        agent = cp.register_agent(**data)
+        agent = cp.register_agent(
+            **data,
+            allow_resurrection=principal.is_admin,
+        )
         if fleet_id:
             cp.observe_fleet_agent(
                 str(fleet_id),
@@ -6050,7 +6075,7 @@ def create_app(
         body: AgentBulkUpdate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.require_admin()
         if not body.agent_ids:
             raise ValidationError("agent_ids is required")
         data = _data(body)
@@ -6083,7 +6108,7 @@ def create_app(
         body: AgentUpdate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.require_admin()
         data = _data(body)
         if data.get("resources") is not None:
             _ensure_payload_bounded(data["resources"], "agent.resources")
@@ -6094,7 +6119,7 @@ def create_app(
         agent_id: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.require_admin()
         return cp.disable_agent(agent_id).to_dict()
 
     @app.delete("/agents/{agent_id}")
@@ -6103,7 +6128,7 @@ def create_app(
         actor: str = Query(default="human"),
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.require_admin()
         cp.delete_agent(agent_id, actor=actor)
         return {"deleted": agent_id}
 
@@ -6178,13 +6203,40 @@ def create_app(
     ) -> Dict[str, Any]:
         return cp.roles.unassign_role(agent_id).to_dict()
 
+    @app.post("/agents/dispatch-hold/release-batch")
+    def release_dispatch_holds_batch(
+        body: DispatchHoldBatchReleaseRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Commit an exact fleet release epoch as one database transaction."""
+
+        principal.require_admin()
+        agents = cp.release_agent_dispatch_holds_batch(
+            ((item.agent_id, item.reason) for item in body.holds),
+            epoch_id=body.epoch_id,
+            expectations={
+                item.agent_id: {
+                    "generation": item.generation,
+                    "baseline_seen": item.baseline_seen,
+                    "principal_id": item.principal_id,
+                    "require_authenticated": item.require_authenticated,
+                }
+                for item in body.holds
+            },
+        )
+        return {
+            "released": True,
+            "epoch_id": body.epoch_id,
+            "agents": [agent.to_dict() for agent in agents],
+        }
+
     @app.post("/agents/{agent_id}/dispatch-hold")
     def set_dispatch_hold(
         agent_id: str,
         body: DispatchHoldRequest,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.require_admin()
         return cp.set_agent_dispatch_hold(agent_id, body.reason).to_dict()
 
     @app.delete("/agents/{agent_id}/dispatch-hold")
@@ -6192,8 +6244,37 @@ def create_app(
         agent_id: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        principal.require_global_fleet()
+        principal.require_admin()
         return cp.clear_agent_dispatch_hold(agent_id).to_dict()
+
+    @app.post("/agents/{agent_id}/dispatch-hold/acquire")
+    def acquire_dispatch_hold(
+        agent_id: str,
+        body: DispatchHoldAcquireRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Acquire or replace a hold only if the caller's snapshot is current."""
+
+        principal.require_admin()
+        changed, agent = cp.acquire_agent_dispatch_hold(
+            agent_id,
+            body.reason,
+            expected_dispatch_hold=body.expected_dispatch_hold,
+            expected_reason=body.expected_reason,
+        )
+        return {"changed": changed, "agent": agent.to_dict()}
+
+    @app.post("/agents/{agent_id}/dispatch-hold/release")
+    def release_dispatch_hold(
+        agent_id: str,
+        body: DispatchHoldRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Release a hold only while its exact caller-owned reason remains."""
+
+        principal.require_admin()
+        released, agent = cp.release_agent_dispatch_hold(agent_id, body.reason)
+        return {"released": released, "agent": agent.to_dict()}
 
     @app.get("/agents/{agent_id}/identity")
     def get_agent_identity(agent_id: str) -> Dict[str, Any]:
@@ -6596,6 +6677,12 @@ def create_app(
             if isinstance(resources_value, Mapping)
             else dict(cp.get_agent(agent_id).resources)
         )
+        if not isinstance(resources_value, Mapping):
+            # Deployment generation is a per-heartbeat proof, not sticky hub
+            # state.  A status-only request authenticated with a copied bearer
+            # must not inherit the last worker's release generation merely
+            # because the API clones resources to attach principal facts.
+            resources.pop("deployment_generation", None)
         # This namespace is hub-owned. A legacy/shared token clears any stale
         # authentication proof; a DB-backed exact worker token replaces it
         # with facts derived from the resolved bearer principal.

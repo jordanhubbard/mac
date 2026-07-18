@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +9,75 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _api_retirement_planner_source() -> str:
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    function = bootstrap.split("retire_managed_sandboxes_via_api() {", 1)[1].split(
+        "\n}\n\nretire_managed_sandboxes_via_docker", 1
+    )[0]
+    return function.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+
+
+def _run_api_retirement_planner(
+    tmp_path: Path,
+    inventory: list[dict],
+    expected_openclaw: str = "mac-openclaw-bullwinkle",
+):
+    path = tmp_path / "sandbox-inventory.json"
+    path.write_text(json.dumps(inventory), encoding="utf-8")
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _api_retirement_planner_source(),
+            str(path),
+            expected_openclaw,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _openclaw_promotion_source() -> str:
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    start = bootstrap.index("rollback_openclaw_promotion() {")
+    end = bootstrap.index("\n\ncheckpoint_openclaw_with_cli()", start)
+    return bootstrap[start:end]
+
+
+def _owned_gateway_replacement_source() -> str:
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    start = bootstrap.index("remove_existing_owned_macos_gateway() {")
+    end = bootstrap.index(
+        "\n\nstop_existing_gateway_for_schema_recovery() {", start
+    )
+    return bootstrap[start:end]
+
+
+def _linux_gateway_ownership_source() -> str:
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    start = bootstrap.index("mac_owned_gateway_wrapper() {")
+    end = bootstrap.index("\n\nretire_managed_sandboxes_via_api()", start)
+    return bootstrap[start:end]
+
+
+def _gateway_fail_closed_source() -> str:
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    start = bootstrap.index("stop_gateway_fail_closed() {")
+    end = bootstrap.index("\n\n# A previous deployment", start)
+    return bootstrap[start:end]
 
 
 def test_openshell_bootstrap_is_docker_engine_only():
@@ -142,6 +212,41 @@ def test_openshell_image_declares_and_verifies_modern_bash_runtime():
     assert "set -euo pipefail" in bootstrap
 
 
+def test_openshell_image_proves_the_riscv_validation_floor() -> None:
+    containerfile = (
+        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+
+    package_install = " ".join(
+        line.strip()
+        for line in containerfile.splitlines()
+        if "apt-get install -y --no-install-recommends" in line
+    )
+    for package in ("clang", "llvm", "lld", "qemu-system-misc"):
+        assert package in package_install.split()
+    assert "bookworm-backports main" in containerfile
+    assert "-t bookworm-backports qemu-system-misc" in containerfile
+    for command in ("clang", "llvm-objcopy", "ld.lld", "qemu-system-riscv64"):
+        assert f"command -v {command}" in containerfile
+    for probe in (
+        "--target=riscv64-unknown-elf",
+        "-march=rv64imac",
+        "-fuse-ld=lld",
+        "llvm-objcopy -O binary",
+        "qemu-system-riscv64 -M virt -device help",
+    ):
+        assert probe in containerfile
+    for device in (
+        "virtio-gpu-device",
+        "virtio-keyboard-device",
+        "virtio-mouse-device",
+        "virtio-sound-device",
+        "virtio-blk-device",
+        "virtio-net-device",
+    ):
+        assert device in containerfile
+
+
 def test_openshell_image_installs_codegraph_baseline():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
@@ -245,12 +350,516 @@ def test_openshell_supervisor_is_version_matched_and_gateway_is_fail_closed():
         not in bootstrap
     )
     assert "gateway select openshell >/dev/null 2>&1 || true" not in bootstrap
-    stop_existing = bootstrap.index("stop_gateway_fail_closed\nverify_supervisor_image")
+    linux = bootstrap.index("ensure_docker_engine")
+    retirement = bootstrap.index(
+        "retire_managed_sandboxes_before_upgrade || exit $?", linux
+    )
+    stop_existing = bootstrap.index(
+        "stop_gateway_fail_closed\nverify_supervisor_image", retirement
+    )
     install_cli = bootstrap.index("# --- 1. openshell CLI")
-    assert stop_existing < install_cli
+    assert retirement < stop_existing < install_cli
     assert bootstrap.count("clear_repo_update_dispatch_blocker") == 3
     assert "MAC_REPO_UPDATE_DISPATCH_BLOCKER_FILE" in bootstrap
     assert 'Path(key).unlink()' in bootstrap
+
+
+def test_macos_gateway_replacement_requires_exact_mac_ownership(tmp_path):
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    darwin = bootstrap.split("bootstrap_darwin() {", 1)[1].split(
+        "\n}\n\nif [ \"$OS\" = Darwin ]", 1
+    )[0]
+    ownership_check = darwin.index("remove_existing_owned_macos_gateway")
+    replacement = darwin.index('"$OSH_DOCKER_BIN" run -d --name openshell-gw')
+    assert ownership_check < replacement
+    assert 'rm -f openshell-gw' not in darwin
+
+    fake_docker = tmp_path / "docker"
+    fake_docker.write_text(
+        """#!/bin/bash
+set -eu
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+case "$1" in
+  ps)
+    [ -z "${FAKE_GATEWAY_IDS:-}" ] || printf '%s\n' "$FAKE_GATEWAY_IDS"
+    ;;
+  inspect)
+    printf '%s\n' "${FAKE_GATEWAY_LABEL:?}"
+    ;;
+  rm)
+    [ "${FAKE_RM_FAIL:-0}" != 1 ]
+    ;;
+  *) exit 97 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    log = tmp_path / "docker.log"
+    harness = _owned_gateway_replacement_source() + "\nremove_existing_owned_macos_gateway\n"
+    base_env = {
+        **os.environ,
+        "OSH_DOCKER_BIN": str(fake_docker),
+        "FAKE_DOCKER_LOG": str(log),
+    }
+
+    unowned = subprocess.run(
+        ["/bin/bash", "-c", harness],
+        env={
+            **base_env,
+            "FAKE_GATEWAY_IDS": "unowned-id",
+            "FAKE_GATEWAY_LABEL": "someone-else:openshell-gateway",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert unowned.returncode != 0
+    assert "refusing to replace an unowned Docker container" in unowned.stderr
+    assert not any(line.startswith("rm ") for line in log.read_text().splitlines())
+
+    log.write_text("", encoding="utf-8")
+    owned = subprocess.run(
+        ["/bin/bash", "-c", harness],
+        env={
+            **base_env,
+            "FAKE_GATEWAY_IDS": "owned-id",
+            "FAKE_GATEWAY_LABEL": "mac:openshell-gateway",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert owned.returncode == 0, owned.stderr
+    assert "rm -f owned-id" in log.read_text(encoding="utf-8").splitlines()
+
+
+def test_linux_gateway_stops_require_exact_mac_manager_ownership(tmp_path):
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    schema_stop = bootstrap.split(
+        "stop_existing_gateway_for_schema_recovery() {", 1
+    )[1].split("\n}\n\nretire_managed_sandboxes_via_api", 1)[0]
+    fail_closed = _gateway_fail_closed_source()
+    assert schema_stop.index("require_owned_gateway_manager_definitions") < schema_stop.index(
+        "systemctl --user stop openshell-gateway.service"
+    )
+    assert schema_stop.index("require_owned_gateway_manager_definitions") < schema_stop.index(
+        "sudo supervisorctl stop openshell-gateway"
+    )
+    assert fail_closed.index("mac_owned_systemd_gateway") < fail_closed.index(
+        "systemctl --user stop openshell-gateway.service"
+    )
+    assert fail_closed.index("mac_owned_supervisord_gateway") < fail_closed.index(
+        "sudo supervisorctl stop openshell-gateway"
+    )
+    linux_entry = bootstrap.index(
+        'if [ "$(uname -s)" = "Darwin" ]; then bootstrap_darwin; exit 0; fi'
+    )
+    initial_preflight = bootstrap.index(
+        "require_owned_gateway_manager_definitions || exit $?", linux_entry
+    )
+    first_linux_mutation = bootstrap.index('mkdir -p "$OSH_DIR" "$BIN"', linux_entry)
+    assert initial_preflight < first_linux_mutation
+    manager_install = bootstrap.index("# --- 8. gateway service + register")
+    replacement_preflight = bootstrap.index(
+        "require_owned_gateway_manager_definitions || exit $?", manager_install
+    )
+    systemd_replacement = bootstrap.index(
+        'cat > "$HOME/.config/systemd/user/openshell-gateway.service"',
+        manager_install,
+    )
+    supervisor_replacement = bootstrap.index(
+        'sudo tee "$OSH_GATEWAY_SUPERVISOR_CONFIG"', manager_install
+    )
+    assert replacement_preflight < systemd_replacement
+    assert replacement_preflight < supervisor_replacement
+    assert "Environment=MAC_OPENSH_GATEWAY_OWNER=mac" in bootstrap
+    assert 'MAC_OPENSH_GATEWAY_OWNER="mac"' in bootstrap
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    manager_log = tmp_path / "manager.log"
+    systemctl = fake_bin / "systemctl"
+    systemctl.write_text(
+        """#!/bin/sh
+printf 'systemctl %s\n' "$*" >> "$MANAGER_LOG"
+case " $* " in
+  *" --user cat openshell-gateway.service "*)
+    [ "${SYSTEMD_PRESENT:-1}" = 1 ]
+    ;;
+  *" --property=ExecStart --value "*)
+    printf '%s\n' "${SYSTEMD_EXEC_START:-}"
+    ;;
+  *" --property=Environment --value "*)
+    printf '%s\n' "${SYSTEMD_ENVIRONMENT:-}"
+    ;;
+  *" --property=FragmentPath --value "*)
+    printf '%s\n' "${SYSTEMD_FRAGMENT_PATH:-}"
+    ;;
+  *" --user stop openshell-gateway.service "*) exit 0 ;;
+  *" --user is-active --quiet openshell-gateway.service "*) exit 3 ;;
+  *) exit 97 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+    sudo = fake_bin / "sudo"
+    sudo.write_text(
+        """#!/bin/sh
+printf 'sudo %s\n' "$*" >> "$MANAGER_LOG"
+case " $* " in
+  *" supervisorctl status openshell-gateway "*) printf '%s\n' 'openshell-gateway RUNNING' ;;
+  *) exit 0 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    sudo.chmod(0o755)
+    uname = fake_bin / "uname"
+    uname.write_text("#!/bin/sh\nprintf '%s\\n' Linux\n", encoding="utf-8")
+    uname.chmod(0o755)
+    pgrep = fake_bin / "pgrep"
+    pgrep.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+
+    home = tmp_path / "home"
+    osh_dir = home / ".mac" / "openshell"
+    osh_dir.mkdir(parents=True)
+    supervisor_config = tmp_path / "openshell-gateway.conf"
+    unrelated_exec = (
+        "{ path=/opt/acme/openshell-gateway ; "
+        "argv[]=/opt/acme/openshell-gateway --config /opt/acme/gateway.toml ; "
+        "ignore_errors=no ; }"
+    )
+    helper = _linux_gateway_ownership_source()
+    schema_harness = helper + "\nstop_existing_gateway_for_schema_recovery\n"
+    fail_closed_harness = helper + "\n" + fail_closed + "\nstop_gateway_fail_closed\n"
+    install_harness = (
+        helper
+        + "\nrequire_owned_gateway_manager_definitions || exit $?\n"
+        + "printf '%s\\n' overwritten > \"$TARGET_DEFINITION\"\n"
+    )
+    base_env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "HOME": str(home),
+        "MAC_HOME": str(home / ".mac"),
+        "OSH_DIR": str(osh_dir),
+        "BIN": str(home / ".local" / "bin"),
+        "OSH_GATEWAY_SUPERVISOR_CONFIG": str(supervisor_config),
+        "MANAGER_LOG": str(manager_log),
+        "SYSTEMD_EXEC_START": unrelated_exec,
+    }
+
+    systemd_definition = tmp_path / "openshell-gateway.service"
+    original_systemd_definition = (
+        b"[Service]\nExecStart=/opt/acme/openshell-gateway "
+        b"--config /opt/acme/gateway.toml\n"
+    )
+    systemd_definition.write_bytes(original_systemd_definition)
+    manager_log.write_text("", encoding="utf-8")
+    blocked_systemd_install = subprocess.run(
+        ["/bin/bash", "-c", install_harness],
+        env={
+            **base_env,
+            "SYSTEMD_PRESENT": "1",
+            "TARGET_DEFINITION": str(systemd_definition),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert blocked_systemd_install.returncode != 0
+    assert "unowned systemd service" in blocked_systemd_install.stderr
+    assert systemd_definition.read_bytes() == original_systemd_definition
+    assert "systemctl --user stop" not in manager_log.read_text(encoding="utf-8")
+
+    manager_log.write_text("", encoding="utf-8")
+    unowned_systemd = subprocess.run(
+        ["/bin/bash", "-c", schema_harness],
+        env={**base_env, "SYSTEMD_PRESENT": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert unowned_systemd.returncode != 0
+    assert "unowned systemd service" in unowned_systemd.stderr
+    assert "systemctl --user stop" not in manager_log.read_text(encoding="utf-8")
+
+    unrelated_supervisor_definition = (
+        "[program:openshell-gateway]\n"
+        "command=/opt/acme/openshell-gateway --config /opt/acme/gateway.toml\n"
+        "directory=/opt/acme\n"
+    )
+    supervisor_config.write_text(unrelated_supervisor_definition, encoding="utf-8")
+    manager_log.write_text("", encoding="utf-8")
+    blocked_supervisor_install = subprocess.run(
+        ["/bin/bash", "-c", install_harness],
+        env={
+            **base_env,
+            "SYSTEMD_PRESENT": "0",
+            "TARGET_DEFINITION": str(supervisor_config),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert blocked_supervisor_install.returncode != 0
+    assert "unowned supervisord service" in blocked_supervisor_install.stderr
+    assert supervisor_config.read_text(encoding="utf-8") == (
+        unrelated_supervisor_definition
+    )
+    assert "sudo supervisorctl stop" not in manager_log.read_text(encoding="utf-8")
+
+    manager_log.write_text("", encoding="utf-8")
+    unowned_supervisord = subprocess.run(
+        ["/bin/bash", "-c", schema_harness],
+        env={**base_env, "SYSTEMD_PRESENT": "0"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert unowned_supervisord.returncode != 0
+    assert "unowned supervisord service" in unowned_supervisord.stderr
+    assert "sudo supervisorctl stop" not in manager_log.read_text(encoding="utf-8")
+
+    manager_log.write_text("", encoding="utf-8")
+    cleanup = subprocess.run(
+        ["/bin/bash", "-c", fail_closed_harness],
+        env={**base_env, "SYSTEMD_PRESENT": "1"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert cleanup.returncode == 0, cleanup.stderr
+    calls = manager_log.read_text(encoding="utf-8")
+    assert "systemctl --user stop" not in calls
+    assert "sudo supervisorctl stop" not in calls
+    assert "left unowned systemd service" in cleanup.stderr
+    assert "left unowned supervisord service" in cleanup.stderr
+
+    wrapper = osh_dir / "run-gateway.sh"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f'exec "{base_env["BIN"]}/openshell-gateway" '
+        f'--config "{osh_dir}/gateway.toml"\n',
+        encoding="utf-8",
+    )
+    supervisor_config.write_text(
+        "[program:openshell-gateway]\n"
+        f"command={wrapper}\n"
+        f"directory={osh_dir}\n",
+        encoding="utf-8",
+    )
+    manager_log.write_text("", encoding="utf-8")
+    owned = subprocess.run(
+        ["/bin/bash", "-c", fail_closed_harness],
+        env={
+            **base_env,
+            "SYSTEMD_PRESENT": "1",
+            "SYSTEMD_EXEC_START": (
+                f"{{ path={wrapper} ; argv[]={wrapper} ; ignore_errors=no ; }}"
+            ),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert owned.returncode == 0, owned.stderr
+    calls = manager_log.read_text(encoding="utf-8")
+    assert "systemctl --user stop openshell-gateway.service" in calls
+    assert "sudo supervisorctl stop openshell-gateway" in calls
+
+
+def test_api_readable_upgrade_retires_only_ready_owned_dead_pid_sandboxes(
+    tmp_path,
+):
+    dead_pid = "99999999"
+    eligible = {
+        "name": "mac-task-deadbeef",
+        "phase": "Ready",
+        "labels": {
+            "mac.owner": "mac",
+            "mac.kind": "task",
+            "mac.keep": "false",
+            "mac.pid": dead_pid,
+        },
+    }
+    result = _run_api_retirement_planner(tmp_path, [eligible])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "disposable\tmac-task-deadbeef"
+
+    # API-visible ownership metadata permits cleanup of a Ready orphan even if
+    # its supervisor container has not exited yet. A live creator PID remains a
+    # hard safety boundary.
+    live = {**eligible, "labels": {**eligible["labels"], "mac.pid": str(os.getpid())}}
+    result = _run_api_retirement_planner(tmp_path, [live])
+    assert result.returncode != 0
+    assert "live managed sandbox creator blocks" in result.stderr
+
+    for unsafe in (
+        {**eligible, "phase": "Stopped"},
+        {**eligible, "labels": {**eligible["labels"], "mac.keep": "true"}},
+        {**eligible, "labels": {**eligible["labels"], "mac.owner": "someone-else"}},
+        {**eligible, "labels": {**eligible["labels"], "mac.pid": ""}},
+        {**eligible, "labels": {**eligible["labels"], "mac.kind": "certifier"}},
+        {
+            "name": "mac-cert-retained",
+            "phase": "Ready",
+            "labels": {"mac.owner": "mac", "mac.kind": "certifier"},
+        },
+    ):
+        result = _run_api_retirement_planner(tmp_path, [unsafe])
+        assert result.returncode != 0
+
+    openclaw = {
+        "name": "mac-openclaw-bullwinkle",
+        "phase": "Ready",
+        "labels": {"mac.role": "openclaw-gateway"},
+    }
+    result = _run_api_retirement_planner(tmp_path, [openclaw])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "openclaw\tmac-openclaw-bullwinkle"
+
+    for impersonator in (
+        {
+            "name": "mac-openclaw-bullwinkle-copy",
+            "phase": "Ready",
+            "labels": {"mac.role": "openclaw-gateway"},
+        },
+        {
+            "name": "mac-openclaw-bullwinkle",
+            "phase": "Ready",
+            "labels": {},
+        },
+    ):
+        result = _run_api_retirement_planner(tmp_path, [impersonator])
+        assert result.returncode != 0
+
+
+def test_openclaw_checkpoint_promotion_rolls_back_an_interrupted_pair(tmp_path):
+    mac_home = tmp_path / "mac home"
+    openclaw = mac_home / "openclaw"
+    recovered = tmp_path / "recovered"
+    osh_dir = mac_home / "openshell"
+    for root, marker in (
+        (openclaw / "workspace", "old-workspace"),
+        (openclaw / "state", "old-state"),
+        (recovered / "workspace", "new-workspace"),
+        (recovered / "state", "new-state"),
+    ):
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "marker.txt").write_text(marker, encoding="utf-8")
+    osh_dir.mkdir(parents=True)
+
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    mock_mv = mock_bin / "mv"
+    mock_mv.write_text(
+        """#!/bin/bash
+last=$((${#@} - 1))
+before=$((${#@} - 2))
+args=("$@")
+src="${args[$before]}"
+dst="${args[$last]}"
+if [ "${FAIL_PROMOTION_STATE_INSTALL:-0}" = 1 ] \\
+    && [[ "$src" == */.upgrade-staging-*/state ]] \\
+    && [[ "$dst" == */openclaw/state ]]; then
+  exit 91
+fi
+exec /bin/mv "$@"
+""",
+        encoding="utf-8",
+    )
+    mock_mv.chmod(0o755)
+
+    harness = (
+        _openclaw_promotion_source()
+        + "\nlog() { :; }\n"
+        + 'if promote_recovered_openclaw_state "$RECOVERED" '
+        + '"mac-openclaw-test" "test"; then exit 90; fi\n'
+    )
+    env = {
+        **os.environ,
+        "MAC_HOME": str(mac_home),
+        "OSH_DIR": str(osh_dir),
+        "RECOVERED": str(recovered),
+        "FAIL_PROMOTION_STATE_INSTALL": "1",
+        "PATH": str(mock_bin) + ":/usr/bin:/bin",
+    }
+    result = subprocess.run(
+        ["/bin/bash", "-c", harness],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (openclaw / "workspace" / "marker.txt").read_text() == "old-workspace"
+    assert (openclaw / "state" / "marker.txt").read_text() == "old-state"
+    assert (recovered / "workspace" / "marker.txt").read_text() == "new-workspace"
+    assert (recovered / "state" / "marker.txt").read_text() == "new-state"
+
+
+def test_schema_fallback_requires_stopped_exact_managed_containers():
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    fallback = bootstrap.split("retire_managed_sandboxes_before_upgrade() {", 1)[
+        1
+    ].split("\n}\n\nrun_live_confinement_probe", 1)[0]
+    first_quiescence = fallback.index("validate_managed_container_quiescence")
+    stop_gateway = fallback.index(
+        "stop_existing_gateway_for_schema_recovery", first_quiescence
+    )
+    second_quiescence = fallback.index(
+        "validate_managed_container_quiescence", first_quiescence + 1
+    )
+    docker_recovery = fallback.index(
+        "retire_managed_sandboxes_via_docker", second_quiescence
+    )
+    assert first_quiescence < stop_gateway < second_quiescence < docker_recovery
+
+    direct = bootstrap.split("retire_managed_sandboxes_via_docker() {", 1)[1].split(
+        "\n}\n\nretire_managed_sandboxes_before_upgrade", 1
+    )[0]
+    assert "exited|created|dead" in direct
+    assert "refusing direct recovery of non-quiescent OpenShell container" in direct
+    inventory_writer = bootstrap.split(
+        "write_managed_openshell_container_ids() {", 1
+    )[1].split("\n}\n\nvalidate_managed_container_quiescence", 1)[0]
+    assert "openshell.ai/managed-by=openshell" in inventory_writer
+    assert "openshell.ai/sandbox-name" in direct
+    assert (
+        "^mac-(task|hubverify|codingcap|runtime-smoke|security-probe)-"
+        "[A-Za-z0-9._-]+$" in direct
+    )
+    assert 'sandbox_name" = "$expected_openclaw' in direct
+    checkpoint = direct.index("checkpoint_openclaw_with_docker")
+    exact_remove = direct.index('"$OSH_DOCKER_BIN" rm "$container_id"')
+    assert checkpoint < exact_remove
+    assert '"$OSH_DOCKER_BIN" rm -f "$container_id"' not in direct
+
+    api = bootstrap.split("retire_managed_sandboxes_via_api() {", 1)[1].split(
+        "\n}\n\nretire_managed_sandboxes_via_docker", 1
+    )[0]
+    assert api.count("sandbox list --limit 1000 --output json") == 1
+    assert "str(item.get(\"phase\") or \"\").strip().lower() != \"ready\"" in api
+    assert 'labels.get("mac.owner") == "mac"' in api
+    assert 'labels.get("mac.keep") or ""' in api
+    assert '"certifier"' not in api.split("disposable_patterns =", 1)[1].split("}", 1)[0]
+    assert "pid = int(raw_pid)" in api
+    assert "os.kill(pid, 0)" in api
+
+    retirement = bootstrap.split("retire_managed_sandboxes_before_upgrade() {", 1)[
+        1
+    ].split("\n}\n\nrun_live_confinement_probe", 1)[0]
+    assert retirement.count("sandbox list --limit 1000 --output json") == 1
 
 
 def test_complete_openshell_bootstrap_clears_default_and_configured_dispatch_holds(

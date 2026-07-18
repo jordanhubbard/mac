@@ -364,7 +364,9 @@ class WorkerCredentialLifecycle:
         expires_at = _timestamp(now + timedelta(seconds=ttl_seconds))
         with self.store.transaction() as conn:
             agent_lock = conn.execute(
-                "UPDATE agents SET updated_at = updated_at WHERE id = ?", (exact_agent,)
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (exact_agent,),
             )
             if agent_lock.rowcount != 1:
                 raise WorkerCredentialError(
@@ -451,6 +453,18 @@ class WorkerCredentialLifecycle:
             )
 
         with self.store.transaction() as conn:
+            # All operations that can create, activate, or invalidate a worker
+            # principal take the owning agent row first.  In particular,
+            # ControlPlane.delete_agent uses this same agent -> credential lock
+            # order, so a concurrent activation cannot deadlock while the
+            # decommission path is revoking the credential set.
+            agent_lock = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (exact_agent,),
+            )
+            if agent_lock.rowcount != 1:
+                raise WorkerCredentialError("worker agent does not exist")
             credential_lock = conn.execute(
                 "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ?",
                 (principal_id,),
@@ -496,11 +510,6 @@ class WorkerCredentialLifecycle:
                         "destination verification does not match install receipt"
                     )
 
-            agent_lock = conn.execute(
-                "UPDATE agents SET updated_at = updated_at WHERE id = ?", (exact_agent,)
-            )
-            if agent_lock.rowcount != 1:
-                raise WorkerCredentialError("worker agent does not exist")
             agent_row = conn.execute(
                 "SELECT * FROM agents WHERE id = ?", (exact_agent,)
             ).fetchone()
@@ -601,8 +610,10 @@ class WorkerCredentialPrincipalProvider:
         instant = (now or _utcnow()).astimezone(timezone.utc)
         result: Dict[str, Dict[str, Any]] = {}
         rows = self.store.query_all(
-            "SELECT * FROM worker_credentials "
-            "WHERE state IN ('pending_install', 'active') AND revoked_at IS NULL"
+            "SELECT wc.* FROM worker_credentials wc "
+            "JOIN agents a ON a.id = wc.agent_id "
+            "WHERE wc.state IN ('pending_install', 'active') "
+            "AND wc.revoked_at IS NULL AND a.deleted_at IS NULL"
         )
         for row in rows:
             record = _record_from_row(row, include_hash=True)

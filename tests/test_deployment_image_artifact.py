@@ -121,8 +121,18 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
     assert "for platform in linux/amd64 linux/arm64" in job
     assert 'docker run --rm --platform "$platform"' in job
     assert "org.opencontainers.image.revision" in job
-    for command in ("gh --version", "codex --version", "codegraph --version"):
+    for command in (
+        "gh --version",
+        "codex --version",
+        "codegraph --version",
+        "clang --version",
+        "llvm-objcopy --version",
+        "ld.lld --version",
+        "qemu-system-riscv64 --version",
+    ):
         assert command in job
+    assert "clang --print-targets | grep -F riscv64" in job
+    assert "qemu-system-riscv64 -machine help | grep -F virt" in job
 
 
 def test_image_publication_is_blocked_on_live_pinned_postgres_contract() -> None:

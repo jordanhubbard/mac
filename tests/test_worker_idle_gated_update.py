@@ -122,7 +122,9 @@ def test_pending_update_applies_once_idle_and_clears_stash(tmp_path, monkeypatch
 def test_run_once_applies_pending_update_before_claiming(tmp_path, monkeypatch):
     instance = _instance(tmp_path, _Client({"current_task_id": None}))
     instance._stash_pending_repo_update({}, "s1")
-    monkeypatch.setattr(instance, "_process_agentbus_control", lambda: None)
+    monkeypatch.setattr(
+        instance, "_process_agentbus_control", lambda **_kwargs: None
+    )
     monkeypatch.setattr(instance, "_poll_debug_terminal_sessions", lambda: None)
     monkeypatch.setattr(instance, "_heartbeat", lambda: None)
     monkeypatch.setattr(instance, "_maybe_sync_service_claims", lambda: None)

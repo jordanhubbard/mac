@@ -41,6 +41,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #   <openssl/evp.h>/<sha.h>/<err.h> and the build links -lcrypto; without it
 #   `make build` fails and a coding agent will destructively stub sign.c just to
 #   compile. A real build dependency belongs in the base image.
+# clang/llvm/lld/qemu-system-misc: the current production executor cannot yet
+#   materialize ADR 0009 root-level overlay images.  Until that lane exists,
+#   the synchronized cut-over must carry the complete, architecture-neutral
+#   RISC-V validation floor used by c26: clang, llvm-objcopy, ld.lld, and
+#   qemu-system-riscv64.  The build-time probe below proves the toolchain is
+#   functional on both published image architectures instead of merely present.
+#   Bookworm's QEMU 7.2 lacks virtio-sound-device, so QEMU alone comes from the
+#   official bookworm-backports suite; the device probe makes that version floor
+#   an executable contract instead of a floating-package assumption.
 # nodejs from NodeSource (v22 LTS), NOT Debian's nodejs (v18): current pnpm
 #   refuses Node < v22.13 ("This version of pnpm requires at least Node.js
 #   v22.13"), which silently breaks every `pnpm install` repo bootstrap.
@@ -54,11 +63,25 @@ ARG TARGETARCH
 COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
 COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
 COPY --from=uv /uv /usr/local/bin/uv
-RUN apt-get update \
+RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/sources.list.d/mac-bookworm-backports.list \
+    && apt-get update \
     && apt-get install -y --no-install-recommends bash ca-certificates curl tar xz-utils \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
-    && apt-get install -y --no-install-recommends iproute2 iptables git make build-essential libssl-dev openjdk-17-jre-headless \
+    && apt-get install -y --no-install-recommends iproute2 iptables git make build-essential libssl-dev openjdk-17-jre-headless clang llvm lld \
+    && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
+    && command -v clang >/dev/null \
+    && command -v llvm-objcopy >/dev/null \
+    && command -v ld.lld >/dev/null \
+    && command -v qemu-system-riscv64 >/dev/null \
+    && printf '%s\n' 'void _start(void) { for (;;) {} }' > /tmp/mac-riscv-probe.c \
+    && clang --target=riscv64-unknown-elf -march=rv64imac -mabi=lp64 -mcmodel=medany -ffreestanding -fuse-ld=lld -nostdlib -nostartfiles -Wl,-e,_start /tmp/mac-riscv-probe.c -o /tmp/mac-riscv-probe.elf \
+    && llvm-objcopy -O binary /tmp/mac-riscv-probe.elf /tmp/mac-riscv-probe.bin \
+    && test -s /tmp/mac-riscv-probe.bin \
+    && qemu-system-riscv64 --version \
+    && qemu-system-riscv64 -M virt -device help > /tmp/mac-qemu-devices 2>&1 \
+    && for device in virtio-gpu-device virtio-keyboard-device virtio-mouse-device virtio-sound-device virtio-blk-device virtio-net-device; do grep -F "$device" /tmp/mac-qemu-devices >/dev/null || exit 1; done \
+    && rm -f /tmp/mac-riscv-probe.c /tmp/mac-riscv-probe.elf /tmp/mac-riscv-probe.bin /tmp/mac-qemu-devices \
     && (cd /tmp/mac-openshell-build-assets && sha256sum -c SHA256SUMS) \
     && case "$TARGETARCH" in \
          amd64) asset_arch=amd64; gh_arch=amd64; codegraph_arch=amd64 ;; \

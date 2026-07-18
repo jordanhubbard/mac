@@ -24,6 +24,7 @@ from mac.agentbus_control import (
     DEBUG_TERMINAL_OUTPUT_TOPIC,
     HERMES_CONFIG_APPLY_CONTENT_TYPE,
     HERMES_CONFIG_APPLY_RESULT_TOPIC,
+    HERMES_CONFIG_APPLY_SCHEMA,
     HERMES_CONFIG_APPLY_TOPIC,
     debug_terminal_input_payload,
     debug_terminal_open_payload,
@@ -2823,6 +2824,81 @@ def test_mac_worker_repo_update_preempts_idle_heartbeat_failure(tmp_path: Path):
     assert _git(work, "rev-parse", "HEAD") == expected
 
 
+def test_mac_worker_dispatch_hold_read_failure_stops_before_controls(
+    monkeypatch, tmp_path: Path
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    client = TestClient(create_app(control_plane=cp))
+
+    def hold_read_fails(
+        method: str, path: str, payload: Optional[Dict[str, Any]]
+    ) -> Any:
+        if method == "GET" and path == f"/agents/{agent.id}":
+            raise MacApiError("hub hold read unavailable")
+        return api_transport(client)(method, path, payload)
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=hold_read_fails),
+        agent.id,
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+    )
+    controls: list[bool] = []
+    monkeypatch.setattr(
+        worker,
+        "_process_agentbus_control",
+        lambda **kwargs: controls.append(True),
+    )
+
+    with pytest.raises(MacApiError, match="hold read unavailable"):
+        worker.run_once()
+
+    assert controls == []
+
+
+def test_mac_worker_heartbeat_recovery_processes_only_repo_update_controls(
+    monkeypatch, tmp_path: Path
+):
+    cp = ControlPlane.in_memory()
+    sender_machine = cp.register_machine("sender-host")
+    sender = cp.register_agent(sender_machine.id, "sender")
+    agent = register_worker_fixture(cp)
+    cp.publish_agentbus_content(
+        sender.id,
+        recipient_agent_id=agent.id,
+        content_type=HERMES_CONFIG_APPLY_CONTENT_TYPE,
+        topic=HERMES_CONFIG_APPLY_TOPIC,
+        payload={"schema": HERMES_CONFIG_APPLY_SCHEMA},
+    )
+    client = TestClient(create_app(control_plane=cp))
+
+    def heartbeat_fails(
+        method: str, path: str, payload: Optional[Dict[str, Any]]
+    ) -> Any:
+        if method == "POST" and path.endswith(f"/agents/{agent.id}/heartbeat"):
+            raise MacApiError("heartbeat rejected")
+        return api_transport(client)(method, path, payload)
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=heartbeat_fails),
+        agent.id,
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+    )
+    config_controls: list[str] = []
+    monkeypatch.setattr(
+        worker,
+        "_handle_hermes_config_apply_stream",
+        lambda stream: config_controls.append(str(stream.get("id"))) or {},
+    )
+
+    with pytest.raises(MacApiError, match="heartbeat rejected"):
+        worker.run_once()
+
+    assert config_controls == []
+
+
 def test_mac_worker_processes_agentbus_hermes_config_apply(monkeypatch, tmp_path: Path):
     cp = ControlPlane.in_memory()
     sender_machine = cp.register_machine("sender-host")
@@ -3162,6 +3238,75 @@ def test_mac_worker_declares_running_digest_on_first_heartbeat(tmp_path: Path):
     distribution = cp.fleet_build_distribution()
     by_digest = {b["digest"]: b for b in distribution["buckets"]}
     assert by_digest[runtime.digest]["count"] == 1
+
+
+def test_worker_generation_barrier_heartbeats_draining_until_authorized(
+    monkeypatch, tmp_path: Path
+):
+    cp = ControlPlane.in_memory()
+    agent = register_worker_fixture(cp)
+    client = TestClient(create_app(control_plane=cp))
+    barrier = tmp_path / "deploy-start-barrier"
+    generation = "sha256:revision:agent_worker:attempt-1"
+    barrier.write_text(generation + "\n", encoding="utf-8")
+    monkeypatch.setenv("MAC_WORKER_DEPLOY_GENERATION", generation)
+    monkeypatch.setenv("MAC_WORKER_DEPLOY_BARRIER_FILE", str(barrier))
+
+    worker = MacWorker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        agent.id,
+        tmp_path / "workspace",
+        lambda _t, _d: WorkerExecution(0, "unused"),
+    )
+    monkeypatch.setattr(worker, "_maybe_start_coding_route_probe", lambda: None)
+    monkeypatch.setattr(worker, "_maybe_command_inventory_resources", lambda: {})
+
+    worker._heartbeat()
+    draining = cp.get_agent(agent.id)
+    assert draining.status == "draining"
+    assert draining.resources["deployment_generation"] == generation
+
+    barrier.unlink()
+    worker._heartbeat()
+    authorized = cp.get_agent(agent.id)
+    assert authorized.status == "idle"
+    assert authorized.resources["deployment_generation"] == generation
+
+
+def test_worker_generation_barrier_registers_draining_atomically(
+    monkeypatch, tmp_path: Path
+):
+    cp = ControlPlane.in_memory()
+    machine = cp.register_machine("barrier-worker-host", machine_id="machine_barrier")
+    agent = cp.register_agent(
+        machine.id,
+        "barrier-worker",
+        agent_id="agent_barrier_worker",
+        capabilities=["python"],
+    )
+    assert agent.status == "idle"
+    barrier = tmp_path / "deploy-start-barrier"
+    generation = "revision:barrier-worker:attempt-3"
+    barrier.write_text(generation + "\n", encoding="utf-8")
+    monkeypatch.setenv("MAC_WORKER_DEPLOY_GENERATION", generation)
+    monkeypatch.setenv("MAC_WORKER_DEPLOY_BARRIER_FILE", str(barrier))
+    client = TestClient(create_app(control_plane=cp))
+
+    registered = register_worker(
+        MacApiClient("http://mac.test", transport=api_transport(client)),
+        hostname="barrier-worker-host",
+        agent_name="barrier-worker",
+        capabilities=["python"],
+        machine_id=machine.id,
+        agent_id=agent.id,
+    )
+
+    assert registered["status"] == "draining"
+    assert registered["health_status"] == "degraded"
+    assert registered["resources"]["deployment_generation"] == generation
+    persisted = cp.get_agent(agent.id)
+    assert persisted.status == "draining"
+    assert persisted.health_status == "degraded"
 
 
 def test_register_worker_creates_identity_then_worker_claims_tasks(tmp_path: Path):

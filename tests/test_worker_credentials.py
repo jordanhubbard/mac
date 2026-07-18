@@ -161,6 +161,75 @@ def test_db_issuance_stores_only_hash_and_projects_exact_agent(tmp_path: Path) -
         lifecycle.issue("agent_alpha", environment="vm", expires_in=59)
 
 
+def test_deleted_agent_rejects_issued_token_issue_and_activation(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    lifecycle = WorkerCredentialLifecycle(cp.store)
+    issue = _package_issue(lifecycle)
+    receipt = install_vm_manifest(
+        installation_manifest(issue),
+        tmp_path / "mac.env",
+        expected_agent_id="agent_alpha",
+    )
+    app = create_app(
+        control_plane=cp,
+        auth_tokens={"shared-admin": {"scopes": ["admin"]}},
+    )
+    cp.delete_agent("agent_alpha", actor="operator")
+
+    with TestClient(app) as client:
+        rejected = client.post(
+            "/agents",
+            headers={"Authorization": "Bearer " + issue.token},
+            json={
+                "machine_id": "machine_worker",
+                "name": "alpha",
+                "capabilities": [PACKAGE_CAPABILITY, "python"],
+                "agent_id": "agent_alpha",
+            },
+        )
+        with pytest.raises(WorkerCredentialError, match="registered agent"):
+            _package_issue(lifecycle)
+        cp.register_agent(
+            "machine_worker",
+            "alpha",
+            [PACKAGE_CAPABILITY, "python"],
+            resources={},
+            agent_id="agent_alpha",
+            allow_resurrection=True,
+        )
+        replayed_after_resurrection = client.post(
+            "/agents",
+            headers={"Authorization": "Bearer " + issue.token},
+            json={
+                "machine_id": "machine_worker",
+                "name": "alpha",
+                "capabilities": [PACKAGE_CAPABILITY, "python"],
+                "agent_id": "agent_alpha",
+            },
+        )
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == "unknown bearer token"
+    assert replayed_after_resurrection.status_code == 403
+    assert replayed_after_resurrection.json()["detail"] == "unknown bearer token"
+    assert cp.get_agent("agent_alpha").deleted_at is None
+    assert lifecycle.list(agent_id="agent_alpha")[0]["state"] == "revoked"
+    events = cp.store.query_all(
+        "SELECT event_type, detail FROM worker_credential_events "
+        "WHERE principal_id = ? ORDER BY created_at",
+        (issue.record["id"],),
+    )
+    assert [event["event_type"] for event in events] == [
+        "worker_credential.issued",
+        "worker_credential.revoked",
+    ]
+    assert all(issue.token not in str(event["detail"]) for event in events)
+
+    fresh = _package_issue(lifecycle)
+    assert fresh.worker_version == issue.worker_version + 1
+    with pytest.raises(WorkerCredentialError, match="revoked or expired"):
+        lifecycle.activate("agent_alpha", issue.record["id"], receipt=receipt)
+
+
 def test_activation_requires_destination_readback_and_live_authenticated_heartbeat(
     tmp_path: Path,
 ) -> None:

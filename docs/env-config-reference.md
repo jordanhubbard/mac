@@ -129,11 +129,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_AGENT_GEN_VIDEO_PORT` | int | consumer-defined | deploy-agent-generation | Deploy Agent Generation setting: deploy agent gen video port. |
 | `MAC_DEPLOY_AGENT_MEDIA_ROUTES` | str | consumer-defined | deployment | Deployment setting: deploy agent media routes. |
 | `MAC_DEPLOY_ALLOW_DEGRADED_SERVICES` | bool | consumer-defined | deployment | Deployment setting: deploy allow degraded services. |
+| `MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP` | bool | consumer-defined | deployment | Deployment setting: deploy allow legacy cas bootstrap. |
 | `MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN` | bool | consumer-defined | deployment | Deployment setting: deploy allow legacy worker token. |
 | `MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD` | bool | consumer-defined | deployment | Deployment setting: deploy allow local openshell image build. |
 | `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG` | bool | consumer-defined | deployment | Deployment setting: deploy allow sample config. |
 | `MAC_DEPLOY_API_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy api timeout seconds. |
 | `MAC_DEPLOY_ARCHIVE` | str | consumer-defined | deployment | Deployment setting: deploy archive. |
+| `MAC_DEPLOY_BARRIER_FILE` | str | consumer-defined | deployment | Deployment setting: deploy barrier file. |
 | `MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | deployment | Deployment setting: deploy certifier openshell gateway endpoint. |
 | `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |
 | `MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy codegraph init timeout seconds. |
@@ -151,6 +153,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_EXECUTION_COHORT_REVISION` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort revision. |
 | `MAC_DEPLOY_EXECUTION_COHORT_SEED` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort seed. |
 | `MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT` | str | consumer-defined | deployment | Deployment setting: deploy execution cohort treatment percent. |
+| `MAC_DEPLOY_FENCE_READY` | str | consumer-defined | deployment | Deployment setting: deploy fence ready. |
 | `MAC_DEPLOY_FIRECRAWL_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy firecrawl bind addr. |
 | `MAC_DEPLOY_FIRECRAWL_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy firecrawl install. |
 | `MAC_DEPLOY_FIRECRAWL_PORT` | int | consumer-defined | deployment | Deployment setting: deploy firecrawl port. |
@@ -160,6 +163,21 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_FLEET_NAME` | str | consumer-defined | deployment | Deployment setting: deploy fleet name. |
 | `MAC_DEPLOY_FLEET_REGISTRY` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry. |
 | `MAC_DEPLOY_FLEET_REGISTRY_FILE` | str | consumer-defined | deployment | Deployment setting: deploy fleet registry file. |
+| `MAC_DEPLOY_GATE_ADMIN_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gate admin token. |
+| `MAC_DEPLOY_GATE_ADOPT_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate adopt reason. |
+| `MAC_DEPLOY_GATE_AGENT_ID` | str | consumer-defined | deployment | Deployment setting: deploy gate agent id. |
+| `MAC_DEPLOY_GATE_ALLOW_MISSING` | bool | consumer-defined | deployment | Deployment setting: deploy gate allow missing. |
+| `MAC_DEPLOY_GATE_BASELINE` | str | consumer-defined | deployment | Deployment setting: deploy gate baseline. |
+| `MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID` | str | consumer-defined | deployment | Deployment setting: deploy gate expected principal id. |
+| `MAC_DEPLOY_GATE_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy gate generation. |
+| `MAC_DEPLOY_GATE_HOLD_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate hold reason. |
+| `MAC_DEPLOY_GATE_PHASE` | str | consumer-defined | deployment | Deployment setting: deploy gate phase. |
+| `MAC_DEPLOY_GATE_PRIOR_HOLD_REASON` | str | consumer-defined | deployment | Deployment setting: deploy gate prior hold reason. |
+| `MAC_DEPLOY_GATE_PRIOR_OWNED` | str | consumer-defined | deployment | Deployment setting: deploy gate prior owned. |
+| `MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED` | bool | consumer-defined | deployment | Deployment setting: deploy gate require authenticated. |
+| `MAC_DEPLOY_GATE_REQUIRE_OWNED` | bool | consumer-defined | deployment | Deployment setting: deploy gate require owned. |
+| `MAC_DEPLOY_GATE_TIMEOUT` | int | consumer-defined | deployment | Deployment setting: deploy gate timeout. |
+| `MAC_DEPLOY_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy generation. |
 | `MAC_DEPLOY_GH_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gh token. |
 | `MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy github credentials required. |
 | `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64` | str | consumer-defined | deployment | Deployment setting: deploy github review key b64. |
@@ -183,12 +201,19 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_HERMES_GATEWAY_PROVIDER` | str | consumer-defined | deployment | Deployment setting: deploy hermes gateway provider. |
 | `MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME` | str | consumer-defined | deployment | Deployment setting: deploy hermes slack home channel name. |
 | `MAC_DEPLOY_HERMES_SURFACE_B64` | str | consumer-defined | deployment | Deployment setting: deploy hermes surface b64. |
+| `MAC_DEPLOY_HOLD_ADOPTIONS_FILE` | str | consumer-defined | deployment | Deployment setting: deploy hold adoptions file. |
 | `MAC_DEPLOY_HUB_AGENT` | str | consumer-defined | deployment | Deployment setting: deploy hub agent. |
 | `MAC_DEPLOY_HUB_TICK_INTERVAL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy hub tick interval seconds. |
 | `MAC_DEPLOY_HUB_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy hub token. |
 | `MAC_DEPLOY_HUB_TUNNEL_PUBKEY` | str | consumer-defined | deployment | Deployment setting: deploy hub tunnel pubkey. |
 | `MAC_DEPLOY_HUB_URL` | str | consumer-defined | deployment | Deployment setting: deploy hub url. |
 | `MAC_DEPLOY_IDE_HANDOFF_FILE` | str | consumer-defined | deployment | Deployment setting: deploy ide handoff file. |
+| `MAC_DEPLOY_LOCK_DIR` | str | consumer-defined | deployment | Deployment setting: deploy lock dir. |
+| `MAC_DEPLOY_LOCK_GUARD_FD` | str | consumer-defined | deployment | Deployment setting: deploy lock guard fd. |
+| `MAC_DEPLOY_LOCK_ID` | str | consumer-defined | deployment | Deployment setting: deploy lock id. |
+| `MAC_DEPLOY_LOCK_RENEW_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy lock renew seconds. |
+| `MAC_DEPLOY_LOCK_STALE_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy lock stale seconds. |
+| `MAC_DEPLOY_LOCK_TAKEOVER` | str | consumer-defined | deployment | Deployment setting: deploy lock takeover. |
 | `MAC_DEPLOY_MEMORY_EMBED_MODEL` | str | consumer-defined | deployment | Deployment setting: deploy memory embed model. |
 | `MAC_DEPLOY_NETWORK_HOSTNAME_PREFIX` | str | consumer-defined | deployment | Deployment setting: deploy network hostname prefix. |
 | `MAC_DEPLOY_NETWORK_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy network install. |
@@ -211,9 +236,12 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_OPENCLAW_TELEGRAM_ACCOUNT_ID` | str | consumer-defined | deployment | Deployment setting: deploy openclaw telegram account id. |
 | `MAC_DEPLOY_OPENSHELL` | str | consumer-defined | deployment | Deployment setting: deploy openshell. |
 | `MAC_DEPLOY_OPENSHELL_ARGS` | str | consumer-defined | deployment | Deployment setting: deploy openshell args. |
+| `MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS` | str | consumer-defined | deployment | Deployment setting: deploy openshell effective args. |
+| `MAC_DEPLOY_OPENSHELL_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy openshell enabled. |
 | `MAC_DEPLOY_OPENSHELL_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy openshell required. |
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime image. |
 | `MAC_DEPLOY_OS` | str | consumer-defined | deployment | Deployment setting: deploy os. |
+| `MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64` | str | consumer-defined | deployment | Deployment setting: deploy preflight agent ids b64. |
 | `MAC_DEPLOY_QDRANT_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant bind addr. |
 | `MAC_DEPLOY_QDRANT_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant data dir. |
 | `MAC_DEPLOY_QDRANT_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy qdrant image. |
@@ -222,12 +250,18 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_QDRANT_PORT` | int | consumer-defined | deployment | Deployment setting: deploy qdrant port. |
 | `MAC_DEPLOY_QDRANT_URL` | str | consumer-defined | deployment | Deployment setting: deploy qdrant url. |
 | `MAC_DEPLOY_RECONCILE_MAX_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy reconcile max retries. |
+| `MAC_DEPLOY_RELEASE_COMMIT_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy release commit retries. |
+| `MAC_DEPLOY_RELEASE_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy release generation. |
+| `MAC_DEPLOY_RELEASE_PLAN_B64` | str | consumer-defined | deployment | Deployment setting: deploy release plan b64. |
+| `MAC_DEPLOY_RELEASE_TS` | str | consumer-defined | deployment | Deployment setting: deploy release ts. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | str | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler grace days. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler initial delay seconds. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler interval seconds. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE` | str | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler mode. |
 | `MAC_DEPLOY_REQUIRE_FIRECRAWL` | bool | consumer-defined | deployment | Deployment setting: deploy require firecrawl. |
 | `MAC_DEPLOY_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | deployment | Deployment setting: deploy require qdrant memory. |
+| `MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED` | bool | consumer-defined | deployment | Deployment setting: deploy require release all selected. |
+| `MAC_DEPLOY_RESTART_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy restart generation. |
 | `MAC_DEPLOY_REV` | str | consumer-defined | deployment | Deployment setting: deploy rev. |
 | `MAC_DEPLOY_REVIEWED_TOOL_ASSETS` | str | consumer-defined | deployment | Deployment setting: deploy reviewed tool assets. |
 | `MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router audio upstream. |
@@ -243,10 +277,19 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_SERVICE_ROLE_OPS` | str | consumer-defined | deployment | Deployment setting: deploy service role ops. |
 | `MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT` | str | consumer-defined | deployment | Deployment setting: deploy shared services manager agent. |
 | `MAC_DEPLOY_SSH_PORT` | int | consumer-defined | deployment | Deployment setting: deploy ssh port. |
+| `MAC_DEPLOY_STALE_LOCK_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy stale lock seconds. |
+| `MAC_DEPLOY_STARTUP_CLEAR_HOLD` | str | consumer-defined | deployment | Deployment setting: deploy startup clear hold. |
+| `MAC_DEPLOY_STATE_ADOPTED_FROM` | str | consumer-defined | deployment | Deployment setting: deploy state adopted from. |
+| `MAC_DEPLOY_STATE_AGENT_EXISTED` | str | consumer-defined | deployment | Deployment setting: deploy state agent existed. |
+| `MAC_DEPLOY_STATE_ID` | str | consumer-defined | deployment | Deployment setting: deploy state id. |
+| `MAC_DEPLOY_STATE_OWNS` | str | consumer-defined | deployment | Deployment setting: deploy state owns. |
+| `MAC_DEPLOY_STATE_REASON` | str | consumer-defined | deployment | Deployment setting: deploy state reason. |
+| `MAC_DEPLOY_STATE_REQUIRE_OWNED` | bool | consumer-defined | deployment | Deployment setting: deploy state require owned. |
 | `MAC_DEPLOY_SUPERVISOR` | str | consumer-defined | deployment | Deployment setting: deploy supervisor. |
 | `MAC_DEPLOY_SUPERVISOR_CONF_DIR` | str | consumer-defined | deployment | Deployment setting: deploy supervisor conf dir. |
 | `MAC_DEPLOY_TAILSCALE_AUTH_KEY` | str | consumer-defined | deployment | Deployment setting: deploy tailscale auth key. |
 | `MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV` | str | consumer-defined | deployment | Deployment setting: deploy tailscale auth key env. |
+| `MAC_DEPLOY_TAKEOVER_STALE_LOCK` | str | consumer-defined | deployment | Deployment setting: deploy takeover stale lock. |
 | `MAC_DEPLOY_TARGET` | str | consumer-defined | deployment | Deployment setting: deploy target. |
 | `MAC_DEPLOY_TOKENHUB_API_KEY` | str | consumer-defined | deployment | Deployment setting: deploy tokenhub api key. |
 | `MAC_DEPLOY_TOKENHUB_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy tokenhub install. |
@@ -389,6 +432,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_LESSON_CURATION_ENABLED` | bool | consumer-defined | core | Core setting: lesson curation enabled. |
 | `MAC_LESSON_CURATION_MODEL` | str | consumer-defined | core | Core setting: lesson curation model. |
 | `MAC_MACHINE_ID` | str | consumer-defined | core | Core setting: machine id. |
+| `MAC_MANAGED_REVERSE_TUNNEL` | str | consumer-defined | core | Core setting: managed reverse tunnel. |
 | `MAC_MAX_CHILD_TASKS_PER_PARENT` | str | consumer-defined | core | Core setting: max child tasks per parent. |
 | `MAC_MAX_DECOMPOSE_DEPTH` | str | consumer-defined | core | Core setting: max decompose depth. |
 | `MAC_MAX_TASK_LEASE_SECONDS` | int | consumer-defined | core | Core setting: max task lease seconds. |
@@ -511,6 +555,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_SANDBOX_NAME` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell sandbox name. |
 | `MAC_OPENSHELL_STALE_AFTER_SECONDS` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell stale after seconds. |
 | `MAC_OPENSHELL_UPLOAD_CODEX_AUTH` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell upload codex auth. |
+| `MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX` | str | consumer-defined | core | Core setting: opensh expected openclaw sandbox. |
+| `MAC_OPENSH_GATEWAY_OWNER` | str | consumer-defined | core | Core setting: opensh gateway owner. |
 | `MAC_OPENSH_GW` | str | consumer-defined | core | Core setting: opensh gw. |
 | `MAC_PG_POOL_SIZE` | int | consumer-defined | core | Core setting: pg pool size. |
 | `MAC_PLIST_BACKUP` | str | consumer-defined | core | Core setting: plist backup. |
@@ -685,6 +731,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SUPERVISOR_FAILURE_THRESHOLD` | int | consumer-defined | core | Core setting: supervisor failure threshold. |
 | `MAC_SUPERVISOR_FLAP_WINDOW_SECONDS` | int | consumer-defined | core | Core setting: supervisor flap window seconds. |
 | `MAC_SUPERVISOR_HEALTH_URL` | str | consumer-defined | core | Core setting: supervisor health url. |
+| `MAC_SUPERVISOR_INCLUDE_ROOT` | str | consumer-defined | core | Core setting: supervisor include root. |
 | `MAC_SUPERVISOR_KIND` | str | consumer-defined | core | Core setting: supervisor kind. |
 | `MAC_SUPERVISOR_LABEL` | str | consumer-defined | core | Core setting: supervisor label. |
 | `MAC_SUPERVISOR_MAINTENANCE_COMMAND` | str | consumer-defined | core | Core setting: supervisor maintenance command. |
@@ -760,6 +807,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_CREDENTIAL_SOURCE_COMMIT` | str | consumer-defined | worker | Worker setting: worker credential source commit. |
 | `MAC_WORKER_CREDENTIAL_VERSION` | str | consumer-defined | worker | Worker setting: worker credential version. |
 | `MAC_WORKER_DELIVERY_DRAIN_SECONDS` | int | consumer-defined | worker | Worker setting: worker delivery drain seconds. |
+| `MAC_WORKER_DEPLOY_BARRIER_FILE` | str | consumer-defined | worker | Worker setting: worker deploy barrier file. |
+| `MAC_WORKER_DEPLOY_GENERATION` | str | consumer-defined | worker | Worker setting: worker deploy generation. |
 | `MAC_WORKER_DIRECTABLE` | str | consumer-defined | worker | Worker setting: worker directable. |
 | `MAC_WORKER_EXECUTOR` | str | consumer-defined | worker | Worker setting: worker executor. |
 | `MAC_WORKER_HEARTBEAT_INTERVAL` | int | consumer-defined | worker | Worker setting: worker heartbeat interval. |

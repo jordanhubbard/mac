@@ -173,6 +173,42 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _deployment_barrier_state() -> tuple[str, bool]:
+    """Return the configured rollout generation and whether its barrier is live."""
+
+    generation = (os.environ.get("MAC_WORKER_DEPLOY_GENERATION") or "").strip()
+    barrier = os.environ.get("MAC_WORKER_DEPLOY_BARRIER_FILE") or ""
+    if not generation or not barrier:
+        return generation, False
+    try:
+        barrier_generation = Path(barrier).read_text(encoding="utf-8").strip()
+    except OSError:
+        barrier_generation = ""
+    return generation, barrier_generation == generation
+
+
+def _deployment_heartbeat_payload(
+    status: str,
+    *,
+    resources: Optional[Mapping[str, Any]] = None,
+    report_health: bool = False,
+) -> JsonDict:
+    """Fence every worker-originated status heartbeat behind the local barrier."""
+
+    generation, barrier_active = _deployment_barrier_state()
+    payload: JsonDict = {
+        "status": "draining" if barrier_active else status,
+    }
+    if report_health or barrier_active:
+        payload["health_status"] = "degraded" if barrier_active else "healthy"
+    if resources is not None:
+        stamped_resources = dict(resources)
+        if generation:
+            stamped_resources["deployment_generation"] = generation
+        payload["resources"] = stamped_resources
+    return payload
+
+
 REQUIRED_CHANGED_FILE_KEYS = (
     "required_changed_files",
     "required_files",
@@ -406,6 +442,19 @@ def _worker_source_state(repo: Path) -> JsonDict:
     return state
 
 
+def _active_worker_deployment_generation() -> Optional[str]:
+    """Return the exact generation only while its local start barrier exists."""
+    generation = (os.environ.get("MAC_WORKER_DEPLOY_GENERATION") or "").strip()
+    barrier = (os.environ.get("MAC_WORKER_DEPLOY_BARRIER_FILE") or "").strip()
+    if not generation or not barrier:
+        return None
+    try:
+        observed = Path(barrier).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return generation if observed == generation else None
+
+
 def register_worker(
     client: MacApiClient,
     hostname: Optional[str] = None,
@@ -480,6 +529,10 @@ def register_worker(
         },
     )
     _register_runtime_identity_for_worker(client, name, hermes_instance_id)
+    agent_resources = dict(resources or {})
+    deployment_generation = _active_worker_deployment_generation()
+    if deployment_generation:
+        agent_resources["deployment_generation"] = deployment_generation
     agent = client.post(
         "/agents",
         {
@@ -487,8 +540,10 @@ def register_worker(
             "name": name,
             "agent_id": resolved_agent_id,
             "capabilities": capabilities or [],
-            "resources": resources or {},
+            "resources": agent_resources,
             "hermes_instance_id": hermes_instance_id,
+            "status": "draining" if deployment_generation else None,
+            "health_status": "degraded" if deployment_generation else None,
         },
     )
     _ensure_worker_fleet_membership(client, agent_name=name, agent_id=str(agent["id"]))
@@ -654,7 +709,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                     if max_iterations is None:
                         time.sleep(self.poll_interval_seconds)
                     continue
-                if outcome.status == "no_task":
+                if outcome.status in {"no_task", "held"}:
                     if max_iterations is None:
                         time.sleep(self.poll_interval_seconds)
                     continue
@@ -699,8 +754,57 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             pass
 
     def run_once(self) -> WorkerRunResult:
-        control_result = self._process_agentbus_control()
-        self._poll_debug_terminal_sessions()
+        deployment_generation, deployment_barrier_active = _deployment_barrier_state()
+        if deployment_barrier_active:
+            # A freshly restarted worker must not consume AgentBus controls before
+            # the deployment controller authorizes this exact generation.
+            self._heartbeat()
+            evidence = {
+                "schema": "mac.worker_deployment_barrier.v1",
+                "agent_id": self.agent_id,
+                "deployment_generation": deployment_generation,
+            }
+            self._observe_log(
+                "worker.dispatch_held.deployment_barrier",
+                level="info",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail=evidence,
+            )
+            return WorkerRunResult(
+                status="held",
+                evidence=evidence,
+                error="deployment barrier is active",
+            )
+        heartbeat_error: Optional[MacApiError] = None
+        try:
+            self._heartbeat()
+        except MacApiError as exc:
+            # A signed repository-update control is the recovery path for a
+            # worker whose current source can no longer heartbeat cleanly.
+            # Remember the failure, but first prove there is no durable hold
+            # and allow only that bounded control phase to request restart.
+            heartbeat_error = exc
+        current_hold = self._current_dispatch_hold()
+        if current_hold is not None:
+            reason = str(current_hold.get("dispatch_hold_reason") or "dispatch held")
+            if reason != self._last_dispatch_hold_reason:
+                self._observe_log(
+                    "worker.dispatch_held",
+                    level="info",
+                    detail={"agent_id": self.agent_id, "reason": reason},
+                )
+                self._last_dispatch_hold_reason = reason
+            return WorkerRunResult(
+                status="held",
+                evidence=current_hold,
+                error=reason,
+            )
+        control_result = self._process_agentbus_control(
+            repository_update_only=heartbeat_error is not None
+        )
+        if heartbeat_error is None:
+            self._poll_debug_terminal_sessions()
         if control_result and control_result.get("restart_requested"):
             self.stop()
             return WorkerRunResult(
@@ -708,7 +812,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 evidence=control_result,
                 error=control_result.get("summary"),
             )
-        self._heartbeat()
+        if heartbeat_error is not None:
+            raise heartbeat_error
         local_update_blocker = self._local_repo_update_dispatch_blocker()
         if local_update_blocker is not None:
             reason = str(
@@ -1291,7 +1396,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             try:
                 self.client.post(
                     "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
-                    {"status": "busy"},  # AgentStatus.BUSY; literal avoids an import
+                    _deployment_heartbeat_payload("busy"),
                 )
             except Exception:  # noqa: BLE001 - liveness ping is best-effort
                 pass
@@ -1316,7 +1421,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             try:
                 self.client.post(
                     "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
-                    {"status": "busy"},  # AgentStatus.BUSY; literal avoids an import
+                    _deployment_heartbeat_payload("busy"),
                 )
             except Exception:  # noqa: BLE001 - liveness ping is best-effort
                 pass
@@ -1330,12 +1435,15 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
     def _current_dispatch_hold(self) -> Optional[JsonDict]:
         """Return the durable hold record, distinguishing it from an empty queue."""
 
-        try:
-            agent = self.client.get(
-                "/agents/%s" % quote(self.agent_id, safe="")
-            )
-        except Exception:  # noqa: BLE001 - status reporting must not break polling
-            return None
+        # The hold is a safety fence, not optional status decoration.  An
+        # unavailable or malformed hub response must stop this iteration; it
+        # must never be interpreted as positive proof that the worker is
+        # unheld.  run_forever owns retry/backoff for transient API failures.
+        agent = self.client.get(
+            "/agents/%s" % quote(self.agent_id, safe="")
+        )
+        if not isinstance(agent, dict):
+            raise MacApiError("agent dispatch-hold response is not an object")
         return agent if isinstance(agent, dict) and agent.get("dispatch_hold") else None
 
     def dry_run_claim(self) -> Optional[JsonDict]:
@@ -1878,7 +1986,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 detail={"agent_id": self.agent_id, "error": str(exc)},
             )
 
-    def _process_agentbus_control(self) -> Optional[JsonDict]:
+    def _process_agentbus_control(
+        self, *, repository_update_only: bool = False
+    ) -> Optional[JsonDict]:
         if not self.agentbus_control_enabled:
             return None
         try:
@@ -1907,6 +2017,14 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 continue
             topic = str(stream.get("topic") or "")
             content_type = str(stream.get("content_type") or "").split(";", 1)[0]
+            if repository_update_only and not (
+                topic == REPO_UPDATE_TOPIC
+                and content_type == REPO_UPDATE_CONTENT_TYPE
+            ):
+                # A worker that cannot heartbeat is allowed only the signed,
+                # bounded source-recovery control.  Config, terminal, reflect,
+                # and directable work all wait for a positive healthy heartbeat.
+                continue
             if topic == REPO_UPDATE_TOPIC and content_type == REPO_UPDATE_CONTENT_TYPE:
                 result = self._handle_repo_update_stream(stream)
                 processed.append(stream_id)
@@ -4292,7 +4410,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         try:
             self.client.post(
                 "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
-                {"status": "idle", "resources": base},
+                _deployment_heartbeat_payload("idle", resources=base),
             )
         except Exception:  # noqa: BLE001
             pass
@@ -4304,6 +4422,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # claim-next.  Preserve the normal idle fallback when the read itself is
         # transiently unavailable; the heartbeat will surface any real conflict.
         heartbeat_status = "idle"
+        current_agent: Optional[JsonDict] = None
         try:
             current_agent = self.client.get(
                 "/agents/%s" % quote(self.agent_id, safe="")
@@ -4313,10 +4432,23 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         except MacApiError:
             pass
         self._maybe_start_coding_route_probe()
-        payload: JsonDict = {"status": heartbeat_status}
         command_resources = self._maybe_command_inventory_resources()
-        if command_resources is not None:
-            payload["resources"] = command_resources
+        deployment_generation, _ = _deployment_barrier_state()
+        if deployment_generation:
+            if command_resources is not None:
+                command_resources = dict(command_resources)
+            elif isinstance(current_agent, Mapping) and isinstance(
+                current_agent.get("resources"), Mapping
+            ):
+                command_resources = dict(current_agent["resources"])
+        # Health is a worker observation, not a controller override. The hub
+        # projects this request through sticky startup-self-test resources, so
+        # asking for healthy can still correctly remain degraded.
+        payload = _deployment_heartbeat_payload(
+            heartbeat_status,
+            resources=command_resources,
+            report_health=True,
+        )
         # Declare the build the agent is running. Send the digest at most once
         # per process; subsequent heartbeats are pure liveness pings.
         if self.running_digest and not self._declared_digest:
@@ -7016,7 +7148,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             apply_openshell_requirement(registered.get("resources"), os.environ)
         # --- startup behaviors (all default-on, env-gated) ---
         startup_info: JsonDict = {"agent_id": agent_id}
-        if args.register and _env_bool("MAC_STARTUP_CLEAR_HOLD", True):
+        # Dispatch holds are hub/operator authority. An ordinary worker restart
+        # cannot know whether a hold is stale or was just replaced by an
+        # operator, so clearing is legacy opt-in rather than the default.
+        if args.register and _env_bool("MAC_STARTUP_CLEAR_HOLD", False):
             try:
                 client.request("DELETE", "/agents/%s/dispatch-hold" % quote(agent_id, safe=""), None)
                 startup_info["hold_cleared"] = True
@@ -7094,9 +7229,28 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if attestation_env_path is not None:
                     _write_env_value(attestation_env_path, "MAC_ATTESTATION_KEY", attestation_key)
         if args.heartbeat_only:
+            deployment_generation, _ = _deployment_barrier_state()
+            heartbeat_resources: Optional[Mapping[str, Any]] = None
+            if deployment_generation:
+                registered_resources = (
+                    registered.get("resources")
+                    if isinstance(registered, Mapping)
+                    else None
+                )
+                heartbeat_resources = (
+                    dict(registered_resources)
+                    if isinstance(registered_resources, Mapping)
+                    else {}
+                )
+            heartbeat_payload = _deployment_heartbeat_payload(
+                "idle",
+                resources=heartbeat_resources,
+                report_health=True,
+            )
+            heartbeat_payload["running_digest"] = args.running_digest
             heartbeat = client.post(
                 "/agents/%s/heartbeat" % quote(agent_id, safe=""),
-                {"status": "idle", "running_digest": args.running_digest},
+                heartbeat_payload,
             )
             print(
                 json.dumps(

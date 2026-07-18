@@ -56,6 +56,7 @@ OSH_GPU="${OSH_GPU:-auto}"
 OPENSHELL_LOCAL_GATEWAY_ENDPOINT="http://127.0.0.1:17670"
 ENVF="$MAC_HOME/mac.env"
 OSH_DIR="$MAC_HOME/openshell"
+OSH_GATEWAY_SUPERVISOR_CONFIG="/etc/supervisor/conf.d/openshell-gateway.conf"
 DEPLOYED_SOURCE_REVISION_FILE="${MAC_DEPLOYED_SOURCE_REVISION_FILE:-$MAC_HOME/deployed-source-revision}"
 BIN="$HOME/.local/bin"
 ARCH="$(uname -m)"   # x86_64 | aarch64
@@ -201,7 +202,6 @@ resolve_deployed_source_revision(){
   printf '%s\n' "$revision"
 }
 export PATH="$BIN:$PATH" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-mkdir -p "$OSH_DIR" "$BIN"
 
 build_runtime_image() {
   local image_source_sha image_source_sha_file runtime_digest runtime_config
@@ -279,6 +279,752 @@ verify_supervisor_image() {
   log "OpenShell supervisor: $version_output"
 }
 
+rollback_openclaw_promotion() {
+  local host_root="$1" archive="$2" installed_workspace="$3" installed_state="$4"
+  local archived_workspace="$5" archived_state="$6" failed=0
+  if [ "$installed_workspace" = 1 ] && ! rm -rf "$host_root/workspace"; then
+    failed=1
+  fi
+  if [ "$installed_state" = 1 ] && ! rm -rf "$host_root/state"; then
+    failed=1
+  fi
+  if [ "$archived_workspace" = 1 ] \
+      && ! mv -f "$archive/workspace" "$host_root/workspace"; then
+    failed=1
+  fi
+  if [ "$archived_state" = 1 ] \
+      && ! mv -f "$archive/state" "$host_root/state"; then
+    failed=1
+  fi
+  [ "$failed" = 0 ]
+}
+
+promote_recovered_openclaw_state() {
+  local recovered="$1" sandbox_name="$2" source_kind="$3"
+  local host_root="$MAC_HOME/openclaw" archive staging stamp
+  local archived_workspace=0 archived_state=0 installed_workspace=0 installed_state=0
+  [ -d "$recovered/workspace" ] || {
+    echo "ERROR: recovered OpenClaw workspace is absent for $sandbox_name" >&2
+    return 1
+  }
+  [ -d "$recovered/state" ] || {
+    echo "ERROR: recovered OpenClaw state is absent for $sandbox_name" >&2
+    return 1
+  }
+  stamp="pre-openshell-upgrade-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  archive="$host_root/archive/$stamp"
+  staging="$host_root/.upgrade-staging-$stamp"
+  if ! mkdir -p "$host_root" "$host_root/archive" \
+      || ! mkdir "$archive" \
+      || ! mkdir "$staging" \
+      || ! chmod 0700 "$host_root" "$host_root/archive" "$archive" "$staging" \
+      || ! cp -rf "$recovered/workspace" "$staging/workspace" \
+      || ! cp -rf "$recovered/state" "$staging/state" \
+      || ! chmod -R go-rwx "$staging/workspace" "$staging/state" \
+      || ! printf 'sandbox=%s\nsource=%s\nrecovered_at=%s\n' \
+        "$sandbox_name" "$source_kind" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > "$archive/recovery.txt" \
+      || ! chmod 0600 "$archive/recovery.txt"; then
+    rm -rf "$staging"
+    echo "ERROR: could not stage recovered OpenClaw state for $sandbox_name" >&2
+    return 1
+  fi
+  if [ -e "$host_root/workspace" ]; then
+    if ! mv -f "$host_root/workspace" "$archive/workspace"; then
+      rm -rf "$staging"
+      echo "ERROR: could not archive the existing OpenClaw workspace" >&2
+      return 1
+    fi
+    archived_workspace=1
+  fi
+  if [ -e "$host_root/state" ]; then
+    if ! mv -f "$host_root/state" "$archive/state"; then
+      rollback_openclaw_promotion "$host_root" "$archive" 0 0 \
+        "$archived_workspace" 0 || true
+      rm -rf "$staging"
+      echo "ERROR: could not archive the existing OpenClaw state" >&2
+      return 1
+    fi
+    archived_state=1
+  fi
+  if ! mv -f "$staging/workspace" "$host_root/workspace"; then
+    rollback_openclaw_promotion "$host_root" "$archive" 0 0 \
+      "$archived_workspace" "$archived_state" || true
+    rm -rf "$staging"
+    echo "ERROR: could not install the recovered OpenClaw workspace" >&2
+    return 1
+  fi
+  installed_workspace=1
+  if ! mv -f "$staging/state" "$host_root/state"; then
+    rollback_openclaw_promotion "$host_root" "$archive" "$installed_workspace" 0 \
+      "$archived_workspace" "$archived_state" || true
+    rm -rf "$staging"
+    echo "ERROR: could not install the recovered OpenClaw state" >&2
+    return 1
+  fi
+  installed_state=1
+  rm -rf "$staging"
+  if ! chmod -R go-rwx "$host_root/workspace" "$host_root/state" \
+      || ! touch "$OSH_DIR/upgrade-recovery.log" \
+      || ! chmod 0600 "$OSH_DIR/upgrade-recovery.log" \
+      || ! printf '%s\tsandbox=%s\tsource=%s\tarchive=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sandbox_name" "$source_kind" "$archive" \
+        >> "$OSH_DIR/upgrade-recovery.log"; then
+    if ! rollback_openclaw_promotion "$host_root" "$archive" \
+        "$installed_workspace" "$installed_state" \
+        "$archived_workspace" "$archived_state"; then
+      echo "ERROR: OpenClaw promotion rollback also failed; operator recovery is required" >&2
+    fi
+    echo "ERROR: could not finalize recovered OpenClaw state for $sandbox_name" >&2
+    return 1
+  fi
+  log "checkpointed $sandbox_name before OpenShell upgrade ($source_kind; prior host state archived at $archive)"
+}
+
+checkpoint_openclaw_with_cli() {
+  local cli="$1" sandbox_name="$2" recovered
+  if ! recovered="$(mktemp -d "${TMPDIR:-/tmp}/mac-openclaw-upgrade.XXXXXX")" \
+      || [ -z "$recovered" ]; then
+    echo "ERROR: could not allocate an OpenClaw API checkpoint directory" >&2
+    return 1
+  fi
+  if ! openshell_local_gateway "$cli" sandbox download \
+      "$sandbox_name" /sandbox/workspace "$recovered/workspace" </dev/null \
+      || ! openshell_local_gateway "$cli" sandbox download \
+      "$sandbox_name" /sandbox/state "$recovered/state" </dev/null; then
+    rm -rf "$recovered"
+    echo "ERROR: could not checkpoint $sandbox_name through the existing OpenShell API" >&2
+    return 1
+  fi
+  if ! promote_recovered_openclaw_state "$recovered" "$sandbox_name" "openshell-api"; then
+    rm -rf "$recovered"
+    return 1
+  fi
+  rm -rf "$recovered"
+}
+
+checkpoint_openclaw_with_docker() {
+  local container_id="$1" sandbox_name="$2" recovered
+  if ! recovered="$(mktemp -d "${TMPDIR:-/tmp}/mac-openclaw-docker-upgrade.XXXXXX")" \
+      || [ -z "$recovered" ]; then
+    echo "ERROR: could not allocate an OpenClaw Docker checkpoint directory" >&2
+    return 1
+  fi
+  if ! "$OSH_DOCKER_BIN" cp \
+      "$container_id:/sandbox/workspace" "$recovered/workspace" \
+      || ! "$OSH_DOCKER_BIN" cp \
+      "$container_id:/sandbox/state" "$recovered/state"; then
+    rm -rf "$recovered"
+    echo "ERROR: could not copy owner state from skewed OpenClaw container $container_id" >&2
+    return 1
+  fi
+  if ! promote_recovered_openclaw_state "$recovered" "$sandbox_name" "docker-schema-recovery"; then
+    rm -rf "$recovered"
+    return 1
+  fi
+  rm -rf "$recovered"
+}
+
+write_managed_openshell_container_ids() {
+  local scope="$1" output="$2"
+  if [ "$scope" = all ]; then
+    "$OSH_DOCKER_BIN" ps -a \
+      --filter label=openshell.ai/managed-by=openshell \
+      --format '{{.ID}}' > "$output"
+  else
+    "$OSH_DOCKER_BIN" ps \
+      --filter label=openshell.ai/managed-by=openshell \
+      --format '{{.ID}}' > "$output"
+  fi
+  if [ "$?" -ne 0 ]; then
+    echo "ERROR: could not enumerate managed OpenShell containers ($scope)" >&2
+    return 1
+  fi
+}
+
+validate_managed_container_quiescence() {
+  local container_id sandbox_name inventory
+  if ! inventory="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-running.XXXXXX")" \
+      || [ -z "$inventory" ]; then
+    echo "ERROR: could not allocate managed-container inventory" >&2
+    return 1
+  fi
+  if ! write_managed_openshell_container_ids running "$inventory"; then
+    rm -f "$inventory"
+    return 1
+  fi
+  while IFS= read -r container_id; do
+    [ -n "$container_id" ] || continue
+    if ! sandbox_name="$("$OSH_DOCKER_BIN" inspect --format \
+        '{{ index .Config.Labels "openshell.ai/sandbox-name" }}' \
+        "$container_id")"; then
+      rm -f "$inventory"
+      echo "ERROR: could not inspect managed OpenShell container $container_id" >&2
+      return 1
+    fi
+    rm -f "$inventory"
+    echo "ERROR: managed OpenShell sandbox $sandbox_name is still running; refusing schema recovery" >&2
+    return 1
+  done < "$inventory"
+  rm -f "$inventory"
+}
+
+running_openclaw_sandbox_present() {
+  local container_id sandbox_name inventory
+  if ! inventory="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-running.XXXXXX")" \
+      || [ -z "$inventory" ]; then
+    echo "ERROR: could not allocate managed-container inventory" >&2
+    return 2
+  fi
+  if ! write_managed_openshell_container_ids running "$inventory"; then
+    rm -f "$inventory"
+    return 2
+  fi
+  while IFS= read -r container_id; do
+    [ -n "$container_id" ] || continue
+    if ! sandbox_name="$("$OSH_DOCKER_BIN" inspect --format \
+        '{{ index .Config.Labels "openshell.ai/sandbox-name" }}' \
+        "$container_id")"; then
+      rm -f "$inventory"
+      echo "ERROR: could not inspect managed OpenShell container $container_id" >&2
+      return 2
+    fi
+    case "$sandbox_name" in
+      mac-openclaw-*) rm -f "$inventory"; return 0 ;;
+    esac
+  done < "$inventory"
+  rm -f "$inventory"
+  return 1
+}
+
+remove_existing_owned_macos_gateway() {
+  # A Docker container name is a shared host namespace, not proof of MAC
+  # ownership.  Inspect the immutable container ID selected by the exact-name
+  # query before replacing it; never turn a name collision into destructive
+  # cleanup of an operator-managed workload.
+  local gateway_ids gateway_count gateway_id label
+  if ! gateway_ids="$("$OSH_DOCKER_BIN" ps -a --filter 'name=^/openshell-gw$' \
+      --format '{{.ID}}')"; then
+    echo "ERROR: could not enumerate the existing OpenShell gateway container" >&2
+    return 1
+  fi
+  gateway_count="$(printf '%s\n' "$gateway_ids" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
+  case "$gateway_count" in
+    0) return 0 ;;
+    1) ;;
+    *)
+      echo "ERROR: multiple exact openshell-gw containers require operator recovery" >&2
+      return 1
+      ;;
+  esac
+  gateway_id="$(printf '%s\n' "$gateway_ids" | sed -n '/[^[:space:]]/p' | sed -n '1p')"
+  if ! label="$("$OSH_DOCKER_BIN" inspect --format \
+      '{{ index .Config.Labels "mac.owner" }}:{{ index .Config.Labels "mac.kind" }}' \
+      "$gateway_id")"; then
+    echo "ERROR: could not inspect the existing OpenShell gateway container" >&2
+    return 1
+  fi
+  if [ "$label" != "mac:openshell-gateway" ]; then
+    echo "ERROR: refusing to replace an unowned Docker container named openshell-gw" >&2
+    return 1
+  fi
+  if ! "$OSH_DOCKER_BIN" rm -f "$gateway_id" >/dev/null; then
+    echo "ERROR: could not remove the reviewed MAC OpenShell gateway container" >&2
+    return 1
+  fi
+}
+
+mac_owned_gateway_wrapper() {
+  # Older MAC deployments predate the explicit manager marker. Preserve their
+  # upgrade path only when the wrapper still has the exact reviewed binary and
+  # config identity; a same-name service or a lookalike command is not enough.
+  local wrapper="$OSH_DIR/run-gateway.sh"
+  [ -f "$wrapper" ] && [ ! -L "$wrapper" ] \
+    && grep -Fqx \
+      "exec \"$BIN/openshell-gateway\" --config \"$OSH_DIR/gateway.toml\"" \
+      "$wrapper"
+}
+
+mac_owned_systemd_gateway() {
+  local exec_start exec_path argv environment fragment
+  if ! exec_start="$(systemctl --user show openshell-gateway.service \
+      --property=ExecStart --value 2>/dev/null)"; then
+    return 1
+  fi
+  exec_path="$(printf '%s\n' "$exec_start" \
+    | sed -n 's/^.*path=\([^;]*\) ; argv\[\]=.*$/\1/p')"
+  argv="$(printf '%s\n' "$exec_start" \
+    | sed -n 's/^.*argv\[\]=\([^;]*\) ;.*$/\1/p')"
+  if [ "$exec_path" = "$OSH_DIR/run-gateway.sh" ] \
+      && [ "$argv" = "$OSH_DIR/run-gateway.sh" ] \
+      && mac_owned_gateway_wrapper; then
+    return 0
+  fi
+  if [ "$exec_path" = "$BIN/openshell-gateway" ] \
+      && [ "$argv" = "$BIN/openshell-gateway --config $OSH_DIR/gateway.toml" ]; then
+    return 0
+  fi
+
+  # The marker is written only into MAC's exact user-unit path. It permits a
+  # future wrapper evolution without weakening ownership to the generic unit
+  # name alone.
+  environment="$(systemctl --user show openshell-gateway.service \
+    --property=Environment --value 2>/dev/null)" || return 1
+  case " $environment " in
+    *" MAC_OPENSH_GATEWAY_OWNER=mac "*) ;;
+    *) return 1 ;;
+  esac
+  fragment="$(systemctl --user show openshell-gateway.service \
+    --property=FragmentPath --value 2>/dev/null)" || return 1
+  [ "$fragment" = "$HOME/.config/systemd/user/openshell-gateway.service" ]
+}
+
+mac_owned_supervisord_gateway() {
+  local config="${1:-$OSH_GATEWAY_SUPERVISOR_CONFIG}" section environment
+  [ -f "$config" ] && [ ! -L "$config" ] || return 1
+  section="$(awk '
+    $0 == "[program:openshell-gateway]" { owned_section = 1; print; next }
+    /^\[/ { if (owned_section) exit }
+    owned_section { print }
+  ' "$config")" || return 1
+  [ -n "$section" ] || return 1
+  if printf '%s\n' "$section" \
+      | grep -Fqx "command=$OSH_DIR/run-gateway.sh" \
+      && printf '%s\n' "$section" \
+      | grep -Fqx "directory=$OSH_DIR" \
+      && mac_owned_gateway_wrapper; then
+    return 0
+  fi
+  environment="$(printf '%s\n' "$section" | sed -n '/^environment=/p')"
+  case "$environment" in
+    *'MAC_OPENSH_GATEWAY_OWNER="mac"'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+require_owned_gateway_manager_definitions() {
+  # The service names are a shared host namespace. Refuse the entire Linux
+  # bootstrap before it mutates the host when either name is already backed by
+  # a definition that cannot be tied to MAC's exact command/config or marker.
+  if command -v systemctl >/dev/null 2>&1 \
+      && systemctl --user cat openshell-gateway.service >/dev/null 2>&1 \
+      && ! mac_owned_systemd_gateway; then
+    echo "ERROR: unowned systemd service named openshell-gateway blocks bootstrap" >&2
+    return 1
+  fi
+  if [ -f "$OSH_GATEWAY_SUPERVISOR_CONFIG" ] \
+      && ! mac_owned_supervisord_gateway; then
+    echo "ERROR: unowned supervisord service named openshell-gateway blocks bootstrap" >&2
+    return 1
+  fi
+}
+
+stop_existing_gateway_for_schema_recovery() {
+  # The API is already unreadable. Stop only a reviewed MAC gateway, then prove
+  # that its manager, exact process/container, and bound endpoint are all down
+  # before direct Docker recovery may remove a sandbox supervisor.
+  local status status_rc=0 deadline gateway_ids gateway_id label
+  local systemd_present=0 supervisord_present=0
+  if [ "$(uname -s)" = Darwin ]; then
+    if ! gateway_ids="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-gateway.XXXXXX")" \
+        || [ -z "$gateway_ids" ]; then
+      echo "ERROR: could not allocate gateway-container inventory" >&2
+      return 1
+    fi
+    if ! "$OSH_DOCKER_BIN" ps -a --filter 'name=^/openshell-gw$' \
+        --format '{{.ID}}' > "$gateway_ids"; then
+      rm -f "$gateway_ids"
+      echo "ERROR: could not enumerate the reviewed OpenShell gateway container" >&2
+      return 1
+    fi
+    if [ -s "$gateway_ids" ]; then
+      [ "$(wc -l < "$gateway_ids" | tr -d ' ')" = 1 ] || {
+        rm -f "$gateway_ids"
+        echo "ERROR: multiple exact openshell-gw containers require operator recovery" >&2
+        return 1
+      }
+      gateway_id="$(sed -n '1p' "$gateway_ids")"
+      if ! label="$("$OSH_DOCKER_BIN" inspect --format \
+          '{{ index .Config.Labels "mac.owner" }}:{{ index .Config.Labels "mac.kind" }}' \
+          "$gateway_id")"; then
+        rm -f "$gateway_ids"
+        echo "ERROR: could not inspect the reviewed OpenShell gateway container" >&2
+        return 1
+      fi
+      [ "$label" = "mac:openshell-gateway" ] || {
+        rm -f "$gateway_ids"
+        echo "ERROR: refusing to stop an unowned Docker container named openshell-gw" >&2
+        return 1
+      }
+      if ! "$OSH_DOCKER_BIN" stop "$gateway_id" >/dev/null; then
+        rm -f "$gateway_ids"
+        echo "ERROR: could not stop the reviewed OpenShell gateway container" >&2
+        return 1
+      fi
+    fi
+    if ! "$OSH_DOCKER_BIN" ps --filter 'name=^/openshell-gw$' \
+        --format '{{.ID}}' > "$gateway_ids" || [ -s "$gateway_ids" ]; then
+      rm -f "$gateway_ids"
+      echo "ERROR: reviewed OpenShell gateway container is still running" >&2
+      return 1
+    fi
+    rm -f "$gateway_ids"
+  else
+    require_owned_gateway_manager_definitions || return 1
+    if command -v systemctl >/dev/null 2>&1 \
+        && systemctl --user cat openshell-gateway.service >/dev/null 2>&1; then
+      systemd_present=1
+    fi
+    if [ -f "$OSH_GATEWAY_SUPERVISOR_CONFIG" ]; then
+      supervisord_present=1
+    fi
+    if [ "$systemd_present" = 1 ]; then
+      if ! systemctl --user stop openshell-gateway.service >/dev/null 2>&1 \
+          || systemctl --user is-active --quiet openshell-gateway.service; then
+        echo "ERROR: systemd did not stop the reviewed OpenShell gateway" >&2
+        return 1
+      fi
+    fi
+    if [ "$supervisord_present" = 1 ]; then
+      status="$(sudo supervisorctl status openshell-gateway 2>&1)" \
+        && status_rc=0 || status_rc=$?
+      case "$status" in
+        *RUNNING*)
+          if ! sudo supervisorctl stop openshell-gateway >/dev/null 2>&1; then
+            echo "ERROR: supervisord did not stop the reviewed OpenShell gateway" >&2
+            return 1
+          fi
+          ;;
+        *STOPPED*|*EXITED*|*FATAL*|*"no such process"*) ;;
+        *)
+          echo "ERROR: could not prove the supervisord OpenShell gateway state (status=$status_rc)" >&2
+          return 1
+          ;;
+      esac
+      status="$(sudo supervisorctl status openshell-gateway 2>&1)" \
+        && status_rc=0 || status_rc=$?
+      case "$status" in
+        *RUNNING*)
+          echo "ERROR: supervisord OpenShell gateway remains running" >&2
+          return 1
+          ;;
+        *STOPPED*|*EXITED*|*FATAL*|*"no such process"*) ;;
+        *)
+          echo "ERROR: could not verify the stopped supervisord gateway (status=$status_rc)" >&2
+          return 1
+          ;;
+      esac
+    fi
+    command -v pgrep >/dev/null 2>&1 || {
+      echo "ERROR: pgrep is required to prove the old OpenShell gateway is stopped" >&2
+      return 1
+    }
+    if pgrep -f -- "$BIN/openshell-gateway --config $OSH_DIR/gateway.toml" >/dev/null 2>&1 \
+        && ! sudo pkill -TERM -f -- \
+          "$BIN/openshell-gateway --config $OSH_DIR/gateway.toml" >/dev/null 2>&1; then
+      echo "ERROR: could not terminate the exact old OpenShell gateway process" >&2
+      return 1
+    fi
+    deadline=$((SECONDS + 30))
+    while pgrep -f -- \
+        "$BIN/openshell-gateway --config $OSH_DIR/gateway.toml" >/dev/null 2>&1 \
+        && [ "$SECONDS" -lt "$deadline" ]; do
+      sleep 1
+    done
+    if pgrep -f -- \
+        "$BIN/openshell-gateway --config $OSH_DIR/gateway.toml" >/dev/null 2>&1; then
+      echo "ERROR: exact old OpenShell gateway process remains running" >&2
+      return 1
+    fi
+  fi
+  deadline=$((SECONDS + 30))
+  while "$MAC_HOME/venv/bin/python" - <<'PY' >/dev/null 2>&1
+import socket
+s = socket.socket()
+s.settimeout(0.25)
+raise SystemExit(0 if s.connect_ex(("127.0.0.1", 17670)) == 0 else 1)
+PY
+  do
+    [ "$SECONDS" -lt "$deadline" ] || {
+      echo "ERROR: old OpenShell gateway endpoint remains reachable on 127.0.0.1:17670" >&2
+      return 1
+    }
+    sleep 1
+  done
+}
+
+retire_managed_sandboxes_via_api() {
+  local cli="$1" inventory="$2" plan remaining containers sandbox_name action openclaw_count
+  if ! plan="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-upgrade-plan.XXXXXX")" \
+      || [ -z "$plan" ]; then
+    echo "ERROR: could not allocate the API retirement plan" >&2
+    return 1
+  fi
+  if ! "$MAC_HOME/venv/bin/python" - "$inventory" \
+      "${MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX:-}" > "$plan" <<'PY'
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected_openclaw = sys.argv[2]
+if not isinstance(value, list):
+    raise SystemExit("OpenShell sandbox inventory is not a list")
+plan = []
+for item in value:
+    if not isinstance(item, dict):
+        raise SystemExit("OpenShell sandbox inventory contains a non-object")
+    name = item.get("name")
+    labels = item.get("labels") or {}
+    if not isinstance(name, str) or not re.fullmatch(r"mac-[A-Za-z0-9._-]+", name):
+        raise SystemExit("non-MAC OpenShell sandbox blocks the gateway upgrade")
+    if not isinstance(labels, dict):
+        raise SystemExit("OpenShell sandbox labels are malformed")
+    if str(item.get("phase") or "").strip().lower() != "ready":
+        raise SystemExit("non-ready OpenShell sandbox blocks the gateway upgrade")
+    if labels.get("mac.role") == "openclaw-gateway":
+        if not expected_openclaw or name != expected_openclaw:
+            raise SystemExit("role-labeled OpenClaw sandbox does not match the expected identity")
+        action = "openclaw"
+    elif name.startswith("mac-openclaw-"):
+        raise SystemExit("prefix-matching sandbox lacks exact OpenClaw ownership proof")
+    elif labels.get("mac.owner") == "mac":
+        kind = str(labels.get("mac.kind") or "").strip()
+        disposable_patterns = {
+            "task": r"mac-task-[A-Za-z0-9._-]+",
+            "hubverify": r"mac-hubverify-[A-Za-z0-9._-]+",
+            "codingcap": r"mac-codingcap-[A-Za-z0-9._-]+",
+            "runtime-smoke": r"mac-runtime-smoke-[A-Za-z0-9._-]+",
+            "security-probe": r"mac-security-probe-[A-Za-z0-9._-]+",
+        }
+        pattern = disposable_patterns.get(kind)
+        if pattern is None or re.fullmatch(pattern, name) is None:
+            raise SystemExit("managed sandbox kind or identity is not disposable")
+        if str(labels.get("mac.keep") or "").strip().lower() != "false":
+            raise SystemExit("retained managed sandbox blocks the gateway upgrade")
+        raw_pid = str(labels.get("mac.pid") or "").strip()
+        try:
+            pid = int(raw_pid)
+            if pid <= 0:
+                raise ValueError
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            pass
+        except ValueError:
+            raise SystemExit("invalid managed sandbox creator PID blocks the gateway upgrade")
+        except PermissionError:
+            raise SystemExit("live managed sandbox creator blocks the gateway upgrade")
+        else:
+            raise SystemExit("live managed sandbox creator blocks the gateway upgrade")
+        action = "disposable"
+    else:
+        raise SystemExit("unowned or retained OpenShell sandbox blocks the gateway upgrade")
+    plan.append((0 if action == "openclaw" else 1, action, name))
+if sum(1 for _, action, _ in plan if action == "openclaw") > 1:
+    raise SystemExit("multiple OpenClaw sandboxes require operator reconciliation")
+for _, action, name in sorted(plan):
+    print("%s\t%s" % (action, name))
+PY
+  then
+    rm -f "$plan"
+    return 1
+  fi
+
+  while IFS=$'\t' read -r action sandbox_name; do
+    [ -n "$sandbox_name" ] || continue
+    if [ "$action" = openclaw ]; then
+      checkpoint_openclaw_with_cli "$cli" "$sandbox_name" || {
+        rm -f "$plan"
+        return 1
+      }
+    fi
+    if ! openshell_local_gateway "$cli" sandbox delete "$sandbox_name" >/dev/null; then
+      rm -f "$plan"
+      echo "ERROR: could not retire managed sandbox $sandbox_name before gateway upgrade" >&2
+      return 1
+    fi
+    log "retired pre-upgrade managed sandbox $sandbox_name"
+  done < "$plan"
+  rm -f "$plan"
+
+  if ! remaining="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-upgrade-remaining.XXXXXX")" \
+      || [ -z "$remaining" ]; then
+    echo "ERROR: could not allocate the post-retirement API inventory" >&2
+    return 1
+  fi
+  if ! openshell_local_gateway "$cli" sandbox list --limit 1000 --output json > "$remaining" \
+      || ! "$MAC_HOME/venv/bin/python" - "$remaining" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if value != []:
+    raise SystemExit("OpenShell sandboxes remain after pre-upgrade retirement")
+PY
+  then
+    rm -f "$remaining"
+    return 1
+  fi
+  rm -f "$remaining"
+  if ! containers="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-remaining.XXXXXX")" \
+      || [ -z "$containers" ]; then
+    echo "ERROR: could not allocate the post-retirement container inventory" >&2
+    return 1
+  fi
+  if ! write_managed_openshell_container_ids all "$containers"; then
+    rm -f "$containers"
+    return 1
+  fi
+  if [ -s "$containers" ]; then
+    rm -f "$containers"
+    echo "ERROR: OpenShell API retired its inventory but managed containers remain" >&2
+    return 1
+  fi
+  rm -f "$containers"
+}
+
+retire_managed_sandboxes_via_docker() {
+  local plan inventory container_id status sandbox_name action openclaw_count=0
+  local expected_openclaw="${MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX:-}"
+  if ! plan="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-docker-plan.XXXXXX")" \
+      || [ -z "$plan" ] \
+      || ! inventory="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-containers.XXXXXX")" \
+      || [ -z "$inventory" ]; then
+    rm -f "${plan:-}" "${inventory:-}"
+    echo "ERROR: could not allocate the Docker recovery inventory" >&2
+    return 1
+  fi
+  if ! write_managed_openshell_container_ids all "$inventory"; then
+    rm -f "$plan" "$inventory"
+    return 1
+  fi
+  while IFS= read -r container_id; do
+    [ -n "$container_id" ] || continue
+    if ! status="$("$OSH_DOCKER_BIN" inspect --format '{{.State.Status}}' "$container_id")" \
+        || ! sandbox_name="$("$OSH_DOCKER_BIN" inspect --format \
+          '{{ index .Config.Labels "openshell.ai/sandbox-name" }}' "$container_id")"; then
+      rm -f "$plan" "$inventory"
+      echo "ERROR: could not inspect managed OpenShell container $container_id" >&2
+      return 1
+    fi
+    case "$status" in
+      exited|created|dead) ;;
+      *)
+        rm -f "$plan" "$inventory"
+        echo "ERROR: refusing direct recovery of non-quiescent OpenShell container $container_id" >&2
+        return 1
+        ;;
+    esac
+    # OpenShell does not propagate user labels (mac.owner/mac.keep/mac.kind) to
+    # Docker.  Schema-skew recovery is therefore deliberately narrower than
+    # the API path: only the historical disposable families already reviewed
+    # by mac.openshell_sandbox_gc are eligible, and only after every container
+    # is stopped. Any future family fails closed until explicitly reviewed.
+    if [[ "$sandbox_name" =~ ^mac-(task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+$ ]]; then
+      action=disposable
+    elif [ -n "$expected_openclaw" ] && [ "$sandbox_name" = "$expected_openclaw" ]; then
+      action=openclaw
+      openclaw_count=$((openclaw_count + 1))
+    else
+      rm -f "$plan" "$inventory"
+      echo "ERROR: skewed OpenShell container $sandbox_name is outside the exact recovery allowlist" >&2
+      return 1
+    fi
+    printf '%s\t%s\t%s\n' "$action" "$container_id" "$sandbox_name" >> "$plan"
+  done < "$inventory"
+  rm -f "$inventory"
+  if [ "$openclaw_count" -gt 1 ]; then
+    rm -f "$plan"
+    echo "ERROR: multiple skewed OpenClaw containers require operator reconciliation" >&2
+    return 1
+  fi
+
+  while IFS=$'\t' read -r action container_id sandbox_name; do
+    [ -n "$container_id" ] || continue
+    if [ "$action" = openclaw ]; then
+      checkpoint_openclaw_with_docker "$container_id" "$sandbox_name" || {
+        rm -f "$plan"
+        return 1
+      }
+    fi
+    if ! "$OSH_DOCKER_BIN" rm "$container_id" >/dev/null; then
+      rm -f "$plan"
+      echo "ERROR: could not remove exact skewed OpenShell container $container_id" >&2
+      return 1
+    fi
+    log "retired schema-skewed managed sandbox $sandbox_name"
+  done < "$plan"
+  rm -f "$plan"
+
+  if ! inventory="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-remaining.XXXXXX")" \
+      || [ -z "$inventory" ]; then
+    echo "ERROR: could not allocate the final Docker recovery inventory" >&2
+    return 1
+  fi
+  if ! write_managed_openshell_container_ids all "$inventory"; then
+    rm -f "$inventory"
+    return 1
+  fi
+  if [ -s "$inventory" ]; then
+    rm -f "$inventory"
+    echo "ERROR: managed OpenShell containers remain after schema recovery" >&2
+    return 1
+  fi
+  rm -f "$inventory"
+}
+
+retire_managed_sandboxes_before_upgrade() {
+  local cli="$BIN/openshell" inventory
+  if ! inventory="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-upgrade-inventory.XXXXXX")" \
+      || [ -z "$inventory" ]; then
+    echo "ERROR: could not allocate the pre-upgrade sandbox inventory" >&2
+    return 1
+  fi
+  if [ -x "$cli" ] \
+      && openshell_local_gateway "$cli" sandbox list --limit 1000 --output json > "$inventory" 2>/dev/null; then
+    if running_openclaw_sandbox_present; then
+      rm -f "$inventory"
+      echo "ERROR: OpenClaw service is still running; stop it before OpenShell upgrade" >&2
+      return 1
+    else
+      local openclaw_probe_rc=$?
+      if [ "$openclaw_probe_rc" -ne 1 ]; then
+        rm -f "$inventory"
+        echo "ERROR: could not prove the running OpenClaw container inventory" >&2
+        return 1
+      fi
+    fi
+    if ! retire_managed_sandboxes_via_api "$cli" "$inventory"; then
+      rm -f "$inventory"
+      echo "ERROR: existing OpenShell API could not retire its managed sandboxes" >&2
+      return 1
+    fi
+  else
+    log "existing OpenShell API is unreadable; using exact-label recovery for stopped managed containers"
+    # Prove quiescence before touching the gateway. Otherwise stopping it could
+    # disguise a genuinely running task as exited/137 and make an unsafe direct
+    # deletion appear eligible (especially during an operator drain skip).
+    if ! validate_managed_container_quiescence \
+        || ! stop_existing_gateway_for_schema_recovery; then
+      rm -f "$inventory"
+      return 1
+    fi
+    if ! validate_managed_container_quiescence; then
+      rm -f "$inventory"
+      return 1
+    fi
+    if ! retire_managed_sandboxes_via_docker; then
+      rm -f "$inventory"
+      return 1
+    fi
+  fi
+  rm -f "$inventory"
+  log "pre-upgrade OpenShell sandbox inventory is empty"
+}
+
 run_live_confinement_probe() {
   local cli="$1" name="$2" output="$3"
   local probe="$MAC_SRC/deploy/openshell/live-confinement-probe.sh"
@@ -326,9 +1072,11 @@ bootstrap_darwin() {
   # shell's Homebrew or Docker Desktop paths.  Bootstrap must be runnable by
   # the fleet deployer, not only from a configured terminal.
   export PATH="/Applications/Docker.app/Contents/Resources/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+  mkdir -p "$OSH_DIR" "$BIN"
   command -v "$OSH_DOCKER_BIN" >/dev/null 2>&1 || { echo "docker CLI not found on PATH (Docker Desktop?)" >&2; exit 1; }
   "$OSH_DOCKER_BIN" info >/dev/null 2>&1 || { echo "docker daemon unreachable — is Docker Desktop running?" >&2; exit 1; }
   log "macOS: OpenShell via Docker ($("$OSH_DOCKER_BIN" --version 2>&1 | head -1)); gateway runs in a container"
+  retire_managed_sandboxes_before_upgrade || exit $?
   verify_supervisor_image || exit $?
   case "$ARCH" in
     arm64|aarch64) gwarch=aarch64; gw_sha="$OSH_GATEWAY_LINUX_ARM64_SHA256";;
@@ -397,7 +1145,7 @@ image_pull_policy = "IfNotPresent"
 EOF
   # 6. gateway container — identical-path HOME so supervisor-binary bind mounts resolve on the Docker host
   GH="$OSH_DIR/ghome"; mkdir -p "$GH"
-  "$OSH_DOCKER_BIN" rm -f openshell-gw >/dev/null 2>&1 || true
+  remove_existing_owned_macos_gateway || exit $?
   "$OSH_DOCKER_BIN" run -d --name openshell-gw --restart unless-stopped \
     --label mac.owner=mac --label mac.kind=openshell-gateway \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$OSH_DIR:/osh" -v "$GH:$GH" -e HOME="$GH" \
@@ -463,6 +1211,11 @@ EOF
   log "restart the agent to apply: launchctl kickstart -k gui/\$(id -u)/com.<fleet_name>.agent (then validate a real task)"
 }
 if [ "$(uname -s)" = "Darwin" ]; then bootstrap_darwin; exit 0; fi
+
+# Collision detection deliberately precedes directory creation, package
+# installation, image pulls, sandbox retirement, and every manager rewrite.
+require_owned_gateway_manager_definitions || exit $?
+mkdir -p "$OSH_DIR" "$BIN"
 
 # --- Docker Engine/Moby + GPU detection -------------------------------------
 [ "$OSH_GPU" = auto ] && { command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1 && OSH_GPU=yes || OSH_GPU=no; }
@@ -565,15 +1318,30 @@ ensure_openshell_docker_bridge() {
 }
 
 stop_gateway_fail_closed() {
-  systemctl --user stop openshell-gateway >/dev/null 2>&1 || true
-  sudo supervisorctl stop openshell-gateway >/dev/null 2>&1 || true
-  sudo pkill -f "$BIN/openshell-gateway" >/dev/null 2>&1 || true
+  if command -v systemctl >/dev/null 2>&1 \
+      && systemctl --user cat openshell-gateway.service >/dev/null 2>&1; then
+    if mac_owned_systemd_gateway; then
+      systemctl --user stop openshell-gateway.service >/dev/null 2>&1 || true
+    else
+      echo "WARNING: left unowned systemd service openshell-gateway untouched" >&2
+    fi
+  fi
+  if [ -f "$OSH_GATEWAY_SUPERVISOR_CONFIG" ]; then
+    if mac_owned_supervisord_gateway; then
+      sudo supervisorctl stop openshell-gateway >/dev/null 2>&1 || true
+    else
+      echo "WARNING: left unowned supervisord service openshell-gateway untouched" >&2
+    fi
+  fi
+  sudo pkill -f -- \
+    "$BIN/openshell-gateway --config $OSH_DIR/gateway.toml" >/dev/null 2>&1 || true
 }
 
 # A previous deployment may still be running with an older, narrower firewall.
 # Stop it before downloads or image builds so bootstrap latency never extends an
 # unauthenticated mesh exposure window. The gateway is restarted only after the
 # strict current rule and its persistence manager have both passed.
+retire_managed_sandboxes_before_upgrade || exit $?
 stop_gateway_fail_closed
 verify_supervisor_image || exit $?
 
@@ -712,6 +1480,7 @@ image_pull_policy = "IfNotPresent"
 EOF
 cat > "$OSH_DIR/run-gateway.sh" <<EOF
 #!/usr/bin/env sh
+# mac.owner=mac; mac.kind=openshell-gateway
 # This gateway is explicitly configured for Docker-in-Docker. Kubernetes injects
 # these variables into every pod; leaving them set makes OpenShell assume the
 # Kubernetes driver must also be configured and abort before listening.
@@ -824,6 +1593,9 @@ log "firewall: loopback + $OPENSH_BRIDGE_IFACE only on :17670 ($firewall_jumps j
 # --- 8. gateway service + register ------------------------------------------
 gateway_manager=""
 gateway_state="unknown"
+# Recheck at the replacement boundary so a definition introduced during image
+# preparation cannot be overwritten based on an earlier ownership decision.
+require_owned_gateway_manager_definitions || exit $?
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   mkdir -p "$HOME/.config/systemd/user"
   cat > "$HOME/.config/systemd/user/openshell-gateway.service" <<EOF
@@ -832,7 +1604,8 @@ Description=OpenShell gateway (Docker Engine/Moby driver)
 After=network-online.target
 Wants=network-online.target
 [Service]
-ExecStart=%h/.mac/openshell/run-gateway.sh
+ExecStart=$OSH_DIR/run-gateway.sh
+Environment=MAC_OPENSH_GATEWAY_OWNER=mac
 Restart=on-failure
 RestartSec=5
 [Install]
@@ -849,12 +1622,12 @@ EOF
   gateway_manager="systemd-user"
   gateway_state="$(systemctl --user is-active openshell-gateway)"
 elif command -v supervisorctl >/dev/null 2>&1; then
-  sudo tee /etc/supervisor/conf.d/openshell-gateway.conf >/dev/null <<EOF
+  sudo tee "$OSH_GATEWAY_SUPERVISOR_CONFIG" >/dev/null <<EOF
 [program:openshell-gateway]
 command=$OSH_DIR/run-gateway.sh
 directory=$OSH_DIR
 user=$USER
-environment=HOME="$HOME",PATH="$BIN:/usr/local/bin:/usr/bin:/bin"
+environment=MAC_OPENSH_GATEWAY_OWNER="mac",HOME="$HOME",PATH="$BIN:/usr/local/bin:/usr/bin:/bin"
 autostart=true
 autorestart=true
 startsecs=2

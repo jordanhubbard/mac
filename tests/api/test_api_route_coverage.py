@@ -403,6 +403,18 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     ctx["attest_verify_agent_id"] = attest_verify["id"]
     ctx["attest_verify_key"] = attest_verify["attestation_key"]
     ctx["dispatch_hold_agent_id"] = agent("dispatch-hold-route-agent", ["python"])["id"]
+    ctx["dispatch_hold_batch_agent_id"] = agent(
+        "dispatch-hold-batch-route-agent", ["python"]
+    )["id"]
+    cp.set_agent_dispatch_hold(
+        ctx["dispatch_hold_batch_agent_id"], "route-coverage batch deployment"
+    )
+    cp.heartbeat_agent(
+        ctx["dispatch_hold_batch_agent_id"],
+        status="idle",
+        health_status="healthy",
+        resources={"deployment_generation": "route-coverage-generation"},
+    )
     ctx["transition_agent_id"] = agent("transition-route-agent", ["python"])["id"]
     ctx["evidence_agent_id"] = agent("evidence-route-agent", ["python"])["id"]
 
@@ -1138,8 +1150,15 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/agentbus/streams/{stream_id}/directive-verification"): {"stream_id": "stream_id"},
         ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
         ("POST", "/agents/bulk"): {},
+        ("POST", "/agents/dispatch-hold/release-batch"): {},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
+        ("POST", "/agents/{agent_id}/dispatch-hold/acquire"): {
+            "agent_id": "dispatch_hold_agent_id"
+        },
+        ("POST", "/agents/{agent_id}/dispatch-hold/release"): {
+            "agent_id": "dispatch_hold_agent_id"
+        },
         ("POST", "/agents/{agent_id}/claim-next"): {"agent_id": "claim_next_agent_id"},
         ("POST", "/agents/{agent_id}/crash-reports"): {"agent_id": "agent_id"},
         ("GET", "/crash-reports/{report_id}"): {"report_id": "crash_report_id"},
@@ -1574,7 +1593,27 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             ),
         },
         ("POST", "/agents/bulk"): {"agent_ids": [ctx["bulk_agent_id"]], "health_status": "healthy"},
+        ("POST", "/agents/dispatch-hold/release-batch"): {
+            "epoch_id": "route-coverage-release-epoch",
+            "holds": [
+                {
+                    "agent_id": ctx["dispatch_hold_batch_agent_id"],
+                    "reason": "route-coverage batch deployment",
+                    "generation": "route-coverage-generation",
+                    "baseline_seen": "2000-01-01T00:00:00+00:00",
+                    "principal_id": None,
+                    "require_authenticated": False,
+                }
+            ],
+        },
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"reason": "route-coverage quarantine"},
+        ("POST", "/agents/{agent_id}/dispatch-hold/acquire"): {
+            "reason": "route-coverage deployment",
+            "expected_dispatch_hold": False,
+        },
+        ("POST", "/agents/{agent_id}/dispatch-hold/release"): {
+            "reason": "route-coverage deployment"
+        },
         ("POST", "/tasks/{task_id}/break-glass-authorizations"): {
             "agent_id": ctx["agent_id"],
             "reason": "route coverage host repair",

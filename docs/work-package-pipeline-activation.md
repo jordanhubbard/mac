@@ -11,6 +11,10 @@ Activation is complete only when every gate below passes. Do not treat a
 running controller thread, a writable Git checkout, or an allocated bundle
 directory as sufficient proof.
 
+For an existing heterogeneous fleet, complete the fail-closed hub bootstrap,
+exact hold adoption, and atomic cohort release in
+`docs/synchronized-fleet-cutover.md` before enabling this pipeline.
+
 This repository declares the reproducible, image-owned certification harness
 under `deploy/certifier/` and publishes it only from the tested main-branch CI
 path. The checked-in `.mac/project.yaml` intentionally omits the activation

@@ -115,6 +115,7 @@ from mac.models import (
     SecretAccess,
     SecretHandle,
     SecretRecord,
+    ServiceClaimStatus,
     ServiceRole,
     metadata_declares_report_deliverable,
     Task,
@@ -13680,6 +13681,9 @@ class ControlPlane:
         agent_id: Optional[str] = None,
         hermes_instance_id: Optional[str] = None,
         actor: str = "human",
+        status: Optional[str] = None,
+        health_status: Optional[str] = None,
+        allow_resurrection: bool = False,
     ) -> Agent:
         self.get_machine(machine_id)
         if not name:
@@ -13690,7 +13694,10 @@ class ControlPlane:
             self.identity.get_hermes_instance(hermes_instance_id)
         now = utcnow()
         aid = agent_id or new_id("agent")
-        existing_agent_row = self.store.query_one("SELECT id FROM agents WHERE id = ?", (aid,))
+        existing_agent_row = self.store.query_one(
+            "SELECT id, status, health_status, deleted_at FROM agents WHERE id = ?",
+            (aid,),
+        )
         if capabilities is None:
             existing_caps = self.store.query_one(
                 "SELECT capabilities FROM agents WHERE id = ?", (aid,)
@@ -13708,14 +13715,61 @@ class ControlPlane:
             )
             if existing_identity_agent_id is not None:
                 aid = existing_identity_agent_id
-                existing_agent_row = {"id": aid}
+                existing_agent_row = self.store.query_one(
+                    "SELECT id, status, health_status, deleted_at FROM agents WHERE id = ?",
+                    (aid,),
+                )
         resource_value = self._agent_resources_with_preserved_control_plane_fields(aid, resources)
         resources_json = json_dumps(resource_value)
+        registration_status = AgentStatus.IDLE.value
+        registration_health = HealthStatus.HEALTHY.value
+        requested_status = _state_value(status) if status is not None else None
+        requested_health = (
+            _state_value(health_status) if health_status is not None else None
+        )
+        if requested_status is not None:
+            try:
+                AgentStatus(requested_status)
+            except ValueError:
+                raise ValidationError(
+                    "unsupported registration status: %s" % requested_status
+                )
+            if requested_status != AgentStatus.DRAINING.value:
+                raise ValidationError(
+                    "agent registration may only request the draining barrier state"
+                )
+        if requested_health is not None:
+            try:
+                HealthStatus(requested_health)
+            except ValueError:
+                raise ValidationError(
+                    "unsupported registration health_status: %s" % requested_health
+                )
+            if requested_status != AgentStatus.DRAINING.value:
+                raise ValidationError(
+                    "registration health_status requires a draining barrier"
+                )
+        if requested_status == AgentStatus.DRAINING.value:
+            registration_status = requested_status
+            registration_health = requested_health or HealthStatus.DEGRADED.value
+        # Re-registration is an identity/resource refresh, not authorization to
+        # escape an operator/deployment drain. Preserve the fail-closed state
+        # atomically until a later heartbeat explicitly clears it. An explicitly
+        # authorized tombstone resurrection returns through the idle path.
+        elif (
+            existing_agent_row is not None
+            and existing_agent_row["deleted_at"] is None
+            and existing_agent_row["status"] == AgentStatus.DRAINING.value
+        ):
+            registration_status = AgentStatus.DRAINING.value
+            registration_health = str(
+                existing_agent_row["health_status"] or HealthStatus.DEGRADED.value
+            )
         health_value = self._project_agent_health_for_resources(
-            HealthStatus.HEALTHY.value,
-            HealthStatus.HEALTHY.value,
+            registration_health,
+            registration_health,
             resource_value,
-        ) or HealthStatus.HEALTHY.value
+        ) or registration_health
         # Preserve hermes_instance_id across re-registrations when the caller
         # didn't pass one, so an ops re-register doesn't accidentally orphan
         # the agent from its soul.
@@ -13743,7 +13797,7 @@ class ControlPlane:
             attestation_ciphertext = self.secrets._encrypt(attestation_key_plaintext)
         event_type = "agent.reregistered" if existing_agent_row is not None else "agent.registered"
         with self.store.transaction() as conn:
-            conn.execute(
+            registration_write = conn.execute(
                 """
                 INSERT INTO agents (
                     id, machine_id, name, capabilities, resources, status, health_status,
@@ -13755,21 +13809,32 @@ class ControlPlane:
                     name = excluded.name,
                     capabilities = excluded.capabilities,
                     resources = excluded.resources,
-                    status = excluded.status,
-                    health_status = excluded.health_status,
+                    status = CASE
+                        WHEN excluded.status = 'draining' THEN excluded.status
+                        WHEN agents.deleted_at IS NULL AND agents.status = 'draining'
+                            THEN agents.status
+                        ELSE excluded.status
+                    END,
+                    health_status = CASE
+                        WHEN excluded.status = 'draining' THEN excluded.health_status
+                        WHEN agents.deleted_at IS NULL AND agents.status = 'draining'
+                            THEN agents.health_status
+                        ELSE excluded.health_status
+                    END,
                     updated_at = excluded.updated_at,
                     last_seen_at = excluded.last_seen_at,
                     hermes_instance_id = excluded.hermes_instance_id,
                     attestation_key_ciphertext = excluded.attestation_key_ciphertext,
-                    -- Resurrect a tombstoned agent: a live re-registration means
-                    -- the identity is back (e.g. a recreated pod re-deploying),
-                    -- so clear the tombstone and the decommission dispatch hold.
+                    -- An administratively-authorized resurrection means the
+                    -- identity is back (e.g. a recreated pod re-deploying), so
+                    -- clear the tombstone and the decommission dispatch hold.
                     -- `agents.*` is the pre-update row, so non-deleted agents keep
                     -- any operator-set hold; only a decommissioned one is cleared.
                     deleted_at = NULL,
                     dispatch_hold = CASE WHEN agents.deleted_at IS NOT NULL THEN 0 ELSE agents.dispatch_hold END,
                     dispatch_hold_reason = CASE WHEN agents.deleted_at IS NOT NULL THEN NULL ELSE agents.dispatch_hold_reason END,
                     dispatch_hold_at = CASE WHEN agents.deleted_at IS NOT NULL THEN NULL ELSE agents.dispatch_hold_at END
+                WHERE agents.deleted_at IS NULL OR ? = 1
                 """,
                 (
                     aid,
@@ -13777,15 +13842,20 @@ class ControlPlane:
                     name,
                     capabilities_json,
                     resources_json,
-                    AgentStatus.IDLE.value,
+                    registration_status,
                     health_value,
                     now,
                     now,
                     now,
                     hermes_instance_id,
                     attestation_ciphertext,
+                    int(bool(allow_resurrection)),
                 ),
             )
+            if registration_write.rowcount != 1:
+                raise AuthorizationError(
+                    "agent resurrection requires administrative authority"
+                )
             self._record_agent_lifecycle_event(
                 conn,
                 aid,
@@ -13797,7 +13867,7 @@ class ControlPlane:
                     "machine_id": machine_id,
                     "capabilities": json_loads(capabilities_json, []),
                     "resource_keys": sorted(ensure_json_object(json_loads(resources_json, {})).keys()),
-                    "status": AgentStatus.IDLE.value,
+                    "status": registration_status,
                     "health_status": health_value,
                     "hermes_instance_id": hermes_instance_id,
                 },
@@ -14064,6 +14134,23 @@ class ControlPlane:
             actor=actor,
         )
 
+    @staticmethod
+    def _withdraw_service_claims_for_dispatch_hold(
+        conn: Any, agent_id: str, now: str
+    ) -> None:
+        """Make the dispatch hold and service-routing fence one transaction."""
+
+        conn.execute(
+            "UPDATE service_claims SET status = ?, updated_at = ? "
+            "WHERE agent_id = ? AND status = ?",
+            (
+                ServiceClaimStatus.RELEASED.value,
+                now,
+                agent_id,
+                ServiceClaimStatus.ACTIVE.value,
+            ),
+        )
+
     def set_agent_dispatch_hold(self, agent_id: str, reason: str) -> "Agent":
         """Place a dispatch hold on an agent; held agents are skipped during claim-next.
 
@@ -14079,7 +14166,403 @@ class ControlPlane:
                 "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ?, dispatch_hold_at = ?, updated_at = ? WHERE id = ?",
                 (reason, now, now, agent_id),
             )
+            self._withdraw_service_claims_for_dispatch_hold(conn, agent_id, now)
         return self.get_agent(agent_id)
+
+    def acquire_agent_dispatch_hold(
+        self,
+        agent_id: str,
+        reason: str,
+        *,
+        expected_dispatch_hold: bool,
+        expected_reason: Optional[str] = None,
+    ) -> Tuple[bool, "Agent"]:
+        """Acquire or replace a dispatch hold with compare-and-swap semantics.
+
+        A caller acquiring an unheld agent must expect both the unheld state and
+        its canonical ``NULL`` reason.  A caller replacing a hold must name the
+        exact reason it currently owns.  The conditional update and the row
+        read used for the response share one write transaction, so a stale
+        deployment cannot overwrite a newer operator's hold.
+
+        Returns ``(changed, agent)``.  A lost comparison is an ordinary
+        ``changed=False`` result rather than an exception; an unknown agent is
+        still reported as ``NotFoundError``.
+        """
+
+        reason = str(reason or "").strip()
+        if not reason:
+            raise ValidationError("dispatch hold reason is required")
+        expected_reason_value: Optional[str] = None
+        if expected_dispatch_hold:
+            expected_reason_value = str(expected_reason or "").strip()
+            if not expected_reason_value:
+                raise ValidationError(
+                    "expected dispatch hold reason is required when a hold is expected"
+                )
+        elif expected_reason is not None:
+            raise ValidationError(
+                "expected dispatch hold reason must be omitted when no hold is expected"
+            )
+
+        now = utcnow()
+        with self.store.transaction() as conn:
+            if expected_dispatch_hold:
+                changed = conn.execute(
+                    """
+                    UPDATE agents
+                    SET dispatch_hold = 1, dispatch_hold_reason = ?,
+                        dispatch_hold_at = ?, updated_at = ?
+                    WHERE id = ? AND dispatch_hold = 1
+                        AND dispatch_hold_reason = ?
+                    """,
+                    (reason, now, now, agent_id, expected_reason_value),
+                )
+            else:
+                changed = conn.execute(
+                    """
+                    UPDATE agents
+                    SET dispatch_hold = 1, dispatch_hold_reason = ?,
+                        dispatch_hold_at = ?, updated_at = ?
+                    WHERE id = ? AND dispatch_hold = 0
+                        AND dispatch_hold_reason IS NULL
+                    """,
+                    (reason, now, now, agent_id),
+                )
+            row = conn.execute(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            agent = self._agent_from_row(row)
+            # Whether this caller acquired/replaced the hold or merely lost a
+            # CAS to another hold owner, dispatch_hold implies zero active
+            # service ownership.  The agent row was updated/read first, so this
+            # shares the service sync lock order and closes the arm-phase race.
+            if agent.dispatch_hold:
+                self._withdraw_service_claims_for_dispatch_hold(
+                    conn, agent_id, now
+                )
+        return changed.rowcount == 1, agent
+
+    def release_agent_dispatch_hold(
+        self,
+        agent_id: str,
+        reason: str,
+    ) -> Tuple[bool, "Agent"]:
+        """Release only the dispatch hold whose reason the caller names.
+
+        The exact-reason predicate is part of the update itself.  This keeps a
+        delayed deployment cleanup from clearing an operator or successor
+        deployment hold that was installed after it last read the agent.
+        """
+
+        reason = str(reason or "").strip()
+        if not reason:
+            raise ValidationError("dispatch hold reason is required")
+        now = utcnow()
+        with self.store.transaction() as conn:
+            released = conn.execute(
+                """
+                UPDATE agents
+                SET dispatch_hold = 0, dispatch_hold_reason = NULL,
+                    dispatch_hold_at = NULL, updated_at = ?
+                WHERE id = ? AND dispatch_hold = 1
+                    AND dispatch_hold_reason = ?
+                """,
+                (now, agent_id, reason),
+            )
+            row = conn.execute(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            agent = self._agent_from_row(row)
+        return released.rowcount == 1, agent
+
+    def release_agent_dispatch_holds_batch(
+        self,
+        holds: Iterable[Tuple[str, str]],
+        *,
+        epoch_id: str,
+        actor: str = "fleet-deploy",
+        expectations: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    ) -> List["Agent"]:
+        """Atomically release one exact deployment hold across a fleet cohort.
+
+        Every reason comparison and every update shares one transaction.  A
+        stale or replaced hold therefore rolls the entire cohort back instead
+        of exposing a mixed-generation interval in which early workers can
+        claim while later workers remain fenced.
+        """
+
+        epoch_id = str(epoch_id or "").strip()
+        if not epoch_id:
+            raise ValidationError("fleet release epoch id is required")
+        normalized: List[Tuple[str, str]] = []
+        seen: set[str] = set()
+        try:
+            hold_entries = iter(holds)
+        except TypeError as exc:
+            raise ValidationError("fleet release holds must be an iterable") from exc
+        for entry in hold_entries:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                raise ValidationError(
+                    "fleet release entries must be (agent_id, reason) pairs"
+                )
+            raw_agent_id, raw_reason = entry
+            agent_id = str(raw_agent_id or "").strip()
+            reason = str(raw_reason or "").strip()
+            if not agent_id or not reason:
+                raise ValidationError(
+                    "fleet release entries require agent_id and reason"
+                )
+            if agent_id in seen:
+                raise ValidationError(
+                    "duplicate agent in fleet release epoch: %s" % agent_id
+                )
+            seen.add(agent_id)
+            normalized.append((agent_id, reason))
+        if not normalized:
+            raise ValidationError("fleet release epoch requires at least one hold")
+        # A stable lock order avoids two concurrent cohort releases deadlocking
+        # merely because their callers supplied the same set in a different
+        # order.  Epoch identity is set-based, so response ordering is likewise
+        # deterministic.
+        normalized.sort(key=lambda item: item[0])
+
+        now = utcnow()
+        agents: List[Agent] = []
+        expected_by_agent = dict(expectations or {})
+
+        receipt_event_type = "agent.dispatch_hold_epoch_released"
+        epoch_event_type = "agent.dispatch_hold_epoch_committed"
+        epoch_receipt_id = "alce_epoch_%s" % hashlib.sha256(
+            epoch_id.encode("utf-8")
+        ).hexdigest()[:32]
+        requested_holds = [
+            {"agent_id": agent_id, "hold_reason": reason}
+            for agent_id, reason in normalized
+        ]
+
+        def replayed_epoch_agents(conn: Any) -> Optional[List[Agent]]:
+            """Return an exact prior commit, or reject partial/changed reuse."""
+
+            marker = conn.execute(
+                "SELECT event_type, detail FROM agent_lifecycle_events WHERE id = ?",
+                (epoch_receipt_id,),
+            ).fetchone()
+            marker_matches = marker is None
+            if marker is not None and marker["event_type"] == epoch_event_type:
+                marker_detail = ensure_json_object(
+                    json_loads(marker["detail"], {})
+                )
+                marker_holds = marker_detail.get("holds")
+                marker_matches = (
+                    str(marker_detail.get("epoch_id") or "") == epoch_id
+                    and isinstance(marker_holds, list)
+                    and marker_holds == requested_holds
+                )
+            if not marker_matches:
+                raise ValidationError(
+                    "fleet release epoch id was already used with a different "
+                    "or incomplete hold set"
+                )
+
+            if marker is None:
+                # Compatibility for a commit created before deterministic epoch
+                # markers existed. This is the only path that needs a historical
+                # event-type scan.
+                receipt_rows = conn.execute(
+                    "SELECT agent_id, detail FROM agent_lifecycle_events "
+                    "WHERE event_type = ?",
+                    (receipt_event_type,),
+                ).fetchall()
+            else:
+                # Normal retries have a marker whose full hold set already
+                # matched. Use the existing per-agent index rather than scanning
+                # a potentially large lifecycle ledger.
+                receipt_rows = []
+                for agent_id, _reason in normalized:
+                    receipt_rows.extend(
+                        conn.execute(
+                            "SELECT agent_id, detail FROM agent_lifecycle_events "
+                            "WHERE agent_id = ? AND event_type = ?",
+                            (agent_id, receipt_event_type),
+                        ).fetchall()
+                    )
+            observed_holds: List[Dict[str, str]] = []
+            for receipt_row in receipt_rows:
+                detail = ensure_json_object(json_loads(receipt_row["detail"], {}))
+                if str(detail.get("epoch_id") or "") != epoch_id:
+                    continue
+                observed_holds.append(
+                    {
+                        "agent_id": str(receipt_row["agent_id"] or ""),
+                        "hold_reason": str(detail.get("hold_reason") or ""),
+                    }
+                )
+
+            if marker is None and not observed_holds:
+                return None
+            observed_holds.sort(key=lambda item: item["agent_id"])
+            if observed_holds != requested_holds:
+                raise ValidationError(
+                    "fleet release epoch id was already used with a different "
+                    "or incomplete hold set"
+                )
+
+            replayed: List[Agent] = []
+            for agent_id, _reason in normalized:
+                row = conn.execute(
+                    "SELECT * FROM agents WHERE id = ?", (agent_id,)
+                ).fetchone()
+                if row is None:
+                    raise NotFoundError(
+                        "fleet release epoch receipt references missing agent: %s"
+                        % agent_id
+                    )
+                replayed.append(self._agent_from_row(row))
+            return replayed
+
+        with self.store.transaction() as conn:
+            # BEGIN IMMEDIATE already serializes SQLite writers, but Postgres
+            # READ COMMITTED does not retain a lock for an ordinary SELECT.
+            # Acquire every agent row in the same stable order before reading
+            # readiness or active-work state. A concurrent heartbeat can no
+            # longer replace idle/healthy/generation/principal proof between
+            # validation and the hold-clearing UPDATE.
+            for agent_id, _reason in normalized:
+                locked = conn.execute(
+                    "UPDATE agents SET updated_at = updated_at "
+                    "WHERE id = ? AND deleted_at IS NULL",
+                    (agent_id,),
+                )
+                if locked.rowcount != 1:
+                    raise NotFoundError("agent not found: %s" % agent_id)
+            replayed = replayed_epoch_agents(conn)
+            if replayed is not None:
+                return replayed
+
+            # Claim the epoch with a deterministic primary key in the same
+            # transaction as every release.  ON CONFLICT serializes concurrent
+            # same-epoch requests on both SQLite and PostgreSQL without a new
+            # schema object.  The marker is invisible unless the whole cohort
+            # commits; rollback removes it together with all per-agent receipts.
+            claimed_epoch = conn.execute(
+                """
+                INSERT INTO agent_lifecycle_events
+                    (id, agent_id, event_type, actor, detail, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+                """,
+                (
+                    epoch_receipt_id,
+                    normalized[0][0],
+                    epoch_event_type,
+                    actor,
+                    json_dumps(
+                        {
+                            "actor": actor,
+                            "epoch_id": epoch_id,
+                            "holds": requested_holds,
+                        }
+                    ),
+                    now,
+                ),
+            )
+            if claimed_epoch.rowcount != 1:
+                replayed = replayed_epoch_agents(conn)
+                if replayed is not None:
+                    return replayed
+                raise ValidationError(
+                    "fleet release epoch id could not be claimed"
+                )
+
+            for agent_id, reason in normalized:
+                row_before = conn.execute(
+                    "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
+                    (agent_id,),
+                ).fetchone()
+                if row_before is None:
+                    raise NotFoundError("agent not found: %s" % agent_id)
+                active_task = conn.execute(
+                    "SELECT id FROM tasks WHERE owner_agent_id = ? "
+                    "AND state IN (?, ?) LIMIT 1",
+                    (
+                        agent_id,
+                        TaskState.CLAIMED.value,
+                        TaskState.RUNNING.value,
+                    ),
+                ).fetchone()
+                if active_task is not None or row_before["current_task_id"] is not None:
+                    raise ValidationError(
+                        "fleet release epoch found active work on %s" % agent_id
+                    )
+                expected = ensure_json_object(expected_by_agent.get(agent_id))
+                if expected:
+                    resources = ensure_json_object(
+                        json_loads(row_before["resources"], {})
+                    )
+                    authenticated = ensure_json_object(
+                        resources.get("worker_credential_authenticated")
+                    )
+                    baseline_seen = str(expected.get("baseline_seen") or "").strip()
+                    last_seen = str(row_before["last_seen_at"] or "").strip()
+                    if (
+                        row_before["status"] != AgentStatus.IDLE.value
+                        or row_before["health_status"] != HealthStatus.HEALTHY.value
+                        or not baseline_seen
+                        or not last_seen
+                        or parse_time(last_seen) <= parse_time(baseline_seen)
+                        or resources.get("deployment_generation")
+                        != expected.get("generation")
+                    ):
+                        raise ValidationError(
+                            "fleet release epoch lost readiness for %s" % agent_id
+                        )
+                    if bool(expected.get("require_authenticated")) and not (
+                        authenticated.get("agent_id") == agent_id
+                        and authenticated.get("principal_id")
+                        == expected.get("principal_id")
+                    ):
+                        raise ValidationError(
+                            "fleet release epoch lost credential proof for %s"
+                            % agent_id
+                        )
+                released = conn.execute(
+                    """
+                    UPDATE agents
+                    SET dispatch_hold = 0, dispatch_hold_reason = NULL,
+                        dispatch_hold_at = NULL, updated_at = ?
+                    WHERE id = ? AND deleted_at IS NULL
+                        AND dispatch_hold = 1 AND dispatch_hold_reason = ?
+                    """,
+                    (now, agent_id, reason),
+                )
+                row = conn.execute(
+                    "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
+                    (agent_id,),
+                ).fetchone()
+                if released.rowcount != 1:
+                    raise ValidationError(
+                        "fleet release epoch lost dispatch-hold ownership for %s"
+                        % agent_id
+                    )
+                self._record_agent_lifecycle_event(
+                    conn,
+                    agent_id,
+                    receipt_event_type,
+                    actor,
+                    {
+                        "agent_id": agent_id,
+                        "epoch_id": epoch_id,
+                        "hold_reason": reason,
+                    },
+                    now,
+                )
+                agents.append(self._agent_from_row(row))
+        return agents
 
     def clear_agent_dispatch_hold(self, agent_id: str) -> "Agent":
         """Remove the dispatch hold from an agent, making it eligible for dispatch again."""
@@ -14117,13 +14600,89 @@ class ControlPlane:
         purged and liveness operations refuse the tombstoned agent.
         Idempotent: deleting a tombstoned agent is a no-op.
         """
-        agent = self.get_agent(agent_id)
-        if agent.deleted_at:
-            return
-        if self._agent_has_active_lease(agent_id):
-            raise ValidationError("agent cannot be deleted while holding an active lease")
-        now = utcnow()
         with self.store.transaction() as conn:
+            # Serialize decommissioning with credential issue/activation and
+            # every liveness path that takes the agent-row fence.  Reading the
+            # agent and its leases before this transaction left a PostgreSQL
+            # window in which issuance could commit a fresh principal after we
+            # had scanned credentials but before the tombstone was written.
+            # Keep the global order agent row -> credential rows: the worker
+            # credential lifecycle uses the same order, avoiding a
+            # delete-versus-activate deadlock.
+            agent_lock = conn.execute(
+                "UPDATE agents SET updated_at = updated_at WHERE id = ?",
+                (agent_id,),
+            )
+            if agent_lock.rowcount != 1:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            agent_row = conn.execute(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            agent = self._agent_from_row(agent_row)
+            if not agent.deleted_at:
+                active_lease = conn.execute(
+                    """
+                    SELECT 1 FROM leases l
+                    JOIN tasks t ON t.lease_id = l.id
+                    WHERE l.agent_id = ?
+                      AND l.status = ?
+                      AND t.owner_agent_id = ?
+                    LIMIT 1
+                    """,
+                    (agent_id, LeaseStatus.ACTIVE.value, agent_id),
+                ).fetchone()
+                if active_lease is not None:
+                    raise ValidationError(
+                        "agent cannot be deleted while holding an active lease"
+                    )
+            now = utcnow()
+            # Decommissioning is a permanent credential boundary.  Merely
+            # hiding credentials behind agents.deleted_at lets an intentional
+            # later resurrection make every old active bearer valid again.
+            # Revoke pending/active principals in the same transaction as the
+            # tombstone and preserve secret-free audit facts. This also repairs
+            # credentials left behind by tombstones created before this rule.
+            credential_rows = conn.execute(
+                "SELECT id, agent_id, credential_version, token_fingerprint "
+                "FROM worker_credentials WHERE agent_id = ? "
+                "AND state IN ('pending_install', 'active')",
+                (agent_id,),
+            ).fetchall()
+            conn.execute(
+                "UPDATE worker_credentials SET state = 'revoked', "
+                "revoked_at = ?, updated_at = ? WHERE agent_id = ? "
+                "AND state IN ('pending_install', 'active')",
+                (now, now, agent_id),
+            )
+            for credential in credential_rows:
+                conn.execute(
+                    "INSERT INTO worker_credential_events ("
+                    "id, principal_id, agent_id, event_type, actor, detail, created_at"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        new_id("workercred-event"),
+                        credential["id"],
+                        credential["agent_id"],
+                        "worker_credential.revoked",
+                        actor,
+                        json_dumps(
+                            {
+                                "schema": "mac.worker_credential_event.v1",
+                                "credential_version": int(
+                                    credential["credential_version"] or 0
+                                ),
+                                "token_fingerprint": str(
+                                    credential["token_fingerprint"] or ""
+                                ),
+                                "state": "revoked",
+                                "reason": "agent_decommissioned",
+                            }
+                        ),
+                        now,
+                    ),
+                )
+            if agent.deleted_at:
+                return
             self._record_agent_lifecycle_event(
                 conn,
                 agent_id,
@@ -16691,22 +17250,17 @@ class ControlPlane:
         # mem-05: idempotent re-claim. The verified 30,806-row storm was one
         # review re-claiming identical evidence over and over. A repeat claim
         # (same review + executor_evidence_id + head_sha) is now a no-op: it
-        # returns the prior claim and writes no new task.review_claimed row.
+        # writes no new task.review_claimed row. Availability still has to
+        # linearize in the transaction below: stale claim metadata must not let a
+        # drained/held reviewer re-enter after a deployment fence wins.
         prior = ensure_json_object(claims.get(review.id))
-        if (
+        prior_is_identical = bool(
             prior
-            and str(prior.get("executor_evidence_id") or "") == str(claim.get("executor_evidence_id") or "")
-            and str(prior.get("repository_head_sha") or "") == str(claim.get("repository_head_sha") or "")
-        ):
-            refreshed = self.get_task(task.id)
-            return {
-                "schema": "mac.review_claim.v1",
-                "status": "claimed",
-                "review": review.to_dict(),
-                "task": refreshed.to_dict(),
-                "claim": prior,
-                "idempotent": True,
-            }
+            and str(prior.get("executor_evidence_id") or "")
+            == str(claim.get("executor_evidence_id") or "")
+            and str(prior.get("repository_head_sha") or "")
+            == str(claim.get("repository_head_sha") or "")
+        )
         claims[review.id] = claim
         metadata["review_claims"] = claims
         metadata["latest_review_claim"] = claim
@@ -16726,6 +17280,49 @@ class ControlPlane:
                     ReviewStatus.PENDING.value,
                 ),
             )
+            if prior_is_identical:
+                agent_claim = conn.execute(
+                    """
+                    UPDATE agents
+                    SET status = ?, current_task_id = ?, updated_at = ?, last_seen_at = ?
+                    WHERE id = ? AND deleted_at IS NULL
+                        AND health_status = ? AND dispatch_hold = 0
+                        AND (
+                            (status = ? AND current_task_id = ?)
+                            OR (status = ? AND current_task_id IS NULL)
+                        )
+                    """,
+                    (
+                        AgentStatus.BUSY.value,
+                        task.id,
+                        now,
+                        now,
+                        reviewer_agent_id,
+                        HealthStatus.HEALTHY.value,
+                        AgentStatus.BUSY.value,
+                        task.id,
+                        AgentStatus.IDLE.value,
+                    ),
+                )
+            else:
+                agent_claim = conn.execute(
+                    """
+                    UPDATE agents
+                    SET status = ?, current_task_id = ?, updated_at = ?, last_seen_at = ?
+                    WHERE id = ? AND deleted_at IS NULL
+                        AND status = ? AND health_status = ?
+                        AND current_task_id IS NULL AND dispatch_hold = 0
+                    """,
+                    (
+                        AgentStatus.BUSY.value,
+                        task.id,
+                        now,
+                        now,
+                        reviewer_agent_id,
+                        AgentStatus.IDLE.value,
+                        HealthStatus.HEALTHY.value,
+                    ),
+                )
             current_task_row = conn.execute(
                 "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
             ).fetchone()
@@ -16743,40 +17340,37 @@ class ControlPlane:
             if (
                 task_lock.rowcount != 1
                 or review_lock.rowcount != 1
+                or agent_claim.rowcount != 1
                 or (locked_target and executor_evidence_id != locked_target)
             ):
                 raise AuthorizationError(
-                    "review assignment or executor evidence revision changed"
+                    "review assignment, reviewer availability, or executor evidence revision changed"
                 )
-            conn.execute(
-                "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
-                (json_dumps(metadata), now, task.id),
-            )
-            conn.execute(
-                """
-                UPDATE agents
-                SET status = ?, current_task_id = ?, updated_at = ?, last_seen_at = ?
-                WHERE id = ?
-                """,
-                (AgentStatus.BUSY.value, task.id, now, now, reviewer_agent_id),
-            )
-            self._record_history(
-                task.id,
-                "task.review_claimed",
-                reviewer_agent_id,
-                None,
-                None,
-                claim,
-                conn=conn,
-            )
+            if not prior_is_identical:
+                conn.execute(
+                    "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (json_dumps(metadata), now, task.id),
+                )
+                self._record_history(
+                    task.id,
+                    "task.review_claimed",
+                    reviewer_agent_id,
+                    None,
+                    None,
+                    claim,
+                    conn=conn,
+                )
         refreshed = self.get_task(task.id)
-        return {
+        result = {
             "schema": "mac.review_claim.v1",
             "status": "claimed",
             "review": review.to_dict(),
             "task": refreshed.to_dict(),
-            "claim": claim,
+            "claim": prior if prior_is_identical else claim,
         }
+        if prior_is_identical:
+            result["idempotent"] = True
+        return result
 
 
     def _review_claim_detail(
@@ -23217,12 +23811,26 @@ class ControlPlane:
                 pass
         return True
 
+    @staticmethod
+    def _agent_service_claim_eligibility_reason(agent: Agent) -> Optional[str]:
+        """Return the durable agent-state fence blocking service-role claims."""
+
+        if agent.deleted_at:
+            return "agent_decommissioned"
+        if agent.dispatch_hold:
+            return "agent_dispatch_held"
+        if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
+            return "agent_status_unavailable"
+        if agent.health_status != HealthStatus.HEALTHY.value:
+            return "agent_health_unavailable"
+        return None
+
     def _service_holder_live(self, agent_id: str) -> bool:
         try:
             agent = self.get_agent(agent_id)
         except Exception:  # noqa: BLE001
             return False
-        return agent.status != AgentStatus.OFFLINE.value
+        return self._agent_service_claim_eligibility_reason(agent) is None
 
     def sync_agent_service_claims(
         self, agent_id: str, willing_ops: Iterable[str], *, lease_seconds: int = 1800
@@ -23236,57 +23844,193 @@ class ControlPlane:
         claims, so the subsystem doesn't depend on a periodic /dispatch/tick."""
         self._ensure_service_roles_seeded()
         self.service_roles.expire_service_claims()
-        agent = self.get_agent(agent_id)
         willing = {str(op).strip() for op in (willing_ops or []) if str(op).strip()}
-        capacity = self._agent_capacity(agent)
-        roles_by_op = {r.op: r for r in self.service_roles.desired_services(tenant_id=None)}
-        held_ops: Dict[str, Any] = {}
-        for claim in self.service_roles.list_active_claims(agent_id=agent_id):
-            try:
-                op = self.service_roles.get_role(claim.service_role_id).op
-            except Exception:  # noqa: BLE001
-                continue
-            held_ops[op] = claim
-        # release held ops no longer willing/desired
-        for op, claim in list(held_ops.items()):
-            if op not in willing or op not in roles_by_op:
-                self.service_roles.release_service_claim(claim.id, agent_id, reason="not_willing")
-                del held_ops[op]
-        # renew still-held
-        for claim in held_ops.values():
-            self.service_roles.renew_service_claim(claim.id, agent_id, lease_seconds)
-        # claim new eligible willing ops, capacity-bounded. Prefer the LEAST-served
-        # ops (fewest current live holders) so the pool spreads to cover every op
-        # instead of every host piling onto the same one.
-        load = len(held_ops) + self._agent_active_lease_count(agent_id)
-        candidates = [
-            op for op in willing
-            if op not in held_ops and op in roles_by_op and roles_by_op[op].enabled
-        ]
+        with self.store.transaction() as conn:
+            # Global lock order for agent-owned state is agent row first, then
+            # the agent's service claims.  This is the same first fence used by
+            # decommissioning and credential lifecycle operations.  On SQLite,
+            # BEGIN IMMEDIATE serializes the writer; on PostgreSQL the no-op
+            # UPDATE retains a row lock until this transaction commits.
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (agent_id,),
+            )
+            if locked.rowcount != 1:
+                row = conn.execute(
+                    "SELECT deleted_at FROM agents WHERE id = ?", (agent_id,)
+                ).fetchone()
+                if row is None:
+                    raise NotFoundError("agent not found: %s" % agent_id)
+                raise ValidationError(
+                    "agent %s was decommissioned at %s"
+                    % (agent_id, row["deleted_at"])
+                )
+            agent_row = conn.execute(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            agent = self._agent_from_row(agent_row)
+            capacity = self._agent_capacity(agent)
 
-        def _holder_count(op: str) -> int:
-            return len(self.service_roles.list_active_claims(role_id=roles_by_op[op].id))
+            role_rows = conn.execute(
+                "SELECT * FROM service_roles "
+                "WHERE enabled = 1 AND tenant_id IS NULL ORDER BY id"
+            ).fetchall()
+            roles_by_op: Dict[str, ServiceRole] = {}
+            for row in role_rows:
+                role = self.service_roles._role_from_row(row)
+                roles_by_op.setdefault(role.op, role)
 
-        for op in sorted(candidates, key=lambda o: (_holder_count(o), o)):
-            if load >= capacity:
-                break  # at capacity -> leave the op for a host with headroom (spread)
-            role = roles_by_op[op]
-            if not self._agent_eligible_for_service(agent, role):
-                continue
-            try:
-                self.service_roles.claim_service(role.id, agent_id, lease_seconds)
-            except Exception:  # noqa: BLE001
-                continue
-            held_ops[op] = True
-            load += 1
-        # "managed" = ops that have a service_role (election active). Ops NOT managed
-        # are advertised unconditionally by the worker (back-compat: a fleet that
-        # seeds no service_roles keeps today's advertise-all behavior).
-        return {
-            "held": sorted(held_ops.keys()),
-            "managed": sorted(roles_by_op.keys()),
-            "capacity": capacity,
-        }
+            # Lock this agent's active claims only after its eligibility row.
+            # Every release, renewal and acquisition below uses this same
+            # connection, closing the stale GET -> separate write TOCTOU.
+            conn.execute(
+                "UPDATE service_claims SET updated_at = updated_at "
+                "WHERE agent_id = ? AND status = ?",
+                (agent_id, ServiceClaimStatus.ACTIVE.value),
+            )
+            claim_rows = conn.execute(
+                "SELECT c.*, r.op AS role_op FROM service_claims c "
+                "LEFT JOIN service_roles r ON r.id = c.service_role_id "
+                "WHERE c.agent_id = ? AND c.status = ? ORDER BY c.id",
+                (agent_id, ServiceClaimStatus.ACTIVE.value),
+            ).fetchall()
+
+            blocked_reason = self._agent_service_claim_eligibility_reason(agent)
+            if blocked_reason is not None:
+                # A held/draining/unhealthy worker is not merely denied new
+                # claims: any old advertisement is withdrawn in this same
+                # eligibility transaction and therefore cannot be renewed.
+                conn.execute(
+                    "UPDATE service_claims SET status = ?, updated_at = ? "
+                    "WHERE agent_id = ? AND status = ?",
+                    (
+                        ServiceClaimStatus.RELEASED.value,
+                        utcnow(),
+                        agent_id,
+                        ServiceClaimStatus.ACTIVE.value,
+                    ),
+                )
+                return {
+                    "held": [],
+                    "managed": sorted(roles_by_op.keys()),
+                    "capacity": capacity,
+                    "eligible": False,
+                    "eligibility_reason": blocked_reason,
+                }
+
+            held_ops: Dict[str, Any] = {}
+            now = utcnow()
+            for claim in claim_rows:
+                op = str(claim["role_op"] or "")
+                if (
+                    not op
+                    or op in held_ops
+                    or op not in willing
+                    or op not in roles_by_op
+                ):
+                    conn.execute(
+                        "UPDATE service_claims SET status = ?, updated_at = ? "
+                        "WHERE id = ? AND agent_id = ? AND status = ?",
+                        (
+                            ServiceClaimStatus.RELEASED.value,
+                            now,
+                            claim["id"],
+                            agent_id,
+                            ServiceClaimStatus.ACTIVE.value,
+                        ),
+                    )
+                    continue
+                held_ops[op] = claim
+
+            expires_at = (
+                parse_time(now) + timedelta(seconds=int(lease_seconds))
+            ).isoformat()
+            for op, claim in list(held_ops.items()):
+                renewed = conn.execute(
+                    "UPDATE service_claims SET expires_at = ?, updated_at = ? "
+                    "WHERE id = ? AND agent_id = ? AND status = ?",
+                    (
+                        expires_at,
+                        now,
+                        claim["id"],
+                        agent_id,
+                        ServiceClaimStatus.ACTIVE.value,
+                    ),
+                )
+                if renewed.rowcount != 1:
+                    del held_ops[op]
+
+            active_lease_row = conn.execute(
+                "SELECT COUNT(*) AS count FROM leases l "
+                "JOIN tasks t ON t.lease_id = l.id "
+                "WHERE l.agent_id = ? AND l.status = ? "
+                "AND t.owner_agent_id = ?",
+                (agent_id, LeaseStatus.ACTIVE.value, agent_id),
+            ).fetchone()
+            load = len(held_ops) + int(
+                active_lease_row["count"] if active_lease_row is not None else 0
+            )
+            candidates = [
+                op
+                for op in willing
+                if op not in held_ops and op in roles_by_op and roles_by_op[op].enabled
+            ]
+            holder_counts = {
+                str(row["service_role_id"]): int(row["count"])
+                for row in conn.execute(
+                    "SELECT service_role_id, COUNT(*) AS count "
+                    "FROM service_claims WHERE status = ? "
+                    "GROUP BY service_role_id",
+                    (ServiceClaimStatus.ACTIVE.value,),
+                ).fetchall()
+            }
+
+            for op in sorted(
+                candidates,
+                key=lambda value: (holder_counts.get(roles_by_op[value].id, 0), value),
+            ):
+                if load >= capacity:
+                    break
+                role = roles_by_op[op]
+                if not self._agent_eligible_for_service(agent, role):
+                    continue
+                claim_id = new_id("sclaim")
+                conn.execute(
+                    "INSERT INTO service_claims ("
+                    "id, service_role_id, agent_id, status, expires_at, "
+                    "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT DO NOTHING",
+                    (
+                        claim_id,
+                        role.id,
+                        agent_id,
+                        ServiceClaimStatus.ACTIVE.value,
+                        expires_at,
+                        now,
+                        now,
+                    ),
+                )
+                active = conn.execute(
+                    "SELECT id FROM service_claims "
+                    "WHERE service_role_id = ? AND agent_id = ? AND status = ?",
+                    (role.id, agent_id, ServiceClaimStatus.ACTIVE.value),
+                ).fetchone()
+                if active is None:
+                    continue
+                held_ops[op] = active
+                holder_counts[role.id] = holder_counts.get(role.id, 0) + 1
+                load += 1
+
+            # "managed" = ops that have a service_role (election active). Ops
+            # not managed remain advertised unconditionally for compatibility.
+            return {
+                "held": sorted(held_ops.keys()),
+                "managed": sorted(roles_by_op.keys()),
+                "capacity": capacity,
+                "eligible": True,
+                "eligibility_reason": None,
+            }
 
     def _ensure_service_roles_seeded(self) -> None:
         """Idempotently seed the desired ops from MAC_SERVICE_ROLE_OPS (opt-in;

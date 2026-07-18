@@ -973,6 +973,10 @@ def build_mac_env(
     values.update(_worker_values(cfg, values))
     values.pop("MAC_WORKER_RESOURCES_FILE", None)
     values.update(_chat_gateway_values(cfg, env))
+    values.setdefault(
+        "MAC_WORKER_RESOURCES_FILE",
+        str(cfg.paths.mac_home / "worker-resources.json"),
+    )
     values.update(_shared_service_requirement_values())
     values.update(_shared_service_url_values(values, cfg))
     values.update(_webdav_values(values, cfg, env))
@@ -1062,6 +1066,24 @@ def build_mac_env(
         _v = (env.get(_src) or "").strip()
         if _v:
             values[_dst] = _v
+    # Exact, non-secret generation witness for the post-reconcile restart.
+    # Only the real mac-agent heartbeat publishes it in resources; a one-use
+    # barrier file keeps that process draining until the deploy controller has
+    # observed the exact generation and authorizes it to serve work.
+    deployment_generation = (env.get("MAC_DEPLOY_GENERATION") or "").strip()
+    if deployment_generation:
+        values["MAC_WORKER_DEPLOY_GENERATION"] = deployment_generation
+        values["MAC_WORKER_DEPLOY_BARRIER_FILE"] = str(
+            cfg.paths.mac_home / "deploy-start-barrier"
+        )
+        # A deployment-owned hub hold must survive transaction failure and the
+        # rollback script's restored-service restart. The outer controller is
+        # the only authority that may re-enable startup hold clearing after it
+        # has observed the exact final generation and credential.
+        values["MAC_STARTUP_CLEAR_HOLD"] = "0"
+    else:
+        values.pop("MAC_WORKER_DEPLOY_GENERATION", None)
+        values.pop("MAC_WORKER_DEPLOY_BARRIER_FILE", None)
     openshell_explicitly_disabled = _apply_openshell_deploy_config(values, env)
     if cfg.identity.is_hub:
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "prune")

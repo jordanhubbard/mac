@@ -471,6 +471,9 @@ def _agent_is_routable(agent: Mapping[str, Any]) -> bool:
     guaranteed-failing first hop on every request)."""
     status = str(agent.get("status") or "").strip().lower()
     health = str(agent.get("health_status") or agent.get("health") or "").strip().lower()
+    hold = agent.get("dispatch_hold")
+    if hold is True or str(hold or "").strip().lower() in {"1", "true", "yes", "on"}:
+        return False
     if status in _OFFLINE_STATUSES:
         return False
     if health in _UNHEALTHY:

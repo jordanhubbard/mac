@@ -38,6 +38,8 @@ load_env_file_with_caller_precedence() {
     MAC_DEPLOY_EXECUTION_COHORT_TREATMENT_PERCENT
     MAC_DEPLOY_EXECUTION_COHORT_SEED
     MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD
+    MAC_DEPLOY_HOLD_ADOPTIONS_FILE
+    MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED
   )
 
   # Also snapshot any fleet-scoped token variables already present.
@@ -102,7 +104,8 @@ DEPLOY_ENV_FILE="${MAC_DEPLOY_ENV_FILE:-$HOME/.mac/.env}"
 load_env_file_with_caller_precedence "$DEPLOY_ENV_FILE"
 resolve_github_deploy_token
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
-TMPDIR_LOCAL="${TMPDIR:-/tmp}/mac-fleet-deploy-${TS}.$$"
+TMPDIR_LOCAL="$(mktemp -d "${TMPDIR:-/tmp}/mac-fleet-deploy-${TS}.XXXXXX")"
+chmod 0700 "$TMPDIR_LOCAL"
 ARCHIVE="${TMPDIR_LOCAL}/mac.tar.gz"
 SANITIZED_FLEET_REGISTRY="${TMPDIR_LOCAL}/fleets.yaml"
 CONFIGURED_AGENT_IDS=""
@@ -121,6 +124,10 @@ FLEET_CONFIG="${MAC_DEPLOY_FLEET_CONFIG:-$ROOT/deploy/fleet/config.yaml}"
 FLEET_REGISTRY_CONFIG="${MAC_DEPLOY_FLEETS_CONFIG:-${MAC_FLEETS_CONFIG:-$HOME/.mac/fleets.yaml}}"
 HUB_SELECTOR="${MAC_DEPLOY_HUB_AGENT:-}"
 SSH_PORT_OVERRIDE="${MAC_DEPLOY_SSH_PORT:-}"
+HOLD_ADOPTIONS_SOURCE="${MAC_DEPLOY_HOLD_ADOPTIONS_FILE:-}"
+HOLD_ADOPTIONS_FILE=""
+REQUIRE_RELEASE_ALL_SELECTED_RAW="${MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED:-0}"
+REQUIRE_RELEASE_ALL_SELECTED=0
 NEW_HUB_NAME=""
 NEW_HUB_TARGET=""
 NEW_HUB_OS="${MAC_DEPLOY_NEW_HUB_OS:-linux}"
@@ -177,7 +184,9 @@ resolve_python_bin() {
 usage() {
   cat <<'USAGE'
 Usage:
-  deploy/deploy-mac-fleet.sh --hub <hub-node> [--ssh-port <port>] [agent ...]
+  deploy/deploy-mac-fleet.sh --hub <hub-node> [--ssh-port <port>]
+                            [--hold-adoptions <owner-only-json>]
+                            [--require-release-all-selected] [agent ...]
   deploy/deploy-mac-fleet.sh --new-hub <hub-node> --target user@host[:port] [--ssh-port <port>]
                             [--fleet-name <name>] [--control-port <port>]
                             [--hub-url <url>] [--home-channel <channel>]
@@ -210,6 +219,11 @@ MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD=1.
 The hub name selects the fleet. Agent arguments may be agent names from that
 fleet. With no agent arguments, all enabled agents in the selected fleet are
 deployed.
+
+An adoption file explicitly authorizes exact-reason CAS replacement of every
+pre-existing hold in the selected cohort. Supplying one always enables
+--require-release-all-selected: phase 3 must release the exact full cohort or
+remain fail-closed. Legacy single-node CAS bootstrap rejects this authority.
 USAGE
 }
 
@@ -241,6 +255,22 @@ while [ "$#" -gt 0 ]; do
       ;;
     --fleets-config=*)
       FLEET_REGISTRY_CONFIG="${1#--fleets-config=}"
+      shift
+      ;;
+    --hold-adoptions)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --hold-adoptions requires an owner-only JSON file" >&2
+        exit 2
+      fi
+      HOLD_ADOPTIONS_SOURCE="$2"
+      shift 2
+      ;;
+    --hold-adoptions=*)
+      HOLD_ADOPTIONS_SOURCE="${1#--hold-adoptions=}"
+      shift
+      ;;
+    --require-release-all-selected)
+      REQUIRE_RELEASE_ALL_SELECTED_RAW=1
       shift
       ;;
     --ssh-port)
@@ -418,10 +448,63 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+case "$(normalize_boolean_token "$REQUIRE_RELEASE_ALL_SELECTED_RAW")" in
+  1|true|yes|on) REQUIRE_RELEASE_ALL_SELECTED=1 ;;
+  0|false|no|off|'') REQUIRE_RELEASE_ALL_SELECTED=0 ;;
+  *)
+    echo "ERROR: MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED must be a boolean token" >&2
+    exit 2
+    ;;
+esac
+if [ -n "$HOLD_ADOPTIONS_SOURCE" ]; then
+  # Adoption is authority to clear an operator hold. It is never meaningful as
+  # a partial best-effort action: the selected epoch must own and release all.
+  REQUIRE_RELEASE_ALL_SELECTED=1
+fi
+
 if ! PYTHON_BIN="$(resolve_python_bin)"; then
   echo "ERROR: Python 3.11+ is required (.venv/bin/python, python3.11, python3, or python)" >&2
   exit 127
 fi
+DEPLOY_CONTROLLER_NONCE="$("$PYTHON_BIN" -c 'import secrets; print(secrets.token_hex(16))')"
+readonly DEPLOY_CONTROLLER_NONCE
+SSH_CONTROL_DIR="/tmp/mac-fleet-ssh-${UID:-0}-${DEPLOY_CONTROLLER_NONCE:0:12}"
+mkdir -p "$SSH_CONTROL_DIR"
+chmod 0700 "$SSH_CONTROL_DIR"
+SSH_CONTROL_REQUIRED=0
+
+cleanup_local_deployment() {
+  local status=$? pid_file pid
+  trap - EXIT
+  set +e
+  for pid_file in "$SSH_CONTROL_DIR"/*.pid; do
+    [ -f "$pid_file" ] || continue
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    case "$pid" in
+      ''|*[!0-9]*) ;;
+      *) kill "$pid" >/dev/null 2>&1 || true ;;
+    esac
+  done
+  for pid_file in "$SSH_CONTROL_DIR"/*.pid; do
+    [ -f "$pid_file" ] || continue
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    case "$pid" in
+      ''|*[!0-9]*) ;;
+      *) wait "$pid" >/dev/null 2>&1 || true ;;
+    esac
+  done
+  rm -rf "$SSH_CONTROL_DIR" "$TMPDIR_LOCAL"
+  exit "$status"
+}
+trap cleanup_local_deployment EXIT
+
+if [ -n "$HOLD_ADOPTIONS_SOURCE" ]; then
+  HOLD_ADOPTIONS_FILE="$TMPDIR_LOCAL/hold-adoptions.authority.json"
+  "$PYTHON_BIN" "$ROOT/scripts/deploy-hold-adoptions.py" snapshot \
+    "$HOLD_ADOPTIONS_SOURCE" "$HOLD_ADOPTIONS_FILE" \
+    --source-commit "$GIT_REV"
+fi
+readonly HOLD_ADOPTIONS_FILE REQUIRE_RELEASE_ALL_SELECTED
 
 if [ -n "$NEW_HUB_NAME" ]; then
   if [ -z "$NEW_HUB_TARGET" ]; then
@@ -470,6 +553,22 @@ if [ -n "$NEW_HUB_NAME" ]; then
   "$PYTHON_BIN" "${setup_args[@]}"
   REQUESTED_AGENTS=("$NEW_HUB_NAME")
 fi
+
+# Freeze the complete routing input for this invocation. Every later remote
+# resolution, hub lookup, and sanitized registry render must use the same
+# owner-only snapshot; otherwise an operator edit or host swap in fleets.yaml
+# can make one controller lock host A, mutate host B, and reconcile host C.
+# --new-hub intentionally runs first so its newly written registry state is
+# included in the immutable deployment view.
+FLEET_REGISTRY_SOURCE="$FLEET_REGISTRY_CONFIG"
+FLEET_CONFIG_SOURCE="$FLEET_CONFIG"
+mkdir -p "$TMPDIR_LOCAL"
+cp -f "$FLEET_REGISTRY_SOURCE" "$TMPDIR_LOCAL/fleets-source.yaml"
+cp -f "$FLEET_CONFIG_SOURCE" "$TMPDIR_LOCAL/fleet-defaults-source.yaml"
+chmod 0600 "$TMPDIR_LOCAL/fleets-source.yaml" "$TMPDIR_LOCAL/fleet-defaults-source.yaml"
+FLEET_REGISTRY_CONFIG="$TMPDIR_LOCAL/fleets-source.yaml"
+FLEET_CONFIG="$TMPDIR_LOCAL/fleet-defaults-source.yaml"
+readonly FLEET_REGISTRY_CONFIG FLEET_CONFIG FLEET_REGISTRY_SOURCE FLEET_CONFIG_SOURCE
 
 fleet_config_query() {
   local mode="$1"
@@ -1031,7 +1130,7 @@ shell_quote() {
   printf "'%s'" "$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
 }
 
-# Resolve every operator-side SSH/scp call through the Python contract used by
+# Resolve every operator-side SSH call through the Python contract used by
 # the CLI and desktop bridge. Output is NUL-delimited so paths containing spaces
 # remain argv-safe. ``-F /dev/null`` prevents ambient ~/.ssh/config from
 # silently supplying a different jump host, identity, or host-key policy.
@@ -1051,12 +1150,155 @@ fleet_ssh_route_args() {
   PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" "${cmd[@]}"
 }
 
-ssh_target_args() {
-  fleet_ssh_route_args ssh "$1"
+ssh_control_path_for_agent() {
+  local digest
+  digest="$("$PYTHON_BIN" -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:20])' "$1")"
+  printf '%s/%s.sock\n' "$SSH_CONTROL_DIR" "$digest"
 }
 
-scp_target_args() {
-  fleet_ssh_route_args scp "$1"
+start_ssh_control_master() {
+  local agent="$1" control_path log_path pid_path
+  local route_parts=() route_args=() target item last_index attempt pid
+  control_path="$(ssh_control_path_for_agent "$agent")"
+  log_path="${control_path}.log"
+  pid_path="${control_path}.pid"
+  if [ -S "$control_path" ] && [ -f "$pid_path" ]; then
+    return 0
+  fi
+  while IFS= read -r -d '' item; do route_parts+=("$item"); done < <(fleet_ssh_route_args ssh "$agent")
+  last_index=$((${#route_parts[@]} - 1))
+  target="${route_parts[$last_index]}"
+  route_args=("${route_parts[@]:0:$last_index}")
+  # Keep the master in this controller's process tree. Every later session uses
+  # explicit mux proxy mode (-O proxy), which cannot fall back to a fresh TCP
+  # connection if this socket or process disappears.
+  ssh -A -MN -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ControlMaster=yes -o ControlPersist=no -o ControlPath="$control_path" \
+    "${route_args[@]}" "$target" </dev/null >"$log_path" 2>&1 &
+  pid=$!
+  printf '%s\n' "$pid" > "$pid_path"
+  chmod 0600 "$pid_path" "$log_path"
+  for attempt in $(seq 1 100); do
+    if ssh -n -S "$control_path" -O check "${route_args[@]}" "$target" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  echo "ERROR: ${agent}: could not establish pinned SSH control master" >&2
+  sed -n '1,20p' "$log_path" >&2 || true
+  return 1
+}
+
+pinned_fleet_route_args() {
+  local agent="$1" control_path
+  local route_parts=() item last_index
+  while IFS= read -r -d '' item; do route_parts+=("$item"); done < <(fleet_ssh_route_args ssh "$agent")
+  if [ "$SSH_CONTROL_REQUIRED" != 1 ]; then
+    printf '%s\0' "${route_parts[@]}"
+    return 0
+  fi
+  control_path="$(ssh_control_path_for_agent "$agent")"
+  # Always emit the explicit mux-proxy route, even if the socket has already
+  # disappeared.  This function is normally consumed through process
+  # substitution, whose exit status is not propagated to the caller.  An
+  # early return could therefore leave the caller with an unpinned route;
+  # ``-O proxy`` instead makes ssh itself fail closed without reconnecting.
+  if [ ! -S "$control_path" ]; then
+    echo "ERROR: ${agent}: pinned SSH control socket is unavailable" >&2
+  fi
+  last_index=$((${#route_parts[@]} - 1))
+  printf '%s\0' "${route_parts[@]:0:$last_index}"
+  # Unlike ordinary ControlPath reuse, explicit mux proxy mode is fail-closed:
+  # OpenSSH exits if the existing master is unavailable instead of reconnecting.
+  printf '%s\0' -S "$control_path" -O proxy
+  printf '%s\0' "${route_parts[$last_index]}"
+}
+
+ssh_target_args() {
+  pinned_fleet_route_args "$1"
+}
+
+remote_deployment_fenced_exec() {
+  local deployment_id="$1" ready="$2" code arg
+  shift 2
+  code='import fcntl,json,os,sys
+from pathlib import Path
+root=Path.home()/".mac"
+guard_path=root/"deploy-controller.guard"
+fd=os.open(str(guard_path), os.O_CREAT|os.O_RDWR, 0o600)
+os.fchmod(fd, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+owner=root/"deploy-controller.lock"/"owner.json"
+try:
+    payload=json.loads(owner.read_text(encoding="utf-8"))
+except (OSError,ValueError,TypeError) as exc:
+    raise SystemExit("deployment lock is unreadable: %s" % type(exc).__name__)
+if payload.get("deployment_id") != sys.argv[1]:
+    raise SystemExit("deployment lock fence does not match this controller")
+os.set_inheritable(fd, True)
+os.environ["MAC_DEPLOY_LOCK_GUARD_FD"]=str(fd)
+if sys.argv[2] == "1":
+    print("MAC_DEPLOY_FENCE_READY:" + sys.argv[1], flush=True)
+os.execvp(sys.argv[3], sys.argv[3:])'
+  printf 'python3 -c %s %s %s' "$(shell_quote "$code")" \
+    "$(shell_quote "$deployment_id")" "$(shell_quote "$ready")"
+  for arg in "$@"; do
+    printf ' %s' "$(shell_quote "$arg")"
+  done
+}
+
+stream_file_after_remote_fence() {
+  local source_file="$1" expected_ready="$2"
+  shift 2
+  # The payload file is deliberately not opened until the exact remote
+  # deployment owner has acquired the stable guard and emitted READY.
+  "$PYTHON_BIN" - "$source_file" "$expected_ready" "$@" <<'PY'
+import shutil
+import subprocess
+import sys
+
+source, expected, *command = sys.argv[1:]
+process = subprocess.Popen(
+    command,
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+)
+assert process.stdin is not None and process.stdout is not None
+line = process.stdout.readline().decode("utf-8", "replace").rstrip("\r\n")
+if line != expected:
+    process.terminate()
+    process.wait(timeout=10)
+    raise SystemExit("remote deployment fence did not emit the exact READY receipt")
+try:
+    with open(source, "rb") as payload:
+        shutil.copyfileobj(payload, process.stdin)
+    process.stdin.close()
+    for chunk in iter(lambda: process.stdout.read(65536), b""):
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+finally:
+    if process.stdin and not process.stdin.closed:
+        process.stdin.close()
+raise SystemExit(process.wait())
+PY
+}
+
+fenced_remote_upload() {
+  local agent="$1" deployment_id="$2" source_file="$3" destination="$4"
+  local ssh_parts=() ssh_args=() ssh_target item last_index remote_body remote_cmd
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  remote_body="set -e; umask 077; _mac_target=$(shell_quote "$destination"); _mac_tmp=\"\${_mac_target}.upload.$$\"; trap 'rm -f \"\$_mac_tmp\"' EXIT HUP INT TERM; cat > \"\$_mac_tmp\"; chmod 0600 \"\$_mac_tmp\"; mv -f \"\$_mac_tmp\" \"\$_mac_target\"; trap - EXIT HUP INT TERM"
+  remote_cmd="$(remote_deployment_fenced_exec "$deployment_id" 1 sh -c "$remote_body")"
+  stream_file_after_remote_fence "$source_file" \
+    "MAC_DEPLOY_FENCE_READY:${deployment_id}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$remote_cmd"
 }
 
 env_value_or_empty() {
@@ -1137,8 +1379,13 @@ make_archive() {
 }
 
 reconcile_remote_deploy() {
-  local agent="$1" target="$2" clear_repo_update_blocker="${3:-0}"
-  local ssh_parts=() ssh_args=() ssh_target item last_index
+  local agent="$1" _display_target="$2" clear_repo_update_blocker="${3:-0}"
+  # Routing is deliberately resolved again by agent name, but only against the
+  # immutable invocation snapshot.  The raw target is retained for the public
+  # function contract/log context and can no longer redirect reconciliation.
+  local ssh_parts=() ssh_args=() ssh_target item last_index deployment_id fence_exec
+  deployment_id="$(deployment_id_for_agent "$agent")"
+  fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 bash -s)"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
@@ -1152,7 +1399,7 @@ reconcile_remote_deploy() {
       sleep "$_sleep_interval"
     fi
     if ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") bash -s" <<'REMOTE'
+      "MAC_DEPLOY_AGENT=$(shell_quote "$agent") MAC_DEPLOY_TS=$(shell_quote "$TS") MAC_DEPLOY_GIT_REV=$(shell_quote "$GIT_REV") MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER=$(shell_quote "$clear_repo_update_blocker") $fence_exec" <<'REMOTE'
 set -euo pipefail
 agent="${MAC_DEPLOY_AGENT:?}"
 deploy_ts="${MAC_DEPLOY_TS:?}"
@@ -1298,48 +1545,1075 @@ REMOTE
   return 1
 }
 
-# Optional or role-required OpenShell sandbox-enforcement bootstrap. Run it
-# after a successful deploy when explicitly requested or the node role requires it. Pure
-# ``gateway_impl=none`` workers require it by default; fleet config may also set
-# ``worker.openshell_required`` explicitly. Required nodes always receive
-# ``--enable --fail-closed`` in addition to any caller flags. Conversational
-# nodes remain opt-in through MAC_DEPLOY_OPENSHELL=1. A bootstrap failure leaves
-# the worker stopped and drained instead of exposing an unconfined executor.
-run_openshell_bootstrap() {
-  local agent="$1" target="$2" bootstrap_args="${3:-}" ssh_parts=() ssh_args=() ssh_target last_index local_build_allowed
-  local runtime_image="${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
-  case "$(printf '%s' "${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-}" | tr 'A-Z' 'a-z')" in
-    1|true|yes|on) local_build_allowed=1 ;;
-    *) local_build_allowed=0 ;;
+hub_dispatch_hold_cas_available() {
+  local hub_agent ssh_parts=() ssh_args=() ssh_target last_index item
+  hub_agent="$(fleet_hub_agent)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    'set -euo pipefail; set -a; . "$HOME/.mac/mac.env"; set +a; export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"; "$HOME/.mac/venv/bin/python" - <<'"'"'PY'"'"'
+import json
+import os
+import urllib.request
+
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+request = urllib.request.Request(
+    hub_url + "/openapi.json",
+    headers={
+        "Authorization": "Bearer " + os.environ["MAC_DEPLOY_GATE_ADMIN_TOKEN"],
+        "Accept": "application/json",
+    },
+)
+with urllib.request.urlopen(request, timeout=15) as response:
+    payload = json.load(response)
+paths = payload.get("paths") if isinstance(payload, dict) else None
+required = {
+    "/agents/{agent_id}/dispatch-hold/acquire",
+    "/agents/{agent_id}/dispatch-hold/release",
+    "/agents/dispatch-hold/release-batch",
+}
+if not isinstance(paths, dict) or not required.issubset(paths):
+    raise SystemExit(1)
+PY'
+}
+
+preflight_cohort_hold_adoptions() {
+  # Freeze the selected names/ids, read every live hub row once, then validate
+  # all exact-reason authority locally.  No hold CAS, drain, stop, or other
+  # mutation may precede this whole-cohort decision.
+  local selected_specs_file="$1" plan_output="$2" hub_agent="$3"
+  local cohort_file="$TMPDIR_LOCAL/hold-adoption-cohort.jsonl"
+  local rows_file="$TMPDIR_LOCAL/hold-adoption-live-rows.json"
+  local spec agent agent_id fleet_name item request_b64 rows_json
+  local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target last_index
+  : > "$cohort_file"
+  chmod 0600 "$cohort_file"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a spec_fields <<<"$spec"
+    agent="${spec_fields[0]}"
+    agent_id="$(stable_worker_agent_id "$agent")"
+    fleet_name="${spec_fields[23]:-mac}"
+    "$PYTHON_BIN" - "$cohort_file" "$agent" "$agent_id" "$fleet_name" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "a", encoding="utf-8") as stream:
+    stream.write(
+        json.dumps(
+            {"agent": sys.argv[2], "agent_id": sys.argv[3], "fleet": sys.argv[4]},
+            sort_keys=True,
+        )
+        + "\n"
+    )
+PY
+  done < "$selected_specs_file"
+
+  local cohort_values selected_fleet selected_ids=()
+  cohort_values="$($PYTHON_BIN - "$cohort_file" <<'PY'
+import json
+import sys
+
+entries = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+if not entries:
+    raise SystemExit("hold-adoption cohort is empty")
+names = [entry["agent"] for entry in entries]
+ids = [entry["agent_id"] for entry in entries]
+fleets = {entry["fleet"] for entry in entries}
+if len(set(names)) != len(names) or len(set(ids)) != len(ids):
+    raise SystemExit("hold-adoption cohort contains duplicate names or stable ids")
+if len(fleets) != 1:
+    raise SystemExit("hold-adoption cohort spans multiple fleet identities")
+print(next(iter(fleets)))
+for agent_id in ids:
+    print(agent_id)
+PY
+)"
+  selected_fleet="${cohort_values%%$'\n'*}"
+  while IFS= read -r agent_id; do
+    [ -n "$agent_id" ] && selected_ids+=("$agent_id")
+  done <<<"${cohort_values#*$'\n'}"
+
+  if [ -n "$HOLD_ADOPTIONS_FILE" ]; then
+    local validation_args=(
+      "$PYTHON_BIN" "$ROOT/scripts/deploy-hold-adoptions.py" validate-selected
+      "$HOLD_ADOPTIONS_FILE" --fleet "$selected_fleet" --hub-agent "$hub_agent"
+    )
+    for agent_id in "${selected_ids[@]}"; do
+      validation_args+=(--agent "$agent_id")
+    done
+    "${validation_args[@]}"
+  fi
+
+  request_b64="$($PYTHON_BIN - "$cohort_file" <<'PY'
+import base64
+import json
+import sys
+
+agent_ids = [
+    json.loads(line)["agent_id"]
+    for line in open(sys.argv[1], encoding="utf-8")
+    if line.strip()
+]
+print(base64.b64encode(json.dumps(agent_ids).encode("utf-8")).decode("ascii"))
+PY
+)"
+  while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#hub_ssh_parts[@]} - 1))
+  hub_ssh_target="${hub_ssh_parts[$last_index]}"
+  hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  rows_json="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64=$(shell_quote "$request_b64") bash -s" <<'REMOTE_HOLD_PREFLIGHT'
+set -euo pipefail
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"
+"$HOME/.mac/venv/bin/python" - <<'PY'
+import base64
+import json
+import os
+import urllib.error
+import urllib.request
+
+agent_ids = json.loads(
+    base64.b64decode(os.environ["MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64"])
+)
+if not isinstance(agent_ids, list) or any(not isinstance(value, str) for value in agent_ids):
+    raise SystemExit("invalid hold-adoption preflight agent set")
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+token = os.environ["MAC_DEPLOY_GATE_ADMIN_TOKEN"]
+rows = []
+for agent_id in agent_ids:
+    request = urllib.request.Request(
+        hub_url + "/agents/%s" % agent_id,
+        headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            row = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            row = None
+        else:
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(
+                "GET agent failed with HTTP %s: %s" % (exc.code, detail)
+            ) from exc
+    rows.append({"agent_id": agent_id, "row": row})
+print(json.dumps(rows, sort_keys=True))
+PY
+REMOTE_HOLD_PREFLIGHT
+)"
+  printf '%s\n' "$rows_json" > "$rows_file"
+  chmod 0600 "$rows_file"
+
+  "$PYTHON_BIN" - "$cohort_file" "$rows_file" "$HOLD_ADOPTIONS_FILE" \
+    "$REQUIRE_RELEASE_ALL_SELECTED" "$plan_output" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+cohort_path, rows_path, authority_path, require_all_raw, output_path = sys.argv[1:]
+cohort = [
+    json.loads(line)
+    for line in open(cohort_path, encoding="utf-8")
+    if line.strip()
+]
+live = json.load(open(rows_path, encoding="utf-8"))
+if not isinstance(live, list) or len(live) != len(cohort):
+    raise SystemExit("hub returned an incomplete hold-adoption preflight snapshot")
+authority = {}
+if authority_path:
+    payload = json.load(open(authority_path, encoding="utf-8"))
+    authority = {item["agent"]: item["reason"] for item in payload["adoptions"]}
+require_all = require_all_raw == "1"
+plan = []
+for expected, observed in zip(cohort, live):
+    agent_id = expected["agent_id"]
+    if not isinstance(observed, dict) or observed.get("agent_id") != agent_id:
+        raise SystemExit("hub returned a reordered or incorrect agent preflight snapshot")
+    row = observed.get("row")
+    if row is not None and (not isinstance(row, dict) or row.get("id") != agent_id):
+        raise SystemExit("hub returned the wrong live agent during hold preflight")
+    exists = row is not None and not row.get("deleted_at")
+    held = bool(exists and row.get("dispatch_hold"))
+    current_reason = str(row.get("dispatch_hold_reason") or "") if exists else ""
+    authorized = authority.get(agent_id, "")
+    if authorized and (not exists or not held):
+        raise SystemExit("hold adoption became stale for agent %s" % agent_id)
+    if authorized and current_reason != authorized:
+        raise SystemExit("hold adoption reason drifted for agent %s" % agent_id)
+    if require_all and held and not authorized:
+        raise SystemExit("selected held agent lacks exact adoption authority: %s" % agent_id)
+    plan.append(
+        {
+            "agent": expected["agent"],
+            "agent_id": agent_id,
+            "exists": exists,
+            "held": held,
+            "authorized_prior_reason": authorized,
+            "require_owned_after_prepare": require_all,
+        }
+    )
+
+output = Path(output_path)
+descriptor, raw = tempfile.mkstemp(prefix=output.name + ".", dir=str(output.parent))
+temporary = Path(raw)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(
+            {
+                "schema": "mac.dispatch_hold_adoption_plan.v1",
+                "require_release_all_selected": require_all,
+                "agents": plan,
+            },
+            stream,
+            sort_keys=True,
+        )
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.chmod(0o600)
+    os.replace(temporary, output)
+finally:
+    temporary.unlink(missing_ok=True)
+PY
+  echo "==> fleet: exact hold-adoption preflight passed for ${#selected_ids[@]} selected agent(s)"
+}
+
+hold_adoption_reason_for_agent() {
+  local plan="$1" agent_id="$2"
+  "$PYTHON_BIN" - "$plan" "$agent_id" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+matches = [
+    item for item in payload.get("agents", []) if item.get("agent_id") == sys.argv[2]
+]
+if len(matches) != 1:
+    raise SystemExit("hold-adoption plan lacks the exact selected agent")
+print(matches[0].get("authorized_prior_reason") or "")
+PY
+}
+
+hub_agent_restart_gate() {
+  # Run the dispatch barrier from the hub itself so the administrative bearer
+  # never crosses onto a worker.  The hub's clock is also the only clock used
+  # for the strict post-restart heartbeat comparison.
+  local phase="$1" agent_id="$2" generation="${3:-}" baseline_seen="${4:-}"
+  local hold_reason="${5:-}" prior_owned="${6:-0}" allow_missing="${7:-0}"
+  local require_authenticated="${8:-0}"
+  local prior_hold_reason="${9:-$hold_reason}"
+  local expected_principal_id="${10:-}"
+  local authorized_prior_reason="${11:-}"
+  local require_owned_after_prepare="${12:-0}"
+  local hub_agent ssh_parts=() ssh_args=() ssh_target last_index item
+  hub_agent="$(fleet_hub_agent)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+    "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_GATE_PHASE=$(shell_quote "$phase") MAC_DEPLOY_GATE_AGENT_ID=$(shell_quote "$agent_id") MAC_DEPLOY_GATE_GENERATION=$(shell_quote "$generation") MAC_DEPLOY_GATE_BASELINE=$(shell_quote "$baseline_seen") MAC_DEPLOY_GATE_HOLD_REASON=$(shell_quote "$hold_reason") MAC_DEPLOY_GATE_PRIOR_HOLD_REASON=$(shell_quote "$prior_hold_reason") MAC_DEPLOY_GATE_PRIOR_OWNED=$(shell_quote "$prior_owned") MAC_DEPLOY_GATE_ALLOW_MISSING=$(shell_quote "$allow_missing") MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED=$(shell_quote "$require_authenticated") MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID=$(shell_quote "$expected_principal_id") MAC_DEPLOY_GATE_ADOPT_REASON=$(shell_quote "$authorized_prior_reason") MAC_DEPLOY_GATE_REQUIRE_OWNED=$(shell_quote "$require_owned_after_prepare") MAC_DEPLOY_GATE_TIMEOUT=$(shell_quote "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}") bash -s" <<'REMOTE_HUB_GATE'
+set -euo pipefail
+set -a
+# shellcheck source=/dev/null -- owner-only hub deployment environment.
+. "$HOME/.mac/mac.env"
+set +a
+export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"
+"$HOME/.mac/venv/bin/python" - <<'PY'
+import datetime as dt
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+
+phase = os.environ["MAC_DEPLOY_GATE_PHASE"]
+agent_id = os.environ["MAC_DEPLOY_GATE_AGENT_ID"]
+generation = os.environ.get("MAC_DEPLOY_GATE_GENERATION", "")
+baseline_text = os.environ.get("MAC_DEPLOY_GATE_BASELINE", "")
+hold_reason = os.environ.get("MAC_DEPLOY_GATE_HOLD_REASON", "")
+prior_hold_reason = os.environ.get("MAC_DEPLOY_GATE_PRIOR_HOLD_REASON", "")
+prior_owned = os.environ.get("MAC_DEPLOY_GATE_PRIOR_OWNED", "0") == "1"
+allow_missing = os.environ.get("MAC_DEPLOY_GATE_ALLOW_MISSING", "0") == "1"
+require_authenticated = (
+    os.environ.get("MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED", "0") == "1"
+)
+expected_principal_id = os.environ.get("MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID", "")
+authorized_prior_reason = os.environ.get("MAC_DEPLOY_GATE_ADOPT_REASON", "")
+require_owned_after_prepare = os.environ.get("MAC_DEPLOY_GATE_REQUIRE_OWNED", "0") == "1"
+timeout = max(1.0, float(os.environ.get("MAC_DEPLOY_GATE_TIMEOUT") or "1800"))
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+token = os.environ.get("MAC_DEPLOY_GATE_ADMIN_TOKEN") or ""
+if not hub_url or not token or not agent_id:
+    raise SystemExit("hub restart gate lacks URL, administrative authority, or agent id")
+if require_authenticated and not expected_principal_id:
+    raise SystemExit("authenticated deployment release lacks the newly issued principal id")
+
+
+def api(method, path, body=None, *, missing_ok=False):
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        hub_url + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/json",
+            **({"Content-Type": "application/json"} if data is not None else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        if missing_ok and exc.code == 404:
+            return None
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(
+            "%s %s failed with HTTP %s: %s" % (method, path, exc.code, detail)
+        ) from exc
+    return json.loads(raw) if raw else None
+
+
+def agent_row(*, missing_ok=False):
+    row = api("GET", "/agents/%s" % agent_id, missing_ok=missing_ok)
+    # A tombstone is historical identity, not a runnable worker.  During the
+    # initial gate treat it exactly like an absent agent so the restarted,
+    # administrator-authorized registration follows the prepare-new path and
+    # immediately reacquires this deployment's hold before strict proof.
+    if row is not None and row.get("deleted_at") and missing_ok:
+        return None
+    if row is None and not missing_ok:
+        raise RuntimeError("agent %s is absent from the hub" % agent_id)
+    if row is not None and (not isinstance(row, dict) or row.get("id") != agent_id):
+        raise RuntimeError("GET /agents/%s returned the wrong agent" % agent_id)
+    return row
+
+
+def parse_seen(value):
+    if not value:
+        return None
+    return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def post_drain():
+    # This is an explicit operator/deployment transition, not a worker claim of
+    # identity. Use the admin-only agent update route so it remains valid after
+    # exact worker identity enforcement.
+    row = api(
+        "PUT",
+        "/agents/%s" % agent_id,
+        {"status": "draining", "health_status": "degraded"},
+    )
+    if not isinstance(row, dict) or row.get("id") != agent_id:
+        raise RuntimeError("drain heartbeat returned the wrong agent")
+    if row.get("status") != "draining":
+        raise RuntimeError("hub did not persist the draining state")
+    return row
+
+
+def active_work():
+    active = []
+    for state in ("claimed", "running"):
+        payload = api("GET", "/tasks?state=%s" % state)
+        if not isinstance(payload, list):
+            raise RuntimeError("GET /tasks?state=%s did not return a list" % state)
+        active.extend(
+            task
+            for task in payload
+            if isinstance(task, dict)
+            and task.get("owner_agent_id") == agent_id
+            and task.get("lease_id")
+            and task.get("state") == state
+        )
+    row = agent_row()
+    current_task_id = row.get("current_task_id")
+    if current_task_id and not any(task.get("id") == current_task_id for task in active):
+        active.append(
+            {
+                "id": current_task_id,
+                "state": "agent_current_task",
+                "owner_agent_id": agent_id,
+            }
+        )
+    return active
+
+
+def cas_hold(reason, *, expected_hold, expected_reason=None):
+    body = {"reason": reason, "expected_dispatch_hold": bool(expected_hold)}
+    if expected_hold:
+        body["expected_reason"] = expected_reason
+    payload = api(
+        "POST",
+        "/agents/%s/dispatch-hold/acquire" % agent_id,
+        body,
+    )
+    if not isinstance(payload, dict) or not isinstance(payload.get("agent"), dict):
+        raise RuntimeError("dispatch hold CAS returned an invalid response")
+    return bool(payload.get("changed")), payload["agent"]
+
+
+if phase == "legacy-bootstrap":
+    if authorized_prior_reason:
+        raise RuntimeError("legacy CAS bootstrap rejects dispatch-hold adoption")
+    row = agent_row()
+    if not row.get("dispatch_hold"):
+        raise RuntimeError(
+            "legacy CAS bootstrap requires the live hub agent to be pre-held"
+        )
+    post_drain()
+    deadline = time.monotonic() + timeout
+    while True:
+        active = active_work()
+        if not active:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "active work did not drain before legacy hub bootstrap: %s"
+                % ",".join(str(task.get("id")) for task in active)
+            )
+        time.sleep(5)
+    row = post_drain()
+    if not row.get("dispatch_hold"):
+        raise RuntimeError("pre-existing hub hold disappeared during CAS bootstrap")
+    print(
+        json.dumps(
+            {
+                "exists": True,
+                "baseline_seen": str(row.get("last_seen_at") or ""),
+                "owns_hold": False,
+            },
+            sort_keys=True,
+        )
+    )
+    raise SystemExit(0)
+
+if phase == "prepare-new":
+    deadline = time.monotonic() + min(timeout, 300.0)
+    while agent_row(missing_ok=True) is None:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "new worker never atomically registered under its local deployment barrier"
+            )
+        time.sleep(2)
+    phase = "prepare"
+
+if phase == "prepare":
+    row = agent_row(missing_ok=allow_missing)
+    if row is None:
+        if authorized_prior_reason:
+            raise RuntimeError("hold adoption became stale because the agent is absent")
+        print(json.dumps({"exists": False, "baseline_seen": "", "owns_hold": False}))
+        raise SystemExit(0)
+    if not hold_reason:
+        raise RuntimeError("deployment hold reason is required")
+    owns_hold = False
+    if authorized_prior_reason:
+        if not bool(row.get("dispatch_hold")):
+            raise RuntimeError("hold adoption became stale because the hold was cleared")
+        if row.get("dispatch_hold_reason") != authorized_prior_reason:
+            raise RuntimeError("hold adoption reason changed before exact CAS")
+        changed, row = cas_hold(
+            hold_reason,
+            expected_hold=True,
+            expected_reason=authorized_prior_reason,
+        )
+        if not changed:
+            raise RuntimeError("exact dispatch-hold adoption CAS did not change the hold")
+        if not row.get("dispatch_hold") or row.get("dispatch_hold_reason") != hold_reason:
+            raise RuntimeError("exact dispatch-hold adoption returned the wrong hold")
+        owns_hold = True
+    elif bool(row.get("dispatch_hold")):
+        if require_owned_after_prepare:
+            # Exact full-cohort mode never upgrades a stale controller's
+            # remembered reason into current ownership. Without explicit
+            # adoption authority, only this invocation's unique reason counts.
+            owns_hold = prior_owned and row.get("dispatch_hold_reason") == hold_reason
+        else:
+            owns_hold = prior_owned and row.get("dispatch_hold_reason") in {
+                hold_reason,
+                prior_hold_reason,
+            }
+        if owns_hold and row.get("dispatch_hold_reason") != hold_reason:
+            changed, row = cas_hold(
+                hold_reason,
+                expected_hold=True,
+                expected_reason=row.get("dispatch_hold_reason"),
+            )
+            owns_hold = changed
+    else:
+        changed, row = cas_hold(
+            hold_reason,
+            expected_hold=False,
+        )
+        owns_hold = changed
+    if not row.get("dispatch_hold"):
+        raise RuntimeError("deployment dispatch-hold CAS lost without a replacement hold")
+    if owns_hold and row.get("dispatch_hold_reason") != hold_reason:
+        raise RuntimeError("hub persisted an unexpected deployment hold reason")
+    if require_owned_after_prepare and not owns_hold:
+        raise RuntimeError(
+            "exact full-cohort release lost deployment hold ownership before drain"
+        )
+    post_drain()
+    deadline = time.monotonic() + timeout
+    while True:
+        active = active_work()
+        if not active:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "active work did not drain before worker restart: %s"
+                % ",".join(str(task.get("id")) for task in active)
+            )
+        time.sleep(5)
+    # A lease renewal can project BUSY while we wait. Reassert the drain only
+    # after the attachment set is empty, then take the hub-side baseline.
+    row = post_drain()
+    if not row.get("dispatch_hold"):
+        raise RuntimeError("dispatch hold disappeared while active leases drained")
+    if owns_hold and row.get("dispatch_hold_reason") != hold_reason:
+        raise RuntimeError("deployment-owned dispatch hold was replaced")
+    print(
+        json.dumps(
+            {
+                "exists": True,
+                "baseline_seen": str(row.get("last_seen_at") or ""),
+                "owns_hold": owns_hold,
+            },
+            sort_keys=True,
+        )
+    )
+elif phase == "verify":
+    if not generation or not baseline_text:
+        raise RuntimeError("restart verification lacks generation or hub baseline")
+    baseline = parse_seen(baseline_text)
+    deadline = time.monotonic() + min(timeout, 300.0)
+    last_error = "heartbeat not observed"
+    while time.monotonic() < deadline:
+        row = agent_row()
+        resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+        seen = parse_seen(row.get("last_seen_at"))
+        if (
+            seen is not None
+            and baseline is not None
+            and seen > baseline
+            and row.get("status") == "draining"
+            and row.get("health_status") == "degraded"
+            and row.get("current_task_id") is None
+            and bool(row.get("dispatch_hold"))
+            and resources.get("deployment_generation") == generation
+        ):
+            print(json.dumps({"agent_id": agent_id, "last_seen_at": row["last_seen_at"]}))
+            break
+        last_error = "agent lacks strict generation, drain, hold, or clock proof"
+        time.sleep(2)
+    else:
+        raise RuntimeError("restarted worker failed strict heartbeat proof: " + last_error)
+elif phase in {"arm", "release"}:
+    if not generation or not baseline_text:
+        raise RuntimeError("deployment release lacks generation or hub baseline")
+    baseline = parse_seen(baseline_text)
+    deadline = time.monotonic() + min(timeout, 300.0)
+    last_error = "worker-generated idle heartbeat not observed"
+    while time.monotonic() < deadline:
+        row = agent_row()
+        resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+        authenticated = resources.get("worker_credential_authenticated")
+        seen = parse_seen(row.get("last_seen_at"))
+        auth_ok = not require_authenticated or (
+            isinstance(authenticated, dict)
+            and authenticated.get("agent_id") == agent_id
+            and authenticated.get("principal_id") == expected_principal_id
+        )
+        if (
+            seen is not None
+            and baseline is not None
+            and seen > baseline
+            and row.get("status") == "idle"
+            and row.get("health_status") == "healthy"
+            and row.get("current_task_id") is None
+            and bool(row.get("dispatch_hold"))
+            and resources.get("deployment_generation") == generation
+            and auth_ok
+            and not active_work()
+        ):
+            break
+        last_error = "agent lacks strict idle, healthy, generation, hold, lease, or credential proof"
+        time.sleep(2)
+    else:
+        raise RuntimeError("deployment release proof failed: " + last_error)
+    if phase == "arm":
+        print(
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "release_ready": True,
+                    "hold_reason": row.get("dispatch_hold_reason"),
+                },
+                sort_keys=True,
+            )
+        )
+        raise SystemExit(0)
+    cleared = False
+    if prior_owned:
+        if row.get("dispatch_hold_reason") != hold_reason:
+            raise RuntimeError("refusing to clear a hold no longer owned by this deployment")
+        payload = api(
+            "POST",
+            "/agents/%s/dispatch-hold/release" % agent_id,
+            {"reason": hold_reason},
+        )
+        if not isinstance(payload, dict) or not isinstance(payload.get("agent"), dict):
+            raise RuntimeError("dispatch hold release CAS returned an invalid response")
+        if not payload.get("released"):
+            raise RuntimeError("deployment dispatch hold ownership changed before release")
+        row = payload["agent"]
+        cleared = True
+    print(json.dumps({"agent_id": agent_id, "hold_cleared": cleared}, sort_keys=True))
+elif phase == "rehold":
+    row = agent_row()
+    if not row.get("dispatch_hold"):
+        _changed, row = cas_hold(hold_reason, expected_hold=False)
+    if not row.get("dispatch_hold"):
+        raise RuntimeError("could not restore a durable dispatch hold")
+    post_drain()
+    print(json.dumps({"agent_id": agent_id, "dispatch_hold": True}, sort_keys=True))
+else:
+    raise RuntimeError("unsupported hub restart gate phase: %s" % phase)
+PY
+REMOTE_HUB_GATE
+}
+
+remote_deployment_hold_state() {
+  local agent="$1" ssh_parts=() ssh_args=() ssh_target last_index item
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    'python3 - <<'"'"'PY'"'"'
+import json
+from pathlib import Path
+
+path = Path.home() / ".mac" / "deploy-dispatch-hold.json"
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except (FileNotFoundError, OSError, ValueError, TypeError):
+    payload = {}
+print(json.dumps(payload if isinstance(payload, dict) else {}, sort_keys=True))
+PY'
+}
+
+deployment_id_for_agent() {
+  local agent="$1"
+  printf '%s:%s:%s:%s' "$GIT_REV" "$agent" "$TS" "$DEPLOY_CONTROLLER_NONCE"
+}
+
+acquire_remote_deployment_lock() {
+  local agent="$1" deployment_id="$2" ssh_parts=() ssh_args=() ssh_target last_index item
+  local takeover=0
+  case "$(printf '%s' "${MAC_DEPLOY_TAKEOVER_STALE_LOCK:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) takeover=1 ;;
   esac
-  if [ -z "$runtime_image" ] && [ "$local_build_allowed" != 1 ]; then
-    echo "==> ${agent}: ERROR: OpenShell requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE with an immutable digest" >&2
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_LOCK_ID=$(shell_quote "$deployment_id") MAC_DEPLOY_LOCK_TAKEOVER=$(shell_quote "$takeover") MAC_DEPLOY_LOCK_STALE_SECONDS=$(shell_quote "${MAC_DEPLOY_STALE_LOCK_SECONDS:-3600}") python3 - <<'PY'
+import json
+import os
+import shutil
+import tempfile
+import time
+import fcntl
+from pathlib import Path
+
+deployment_id = os.environ['MAC_DEPLOY_LOCK_ID']
+allow_takeover = os.environ['MAC_DEPLOY_LOCK_TAKEOVER'] == '1'
+stale_seconds = max(60.0, float(os.environ['MAC_DEPLOY_LOCK_STALE_SECONDS']))
+root = Path.home() / '.mac'
+root.mkdir(parents=True, exist_ok=True)
+lock = root / 'deploy-controller.lock'
+owner_path = lock / 'owner.json'
+guard_path = root / 'deploy-controller.guard'
+
+guard_fd = os.open(str(guard_path), os.O_CREAT | os.O_RDWR, 0o600)
+os.fchmod(guard_fd, 0o600)
+fcntl.flock(guard_fd, fcntl.LOCK_EX)
+
+def owner():
+    try:
+        value = json.loads(owner_path.read_text(encoding='utf-8'))
+    except (OSError, ValueError, TypeError):
+        value = {}
+    return value if isinstance(value, dict) else {}
+
+try:
+    try:
+        lock.mkdir(mode=0o700)
+    except FileExistsError:
+        current = owner()
+        if current.get('deployment_id') == deployment_id:
+            raise SystemExit(0)
+        renewed = current.get('renewed_at_epoch') or current.get('created_at_epoch')
+        try:
+            renewed_epoch = float(renewed)
+        except (TypeError, ValueError):
+            renewed_epoch = lock.stat().st_mtime
+        age = max(0.0, time.time() - renewed_epoch)
+        if not allow_takeover or age < stale_seconds:
+            raise SystemExit(
+                'another deployment owns this node: %s (age %.0fs); explicit stale takeover required'
+                % (current.get('deployment_id') or 'unknown', age)
+            )
+        # The stable fcntl guard covers owner read, stale decision, rename, and
+        # replacement. A concurrent renewer cannot refresh between stat/read
+        # and rename, and cannot resolve a replacement lock directory mid-write.
+        stale = root / (
+            'deploy-controller.lock.stale.%d.%d'
+            % (time.time_ns(), os.getpid())
+        )
+        os.replace(lock, stale)
+        lock.mkdir(mode=0o700)
+        shutil.rmtree(stale)
+
+    now = time.time()
+    payload = {
+        'schema': 'mac.deploy_controller_lock.v1',
+        'deployment_id': deployment_id,
+        'created_at_epoch': now,
+        'renewed_at_epoch': now,
+    }
+    fd, raw = tempfile.mkstemp(prefix='owner.json.', dir=str(lock))
+    tmp = Path(raw)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(json.dumps(payload, sort_keys=True) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.chmod(0o600)
+        os.replace(tmp, owner_path)
+        directory_fd = os.open(lock, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
+finally:
+    fcntl.flock(guard_fd, fcntl.LOCK_UN)
+    os.close(guard_fd)
+PY"
+}
+
+assert_remote_deployment_lock() {
+  local agent="$1" deployment_id="$2" ssh_parts=() ssh_args=() ssh_target last_index item
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_LOCK_ID=$(shell_quote "$deployment_id") python3 - <<'PY'
+import json
+import os
+import tempfile
+import time
+import fcntl
+from pathlib import Path
+
+root = Path.home() / '.mac'
+path = root / 'deploy-controller.lock' / 'owner.json'
+guard_path = root / 'deploy-controller.guard'
+guard_fd = os.open(str(guard_path), os.O_CREAT | os.O_RDWR, 0o600)
+os.fchmod(guard_fd, 0o600)
+fcntl.flock(guard_fd, fcntl.LOCK_EX)
+try:
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit('deployment lock is unreadable: %s' % type(exc).__name__)
+    if payload.get('deployment_id') != os.environ['MAC_DEPLOY_LOCK_ID']:
+        raise SystemExit('deployment lock fence does not match this controller')
+    payload['renewed_at_epoch'] = time.time()
+    fd, raw = tempfile.mkstemp(prefix=path.name + '.', dir=str(path.parent))
+    tmp = Path(raw)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(json.dumps(payload, sort_keys=True) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.chmod(0o600)
+        os.replace(tmp, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
+finally:
+    fcntl.flock(guard_fd, fcntl.LOCK_UN)
+    os.close(guard_fd)
+PY"
+}
+
+release_remote_deployment_lock() {
+  local agent="$1" deployment_id="$2" ssh_parts=() ssh_args=() ssh_target last_index item
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_LOCK_ID=$(shell_quote "$deployment_id") python3 - <<'PY'
+import json
+import os
+import fcntl
+from pathlib import Path
+
+root = Path.home() / '.mac'
+lock = root / 'deploy-controller.lock'
+owner = lock / 'owner.json'
+guard_path = root / 'deploy-controller.guard'
+guard_fd = os.open(str(guard_path), os.O_CREAT | os.O_RDWR, 0o600)
+os.fchmod(guard_fd, 0o600)
+fcntl.flock(guard_fd, fcntl.LOCK_EX)
+try:
+    payload = json.loads(owner.read_text(encoding='utf-8'))
+    if payload.get('deployment_id') != os.environ['MAC_DEPLOY_LOCK_ID']:
+        raise SystemExit('refusing to release another deployment controller lock')
+    owner.unlink()
+    lock.rmdir()
+finally:
+    fcntl.flock(guard_fd, fcntl.LOCK_UN)
+    os.close(guard_fd)
+PY"
+}
+
+write_remote_deployment_hold_state() {
+  local agent="$1" deployment_id="$2" hold_reason="$3" owns_hold="$4"
+  local agent_existed="${5:-1}"
+  local adopted_from_reason="${6:-}"
+  local require_owned_after_prepare="${7:-0}"
+  local ssh_parts=() ssh_args=() ssh_target last_index item fence_exec
+  fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_STATE_ID=$(shell_quote "$deployment_id") MAC_DEPLOY_STATE_REASON=$(shell_quote "$hold_reason") MAC_DEPLOY_STATE_OWNS=$(shell_quote "$owns_hold") MAC_DEPLOY_STATE_AGENT_EXISTED=$(shell_quote "$agent_existed") MAC_DEPLOY_STATE_ADOPTED_FROM=$(shell_quote "$adopted_from_reason") MAC_DEPLOY_STATE_REQUIRE_OWNED=$(shell_quote "$require_owned_after_prepare") $fence_exec <<'PY'
+import json
+import os
+import tempfile
+from pathlib import Path
+
+directory = Path.home() / '.mac'
+directory.mkdir(parents=True, exist_ok=True)
+path = directory / 'deploy-dispatch-hold.json'
+fd, raw = tempfile.mkstemp(prefix=path.name + '.', dir=str(directory))
+tmp = Path(raw)
+try:
+    with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+        payload = {
+            'schema': 'mac.deploy_dispatch_hold.v1',
+            'deployment_id': os.environ['MAC_DEPLOY_STATE_ID'],
+            'hold_reason': os.environ['MAC_DEPLOY_STATE_REASON'],
+            'owns_hold': os.environ['MAC_DEPLOY_STATE_OWNS'] == '1',
+            'agent_existed': os.environ['MAC_DEPLOY_STATE_AGENT_EXISTED'] == '1',
+            'require_owned_after_prepare': os.environ['MAC_DEPLOY_STATE_REQUIRE_OWNED'] == '1',
+        }
+        if os.environ.get('MAC_DEPLOY_STATE_ADOPTED_FROM'):
+            payload['adopted_from_reason'] = os.environ['MAC_DEPLOY_STATE_ADOPTED_FROM']
+        json.dump(payload, stream, sort_keys=True)
+        stream.write('\\n')
+    tmp.chmod(0o600)
+    os.replace(tmp, path)
+finally:
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+PY"
+}
+
+set_remote_mac_startup_hold_policy() {
+  local agent="$1" value="$2" ssh_parts=() ssh_args=() ssh_target last_index item
+  local deployment_id fence_exec
+  deployment_id="$(deployment_id_for_agent "$agent")"
+  fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_STARTUP_CLEAR_HOLD=$(shell_quote "$value") $fence_exec <<'PY'
+import os
+import tempfile
+from pathlib import Path
+
+path = Path.home() / '.mac' / 'mac.env'
+if path.exists():
+    # Avoid importing the not-yet-deployed mac package: preserve all existing
+    # assignments and replace/append only this simple numeric policy value.
+    lines = path.read_text(encoding='utf-8').splitlines()
+    key = 'MAC_STARTUP_CLEAR_HOLD'
+    replacement = key + '=' + os.environ['MAC_DEPLOY_STARTUP_CLEAR_HOLD']
+    updated = []
+    replaced = False
+    for line in lines:
+        if line.startswith(key + '=') or line.startswith('export ' + key + '='):
+            if not replaced:
+                updated.append(replacement)
+                replaced = True
+        else:
+            updated.append(line)
+    if not replaced:
+        updated.append(replacement)
+    fd, raw = tempfile.mkstemp(prefix=path.name + '.', dir=str(path.parent))
+    tmp = Path(raw)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write('\\n'.join(updated) + '\\n')
+        tmp.chmod(0o600)
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+PY"
+}
+
+prepare_remote_mac_agent_deployment() {
+  local agent="$1" deployment_id="$2" supervisor="${3:-auto}" fleet_name="${4:-mac}"
+  local adoption_reason="${5:-}" require_owned_after_prepare="${6:-0}"
+  local agent_id state prior_owned prior_hold_reason hold_reason result owns_hold agent_existed gate_phase=prepare
+  agent_id="$(stable_worker_agent_id "$agent")"
+  if ! hub_dispatch_hold_cas_available; then
+    if [ -n "$adoption_reason" ] || [ "$require_owned_after_prepare" = 1 ]; then
+      echo "==> ${agent}: legacy CAS bootstrap rejects hold adoption and exact full-cohort release" >&2
+      return 1
+    fi
+    case "$(printf '%s' "${MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP:-0}" | tr '[:upper:]' '[:lower:]')" in
+      1|true|yes|on) ;;
+      *)
+        echo "==> ${agent}: live hub lacks dispatch-hold CAS routes; deploy the pre-held hub first with explicit MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP=1" >&2
+        return 1
+        ;;
+    esac
+    if [ "$agent" != "$(fleet_hub_agent)" ]; then
+      echo "==> ${agent}: legacy CAS bootstrap is restricted to the configured hub agent" >&2
+      return 1
+    fi
+    gate_phase=legacy-bootstrap
+    echo "==> ${agent}: using one-time pre-held hub bootstrap to install CAS routes"
+  fi
+  acquire_remote_deployment_lock "$agent" "$deployment_id"
+  state="$(remote_deployment_hold_state "$agent")"
+  prior_owned="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+  prior_hold_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("hold_reason") or "")')"
+  hold_reason="mac fleet deployment ${deployment_id}"
+  result="$(hub_agent_restart_gate "$gate_phase" "$agent_id" "" "" "$hold_reason" "$prior_owned" 1 0 "$prior_hold_reason" "" "$adoption_reason" "$require_owned_after_prepare")"
+  owns_hold="$(printf '%s' "$result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+  agent_existed="$(printf '%s' "$result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("exists") else "0")')"
+  if [ "$require_owned_after_prepare" = 1 ] \
+    && [ "$agent_existed" = 1 ] && [ "$owns_hold" != 1 ]; then
+    echo "==> ${agent}: exact full-cohort release requires deployment ownership of the live hold" >&2
+    return 1
+  fi
+  # This precedes every other target mutation. If the transaction rolls back
+  # and restarts an older worker, that restored process cannot clear the hub
+  # barrier before the outer controller performs an exact-generation restart.
+  set_remote_mac_startup_hold_policy "$agent" 0
+  write_remote_deployment_hold_state \
+    "$agent" "$deployment_id" "$hold_reason" "$owns_hold" "$agent_existed" \
+    "$adoption_reason" "$require_owned_after_prepare"
+  # A pre-cutover worker may not yet honor dispatch_hold before controls,
+  # service claims, or review nudges, and older review claims are not visible
+  # through current_task_id. Stop every selected worker immediately after its
+  # hub fence/drain proof. Phase 2 restarts only the new generation behind its
+  # local barrier, so completing phase 1 creates a real fleet-wide quiescent
+  # boundary rather than a best-effort database label.
+  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop
+  if [ "$gate_phase" = legacy-bootstrap ]; then
+    echo "==> ${agent}: legacy hub worker stopped after drain and before source mutation"
+  else
+    echo "==> ${agent}: worker stopped after drain and before cohort deployment"
+  fi
+  echo "==> ${agent}: durable hub dispatch barrier established before remote mutation"
+}
+
+set_remote_mac_agent_service() {
+  local agent="$1" supervisor="$2" fleet_name="$3" action="$4"
+  local release_mode="${5:-keep}" release_policy="${6:-authenticated}"
+  local expected_principal_id="${7:-}" release_commit_mode="${8:-immediate}"
+  local agent_id state deployment_id hold_reason prior_owned gate_result owns_hold release_result hold_cleared
+  local agent_existed adopted_from_reason require_owned_after_prepare new_agent=0
+  local generation="" baseline_seen="" release_baseline="" require_authenticated=1
+  local expected_deployment_id service_fence release_fence restore_fence cleanup_fence
+  local ssh_parts=() ssh_args=() ssh_target last_index item
+  agent_id="$(stable_worker_agent_id "$agent")"
+  expected_deployment_id="$(deployment_id_for_agent "$agent")"
+  service_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 bash -s)"
+  assert_remote_deployment_lock "$agent" "$expected_deployment_id"
+  state="$(remote_deployment_hold_state "$agent")"
+  deployment_id="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("deployment_id") or "")')"
+  hold_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("hold_reason") or "")')"
+  prior_owned="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+  agent_existed="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("agent_existed", True) else "0")')"
+  adopted_from_reason="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("adopted_from_reason") or "")')"
+  require_owned_after_prepare="$(printf '%s' "$state" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("require_owned_after_prepare") else "0")')"
+  [ -n "$deployment_id" ] && [ -n "$hold_reason" ] || {
+    echo "==> ${agent}: missing durable deployment hold state" >&2
+    return 1
+  }
+  if [ "$deployment_id" != "$expected_deployment_id" ]; then
+    echo "==> ${agent}: deployment state fence belongs to $deployment_id, expected $expected_deployment_id" >&2
     return 1
   fi
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  echo "==> ${agent}: OpenShell bootstrap (args='${bootstrap_args}')"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-    "MAC_DEPLOY_OPENSHELL_ARGS=$(shell_quote "$bootstrap_args") OSH_RUNTIME_IMAGE_REF=$(shell_quote "$runtime_image") bash -s" <<'REMOTE'
-set -euo pipefail
-mac_home="${MAC_HOME:-$HOME/.mac}"
-bs="$mac_home/src/mac/deploy/openshell/bootstrap-openshell.sh"
-[ -x "$bs" ] || { echo "OpenShell bootstrap not found/executable at $bs" >&2; exit 1; }
-exec "$bs" $MAC_DEPLOY_OPENSHELL_ARGS
-REMOTE
-}
 
-set_remote_mac_agent_service() {
-  local agent="$1" supervisor="$2" fleet_name="$3" action="$4"
-  local ssh_parts=() ssh_args=() ssh_target last_index item
-  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
-  last_index=$((${#ssh_parts[@]} - 1))
-  ssh_target="${ssh_parts[$last_index]}"
-  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  if [ "$action" = restart ]; then
+    generation="$($PYTHON_BIN - "$GIT_REV" "$agent" <<'PY'
+import secrets
+import sys
+
+print("%s-%s-%s" % (sys.argv[1], sys.argv[2], secrets.token_hex(16)))
+PY
+)"
+    gate_result="$(hub_agent_restart_gate prepare "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" "$([ "$agent_existed" = 0 ] && printf 1 || printf 0)" 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
+    baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
+    owns_hold="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+    new_agent="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("0" if json.load(sys.stdin).get("exists") else "1")')"
+    write_remote_deployment_hold_state "$agent" "$deployment_id" "$hold_reason" "$owns_hold" "$agent_existed" "$adopted_from_reason" "$require_owned_after_prepare"
+    prior_owned="$owns_hold"
+  elif [ "$action" = release ]; then
+    generation="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+      "$(remote_deployment_fenced_exec "$expected_deployment_id" 0 sh -c 'set -euo pipefail; set -a; . "$HOME/.mac/mac.env"; set +a; printf "%s" "${MAC_WORKER_DEPLOY_GENERATION:?}"')")"
+    gate_result="$(hub_agent_restart_gate prepare "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" 0 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
+    release_baseline="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
+    owns_hold="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+    write_remote_deployment_hold_state "$agent" "$deployment_id" "$hold_reason" "$owns_hold" 1 "$adopted_from_reason" "$require_owned_after_prepare"
+    prior_owned="$owns_hold"
+  fi
+
   ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" \
-    "MAC_DEPLOY_SERVICE_ACTION=$(shell_quote "$action") MAC_DEPLOY_SUPERVISOR=$(shell_quote "$supervisor") MAC_DEPLOY_FLEET_NAME=$(shell_quote "$fleet_name") bash -s" <<'REMOTE'
+    "MAC_DEPLOY_SERVICE_ACTION=$(shell_quote "$action") MAC_DEPLOY_SUPERVISOR=$(shell_quote "$supervisor") MAC_DEPLOY_FLEET_NAME=$(shell_quote "$fleet_name") MAC_DEPLOY_RESTART_GENERATION=$(shell_quote "$generation") $service_fence" <<'REMOTE'
 set -euo pipefail
 action="${MAC_DEPLOY_SERVICE_ACTION:?}"
 supervisor="${MAC_DEPLOY_SUPERVISOR:?}"
@@ -1355,27 +2629,84 @@ if [ "$supervisor" = "auto" ]; then
     exit 1
   fi
 fi
+if [ "$action" = restart ]; then
+  generation="${MAC_DEPLOY_RESTART_GENERATION:?}"
+  env_file="$HOME/.mac/mac.env"
+  barrier_path="$HOME/.mac/deploy-start-barrier"
+  MAC_DEPLOY_ENV_FILE="$env_file" MAC_DEPLOY_BARRIER_FILE="$barrier_path" \
+    MAC_DEPLOY_RESTART_GENERATION="$generation" \
+    "$HOME/.mac/venv/bin/python" - <<'PY'
+import os
+import tempfile
+from pathlib import Path
+
+from mac.deploy_env import read_env_file, write_env_file
+
+env_path = Path(os.environ["MAC_DEPLOY_ENV_FILE"])
+barrier_path = Path(os.environ["MAC_DEPLOY_BARRIER_FILE"])
+generation = os.environ["MAC_DEPLOY_RESTART_GENERATION"]
+values = read_env_file(env_path)
+values["MAC_WORKER_DEPLOY_GENERATION"] = generation
+values["MAC_WORKER_DEPLOY_BARRIER_FILE"] = str(barrier_path)
+values["MAC_STARTUP_CLEAR_HOLD"] = "0"
+fd, raw = tempfile.mkstemp(prefix=env_path.name + ".", dir=str(env_path.parent))
+os.close(fd)
+tmp = Path(raw)
+try:
+    write_env_file(tmp, values)
+    os.replace(tmp, env_path)
+finally:
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+barrier_tmp = barrier_path.with_name(barrier_path.name + ".tmp.%s" % os.getpid())
+barrier_tmp.write_text(generation + "\n", encoding="utf-8")
+barrier_tmp.chmod(0o600)
+os.replace(barrier_tmp, barrier_path)
+if barrier_path.read_text(encoding="utf-8").strip() != generation:
+    raise SystemExit("fresh deployment barrier verification failed")
+PY
+fi
 case "$supervisor" in
   supervisord)
-    if [ "$action" = "stop" ]; then
-      sudo supervisorctl stop mac-agent >/dev/null 2>&1 || true
-    else
-      sudo supervisorctl restart mac-agent >/dev/null
+    program="${MAC_DEPLOY_FLEET_NAME:?}-agent"
+    if [ "$action" = restart ] || [ "$action" = stop ]; then
+      sudo supervisorctl stop "$program" >/dev/null 2>&1 || true
+      status="$(sudo supervisorctl status "$program" 2>&1 || true)"
+      case "$status" in
+        *STOPPED*|*EXITED*|*FATAL*|*"no such process"*) ;;
+        *) echo "supervisord worker did not become inactive: $status" >&2; exit 1 ;;
+      esac
+    fi
+    if [ "$action" = restart ]; then
+      sudo supervisorctl start "$program" >/dev/null
     fi
     ;;
   systemd)
-    if [ "$action" = "stop" ]; then
-      sudo systemctl stop mac-agent.service >/dev/null 2>&1 || true
-    else
-      sudo systemctl restart mac-agent.service >/dev/null
+    unit="${MAC_DEPLOY_FLEET_NAME:?}-agent.service"
+    if [ "$action" = restart ] || [ "$action" = stop ]; then
+      sudo systemctl stop "$unit" >/dev/null 2>&1 || true
+      if sudo systemctl is-active --quiet "$unit"; then
+        echo "systemd worker remained active after stop: $unit" >&2
+        exit 1
+      fi
+    fi
+    if [ "$action" = restart ]; then
+      sudo systemctl start "$unit" >/dev/null
     fi
     ;;
   launchd)
     label="com.${MAC_DEPLOY_FLEET_NAME:?}.agent"
     domain="gui/$(id -u)"
-    if [ "$action" = "stop" ]; then
+    if [ "$action" = restart ] || [ "$action" = stop ]; then
       launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-    else
+      if launchctl print "$domain/$label" >/dev/null 2>&1; then
+        echo "launchd worker remained loaded after bootout: $label" >&2
+        exit 1
+      fi
+    fi
+    if [ "$action" = restart ]; then
       # A deferred restart intentionally leaves the freshly written plist
       # unregistered until the post manifest has reconciled.  ``kickstart``
       # cannot load an absent job, so bootstrap it first when needed.
@@ -1384,12 +2715,157 @@ case "$supervisor" in
         [ -f "$plist" ] || { echo "launchd agent plist missing: $plist" >&2; exit 1; }
         launchctl bootstrap "$domain" "$plist"
       fi
-      launchctl kickstart -k "$domain/$label"
+      launchctl kickstart "$domain/$label"
     fi
     ;;
   *) echo "unsupported supervisor: $supervisor" >&2; exit 1 ;;
 esac
 REMOTE
+
+  if [ "$action" = restart ]; then
+    if [ "$new_agent" = 1 ]; then
+      gate_result="$(hub_agent_restart_gate prepare-new "$agent_id" "$generation" "" "$hold_reason" "$prior_owned" 0 0 "$hold_reason" "" "" "$require_owned_after_prepare")"
+      baseline_seen="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("baseline_seen") or "")')"
+      owns_hold="$(printf '%s' "$gate_result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("owns_hold") else "0")')"
+      prior_owned="$owns_hold"
+      write_remote_deployment_hold_state "$agent" "$deployment_id" "$hold_reason" "$owns_hold" 1 "$adopted_from_reason" "$require_owned_after_prepare"
+    fi
+    hub_agent_restart_gate verify "$agent_id" "$generation" "$baseline_seen" \
+      "$hold_reason" "$prior_owned" 0 0 >/dev/null
+    if [ "$release_mode" = keep ]; then
+      echo "==> ${agent}: exact generation restart kept under deployment barrier"
+      return 0
+    fi
+    echo "==> ${agent}: restart release mode is unsupported; activate credentials before explicit release" >&2
+    return 1
+  fi
+  if [ "$action" = release ]; then
+    # Unlinking the process barrier is not authorization: the durable dispatch
+    # hold remains until a worker-generated idle heartbeat advances the hub
+    # clock and the hub clears only this deployment's own hold.
+    release_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 bash -s)"
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+      "MAC_DEPLOY_RELEASE_GENERATION=$(shell_quote "$generation") $release_fence" <<'REMOTE_RELEASE'
+set -euo pipefail
+generation="${MAC_DEPLOY_RELEASE_GENERATION:?}"
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+barrier_path="${MAC_WORKER_DEPLOY_BARRIER_FILE:?}"
+[ "${MAC_WORKER_DEPLOY_GENERATION:?}" = "$generation" ]
+[ "$(cat "$barrier_path")" = "$generation" ]
+rm -f "$barrier_path"
+REMOTE_RELEASE
+    case "$release_policy" in
+      authenticated) require_authenticated=1 ;;
+      legacy) require_authenticated=0 ;;
+      *) echo "unsupported release policy: $release_policy" >&2; return 1 ;;
+    esac
+    local release_gate_phase=release
+    if [ "$release_commit_mode" = deferred ]; then
+      release_gate_phase=arm
+    elif [ "$release_commit_mode" != immediate ]; then
+      echo "unsupported deployment release commit mode: $release_commit_mode" >&2
+      return 1
+    fi
+    if ! release_result="$(hub_agent_restart_gate "$release_gate_phase" "$agent_id" "$generation" "$release_baseline" \
+      "$hold_reason" "$prior_owned" 0 "$require_authenticated" "$hold_reason" "$expected_principal_id")"; then
+      restore_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 bash -s)"
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+        "MAC_DEPLOY_RELEASE_GENERATION=$(shell_quote "$generation") $restore_fence" <<'REMOTE_RESTORE'
+set -euo pipefail
+generation="${MAC_DEPLOY_RELEASE_GENERATION:?}"
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+barrier_path="${MAC_WORKER_DEPLOY_BARRIER_FILE:?}"
+tmp="${barrier_path}.tmp.$$"
+printf '%s\n' "$generation" > "$tmp"
+chmod 0600 "$tmp"
+mv -f "$tmp" "$barrier_path"
+REMOTE_RESTORE
+      hub_agent_restart_gate rehold "$agent_id" "$generation" "" "$hold_reason" \
+        "$prior_owned" 0 0 >/dev/null || true
+      return 1
+    fi
+    if [ "$release_commit_mode" = deferred ]; then
+      local ready_file="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
+      "$PYTHON_BIN" - "$ready_file" "$agent" "$agent_id" "$supervisor" "$fleet_name" \
+        "$generation" "$release_baseline" "$hold_reason" "$prior_owned" \
+        "$expected_principal_id" "$require_authenticated" "$deployment_id" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+(
+    output,
+    agent,
+    agent_id,
+    supervisor,
+    fleet_name,
+    generation,
+    baseline,
+    hold_reason,
+    owns_hold,
+    principal_id,
+    require_authenticated,
+    deployment_id,
+) = sys.argv[1:]
+path = Path(output)
+fd, raw = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+tmp = Path(raw)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(
+            {
+                "schema": "mac.deploy_release_ready.v1",
+                "agent": agent,
+                "agent_id": agent_id,
+                "supervisor": supervisor,
+                "fleet_name": fleet_name,
+                "generation": generation,
+                "baseline_seen": baseline,
+                "hold_reason": hold_reason,
+                "owns_hold": owns_hold == "1",
+                "principal_id": principal_id,
+                "require_authenticated": require_authenticated == "1",
+                "deployment_id": deployment_id,
+            },
+            stream,
+            sort_keys=True,
+        )
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    tmp.chmod(0o600)
+    os.replace(tmp, path)
+finally:
+    tmp.unlink(missing_ok=True)
+PY
+      echo "==> ${agent}: release armed under durable hold for fleet epoch commit"
+      return 0
+    fi
+    hold_cleared="$(printf '%s' "$release_result" | "$PYTHON_BIN" -c 'import json,sys; print("1" if json.load(sys.stdin).get("hold_cleared") else "0")')"
+    # CAS release is the authorization linearization point. Never attempt to
+    # re-hold after it succeeds: work may already have been claimed. This file
+    # is retry bookkeeping only; managed nodes permanently retain
+    # MAC_STARTUP_CLEAR_HOLD=0 in mac.env.
+    cleanup_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 sh -c 'rm -f "$HOME/.mac/deploy-dispatch-hold.json"')"
+    if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+      "$cleanup_fence"; then
+      echo "==> ${agent}: WARNING: released successfully but could not remove deployment hold bookkeeping" >&2
+    fi
+    if ! release_remote_deployment_lock "$agent" "$expected_deployment_id"; then
+      echo "==> ${agent}: WARNING: released successfully but could not remove deployment controller lock" >&2
+    fi
+    if [ "$hold_cleared" = 1 ]; then
+      echo "==> ${agent}: deployment-owned dispatch barrier released after exact idle credential proof"
+    else
+      echo "==> ${agent}: process barrier released after exact idle credential proof; pre-existing operator dispatch hold preserved"
+    fi
+  fi
 }
 
 validate_router_topology_spec() {
@@ -1436,9 +2912,43 @@ validate_router_topology_spec() {
   fi
 }
 
+validate_openshell_runtime_image_spec() {
+  # Pure workers carry openshell_required in the frozen selected-host spec.
+  # Reject an incomplete production cohort locally, before the controller
+  # opens a remote connection or acquires any worker hold/lock.
+  local spec="$1" agent openshell_required openshell_enabled=0 request required
+  local fields=()
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]:-unknown}"
+  openshell_required="${fields[53]:-0}"
+  request="$(normalize_boolean_token "${MAC_DEPLOY_OPENSHELL:-}")"
+  required="$(normalize_boolean_token "$openshell_required")"
+  case "$request" in
+    1|true|yes|on) openshell_enabled=1 ;;
+  esac
+  case "$required" in
+    1|true|yes|on) openshell_enabled=1 ;;
+  esac
+  [ "$openshell_enabled" = 1 ] || return 0
+  case "$(printf '%s' "${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-}" | tr 'A-Z' 'a-z')" in
+    1|true|yes|on) return 0 ;;
+  esac
+  if [ -z "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ]; then
+    echo "ERROR: ${agent}: production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE before fleet phase 1" >&2
+    return 1
+  fi
+  case " ${MAC_DEPLOY_OPENSHELL_ARGS:-} " in
+    *" --skip-image "*)
+      echo "ERROR: ${agent}: --skip-image is incompatible with a digest-managed OpenShell deployment" >&2
+      return 1
+      ;;
+  esac
+}
+
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required remote_archive remote_registry ssh_args scp_args ssh_target scp_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" already_prepared="${7:-0}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required remote_archive remote_registry deploy_generation ssh_args ssh_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
   IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required <<<"$spec"
+  deploy_generation="$(deployment_id_for_agent "$agent")"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
   nvidia_base_url="$(fleet_scoped_env NVIDIA_BASE_URL "$agent")"
@@ -1470,15 +2980,21 @@ deploy_host() {
   fi
   remote_archive="/tmp/mac-${agent}-${TS}.tar.gz"
   remote_registry="/tmp/mac-fleets-${agent}-${TS}.yaml"
-  local ssh_parts=() scp_parts=() last_index
+  local ssh_parts=() last_index
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
-  while IFS= read -r -d '' item; do scp_parts+=("$item"); done < <(scp_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  last_index=$((${#scp_parts[@]} - 1))
-  scp_target="${scp_parts[$last_index]}"
-  scp_args=("${scp_parts[@]:0:$last_index}")
+
+  # Establish the durable hub-side dispatch barrier before any target-side
+  # personality, source, runtime, or service mutation. The node-local drain is
+  # defense in depth; this outer gate also works when the worker cannot reach
+  # the hub itself.
+  if [ "$already_prepared" != 1 ]; then
+    prepare_remote_mac_agent_deployment \
+      "$agent" "$deploy_generation" "$supervisor" "$fleet_name"
+  fi
+  assert_remote_deployment_lock "$agent" "$deploy_generation"
 
   # A non-interactive OpenClaw node must not inherit the stock blank wizard
   # identity.  The provisioner is a no-op when Hermes or a configured
@@ -1490,25 +3006,60 @@ deploy_host() {
   # worker deploy — a mentor being unavailable or the persona step failing
   # (e.g. openclaw-agent rejecting a multi-line --message) leaves the worker
   # perfectly able to claim and execute tasks. So it is best-effort/non-fatal.
-  if ! MAC_OPENCLAW_BOOTSTRAP_TOKEN="$hub_token" \
+  local personality_result personality_status personality_file personality_remote
+  local personality_install_cmd
+  if personality_result="$(MAC_OPENCLAW_BOOTSTRAP_TOKEN="$hub_token" \
     PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
       "$PYTHON_BIN" "$ROOT/scripts/provision-openclaw-personality.py" \
         --config "$FLEET_REGISTRY_CONFIG" \
         --fleet "$HUB_SELECTOR" \
         --agent "$agent" \
-        --hub-url "$hub_url"; then
+        --hub-url "$hub_url" \
+        --dry-run)"; then
+    personality_file="$TMPDIR_LOCAL/openclaw-personality-${agent}.json"
+    personality_status="$("$PYTHON_BIN" - "$personality_result" "$personality_file" <<'PY'
+import json
+import os
+import sys
+
+payload = json.loads(sys.argv[1])
+status = str(payload.get("status") or "")
+if status == "would_install":
+    proposal = payload.get("proposal")
+    if not isinstance(proposal, dict):
+        raise SystemExit("personality dry-run omitted its validated proposal")
+    with open(sys.argv[2], "w", encoding="utf-8") as stream:
+        json.dump(proposal, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.chmod(sys.argv[2], 0o600)
+print(status)
+PY
+)"
+    if [ "$personality_status" = would_install ]; then
+      personality_remote="/tmp/mac-openclaw-personality-${agent}-${TS}.json"
+      fenced_remote_upload "$agent" "$deploy_generation" \
+        "$personality_file" "$personality_remote"
+      personality_install_cmd="$(remote_deployment_fenced_exec "$deploy_generation" 0 sh -c \
+        "set -e; umask 077; mkdir -p \"\$HOME/.mac/openclaw/migration\"; chmod 0700 \"\$HOME/.mac/openclaw\" \"\$HOME/.mac/openclaw/migration\"; mv -f $(shell_quote "$personality_remote") \"\$HOME/.mac/openclaw/migration/personality-proposal.json\"; chmod 0600 \"\$HOME/.mac/openclaw/migration/personality-proposal.json\"")"
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+        "${ssh_args[@]}" "$ssh_target" "$personality_install_cmd"
+      rm -f "$personality_file"
+      echo "==> ${agent}: installed validated OpenClaw personality under deployment fence"
+    fi
+  else
     echo "==> ${agent}: OpenClaw persona provisioning skipped (non-fatal) — a worker does not require a persona"
   fi
 
+  assert_remote_deployment_lock "$agent" "$deploy_generation"
   echo "==> ${agent}: copying mac release archive"
-  # OpenSSH 9 switched scp to SFTP by default. Minimal fleet containers often
-  # expose the SCP protocol through sshd but intentionally omit an SFTP
-  # subsystem; force the portable legacy SCP wire protocol for both kinds of
-  # host. Authentication, ProxyJump, host-key policy, and destination paths
-  # remain the same.
-  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$ARCHIVE" "${scp_target}:${remote_archive}"
+  # Stream every node-target file through a same-session exact fence. A
+  # separate file-transfer multiplex client may silently reconnect when its
+  # ControlMaster disappears;
+  # this path instead uses fail-closed `ssh -O proxy` and holds the remote
+  # fcntl guard while the atomic upload is materialized.
+  fenced_remote_upload "$agent" "$deploy_generation" "$ARCHIVE" "$remote_archive"
   echo "==> ${agent}: copying fleet registry"
-  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" "$SANITIZED_FLEET_REGISTRY" "${scp_target}:${remote_registry}"
+  fenced_remote_upload "$agent" "$deploy_generation" "$SANITIZED_FLEET_REGISTRY" "$remote_registry"
 
   echo "==> ${agent}: running one-time deploy"
   local remote_env=() remote_secret_env=() remote_cmd openshell_enabled=0
@@ -1568,6 +3119,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_CONFIGURED_AGENT_IDS "$CONFIGURED_AGENT_IDS"
   add_remote_env MAC_DEPLOY_TS "$TS"
   add_remote_env MAC_DEPLOY_GIT_REV "$GIT_REV"
+  add_remote_env MAC_DEPLOY_GENERATION "$deploy_generation"
   add_remote_env MAC_DEPLOY_GIT_URL "$GIT_URL"
   add_remote_env MAC_DEPLOY_GIT_BRANCH "$GIT_BRANCH"
   add_remote_env MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME "$home_channel"
@@ -1593,6 +3145,14 @@ deploy_host() {
   # flag below still wins for pure workers.
   add_remote_env MAC_DEPLOY_OPENSHELL "${MAC_DEPLOY_OPENSHELL:-}"
   add_remote_env MAC_DEPLOY_OPENSHELL_REQUIRED "$openshell_required"
+  # Bootstrap the final gateway inside the one-use node transaction, after the
+  # exact source/runtime contract is installed but before OpenClaw creates a
+  # long-lived sandbox.  Replacing the gateway after OpenClaw verification can
+  # strand an older protobuf SandboxSpec that the new client cannot decode.
+  add_remote_env MAC_DEPLOY_OPENSHELL_ENABLED "$openshell_enabled"
+  add_remote_env MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS "$effective_openshell_args"
+  add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
+  add_remote_env MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD "${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
   add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED "$github_credentials_required"
   add_remote_env MAC_DEPLOY_SUPERVISOR "$supervisor"
   add_remote_env MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT "$shared_services_manager"
@@ -1637,7 +3197,10 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_DRAIN_MODE "${MAC_DEPLOY_DRAIN_MODE:-}"
   add_remote_env MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-}"
   add_remote_env MAC_DEPLOY_DRAIN_POLL_SECONDS "${MAC_DEPLOY_DRAIN_POLL_SECONDS:-}"
-  add_remote_env MAC_DEPLOY_DEFER_CLEAR_DRAIN "$openshell_enabled"
+  # Agent restart is deliberately deferred until the post manifest reconciles,
+  # so drain release must be deferred too. The outer restart helper proves a
+  # fresh heartbeat from the new generation before deployment may succeed.
+  add_remote_env MAC_DEPLOY_DEFER_CLEAR_DRAIN 1
   # Starting/restarting the worker from inside the remote install transaction
   # can terminate that transaction before its post manifest is durable (most
   # visibly under supervisord).  The outer controller owns the restart after
@@ -1646,7 +3209,7 @@ deploy_host() {
   add_remote_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_tunnel_pubkey"
   add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"
   add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"
-  add_remote_env MAC_DEPLOY_GITHUB_REVIEW_KEY_B64 "$github_review_key_b64"
+  add_remote_secret_env MAC_DEPLOY_GITHUB_REVIEW_KEY_B64 "$github_review_key_b64"
   add_remote_env MAC_DEPLOY_MEMORY_EMBED_MODEL "$mem_embed_model"
   add_remote_env MAC_DEPLOY_ROUTER_BACKEND "$router_backend"
   add_remote_env MAC_DEPLOY_ROUTER_PROVIDERS "$router_providers"
@@ -1711,17 +3274,17 @@ deploy_host() {
   if [ "$agent" != "$shared_services_manager" ] && [ "$router_backend_lc" = "inproc" ]; then
     img_key="" ; aud_key="" ; vid_key=""
   fi
-  add_remote_env NVIDIA_IMAGE_API_KEY "$img_key"
-  add_remote_env NVIDIA_AUDIO_API_KEY "$aud_key"
-  add_remote_env NVIDIA_VIDEO_API_KEY "$vid_key"
-  add_remote_env NVIDIA_API_KEY "$nvidia_api_key"
+  add_remote_secret_env NVIDIA_IMAGE_API_KEY "$img_key"
+  add_remote_secret_env NVIDIA_AUDIO_API_KEY "$aud_key"
+  add_remote_secret_env NVIDIA_VIDEO_API_KEY "$vid_key"
+  add_remote_secret_env NVIDIA_API_KEY "$nvidia_api_key"
   add_remote_env NVIDIA_API_BASE "$nvidia_api_base"
   add_remote_env NVIDIA_BASE_URL "$nvidia_base_url"
-  add_remote_env OPENAI_API_KEY "$openai_api_key"
+  add_remote_secret_env OPENAI_API_KEY "$openai_api_key"
   add_remote_env OPENAI_BASE_URL "$openai_base_url"
-  add_remote_env ANTHROPIC_API_KEY "$anthropic_api_key"
+  add_remote_secret_env ANTHROPIC_API_KEY "$anthropic_api_key"
   add_remote_env ANTHROPIC_BASE_URL "$anthropic_base_url"
-  add_remote_env PERPLEXITY_API_KEY "$perplexity_api_key"
+  add_remote_secret_env PERPLEXITY_API_KEY "$perplexity_api_key"
   add_remote_env PERPLEXITY_BASE_URL "$perplexity_base_url"
   add_remote_env PERPLEXITY_API_BASE "$perplexity_api_base"
   # The deploy body is in the standalone fleet-node-install.sh script which is
@@ -1735,40 +3298,40 @@ deploy_host() {
   deploy_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fleet-node-install.sh"
   reviewed_tool_assets="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh"
   echo "==> ${agent}: copying fleet-node-install.sh"
-  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" \
-    "$deploy_script" "${scp_target}:${remote_node_script}"
+  fenced_remote_upload "$agent" "$deploy_generation" "$deploy_script" "$remote_node_script"
   echo "==> ${agent}: copying reviewed native-tool checksum contract"
-  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}" \
-    "$reviewed_tool_assets" "${scp_target}:${remote_tool_assets}"
+  fenced_remote_upload "$agent" "$deploy_generation" "$reviewed_tool_assets" "$remote_tool_assets"
   remote_env+=("MAC_DEPLOY_REVIEWED_TOOL_ASSETS=$(shell_quote "$remote_tool_assets")")
-  local remote_cmd
+  local remote_cmd fenced_remote_cmd local_secret_payload
   remote_cmd="${remote_env[*]} sh -c 'umask 077; _mac_secret_file=\$1; _mac_script=\$2; _mac_tool_assets=\$3; trap \"rm -f \\\"\$_mac_secret_file\\\" \\\"\$_mac_script\\\" \\\"\$_mac_tool_assets\\\"\" EXIT HUP INT TERM; cat > \"\$_mac_secret_file\"; set -a; . \"\$_mac_secret_file\"; set +a; rm -f \"\$_mac_secret_file\"; bash \"\$_mac_script\"' sh $(shell_quote "$remote_secret_file") $(shell_quote "$remote_node_script") $(shell_quote "$remote_tool_assets")"
-  if printf '%s\n' "${remote_secret_env[@]}" | \
-    ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}" "$ssh_target" "$remote_cmd"
+  assert_remote_deployment_lock "$agent" "$deploy_generation"
+  local_secret_payload="$TMPDIR_LOCAL/node-secrets-${agent}.env"
+  printf '%s\n' "${remote_secret_env[@]}" > "$local_secret_payload"
+  chmod 0600 "$local_secret_payload"
+  fenced_remote_cmd="$(remote_deployment_fenced_exec "$deploy_generation" 1 sh -c "$remote_cmd")"
+  if stream_file_after_remote_fence "$local_secret_payload" \
+    "MAC_DEPLOY_FENCE_READY:${deploy_generation}" \
+    ssh -A -o BatchMode=yes -o ConnectTimeout=10 \
+      -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+      "${ssh_args[@]}" "$ssh_target" "$fenced_remote_cmd"
   then
+    rm -f "$local_secret_payload"
     echo "==> ${agent}: validating remote post-deploy manifest"
     if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then
       echo "==> ${agent}: remote deploy returned success but post manifest validation failed" >&2
       return 1
     fi
   else
+    rm -f "$local_secret_payload"
     echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"
     reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"
   fi
   if [ "$openshell_enabled" = "1" ]; then
-    echo "==> ${agent}: keeping mac-agent stopped while OpenShell validates"
-    set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop
-    if run_openshell_bootstrap "$agent" "$target" "$effective_openshell_args"; then
-      set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart
-    else
-      echo "==> ${agent}: ERROR: OpenShell bootstrap failed; mac-agent remains stopped and drained" >&2
-      set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop || true
-      return 1
-    fi
+    echo "==> ${agent}: restarting mac-agent after in-transaction OpenShell and OpenClaw validation"
   else
     echo "==> ${agent}: restarting mac-agent after post-manifest reconciliation"
-    set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart
   fi
+  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart keep
 }
 
 hub_target() {
@@ -1896,6 +3459,7 @@ ensure_local_github_review_key() {
 install_reverse_tunnel_on_hub() {
   local worker_agent="$1" worker_target="$2" hub_agent="$3" hub_target_str="$4" fleet_name_arg="${5:-mac}"
   local ssh_parts=() ssh_args=() ssh_target item last_index tunnel_host fleet_name_local
+  local hub_deployment_id hub_lock_temporary=0 hub_script_status=0 fence_exec
   fleet_name_local="${fleet_name_arg:-mac}"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
   last_index=$((${#ssh_parts[@]} - 1))
@@ -1914,14 +3478,182 @@ install_reverse_tunnel_on_hub() {
   else
     tunnel_user="horde"
   fi
-  # Pass values to the remote inline; quoting handled by shell_quote
-  ssh -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
-    "TUNNEL_WORKER_AGENT=$(shell_quote "$worker_agent") TUNNEL_HOST=$(shell_quote "$tunnel_host") TUNNEL_USER=$(shell_quote "$tunnel_user") TUNNEL_FLEET_NAME=$(shell_quote "$fleet_name_local") bash -s" <<'HUBSCRIPT'
+  # A spoke-only invocation does not otherwise own the hub's deployment lock.
+  # Acquire it for this deterministic manager-config transaction; if the hub is
+  # part of the selected cohort, reuse the exact phase-1 owner instead.  The
+  # whole script executes while remote_deployment_fenced_exec holds the hub's
+  # stable fcntl guard, so concurrent fleet controllers cannot interleave or
+  # overwrite tunnel manager state.
+  hub_deployment_id="$(deployment_id_for_agent "$hub_agent")"
+  if ! assert_remote_deployment_lock "$hub_agent" "$hub_deployment_id" \
+    >/dev/null 2>&1; then
+    acquire_remote_deployment_lock "$hub_agent" "$hub_deployment_id"
+    hub_lock_temporary=1
+  fi
+  fence_exec="$(remote_deployment_fenced_exec "$hub_deployment_id" 0 bash -s)"
+  # Pass values to the remote inline; quoting handled by shell_quote.
+  if ssh -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    "TUNNEL_WORKER_AGENT=$(shell_quote "$worker_agent") TUNNEL_HOST=$(shell_quote "$tunnel_host") TUNNEL_USER=$(shell_quote "$tunnel_user") TUNNEL_FLEET_NAME=$(shell_quote "$fleet_name_local") $fence_exec" <<'HUBSCRIPT'
 set -euo pipefail
 worker_agent="${TUNNEL_WORKER_AGENT:?}"
 tunnel_host="${TUNNEL_HOST:?}"
 tunnel_user="${TUNNEL_USER:-horde}"
 fleet_name="${TUNNEL_FLEET_NAME:-mac}"
+managed_marker="mac.managed-reverse-tunnel.v1:${fleet_name}:${worker_agent}"
+definition_tmp=""
+
+cleanup_definition_tmp() {
+  if [ -n "$definition_tmp" ]; then
+    sudo rm -f "$definition_tmp" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_definition_tmp EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+legacy_managed_definition() {
+  local kind="$1" path="$2"
+  sudo python3 - "$kind" "$path" "$fleet_name" "$worker_agent" "$HOME" \
+    "$(whoami)" "$(command -v ssh)" <<'PY'
+import plistlib
+import re
+import shlex
+import sys
+from pathlib import Path
+
+kind, raw_path, fleet, worker, home, user, ssh_bin = sys.argv[1:]
+path = Path(raw_path)
+label = f"com.{fleet}.tunnel-{worker}"
+program = f"{fleet}-tunnel-{worker}"
+forwards = [
+    "127.0.0.1:18789:127.0.0.1:8789",
+    "127.0.0.1:18090:127.0.0.1:8090",
+    "127.0.0.1:16333:127.0.0.1:6333",
+    "127.0.0.1:13002:127.0.0.1:3002",
+]
+
+
+def ssh_arguments(binary):
+    result = [
+        binary,
+        "-N",
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "ServerAliveInterval=30",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "ExitOnForwardFailure=yes",
+        "-i", f"{home}/.ssh/mac_tunnel_id",
+    ]
+    for forward in forwards:
+        result.extend(["-R", forward])
+    return result
+
+
+def exact_legacy_ssh(args, binary):
+    expected = ssh_arguments(binary)
+    return (
+        args[:-1] == expected
+        and len(args) == len(expected) + 1
+        and re.fullmatch(r"[^@\s]+@[^\s]+", args[-1] or "") is not None
+    )
+
+
+try:
+    raw = path.read_bytes()
+    if kind == "launchd":
+        data = plistlib.loads(raw)
+        ok = (
+            data.get("Label") == label
+            and data.get("UserName") == user
+            and data.get("EnvironmentVariables") == {"HOME": home}
+            and exact_legacy_ssh(data.get("ProgramArguments") or [], ssh_bin)
+            and data.get("KeepAlive") is True
+            and data.get("RunAtLoad") is True
+            and data.get("ThrottleInterval") == 5
+            and data.get("StandardOutPath") == f"{home}/.mac/logs/tunnel-{worker}.log"
+            and data.get("StandardErrorPath") == f"{home}/.mac/logs/tunnel-{worker}.log"
+        )
+    elif kind == "systemd":
+        lines = [line.strip() for line in raw.decode().splitlines() if line.strip()]
+        exec_lines = [line for line in lines if line.startswith("ExecStart=")]
+        args = shlex.split(exec_lines[0].split("=", 1)[1]) if len(exec_lines) == 1 else []
+        expected_lines = {
+            "[Unit]",
+            f"Description=mac reverse tunnel for {worker}",
+            "After=network-online.target",
+            "Wants=network-online.target",
+            "[Service]",
+            "Type=simple",
+            f"User={user}",
+            f"WorkingDirectory={home}",
+            "Restart=always",
+            "RestartSec=5",
+            "[Install]",
+            "WantedBy=multi-user.target",
+        }
+        ok = (
+            exact_legacy_ssh(args, ssh_bin)
+            and set(lines) == expected_lines | set(exec_lines)
+        )
+    elif kind == "supervisor":
+        lines = [
+            line.strip()
+            for line in raw.decode().splitlines()
+            if line.strip() and not line.lstrip().startswith(";")
+        ]
+        command_lines = [line for line in lines if line.startswith("command=")]
+        args = shlex.split(command_lines[0].split("=", 1)[1]) if len(command_lines) == 1 else []
+        expected_lines = {
+            f"[program:{program}]",
+            f"directory={home}",
+            f"user={user}",
+            "autostart=true",
+            "autorestart=true",
+            "startsecs=5",
+            "startretries=1000",
+            "stopwaitsecs=10",
+            f"stdout_logfile={home}/.mac/logs/tunnel-{worker}.log",
+            f"stderr_logfile={home}/.mac/logs/tunnel-{worker}.log",
+        }
+        ok = exact_legacy_ssh(args, "ssh") and set(lines) == expected_lines | set(command_lines)
+    else:
+        ok = False
+except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
+    ok = False
+raise SystemExit(0 if ok else 1)
+PY
+}
+
+assert_managed_definition_or_absent() {
+  local path="$1" marker_line="$2" kind="$3"
+  if sudo test -L "$path"; then
+    echo "refusing symlink reverse-tunnel manager definition: $path" >&2
+    exit 1
+  fi
+  if sudo test -e "$path" && ! sudo grep -Fqx "$marker_line" "$path"; then
+    if ! legacy_managed_definition "$kind" "$path"; then
+      echo "refusing to replace unowned reverse-tunnel manager definition: $path" >&2
+      exit 1
+    fi
+  fi
+}
+
+stage_managed_definition() {
+  local path="$1"
+  definition_tmp="$(sudo mktemp "${path}.mac-deploy.XXXXXX")"
+}
+
+install_staged_definition() {
+  local path="$1" marker_line="$2" kind="$3"
+  # Recheck immediately before the atomic replace. An operator definition that
+  # appeared after preflight must remain byte-identical.
+  assert_managed_definition_or_absent "$path" "$marker_line" "$kind"
+  sudo mv -f "$definition_tmp" "$path"
+  definition_tmp=""
+}
+
 if [ "$(uname -s)" = "Darwin" ]; then
   # macOS hub: run the reverse tunnel as a system LaunchDaemon (headless, no GUI
   # session required — mirrors com.mac.control-plane). macOS has neither systemd
@@ -1930,16 +3662,104 @@ if [ "$(uname -s)" = "Darwin" ]; then
   ssh_bin="$(command -v ssh)"
   label="com.${fleet_name}.tunnel-${worker_agent}"
   plist="/Library/LaunchDaemons/${label}.plist"
+  marker_line="<!-- ${managed_marker} -->"
   hub_user="$(whoami)"
+  assert_managed_definition_or_absent "$plist" "$marker_line" launchd
+  launchd_loaded_legacy=0
+  launchd_file_legacy=0
+  if sudo test -e "$plist" && ! sudo grep -Fqx "$marker_line" "$plist"; then
+    legacy_managed_definition launchd "$plist"
+    launchd_file_legacy=1
+  fi
+  launchd_state_has_managed_identity() {
+    local mode="$1" state="$2"
+    python3 - "$mode" "$plist" "$label" "$managed_marker" "$ssh_bin" "$HOME" \
+      3<<<"$state" <<'PY'
+import re
+import sys
+
+mode, plist, label, marker, ssh_bin, home = sys.argv[1:]
+text = open(3, encoding="utf-8").read()
+lines = text.splitlines()
+
+
+def one(prefix):
+    values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
+    return values[0] if len(values) == 1 else None
+
+
+if not lines or lines[0] != f"system/{label} = {{":
+    raise SystemExit(1)
+if one("\tpath = ") != plist or one("\tprogram = ") != ssh_bin:
+    raise SystemExit(1)
+try:
+    start = lines.index("\targuments = {")
+    end = lines.index("\t}", start + 1)
+except ValueError:
+    raise SystemExit(1)
+argument_lines = lines[start + 1:end]
+if not argument_lines or any(not line.startswith("\t\t") for line in argument_lines):
+    raise SystemExit(1)
+args = [line[2:] for line in argument_lines]
+expected = [
+    ssh_bin,
+    "-N",
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "ServerAliveInterval=30",
+    "-o", "ServerAliveCountMax=3",
+    "-o", "ExitOnForwardFailure=yes",
+    "-i", f"{home}/.ssh/mac_tunnel_id",
+    "-R", "127.0.0.1:18789:127.0.0.1:8789",
+    "-R", "127.0.0.1:18090:127.0.0.1:8090",
+    "-R", "127.0.0.1:16333:127.0.0.1:6333",
+    "-R", "127.0.0.1:13002:127.0.0.1:3002",
+]
+if (
+    args[:-1] != expected
+    or len(args) != len(expected) + 1
+    or re.fullmatch(r"[^@\s]+@[^\s]+", args[-1] or "") is None
+):
+    raise SystemExit(1)
+marker_line = f"\t\tMAC_MANAGED_REVERSE_TUNNEL => {marker}"
+has_marker = lines.count(marker_line) == 1
+if mode == "managed" and not has_marker:
+    raise SystemExit(1)
+if mode == "legacy" and has_marker:
+    raise SystemExit(1)
+PY
+  }
+  launchd_state=""
+  if launchd_state="$(sudo launchctl print "system/${label}" 2>/dev/null)"; then
+    if launchd_state_has_managed_identity managed "$launchd_state"; then
+      :
+    elif launchd_state_has_managed_identity legacy "$launchd_state"; then
+      # Either this is the first exact-template migration or the previous run
+      # atomically installed the marked plist and was interrupted before the
+      # one-time legacy job bootout. Both are safe, retryable adoption states.
+      [ "$launchd_file_legacy" = 1 ] || sudo grep -Fqx "$marker_line" "$plist"
+      launchd_loaded_legacy=1
+    else
+      echo "refusing to bootout same-name launchd job without exact MAC identity" >&2
+      exit 1
+    fi
+  fi
   mkdir -p "$HOME/.mac/logs"
-  sudo tee "$plist" > /dev/null <<PLIST
+  stage_managed_definition "$plist"
+  sudo tee "$definition_tmp" > /dev/null <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+${marker_line}
 <plist version="1.0">
 <dict>
   <key>Label</key><string>${label}</string>
   <key>UserName</key><string>${hub_user}</string>
-  <key>EnvironmentVariables</key><dict><key>HOME</key><string>${HOME}</string></dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>${HOME}</string>
+    <key>MAC_MANAGED_REVERSE_TUNNEL</key><string>${managed_marker}</string>
+  </dict>
   <key>ProgramArguments</key>
   <array>
     <string>${ssh_bin}</string>
@@ -1965,18 +3785,52 @@ if [ "$(uname -s)" = "Darwin" ]; then
 </dict>
 </plist>
 PLIST
-  sudo chown root:wheel "$plist" 2>/dev/null || true
-  sudo chmod 644 "$plist" 2>/dev/null || true
-  sudo launchctl bootout "system/${label}" >/dev/null 2>&1 || true
-  sudo launchctl bootstrap system "$plist" >/dev/null 2>&1 || true
-  sudo launchctl enable "system/${label}" >/dev/null 2>&1 || true
-  sudo launchctl kickstart -k "system/${label}" >/dev/null 2>&1 || true
+  sudo chown root:wheel "$definition_tmp"
+  sudo chmod 0644 "$definition_tmp"
+  install_staged_definition "$plist" "$marker_line" launchd
+  # Re-evaluate the loaded label immediately before its one permitted stop.
+  # Absence is intentional on first install; every present job must prove both
+  # canonical path and durable in-job marker before path-form bootout.
+  if launchd_state="$(sudo launchctl print "system/${label}" 2>/dev/null)"; then
+    if ! launchd_state_has_managed_identity managed "$launchd_state"; then
+      [ "$launchd_loaded_legacy" = 1 ]
+      launchd_state_has_managed_identity legacy "$launchd_state"
+    fi
+    sudo launchctl bootout system "$plist"
+  fi
+  sudo launchctl bootstrap system "$plist"
+  sudo launchctl enable "system/${label}"
+  sudo launchctl kickstart -k "system/${label}"
+  launchd_state="$(sudo launchctl print "system/${label}")"
+  launchd_state_has_managed_identity managed "$launchd_state"
   exit 0
 fi
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   service="${fleet_name}-tunnel-${worker_agent}.service"
+  unit="/etc/systemd/system/${service}"
+  marker_line="# ${managed_marker}"
   ssh_bin="$(command -v ssh)"
-  sudo tee "/etc/systemd/system/${service}" > /dev/null <<EOF
+  load_state="$(sudo systemctl show -p LoadState --value "$service")"
+  if [ "$load_state" = loaded ]; then
+    fragment="$(sudo systemctl show -p FragmentPath --value "$service")"
+    [ -n "$fragment" ] \
+      && [ "$(sudo realpath "$fragment")" = "$(sudo realpath "$unit")" ] || {
+        echo "refusing same-name systemd tunnel loaded from another definition" >&2
+        exit 1
+      }
+    dropins="$(sudo systemctl show -p DropInPaths --value "$service")"
+    [ -z "$dropins" ] || {
+      echo "refusing managed systemd tunnel with unreviewed drop-ins" >&2
+      exit 1
+    }
+  elif [ "$load_state" != not-found ]; then
+    echo "refusing same-name systemd tunnel in unexpected load state: $load_state" >&2
+    exit 1
+  fi
+  assert_managed_definition_or_absent "$unit" "$marker_line" systemd
+  stage_managed_definition "$unit"
+  sudo tee "$definition_tmp" > /dev/null <<EOF
+${marker_line}
 [Unit]
 Description=mac reverse tunnel for ${worker_agent}
 After=network-online.target
@@ -1993,13 +3847,128 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
+  sudo chown root:root "$definition_tmp"
+  sudo chmod 0644 "$definition_tmp"
+  install_staged_definition "$unit" "$marker_line" systemd
   sudo systemctl daemon-reload
-  sudo systemctl enable --now "$service" >/dev/null 2>&1 || true
-  sudo systemctl restart "$service" >/dev/null 2>&1 || true
+  fragment="$(sudo systemctl show -p FragmentPath --value "$service")"
+  [ "$(sudo realpath "$fragment")" = "$(sudo realpath "$unit")" ]
+  [ -z "$(sudo systemctl show -p DropInPaths --value "$service")" ]
+  effective_exec="$(sudo systemctl show -p ExecStart --value "$service")"
+  for needle in \
+    "$ssh_bin" \
+    "$HOME/.ssh/mac_tunnel_id" \
+    "127.0.0.1:18789:127.0.0.1:8789" \
+    "127.0.0.1:18090:127.0.0.1:8090" \
+    "127.0.0.1:16333:127.0.0.1:6333" \
+    "127.0.0.1:13002:127.0.0.1:3002"; do
+    printf '%s\n' "$effective_exec" | grep -Fq "$needle"
+  done
+  [ "$(sudo systemctl show -p Restart --value "$service")" = always ]
+  sudo systemctl enable "$service" >/dev/null
+  # Enabling creates manager-owned links; recheck the effective source and
+  # policy at the last possible point before restarting a same-name unit.
+  [ "$(sudo systemctl show -p LoadState --value "$service")" = loaded ]
+  fragment="$(sudo systemctl show -p FragmentPath --value "$service")"
+  [ "$(sudo realpath "$fragment")" = "$(sudo realpath "$unit")" ]
+  [ -z "$(sudo systemctl show -p DropInPaths --value "$service")" ]
+  sudo systemctl cat "$service" | grep -Fq "$managed_marker"
+  [ "$(sudo systemctl show -p Restart --value "$service")" = always ]
+  sudo systemctl restart "$service" >/dev/null
+  sudo systemctl is-enabled "$service" >/dev/null
+  sudo systemctl cat "$service" | grep -Fq "$managed_marker"
   exit 0
 fi
 conf_dir="$(ls -d /etc/supervisor/conf.d 2>/dev/null || ls -d /etc/supervisord.d 2>/dev/null || echo '/etc/supervisor/conf.d')"
-sudo tee "$conf_dir/${fleet_name}-tunnel-${worker_agent}.conf" > /dev/null <<EOF
+program="${fleet_name}-tunnel-${worker_agent}"
+conf="$conf_dir/${program}.conf"
+marker_line="; ${managed_marker}"
+assert_no_duplicate_supervisor_program() {
+  local expected="$1" include_root="${MAC_SUPERVISOR_INCLUDE_ROOT:-/}"
+  sudo python3 - "$program" "$expected" "$include_root" <<'PY'
+import configparser
+import glob
+import os
+import re
+import sys
+from pathlib import Path
+
+program, expected, raw_root = sys.argv[1:]
+root = Path(raw_root)
+expected = os.path.abspath(expected)
+candidates = set()
+for relative in ("etc/supervisor/conf.d", "etc/supervisord.d"):
+    candidates.update(Path(path) for path in glob.glob(str(root / relative / "*")))
+for relative in ("etc/supervisor/supervisord.conf", "etc/supervisord.conf"):
+    config_path = root / relative
+    if not config_path.is_file():
+        continue
+    candidates.add(config_path)
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read(config_path)
+        patterns = parser.get("include", "files", fallback="").split()
+    except (configparser.Error, OSError):
+        patterns = []
+    for pattern in patterns:
+        if os.path.isabs(pattern):
+            pattern = str(root / pattern.lstrip("/"))
+        else:
+            pattern = str(config_path.parent / pattern)
+        candidates.update(Path(path) for path in glob.glob(pattern))
+section = re.compile(r"^\s*\[program:%s\]\s*$" % re.escape(program), re.MULTILINE)
+duplicates = []
+for candidate in candidates:
+    if not candidate.is_file():
+        continue
+    try:
+        matched = section.search(candidate.read_text(encoding="utf-8")) is not None
+    except (OSError, UnicodeError):
+        matched = False
+    if matched and os.path.abspath(candidate) != expected:
+        duplicates.append(str(candidate))
+if duplicates:
+    print("duplicate supervisor program definitions: " + ", ".join(sorted(duplicates)), file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+supervisor_status_output() {
+  local output rc
+  set +e
+  output="$(supervisorctl status "$program" 2>&1)"
+  rc=$?
+  set -e
+  case "$output" in
+    *RUNNING*|*STARTING*|*BACKOFF*|*STOPPED*|*EXITED*|*FATAL*|*"no such process"*)
+      printf '%s\n' "$output"
+      return 0
+      ;;
+  esac
+  set +e
+  output="$(sudo supervisorctl status "$program" 2>&1)"
+  rc=$?
+  set -e
+  case "$output" in
+    *RUNNING*|*STARTING*|*BACKOFF*|*STOPPED*|*EXITED*|*FATAL*|*"no such process"*)
+      printf '%s\n' "$output"
+      return 0
+      ;;
+  esac
+  echo "could not establish supervisor identity for $program (status $rc): $output" >&2
+  return 1
+}
+assert_no_duplicate_supervisor_program "$conf"
+preexisting_status="$(supervisor_status_output)"
+if ! sudo test -e "$conf"; then
+  case "$preexisting_status" in
+    *"no such process"*) ;;
+    *) echo "refusing same-name supervisor program from another include" >&2; exit 1 ;;
+  esac
+fi
+assert_managed_definition_or_absent "$conf" "$marker_line" supervisor
+stage_managed_definition "$conf"
+sudo tee "$definition_tmp" > /dev/null <<EOF
+${marker_line}
 [program:${fleet_name}-tunnel-${worker_agent}]
 command=ssh -N -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -i $HOME/.ssh/mac_tunnel_id -R 127.0.0.1:18789:127.0.0.1:8789 -R 127.0.0.1:18090:127.0.0.1:8090 -R 127.0.0.1:16333:127.0.0.1:6333 -R 127.0.0.1:13002:127.0.0.1:3002 ${tunnel_user}@${tunnel_host}
 directory=$HOME
@@ -2016,13 +3985,36 @@ stopwaitsecs=10
 stdout_logfile=$HOME/.mac/logs/tunnel-${worker_agent}.log
 stderr_logfile=$HOME/.mac/logs/tunnel-${worker_agent}.log
 EOF
-supervisorctl reread >/dev/null 2>&1 || sudo supervisorctl reread >/dev/null 2>&1 || true
-supervisorctl update >/dev/null 2>&1 || sudo supervisorctl update >/dev/null 2>&1 || true
-supervisorctl restart "${fleet_name}-tunnel-${worker_agent}" >/dev/null 2>&1 \
-  || supervisorctl start "${fleet_name}-tunnel-${worker_agent}" >/dev/null 2>&1 \
-  || sudo supervisorctl start "${fleet_name}-tunnel-${worker_agent}" >/dev/null 2>&1 \
-  || true
+sudo chown root:root "$definition_tmp"
+sudo chmod 0644 "$definition_tmp"
+install_staged_definition "$conf" "$marker_line" supervisor
+supervisor_control() {
+  supervisorctl "$@" >/dev/null 2>&1 || sudo supervisorctl "$@" >/dev/null
+}
+supervisor_control reread
+assert_no_duplicate_supervisor_program "$conf"
+supervisor_control update
+# update registers and autostarts changed definitions. Do not issue a blocking
+# start while the spoke has not authorized the key; STARTING/BACKOFF/STOPPED
+# are valid pre-key states, but a missing or FATAL program is not.
+status="$(supervisor_status_output)"
+case "$status" in
+  *RUNNING*|*STARTING*|*BACKOFF*) ;;
+  *) echo "supervisor did not register managed reverse tunnel: $status" >&2; exit 1 ;;
+esac
 HUBSCRIPT
+  then
+    hub_script_status=0
+  else
+    hub_script_status=$?
+  fi
+  if [ "$hub_lock_temporary" = 1 ]; then
+    if ! release_remote_deployment_lock "$hub_agent" "$hub_deployment_id"; then
+      echo "ERROR: ${hub_agent}: could not release temporary tunnel configuration fence" >&2
+      return 1
+    fi
+  fi
+  return "$hub_script_status"
 }
 
 uses_direct_mesh_hub() {
@@ -2086,12 +4078,14 @@ provision_bound_worker_credential() (
   case "$(printf '%s' "${MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN:-}" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|on)
       echo "==> ${agent}: explicit legacy worker-token override; package work remains disabled"
+      set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" release keep legacy "" deferred
       return 0
       ;;
   esac
 
   local agent_id runtime_digest principal_id
   agent_id="$(stable_worker_agent_id "$agent")"
+  assert_remote_deployment_lock "$agent" "$(deployment_id_for_agent "$agent")"
   local local_manifest="$TMPDIR_LOCAL/worker-credential-${agent_id}.json"
   local local_receipt="$TMPDIR_LOCAL/worker-credential-${agent_id}-receipt.json"
   local hub_manifest="/tmp/mac-worker-credential-${agent_id}-${TS}.json"
@@ -2100,26 +4094,16 @@ provision_bound_worker_credential() (
   local worker_receipt="/tmp/mac-worker-credential-${agent_id}-${TS}-receipt.json"
 
   local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target
-  local hub_scp_parts=() hub_scp_args=() hub_scp_target
   local worker_ssh_parts=() worker_ssh_args=() worker_ssh_target
-  local worker_scp_parts=() worker_scp_args=() worker_scp_target
   local item last_index
   while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
-  while IFS= read -r -d '' item; do hub_scp_parts+=("$item"); done < <(scp_target_args "$hub_agent")
   while IFS= read -r -d '' item; do worker_ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
-  while IFS= read -r -d '' item; do worker_scp_parts+=("$item"); done < <(scp_target_args "$agent")
   last_index=$((${#hub_ssh_parts[@]} - 1))
   hub_ssh_target="${hub_ssh_parts[$last_index]}"
   hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
-  last_index=$((${#hub_scp_parts[@]} - 1))
-  hub_scp_target="${hub_scp_parts[$last_index]}"
-  hub_scp_args=("${hub_scp_parts[@]:0:$last_index}")
   last_index=$((${#worker_ssh_parts[@]} - 1))
   worker_ssh_target="${worker_ssh_parts[$last_index]}"
   worker_ssh_args=("${worker_ssh_parts[@]:0:$last_index}")
-  last_index=$((${#worker_scp_parts[@]} - 1))
-  worker_scp_target="${worker_scp_parts[$last_index]}"
-  worker_scp_args=("${worker_scp_parts[@]:0:$last_index}")
 
   local runtime_cmd runtime_result
   runtime_cmd='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials ensure-runtime'
@@ -2151,9 +4135,11 @@ print(digest)
 
   cleanup_worker_relay() {
     rm -f "$local_manifest" "$local_receipt"
+    local cleanup_cmd
+    cleanup_cmd="$(remote_deployment_fenced_exec "$(deployment_id_for_agent "$agent")" 0 sh -c \
+      "rm -f $(shell_quote "$worker_manifest") $(shell_quote "$worker_receipt")")"
     ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${worker_ssh_args[@]}" \
-      "$worker_ssh_target" \
-      "rm -f $(shell_quote "$worker_manifest") $(shell_quote "$worker_receipt")" \
+      "$worker_ssh_target" "$cleanup_cmd" \
       >/dev/null 2>&1 || true
   }
   trap cleanup_worker_relay EXIT
@@ -2186,8 +4172,11 @@ print(digest)
     return 1
   fi
 
-  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 \
-    "${hub_scp_args[@]}" "${hub_scp_target}:${hub_manifest}" "$local_manifest"
+  assert_remote_deployment_lock "$agent" "$(deployment_id_for_agent "$agent")"
+
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "cat $(shell_quote "$hub_manifest")" > "$local_manifest"
   chmod 0600 "$local_manifest"
   principal_id="$("$PYTHON_BIN" - "$local_manifest" <<'PY'
 import json
@@ -2201,9 +4190,11 @@ if payload.get("schema") != "mac.worker_credential_install.v1" or not principal:
 print(principal)
 PY
 )"
-  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 \
-    "${worker_scp_args[@]}" "$local_manifest" \
-    "${worker_scp_target}:${worker_manifest}"
+  # The install manifest contains the raw worker bearer. It is opened locally
+  # only after the worker proves this exact deployment owner in the same SSH
+  # channel, then lands atomically under the held fcntl guard.
+  fenced_remote_upload "$agent" "$(deployment_id_for_agent "$agent")" \
+    "$local_manifest" "$worker_manifest"
   local install_cmd
   install_cmd='set -e; umask 077; chmod 0600'
   install_cmd+=" $(shell_quote "$worker_manifest")"
@@ -2212,19 +4203,23 @@ PY
   install_cmd+=" --agent-id $(shell_quote "$agent_id")"
   install_cmd+=' --env-file "$HOME/.mac/mac.env"'
   install_cmd+=" --receipt-out $(shell_quote "$worker_receipt")"
+  assert_remote_deployment_lock "$agent" "$(deployment_id_for_agent "$agent")"
+  local fenced_install_cmd
+  fenced_install_cmd="$(remote_deployment_fenced_exec "$(deployment_id_for_agent "$agent")" 0 sh -c "$install_cmd")"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-    "${worker_ssh_args[@]}" "$worker_ssh_target" "$install_cmd" >/dev/null
-  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 \
-    "${worker_scp_args[@]}" "${worker_scp_target}:${worker_receipt}" "$local_receipt"
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_install_cmd" >/dev/null
+  local fenced_receipt_cmd
+  fenced_receipt_cmd="$(remote_deployment_fenced_exec "$(deployment_id_for_agent "$agent")" 0 sh -c \
+    "cat $(shell_quote "$worker_receipt")")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_receipt_cmd" > "$local_receipt"
   chmod 0600 "$local_receipt"
-  scp -O -q -o BatchMode=yes -o ConnectTimeout=10 \
-    "${hub_scp_args[@]}" "$local_receipt" \
-    "${hub_scp_target}:${hub_receipt}"
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+  ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    "chmod 0600 $(shell_quote "$hub_receipt")"
+    "umask 077; cat > $(shell_quote "$hub_receipt"); chmod 0600 $(shell_quote "$hub_receipt")" \
+    < "$local_receipt"
 
-  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart
+  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart keep
   local activate_cmd activate_ok=0
   activate_cmd='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials activate'
   activate_cmd+=" --agent-id $(shell_quote "$agent_id")"
@@ -2246,6 +4241,12 @@ PY
     echo "    hub retry manifest retained at $hub_manifest" >&2
     return 1
   fi
+  # Credential activation is proved while the worker is still drained and
+  # held. Arm the worker and prove its exact newly issued principal, but retain
+  # the durable hub hold until every selected node is ready for one atomic
+  # fleet-epoch commit.
+  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" release \
+    keep authenticated "$principal_id" deferred
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${hub_ssh_args[@]}" "$hub_ssh_target" \
     "rm -f $(shell_quote "$hub_receipt")"
@@ -2255,6 +4256,319 @@ PY
     "${hub_ssh_args[@]}" "$hub_ssh_target" "$policy_cmd" >/dev/null
   echo "==> ${agent}: exact worker credential active and package membership reconciled"
 )
+
+finalize_remote_deployment_release() {
+  local agent="$1" deployment_id="$2" ssh_parts=() ssh_args=() ssh_target item last_index fence_exec
+  assert_remote_deployment_lock "$agent" "$deployment_id"
+  fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_STATE_ID=$(shell_quote "$deployment_id") $fence_exec <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path.home() / '.mac' / 'deploy-dispatch-hold.json'
+payload = json.loads(path.read_text(encoding='utf-8'))
+if payload.get('deployment_id') != os.environ['MAC_DEPLOY_STATE_ID']:
+    raise SystemExit('refusing to remove another deployment release state')
+path.unlink()
+PY"
+  release_remote_deployment_lock "$agent" "$deployment_id"
+}
+
+commit_fleet_release_epoch() {
+  local expected_count="$1" hub_agent="$2" selected_plan="$3"
+  local require_release_all_selected="${4:-0}"
+  local plan="$TMPDIR_LOCAL/fleet-release-plan.json"
+  local epoch_id="${GIT_REV}:${TS}:${DEPLOY_CONTROLLER_NONCE}"
+  "$PYTHON_BIN" - "$plan" "$expected_count" "$epoch_id" "$TMPDIR_LOCAL" \
+    "$selected_plan" "$require_release_all_selected" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+output = Path(sys.argv[1])
+expected_count = int(sys.argv[2])
+epoch_id = sys.argv[3]
+root = Path(sys.argv[4])
+selected_plan = json.load(open(sys.argv[5], encoding="utf-8"))
+require_release_all_selected = sys.argv[6] == "1"
+if bool(selected_plan.get("require_release_all_selected")) != require_release_all_selected:
+    raise SystemExit("selected hold plan and release policy disagree")
+entries = []
+for path in sorted(root.glob("release-ready-agent_*.json")):
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") != "mac.deploy_release_ready.v1":
+        raise SystemExit("invalid fleet release readiness record: %s" % path)
+    entries.append(payload)
+if len(entries) != expected_count:
+    raise SystemExit(
+        "fleet release epoch has %d readiness records, expected %d"
+        % (len(entries), expected_count)
+    )
+agent_ids = [str(item.get("agent_id") or "") for item in entries]
+if any(not value for value in agent_ids) or len(set(agent_ids)) != len(agent_ids):
+    raise SystemExit("fleet release readiness records contain missing or duplicate agents")
+selected_ids = sorted(
+    str(item.get("agent_id") or "") for item in selected_plan.get("agents", [])
+)
+if sorted(agent_ids) != selected_ids:
+    raise SystemExit("fleet release readiness does not match the exact selected agent set")
+if require_release_all_selected and any(not item.get("owns_hold") for item in entries):
+    raise SystemExit("exact full-cohort release includes a hold not owned by this deployment")
+payload = {
+    "schema": "mac.fleet_release_epoch.v1",
+    "epoch_id": epoch_id,
+    "source_commit": epoch_id.split(":", 1)[0],
+    "require_release_all_selected": require_release_all_selected,
+    "agents": entries,
+}
+fd, raw = tempfile.mkstemp(prefix=output.name + ".", dir=str(output.parent))
+tmp = Path(raw)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    tmp.chmod(0o600)
+    os.replace(tmp, output)
+finally:
+    tmp.unlink(missing_ok=True)
+PY
+
+  local plan_b64 hub_ssh_parts=() hub_ssh_args=() hub_ssh_target item last_index receipt
+  local attempt commit_ok=0
+  plan_b64="$($PYTHON_BIN - "$plan" <<'PY'
+import base64
+import sys
+print(base64.b64encode(open(sys.argv[1], 'rb').read()).decode('ascii'))
+PY
+)"
+  while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#hub_ssh_parts[@]} - 1))
+  hub_ssh_target="${hub_ssh_parts[$last_index]}"
+  hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  echo "==> fleet: committing synchronized release epoch ${epoch_id}"
+  for attempt in $(seq 1 "${MAC_DEPLOY_RELEASE_COMMIT_RETRIES:-3}"); do
+    if receipt="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "MAC_DEPLOY_RELEASE_PLAN_B64=$(shell_quote "$plan_b64") MAC_DEPLOY_RELEASE_TS=$(shell_quote "$TS") bash -s" <<'REMOTE_RELEASE_EPOCH'
+set -euo pipefail
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"
+"$HOME/.mac/venv/bin/python" - <<'PY'
+import base64
+import datetime as dt
+import json
+import os
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+plan = json.loads(base64.b64decode(os.environ["MAC_DEPLOY_RELEASE_PLAN_B64"]))
+if plan.get("schema") != "mac.fleet_release_epoch.v1":
+    raise SystemExit("invalid fleet release epoch plan")
+epoch_id = str(plan.get("epoch_id") or "")
+entries = plan.get("agents")
+require_release_all_selected = bool(plan.get("require_release_all_selected"))
+if not epoch_id or not isinstance(entries, list) or not entries:
+    raise SystemExit("fleet release epoch plan is incomplete")
+entry_ids = [str(item.get("agent_id") or "") for item in entries]
+if any(not value for value in entry_ids) or len(set(entry_ids)) != len(entry_ids):
+    raise SystemExit("fleet release epoch has missing or duplicate agent ids")
+if require_release_all_selected and any(not item.get("owns_hold") for item in entries):
+    raise SystemExit("exact full-cohort release contains an unowned hold")
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+token = os.environ["MAC_DEPLOY_GATE_ADMIN_TOKEN"]
+
+
+def api(method, path, body=None):
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        hub_url + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/json",
+            **({"Content-Type": "application/json"} if data is not None else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(
+            "%s %s failed with HTTP %s: %s" % (method, path, exc.code, detail)
+        ) from exc
+    return json.loads(raw) if raw else None
+
+
+def parse_seen(value):
+    return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+rows = {}
+for item in entries:
+    agent_id = str(item.get("agent_id") or "")
+    row = api("GET", "/agents/%s" % agent_id)
+    if not isinstance(row, dict) or row.get("id") != agent_id:
+        raise RuntimeError("release epoch received the wrong agent row")
+    if not item.get("owns_hold"):
+        # Operator-held workers are intentionally omitted from the atomic
+        # release call. They still have to prove this epoch while retaining the
+        # unrelated hold. Deployment-owned workers are validated inside the
+        # hub transaction below, which also makes an epoch retry safe after a
+        # committed response was lost.
+        resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+        authenticated = resources.get("worker_credential_authenticated")
+        auth_ok = not item.get("require_authenticated") or (
+            isinstance(authenticated, dict)
+            and authenticated.get("agent_id") == agent_id
+            and authenticated.get("principal_id") == item.get("principal_id")
+        )
+        if not (
+            parse_seen(row.get("last_seen_at")) > parse_seen(item.get("baseline_seen"))
+            and row.get("status") == "idle"
+            and row.get("health_status") == "healthy"
+            and row.get("current_task_id") is None
+            and bool(row.get("dispatch_hold"))
+            and bool(row.get("dispatch_hold_reason"))
+            and resources.get("deployment_generation") == item.get("generation")
+            and auth_ok
+        ):
+            raise RuntimeError(
+                "operator-held agent %s lost release readiness before epoch commit"
+                % agent_id
+            )
+    rows[agent_id] = row
+
+holds = [
+    {
+        "agent_id": item["agent_id"],
+        "reason": item["hold_reason"],
+        "generation": item["generation"],
+        "baseline_seen": item["baseline_seen"],
+        "principal_id": item.get("principal_id") or None,
+        "require_authenticated": bool(item.get("require_authenticated")),
+    }
+    for item in entries
+    if item.get("owns_hold")
+]
+if require_release_all_selected and len(holds) != len(entries):
+    raise RuntimeError("exact full-cohort release does not own every selected hold")
+if holds:
+    response = api(
+        "POST",
+        "/agents/dispatch-hold/release-batch",
+        {"epoch_id": epoch_id, "holds": holds},
+    )
+    if not isinstance(response, dict) or not response.get("released"):
+        raise RuntimeError("hub rejected the atomic fleet release epoch")
+    if response.get("epoch_id") != epoch_id:
+        raise RuntimeError("hub returned the wrong fleet release epoch id")
+    released_agents = response.get("agents")
+    if not isinstance(released_agents, list):
+        raise RuntimeError("hub returned an invalid fleet release receipt")
+    requested_ids = sorted(item["agent_id"] for item in holds)
+    returned_ids = sorted(
+        str(item.get("id") or "")
+        for item in released_agents
+        if isinstance(item, dict)
+    )
+    if returned_ids != requested_ids or len(released_agents) != len(holds):
+        raise RuntimeError("hub returned the wrong fleet release agent set")
+    if any(bool(item.get("dispatch_hold")) for item in released_agents):
+        raise RuntimeError("hub release receipt still reports a selected hold")
+
+if require_release_all_selected:
+    post_rows = {}
+    for agent_id in sorted(entry_ids):
+        row = api("GET", "/agents/%s" % agent_id)
+        if not isinstance(row, dict) or row.get("id") != agent_id:
+            raise RuntimeError("post-release verification received the wrong agent")
+        if row.get("dispatch_hold") or row.get("dispatch_hold_reason"):
+            raise RuntimeError("selected agent remained held after exact fleet release")
+        post_rows[agent_id] = row
+    rows = post_rows
+
+receipt = {
+    "schema": "mac.fleet_release_receipt.v1",
+    "epoch_id": epoch_id,
+    "source_commit": plan.get("source_commit"),
+    "committed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "cohort_size": len(entries),
+    "deployment_holds_released": len(holds),
+    "operator_holds_preserved": len(entries) - len(holds),
+    "agent_ids": sorted(rows),
+}
+if require_release_all_selected and not (
+    receipt["deployment_holds_released"] == receipt["cohort_size"]
+    and receipt["operator_holds_preserved"] == 0
+    and receipt["agent_ids"] == sorted(entry_ids)
+):
+    raise RuntimeError("exact full-cohort release receipt failed its postconditions")
+log_dir = Path.home() / ".mac" / "logs"
+log_dir.mkdir(parents=True, exist_ok=True)
+path = log_dir / ("fleet-release-epoch-%s.json" % os.environ["MAC_DEPLOY_RELEASE_TS"])
+fd, raw = tempfile.mkstemp(prefix=path.name + ".", dir=str(log_dir))
+tmp = Path(raw)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(receipt, stream, sort_keys=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    tmp.chmod(0o600)
+    os.replace(tmp, path)
+finally:
+    tmp.unlink(missing_ok=True)
+print(json.dumps(receipt, sort_keys=True))
+PY
+REMOTE_RELEASE_EPOCH
+)"; then
+      commit_ok=1
+      break
+    fi
+    echo "==> fleet: release epoch response was not confirmed (attempt ${attempt}); retrying the same idempotency key" >&2
+    sleep "$attempt"
+  done
+  if [ "$commit_ok" != 1 ]; then
+    echo "==> fleet: ERROR: synchronized release epoch could not be confirmed; durable holds/receipts must be reconciled before retry" >&2
+    return 1
+  fi
+  printf '%s\n' "$receipt" > "$TMPDIR_LOCAL/fleet-release-receipt.json"
+  chmod 0600 "$TMPDIR_LOCAL/fleet-release-receipt.json"
+
+  local ready_file values agent deployment_id
+  for ready_file in "$TMPDIR_LOCAL"/release-ready-agent_*.json; do
+    values="$($PYTHON_BIN - "$ready_file" <<'PY'
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding='utf-8'))
+print(payload['agent'])
+print(payload['deployment_id'])
+PY
+)"
+    agent="${values%%$'\n'*}"
+    deployment_id="${values#*$'\n'}"
+    if ! finalize_remote_deployment_release "$agent" "$deployment_id"; then
+      echo "==> ${agent}: WARNING: epoch committed but deployment lock cleanup failed" >&2
+    fi
+  done
+  echo "==> fleet: synchronized release epoch committed for ${expected_count} agent(s)"
+}
 
 enforce_bound_worker_credentials() {
   local hub_agent="$1" hub_ssh_parts=() hub_ssh_args=() hub_ssh_target item last_index
@@ -2275,13 +4589,30 @@ enforce_bound_worker_credentials() {
 
 main() {
   make_archive
-  local spec agent hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field
+  local spec agent agent_id adoption_reason hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field
+  local selected_specs_file="$TMPDIR_LOCAL/selected-specs.txt" selected_count
+  local hold_adoption_plan="$TMPDIR_LOCAL/hold-adoption-plan.json"
   hub_agent="$(fleet_hub_agent)"
   hub_target_str="$(fleet_hub_target)"
   hub_token="$(fleet_scoped_env MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
   hub_token_key="$(fleet_scoped_name MAC_DEPLOY_HUB_TOKEN "$hub_agent")"
   hub_tunnel_pubkey="$(fleet_scoped_env MAC_DEPLOY_HUB_TUNNEL_PUBKEY "$hub_agent")"
   CONFIGURED_AGENT_IDS="$(fleet_config_query configured-agent-ids | paste -sd, -)"
+  selected_hosts "${REQUESTED_AGENTS[@]}" > "$selected_specs_file"
+  chmod 0600 "$selected_specs_file"
+  selected_count="$(awk 'NF { count += 1 } END { print count + 0 }' "$selected_specs_file")"
+  if [ "$selected_count" -eq 0 ]; then
+    echo "ERROR: no agents were selected from the frozen fleet registry" >&2
+    echo "  Fleet registry: ${FLEET_REGISTRY_SOURCE}" >&2
+    exit 1
+  fi
+  # This pass is deliberately before the first remote read/control-master.
+  # One missing immutable OpenShell image rejects the entire frozen cohort
+  # with zero remote mutations instead of stranding already-held workers.
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    validate_openshell_runtime_image_spec "$spec"
+  done < "$selected_specs_file"
   deployed_count=0
   echo "==> deploying fleet: hub=${hub_agent} target=${hub_target_str} agents=${REQUESTED_AGENTS[*]:-all}"
   if [ -n "${GITHUB_DEPLOY_CREDENTIAL_SOURCE:-}" ]; then
@@ -2289,11 +4620,65 @@ main() {
   else
     echo "==> WARNING: no GitHub repository credential found in deploy env or gh keyring"
   fi
+
+  # Pin the hub and every selected agent before the first remote read, not just
+  # before phase 1.  Hub tokens and tunnel keys must come from the same concrete
+  # endpoint that receives all subsequent control-plane operations.
+  start_ssh_control_master "$hub_agent"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a spec_fields <<<"$spec"
+    start_ssh_control_master "${spec_fields[0]}"
+  done < "$selected_specs_file"
+  SSH_CONTROL_REQUIRED=1
+
   github_review_key_b64="$(ensure_local_github_review_key)"
   if [ -z "$hub_tunnel_pubkey" ]; then
     hub_tunnel_pubkey="$(read_hub_tunnel_pubkey 2>/dev/null || true)"
   fi
+  if [ -z "$hub_token" ]; then
+    hub_token="$(read_hub_token)"
+    upsert_local_env "$hub_token_key" "$hub_token"
+  fi
+
+  # Validate the whole frozen cohort before holding any worker.  A legacy hub
+  # can only bootstrap itself; once that single-node upgrade lands, a second
+  # invocation may establish the real all-node synchronized epoch.
   while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    validate_router_topology_spec "$spec" "$hub_token"
+  done < "$selected_specs_file"
+
+  if ! hub_dispatch_hold_cas_available; then
+    if [ "$selected_count" -gt 1 ] \
+      || [ "$REQUIRE_RELEASE_ALL_SELECTED" = 1 ] \
+      || [ -n "$HOLD_ADOPTIONS_FILE" ]; then
+      echo "ERROR: the live hub lacks dispatch-hold CAS; deploy only ${hub_agent} without adoption using the explicit legacy bootstrap, then rerun the full cohort" >&2
+      exit 1
+    fi
+  fi
+
+  preflight_cohort_hold_adoptions \
+    "$selected_specs_file" "$hold_adoption_plan" "$hub_agent"
+
+  echo "==> fleet: phase 1/3 holding and draining all ${selected_count} selected agent(s)"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a spec_fields <<<"$spec"
+    agent="${spec_fields[0]}"
+    agent_id="$(stable_worker_agent_id "$agent")"
+    adoption_reason="$(hold_adoption_reason_for_agent "$hold_adoption_plan" "$agent_id")"
+    supervisor_field="${spec_fields[14]:-auto}"
+    fleet_name_field="${spec_fields[23]:-mac}"
+    prepare_remote_mac_agent_deployment \
+      "$agent" "$(deployment_id_for_agent "$agent")" \
+      "$supervisor_field" "$fleet_name_field" "$adoption_reason" \
+      "$REQUIRE_RELEASE_ALL_SELECTED"
+  done < "$selected_specs_file"
+  echo "==> fleet: phase 2/3 deploying and proving all selected agents under hold"
+
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
     IFS='|' read -r -a spec_fields <<<"$spec"
     agent="${spec_fields[0]}"
     local_target="${spec_fields[1]}"
@@ -2346,7 +4731,7 @@ main() {
         fi
       done
     fi
-    deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" "$allow_degraded_services" "$github_review_key_b64" "$direct_mesh_hub"
+    deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" "$allow_degraded_services" "$github_review_key_b64" "$direct_mesh_hub" 1
     deployed_count=$((deployed_count + 1))
     if [ "$agent" = "$hub_agent" ]; then
       hub_token="$(read_hub_token)"
@@ -2362,9 +4747,8 @@ main() {
       if [ "$direct_mesh_hub" = "1" ]; then
         echo "==> ${agent}: using ${network_provider_field} hub URL ${hub_url_field}; skipping reverse tunnel"
       elif [ "${tunnel_ok:-0}" = "1" ]; then
-        local agent_prog="${fleet_name_field}-agent"
-        ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${local_ssh_args[@]}" "$local_ssh_target" \
-          "sudo supervisorctl restart '$agent_prog' >/dev/null 2>&1 || sudo supervisorctl start '$agent_prog' >/dev/null 2>&1 || true" 2>/dev/null || true
+        set_remote_mac_agent_service \
+          "$agent" "$supervisor_field" "$fleet_name_field" restart keep
         echo "==> ${agent}: restarted mac-agent with tunnel now available"
       elif [ "${allow_degraded_services:-0}" = "1" ]; then
         # First deploy: hub tunnel key now installed. Wait for the hub supervisord
@@ -2380,10 +4764,9 @@ main() {
             break
           fi
         done
-        local agent_prog="${fleet_name_field}-agent"
         if [ "$first_tunnel_ok" = "1" ]; then
-          ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${local_ssh_args[@]}" "$local_ssh_target" \
-            "sudo supervisorctl restart '$agent_prog' >/dev/null 2>&1 || sudo supervisorctl start '$agent_prog' >/dev/null 2>&1 || true" 2>/dev/null || true
+          set_remote_mac_agent_service \
+            "$agent" "$supervisor_field" "$fleet_name_field" restart keep
           echo "==> ${agent}: restarted mac-agent with tunnel now available"
         else
           echo "==> ${agent}: WARNING: hub tunnel not reachable after first deploy; redeploy to complete setup"
@@ -2393,16 +4776,20 @@ main() {
     provision_bound_worker_credential \
       "$agent" "$hub_agent" "$supervisor_field" "$fleet_name_field" \
       "$worker_capabilities_field"
-  done < <(selected_hosts "${REQUESTED_AGENTS[@]}")
+  done < "$selected_specs_file"
   if [ "$deployed_count" -eq 0 ]; then
     echo "ERROR: no agents were deployed. Check that the fleet config is valid and the requested agents exist." >&2
-    echo "  Fleet registry: ${FLEET_REGISTRY_CONFIG}" >&2
-    echo "  Fleet config:   ${FLEET_CONFIG}" >&2
+    echo "  Fleet registry: ${FLEET_REGISTRY_SOURCE}" >&2
+    echo "  Fleet config:   ${FLEET_CONFIG_SOURCE}" >&2
     echo "  Hub selector:   ${HUB_SELECTOR:-not set (use --hub <agent>)}" >&2
     echo "  Requested agents: ${REQUESTED_AGENTS[*]:-all}" >&2
     exit 1
   fi
   enforce_bound_worker_credentials "$hub_agent"
+  echo "==> fleet: phase 3/3 atomically releasing the proved cohort"
+  commit_fleet_release_epoch \
+    "$deployed_count" "$hub_agent" "$hold_adoption_plan" \
+    "$REQUIRE_RELEASE_ALL_SELECTED"
   rm -rf "$TMPDIR_LOCAL"
 }
 

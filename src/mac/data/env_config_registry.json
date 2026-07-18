@@ -1540,6 +1540,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy allow legacy cas bootstrap.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy allow legacy worker token.",
     "family": "deployment",
     "name": "MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN",
@@ -1557,6 +1568,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "bool"
@@ -1592,6 +1604,17 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy barrier file.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_BARRIER_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -1800,6 +1823,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy fence ready.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_FENCE_READY",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy firecrawl bind addr.",
     "family": "deployment",
     "name": "MAC_DEPLOY_FIRECRAWL_BIND_ADDR",
@@ -1907,6 +1941,173 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate admin token.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_ADMIN_TOKEN",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate adopt reason.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_ADOPT_REASON",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate agent id.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_AGENT_ID",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate allow missing.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_ALLOW_MISSING",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate baseline.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_BASELINE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate expected principal id.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate generation.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate hold reason.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_HOLD_REASON",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate phase.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_PHASE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate prior hold reason.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_PRIOR_HOLD_REASON",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate prior owned.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_PRIOR_OWNED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate require authenticated.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate require owned.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_REQUIRE_OWNED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate timeout.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_TIMEOUT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy generation.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -2195,6 +2396,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy hold adoptions file.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_HOLD_ADOPTIONS_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy hub agent.",
     "family": "deployment",
     "name": "MAC_DEPLOY_HUB_AGENT",
@@ -2263,6 +2475,74 @@
     "description": "Deployment setting: deploy ide handoff file.",
     "family": "deployment",
     "name": "MAC_DEPLOY_IDE_HANDOFF_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy lock dir.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_LOCK_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy lock guard fd.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_LOCK_GUARD_FD",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy lock id.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_LOCK_ID",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy lock renew seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_LOCK_RENEW_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy lock stale seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_LOCK_STALE_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy lock takeover.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_LOCK_TAKEOVER",
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh"
@@ -2525,6 +2805,30 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy openshell effective args.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy openshell enabled.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_OPENSHELL_ENABLED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy openshell required.",
     "family": "deployment",
     "name": "MAC_DEPLOY_OPENSHELL_REQUIRED",
@@ -2544,6 +2848,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2557,6 +2862,17 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy preflight agent ids b64.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -2657,6 +2973,50 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy release commit retries.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RELEASE_COMMIT_RETRIES",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy release generation.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RELEASE_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy release plan b64.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RELEASE_PLAN_B64",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy release ts.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RELEASE_TS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy repository ref reconciler grace days.",
     "family": "deployment",
     "name": "MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS",
@@ -2724,6 +3084,28 @@
       "deploy/deploy-mac-fleet.sh"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy require release all selected.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy restart generation.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RESTART_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -2903,6 +3285,94 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy stale lock seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_STALE_LOCK_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy startup clear hold.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_STARTUP_CLEAR_HOLD",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy state adopted from.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_STATE_ADOPTED_FROM",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy state agent existed.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_STATE_AGENT_EXISTED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy state id.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_STATE_ID",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy state owns.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_STATE_OWNS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy state reason.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_STATE_REASON",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy state require owned.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_STATE_REQUIRE_OWNED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy supervisor.",
     "family": "deployment",
     "name": "MAC_DEPLOY_SUPERVISOR",
@@ -2955,6 +3425,17 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy takeover stale lock.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_TAKEOVER_STALE_LOCK",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -4749,6 +5230,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: managed reverse tunnel.",
+    "family": "core",
+    "name": "MAC_MANAGED_REVERSE_TUNNEL",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: max child tasks per parent.",
     "family": "core",
     "name": "MAC_MAX_CHILD_TASKS_PER_PARENT",
@@ -6215,6 +6707,29 @@
       "src/mac/executor_sandbox.py"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: opensh expected openclaw sandbox.",
+    "family": "core",
+    "name": "MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/openshell/bootstrap-openshell.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: opensh gateway owner.",
+    "family": "core",
+    "name": "MAC_OPENSH_GATEWAY_OWNER",
+    "retired": false,
+    "sources": [
+      "deploy/openshell/bootstrap-openshell.sh"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -8169,6 +8684,8 @@
     "name": "MAC_STARTUP_CLEAR_HOLD",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -8280,6 +8797,17 @@
     "retired": false,
     "sources": [
       "src/mac/supervisor.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: supervisor include root.",
+    "family": "core",
+    "name": "MAC_SUPERVISOR_INCLUDE_ROOT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -9258,6 +9786,32 @@
       "src/mac/worker.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker deploy barrier file.",
+    "family": "worker",
+    "name": "MAC_WORKER_DEPLOY_BARRIER_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Worker setting: worker deploy generation.",
+    "family": "worker",
+    "name": "MAC_WORKER_DEPLOY_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "src/mac/deploy_env.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,

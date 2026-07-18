@@ -476,6 +476,12 @@ jobs:
                 gh --version
                 codex --version
                 codegraph --version
+                clang --version
+                clang --print-targets | grep -F riscv64
+                llvm-objcopy --version
+                ld.lld --version
+                qemu-system-riscv64 --version
+                qemu-system-riscv64 -machine help | grep -F virt
                 python3 --version
                 getent passwd sandbox
                 test -x /opt/mac-venv/bin/mac-git-askpass

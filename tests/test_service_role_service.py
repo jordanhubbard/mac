@@ -1,7 +1,13 @@
 """media-01 service-role election: claim/sync/reconcile lifecycle."""
 from __future__ import annotations
 
+import threading
+
+import pytest
+
+from mac.models import HealthStatus
 from mac.services import ControlPlane
+from mac.store import SQLiteStore
 
 GPU_HW = {"accelerator": "cuda", "gpu": {"name": "X", "vram_mb": 48000}, "memory_mb": 120000}
 OPS = ["image.generate", "audio.tts", "audio.music", "audio.asr", "video.generate"]
@@ -130,3 +136,142 @@ def test_sync_auto_seeds_roles_from_env(monkeypatch):
     res = cp.sync_agent_service_claims(a.id, ["image.generate", "audio.tts"])
     assert set(res["held"]) == {"image.generate", "audio.tts"}
     assert {r.op for r in cp.service_roles.desired_services()} >= {"image.generate", "audio.tts"}
+
+
+def test_dispatch_hold_atomically_withdraws_and_blocks_service_claim_renewal():
+    cp = ControlPlane.in_memory()
+    _seed(cp)
+    agent = _gpu_agent(cp, "held-natasha", capacity=5)
+    initial = cp.sync_agent_service_claims(agent.id, ["image.generate"])
+    assert initial["held"] == ["image.generate"]
+    claim = cp.service_roles.list_active_claims(agent_id=agent.id)[0]
+
+    cp.set_agent_dispatch_hold(agent.id, "fleet deployment")
+    assert cp.service_roles.list_active_claims(agent_id=agent.id) == []
+    blocked = cp.sync_agent_service_claims(
+        agent.id, ["image.generate"], lease_seconds=7200
+    )
+
+    assert blocked["held"] == []
+    assert blocked["eligible"] is False
+    assert blocked["eligibility_reason"] == "agent_dispatch_held"
+    assert cp.service_roles.list_active_claims(agent_id=agent.id) == []
+    persisted = cp.store.query_one(
+        "SELECT status, expires_at FROM service_claims WHERE id = ?", (claim.id,)
+    )
+    assert persisted["status"] == "released"
+    assert persisted["expires_at"] == claim.expires_at
+
+
+def test_dispatch_hold_cas_withdraws_service_claim_before_arm_returns():
+    cp = ControlPlane.in_memory()
+    _seed(cp)
+    agent = _gpu_agent(cp, "cas-held-natasha", capacity=5)
+    cp.sync_agent_service_claims(agent.id, ["image.generate"])
+
+    changed, held = cp.acquire_agent_dispatch_hold(
+        agent.id,
+        "fleet epoch arm",
+        expected_dispatch_hold=False,
+    )
+
+    assert changed is True
+    assert held.dispatch_hold is True
+    assert cp.service_roles.list_active_claims(agent_id=agent.id) == []
+
+
+@pytest.mark.parametrize(
+    ("status", "health_status", "reason"),
+    (
+        ("draining", "degraded", "agent_status_unavailable"),
+        ("idle", "degraded", "agent_health_unavailable"),
+    ),
+)
+def test_unavailable_agent_cannot_acquire_service_claim(
+    status, health_status, reason
+):
+    cp = ControlPlane.in_memory()
+    _seed(cp)
+    agent = _gpu_agent(cp, "unavailable-%s" % reason, capacity=5)
+    cp.heartbeat_agent(agent.id, status=status, health_status=health_status)
+
+    blocked = cp.sync_agent_service_claims(agent.id, ["image.generate"])
+
+    assert blocked["held"] == []
+    assert blocked["eligible"] is False
+    assert blocked["eligibility_reason"] == reason
+    assert cp.service_roles.list_active_claims(agent_id=agent.id) == []
+
+
+def test_service_claim_sync_waits_for_agent_hold_fence_before_renewing(tmp_path):
+    """A hold winning the agent-row lock must defeat a stale concurrent sync."""
+
+    path = str(tmp_path / "service-claim-fence.db")
+    owner_store = SQLiteStore(path)
+    worker_store = SQLiteStore(path, initialize_schema=False)
+    owner = ControlPlane(owner_store, secret_key="s" * 32)
+    worker = ControlPlane(worker_store, secret_key="s" * 32)
+    _seed(owner)
+    agent = _gpu_agent(owner, "racing-natasha", capacity=5)
+    owner.sync_agent_service_claims(agent.id, ["image.generate"])
+    original = owner.service_roles.list_active_claims(agent_id=agent.id)[0]
+    started = threading.Event()
+    finished = threading.Event()
+    outcome = {}
+
+    def sync_after_stale_read_window():
+        started.set()
+        try:
+            outcome["result"] = worker.sync_agent_service_claims(
+                agent.id, ["image.generate"], lease_seconds=7200
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            outcome["error"] = exc
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=sync_after_stale_read_window, daemon=True)
+    try:
+        with owner_store.transaction() as conn:
+            conn.execute(
+                "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ?, "
+                "dispatch_hold_at = updated_at WHERE id = ?",
+                ("concurrent fleet deployment", agent.id),
+            )
+            thread.start()
+            assert started.wait(timeout=1)
+            # The worker cannot complete against pre-hold state while this
+            # transaction owns the agent-row/write fence.
+            assert finished.wait(timeout=0.05) is False
+
+        assert finished.wait(timeout=5)
+        thread.join(timeout=1)
+        assert "error" not in outcome
+        result = outcome["result"]
+        assert result["eligible"] is False
+        assert result["eligibility_reason"] == "agent_dispatch_held"
+        assert result["held"] == []
+        assert owner.service_roles.list_active_claims(agent_id=agent.id) == []
+        persisted = owner_store.query_one(
+            "SELECT status, expires_at FROM service_claims WHERE id = ?",
+            (original.id,),
+        )
+        assert persisted["status"] == "released"
+        assert persisted["expires_at"] == original.expires_at
+    finally:
+        if thread.is_alive():
+            thread.join(timeout=6)
+        worker_store.close()
+        owner_store.close()
+
+
+def test_service_holder_liveness_uses_dispatch_and_health_fence():
+    cp = ControlPlane.in_memory()
+    agent = _gpu_agent(cp, "holder-liveness", capacity=1)
+    assert cp._service_holder_live(agent.id) is True
+
+    cp.set_agent_dispatch_hold(agent.id, "operator maintenance")
+    assert cp._service_holder_live(agent.id) is False
+    cp.clear_agent_dispatch_hold(agent.id)
+    cp.heartbeat_agent(agent.id, health_status=HealthStatus.DEGRADED.value)
+    assert cp._service_holder_live(agent.id) is False

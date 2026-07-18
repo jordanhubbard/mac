@@ -9,6 +9,94 @@ FLEET_REGISTRY_FILE="${MAC_DEPLOY_FLEET_REGISTRY_FILE:-}"
 CONFIGURED_AGENT_IDS="${MAC_DEPLOY_CONFIGURED_AGENT_IDS:-}"
 DEPLOY_TS="${MAC_DEPLOY_TS:?}"
 DEPLOY_REV="${MAC_DEPLOY_GIT_REV:?}"
+DEPLOY_GENERATION="${MAC_DEPLOY_GENERATION:-${DEPLOY_REV}:${AGENT}:${DEPLOY_TS}}"
+export MAC_DEPLOY_GENERATION="$DEPLOY_GENERATION"
+
+# The outer controller acquires this fence before it copies or mutates any
+# managed state.  Re-check it in-band before this transaction's first write,
+# then renew it throughout long package/image installs.  A controller whose
+# lock is replaced must not continue writing merely because its SSH session is
+# still alive.
+DEPLOY_LOCK_DIR="${MAC_HOME:-$HOME/.mac}/deploy-controller.lock"
+deployment_lock_assert_and_renew() {
+  MAC_DEPLOY_LOCK_DIR="$DEPLOY_LOCK_DIR" \
+    MAC_DEPLOY_LOCK_ID="$DEPLOY_GENERATION" python3 - <<'PY'
+import json
+import os
+import tempfile
+import time
+import fcntl
+from pathlib import Path
+
+lock = Path(os.environ["MAC_DEPLOY_LOCK_DIR"])
+owner = lock / "owner.json"
+guard_path = lock.parent / "deploy-controller.guard"
+inherited_guard = os.environ.get("MAC_DEPLOY_LOCK_GUARD_FD", "").strip()
+opened_guard = not inherited_guard
+if inherited_guard:
+    try:
+        guard_fd = int(inherited_guard)
+        os.fstat(guard_fd)
+    except (OSError, ValueError) as exc:
+        raise SystemExit("inherited deployment guard is invalid") from exc
+else:
+    guard_fd = os.open(str(guard_path), os.O_CREAT | os.O_RDWR, 0o600)
+    os.fchmod(guard_fd, 0o600)
+    fcntl.flock(guard_fd, fcntl.LOCK_EX)
+try:
+    try:
+        payload = json.loads(owner.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit("deployment lock is unreadable: %s" % type(exc).__name__)
+    if payload.get("deployment_id") != os.environ["MAC_DEPLOY_LOCK_ID"]:
+        raise SystemExit("deployment lock fence no longer belongs to this transaction")
+    payload["renewed_at_epoch"] = time.time()
+    fd, raw = tempfile.mkstemp(prefix="owner.json.", dir=str(lock))
+    tmp = Path(raw)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(payload, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.chmod(0o600)
+        os.replace(tmp, owner)
+        directory_fd = os.open(lock, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
+finally:
+    if opened_guard:
+        fcntl.flock(guard_fd, fcntl.LOCK_UN)
+        os.close(guard_fd)
+PY
+}
+
+deployment_lock_assert_and_renew
+DEPLOY_LOCK_RENEW_PID=""
+deployment_lock_renewer() {
+  local controller_pid="$1"
+  while sleep "${MAC_DEPLOY_LOCK_RENEW_SECONDS:-20}"; do
+    if ! deployment_lock_assert_and_renew; then
+      echo "deployment lock ownership was lost; terminating fenced install" >&2
+      kill -TERM "$controller_pid" 2>/dev/null || true
+      return 1
+    fi
+  done
+}
+deployment_lock_renewer "$$" &
+DEPLOY_LOCK_RENEW_PID="$!"
+stop_deployment_lock_renewer() {
+  if [ -n "${DEPLOY_LOCK_RENEW_PID:-}" ]; then
+    kill "$DEPLOY_LOCK_RENEW_PID" 2>/dev/null || true
+    wait "$DEPLOY_LOCK_RENEW_PID" 2>/dev/null || true
+    DEPLOY_LOCK_RENEW_PID=""
+  fi
+}
+trap stop_deployment_lock_renewer EXIT
+
 DEPLOY_GIT_URL="${MAC_DEPLOY_GIT_URL:-}"
 DEPLOY_GIT_BRANCH="${MAC_DEPLOY_GIT_BRANCH:-main}"
 HERMES_SLACK_HOME_CHANNEL_NAME="${MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME:-}"
@@ -139,6 +227,11 @@ DRAIN_TIMEOUT_SECONDS="${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}"
 DRAIN_POLL_SECONDS="${MAC_DEPLOY_DRAIN_POLL_SECONDS:-10}"
 DEFER_CLEAR_DRAIN="${MAC_DEPLOY_DEFER_CLEAR_DRAIN:-0}"
 DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"
+OPENSHELL_DEPLOY_ENABLED="${MAC_DEPLOY_OPENSHELL_ENABLED:-0}"
+OPENSHELL_EFFECTIVE_ARGS="${MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS:-}"
+OPENSHELL_RUNTIME_IMAGE="${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
+OPENSHELL_LOCAL_IMAGE_BUILD="${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
+OPENSHELL_BOOTSTRAPPED=0
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
 REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh}"
@@ -313,7 +406,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -716,7 +809,8 @@ install_github_review_key() {
   rm -f "$candidate_file"
 
   if [ -n "$GITHUB_REVIEW_KEY_B64" ]; then
-    "$PYTHON_BIN" -c "import base64, sys; open(sys.argv[1],'wb').write(base64.b64decode(sys.argv[2]))" "$candidate_file" "$GITHUB_REVIEW_KEY_B64"
+    "$PYTHON_BIN" -c "import base64, sys; open(sys.argv[1],'wb').write(base64.b64decode(sys.stdin.buffer.read()))" \
+      "$candidate_file" <<<"$GITHUB_REVIEW_KEY_B64"
     chmod 600 "$candidate_file"
     if ssh-keygen -y -f "$candidate_file" >/dev/null 2>&1 \
       && github_ssh_auth_succeeds "$candidate_file"; then
@@ -892,6 +986,254 @@ openshell_disable_requested() {
     1|true|yes|on) return 1 ;;
   esac
   return 0
+}
+
+bootstrap_enabled_openshell() {
+  local bootstrap="$SRC_DIR/deploy/openshell/bootstrap-openshell.sh"
+  local parsed_args arg enabled=0 required=0 value found expected_openclaw suffix
+  local -a bootstrap_args=()
+  if truthy "$OPENSHELL_DEPLOY_ENABLED" || truthy "${MAC_DEPLOY_OPENSHELL:-}"; then
+    enabled=1
+  fi
+  if truthy "${MAC_DEPLOY_OPENSHELL_REQUIRED:-}"; then
+    enabled=1
+    required=1
+  fi
+  [ "$enabled" = 1 ] || return 0
+  [ -x "$bootstrap" ] || die "OpenShell bootstrap is missing or not executable: $bootstrap"
+
+  if [ -n "$OPENSHELL_RUNTIME_IMAGE" ]; then
+    [[ "$OPENSHELL_RUNTIME_IMAGE" =~ ^ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}$ ]] \
+      || die "OpenShell runtime image is not an immutable repository-owned digest"
+  elif ! truthy "$OPENSHELL_LOCAL_IMAGE_BUILD"; then
+    die "enabled OpenShell deployment requires an immutable runtime image"
+  fi
+
+  # The outer controller has already normalized role-required flags. Parse its
+  # exact result without eval so quoted whitespace cannot become shell syntax.
+  # Only bootstrap's reviewed flag surface is accepted here.
+  parsed_args="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-args.XXXXXX")"
+  if ! "$PY" - "$OPENSHELL_EFFECTIVE_ARGS" > "$parsed_args" <<'PY'
+import shlex
+import sys
+
+allowed = {"--enable", "--fail-closed", "--skip-image"}
+try:
+    values = shlex.split(sys.argv[1], posix=True)
+except ValueError as exc:
+    raise SystemExit("invalid OpenShell bootstrap arguments: %s" % exc)
+unknown = sorted(set(values) - allowed)
+if unknown:
+    raise SystemExit("unreviewed OpenShell bootstrap arguments: %s" % ", ".join(unknown))
+for value in values:
+    sys.stdout.buffer.write(value.encode("utf-8") + b"\0")
+PY
+  then
+    rm -f "$parsed_args"
+    die "could not parse reviewed OpenShell bootstrap arguments"
+  fi
+  while IFS= read -r -d '' arg; do
+    bootstrap_args+=("$arg")
+  done < "$parsed_args"
+  rm -f "$parsed_args"
+
+  if [ "$required" = 1 ]; then
+    for value in --enable --fail-closed; do
+      found=0
+      if [ "${#bootstrap_args[@]}" -gt 0 ]; then
+        for arg in "${bootstrap_args[@]}"; do
+          [ "$arg" != "$value" ] || found=1
+        done
+      fi
+      if [ "$found" = 0 ]; then
+        bootstrap_args+=("$value")
+      fi
+    done
+  fi
+  if [ -n "$OPENSHELL_RUNTIME_IMAGE" ] && [ "${#bootstrap_args[@]}" -gt 0 ]; then
+    for arg in "${bootstrap_args[@]}"; do
+      [ "$arg" != --skip-image ] \
+        || die "--skip-image is incompatible with a digest-managed OpenShell deployment"
+    done
+  fi
+
+  expected_openclaw=""
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = openclaw ]; then
+    suffix="$(printf '%s' "${MAC_AGENT_ID:-agent_$AGENT}" \
+      | sed -E 's/^agent_//; s/[^A-Za-z0-9]+/-/g; s/^-+//; s/-+$//' \
+      | tr '[:upper:]' '[:lower:]')"
+    expected_openclaw="mac-openclaw-${suffix:-gateway}"
+  fi
+
+  log "bootstrapping final OpenShell gateway before any chat or worker sandbox is created"
+  if [ "${#bootstrap_args[@]}" -gt 0 ]; then
+    MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX="$expected_openclaw" \
+      OSH_RUNTIME_IMAGE_REF="$OPENSHELL_RUNTIME_IMAGE" \
+      "$bootstrap" "${bootstrap_args[@]}"
+  else
+    # Bash 3.2 with set -u rejects an expansion of an empty declared array.
+    MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX="$expected_openclaw" \
+      OSH_RUNTIME_IMAGE_REF="$OPENSHELL_RUNTIME_IMAGE" \
+      "$bootstrap"
+  fi
+  OPENSHELL_BOOTSTRAPPED=1
+}
+
+verify_managed_openshell_runtime() {
+  [ "$OPENSHELL_BOOTSTRAPPED" = 1 ] || return 0
+
+  local cli="$MAC_HOME/bin/openshell" docker_bin inventory containers report
+  local cli_version_text cli_version expected_supervisor container_id sandbox_name
+  local supervisor_path supervisor_version supervisor_digest expected_openclaw="" managed_count=0
+  [ -x "$cli" ] || die "reviewed OpenShell CLI is absent after bootstrap"
+  docker_bin="$(command -v docker || true)"
+  if [ -z "$docker_bin" ] && [ "$OS_KIND" = darwin ]; then
+    for docker_bin in /Applications/Docker.app/Contents/Resources/bin/docker /opt/homebrew/bin/docker /usr/local/bin/docker; do
+      [ -x "$docker_bin" ] && break
+    done
+  fi
+  [ -x "$docker_bin" ] || die "Docker CLI is absent after OpenShell bootstrap"
+
+  inventory="$LOG_DIR/openshell-sandbox-inventory-${DEPLOY_TS}.json"
+  OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17670 \
+    "$cli" sandbox list --limit 1000 --output json > "$inventory" \
+    || die "OpenShell sandbox inventory is unreadable after bootstrap"
+  "$PY" - "$inventory" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(value, list):
+    raise SystemExit("OpenShell sandbox inventory is not a list")
+PY
+
+  cli_version_text="$("$cli" --version 2>&1)"
+  if [[ "$cli_version_text" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+    cli_version="${BASH_REMATCH[1]}"
+  else
+    die "could not derive the reviewed OpenShell CLI version"
+  fi
+  expected_supervisor="openshell-sandbox $cli_version"
+  supervisor_digest="$($PY - "$MAC_HOME/openshell/gateway.toml" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r'^supervisor_image\s*=\s*"[^"\n]+@sha256:([0-9a-f]{64})"$', text, re.MULTILINE)
+if not match:
+    raise SystemExit("OpenShell gateway config lacks an immutable supervisor image")
+print(match.group(1))
+PY
+)" || die "could not verify the configured OpenShell supervisor digest"
+  containers="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-conformance.XXXXXX")"
+  while IFS= read -r container_id; do
+    [ -n "$container_id" ] || continue
+    managed_count=$((managed_count + 1))
+    sandbox_name="$("$docker_bin" inspect --format \
+      '{{ index .Config.Labels "openshell.ai/sandbox-name" }}' "$container_id")"
+    supervisor_path="$("$docker_bin" inspect --format \
+      '{{range .Mounts}}{{if eq .Destination "/opt/openshell/bin/openshell-sandbox"}}{{.Source}}{{end}}{{end}}' \
+      "$container_id")"
+    [ -n "$sandbox_name" ] || {
+      rm -f "$containers"
+      die "managed OpenShell container $container_id has no sandbox name"
+    }
+    [ -r "$supervisor_path" ] || {
+      rm -f "$containers"
+      die "managed sandbox $sandbox_name lacks a readable supervisor bind"
+    }
+    case "$supervisor_path" in
+      */docker-supervisor/sha256-"$supervisor_digest"/openshell-sandbox) ;;
+      *)
+        rm -f "$containers"
+        die "managed sandbox $sandbox_name is bound to an unreviewed supervisor digest"
+        ;;
+    esac
+    if [ "$OS_KIND" = darwin ]; then
+      # The bind is a Linux ELF inside Docker Desktop and cannot execute on the
+      # Darwin host. verify_supervisor_image already ran this exact digest in
+      # Docker; the immutable cache path proves each sandbox uses that binary.
+      supervisor_version="$expected_supervisor (digest-bound)"
+    else
+      supervisor_version="$("$supervisor_path" --version 2>&1 || true)"
+      [ "$supervisor_version" = "$expected_supervisor" ] || {
+        rm -f "$containers"
+        die "managed sandbox $sandbox_name uses '$supervisor_version', expected '$expected_supervisor'"
+      }
+    fi
+    printf '%s\t%s\t%s\t%s\n' \
+      "$container_id" "$sandbox_name" "$supervisor_version" "$supervisor_digest" \
+      >> "$containers"
+  done < <("$docker_bin" ps -a \
+    --filter label=openshell.ai/managed-by=openshell --format '{{.ID}}')
+
+  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = openclaw ]; then
+    expected_openclaw="$($PY - "$MAC_HOME/openclaw/service-advertisement.json" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+value = json.loads(path.read_text(encoding="utf-8"))
+sandbox = (((value.get("openclaw_runtime") or {}).get("confinement") or {}).get("sandbox"))
+if not isinstance(sandbox, str) or not re.fullmatch(r"mac-openclaw-[a-z0-9][a-z0-9._-]*", sandbox):
+    raise SystemExit("verified OpenClaw advertisement has no safe sandbox identity")
+print(sandbox)
+PY
+)" || {
+      rm -f "$containers"
+      die "could not verify the advertised OpenClaw sandbox identity"
+    }
+    OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17670 \
+      "$cli" sandbox get "$expected_openclaw" >/dev/null \
+      || {
+        rm -f "$containers"
+        die "advertised OpenClaw sandbox is not decodable after OpenShell bootstrap"
+      }
+    [ "$managed_count" -gt 0 ] || {
+      rm -f "$containers"
+      die "OpenClaw is advertised but no managed supervisor container exists"
+    }
+    awk -F '\t' -v expected="$expected_openclaw" \
+      '$2 == expected { found = 1 } END { exit(found ? 0 : 1) }' \
+      "$containers" || {
+      rm -f "$containers"
+      die "advertised OpenClaw sandbox has no exact managed container"
+    }
+  fi
+
+  report="$LOG_DIR/openshell-runtime-conformance-${DEPLOY_TS}.json"
+  "$PY" - "$containers" "$report" "$cli_version" "$expected_openclaw" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+rows_path, report_path, cli_version, openclaw = sys.argv[1:]
+rows = []
+for line in Path(rows_path).read_text(encoding="utf-8").splitlines():
+    if not line:
+        continue
+    container_id, sandbox, supervisor, supervisor_digest = line.split("\t")
+    rows.append({
+        "container_id": container_id,
+        "sandbox": sandbox,
+        "supervisor_image_digest": "sha256:" + supervisor_digest,
+        "supervisor_version": supervisor,
+    })
+Path(report_path).write_text(json.dumps({
+    "schema": "mac.openshell_runtime_conformance.v1",
+    "cli_version": cli_version,
+    "expected_openclaw_sandbox": openclaw or None,
+    "managed_containers": rows,
+    "status": "passed",
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+  rm -f "$containers"
+  chmod 0600 "$inventory" "$report"
+  log "OpenShell runtime conformance passed for $managed_count managed container(s)"
 }
 
 remove_openshell_firewall_chain() {
@@ -1795,6 +2137,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -2084,6 +2427,9 @@ manifest = {
         "disk_before_cleanup": file_ref(Path(os.environ["LOG_DIR"]) / ("disk-before-cleanup-%s.json" % os.environ["DEPLOY_TS"])),
         "disk_after_cleanup": file_ref(Path(os.environ["LOG_DIR"]) / ("disk-after-cleanup-%s.json" % os.environ["DEPLOY_TS"])),
         "disk_cleanup_report": file_ref(Path(os.environ["LOG_DIR"]) / ("disk-cleanup-%s.json" % os.environ["DEPLOY_TS"])),
+        "openshell_sandbox_inventory": file_ref(Path(os.environ["LOG_DIR"]) / ("openshell-sandbox-inventory-%s.json" % os.environ["DEPLOY_TS"])),
+        "openshell_runtime_conformance": file_ref(Path(os.environ["LOG_DIR"]) / ("openshell-runtime-conformance-%s.json" % os.environ["DEPLOY_TS"])),
+        "openshell_upgrade_recovery": file_ref(Path(os.environ["MAC_HOME"]) / "openshell" / "upgrade-recovery.log"),
     },
     "acc": {
         "candidate_databases": [file_ref(path) for path in acc_candidates],
@@ -2500,14 +2846,79 @@ wait_for_local_control_plane_health() {
   done
 }
 
+stop_systemd_service_if_present() {
+  local unit="$1" load_state active_state
+  if ! load_state="$(sudo systemctl show "$unit" -p LoadState --value 2>/dev/null)"; then
+    log "ERROR: could not inspect systemd unit $unit before artifact replacement"
+    return 1
+  fi
+  case "$load_state" in
+    not-found) return 0 ;;
+    loaded|masked) ;;
+    *)
+      log "ERROR: unsupported systemd load state for $unit: ${load_state:-empty}"
+      return 1
+      ;;
+  esac
+  if ! sudo systemctl stop "$unit" >/dev/null 2>&1; then
+    log "ERROR: failed to stop systemd unit $unit"
+    return 1
+  fi
+  if ! active_state="$(sudo systemctl show "$unit" -p ActiveState --value 2>/dev/null)"; then
+    log "ERROR: could not verify stopped systemd unit $unit"
+    return 1
+  fi
+  case "$active_state" in
+    inactive|failed) return 0 ;;
+    *)
+      log "ERROR: systemd unit $unit remained $active_state after stop"
+      return 1
+      ;;
+  esac
+}
+
+stop_supervisord_program_if_present() {
+  local program="$1" status status_rc=0
+  status="$(run_supervisorctl status "$program" 2>&1)" \
+    && status_rc=0 || status_rc=$?
+  case "$status" in
+    *RUNNING*|*STARTING*|*BACKOFF*)
+      if ! run_supervisorctl stop "$program" >/dev/null 2>&1; then
+        log "ERROR: failed to stop supervisord program $program"
+        return 1
+      fi
+      ;;
+    *STOPPED*|*EXITED*|*FATAL*|*"no such process"*) return 0 ;;
+    *)
+      log "ERROR: could not inspect supervisord program $program (status=$status_rc)"
+      return 1
+      ;;
+  esac
+  status="$(run_supervisorctl status "$program" 2>&1)" \
+    && status_rc=0 || status_rc=$?
+  case "$status" in
+    *STOPPED*|*EXITED*|*FATAL*|*"no such process"*) return 0 ;;
+    *)
+      log "ERROR: supervisord program $program did not become inactive (status=$status_rc)"
+      return 1
+      ;;
+  esac
+}
+
 stop_existing_services_for_deploy() {
   log "stopping existing mac services for artifact replacement"
   case "$SUPERVISOR_KIND" in
     systemd)
-      sudo systemctl stop "$MAC_AGENT_SERVICE_NAME" "$HERMES_SERVICE_NAME" "$OPENCLAW_SERVICE_NAME" "$MAC_SERVICE_NAME" >/dev/null 2>&1 || true
+      stop_systemd_service_if_present "$MAC_AGENT_SERVICE_NAME"
+      stop_systemd_service_if_present "$HERMES_SERVICE_NAME"
+      stop_systemd_service_if_present "$OPENCLAW_SERVICE_NAME"
+      stop_systemd_service_if_present "$MAC_SERVICE_NAME"
       ;;
     supervisord)
-      run_supervisorctl stop "$AGENT_SUPERVISORD_PROG" "$HERMES_SUPERVISORD_PROG" "$OPENCLAW_SUPERVISORD_PROG" "$MAC_SUPERVISORD_PROG" >/dev/null 2>&1 || true
+      stop_supervisord_program_if_present "$AGENT_SUPERVISORD_PROG"
+      stop_supervisord_program_if_present "$HERMES_SUPERVISORD_PROG"
+      stop_supervisord_program_if_present "$OPENCLAW_SUPERVISORD_PROG"
+      stop_supervisord_program_if_present "$MAC_SUPERVISORD_PROG"
       ;;
     launchd)
       local uid
@@ -2520,6 +2931,16 @@ stop_existing_services_for_deploy() {
       launchctl bootout "gui/$uid/$HERMES_LAUNCHD_LABEL" >/dev/null 2>&1 || true
       launchctl bootout "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" >/dev/null 2>&1 || true
       launchctl bootout "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1 || true
+      local stopped_label
+      for stopped_label in \
+          "$MAC_AGENT_LAUNCHD_LABEL" \
+          "$HERMES_LAUNCHD_LABEL" \
+          "$OPENCLAW_LAUNCHD_LABEL"; do
+        if launchctl print "gui/$uid/$stopped_label" >/dev/null 2>&1; then
+          log "ERROR: launchd job $stopped_label remained loaded after bootout"
+          return 1
+        fi
+      done
       if [ "$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ] \
         && launchctl print "gui/$uid/$MAC_LAUNCHD_LABEL" >/dev/null 2>&1; then
         log "ERROR: GUI control-plane job remained loaded after bootout"
@@ -4046,6 +4467,16 @@ PYTHONPATH="$SRC_DIR/src:${PYTHONPATH:-}" "$PY" -m mac.deploy_env write-mac-env 
 
 normalize_hermes_redaction_env
 
+deploy_barrier_file="$MAC_HOME/deploy-start-barrier"
+if truthy "$DEFER_AGENT_RESTART"; then
+  deploy_barrier_tmp="${deploy_barrier_file}.tmp.$$"
+  printf '%s\n' "$DEPLOY_GENERATION" > "$deploy_barrier_tmp"
+  chmod 0600 "$deploy_barrier_tmp"
+  mv -f "$deploy_barrier_tmp" "$deploy_barrier_file"
+else
+  rm -f "$deploy_barrier_file"
+fi
+
 reload_mac_env
 reconcile_disabled_optional_openshell
 prepare_work_package_pipeline_storage
@@ -4082,6 +4513,12 @@ log "installing mac Python package (with vendored Hermes runtime + gateway + rel
 "$VENV/bin/python" -m pip install -e "${SRC_DIR}[hermes-gateway,relay]" >/dev/null
 mkdir -p "$HOME/.local/bin"
 ln -sf "$VENV/bin/mac" "$HOME/.local/bin/mac"
+
+# OpenShell owns the schema used by every later sandbox.  Upgrade and prove the
+# final gateway now, while the node is drained and all prior services remain
+# stopped.  OpenClaw is installed only after this returns successfully.
+bootstrap_enabled_openshell
+
 install_or_validate_web_search_service
 write_hermes_web_search_config
 install_or_validate_publish_service
@@ -4843,6 +5280,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -5272,14 +5710,46 @@ report = {
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+# Registration follows this self-test in mac-agent-service. Persist the report
+# into the exact resources document that registration consumes so a brand-new
+# agent cannot lose a degraded verdict to the expected pre-registration 404.
+# Existing OpenClaw runtime/ownership advertisements are preserved.
+resources_path.parent.mkdir(parents=True, exist_ok=True)
+try:
+    registration_resources = (
+        json.loads(resources_path.read_text(encoding="utf-8"))
+        if resources_path.exists()
+        else {}
+    )
+    if not isinstance(registration_resources, dict):
+        raise ValueError("worker resources document is not an object")
+    registration_resources["startup_self_test"] = report
+    fd, raw = tempfile.mkstemp(prefix=resources_path.name + ".", dir=str(resources_path.parent))
+    tmp = Path(raw)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(registration_resources, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        tmp.chmod(0o600)
+        os.replace(tmp, resources_path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+except Exception as exc:
+    print(
+        f"agent startup self-test: cannot persist registration health: {safe_error(exc)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
 hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
 token = os.environ.get("MAC_WORKER_TOKEN") or ""
 if hub_url and token and agent_id:
-    payload = {
-        "status": "offline" if blocking_problems else "idle",
-        "health_status": "degraded" if problems else "healthy",
-        "resources": {"startup_self_test": report},
-    }
+    payload = {"resources": {"startup_self_test": report}}
+    if blocking_problems:
+        payload.update({"status": "offline", "health_status": "degraded"})
     req = urllib.request.Request(
         f"{hub_url}/agents/{agent_id}/heartbeat",
         data=json.dumps(payload).encode("utf-8"),
@@ -5452,6 +5922,10 @@ EOF
 
 install_supervisord_service() {
   local conf_dir conf restart_since control_program="" gateway_program active_gateway_program
+  local agent_autostart=true
+  if truthy "$DEFER_AGENT_RESTART"; then
+    agent_autostart=false
+  fi
   conf_dir="$(supervisord_conf_dir)"
   conf="$conf_dir/$MAC_SUPERVISORD_CONF_NAME"
   log "installing supervisord programs in $conf"
@@ -5545,7 +6019,7 @@ environment=HOME="$HOME",MAC_HOME="$MAC_HOME",MAC_RESOURCE_HEALTH_INTERVAL_SECON
 command=$MAC_HOME/bin/mac-crash-observer --supervisor supervisord -- $MAC_HOME/bin/mac-agent-service
 directory=$MAC_HOME
 user=$USER
-autostart=true
+autostart=$agent_autostart
 autorestart=true
 startsecs=3
 stopwaitsecs=30
@@ -6090,6 +6564,12 @@ case "$SUPERVISOR_KIND" in
   supervisord) install_supervisord_service ;;
   *) log "ERROR: unsupported supervisor $SUPERVISOR_KIND"; exit 1 ;;
 esac
+
+# The service installer may now have created the long-lived OpenClaw sandbox.
+# Prove the API can decode it and every surviving managed container binds the
+# exact supervisor version reviewed with this CLI before any post manifest can
+# declare the node deployable.
+verify_managed_openshell_runtime
 
 # media-01: durable local media-gen server on GPU agents (non-fatal, self-gated).
 install_gpu_gen_server || true

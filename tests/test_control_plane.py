@@ -831,6 +831,89 @@ def test_review_claim_is_idempotent_for_identical_evidence(cp):
     assert len(claim_rows()) == 1  # 50 identical re-claims added no rows
 
 
+@pytest.mark.parametrize("barrier", ["dispatch_hold", "draining"])
+def test_review_claim_rejects_reviewer_behind_dispatch_barrier(cp, barrier):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task("Barrier-fenced review", required_capabilities=["python"])
+    cp.dispatch_once()
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://pytest",
+        "pytest passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    before_metadata = cp.get_task(task.id).metadata
+    before_history = list(cp.task_history(task.id))
+    if barrier == "dispatch_hold":
+        cp.set_agent_dispatch_hold(reviewer.id, "deployment fence")
+    else:
+        cp.update_agent(
+            reviewer.id,
+            status=AgentStatus.DRAINING.value,
+            health_status=HealthStatus.DEGRADED.value,
+        )
+
+    with pytest.raises(AuthorizationError):
+        cp.claim_review(
+            review.id,
+            reviewer.id,
+            executor_evidence_id=evidence.id,
+            sync_beads=False,
+        )
+
+    assert cp.get_task(task.id).metadata == before_metadata
+    assert cp.task_history(task.id) == before_history
+    fenced = cp.get_agent(reviewer.id)
+    assert fenced.current_task_id is None
+
+
+def test_identical_review_reclaim_cannot_cross_new_dispatch_hold(cp):
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    task = cp.create_task("Idempotent barrier review", required_capabilities=["python"])
+    cp.dispatch_once()
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id,
+        "test",
+        "artifact://pytest",
+        "pytest passed",
+        worker.id,
+        metadata=verified_repo_metadata(cp, worker.id),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    review = cp.request_review(task.id, reviewer.id)
+    cp.claim_review(
+        review.id,
+        reviewer.id,
+        executor_evidence_id=evidence.id,
+        sync_beads=False,
+    )
+    cp.set_agent_dispatch_hold(reviewer.id, "deployment fence")
+    before_metadata = cp.get_task(task.id).metadata
+    before_history = list(cp.task_history(task.id))
+
+    with pytest.raises(AuthorizationError):
+        cp.claim_review(
+            review.id,
+            reviewer.id,
+            executor_evidence_id=evidence.id,
+            sync_beads=False,
+        )
+
+    assert cp.get_task(task.id).metadata == before_metadata
+    assert cp.task_history(task.id) == before_history
+    held = cp.get_agent(reviewer.id)
+    assert held.dispatch_hold is True
+    assert held.current_task_id == task.id
+
+
 def test_default_review_workflow_assigns_reviewer_and_publishes(cp):
     from tests.conftest import submit_review_verdict
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -162,6 +163,261 @@ def test_postgres_fleet_source_runtime_registration_converges_concurrently(
         "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
         (results[0]["runtime_name"],),
     )["count"] == 1
+
+
+def test_postgres_delete_agent_serializes_before_credential_revocation(
+    postgres_store,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issuance cannot land a live bearer behind an in-flight tombstone.
+
+    Force issuance to hold the agent-row fence while deletion enters its
+    transaction.  Deletion must block on that same fence *before* inspecting
+    worker credentials.  Once issuance commits, deletion sees and revokes the
+    new principal in the same transaction that writes the tombstone.
+
+    This interleaving regresses the old credential-row -> agent-row delete
+    order, which could both deadlock with issuance and leave a pending bearer
+    valid after the agent was decommissioned.
+    """
+    from mac.services import ControlPlane
+    from mac.worker_credentials import WorkerCredentialLifecycle
+
+    cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    machine = cp.register_machine("postgres-delete-issue-host")
+    agent = cp.register_agent(
+        machine.id,
+        "postgres-delete-issue-worker",
+        capabilities=["python"],
+        agent_id="agent_postgres_delete_issue",
+    )
+    lifecycle = WorkerCredentialLifecycle(postgres_store)
+
+    issue_has_agent_lock = threading.Event()
+    permit_issue_to_commit = threading.Event()
+    delete_attempted_agent_lock = threading.Event()
+    delete_touched_credentials_first = threading.Event()
+    original_transaction = postgres_store.transaction
+
+    class _InstrumentedConnection:
+        def __init__(self, connection) -> None:
+            self._connection = connection
+
+        def execute(self, sql, params=()):
+            statement = " ".join(str(sql).lower().split())
+            thread_name = threading.current_thread().name
+            touches_agent_row = (
+                statement.startswith("update agents ")
+                or (statement.startswith("select ") and " from agents " in statement)
+                and " for update" in statement
+            )
+
+            if thread_name == "credential-issuer" and touches_agent_row:
+                result = self._connection.execute(sql, params)
+                issue_has_agent_lock.set()
+                if not permit_issue_to_commit.wait(timeout=10):
+                    raise AssertionError("test did not release credential issuance")
+                return result
+
+            if thread_name == "agent-deleter":
+                if (
+                    "worker_credentials" in statement
+                    and not delete_attempted_agent_lock.is_set()
+                ):
+                    delete_touched_credentials_first.set()
+                if touches_agent_row:
+                    # Signal before executing: the real PostgreSQL call blocks
+                    # here until the issuer releases its row lock.
+                    delete_attempted_agent_lock.set()
+            return self._connection.execute(sql, params)
+
+    @contextmanager
+    def instrumented_transaction():
+        with original_transaction() as connection:
+            yield _InstrumentedConnection(connection)
+
+    monkeypatch.setattr(postgres_store, "transaction", instrumented_transaction)
+
+    issued = []
+    errors = []
+    result_lock = threading.Lock()
+
+    def issue_credential() -> None:
+        try:
+            result = lifecycle.issue(agent.id, environment="vm", actor="postgres-test")
+            with result_lock:
+                issued.append(result)
+        except Exception as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    def delete_agent() -> None:
+        try:
+            cp.delete_agent(agent.id, actor="postgres-test")
+        except Exception as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    issuer = threading.Thread(target=issue_credential, name="credential-issuer")
+    deleter = threading.Thread(target=delete_agent, name="agent-deleter")
+    issuer.start()
+    assert issue_has_agent_lock.wait(timeout=10)
+    deleter.start()
+    delete_reached_fence = delete_attempted_agent_lock.wait(timeout=10)
+    permit_issue_to_commit.set()
+
+    for thread in (issuer, deleter):
+        thread.join(timeout=20)
+        assert not thread.is_alive(), "delete/issue transaction deadlocked"
+
+    assert delete_reached_fence
+    assert not delete_touched_credentials_first.is_set()
+    assert not errors
+    assert len(issued) == 1
+    assert cp.get_agent(agent.id).deleted_at is not None
+    credential = postgres_store.query_one(
+        "SELECT state FROM worker_credentials WHERE id = ?",
+        (issued[0].record["id"],),
+    )
+    assert credential["state"] == "revoked"
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS n FROM worker_credentials "
+            "WHERE agent_id = ? AND state IN ('pending_install', 'active')",
+            (agent.id,),
+        )["n"]
+        == 0
+    )
+
+
+def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
+    postgres_store,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Activation and deletion cannot deadlock on inverted row-lock order."""
+
+    from mac.deploy_env import read_env_file
+    from mac.services import ControlPlane
+    from mac.worker_credentials import (
+        WorkerCredentialLifecycle,
+        authenticated_credential_resource,
+        credential_resource_from_env,
+        install_vm_manifest,
+        installation_manifest,
+    )
+
+    cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    machine = cp.register_machine("postgres-delete-activate-host")
+    agent = cp.register_agent(
+        machine.id,
+        "postgres-delete-activate-worker",
+        capabilities=["python"],
+        agent_id="agent_postgres_delete_activate",
+    )
+    lifecycle = WorkerCredentialLifecycle(postgres_store)
+    issue = lifecycle.issue(agent.id, environment="vm", actor="postgres-test")
+    env_path = tmp_path / "worker.env"
+    receipt = install_vm_manifest(
+        installation_manifest(issue), env_path, expected_agent_id=agent.id
+    )
+    env_values = read_env_file(env_path)
+    cp.heartbeat_agent(
+        agent.id,
+        status="idle",
+        health_status="healthy",
+        resources={
+            "worker_credential": credential_resource_from_env(
+                agent.id, env_values
+            ),
+            "worker_credential_authenticated": authenticated_credential_resource(
+                agent_id=agent.id,
+                principal_id=issue.record["id"],
+                token_fingerprint=issue.record["token_fingerprint"],
+                credential_version=issue.worker_version,
+            ),
+        },
+    )
+
+    activation_has_agent_lock = threading.Event()
+    permit_activation_to_commit = threading.Event()
+    delete_attempted_agent_lock = threading.Event()
+    activation_touched_credentials_first = threading.Event()
+    original_transaction = postgres_store.transaction
+
+    class _InstrumentedConnection:
+        def __init__(self, connection) -> None:
+            self._connection = connection
+
+        def execute(self, sql, params=()):
+            statement = " ".join(str(sql).lower().split())
+            thread_name = threading.current_thread().name
+            touches_agent_row = statement.startswith("update agents ")
+            if thread_name == "credential-activator":
+                if (
+                    "worker_credentials" in statement
+                    and not activation_has_agent_lock.is_set()
+                ):
+                    activation_touched_credentials_first.set()
+                if touches_agent_row:
+                    result = self._connection.execute(sql, params)
+                    activation_has_agent_lock.set()
+                    if not permit_activation_to_commit.wait(timeout=10):
+                        raise AssertionError("test did not release credential activation")
+                    return result
+            if thread_name == "agent-deleter" and touches_agent_row:
+                delete_attempted_agent_lock.set()
+            return self._connection.execute(sql, params)
+
+    @contextmanager
+    def instrumented_transaction():
+        with original_transaction() as connection:
+            yield _InstrumentedConnection(connection)
+
+    monkeypatch.setattr(postgres_store, "transaction", instrumented_transaction)
+
+    activated = []
+    errors = []
+    result_lock = threading.Lock()
+
+    def activate_credential() -> None:
+        try:
+            result = lifecycle.activate(
+                agent.id, issue.record["id"], receipt=receipt, actor="postgres-test"
+            )
+            with result_lock:
+                activated.append(result)
+        except Exception as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    def delete_agent() -> None:
+        try:
+            cp.delete_agent(agent.id, actor="postgres-test")
+        except Exception as exc:  # pragma: no cover - asserted below
+            with result_lock:
+                errors.append(exc)
+
+    activator = threading.Thread(
+        target=activate_credential, name="credential-activator"
+    )
+    deleter = threading.Thread(target=delete_agent, name="agent-deleter")
+    activator.start()
+    assert activation_has_agent_lock.wait(timeout=10)
+    deleter.start()
+    delete_reached_fence = delete_attempted_agent_lock.wait(timeout=10)
+    permit_activation_to_commit.set()
+
+    for thread in (activator, deleter):
+        thread.join(timeout=20)
+        assert not thread.is_alive(), "delete/activation transaction deadlocked"
+
+    assert delete_reached_fence
+    assert not activation_touched_credentials_first.is_set()
+    assert not errors
+    assert len(activated) == 1
+    assert cp.get_agent(agent.id).deleted_at is not None
+    assert lifecycle.list(agent_id=agent.id)[0]["state"] == "revoked"
 
 
 def test_schema_applied_with_all_bundled_base_tables(postgres_store) -> None:

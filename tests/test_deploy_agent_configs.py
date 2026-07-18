@@ -2345,8 +2345,10 @@ def test_fleet_deploy_handles_custom_ssh_ports_reconciliation_and_disk_hygiene()
     assert "--ssh-port <port>" in script
     assert "fleet_ssh_route_args()" in script
     assert "--port-override" in script
-    assert 'scp -O -q -o BatchMode=yes -o ConnectTimeout=10 "${scp_args[@]}"' in script
-    assert 'ssh -A -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${ssh_args[@]}"' in script
+    assert "fenced_remote_upload()" in script
+    assert '-S "$control_path" -O proxy' in script
+    assert "scp -O" not in script
+    assert "ssh -A -o BatchMode=yes -o ConnectTimeout=10" in script
     assert script.count("-o ServerAliveInterval=30 -o ServerAliveCountMax=6") >= 10
     assert "reconcile_remote_deploy()" in script
     assert "remote reconciliation succeeded" in script
@@ -2372,13 +2374,30 @@ def _run_reconcile_remote_deploy(
     script = deploy_script_text()
     function_text = "reconcile_remote_deploy() {" + script.split(
         "reconcile_remote_deploy() {", 1
-    )[1].split("\n# Optional", 1)[0]
+    )[1].split("\nset_remote_mac_agent_service() {", 1)[0]
+    fence_function = "remote_deployment_fenced_exec() {" + script.split(
+        "remote_deployment_fenced_exec() {", 1
+    )[1].split("\n}\n\nstream_file_after_remote_fence() {", 1)[0] + "\n}"
     mac_home = tmp_path / ".mac"
     (mac_home / "logs").mkdir(parents=True, exist_ok=True)
+    lock_dir = mac_home / "deploy-controller.lock"
+    lock_dir.mkdir()
+    deployment_nonce = "reconcile-test-nonce"
+    (lock_dir / "owner.json").write_text(
+        json.dumps(
+            {
+                "deployment_id": (
+                    f"{deploy_rev}:rocky:{deploy_ts}:{deployment_nonce}"
+                )
+            }
+        ),
+        encoding="utf-8",
+    )
     snippet = f"""
 set -euo pipefail
 TS={shlex.quote(deploy_ts)}
 GIT_REV={shlex.quote(deploy_rev)}
+DEPLOY_CONTROLLER_NONCE={shlex.quote(deployment_nonce)}
 shell_quote() {{
   python3 - "$1" <<'PY'
 import shlex
@@ -2393,6 +2412,7 @@ ssh() {{
   local remote_cmd="${{!#}}"
   bash -c "$remote_cmd"
 }}
+{fence_function}
 {function_text}
 reconcile_remote_deploy rocky fake-target {int(clear_repo_update_blocker)}
 """
@@ -2565,21 +2585,20 @@ def test_remote_deploy_reconciliation_preserves_hold_when_env_file_cannot_load(t
 
 
 def test_fleet_deploy_validates_post_manifest_after_zero_exit_ssh():
-    # The one-time deploy now uses scp + ssh (no heredoc); verify the ssh
-    # invocation is the final command in an `if` pipeline (with pipefail active)
-    # and the host-side reconciliation logic is present after it.
+    # Secret input is opened only after the exact deployment fence emits READY
+    # on the same pinned SSH session. Reconciliation still runs after either a
+    # zero or non-zero remote install exit.
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
-    # Extract the ssh invocation section between remote_cmd= and openshell check.
-    ssh_section = deploy.split("local remote_cmd", 1)[1].split(
-        'if [ "$openshell_enabled" = "1" ]', 1
+    deploy_host = deploy.split("deploy_host() {", 1)[1].split(
+        "\n}\n\nhub_target()", 1
     )[0]
-    deploy_host_tail = deploy.split('ssh -A -o BatchMode=yes', 1)[1].split(
-        'if [ "$openshell_enabled" = "1" ]', 1
-    )[0]
+    ssh_section = deploy_host.split("local remote_cmd", 1)[1]
+    deploy_host_tail = ssh_section.split('ssh -A -o BatchMode=yes', 1)[1]
 
-    assert "if printf '%s\\n' \"${remote_secret_env[@]}\" |" in ssh_section
+    assert "printf '%s\\n' \"${remote_secret_env[@]}\" > \"$local_secret_payload\"" in ssh_section
+    assert 'stream_file_after_remote_fence "$local_secret_payload"' in ssh_section
+    assert '"MAC_DEPLOY_FENCE_READY:${deploy_generation}"' in ssh_section
     assert "ssh -A -o BatchMode=yes" in ssh_section
-    assert "if ! ssh -A -o BatchMode=yes" not in ssh_section
     assert 'echo "==> ${agent}: validating remote post-deploy manifest"' in deploy_host_tail
     assert (
         'if ! reconcile_remote_deploy "$agent" "$target" '
@@ -2652,7 +2671,20 @@ def test_pure_worker_deploy_requires_openshell_and_github_credentials(tmp_path):
         'add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED '
         '"$github_credentials_required"'
     ) in deploy
-    assert 'run_openshell_bootstrap "$agent" "$target" "$effective_openshell_args"' in deploy
+    assert 'add_remote_env MAC_DEPLOY_OPENSHELL_ENABLED "$openshell_enabled"' in deploy
+    assert (
+        'add_remote_env MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS '
+        '"$effective_openshell_args"'
+    ) in deploy
+    assert (
+        'add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE '
+        '"${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"'
+    ) in deploy
+    assert (
+        'add_remote_env MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD '
+        '"${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"'
+    ) in deploy
+    assert "run_openshell_bootstrap" not in deploy
     assert '*" --enable "*' in deploy
     assert '*" --fail-closed "*' in deploy
 
@@ -2868,10 +2900,13 @@ def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):
     assert "classify_openclaw_agent_failure" in selftest
     assert '"openclaw_failure_class": openclaw_failure_class' in selftest
     assert '"blocking_problems": blocking_problems' in selftest
-    assert '"status": "offline" if blocking_problems else "idle"' in selftest
+    assert 'payload = {"resources": {"startup_self_test": report}}' in selftest
+    assert "if blocking_problems:" in selftest
+    assert 'payload.update({"status": "offline", "health_status": "degraded"})' in selftest
+    assert '"status": "idle"' not in selftest
     assert "sys.exit(1 if blocking_problems else 0)" in selftest
     assert '"resources": {"startup_self_test": report}' in selftest
-    assert '"health_status": "degraded" if problems else "healthy"' in selftest
+    assert '"health_status": "healthy"' not in selftest
     assert '"health_status": "degraded"' in selftest
 
 
@@ -3078,7 +3113,8 @@ def test_build_mac_env_passes_through_gh_token(tmp_path):
     assert 'add_remote_secret_env MAC_DEPLOY_GH_TOKEN "${MAC_DEPLOY_GH_TOKEN:-}"' in script
     assert "remote_secret_env" in script
     assert r'cat > \"\$_mac_secret_file\"' in script
-    assert "printf '%s\\n' \"${remote_secret_env[@]}\" |" in script
+    assert "printf '%s\\n' \"${remote_secret_env[@]}\" > \"$local_secret_payload\"" in script
+    assert 'stream_file_after_remote_fence "$local_secret_payload"' in script
 
 
 def test_required_github_credentials_fail_before_worker_drain():
@@ -3245,7 +3281,11 @@ def test_optional_openshell_disable_guard_normalizes_boolean_tokens(
         capture_output=True,
         text=True,
         env={
-            **os.environ,
+            **{
+                key: value
+                for key, value in os.environ.items()
+                if key != "MAC_OPENSHELL_REQUIRED"
+            },
             "MAC_DEPLOY_OPENSHELL": requested,
             "MAC_DEPLOY_OPENSHELL_REQUIRED": required,
         },
@@ -3858,7 +3898,13 @@ def test_fleet_deploy_pins_one_openshell_runtime_digest_across_nodes():
 
     assert "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" in script
     assert "mac-openshell-runtime@sha256:" in script
-    assert "OSH_RUNTIME_IMAGE_REF=$(shell_quote" in script
+    assert (
+        'add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE '
+        '"${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"'
+    ) in script
+    assert 'OSH_RUNTIME_IMAGE_REF="$OPENSHELL_RUNTIME_IMAGE"' in script
+    assert 'MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS "$effective_openshell_args"' in script
+    assert "OSH_RUNTIME_IMAGE_REF=$(shell_quote" not in script
     assert "OSH_RUNTIME_IMAGE_REF" in bootstrap
     assert '"$OSH_DOCKER_BIN" pull "$OSH_RUNTIME_IMAGE_REF"' in bootstrap
     assert 'image_source_sha="$(resolve_deployed_source_revision)" || return 1' in bootstrap
@@ -3870,6 +3916,131 @@ def test_fleet_deploy_pins_one_openshell_runtime_digest_across_nodes():
     assert "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD" in script
     assert "production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" in script
     assert "--skip-image is incompatible with a digest-managed OpenShell deployment" in script
+
+
+def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vector(
+    tmp_path,
+):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("bootstrap_enabled_openshell() {")
+    end = installer.index(
+        "\n}\n\nverify_managed_openshell_runtime", start
+    ) + len("\n}\n")
+    helper = installer[start:end]
+
+    source = tmp_path / "source"
+    bootstrap = source / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    bootstrap.parent.mkdir(parents=True)
+    calls = tmp_path / "bootstrap-calls"
+    bootstrap.write_text(
+        "#!/bin/bash\n"
+        "{\n"
+        "  printf 'runtime=%s\\n' \"${OSH_RUNTIME_IMAGE_REF:-}\"\n"
+        "  printf 'expected=%s\\n' \"${MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX:-}\"\n"
+        "  printf 'argc=%s\\n' \"$#\"\n"
+        "  for arg in \"$@\"; do printf 'arg=%s\\n' \"$arg\"; done\n"
+        "} >> \"$MAC_TEST_BOOTSTRAP_CALLS\"\n"
+        "exit \"${MAC_TEST_BOOTSTRAP_RC:-0}\"\n",
+        encoding="utf-8",
+    )
+    bootstrap.chmod(0o755)
+    digest = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+    snippet = (
+        "set -euo pipefail\n"
+        "truthy() { case \"$(printf '%s' \"${1:-}\" | tr '[:upper:]' '[:lower:]')\" "
+        "in 1|true|yes|on) return 0;; *) return 1;; esac; }\n"
+        "die() { printf '%s\\n' \"$*\" >&2; return 1; }\n"
+        "log() { :; }\n"
+        + helper
+        + "\nbootstrap_enabled_openshell\n"
+    )
+    base_env = {
+        **os.environ,
+        "SRC_DIR": str(source),
+        "PY": sys.executable,
+        "AGENT": "bullwinkle",
+        "OPENSHELL_LOCAL_IMAGE_BUILD": "0",
+        "OPENSHELL_RUNTIME_IMAGE": digest,
+        "MAC_TEST_BOOTSTRAP_CALLS": str(calls),
+    }
+
+    # Empty reviewed args must invoke the bootstrap with zero argv entries. This
+    # specifically protects macOS Bash 3.2, where an empty array expansion under
+    # set -u aborts even though the array was declared.
+    empty = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        env={
+            **base_env,
+            "OPENSHELL_DEPLOY_ENABLED": "1",
+            "OPENSHELL_EFFECTIVE_ARGS": "",
+            "HERMES_GATEWAY_IMPL": "hermes",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert empty.returncode == 0, empty.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        f"runtime={digest}",
+        "expected=",
+        "argc=0",
+    ]
+
+    calls.unlink()
+    required = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        env={
+            **base_env,
+            "MAC_DEPLOY_OPENSHELL": "0",
+            "MAC_DEPLOY_OPENSHELL_REQUIRED": "true",
+            "OPENSHELL_DEPLOY_ENABLED": "0",
+            "OPENSHELL_EFFECTIVE_ARGS": "",
+            "HERMES_GATEWAY_IMPL": "openclaw",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert required.returncode == 0, required.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        f"runtime={digest}",
+        "expected=mac-openclaw-bullwinkle",
+        "argc=2",
+        "arg=--enable",
+        "arg=--fail-closed",
+    ]
+
+    calls.unlink()
+    skip_image = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        env={
+            **base_env,
+            "OPENSHELL_DEPLOY_ENABLED": "1",
+            "OPENSHELL_EFFECTIVE_ARGS": "--skip-image",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert skip_image.returncode != 0
+    assert "--skip-image is incompatible" in skip_image.stderr
+    assert not calls.exists()
+
+    failed_bootstrap = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        env={
+            **base_env,
+            "OPENSHELL_DEPLOY_ENABLED": "1",
+            "OPENSHELL_EFFECTIVE_ARGS": "--enable",
+            "MAC_TEST_BOOTSTRAP_RC": "42",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert failed_bootstrap.returncode == 42
 
 
 def _startup_self_test_source() -> str:
