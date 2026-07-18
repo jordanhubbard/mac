@@ -2471,6 +2471,66 @@ def cmd_agent_list(args: argparse.Namespace) -> None:
     _print(rows)
 
 
+def cmd_agent_attestation_recover(args: argparse.Namespace) -> None:
+    """Conditionally recover a missing/stale key into an owner-only manifest.
+
+    The cleartext key is never rendered by the CLI. Fleet deploy relays the
+    manifest under its target-side deployment lock and consumes it only after a
+    second signed proof succeeds.
+    """
+
+    from mac.deployment_attestation import _atomic_private_json, recovery_manifest
+
+    probe_path = Path(args.probe_file).expanduser()
+    probe = json.loads(probe_path.read_text(encoding="utf-8"))
+    if not isinstance(probe, dict):
+        raise MACError("attestation recovery probe must be a JSON object")
+    result = _plane(args).recover_agent_attestation_key(args.agent_id, probe)
+    payload = result.to_dict() if hasattr(result, "to_dict") else result
+    key = payload if isinstance(payload, str) else payload.get("attestation_key")
+    manifest = recovery_manifest(
+        args.agent_id,
+        str(probe.get("deployment_id") or ""),
+        str(key or ""),
+    )
+    destination = Path(args.manifest_out).expanduser()
+    _atomic_private_json(destination, manifest)
+    _print(
+        {
+            "status": "rotation_manifest_written",
+            "agent_id": args.agent_id,
+            "deployment_id": manifest["deployment_id"],
+            "manifest": str(destination),
+        }
+    )
+
+
+def cmd_agent_report_executor_approve(args: argparse.Namespace) -> None:
+    attestation = json.loads(
+        Path(args.attestation_file).expanduser().read_text(encoding="utf-8")
+    )
+    if not isinstance(attestation, dict):
+        raise MACError("report executor attestation must be a JSON object")
+    _print(
+        _plane(args).approve_agent_report_repository_executor(
+            args.agent_id,
+            attestation,
+            args.startup_timestamp,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_agent_report_executor_revoke(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).revoke_agent_report_repository_executor(
+            args.agent_id,
+            args.reason,
+            actor=args.actor,
+        )
+    )
+
+
 def _agent_unconsumed_control_stream_age_from_row(row: Mapping[str, Any]) -> Optional[float]:
     published_at = row.get("last_control_stream_published_at")
     if not published_at:
@@ -6057,6 +6117,34 @@ def build_parser() -> argparse.ArgumentParser:
     agent_list = agent.add_parser("list")
     agent_list.add_argument("--health", action="store_true")
     _set(cmd_agent_list, agent_list)
+
+    agent_attestation_recover = agent.add_parser(
+        "attestation-recover",
+        help="admin-only conditional recovery for a missing/stale worker signing key",
+    )
+    agent_attestation_recover.add_argument("agent_id")
+    agent_attestation_recover.add_argument("--probe-file", required=True)
+    agent_attestation_recover.add_argument("--manifest-out", required=True)
+    _set(cmd_agent_attestation_recover, agent_attestation_recover)
+
+    report_executor_approve = agent.add_parser(
+        "report-executor-approve",
+        help="approve the exact current startup-attested OpenShell report executor",
+    )
+    report_executor_approve.add_argument("agent_id")
+    report_executor_approve.add_argument("--attestation-file", required=True)
+    report_executor_approve.add_argument("--startup-timestamp", required=True)
+    report_executor_approve.add_argument("--actor", default="fleet-deploy")
+    _set(cmd_agent_report_executor_approve, report_executor_approve)
+
+    report_executor_revoke = agent.add_parser(
+        "report-executor-revoke",
+        help="revoke report-repository dispatch eligibility for an agent",
+    )
+    report_executor_revoke.add_argument("agent_id")
+    report_executor_revoke.add_argument("--reason", required=True)
+    report_executor_revoke.add_argument("--actor", default="fleet-deploy")
+    _set(cmd_agent_report_executor_revoke, report_executor_revoke)
 
     agent_reflect = agent.add_parser(
         "reflect",

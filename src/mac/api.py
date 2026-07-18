@@ -850,6 +850,21 @@ class AgentAttestationKeyVerify(BaseModel):
     signature: str
 
 
+class AgentAttestationKeyRecover(BaseModel):
+    probe: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentReportRepositoryExecutorApprove(BaseModel):
+    expected_attestation: Dict[str, Any] = Field(default_factory=dict)
+    expected_startup_timestamp: str
+    actor: str = "fleet-deploy"
+
+
+class AgentReportRepositoryExecutorRevoke(BaseModel):
+    reason: str
+    actor: str = "fleet-deploy"
+
+
 class AgentUpdate(BaseModel):
     name: Optional[str] = None
     capabilities: Optional[List[str]] = None
@@ -857,7 +872,6 @@ class AgentUpdate(BaseModel):
     status: Optional[str] = None
     health_status: Optional[str] = None
     hermes_instance_id: Optional[str] = None
-    actor: str = "human"
     actor: str = "human"
 
 
@@ -1160,6 +1174,7 @@ class DispatchHoldBatchItem(BaseModel):
     baseline_seen: str
     principal_id: Optional[str] = None
     require_authenticated: bool = True
+    require_report_executor: bool = False
 
 
 class DispatchHoldBatchReleaseRequest(BaseModel):
@@ -6043,7 +6058,11 @@ def create_app(
         agent_id: str,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, str]:
-        principal.require_global_fleet()
+        # Rotation discloses the new cleartext signing key and immediately
+        # changes which worker-authored evidence the controller will accept.
+        # Agent-bound credentials therefore must never be able to rotate their
+        # own key (or a peer's); recovery/bootstrap is an operator action.
+        principal.require_admin()
         return {
             "agent_id": agent_id,
             "attestation_key": cp.rotate_agent_attestation_key(agent_id),
@@ -6056,6 +6075,11 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         principal.require_global_fleet()
+        if not principal.is_admin:
+            # Verification is deliberately available to a worker as a
+            # challenge-response health check, but only for its own key. It
+            # returns no secret and remains necessary for evidence signing.
+            principal.assert_actor(agent_id)
         _ensure_payload_bounded(body.challenge, "agent.attestation.challenge")
         return {
             "agent_id": agent_id,
@@ -6065,6 +6089,55 @@ def create_app(
                 body.signature,
             ),
         }
+
+    @app.post("/agents/{agent_id}/attestation-key/recover")
+    def recover_agent_attestation_key(
+        agent_id: str,
+        body: AgentAttestationKeyRecover,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, str]:
+        # The response contains the new cleartext key. Only the fenced deploy
+        # controller may request it; a bound worker can submit a secret-free
+        # verify probe but can never rotate or retrieve key material.
+        principal.require_admin()
+        _ensure_payload_bounded(body.probe, "agent.attestation.recovery_probe")
+        return {
+            "agent_id": agent_id,
+            "attestation_key": cp.recover_agent_attestation_key(
+                agent_id, body.probe
+            ),
+        }
+
+    @app.post("/agents/{agent_id}/report-repository-executor/approve")
+    def approve_agent_report_repository_executor(
+        agent_id: str,
+        body: AgentReportRepositoryExecutorApprove,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        _ensure_payload_bounded(
+            body.expected_attestation,
+            "agent.report_repository_executor.expected_attestation",
+        )
+        return cp.approve_agent_report_repository_executor(
+            agent_id,
+            body.expected_attestation,
+            body.expected_startup_timestamp,
+            actor=body.actor,
+        ).to_dict()
+
+    @app.post("/agents/{agent_id}/report-repository-executor/revoke")
+    def revoke_agent_report_repository_executor(
+        agent_id: str,
+        body: AgentReportRepositoryExecutorRevoke,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_admin()
+        return cp.revoke_agent_report_repository_executor(
+            agent_id,
+            body.reason,
+            actor=body.actor,
+        ).to_dict()
 
     @app.get("/agents")
     def list_agents() -> List[Dict[str, Any]]:
@@ -6220,6 +6293,7 @@ def create_app(
                     "baseline_seen": item.baseline_seen,
                     "principal_id": item.principal_id,
                     "require_authenticated": item.require_authenticated,
+                    "require_report_executor": item.require_report_executor,
                 }
                 for item in body.holds
             },

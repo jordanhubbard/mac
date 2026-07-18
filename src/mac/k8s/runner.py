@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from mac.k8s.config_loader import load_config_file
+from mac.models import metadata_declares_read_only_report_repository
 
 JsonDict = Dict[str, Any]
 log = logging.getLogger(__name__)
@@ -30,6 +31,10 @@ DEFAULT_LEASE_RENEW_INTERVAL_SECONDS = 30
 DEFAULT_JOB_POLL_INTERVAL_SECONDS = 5
 
 DEFAULT_OPENCODE_CONFIGMAP_NAME = "mac-opencode-config"
+
+READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON = (
+    "read_only_report_requires_openshell_isolation"
+)
 
 
 def _optional_int_env(name: str) -> Optional[int]:
@@ -445,6 +450,8 @@ def build_job_spec(
     lease: JsonDict,
     cfg: RunnerConfig,
 ) -> JsonDict:
+    if metadata_declares_read_only_report_repository(task.get("metadata")):
+        raise ValueError(READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON)
     task_id = task["id"]
     lease_id = lease["id"]
     name = _job_name_for(task_id, lease_id)
@@ -727,6 +734,46 @@ def claim_and_launch_one(
         )
         return None
 
+    if metadata_declares_read_only_report_repository(task.get("metadata")):
+        reason = READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON
+        try:
+            mac.post(
+                "/tasks/%s/transition" % task["id"],
+                {
+                    "target_state": "blocked",
+                    "actor": cfg.agent_id,
+                    "lease_id": lease["id"],
+                    "detail": {
+                        "reason": reason,
+                        "manual_repair_required": True,
+                        "required_execution_boundary": "openshell",
+                        "rejected_execution_boundary": "kubernetes_job",
+                    },
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "failed to block unsafe K8s read-only report claim "
+                "task=%s lease=%s: %s",
+                task.get("id"),
+                lease.get("id"),
+                exc,
+            )
+            return {
+                "status": "block_transition_failed",
+                "reason": reason,
+                "task_id": task.get("id"),
+                "lease_id": lease.get("id"),
+                "error": str(exc),
+            }
+        return {
+            "status": "blocked",
+            "reason": reason,
+            "task_id": task.get("id"),
+            "lease_id": lease.get("id"),
+            "required_execution_boundary": "openshell",
+        }
+
     role = _resolve_task_role(task, cfg)
     job_agent_id = _resolve_execution_agent_id(task, role, cfg)
     if job_agent_id != cfg.agent_id:
@@ -847,6 +894,8 @@ def build_review_job_spec(
     reviewer_agent_id: str,
     executor_evidence_id: str,
     cfg: RunnerConfig,
+    *,
+    canonical_task: JsonDict,
 ) -> JsonDict:
     """Job spec for a reviewer agent running mac-task-executor-*-review.
 
@@ -856,6 +905,18 @@ def build_review_job_spec(
     are gated by ``/reviews/{id}/claim``, not leases. Everything else
     (pod template, secret env block) flows through the shared helpers.
     """
+    # The review mailbox nudge is only a routing hint.  It is not a trusted
+    # task-policy snapshot, so require the caller to supply the canonical task
+    # fetched from the hub and reject the legacy Job boundary before any
+    # credential-bearing environment is assembled.
+    if not isinstance(canonical_task, dict):
+        raise ValueError("canonical review task must be an object")
+    canonical_task_id = str(canonical_task.get("id") or "").strip()
+    if canonical_task_id != task_id:
+        raise ValueError("canonical review task id does not match nudge task id")
+    if metadata_declares_read_only_report_repository(canonical_task.get("metadata")):
+        raise ValueError(READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON)
+
     role = _resolve_role_for_reviewer_agent(reviewer_agent_id, cfg)
     # Review Jobs use one audited implementation across every role.  Role
     # executor maps still select coding executors, but may not reintroduce the
@@ -979,6 +1040,40 @@ def claim_and_launch_review_one(
                     review_id, task_id, executor_evidence_id,
                 )
                 continue
+            # A delivered nudge is untrusted and may have been queued before a
+            # task policy or worker-boundary change.  Fetch the canonical task
+            # before claiming the review.  Read-only repository reports are
+            # intentionally left pending and unclaimed so the hub's reviewer
+            # eligibility pass can retract/reroute them to an OpenShell peer.
+            try:
+                canonical_task = mac.get("/tasks/%s" % task_id)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "review-dispatch: task lookup failed task=%s review=%s: %s",
+                    task_id,
+                    review_id,
+                    exc,
+                )
+                continue
+            if not isinstance(canonical_task, dict) or str(
+                canonical_task.get("id") or ""
+            ).strip() != task_id:
+                log.warning(
+                    "review-dispatch: canonical task mismatch task=%s review=%s",
+                    task_id,
+                    review_id,
+                )
+                continue
+            if metadata_declares_read_only_report_repository(
+                canonical_task.get("metadata")
+            ):
+                log.warning(
+                    "review-dispatch: refusing read-only repository report "
+                    "task=%s review=%s boundary=kubernetes_job required=openshell",
+                    task_id,
+                    review_id,
+                )
+                continue
             try:
                 claim = mac.post(
                     "/reviews/%s/claim" % review_id,
@@ -1002,7 +1097,12 @@ def claim_and_launch_review_one(
                 )
                 continue
             manifest = build_review_job_spec(
-                review_id, task_id, reviewer_agent_id, executor_evidence_id, cfg
+                review_id,
+                task_id,
+                reviewer_agent_id,
+                executor_evidence_id,
+                cfg,
+                canonical_task=canonical_task,
             )
             try:
                 created = k8s.create(cfg.namespace, manifest)

@@ -95,6 +95,8 @@ def _sample(name: str) -> Any:
         "scopes",
         "checks",
         "plan",
+        "probe",
+        "expected_attestation",
     }:
         return {"sample": "value"}
     if name == "artifacts":

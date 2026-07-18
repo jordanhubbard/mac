@@ -107,6 +107,139 @@ def test_main_prepares_entire_cohort_before_first_node_deploy():
     assert '"$REQUIRE_RELEASE_ALL_SELECTED"' in phase_three
 
 
+def test_deployment_controller_owns_key_recovery_and_report_approval():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
+    recovery = deploy.split(
+        "reconcile_bound_worker_attestation_key() (", 1
+    )[1].split("\n)\n\nreconcile_report_repository_executor_approval", 1)[0]
+    approval = deploy.split(
+        "reconcile_report_repository_executor_approval() (", 1
+    )[1].split("\n)\n\nprovision_bound_worker_credential", 1)[0]
+    release = deploy.split("commit_fleet_release_epoch() {", 1)[1].split(
+        "\n}\n\nenforce_bound_worker_credentials", 1
+    )[0]
+
+    assert "--rotate-missing-attestation-key" not in node
+    assert "--rotate-invalid-attestation-key" not in node
+    assert "mac.deployment_attestation probe" in recovery
+    assert "/attestation-key/verify" in recovery
+    assert "/attestation-key/recover" in recovery
+    assert "mac.deployment_attestation install" in recovery
+    assert "post-install attestation key proof did not verify" in recovery
+    cleanup = recovery.split("cleanup_attestation_relay() {", 1)[1].split(
+        "trap cleanup_attestation_relay EXIT", 1
+    )[0]
+    assert 'rm -f "$probe" "$second_probe" "$manifest"' in cleanup
+    assert '"rm -f $(shell_quote "$hub_manifest")"' in cleanup
+    assert recovery.index("trap cleanup_attestation_relay EXIT") < recovery.index(
+        '"cat $(shell_quote "$hub_manifest")"'
+    )
+    assert recovery.index("/attestation-key/verify") < recovery.index(
+        "/attestation-key/recover"
+    )
+    assert "set_remote_mac_agent_service" in recovery
+    assert recovery.rindex("/attestation-key/verify") > recovery.index(
+        "set_remote_mac_agent_service"
+    )
+
+    assert "/report-repository-executor/approve" in approval
+    assert "/report-repository-executor/revoke" in approval
+    assert "expected_startup_timestamp" in approval
+    assert "agent_has_read_only_report_repository_executor" in approval
+    assert "deployment report executor approval failed or drifted" in approval
+
+    key_pos = main.index("reconcile_bound_worker_attestation_key")
+    approve_pos = main.index("reconcile_report_repository_executor_approval")
+    credential_pos = main.index("provision_bound_worker_credential")
+    assert key_pos < approve_pos < credential_pos
+    assert '"require_report_executor": bool(item.get("require_report_executor"))' in release
+    assert "report_executor_ready(" in release
+
+
+def test_same_host_attestation_recovery_keeps_distinct_hub_and_worker_copies():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery = deploy.split(
+        "reconcile_bound_worker_attestation_key() (", 1
+    )[1].split("\n)\n\nreconcile_report_repository_executor_approval", 1)[0]
+
+    hub_path = next(
+        line.strip() for line in recovery.splitlines() if "local hub_manifest=" in line
+    )
+    worker_path = next(
+        line.strip()
+        for line in recovery.splitlines()
+        if "local worker_manifest=" in line
+    )
+    assert "attestation-recovery-hub-" in hub_path
+    assert "attestation-recovery-worker-" in worker_path
+    assert hub_path != worker_path
+    assert 'Path(os.environ["MAC_DEPLOY_ATTESTATION_MANIFEST"]).unlink(' in recovery
+    assert "missing_ok=True" in recovery
+
+
+def test_same_host_worker_credential_failure_preserves_hub_retry_manifest():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    rollout = deploy.split("provision_bound_worker_credential() (", 1)[1].split(
+        "\n)\n\nfinalize_remote_deployment_release", 1
+    )[0]
+    assignments = {
+        name: next(
+            line.strip()
+            for line in rollout.splitlines()
+            if "local %s=" % name in line
+        )
+        for name in (
+            "hub_manifest",
+            "hub_receipt",
+            "worker_manifest",
+            "worker_receipt",
+        )
+    }
+    assert "worker-credential-hub-" in assignments["hub_manifest"]
+    assert "worker-credential-worker-" in assignments["worker_manifest"]
+    assert assignments["hub_manifest"] != assignments["worker_manifest"]
+    assert assignments["hub_receipt"] != assignments["worker_receipt"]
+
+    cleanup = rollout.split("cleanup_worker_relay() {", 1)[1].split(
+        "trap cleanup_worker_relay EXIT", 1
+    )[0]
+    assert '$(shell_quote "$worker_manifest")' in cleanup
+    assert '$(shell_quote "$worker_receipt")' in cleanup
+    assert "$hub_manifest" not in cleanup
+    assert "$hub_receipt" not in cleanup
+
+    failure = rollout.index('if [ "$activate_ok" != "1" ]')
+    preserve = rollout.index("hub retry manifest retained", failure)
+    failure_return = rollout.index("return 1", preserve)
+    success_cleanup = rollout.index(
+        '"rm -f $(shell_quote "$hub_manifest") $(shell_quote "$hub_receipt")"',
+        failure_return,
+    )
+    release = rollout.index("set_remote_mac_agent_service", success_cleanup)
+    assert failure < preserve < failure_return < success_cleanup < release
+    assert "--manifest $(shell_quote \"$hub_manifest\")" in rollout
+
+
+def test_report_executor_release_gate_applies_to_all_selected_supervisors():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
+        "validate_router_topology_spec() {", 1
+    )[0]
+    gate = deploy.split("hub_agent_restart_gate() {", 1)[1].split(
+        "remote_deployment_hold_state() {", 1
+    )[0]
+    # The common service path resolves launchd/systemd/supervisord (the current
+    # selected GKE pods use supervisord over their frozen SSH routes) before the
+    # shared arm gate; no supervisor-specific route can bypass the proof.
+    for supervisor in ("launchd)", "systemd)", "supervisord)"):
+        assert supervisor in service
+    assert "MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR" in gate
+    assert "report_executor_ready(resources)" in gate
+    assert "and report_executor_ready(resources)" in gate
+
+
 def test_remote_restart_helper_keeps_then_releases_the_deployment_barrier():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     service_control = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(

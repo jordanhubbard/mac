@@ -574,6 +574,65 @@ def test_k8s_executor_rejects_invalid_contract_remote_without_leaking_secret(
     assert not manifest_path.exists()
 
 
+@pytest.mark.parametrize(
+    "override_env",
+    [
+        {},
+        {"MAC_OPENSHELL_SANDBOX": "1"},
+        {
+            "MAC_READ_ONLY_REPORT_PROCESS_ISOLATION": (
+                "separate_pid_namespace_v1"
+            )
+        },
+        {"MAC_TASK_GIT_TOKEN": "must-not-leak"},
+    ],
+)
+def test_legacy_executor_rejects_read_only_report_before_clone_or_agent(
+    tmp_path: Path, override_env: Dict[str, str]
+) -> None:
+    bindir = tmp_path / "bin"
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "canonical_remote_url": "https://github.com/example/report-target.git",
+        "default_branch": "main",
+        "test": {"command": "make check"},
+    }
+    _make_fake_bin(
+        bindir,
+        opencode_stdout="must never execute\n",
+        task_metadata={
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+            "runtime": {
+                "backend": "openshell",
+                "allow_legacy_read_only_report": True,
+            },
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": contract,
+            },
+        },
+        git_base_sha="a" * 40,
+    )
+    manifest_path = tmp_path / "mac-evidence.json"
+
+    result = _run_build(
+        bindir=bindir,
+        manifest_path=manifest_path,
+        extra_env=override_env,
+    )
+
+    assert result.returncode == 78
+    assert "require the isolated OpenShell executor" in result.stderr
+    assert not manifest_path.exists()
+    assert not (bindir / "_opencode_ran").exists()
+    git_calls = bindir / "_git_calls.txt"
+    assert not git_calls.exists() or not git_calls.read_text().strip()
+
+
 def test_captures_stdout_stderr_head_tail_and_event_summary(tmp_path: Path) -> None:
     bindir = tmp_path / "bin"
     # Build a JSON-lines stream using the REAL opencode event shapes:

@@ -135,6 +135,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ALLOW_SAMPLE_CONFIG` | bool | consumer-defined | deployment | Deployment setting: deploy allow sample config. |
 | `MAC_DEPLOY_API_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy api timeout seconds. |
 | `MAC_DEPLOY_ARCHIVE` | str | consumer-defined | deployment | Deployment setting: deploy archive. |
+| `MAC_DEPLOY_ATTESTATION_MANIFEST` | str | consumer-defined | deployment | Deployment setting: deploy attestation manifest. |
+| `MAC_DEPLOY_ATTESTATION_PROBE_B64` | str | consumer-defined | deployment | Deployment setting: deploy attestation probe b64. |
 | `MAC_DEPLOY_BARRIER_FILE` | str | consumer-defined | deployment | Deployment setting: deploy barrier file. |
 | `MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | deployment | Deployment setting: deploy certifier openshell gateway endpoint. |
 | `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |
@@ -176,6 +178,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_GATE_PRIOR_OWNED` | str | consumer-defined | deployment | Deployment setting: deploy gate prior owned. |
 | `MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED` | bool | consumer-defined | deployment | Deployment setting: deploy gate require authenticated. |
 | `MAC_DEPLOY_GATE_REQUIRE_OWNED` | bool | consumer-defined | deployment | Deployment setting: deploy gate require owned. |
+| `MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR` | bool | consumer-defined | deployment | Deployment setting: deploy gate require report executor. |
 | `MAC_DEPLOY_GATE_TIMEOUT` | int | consumer-defined | deployment | Deployment setting: deploy gate timeout. |
 | `MAC_DEPLOY_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy generation. |
 | `MAC_DEPLOY_GH_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gh token. |
@@ -254,6 +257,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_RELEASE_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy release generation. |
 | `MAC_DEPLOY_RELEASE_PLAN_B64` | str | consumer-defined | deployment | Deployment setting: deploy release plan b64. |
 | `MAC_DEPLOY_RELEASE_TS` | str | consumer-defined | deployment | Deployment setting: deploy release ts. |
+| `MAC_DEPLOY_REPORT_AGENT_ID` | str | consumer-defined | deployment | Deployment setting: deploy report agent id. |
+| `MAC_DEPLOY_REPORT_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy report required. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | str | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler grace days. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler initial delay seconds. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler interval seconds. |
@@ -395,6 +400,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HUB_REVIEWER_MACHINE_ID` | str | consumer-defined | hub | Hub setting: hub reviewer machine id. |
 | `MAC_HUB_TICK_INTERVAL_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick interval seconds. |
 | `MAC_HUB_TICK_STALE_AFTER_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick stale after seconds. |
+| `MAC_HUB_TOKEN` | str | consumer-defined | hub | Hub setting: hub token. |
 | `MAC_HUB_URL` | str | consumer-defined | hub | Hub setting: hub url. |
 | `MAC_HUB_VERIFY_IMAGE` | str | consumer-defined | hub | Hub setting: hub verify image. |
 | `MAC_HUB_VERIFY_RUNNER` | str | consumer-defined | hub | Hub setting: hub verify runner. |
@@ -583,6 +589,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_QDRANT_MEMORY_ROLE` | str | consumer-defined | qdrant-memory | Qdrant Memory setting: qdrant memory role. |
 | `MAC_QDRANT_URL` | str | consumer-defined | qdrant-memory | Qdrant Memory setting: qdrant url. |
 | `MAC_QUIET_LOCAL_BANNER` | str | consumer-defined | core | Core setting: quiet local banner. |
+| `MAC_READ_ONLY_AUTHORITATIVE_VERIFIER` | str | consumer-defined | core | Core setting: read only authoritative verifier. |
 | `MAC_RECONCILER_LEASE_SECONDS` | int | consumer-defined | core | Core setting: reconciler lease seconds. |
 | `MAC_RECORD_HTTP_OBSERVATIONS` | str | consumer-defined | core | Core setting: record http observations. |
 | `MAC_RECOVERY_REFLEX_ENABLED` | bool | consumer-defined | core | Core setting: recovery reflex enabled. |
@@ -590,6 +597,20 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REFLECT_ENABLED` | bool | consumer-defined | core | Core setting: reflect enabled. |
 | `MAC_REFLECT_TIMEOUT` | int | consumer-defined | core | Core setting: reflect timeout. |
 | `MAC_RELAY_OBSERVABILITY` | str | consumer-defined | core | Core setting: relay observability. |
+| `MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH` | str | consumer-defined | core | Core setting: report executor approved executor script path. |
+| `MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256` | str | consumer-defined | core | Core setting: report executor approved executor script sha256. |
+| `MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH` | str | consumer-defined | core | Core setting: report executor approved host executor path. |
+| `MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256` | str | consumer-defined | core | Core setting: report executor approved host executor sha256. |
+| `MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE` | str | consumer-defined | core | Core setting: report executor approved isolation posture. |
+| `MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_PATH` | str | consumer-defined | core | Core setting: report executor approved openshell bin path. |
+| `MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_SHA256` | str | consumer-defined | core | Core setting: report executor approved openshell bin sha256. |
+| `MAC_REPORT_EXECUTOR_APPROVED_PLATFORM` | str | consumer-defined | core | Core setting: report executor approved platform. |
+| `MAC_REPORT_EXECUTOR_APPROVED_POLICY_SHA256` | str | consumer-defined | core | Core setting: report executor approved policy sha256. |
+| `MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH` | str | consumer-defined | core | Core setting: report executor approved python path. |
+| `MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256` | str | consumer-defined | core | Core setting: report executor approved python sha256. |
+| `MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_IMAGE_REF` | str | consumer-defined | core | Core setting: report executor approved runtime image ref. |
+| `MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256` | str | consumer-defined | core | Core setting: report executor approved source bundle sha256. |
+| `MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT` | str | consumer-defined | core | Core setting: report executor approved source root. |
 | `MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS` | int | consumer-defined | core | Core setting: repository access failure cooldown seconds. |
 | `MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS` | int | consumer-defined | core | Core setting: repository access success ttl seconds. |
 | `MAC_REPOSITORY_REF_RECONCILER_BASE_REF` | str | consumer-defined | repository-lifecycle | Repository Lifecycle setting: repository ref reconciler base ref. |
@@ -632,8 +653,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REVIEW_TICK_ON_HEARTBEAT` | str | consumer-defined | review | Review setting: review tick on heartbeat. |
 | `MAC_REVIEW_VERDICT_WAIT_CAP` | str | consumer-defined | review | Review setting: review verdict wait cap. |
 | `MAC_REVIEW_WORKSPACE_ROOT` | str | consumer-defined | review | Review setting: review workspace root. |
-| `MAC_ROTATE_INVALID_ATTESTATION_KEY` | bool | consumer-defined | core | Core setting: rotate invalid attestation key. |
-| `MAC_ROTATE_MISSING_ATTESTATION_KEY` | bool | consumer-defined | core | Core setting: rotate missing attestation key. |
 | `MAC_ROUTER_AUDIO_KEY` | str | consumer-defined | router | Router setting: router audio key. |
 | `MAC_ROUTER_AUDIO_TIMEOUT` | int | consumer-defined | router | Router setting: router audio timeout. |
 | `MAC_ROUTER_AUDIO_UPSTREAM` | str | consumer-defined | router | Router setting: router audio upstream. |
@@ -748,16 +767,24 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TASK_CANONICAL_REMOTE` | str | consumer-defined | task-execution | Task Execution setting: task canonical remote. |
 | `MAC_TASK_EVIDENCE_MANIFEST_PATH` | str | consumer-defined | task-execution | Task Execution setting: task evidence manifest path. |
 | `MAC_TASK_EXECUTOR_COMMAND` | str | consumer-defined | task-execution | Task Execution setting: task executor command. |
+| `MAC_TASK_EXECUTOR_PYTHON` | str | consumer-defined | task-execution | Task Execution setting: task executor python. |
+| `MAC_TASK_EXECUTOR_SCRIPT` | str | consumer-defined | task-execution | Task Execution setting: task executor script. |
 | `MAC_TASK_EXECUTOR_TIMEOUT_SECONDS` | int | consumer-defined | task-execution | Task Execution setting: task executor timeout seconds. |
 | `MAC_TASK_FILE` | str | consumer-defined | task-execution | Task Execution setting: task file. |
 | `MAC_TASK_GIT_TOKEN` | str | consumer-defined | task-execution | Task Execution setting: task git token. |
 | `MAC_TASK_ID` | str | consumer-defined | task-execution | Task Execution setting: task id. |
 | `MAC_TASK_MAX_ITERATIONS` | str | consumer-defined | task-execution | Task Execution setting: task max iterations. |
 | `MAC_TASK_MODEL` | str | consumer-defined | task-execution | Task Execution setting: task model. |
+| `MAC_TASK_REPO_ACCESS_MODE` | str | consumer-defined | task-repository | Task Repository setting: task repo access mode. |
+| `MAC_TASK_REPO_ACCESS_SCHEMA` | str | consumer-defined | task-repository | Task Repository setting: task repo access schema. |
 | `MAC_TASK_REPO_BASE_SHA` | str | consumer-defined | task-repository | Task Repository setting: task repo base sha. |
+| `MAC_TASK_REPO_BASE_TREE` | str | consumer-defined | task-repository | Task Repository setting: task repo base tree. |
 | `MAC_TASK_REPO_BRANCH` | str | consumer-defined | task-repository | Task Repository setting: task repo branch. |
+| `MAC_TASK_REPO_CONTENT_DIGEST` | str | consumer-defined | task-repository | Task Repository setting: task repo content digest. |
 | `MAC_TASK_REPO_DEFAULT_BRANCH` | str | consumer-defined | task-repository | Task Repository setting: task repo default branch. |
+| `MAC_TASK_REPO_GIT_CONTROL_DIGEST` | str | consumer-defined | task-repository | Task Repository setting: task repo git control digest. |
 | `MAC_TASK_REPO_LEASE_ID` | str | consumer-defined | task-repository | Task Repository setting: task repo lease id. |
+| `MAC_TASK_REPO_REFS_DIGEST` | str | consumer-defined | task-repository | Task Repository setting: task repo refs digest. |
 | `MAC_TASK_REPO_REMOTE` | str | consumer-defined | task-repository | Task Repository setting: task repo remote. |
 | `MAC_TASK_REPO_SOURCE` | str | consumer-defined | task-repository | Task Repository setting: task repo source. |
 | `MAC_TASK_REPO_URL` | str | consumer-defined | task-repository | Task Repository setting: task repo url. |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -55,6 +56,68 @@ def test_executor_runs_command_and_emits_audit(tmp_path) -> None:
     assert result.stdout.strip() == "subprocess-ok"
     assert [record["phase"] for record in records] == ["started", "completed"]
     assert records[-1]["task_id"] == "task_test"
+
+
+def test_read_only_review_fences_git_credentials_without_repository_context(
+    tmp_path, monkeypatch
+) -> None:
+    # Isolate the child-environment fence; approved-wrapper identity has its
+    # own fail-closed tests and intentionally rejects this inline Python probe.
+    monkeypatch.setattr(
+        "mac.worker_subprocess._assert_approved_read_only_report_host_executor",
+        lambda _argv, _environment: None,
+    )
+    monkeypatch.setenv("GH_TOKEN", "must-not-reach-child")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "credential.helper")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "!publish")
+    monkeypatch.setenv("OPENAI_API_KEY", "model-credential")
+    names = [
+        "GH_TOKEN",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_TERMINAL_PROMPT",
+        "MAC_TASK_REPO_ACCESS_SCHEMA",
+        "MAC_TASK_REPO_ACCESS_MODE",
+        "OPENAI_API_KEY",
+    ]
+    executor = SubprocessExecutor(
+        [
+            sys.executable,
+            "-c",
+            "import json, os; print(json.dumps({name: os.environ.get(name) for name in %r}))"
+            % names,
+        ],
+        timeout=5,
+    )
+    task = {
+        "id": "task_read_only_review",
+        "metadata": {
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+            "review_context": {"executor_evidence_id": "evidence_x"},
+        },
+    }
+
+    result = executor(task, tmp_path)
+    child = json.loads(result.stdout)
+
+    assert child["GH_TOKEN"] is None
+    assert child["GIT_CONFIG_COUNT"] is None
+    assert child["GIT_CONFIG_KEY_0"] is None
+    assert child["GIT_CONFIG_VALUE_0"] is None
+    assert child["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert child["GIT_CONFIG_SYSTEM"] == "/dev/null"
+    assert child["GIT_TERMINAL_PROMPT"] == "0"
+    assert child["MAC_TASK_REPO_ACCESS_SCHEMA"] == "mac.report_repository_access.v1"
+    assert child["MAC_TASK_REPO_ACCESS_MODE"] == "read_only"
+    assert child["OPENAI_API_KEY"] == "model-credential"
 
 
 def test_executor_timeout_preserves_timeout_evidence(tmp_path) -> None:

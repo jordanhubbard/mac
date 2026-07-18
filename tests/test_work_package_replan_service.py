@@ -10,6 +10,7 @@ from mac.models import TransitionError, ValidationError, json_loads
 from mac.services import ControlPlane
 from mac.store import SQLiteStore
 from mac.work_package_candidate_service import WorkPackageCandidateService
+from mac.work_package_certification_service import CERTIFICATION_CONTRACT_SCHEMA
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_output import (
     AttemptOutputObservation,
@@ -20,6 +21,7 @@ from mac.work_package_output_service import WorkPackageOutputService
 from mac.work_package_pipeline_runtime import WorkPackagePipelineRuntimeConfig
 from mac.work_package_replan_service import WorkPackageReplanService
 from mac.work_package_service import RepositoryBaseAttestation, WorkPackageService
+from tests.certifier_phase_profile_fixtures import mac_phase_profile
 
 
 BASE_SHA = "a" * 40
@@ -217,16 +219,15 @@ def _configure_ready_downstream(
         "canonical_remote_url": "ssh://git@example.invalid/mac.git",
         "landing_certification_policy_id": policy_id,
         "work_package_certification": {
-            "schema": "mac.work_package.certification_contract.v1",
+            "schema": CERTIFICATION_CONTRACT_SCHEMA,
             "policy": {
                 "policy_id": policy_id,
                 "version": 1,
                 "checksum": "sha256:"
-                + hashlib.sha256(
-                    _CERTIFIER_POLICY_TEXT.encode("utf-8")
-                ).hexdigest(),
+                + hashlib.sha256(_CERTIFIER_POLICY_TEXT.encode("utf-8")).hexdigest(),
             },
             "policy_text": _CERTIFIER_POLICY_TEXT,
+            "phase_profile": mac_phase_profile(),
             "image_ref": "registry.invalid/mac-certifier@sha256:" + "c" * 64,
             "controller_commands": [
                 {
@@ -281,11 +282,14 @@ def test_replan_cannot_introduce_unfenced_external_effect() -> None:
                 actor="planner",
                 reason="unsafe external action",
             )
-        assert store.query_one(
-            "SELECT COUNT(*) AS n FROM work_package_plan_versions "
-            "WHERE package_id = ?",
-            ("wp_replan",),
-        )["n"] == 1
+        assert (
+            store.query_one(
+                "SELECT COUNT(*) AS n FROM work_package_plan_versions "
+                "WHERE package_id = ?",
+                ("wp_replan",),
+            )["n"]
+            == 1
+        )
     finally:
         store.close()
 

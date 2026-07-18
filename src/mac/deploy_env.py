@@ -1117,6 +1117,16 @@ def build_mac_env(
     values.setdefault("MAC_WORKER_POLL_INTERVAL", "2")
     values.setdefault("MAC_WORKER_LEASE_SECONDS", "900")
     values.setdefault("MAC_WORKER_EXECUTOR", str(cfg.paths.mac_home / "bin" / "mac-task-executor"))
+    # Report executors use deployment-owned, no-follow artifacts. The Python
+    # binary is a real file copied beside the venv launchers (not the mutable
+    # venv/bin/python symlink); the task wrapper must exec these exact paths.
+    values["MAC_TASK_EXECUTOR_PYTHON"] = str(
+        cfg.paths.mac_home / "venv" / "bin" / "mac-report-python"
+    )
+    values["MAC_TASK_EXECUTOR_SCRIPT"] = str(
+        cfg.paths.mac_home / "bin" / "mac-task-executor.py"
+    )
+    values["MAC_SELF_UPDATE_REPO"] = str(cfg.paths.mac_home / "src" / "mac")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST", "1")
     values.setdefault("MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT", "120")
     # Fail-closed default: repo tasks under OpenShell require a verified coding

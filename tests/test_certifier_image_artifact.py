@@ -9,6 +9,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
+
+from mac.openshell_certifier import CertifierPhaseProfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +50,9 @@ selector = _module(
 def _harness_root(tmp_path: Path) -> Path:
     for tree in manifest.MANAGED_TREES:
         (tmp_path / tree).mkdir(parents=True)
-    (tmp_path / "tests" / "test_baseline.py").write_text("assert True\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_baseline.py").write_text(
+        "assert True\n", encoding="utf-8"
+    )
     for name in manifest.MANAGED_FILES:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,7 +60,9 @@ def _harness_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_frozen_harness_manifest_rejects_edits_and_inventory_growth(tmp_path: Path) -> None:
+def test_frozen_harness_manifest_rejects_edits_and_inventory_growth(
+    tmp_path: Path,
+) -> None:
     root = _harness_root(tmp_path)
     payload = manifest.build_manifest(root, source_revision="a" * 40)
 
@@ -96,9 +103,10 @@ def test_manifest_file_is_strict_and_deterministic(tmp_path: Path) -> None:
     output = tmp_path / "manifest.json"
     manifest._write_manifest(output, payload)
 
-    assert output.read_text(encoding="utf-8") == json.dumps(
-        payload, indent=2, sort_keys=True
-    ) + "\n"
+    assert (
+        output.read_text(encoding="utf-8")
+        == json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    )
     assert manifest.load_manifest(output) == payload
 
     payload["unknown"] = True
@@ -114,9 +122,10 @@ def test_publication_verifier_requires_exact_ghcr_digest_and_exact_policy_bytes(
 ) -> None:
     policy = tmp_path / "policy.yaml"
     policy.write_bytes(b"version: 1\nnetwork_policies: {}\n")
-    assert publication.policy_checksum(policy) == "sha256:" + hashlib.sha256(
-        policy.read_bytes()
-    ).hexdigest()
+    assert (
+        publication.policy_checksum(policy)
+        == "sha256:" + hashlib.sha256(policy.read_bytes()).hexdigest()
+    )
 
     with pytest.raises(publication.VerificationError, match="sha256"):
         publication.verify_registry_digest("ghcr.io/jordanhubbard/mac-certifier:latest")
@@ -169,9 +178,7 @@ def test_publication_verifier_finds_buildx_hidden_by_anonymous_config(
     assert command == ["/usr/local/bin/docker", "buildx"]
     assert calls[0][0] == ["/usr/local/bin/docker", "buildx", "version"]
     assert calls[1][0] == ["/usr/local/bin/docker", "buildx", "version"]
-    linked_plugin = (
-        Path(anonymous["DOCKER_CONFIG"]) / "cli-plugins" / "docker-buildx"
-    )
+    linked_plugin = Path(anonymous["DOCKER_CONFIG"]) / "cli-plugins" / "docker-buildx"
     assert linked_plugin.resolve() == plugin.resolve()
     assert all(
         call_env["DOCKER_CONFIG"] == anonymous["DOCKER_CONFIG"] for _, call_env in calls
@@ -202,7 +209,9 @@ def test_certifier_container_is_pinned_nonroot_and_image_owned() -> None:
     containerfile = (ROOT / "deploy" / "certifier" / "Containerfile").read_text(
         encoding="utf-8"
     )
-    from_lines = [line for line in containerfile.splitlines() if line.startswith("FROM ")]
+    from_lines = [
+        line for line in containerfile.splitlines() if line.startswith("FROM ")
+    ]
     assert len(from_lines) == 2
     assert all(re.search(r"@sha256:[0-9a-f]{64}(?:\s|$)", line) for line in from_lines)
     assert "COPY . /opt/mac-certifier/trusted" in containerfile
@@ -211,13 +220,17 @@ def test_certifier_container_is_pinned_nonroot_and_image_owned() -> None:
     assert "find /opt/mac-certifier/trusted -type f -exec chmod 0444" in containerfile
     assert "uv sync --frozen --extra dev --no-install-project" in containerfile
     assert "USER sandbox" in containerfile
-    assert "/opt/mac-certifier/bin/run-contract-tests --image-self-test" in containerfile
+    assert (
+        "/opt/mac-certifier/bin/run-contract-tests --image-self-test" in containerfile
+    )
 
     launcher = (ROOT / "deploy" / "certifier" / "run-contract-tests").read_text(
         encoding="utf-8"
     )
-    verify_at = launcher.index("harness_manifest.py\" verify")
-    execute_at = launcher.rindex('"$CERTIFIER_ROOT/libexec/authoritative-contract-tests"')
+    verify_at = launcher.index('harness_manifest.py" verify')
+    execute_at = launcher.rindex(
+        '"$CERTIFIER_ROOT/libexec/authoritative-contract-tests"'
+    )
     assert verify_at < execute_at
     assert '"$scratch/scripts/run-contract-tests.sh" "$@"' not in launcher
     assert '"$#" -eq 2' in launcher
@@ -235,7 +248,9 @@ def test_certifier_container_is_pinned_nonroot_and_image_owned() -> None:
     assert '-o "pythonpath=$candidate_src"' in authoritative
     assert "/usr/bin/env -i" in authoritative
     assert "PYTHONSAFEPATH=1" in authoritative
-    assert launcher.index("authoritative-contract-tests") < launcher.index("git clone --quiet")
+    assert launcher.index("authoritative-contract-tests") < launcher.index(
+        "git clone --quiet"
+    )
     assert '"$CERTIFIER_ROOT/libexec/run-contract-tests"' not in launcher
 
 
@@ -249,6 +264,48 @@ def _selector_trusted_root(tmp_path: Path) -> Path:
         "def test_extra(): pass\n", encoding="utf-8"
     )
     return root
+
+
+def test_checked_in_mac_phase_profile_matches_every_frozen_selector_mode(
+    tmp_path: Path,
+) -> None:
+    contract = yaml.safe_load((ROOT / ".mac" / "project.yaml").read_text("utf-8"))
+    profile = CertifierPhaseProfile.from_mapping(
+        contract["work_package_certification"]["phase_profile"]
+    )
+    profile_value = profile.to_dict()
+    expected_modes = profile_value["selection_modes"]
+    trusted_root = _selector_trusted_root(tmp_path)
+    scenarios = (
+        ["src/mac/data/runtime.json"],
+        ["tests/test_publication_lane.py"],
+        ["docs/fast.md"],
+        ["src/mac/data/runtime.json", "deploy/worker.sh"],
+        ["src/mac/publication_lane.py"],
+        ["deploy/worker.sh"],
+    )
+
+    observed_modes = set()
+    for changed in scenarios:
+        plan = selector.plan_selection(
+            changed,
+            trusted_root=trusted_root,
+            assembly_base_sha="a" * 40,
+            candidate_sha="b" * 40,
+            trusted_source_revision="c" * 40,
+        )
+        observed_modes.add(plan["selection_mode"])
+        expected = expected_modes[plan["selection_mode"]]
+        for phase_name in ("authoritative", "supplemental"):
+            assert {
+                "mode": plan[phase_name]["mode"],
+                "reason": plan[phase_name]["reason"],
+            } == expected[phase_name]
+        assert plan["full_suite_count"] == expected["expected_full_suite_count"]
+
+    assert observed_modes == set(expected_modes)
+    assert profile_value["full_targets"] == sorted(selector.FULL_TARGETS)
+    assert profile_value["focused_required_tests"] == sorted(selector.INVARIANT_TESTS)
 
 
 @pytest.mark.parametrize(
@@ -301,10 +358,13 @@ def test_frozen_selector_is_proportional_and_never_runs_two_full_suites(
     assert plan["authoritative"]["mode"] == authoritative
     assert plan["supplemental"]["mode"] == supplemental
     assert plan["full_suite_count"] == full_count
-    assert sum(
-        phase["mode"] == "full"
-        for phase in (plan["authoritative"], plan["supplemental"])
-    ) <= 1
+    assert (
+        sum(
+            phase["mode"] == "full"
+            for phase in (plan["authoritative"], plan["supplemental"])
+        )
+        <= 1
+    )
     assert plan["manifest_digest"].startswith("sha256:")
 
 
@@ -323,7 +383,11 @@ def test_frozen_selector_proves_exact_base_object_and_ancestor(tmp_path: Path) -
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=repo, check=True)
     base = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
     (repo / "docs" / "next.md").write_text("next\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
@@ -355,7 +419,9 @@ def test_green_ci_publishes_both_images_without_certifier_digest_loop() -> None:
     assert "for platform in linux/amd64 linux/arm64" in certifier_job
     assert '--platform "$platform" "$exact_ref"' in certifier_job
     assert "org.opencontainers.image.revision" in certifier_job
-    assert "/opt/mac-certifier/bin/run-contract-tests --image-self-test" in certifier_job
+    assert (
+        "/opt/mac-certifier/bin/run-contract-tests --image-self-test" in certifier_job
+    )
 
     build_script = (ROOT / "scripts" / "build-certifier-image.sh").read_text(
         encoding="utf-8"
@@ -394,7 +460,9 @@ def test_cutover_canary_plans_compile_and_encode_opposite_git_expectations() -> 
     positive = plans["positive"]
     assert negative["metadata"]["expected_canonical_movement"] is False
     assert positive["metadata"]["expected_canonical_movement"] is True
-    assert "candidate-owned pre-push suite to pass" in negative["nodes"][0]["instructions"]
+    assert (
+        "candidate-owned pre-push suite to pass" in negative["nodes"][0]["instructions"]
+    )
     assert positive["nodes"][0]["effects"]["writes"] == [
         "docs/canaries/pilot_deadbeef1234-managed-positive.md"
     ]
@@ -424,7 +492,9 @@ def test_cutover_canary_is_plan_only_without_three_live_authorizations(capsys) -
     assert "--confirm-exclusive-main-window" in error
 
 
-def test_repository_discovery_passes_read_token_without_recording_it(monkeypatch) -> None:
+def test_repository_discovery_passes_read_token_without_recording_it(
+    monkeypatch,
+) -> None:
     calls = []
 
     def fake_request(hub_url, path, **kwargs):
@@ -432,9 +502,12 @@ def test_repository_discovery_passes_read_token_without_recording_it(monkeypatch
         return [{"id": "repo", "name": "mac", "project": "mac"}]
 
     monkeypatch.setattr(canary, "_request", fake_request)
-    assert canary._registered_repository(
-        "https://hub.invalid", "mac", token="admin-read-token"
-    )["id"] == "repo"
+    assert (
+        canary._registered_repository(
+            "https://hub.invalid", "mac", token="admin-read-token"
+        )["id"]
+        == "repo"
+    )
     assert calls == [
         (
             "https://hub.invalid",

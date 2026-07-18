@@ -11,6 +11,7 @@ from mac.landing_service import LandingServiceConfig, RepositoryEndpoint
 from mac.models import ValidationError, json_dumps
 from mac.services import ControlPlane
 from mac.store import SQLiteStore
+from mac.work_package_certification_service import CERTIFICATION_CONTRACT_SCHEMA
 from mac.work_package_pipeline import PipelineSnapshot
 from mac.work_package_pipeline_runtime import (
     ExactCandidateBundleProvider,
@@ -78,7 +79,7 @@ def _seed(
     }
     if certification_contract:
         repository_contract["work_package_certification"] = {
-            "schema": "mac.work_package.certification_contract.v1"
+            "schema": CERTIFICATION_CONTRACT_SCHEMA
         }
     store.execute(
         "INSERT INTO project_repositories ("

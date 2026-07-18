@@ -622,7 +622,9 @@
     "name": "MAC_ATTESTATION_KEY",
     "retired": false,
     "sources": [
+      "src/mac/deployment_attestation.py",
       "src/mac/executor_finalizer.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/k8s/job_executor.py",
       "src/mac/worker.py"
     ],
@@ -1609,6 +1611,28 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy attestation manifest.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ATTESTATION_MANIFEST",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy attestation probe b64.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ATTESTATION_PROBE_B64",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy barrier file.",
     "family": "deployment",
     "name": "MAC_DEPLOY_BARRIER_FILE",
@@ -2081,6 +2105,17 @@
     "description": "Deployment setting: deploy gate require owned.",
     "family": "deployment",
     "name": "MAC_DEPLOY_GATE_REQUIRE_OWNED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy gate require report executor.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR",
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh"
@@ -3014,6 +3049,28 @@
       "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy report agent id.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REPORT_AGENT_ID",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy report required.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REPORT_REQUIRED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
   },
   {
     "default": null,
@@ -3996,7 +4053,8 @@
     "sources": [
       "src/mac/acp/__init__.py",
       "src/mac/acp/executor.py",
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -4652,6 +4710,7 @@
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
       "src/mac/client_principals.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/hermes_runtime.py",
       "src/mac/ledger_backup_scheduler.py",
       "src/mac/model_selection.py",
@@ -4774,6 +4833,17 @@
       "src/mac/api.py"
     ],
     "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub token.",
+    "family": "hub",
+    "name": "MAC_HUB_TOKEN",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -6338,7 +6408,8 @@
     "sources": [
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/deploy_env.py",
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
     ],
     "type": "bool"
   },
@@ -6359,7 +6430,8 @@
       "src/mac/hermes_gateway.py",
       "src/mac/openshell_certifier.py",
       "src/mac/openshell_supervisor.py",
-      "src/mac/services.py"
+      "src/mac/services.py",
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -6428,7 +6500,8 @@
     "name": "MAC_OPENSHELL_ENV_PASSTHROUGH",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
     ],
     "type": "str"
   },
@@ -6549,7 +6622,8 @@
     "name": "MAC_OPENSHELL_KEEP",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
     ],
     "type": "bool"
   },
@@ -6635,6 +6709,7 @@
     "retired": false,
     "sources": [
       "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -7060,6 +7135,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: read only authoritative verifier.",
+    "family": "core",
+    "name": "MAC_READ_ONLY_AUTHORITATIVE_VERIFIER",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: reconciler lease seconds.",
     "family": "core",
     "name": "MAC_RECONCILER_LEASE_SECONDS",
@@ -7136,6 +7222,180 @@
       "src/mac/_hermes/agent/tool_executor.py",
       "src/mac/deploy_env.py",
       "src/mac/relay_observability.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved executor script path.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved executor script sha256.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved host executor path.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved host executor sha256.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256",
+    "retired": false,
+    "sources": [
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved isolation posture.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved openshell bin path.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_PATH",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved openshell bin sha256.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_SHA256",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved platform.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_PLATFORM",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved policy sha256.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_POLICY_SHA256",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved python path.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved python sha256.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved runtime image ref.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_IMAGE_REF",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved source bundle sha256.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: report executor approved source root.",
+    "family": "core",
+    "name": "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -7240,7 +7500,8 @@
     "name": "MAC_REPO_BOOTSTRAP_COMMAND",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py"
     ],
     "type": "str"
   },
@@ -7251,7 +7512,8 @@
     "name": "MAC_REPO_BOOTSTRAP_CREATES",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py"
     ],
     "type": "str"
   },
@@ -7306,7 +7568,8 @@
     "name": "MAC_REPO_TEST_COMMAND",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py"
     ],
     "type": "str"
   },
@@ -7627,28 +7890,6 @@
       "src/mac/k8s/job_executor.py"
     ],
     "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rotate invalid attestation key.",
-    "family": "core",
-    "name": "MAC_ROTATE_INVALID_ATTESTATION_KEY",
-    "retired": false,
-    "sources": [
-      "src/mac/worker.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Core setting: rotate missing attestation key.",
-    "family": "core",
-    "name": "MAC_ROTATE_MISSING_ATTESTATION_KEY",
-    "retired": false,
-    "sources": [
-      "src/mac/worker.py"
-    ],
-    "type": "bool"
   },
   {
     "default": null,
@@ -8200,7 +8441,8 @@
     "retired": false,
     "sources": [
       "src/mac/_hermes/tools/environments/local.py",
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py"
     ],
     "type": "str"
   },
@@ -8234,7 +8476,8 @@
     "retired": false,
     "sources": [
       "src/mac/_hermes/tools/environments/local.py",
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py"
     ],
     "type": "str"
   },
@@ -8573,7 +8816,9 @@
     "sources": [
       "deploy/mac-crash-observer.py",
       "src/mac/deploy_env.py",
-      "src/mac/worker.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
     ],
     "type": "str"
   },
@@ -8999,6 +9244,36 @@
   },
   {
     "default": null,
+    "description": "Task Execution setting: task executor python.",
+    "family": "task-execution",
+    "name": "MAC_TASK_EXECUTOR_PYTHON",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Task Execution setting: task executor script.",
+    "family": "task-execution",
+    "name": "MAC_TASK_EXECUTOR_SCRIPT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py",
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Task Execution setting: task executor timeout seconds.",
     "family": "task-execution",
     "name": "MAC_TASK_EXECUTOR_TIMEOUT_SECONDS",
@@ -9031,7 +9306,8 @@
     "retired": false,
     "sources": [
       "src/mac/fleet_learning.py",
-      "src/mac/gitops.py"
+      "src/mac/gitops.py",
+      "src/mac/repository_access_env.py"
     ],
     "type": "str"
   },
@@ -9078,6 +9354,32 @@
   },
   {
     "default": null,
+    "description": "Task Repository setting: task repo access mode.",
+    "family": "task-repository",
+    "name": "MAC_TASK_REPO_ACCESS_MODE",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Task Repository setting: task repo access schema.",
+    "family": "task-repository",
+    "name": "MAC_TASK_REPO_ACCESS_SCHEMA",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/worker.py",
+      "src/mac/worker_subprocess.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Task Repository setting: task repo base sha.",
     "family": "task-repository",
     "name": "MAC_TASK_REPO_BASE_SHA",
@@ -9085,6 +9387,20 @@
     "sources": [
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Task Repository setting: task repo base tree.",
+    "family": "task-repository",
+    "name": "MAC_TASK_REPO_BASE_TREE",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -9098,6 +9414,19 @@
     "sources": [
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Task Repository setting: task repo content digest.",
+    "family": "task-repository",
+    "name": "MAC_TASK_REPO_CONTENT_DIGEST",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -9118,6 +9447,18 @@
   },
   {
     "default": null,
+    "description": "Task Repository setting: task repo git control digest.",
+    "family": "task-repository",
+    "name": "MAC_TASK_REPO_GIT_CONTROL_DIGEST",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Task Repository setting: task repo lease id.",
     "family": "task-repository",
     "name": "MAC_TASK_REPO_LEASE_ID",
@@ -9125,6 +9466,19 @@
     "sources": [
       "src/mac/executor_prompt.py",
       "src/mac/executor_sandbox.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Task Repository setting: task repo refs digest.",
+    "family": "task-repository",
+    "name": "MAC_TASK_REPO_REFS_DIGEST",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -9178,6 +9532,7 @@
       "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
       "src/mac/k8s/job_executor.py",
+      "src/mac/read_only_report_verifier.py",
       "src/mac/services.py",
       "src/mac/worker.py"
     ],
@@ -9216,6 +9571,7 @@
       "src/mac/executor_sandbox.py",
       "src/mac/executor_scope.py",
       "src/mac/k8s/job_executor.py",
+      "src/mac/read_only_report_verifier.py",
       "src/mac/review_finalizer.py",
       "src/mac/worker_subprocess.py"
     ],
@@ -9337,7 +9693,8 @@
     "name": "MAC_TOOLCHAIN_ROOT",
     "retired": false,
     "sources": [
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py"
     ],
     "type": "str"
   },
@@ -9961,7 +10318,8 @@
     "sources": [
       "src/mac/executor_finalizer.py",
       "src/mac/executor_prompt.py",
-      "src/mac/executor_sandbox.py"
+      "src/mac/executor_sandbox.py",
+      "src/mac/read_only_report_verifier.py"
     ],
     "type": "int"
   },

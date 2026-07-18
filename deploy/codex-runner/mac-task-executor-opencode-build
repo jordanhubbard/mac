@@ -96,6 +96,9 @@ WORK_PACKAGE_ATTEMPT_REF=""
 WORK_PACKAGE_BASE_SHA=""
 WORK_PACKAGE_PACKAGE_ID=""
 WORK_PACKAGE_ATTEMPT_NUMBER=""
+REPORT_DELIVERABLE="false"
+READ_ONLY_REPORT_REPOSITORY="false"
+REPORT_REPOSITORY_CONTRACT=""
 if [ -n "${MAC_URL}" ] && [ -n "${MAC_TASK_ID}" ] && [ -n "${MAC_WORKER_TOKEN}" ]; then
     task_json="$(curl -fsS --config - \
         "${MAC_URL}/tasks/${MAC_TASK_ID}" 2>/dev/null <<CURL || true
@@ -156,19 +159,60 @@ def nested_dict(root, *path):
         node = node.get(key)
     return node if isinstance(node, dict) else {}
 
-repo_url = str(origin.get("repository_url") or "").strip()
-repo_source = "origin.repository_url"
-if not repo_url:
-    contracts = [
-        nested_dict(meta, "execution_contract", "repository_contract"),
-        nested_dict(meta, "origin", "repository_contract"),
-        nested_dict(meta, "repository_contract"),
-    ]
+deliverable = str(meta.get("deliverable") or "").strip().lower()
+is_report = deliverable in {
+    "report", "answer", "analysis", "investigation", "question", "triage"
+}
+report_access = meta.get("report_repository_access")
+read_only_report_repository = bool(
+    is_report
+    and isinstance(report_access, dict)
+    and report_access.get("schema") == "mac.report_repository_access.v1"
+    and str(report_access.get("mode") or "").strip().lower() == "read_only"
+)
+contracts = [
+    nested_dict(meta, "execution_contract", "repository_contract"),
+    nested_dict(meta, "origin", "repository_contract"),
+    nested_dict(meta, "repository_contract"),
+]
+# Only the current execution contract is authority for an explicit read-only
+# report.  ``origin`` and top-level contracts are historical compatibility
+# projections and may name a repository that has since been replaced.
+current_contract = nested_dict(meta, "execution_contract", "repository_contract")
+print("REPORT_DELIVERABLE=%s" % ("true" if is_report else "false"))
+print(
+    "READ_ONLY_REPORT_REPOSITORY=%s"
+    % ("true" if read_only_report_repository else "false")
+)
+print(
+    "REPORT_REPOSITORY_CONTRACT=%s"
+    % shlex.quote(json.dumps(current_contract, sort_keys=True)[:16000])
+)
+
+repo_url = ""
+repo_source = ""
+repo_error = ""
+if read_only_report_repository:
+    repo_url = str(current_contract.get("canonical_remote_url") or "").strip()
+    repo_source = (
+        "current execution_contract.repository_contract canonical_remote_url"
+    )
+    if not repo_url:
+        repo_error = (
+            "read-only repository report current "
+            "execution_contract.repository_contract canonical_remote_url is missing"
+        )
+elif not repo_url:
+    repo_url = str(origin.get("repository_url") or "").strip()
+    repo_source = "origin.repository_url"
+if not repo_url and not read_only_report_repository:
     for contract in contracts:
         repo_url = str(contract.get("canonical_remote_url") or "").strip()
         if repo_url:
             repo_source = "repository contract canonical_remote_url"
             break
+if is_report and not read_only_report_repository:
+    repo_url = ""
 
 def valid_repo_url(value):
     if not value or value.startswith("-") or len(value) > 2048:
@@ -191,7 +235,6 @@ def valid_repo_url(value):
         return False
     return True
 
-repo_error = ""
 if repo_url and not valid_repo_url(repo_url):
     repo_error = (
         "%s is invalid (value redacted); expected a supported git remote "
@@ -199,8 +242,29 @@ if repo_url and not valid_repo_url(repo_url):
     )
     repo_url = ""
 print("REPO_URL=%s" % shlex.quote(repo_url))
+contract_branch = str(
+    current_contract.get("default_branch")
+    or current_contract.get("canonical_branch")
+    or ""
+).strip()
+if read_only_report_repository:
+    repo_branch = contract_branch
+    if not repo_branch and not repo_error:
+        repo_error = (
+            "read-only repository report current "
+            "execution_contract.repository_contract canonical branch is missing"
+        )
+else:
+    repo_branch = str(origin.get("default_branch") or "").strip() or "main"
 print("REPO_ERROR=%s" % shlex.quote(repo_error))
-print("REPO_BRANCH=%s" % shlex.quote(origin.get("default_branch") or "main"))
+print("REPO_BRANCH=%s" % shlex.quote(repo_branch))
+report_test = current_contract.get("test") if isinstance(current_contract, dict) else {}
+report_test_command = (
+    str(report_test.get("command") or "").strip()
+    if isinstance(report_test, dict)
+    else ""
+)
+print("REPORT_TEST_COMMAND=%s" % shlex.quote(report_test_command))
 print("CHECKOUT_BRANCH=%s" % shlex.quote(origin.get("checkout_branch") or ""))
 print("SKIP_PR_OPEN=%s" % ("true" if meta.get("skip_pr_open") else ""))
 
@@ -300,7 +364,7 @@ if is_work_package:
         SKIP_PR_OPEN="true"
     fi
     # If task didn't carry the repo URL, fall back to project metadata. GET /projects/{name} returns a wrapper {project, summary, record, tasks,...}; the project record (with its metadata) is nested under `record`.
-    if [ -z "${REPO_URL}" ] && [ -n "${PROJECT}" ]; then
+    if [ -z "${REPO_URL}" ] && [ -n "${PROJECT}" ] && [ "${REPORT_DELIVERABLE}" != "true" ]; then
         project_json="$(curl -fsS --config - \
             "${MAC_URL}/projects/${PROJECT}" 2>/dev/null <<CURL || true
 header = "Authorization: Bearer ${MAC_WORKER_TOKEN}"
@@ -317,6 +381,11 @@ print("REPO_BRANCH=%s" % shlex.quote(meta.get("default_branch") or "main"))
 ' || true)"
         fi
     fi
+fi
+
+if [ "${READ_ONLY_REPORT_REPOSITORY}" = "true" ]; then
+    echo "[FATAL] read-only repository reports require the isolated OpenShell executor; the legacy same-process executor is forbidden" >&2
+    exit 78
 fi
 
 echo "PROJECT:          ${PROJECT:-<unset>}"

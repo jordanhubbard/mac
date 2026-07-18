@@ -16,6 +16,7 @@ from mac.agentbus_control import (
     DEBUG_TERMINAL_OUTPUT_TOPIC,
 )
 from mac.api import create_app
+from mac.models import read_only_report_repository_executor_attestation
 from mac.services import ControlPlane, sign_verification_manifest
 
 
@@ -402,6 +403,49 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     attest_verify = agent("attest-verify-route-agent", ["python"])
     ctx["attest_verify_agent_id"] = attest_verify["id"]
     ctx["attest_verify_key"] = attest_verify["attestation_key"]
+    attest_recover = agent("attest-recover-route-agent", ["python"])
+    ctx["attest_recover_agent_id"] = attest_recover["id"]
+    report_attestation = read_only_report_repository_executor_attestation(
+        runtime_image_ref=(
+            "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "1" * 64
+        ),
+        policy_sha256="sha256:" + "2" * 64,
+        openshell_bin_path="/route/openshell",
+        openshell_bin_sha256="sha256:" + "3" * 64,
+        executor_path="/route/mac-task-executor",
+        executor_sha256="sha256:" + "4" * 64,
+        platform="linux",
+        isolation_posture="landlock_enforced",
+        python_path="/route/python",
+        python_sha256="sha256:" + "5" * 64,
+        executor_script_path="/route/mac-task-executor.py",
+        executor_script_sha256="sha256:" + "6" * 64,
+        source_root="/route/mac",
+        source_bundle_sha256="sha256:" + "7" * 64,
+    )
+    ctx["report_executor_attestation"] = report_attestation
+    ctx["report_executor_startup_timestamp"] = "2026-07-18T12:00:00Z"
+    report_agent = agent("report-executor-route-agent", ["python"])
+    ctx["report_executor_agent_id"] = report_agent["id"]
+    cp.update_agent(
+        report_agent["id"],
+        resources={
+            "openshell_required": True,
+            "report_repository_executor_attestation": report_attestation,
+            "startup_self_test": {
+                "schema": "mac.agent_startup_self_test.v1",
+                "timestamp": ctx["report_executor_startup_timestamp"],
+                "status": "passed",
+                "agent_id": report_agent["id"],
+                "checks": {
+                    "openshell_executor_config": True,
+                    "report_repository_executor_attestation": True,
+                },
+                "report_repository_executor_attestation": report_attestation,
+                "blocking_problems": [],
+            },
+        },
+    )
     ctx["dispatch_hold_agent_id"] = agent("dispatch-hold-route-agent", ["python"])["id"]
     ctx["dispatch_hold_batch_agent_id"] = agent(
         "dispatch-hold-batch-route-agent", ["python"]
@@ -1143,6 +1187,15 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("DELETE", "/projects/{project}"): {"project": "delete_project_name"},
         ("POST", "/agents/{agent_id}/attestation-key/rotate"): {"agent_id": "attest_rotate_agent_id"},
         ("POST", "/agents/{agent_id}/attestation-key/verify"): {"agent_id": "attest_verify_agent_id"},
+        ("POST", "/agents/{agent_id}/attestation-key/recover"): {
+            "agent_id": "attest_recover_agent_id"
+        },
+        ("POST", "/agents/{agent_id}/report-repository-executor/approve"): {
+            "agent_id": "report_executor_agent_id"
+        },
+        ("POST", "/agents/{agent_id}/report-repository-executor/revoke"): {
+            "agent_id": "report_executor_agent_id"
+        },
         ("POST", "/agents/{agent_id}/disable"): {"agent_id": "disable_agent_id"},
         ("DELETE", "/agents/{agent_id}"): {"agent_id": "delete_agent_id"},
         ("POST", "/v1/agents/{agent_id}/deregister"): {"agent_id": "deregister_agent_id"},
@@ -1591,6 +1644,33 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                     "nonce": "route-nonce",
                 },
             ),
+        },
+        ("POST", "/agents/{agent_id}/attestation-key/recover"): {
+            "probe": {
+                "schema": "mac.agent_attestation_key_probe.v1",
+                "state": "present",
+                "agent_id": ctx["attest_recover_agent_id"],
+                "deployment_id": "route-coverage-deployment",
+                "challenge": {
+                    "schema": "mac.agent_attestation_challenge.v1",
+                    "purpose": "fleet-deploy-attestation-key-proof",
+                    "agent_id": ctx["attest_recover_agent_id"],
+                    "deployment_id": "route-coverage-deployment",
+                    "nonce": "route-coverage-nonce-that-is-at-least-32-bytes",
+                },
+                "signature": "v1:deliberately-stale-route-coverage-signature",
+            }
+        },
+        ("POST", "/agents/{agent_id}/report-repository-executor/approve"): {
+            "expected_attestation": ctx["report_executor_attestation"],
+            "expected_startup_timestamp": ctx[
+                "report_executor_startup_timestamp"
+            ],
+            "actor": "route-coverage",
+        },
+        ("POST", "/agents/{agent_id}/report-repository-executor/revoke"): {
+            "reason": "route coverage cleanup",
+            "actor": "route-coverage",
         },
         ("POST", "/agents/bulk"): {"agent_ids": [ctx["bulk_agent_id"]], "health_status": "healthy"},
         ("POST", "/agents/dispatch-hold/release-batch"): {

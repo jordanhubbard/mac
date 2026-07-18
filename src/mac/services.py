@@ -37,7 +37,9 @@ from mac.agentbus_control import (
     repo_update_payload,
 )
 from mac.attempt_failure_classifier import classify_attempt_failure
+from mac.gitops import validate_git_ref
 from mac.repository_contract import (
+    canonical_git_remote_identity,
     normalize_repo_relative_path as _normalize_repo_relative_path,
     remote_branch_from_ref as _remote_branch_from_ref,
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
@@ -117,7 +119,17 @@ from mac.models import (
     SecretRecord,
     ServiceClaimStatus,
     ServiceRole,
+    REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY,
+    REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
+    REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY,
+    agent_has_read_only_report_repository_executor,
+    metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
+    read_only_report_repository_executor_approval,
+    read_only_report_repository_executor_resource,
+    report_repository_executor_approval_matches_attestation,
+    valid_read_only_report_repository_executor_approval,
+    valid_read_only_report_repository_executor_attestation,
     Task,
     TASK_TRANSITIONS,
     TaskState,
@@ -1055,6 +1067,32 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
                 "credentials and must be a secret-free git URL: %r"
                 % canonical_remote_url
             ) from exc
+    default_branch_raw = data.get("default_branch")
+    canonical_branch_raw = data.get("canonical_branch")
+    default_branch: Optional[str] = None
+    if default_branch_raw is not None or canonical_branch_raw is not None:
+        default_branch = _contract_string(
+            default_branch_raw
+            if default_branch_raw is not None
+            else canonical_branch_raw,
+            "repository runtime contract.default_branch",
+        )
+        if canonical_branch_raw is not None:
+            canonical_branch = _contract_string(
+                canonical_branch_raw,
+                "repository runtime contract.canonical_branch",
+            )
+            if canonical_branch != default_branch:
+                raise ValidationError(
+                    "repository runtime contract default_branch and "
+                    "canonical_branch must match"
+                )
+        try:
+            default_branch = validate_git_ref(default_branch)
+        except ValueError as exc:
+            raise ValidationError(
+                "repository runtime contract.default_branch is invalid: %s" % exc
+            ) from exc
     normalized = {
         "schema": schema,
         "project": project,
@@ -1087,6 +1125,8 @@ def _normalize_repository_contract(raw: Any, contract_path: str) -> JsonDict:
             ),
         },
     }
+    if default_branch is not None:
+        normalized["default_branch"] = default_branch
     if (
         "landing_certification_policy_id" in data
         or "work_package_certification" in data
@@ -1691,10 +1731,48 @@ class ControlPlane:
             return json_dumps({})
         return row["value"]
 
+    @staticmethod
+    def _project_report_repository_executor_marker(
+        resources: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        projected = ensure_json_object(resources)
+        projected.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
+        attestation = projected.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
+        approval = projected.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
+        if (
+            projected.get("openshell_required") is True
+            and report_repository_executor_approval_matches_attestation(
+                approval, attestation
+            )
+        ):
+            projected[REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY] = (
+                read_only_report_repository_executor_resource(
+                    runtime_image_ref=str(attestation["runtime_image_ref"]),
+                    policy_sha256=str(attestation["policy_sha256"]),
+                    openshell_bin_path=str(attestation["openshell_bin_path"]),
+                    openshell_bin_sha256=str(attestation["openshell_bin_sha256"]),
+                    executor_path=str(attestation["executor_path"]),
+                    executor_sha256=str(attestation["executor_sha256"]),
+                    platform=str(attestation["platform"]),
+                    isolation_posture=str(attestation["isolation_posture"]),
+                    python_path=str(attestation["python_path"]),
+                    python_sha256=str(attestation["python_sha256"]),
+                    executor_script_path=str(attestation["executor_script_path"]),
+                    executor_script_sha256=str(
+                        attestation["executor_script_sha256"]
+                    ),
+                    source_root=str(attestation["source_root"]),
+                    source_bundle_sha256=str(attestation["source_bundle_sha256"]),
+                )
+            )
+        return projected
+
     def _agent_resources_with_preserved_control_plane_fields(
         self,
         agent_id: str,
         resources: Optional[Dict[str, Any]],
+        *,
+        conn: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Merge self-reported resources without erasing hub-owned policy.
 
@@ -1702,22 +1780,80 @@ class ControlPlane:
         ``openshell_required`` is control-plane policy and is therefore always
         retained once the agent exists; operators change it through
         ``update_agent``/OpenShell reconciliation, not self-registration or a
-        heartbeat inventory refresh.
+        heartbeat inventory refresh. ``report_repository_executor`` is also
+        control-plane-owned: callers may submit only the distinct attestation,
+        from which the hub projects the exact dispatch marker only when it
+        matches the admin-owned ``report_repository_executor_approval`` tuple.
+        Client-supplied approval and marker values are always discarded.
         """
         if resources is None:
-            raw = self._resolved_json_column("agents", "resources", agent_id, None)
-            return ensure_json_object(json_loads(raw, {}))
+            row = (
+                conn.execute(
+                    "SELECT resources FROM agents WHERE id = ?", (agent_id,)
+                ).fetchone()
+                if conn is not None
+                else self.store.query_one(
+                    "SELECT resources FROM agents WHERE id = ?", (agent_id,)
+                )
+            )
+            return ensure_json_object(
+                json_loads(row["resources"], {}) if row is not None else {}
+            )
         resource_value = ensure_json_object(resources)
-        row = self.store.query_one("SELECT resources FROM agents WHERE id = ?", (agent_id,))
-        if row is None:
-            return resource_value
-        existing = ensure_json_object(json_loads(row["resources"], {}))
+        row = (
+            conn.execute(
+                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            if conn is not None
+            else self.store.query_one(
+                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
+            )
+        )
+        existing = (
+            ensure_json_object(json_loads(row["resources"], {}))
+            if row is not None
+            else {}
+        )
         merged = dict(resource_value)
         if "startup_self_test" not in merged and "startup_self_test" in existing:
             merged["startup_self_test"] = existing["startup_self_test"]
         if "openshell_required" in existing:
             merged["openshell_required"] = existing["openshell_required"]
-        return merged
+        merged.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
+        existing_approval = existing.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
+        if valid_read_only_report_repository_executor_approval(existing_approval):
+            merged[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = existing_approval
+        return self._project_report_repository_executor_marker(merged)
+
+    def _admin_project_agent_resources(
+        self,
+        existing: Mapping[str, Any],
+        requested: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Project an admin resource replacement with explicit approval CAS.
+
+        Omission preserves the controller approval; an explicit null revokes
+        it. The marker itself is always discarded and re-derived.
+        """
+
+        projected = ensure_json_object(requested)
+        requested_has_approval = REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY in projected
+        requested_approval = projected.pop(
+            REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None
+        )
+        projected.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
+        approval = (
+            requested_approval
+            if requested_has_approval
+            else existing.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
+        )
+        if approval is not None:
+            if not valid_read_only_report_repository_executor_approval(approval):
+                raise ValidationError(
+                    "report_repository_executor_approval is malformed"
+                )
+            projected[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = approval
+        return self._project_report_repository_executor_marker(projected)
 
     def _mirror_agent_reported_hardware_to_machine(
         self,
@@ -4785,6 +4921,304 @@ class ControlPlane:
             return existing
         return self.update_project(existing.id, metadata=md, actor=actor)
 
+    @staticmethod
+    def _read_only_report_evidence_override_paths(metadata: Mapping[str, Any]) -> List[str]:
+        paths: List[str] = []
+
+        def collect(value: Any, path: str) -> None:
+            if isinstance(value, Mapping):
+                for key, item in value.items():
+                    child_path = "%s.%s" % (path, key)
+                    if key in {"evidence_type", "expected_evidence_type"}:
+                        paths.append(child_path)
+                    collect(item, child_path)
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    collect(item, "%s[%d]" % (path, index))
+
+        collect(metadata, "metadata")
+        return sorted(paths)
+
+    @staticmethod
+    def _validated_read_only_report_repository_contract(
+        value: Any,
+        *,
+        field: str,
+    ) -> JsonDict:
+        """Validate the immutable repository identity needed by report workers.
+
+        The normal repository-contract loader intentionally supports older
+        contracts that predate an explicit canonical branch. A read-only report
+        cannot use those compatibility fallbacks: both executor and independent
+        reviewer must clone the same remote, branch, and test policy from the one
+        current execution contract.
+        """
+
+        if not isinstance(value, Mapping):
+            raise ValidationError("%s must be an object" % field)
+        contract = json_loads(json_dumps(dict(value)), {})
+        if contract.get("schema") != REPOSITORY_CONTRACT_SCHEMA:
+            raise ValidationError(
+                "%s.schema must be %s" % (field, REPOSITORY_CONTRACT_SCHEMA)
+            )
+        remote = str(contract.get("canonical_remote_url") or "").strip()
+        if not remote:
+            raise ValidationError("%s.canonical_remote_url is required" % field)
+        try:
+            remote = validate_secret_free_git_remote(remote)
+            canonical_git_remote_identity(remote)
+        except ValueError as exc:
+            raise ValidationError(
+                "%s.canonical_remote_url is invalid: %s" % (field, exc)
+            ) from exc
+        default_branch = str(contract.get("default_branch") or "").strip()
+        canonical_branch = str(contract.get("canonical_branch") or "").strip()
+        if default_branch and canonical_branch and default_branch != canonical_branch:
+            raise ValidationError(
+                "%s default_branch and canonical_branch contradict each other" % field
+            )
+        branch = default_branch or canonical_branch
+        if not branch:
+            raise ValidationError(
+                "%s.default_branch (or canonical_branch) is required" % field
+            )
+        try:
+            branch = validate_git_ref(branch)
+        except ValueError as exc:
+            raise ValidationError("%s branch is invalid: %s" % (field, exc)) from exc
+        test = contract.get("test")
+        if not isinstance(test, Mapping) or not str(test.get("command") or "").strip():
+            raise ValidationError("%s.test.command is required" % field)
+        contract["canonical_remote_url"] = remote
+        contract["default_branch"] = branch
+        contract.pop("canonical_branch", None)
+        return contract
+
+    def _normalize_read_only_report_execution_contract(
+        self,
+        metadata: Mapping[str, Any],
+        project: Optional[str],
+    ) -> JsonDict:
+        """Persist exactly one current repository contract for a report task."""
+
+        normalized = ensure_json_object(metadata)
+        override_paths = self._read_only_report_evidence_override_paths(normalized)
+        if override_paths:
+            raise ValidationError(
+                "read-only repository reports forbid evidence-type overrides: %s"
+                % ", ".join(override_paths)
+            )
+
+        origin = ensure_json_object(normalized.get("origin"))
+        raw_execution = normalized.get("execution_contract")
+        if raw_execution is not None and not isinstance(raw_execution, Mapping):
+            raise ValidationError(
+                "read-only repository reports require execution_contract to be an object"
+            )
+        execution = ensure_json_object(raw_execution)
+        if execution and str(execution.get("type") or "").strip().lower() != "repository":
+            raise ValidationError(
+                "read-only repository reports require a repository execution contract"
+            )
+
+        explicit_contracts: List[Tuple[str, JsonDict]] = []
+        for field, container, key in (
+            (
+                "metadata.execution_contract.repository_contract",
+                execution,
+                "repository_contract",
+            ),
+            ("metadata.origin.repository_contract", origin, "repository_contract"),
+            ("metadata.repository_contract", normalized, "repository_contract"),
+        ):
+            if key not in container:
+                continue
+            value = container.get(key)
+            if not isinstance(value, Mapping):
+                raise ValidationError("%s must be an object" % field)
+            explicit_contracts.append((field, ensure_json_object(value)))
+
+        repo = self._repository_for_project(project)
+        if repo is not None:
+            current = self._validated_read_only_report_repository_contract(
+                ensure_json_object(repo.metadata).get("repository_contract"),
+                field="registered repository contract",
+            )
+            for field, explicit in explicit_contracts:
+                if json_dumps(explicit) != json_dumps(current):
+                    raise ValidationError(
+                        "%s contradicts the current registered repository contract"
+                        % field
+                    )
+            if execution.get("repository_id") not in {None, "", repo.id}:
+                raise ValidationError(
+                    "metadata.execution_contract.repository_id contradicts the "
+                    "current registered repository"
+                )
+            if execution.get("repository_path") not in {None, "", repo.path}:
+                raise ValidationError(
+                    "metadata.execution_contract.repository_path contradicts the "
+                    "current registered repository"
+                )
+            contract = current
+            canonical_execution: JsonDict = {
+                "schema": "mac.task_execution_contract.v1",
+                "type": "repository",
+                "quality": "strong",
+                "source": "registered_project",
+                "repository_id": repo.id,
+                "repository_path": repo.path,
+                "repository_contract": contract,
+            }
+            for key, expected in (
+                ("repository_id", repo.id),
+                ("repository_path", repo.path),
+            ):
+                if key in origin and str(origin.get(key) or "") != expected:
+                    raise ValidationError(
+                        "metadata.origin.%s contradicts the current registered repository"
+                        % key
+                    )
+            origin.update(
+                {
+                    "type": "direct_task",
+                    "repository_id": repo.id,
+                    "repository_name": repo.name,
+                    "repository_path": repo.path,
+                    "source": repo.source,
+                }
+            )
+            acc_metadata = ensure_json_object(normalized.get("acc_metadata"))
+            acc_metadata.setdefault("workflow_role", "work")
+            acc_metadata["repository_contract_schema"] = contract["schema"]
+            acc_metadata["repository_contract_project"] = contract.get("project")
+            normalized["acc_metadata"] = acc_metadata
+        else:
+            if not execution:
+                raise ValidationError(
+                    "read-only repository reports require the current "
+                    "execution_contract.repository_contract"
+                )
+            raw_contract = execution.get("repository_contract")
+            contract = self._validated_read_only_report_repository_contract(
+                raw_contract,
+                field="metadata.execution_contract.repository_contract",
+            )
+            for field, explicit in explicit_contracts:
+                comparable = self._validated_read_only_report_repository_contract(
+                    explicit,
+                    field=field,
+                )
+                if json_dumps(comparable) != json_dumps(contract):
+                    raise ValidationError(
+                        "%s contradicts the current execution repository contract"
+                        % field
+                    )
+            canonical_execution = dict(execution)
+            schema = str(canonical_execution.get("schema") or "").strip()
+            if schema and schema != "mac.task_execution_contract.v1":
+                raise ValidationError(
+                    "read-only repository report execution_contract.schema is unsupported"
+                )
+            canonical_execution["schema"] = "mac.task_execution_contract.v1"
+            canonical_execution["type"] = "repository"
+            canonical_execution["repository_contract"] = contract
+            origin_remote = str(origin.get("repository_url") or "").strip()
+            if origin_remote:
+                try:
+                    same_remote = canonical_git_remote_identity(origin_remote) == (
+                        canonical_git_remote_identity(contract["canonical_remote_url"])
+                    )
+                except ValueError as exc:
+                    raise ValidationError(
+                        "metadata.origin.repository_url is invalid: %s" % exc
+                    ) from exc
+                if not same_remote:
+                    raise ValidationError(
+                        "metadata.origin.repository_url contradicts the current "
+                        "execution repository contract"
+                    )
+            origin_branch = str(
+                origin.get("default_branch") or origin.get("canonical_branch") or ""
+            ).strip()
+            if origin_branch and origin_branch != contract["default_branch"]:
+                raise ValidationError(
+                    "metadata.origin.default_branch contradicts the current "
+                    "execution repository contract"
+                )
+            origin.setdefault("type", "direct_task")
+            origin["repository_url"] = contract["canonical_remote_url"]
+            origin["default_branch"] = contract["default_branch"]
+
+        # Historical fallbacks may be read for ordinary repository tasks, but a
+        # report persists its contract in the current execution slot only.
+        origin.pop("repository_contract", None)
+        normalized.pop("repository_contract", None)
+        normalized["origin"] = origin
+        normalized["execution_contract"] = canonical_execution
+        return normalized
+
+    def _assert_current_read_only_report_task_contract(
+        self,
+        task: Task,
+        *,
+        conn: Optional[Any] = None,
+    ) -> None:
+        """Fail closed for pre-cutover rows without rewriting ledger history."""
+
+        metadata = ensure_json_object(task.metadata)
+        if not metadata_declares_read_only_report_repository(metadata):
+            return
+        override_paths = self._read_only_report_evidence_override_paths(metadata)
+        if override_paths:
+            raise ValidationError(
+                "read-only repository report has legacy evidence-type overrides: %s"
+                % ", ".join(override_paths)
+            )
+        execution = ensure_json_object(metadata.get("execution_contract"))
+        if (
+            execution.get("schema") != "mac.task_execution_contract.v1"
+            or str(execution.get("type") or "").strip().lower() != "repository"
+        ):
+            raise ValidationError(
+                "read-only repository report lacks its normalized current execution contract"
+            )
+        contract = self._validated_read_only_report_repository_contract(
+            execution.get("repository_contract"),
+            field="metadata.execution_contract.repository_contract",
+        )
+        row = None
+        if task.project:
+            sql = (
+                "SELECT * FROM project_repositories WHERE project = ? AND enabled = ? "
+                "ORDER BY name, id LIMIT 1"
+            )
+            row = (
+                conn.execute(sql, (task.project, 1)).fetchone()
+                if conn is not None
+                else self.store.query_one(sql, (task.project, 1))
+            )
+        if row is None:
+            return
+        repo = self.project_repositories.from_row(row)
+        current = self._validated_read_only_report_repository_contract(
+            ensure_json_object(repo.metadata).get("repository_contract"),
+            field="registered repository contract",
+        )
+        if json_dumps(contract) != json_dumps(current):
+            raise ValidationError(
+                "read-only repository report execution contract is stale relative "
+                "to the current registered repository contract"
+            )
+        if execution.get("repository_id") != repo.id:
+            raise ValidationError(
+                "read-only repository report execution contract has the wrong repository_id"
+            )
+        if execution.get("repository_path") != repo.path:
+            raise ValidationError(
+                "read-only repository report execution contract has the wrong repository_path"
+            )
+
     def _normalize_task_execution_contract(
         self,
         metadata: Dict[str, Any],
@@ -4792,6 +5226,12 @@ class ControlPlane:
         required_capabilities: List[str],
     ) -> JsonDict:
         normalized = ensure_json_object(metadata)
+        read_only_report = metadata_declares_read_only_report_repository(normalized)
+        if read_only_report:
+            return self._normalize_read_only_report_execution_contract(
+                normalized,
+                project,
+            )
         origin = normalized.get("origin")
         origin_dict = dict(origin) if isinstance(origin, dict) else {}
         existing_contract = normalized.get("execution_contract")
@@ -5043,6 +5483,12 @@ class ControlPlane:
         """
         out: List[Task] = []
         for task in self._dispatch_ordered_tasks(project=project):
+            try:
+                self._assert_current_read_only_report_task_contract(task)
+            except ValidationError:
+                # Pre-cutover rows remain visible through get/list for explicit
+                # repair, but never enter an autonomous dispatch candidate set.
+                continue
             if tenant_id is not None and self._task_tenant_id(task) != tenant_id:
                 continue
             break_glass = self._active_break_glass_authorization(task.id)
@@ -5084,6 +5530,12 @@ class ControlPlane:
             "machine_untrusted": "agent machine is not trusted",
             "agent_capacity_full": "agent has no free execution capacity",
             "machine_tenant_not_allowed": "machine tenant policy rejects the task",
+            "report_repository_executor_missing": (
+                "agent lacks the controller-verified per-task OpenShell report executor"
+            ),
+            "report_repository_contract_invalid": (
+                "read-only repository report lacks its exact current repository contract"
+            ),
             "agent_resources_insufficient": "agent hardware resources do not satisfy the task",
             "repository_commands_missing": "required repository commands are unavailable in the sandbox",
             "required_role_unknown": "task requires an unknown role",
@@ -6474,6 +6926,10 @@ class ControlPlane:
         authorized_by = str(authorized_by or "").strip()
         if task.state != TaskState.OPEN.value:
             raise ValidationError("break-glass authorization requires an open task")
+        if metadata_declares_read_only_report_repository(task.metadata):
+            raise ValidationError(
+                "read-only repository reports cannot use host break-glass execution"
+            )
         if isinstance(ensure_json_object(task.metadata).get("review_context"), dict):
             raise ValidationError(
                 "review tasks cannot use host break-glass execution"
@@ -9569,6 +10025,11 @@ class ControlPlane:
     def _repository_contract_for_task(task: Task) -> JsonDict:
         """Return the repository contract carried by a repository task."""
         metadata = ensure_json_object(task.metadata)
+        if metadata_declares_report_deliverable(metadata):
+            # Reports may inspect an exact repository base, but no code is
+            # integrated. Their reviewed operator_result is the completion
+            # proof; canonical Git integration is categorically inapplicable.
+            return {}
         execution = ensure_json_object(metadata.get("execution_contract"))
         origin = ensure_json_object(metadata.get("origin"))
         contract = ensure_json_object(execution.get("repository_contract"))
@@ -9789,6 +10250,10 @@ class ControlPlane:
                 or current_task.lease_id is not None
             ):
                 raise TransitionError("task %s was claimed by another agent" % task_id)
+            self._assert_current_read_only_report_task_contract(
+                current_task,
+                conn=conn,
+            )
             for dependency_id in current_task.dependencies:
                 dependency_row = conn.execute(
                     "SELECT state FROM tasks WHERE id = ?", (dependency_id,)
@@ -13797,6 +14262,23 @@ class ControlPlane:
             attestation_ciphertext = self.secrets._encrypt(attestation_key_plaintext)
         event_type = "agent.reregistered" if existing_agent_row is not None else "agent.registered"
         with self.store.transaction() as conn:
+            # Linearize self-reported resources with controller-owned fields.
+            # A heartbeat/registration that read resources before an admin
+            # revocation must observe the revocation after acquiring this row
+            # lock and cannot resurrect either approval or projected marker.
+            conn.execute(
+                "UPDATE agents SET updated_at = updated_at WHERE id = ?",
+                (aid,),
+            )
+            resource_value = self._agent_resources_with_preserved_control_plane_fields(
+                aid, resources, conn=conn
+            )
+            resources_json = json_dumps(resource_value)
+            health_value = self._project_agent_health_for_resources(
+                registration_health,
+                registration_health,
+                resource_value,
+            ) or registration_health
             registration_write = conn.execute(
                 """
                 INSERT INTO agents (
@@ -13963,6 +14445,321 @@ class ControlPlane:
             return False
         return verify_verification_manifest_signature(key, challenge, signature)
 
+    @staticmethod
+    def _validated_deployment_attestation_probe(
+        agent_id: str, probe: Mapping[str, Any]
+    ) -> tuple[str, str, Dict[str, Any], str]:
+        """Validate the secret-free, deployment-owner key probe.
+
+        The probe does not authorize recovery by itself: the API route is
+        admin-only and the fleet deployer additionally holds the target's
+        fenced deployment lock.  Its purpose is to make the recovery decision
+        explicit and auditable while ensuring a valid installed key is never
+        rotated merely because a deploy was rerun.
+        """
+
+        expected_keys = {
+            "schema",
+            "state",
+            "agent_id",
+            "deployment_id",
+            "challenge",
+            "signature",
+        }
+        if not isinstance(probe, Mapping) or set(probe) != expected_keys:
+            raise ValidationError("attestation-key recovery probe is malformed")
+        if probe.get("schema") != "mac.agent_attestation_key_probe.v1":
+            raise ValidationError("attestation-key recovery probe schema is unsupported")
+        if probe.get("agent_id") != agent_id:
+            raise ValidationError("attestation-key recovery probe agent does not match")
+        deployment_id = str(probe.get("deployment_id") or "").strip()
+        if not deployment_id:
+            raise ValidationError("attestation-key recovery probe lacks deployment id")
+        state = str(probe.get("state") or "").strip()
+        challenge = probe.get("challenge")
+        signature = str(probe.get("signature") or "")
+        if state == "missing":
+            if challenge != {} or signature:
+                raise ValidationError("missing-key probe must not carry a signature")
+            return state, deployment_id, {}, ""
+        if state != "present" or not isinstance(challenge, dict):
+            raise ValidationError("attestation-key recovery probe state is unsupported")
+        if set(challenge) != {
+            "schema",
+            "purpose",
+            "agent_id",
+            "deployment_id",
+            "nonce",
+        }:
+            raise ValidationError("attestation-key recovery challenge is malformed")
+        if (
+            challenge.get("schema") != "mac.agent_attestation_challenge.v1"
+            or challenge.get("purpose") != "fleet-deploy-attestation-key-proof"
+            or challenge.get("agent_id") != agent_id
+            or challenge.get("deployment_id") != deployment_id
+            or len(str(challenge.get("nonce") or "")) < 32
+            or not signature.startswith("v1:")
+        ):
+            raise ValidationError("attestation-key recovery challenge is invalid")
+        return state, deployment_id, challenge, signature
+
+    def recover_agent_attestation_key(
+        self, agent_id: str, probe: Mapping[str, Any]
+    ) -> str:
+        """Rotate only when the deployment-owned probe is missing or stale.
+
+        This is the deployment recovery primitive.  Unlike the historical
+        worker-side ``--rotate-missing``/``--rotate-invalid`` path, it runs
+        under administrator authority and linearizes the probe decision with
+        the key rotation.  A valid installed key fails closed without change.
+        """
+
+        state, deployment_id, challenge, signature = (
+            self._validated_deployment_attestation_probe(agent_id, probe)
+        )
+        now = utcnow()
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (agent_id,),
+            )
+            if locked.rowcount != 1:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            row = conn.execute(
+                "SELECT attestation_key_ciphertext FROM agents WHERE id = ?",
+                (agent_id,),
+            ).fetchone()
+            current_key: Optional[str] = None
+            if row is not None and row["attestation_key_ciphertext"]:
+                try:
+                    current_key = self.secrets._decrypt(
+                        row["attestation_key_ciphertext"]
+                    )
+                except Exception:  # noqa: BLE001 - corrupt authority is stale.
+                    current_key = None
+            if (
+                state == "present"
+                and current_key is not None
+                and verify_verification_manifest_signature(
+                    current_key, challenge, signature
+                )
+            ):
+                raise ValidationError(
+                    "attestation key is already valid; recovery rotation refused"
+                )
+            key = _generate_attestation_key()
+            conn.execute(
+                """
+                UPDATE agents
+                SET attestation_key_prev_ciphertext = attestation_key_ciphertext,
+                    attestation_key_ciphertext = ?,
+                    attestation_key_rotated_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (self.secrets._encrypt(key), now, now, agent_id),
+            )
+            self._record_agent_lifecycle_event(
+                conn,
+                agent_id,
+                "agent.attestation_key.recovered",
+                "fleet-deploy",
+                {
+                    "agent_id": agent_id,
+                    "deployment_id": deployment_id,
+                    "probe_state": state,
+                    "reason": "missing" if state == "missing" else "stale",
+                },
+                now,
+            )
+        return key
+
+    @staticmethod
+    def _report_executor_startup_proof_matches(
+        agent_id: str,
+        resources: Mapping[str, Any],
+        expected_attestation: Mapping[str, Any],
+        expected_startup_timestamp: str,
+    ) -> bool:
+        startup = resources.get("startup_self_test")
+        checks = startup.get("checks") if isinstance(startup, Mapping) else None
+        return bool(
+            isinstance(startup, Mapping)
+            and startup.get("schema") == "mac.agent_startup_self_test.v1"
+            and startup.get("agent_id") == agent_id
+            and startup.get("timestamp") == expected_startup_timestamp
+            and startup.get("status") in {"passed", "degraded"}
+            and startup.get("blocking_problems") == []
+            and isinstance(checks, Mapping)
+            and checks.get("openshell_executor_config") is True
+            and checks.get("report_repository_executor_attestation") is True
+            and startup.get("report_repository_executor_attestation")
+            == expected_attestation
+        )
+
+    @classmethod
+    def _report_executor_release_ready(
+        cls, agent_id: str, resources: Mapping[str, Any]
+    ) -> bool:
+        attestation = resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
+        startup = resources.get("startup_self_test")
+        timestamp = (
+            str(startup.get("timestamp") or "")
+            if isinstance(startup, Mapping)
+            else ""
+        )
+        return bool(
+            agent_has_read_only_report_repository_executor(resources)
+            and valid_read_only_report_repository_executor_attestation(attestation)
+            and timestamp
+            and cls._report_executor_startup_proof_matches(
+                agent_id, resources, attestation, timestamp
+            )
+        )
+
+    def approve_agent_report_repository_executor(
+        self,
+        agent_id: str,
+        expected_attestation: Mapping[str, Any],
+        expected_startup_timestamp: str,
+        *,
+        actor: str = "fleet-deploy",
+    ) -> Agent:
+        """CAS-install approval for the exact current worker/startup proof.
+
+        Workers can publish an attestation, but only an administrator-driven
+        deployment may create this approval.  The derived dispatch marker is
+        projected in the same transaction and disappears automatically if a
+        later heartbeat reports different artifacts.
+        """
+
+        if not valid_read_only_report_repository_executor_attestation(
+            expected_attestation
+        ):
+            raise ValidationError("report executor attestation is malformed")
+        timestamp = str(expected_startup_timestamp or "").strip()
+        if not timestamp:
+            raise ValidationError("report executor startup timestamp is required")
+        now = utcnow()
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (agent_id,),
+            )
+            if locked.rowcount != 1:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            row = conn.execute(
+                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            resources = ensure_json_object(json_loads(row["resources"], {}))
+            current_attestation = resources.get(
+                REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY
+            )
+            if current_attestation != expected_attestation:
+                raise ValidationError(
+                    "report executor attestation changed before controller approval"
+                )
+            if resources.get("openshell_required") is not True:
+                raise ValidationError("report executor requires OpenShell policy")
+            if not self._report_executor_startup_proof_matches(
+                agent_id, resources, expected_attestation, timestamp
+            ):
+                raise ValidationError(
+                    "report executor startup proof does not match current attestation"
+                )
+            approval = read_only_report_repository_executor_approval(
+                runtime_image_ref=str(expected_attestation["runtime_image_ref"]),
+                policy_sha256=str(expected_attestation["policy_sha256"]),
+                openshell_bin_path=str(expected_attestation["openshell_bin_path"]),
+                openshell_bin_sha256=str(
+                    expected_attestation["openshell_bin_sha256"]
+                ),
+                executor_path=str(expected_attestation["executor_path"]),
+                executor_sha256=str(expected_attestation["executor_sha256"]),
+                platform=str(expected_attestation["platform"]),
+                isolation_posture=str(expected_attestation["isolation_posture"]),
+                python_path=str(expected_attestation["python_path"]),
+                python_sha256=str(expected_attestation["python_sha256"]),
+                executor_script_path=str(
+                    expected_attestation["executor_script_path"]
+                ),
+                executor_script_sha256=str(
+                    expected_attestation["executor_script_sha256"]
+                ),
+                source_root=str(expected_attestation["source_root"]),
+                source_bundle_sha256=str(
+                    expected_attestation["source_bundle_sha256"]
+                ),
+            )
+            resources[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = approval
+            resources = self._project_report_repository_executor_marker(resources)
+            if not agent_has_read_only_report_repository_executor(resources):
+                raise ValidationError(
+                    "report executor controller marker was not derived"
+                )
+            conn.execute(
+                "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(resources), now, agent_id),
+            )
+            self._record_agent_lifecycle_event(
+                conn,
+                agent_id,
+                "agent.report_repository_executor.approved",
+                str(actor or "fleet-deploy"),
+                {
+                    "agent_id": agent_id,
+                    "startup_timestamp": timestamp,
+                    "runtime_image_ref": expected_attestation["runtime_image_ref"],
+                    "policy_sha256": expected_attestation["policy_sha256"],
+                    "source_bundle_sha256": expected_attestation[
+                        "source_bundle_sha256"
+                    ],
+                },
+                now,
+            )
+        return self.get_agent(agent_id)
+
+    def revoke_agent_report_repository_executor(
+        self,
+        agent_id: str,
+        reason: str,
+        *,
+        actor: str = "fleet-deploy",
+    ) -> Agent:
+        reason_value = str(reason or "").strip()
+        if not reason_value:
+            raise ValidationError("report executor revocation reason is required")
+        now = utcnow()
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (agent_id,),
+            )
+            if locked.rowcount != 1:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            row = conn.execute(
+                "SELECT resources FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            resources = ensure_json_object(json_loads(row["resources"], {}))
+            resources.pop(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY, None)
+            resources.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
+            conn.execute(
+                "UPDATE agents SET resources = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(resources), now, agent_id),
+            )
+            self._record_agent_lifecycle_event(
+                conn,
+                agent_id,
+                "agent.report_repository_executor.revoked",
+                str(actor or "fleet-deploy"),
+                {"agent_id": agent_id, "reason": reason_value},
+                now,
+            )
+        return self.get_agent(agent_id)
+
     def get_agent(self, agent_id: str) -> Agent:
         row = self.store.query_one("SELECT * FROM agents WHERE id = ?", (agent_id,))
         if row is None:
@@ -13997,6 +14794,8 @@ class ControlPlane:
         next_status = agent_before.status
         next_health_status = agent_before.health_status
         next_hermes_instance_id = agent_before.hermes_instance_id
+        requested_resource_value: Optional[Dict[str, Any]] = None
+        resource_param_index: Optional[int] = None
         if name is not None:
             name_value = name.strip()
             if not name_value:
@@ -14013,8 +14812,24 @@ class ControlPlane:
             if capability_list != agent_before.capabilities:
                 changed_fields.append("capabilities")
         if resources is not None:
-            resource_value = ensure_json_object(resources)
+            requested_resource_value = ensure_json_object(resources)
+            approval = requested_resource_value.get(
+                REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY
+            )
+            if approval is not None and not (
+                valid_read_only_report_repository_executor_approval(approval)
+            ):
+                raise ValidationError(
+                    "report_repository_executor_approval is malformed"
+                )
+            # Final approval preservation/revocation and marker projection are
+            # repeated under the agent row lock below. This preliminary value
+            # exists only for changed-field reporting.
+            resource_value = self._admin_project_agent_resources(
+                agent_before.resources, requested_resource_value
+            )
             updates.append("resources = ?")
+            resource_param_index = len(params)
             params.append(json_dumps(resource_value))
             if resource_value != agent_before.resources:
                 changed_fields.append("resources")
@@ -14065,6 +14880,21 @@ class ControlPlane:
         params.append(now)
         params.append(agent_id)
         with self.store.transaction() as conn:
+            if requested_resource_value is not None and resource_param_index is not None:
+                conn.execute(
+                    "UPDATE agents SET updated_at = updated_at WHERE id = ?",
+                    (agent_id,),
+                )
+                row = conn.execute(
+                    "SELECT resources FROM agents WHERE id = ?", (agent_id,)
+                ).fetchone()
+                current_resources = ensure_json_object(
+                    json_loads(row["resources"], {}) if row is not None else {}
+                )
+                resource_value = self._admin_project_agent_resources(
+                    current_resources, requested_resource_value
+                )
+                params[resource_param_index] = json_dumps(resource_value)
             conn.execute(
                 "UPDATE agents SET %s WHERE id = ?" % ", ".join(updates),
                 tuple(params),
@@ -14530,6 +15360,13 @@ class ControlPlane:
                             "fleet release epoch lost credential proof for %s"
                             % agent_id
                         )
+                    if bool(expected.get("require_report_executor")) and not (
+                        self._report_executor_release_ready(agent_id, resources)
+                    ):
+                        raise ValidationError(
+                            "fleet release epoch lost report executor proof for %s"
+                            % agent_id
+                        )
                 released = conn.execute(
                     """
                     UPDATE agents
@@ -14755,6 +15592,7 @@ class ControlPlane:
         resource_value = agent_before.resources
         next_running_digest = agent_before.running_digest
         changed_fields: List[str] = []
+        resource_param_index: Optional[int] = None
         if status is not None:
             status_value = _state_value(status)
             try:
@@ -14774,6 +15612,7 @@ class ControlPlane:
         if resources is not None:
             resource_value = self._agent_resources_with_preserved_control_plane_fields(agent_id, resources)
             updates.append("resources = ?")
+            resource_param_index = len(params)
             params.append(json_dumps(resource_value))
             if resource_value != agent_before.resources:
                 changed_fields.append("resources")
@@ -14875,6 +15714,20 @@ class ControlPlane:
         # obs rows in ~4 days on rocky, almost all just CPU/mem jitter.
         meaningful_changes = [f for f in changed_fields if f != "resources"]
         with self.store.transaction() as conn:
+            if resources is not None and resource_param_index is not None:
+                # Acquire the agent row before reading its controller-owned
+                # approval. This closes the stale-read resurrection race with
+                # an overlapping admin revoke/update.
+                conn.execute(
+                    "UPDATE agents SET updated_at = updated_at WHERE id = ?",
+                    (agent_id,),
+                )
+                resource_value = (
+                    self._agent_resources_with_preserved_control_plane_fields(
+                        agent_id, resources, conn=conn
+                    )
+                )
+                params[resource_param_index] = json_dumps(resource_value)
             conn.execute("UPDATE agents SET %s WHERE id = ?" % ", ".join(updates), tuple(params))
             if resources is not None:
                 self._mirror_agent_reported_hardware_to_machine(
@@ -17245,25 +18098,14 @@ class ControlPlane:
         claim = self._review_claim_detail(task, review, evidence, actor=actor)
         now = utcnow()
         claim["claimed_at"] = now
-        metadata = ensure_json_object(task.metadata)
-        claims = ensure_json_object(metadata.get("review_claims"))
         # mem-05: idempotent re-claim. The verified 30,806-row storm was one
         # review re-claiming identical evidence over and over. A repeat claim
         # (same review + executor_evidence_id + head_sha) is now a no-op: it
         # writes no new task.review_claimed row. Availability still has to
         # linearize in the transaction below: stale claim metadata must not let a
         # drained/held reviewer re-enter after a deployment fence wins.
-        prior = ensure_json_object(claims.get(review.id))
-        prior_is_identical = bool(
-            prior
-            and str(prior.get("executor_evidence_id") or "")
-            == str(claim.get("executor_evidence_id") or "")
-            and str(prior.get("repository_head_sha") or "")
-            == str(claim.get("repository_head_sha") or "")
-        )
-        claims[review.id] = claim
-        metadata["review_claims"] = claims
-        metadata["latest_review_claim"] = claim
+        prior: JsonDict = {}
+        prior_is_identical = False
         with self.store.transaction() as conn:
             task_lock = conn.execute(
                 "UPDATE tasks SET updated_at = updated_at "
@@ -17280,6 +18122,28 @@ class ControlPlane:
                     ReviewStatus.PENDING.value,
                 ),
             )
+            current_task_row = conn.execute(
+                "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
+            ).fetchone()
+            current_metadata = ensure_json_object(
+                json_loads(current_task_row["metadata"], {})
+                if current_task_row is not None
+                else {}
+            )
+            current_claims = ensure_json_object(
+                current_metadata.get("review_claims")
+            )
+            prior = ensure_json_object(current_claims.get(review.id))
+            prior_is_identical = bool(
+                prior
+                and str(prior.get("executor_evidence_id") or "")
+                == str(claim.get("executor_evidence_id") or "")
+                and str(prior.get("repository_head_sha") or "")
+                == str(claim.get("repository_head_sha") or "")
+            )
+            current_claims[review.id] = claim
+            current_metadata["review_claims"] = current_claims
+            current_metadata["latest_review_claim"] = claim
             if prior_is_identical:
                 agent_claim = conn.execute(
                     """
@@ -17323,13 +18187,20 @@ class ControlPlane:
                         HealthStatus.HEALTHY.value,
                     ),
                 )
-            current_task_row = conn.execute(
-                "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
+            current_agent_row = conn.execute(
+                "SELECT resources FROM agents WHERE id = ?",
+                (reviewer_agent_id,),
             ).fetchone()
-            current_metadata = ensure_json_object(
-                json_loads(current_task_row["metadata"], {})
-                if current_task_row is not None
+            current_agent_resources = ensure_json_object(
+                json_loads(current_agent_row["resources"], {})
+                if current_agent_row is not None
                 else {}
+            )
+            report_reviewer_ineligible = (
+                metadata_declares_read_only_report_repository(current_metadata)
+                and not agent_has_read_only_report_repository_executor(
+                    current_agent_resources
+                )
             )
             locked_target = str(
                 ensure_json_object(current_metadata.get("review_target")).get(
@@ -17341,6 +18212,7 @@ class ControlPlane:
                 task_lock.rowcount != 1
                 or review_lock.rowcount != 1
                 or agent_claim.rowcount != 1
+                or report_reviewer_ineligible
                 or (locked_target and executor_evidence_id != locked_target)
             ):
                 raise AuthorizationError(
@@ -17349,7 +18221,7 @@ class ControlPlane:
             if not prior_is_identical:
                 conn.execute(
                     "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
-                    (json_dumps(metadata), now, task.id),
+                    (json_dumps(current_metadata), now, task.id),
                 )
                 self._record_history(
                     task.id,
@@ -17592,6 +18464,10 @@ class ControlPlane:
         if target not in {"git://main", "git://origin/main"}:
             return None
         task = self.get_task(task_id)
+        if metadata_declares_report_deliverable(task.metadata):
+            raise ValidationError(
+                "report deliverables cannot use Git publication targets"
+            )
         metadata = ensure_json_object(task.metadata)
         origin = ensure_json_object(metadata.get("origin"))
         repo_path_raw = str(origin.get("repository_path") or "").strip()
@@ -18791,22 +19667,28 @@ class ControlPlane:
 
         target = self._default_publication_target(task)
         if target is None:
-            # No operator-configured publication destination; refuse to
-            # invent one. The review is approved, but the task stays in
-            # REVIEWING until an operator sets metadata.publication_target
-            # (mac-w29).
-            self._record_default_review_observation(
-                task_id,
-                "workflow.default_review.no_publication_target",
-                "warning",
-                {"review_id": review.id, "evidence_id": evidence.id},
-                actor,
-            )
-            return {
-                "task_id": task_id,
-                "status": "waiting_for_publication_target",
-                "review_id": review.id,
-            }
+            if metadata_declares_report_deliverable(task.metadata):
+                # The reviewed operator_result itself is the durable report
+                # deliverable. Publish that hub-owned evidence identity rather
+                # than inventing or inheriting a Git merge target.
+                target = "evidence://%s" % evidence.id
+            else:
+                # No operator-configured publication destination; refuse to
+                # invent one. The review is approved, but the task stays in
+                # REVIEWING until an operator sets metadata.publication_target
+                # (mac-w29).
+                self._record_default_review_observation(
+                    task_id,
+                    "workflow.default_review.no_publication_target",
+                    "warning",
+                    {"review_id": review.id, "evidence_id": evidence.id},
+                    actor,
+                )
+                return {
+                    "task_id": task_id,
+                    "status": "waiting_for_publication_target",
+                    "review_id": review.id,
+                }
         try:
             publication = self.publish_task(
                 task_id,
@@ -21010,6 +21892,11 @@ class ControlPlane:
             return "machine_untrusted"
         if not self._machine_allows_tenant(machine, self._task_tenant_id(task)):
             return "machine_tenant_not_allowed"
+        if (
+            metadata_declares_read_only_report_repository(task.metadata)
+            and not agent_has_read_only_report_repository_executor(agent.resources)
+        ):
+            return "report_repository_executor_missing"
 
         break_glass_active = break_glass is not None and break_glass.agent_id == agent.id
         if self._task_dispatch_held(task) and not break_glass_active:
@@ -21216,6 +22103,15 @@ class ControlPlane:
             return False, "agent_status_unavailable"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return False, "agent_health_unavailable"
+        try:
+            self._assert_current_read_only_report_task_contract(task)
+        except ValidationError:
+            return False, "report_repository_contract_invalid"
+        if (
+            metadata_declares_read_only_report_repository(task.metadata)
+            and not agent_has_read_only_report_repository_executor(agent.resources)
+        ):
+            return False, "report_repository_executor_missing"
         # Hard safety exclusion used by crash-repair tasks: a worker must not
         # diagnose or approve a crash in the same revision that killed it.
         # Unlike cooperative distinctness this is not relaxed when the pool is
@@ -23219,6 +24115,11 @@ class ControlPlane:
             return "reviewer_unhealthy"
         if agent.status not in {AgentStatus.IDLE.value, AgentStatus.BUSY.value}:
             return "reviewer_not_available"
+        if (
+            metadata_declares_read_only_report_repository(task.metadata)
+            and not agent_has_read_only_report_repository_executor(agent.resources)
+        ):
+            return "reviewer_report_repository_executor_missing"
         hub_review_verifier = (
             _hub_review_verify_enabled()
             and self._agent_is_hub_review_verifier(agent)
@@ -23307,6 +24208,11 @@ class ControlPlane:
         return None
 
     def _reviewer_independence_fallback_enabled(self, task: Task) -> bool:
+        # Repository reports are conclusions drawn from observed source rather
+        # than mechanically integrated code. Their executor cannot also serve
+        # as the independent check on those conclusions.
+        if metadata_declares_read_only_report_repository(task.metadata):
+            return False
         policy = self._default_review_policy(task)
         return not (
             policy.get("require_independent_reviewer") is True
@@ -23518,6 +24424,9 @@ class ControlPlane:
         readable = {
             "reviewer_same_persona": "reviewer and executor use the same persona",
             "reviewer_wrong_tenant": "reviewer is outside the task tenant boundary",
+            "reviewer_report_repository_executor_missing": (
+                "reviewer lacks the controller-verified per-task OpenShell report executor"
+            ),
             "reviewer_cooperative_family_participant": (
                 "reviewer executed another task in the same cooperative work family"
             ),
@@ -23591,14 +24500,19 @@ class ControlPlane:
         observability event."
         """
         metadata = task.metadata
+        report_deliverable = metadata_declares_report_deliverable(metadata)
+
+        def eligible(target: str) -> bool:
+            return not (report_deliverable and target.startswith("git://"))
+
         for key in ("publication_target", "publish_target"):
             value = metadata.get(key)
-            if isinstance(value, str) and value.strip():
+            if isinstance(value, str) and value.strip() and eligible(value.strip()):
                 return value.strip()
         publication = metadata.get("publication")
         if isinstance(publication, dict):
             target = publication.get("target")
-            if isinstance(target, str) and target.strip():
+            if isinstance(target, str) and target.strip() and eligible(target.strip()):
                 return target.strip()
         acc_metadata = metadata.get("acc_metadata")
         if isinstance(acc_metadata, dict):
@@ -23610,7 +24524,7 @@ class ControlPlane:
         # (e.g. for autonomous coding tasks that all complete the same
         # way) instead of stamping every task individually.
         project_target = self._project_publication_target(task)
-        if project_target:
+        if project_target and eligible(project_target):
             return project_target
         # Fleet-wide default (opt-in): when set, routine approved tasks publish
         # via this target and auto-complete instead of parking in REVIEWING for
@@ -23636,7 +24550,10 @@ class ControlPlane:
         origin.repository_path, or the remote the worker pushed to (from the
         evidence), so a repo task need not have a hub-local path. Non-repo
         (operator) tasks return False so a git fleet-default never blocks them."""
-        origin = ensure_json_object(ensure_json_object(task.metadata).get("origin"))
+        metadata = ensure_json_object(task.metadata)
+        if metadata_declares_report_deliverable(metadata):
+            return False
+        origin = ensure_json_object(metadata.get("origin"))
         if str(origin.get("repository_url") or "").strip():
             return True
         if str(origin.get("repository_path") or "").strip():

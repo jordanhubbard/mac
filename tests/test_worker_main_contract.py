@@ -168,36 +168,23 @@ def test_worker_main_self_install_modes(worker_main, capsys, ok, expected):
     assert set(payload["results"]) == {"pip", "npm"}
 
 
-def test_worker_main_rotates_missing_and_invalid_attestation_keys(
-    worker_main, monkeypatch, tmp_path
+def test_worker_main_never_rotates_missing_or_invalid_attestation_keys(
+    worker_main, monkeypatch
 ):
     monkeypatch.setenv("MAC_ATTESTATION_KEY", "")
-    env_file = tmp_path / "mac.env"
     assert worker.main(
-        [
-            "--agent-id",
-            "agent_test",
-            "--rotate-missing-attestation-key",
-            "--attestation-key-env",
-            str(env_file),
-            "--heartbeat-only",
-        ]
-    ) == 0
-    assert any(path.endswith("attestation-key/rotate") for path, _ in worker_main[-1].posts)
-
-    monkeypatch.setenv("MAC_ATTESTATION_KEY", "old-key")
-    monkeypatch.setattr(worker, "_attestation_key_matches_hub", lambda *_args: False)
-    assert worker.main(
-        ["--agent-id", "agent_test", "--rotate-invalid-attestation-key", "--heartbeat-only"]
-    ) == 0
-    assert any(path.endswith("attestation-key/rotate") for path, _ in worker_main[-1].posts)
-
-    monkeypatch.setenv("MAC_ATTESTATION_KEY", "current-key")
-    monkeypatch.setattr(worker, "_attestation_key_matches_hub", lambda *_args: True)
-    assert worker.main(
-        ["--agent-id", "agent_test", "--rotate-invalid-attestation-key", "--heartbeat-only"]
+        ["--agent-id", "agent_test", "--heartbeat-only"]
     ) == 0
     assert not any(path.endswith("attestation-key/rotate") for path, _ in worker_main[-1].posts)
+
+    for removed_flag in (
+        "--rotate-missing-attestation-key",
+        "--rotate-invalid-attestation-key",
+    ):
+        with pytest.raises(SystemExit):
+            worker.build_parser().parse_args(
+                ["--agent-id", "agent_test", removed_flag, "--heartbeat-only"]
+            )
 
 
 def test_worker_main_dry_run_and_executor_modes(worker_main, tmp_path, capsys):

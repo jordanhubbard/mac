@@ -112,6 +112,335 @@ REPORT_DELIVERABLE = "report"
 _REPORT_DELIVERABLE_ALIASES = frozenset(
     {"report", "answer", "analysis", "investigation", "question", "triage"}
 )
+REPORT_REPOSITORY_ACCESS_SCHEMA = "mac.report_repository_access.v1"
+REPORT_REPOSITORY_ACCESS_KEY = "report_repository_access"
+REPORT_REPOSITORY_READ_ONLY_MODE = "read_only"
+REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY = (
+    "report_repository_executor_attestation"
+)
+REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA = (
+    "mac.report_repository_executor_attestation.v1"
+)
+REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY = "report_repository_executor_approval"
+REPORT_REPOSITORY_EXECUTOR_APPROVAL_SCHEMA = (
+    "mac.report_repository_executor_approval.v1"
+)
+REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY = "report_repository_executor"
+REPORT_REPOSITORY_EXECUTOR_SCHEMA = "mac.report_repository_executor.v1"
+REPORT_REPOSITORY_EXECUTOR_NAME = "mac.task_executor"
+REPORT_REPOSITORY_EXECUTOR_ISOLATION = "openshell_per_task"
+
+
+def read_only_report_repository_executor_attestation(
+    *,
+    runtime_image_ref: str,
+    policy_sha256: str,
+    openshell_bin_path: str,
+    openshell_bin_sha256: str,
+    executor_path: str,
+    executor_sha256: str,
+    platform: str,
+    isolation_posture: str,
+    python_path: str,
+    python_sha256: str,
+    executor_script_path: str,
+    executor_script_sha256: str,
+    source_root: str,
+    source_bundle_sha256: str,
+) -> JsonDict:
+    """Return the exact worker-side claim used to request hub admission.
+
+    This object is deliberately distinct from the controller-owned resource
+    marker.  Workers can report their current configuration, but they cannot
+    directly mint the marker that dispatch and review routing consume.
+    """
+
+    return {
+        "schema": REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA,
+        "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
+        "isolation": REPORT_REPOSITORY_EXECUTOR_ISOLATION,
+        "access_mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+        "runtime_image_ref": runtime_image_ref,
+        "policy_sha256": policy_sha256,
+        "openshell_bin_path": openshell_bin_path,
+        "openshell_bin_sha256": openshell_bin_sha256,
+        "executor_path": executor_path,
+        "executor_sha256": executor_sha256,
+        "platform": platform,
+        "isolation_posture": isolation_posture,
+        "python_path": python_path,
+        "python_sha256": python_sha256,
+        "executor_script_path": executor_script_path,
+        "executor_script_sha256": executor_script_sha256,
+        "source_root": source_root,
+        "source_bundle_sha256": source_bundle_sha256,
+        "verified": True,
+    }
+
+
+def valid_read_only_report_repository_executor_attestation(value: Any) -> bool:
+    """Validate the complete, digest-bound worker claim exactly."""
+
+    if not isinstance(value, Mapping):
+        return False
+    expected_keys = {
+        "schema",
+        "executor",
+        "isolation",
+        "access_mode",
+        "runtime_image_ref",
+        "policy_sha256",
+        "openshell_bin_path",
+        "openshell_bin_sha256",
+        "executor_path",
+        "executor_sha256",
+        "platform",
+        "isolation_posture",
+        "python_path",
+        "python_sha256",
+        "executor_script_path",
+        "executor_script_sha256",
+        "source_root",
+        "source_bundle_sha256",
+        "verified",
+    }
+    if set(value) != expected_keys:
+        return False
+    if value.get("schema") != REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA:
+        return False
+    if value.get("executor") != REPORT_REPOSITORY_EXECUTOR_NAME:
+        return False
+    if value.get("isolation") != REPORT_REPOSITORY_EXECUTOR_ISOLATION:
+        return False
+    if value.get("access_mode") != REPORT_REPOSITORY_READ_ONLY_MODE:
+        return False
+    if value.get("verified") is not True:
+        return False
+    runtime_ref = str(value.get("runtime_image_ref") or "")
+    if not re.fullmatch(
+        r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}",
+        runtime_ref,
+    ):
+        return False
+    if not all(
+        re.fullmatch(r"sha256:[0-9a-f]{64}", str(value.get(key) or ""))
+        for key in (
+            "policy_sha256",
+            "openshell_bin_sha256",
+            "executor_sha256",
+            "python_sha256",
+            "executor_script_sha256",
+            "source_bundle_sha256",
+        )
+    ):
+        return False
+    if not all(
+        isinstance(value.get(key), str)
+        and str(value[key]).startswith("/")
+        and "\x00" not in str(value[key])
+        for key in (
+            "openshell_bin_path",
+            "executor_path",
+            "python_path",
+            "executor_script_path",
+            "source_root",
+        )
+    ):
+        return False
+    return (value.get("platform"), value.get("isolation_posture")) in {
+        ("linux", "landlock_enforced"),
+        ("darwin", "macos_docker_vm_seccomp_egress"),
+    }
+
+
+def read_only_report_repository_executor_approval(
+    *,
+    runtime_image_ref: str,
+    policy_sha256: str,
+    openshell_bin_path: str,
+    openshell_bin_sha256: str,
+    executor_path: str,
+    executor_sha256: str,
+    platform: str,
+    isolation_posture: str,
+    python_path: str,
+    python_sha256: str,
+    executor_script_path: str,
+    executor_script_sha256: str,
+    source_root: str,
+    source_bundle_sha256: str,
+) -> JsonDict:
+    """Return the admin/deployment-owned tuple allowed to reach dispatch."""
+
+    return {
+        "schema": REPORT_REPOSITORY_EXECUTOR_APPROVAL_SCHEMA,
+        "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
+        "isolation": REPORT_REPOSITORY_EXECUTOR_ISOLATION,
+        "access_mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+        "runtime_image_ref": runtime_image_ref,
+        "policy_sha256": policy_sha256,
+        "openshell_bin_path": openshell_bin_path,
+        "openshell_bin_sha256": openshell_bin_sha256,
+        "executor_path": executor_path,
+        "executor_sha256": executor_sha256,
+        "platform": platform,
+        "isolation_posture": isolation_posture,
+        "python_path": python_path,
+        "python_sha256": python_sha256,
+        "executor_script_path": executor_script_path,
+        "executor_script_sha256": executor_script_sha256,
+        "source_root": source_root,
+        "source_bundle_sha256": source_bundle_sha256,
+        "approved": True,
+    }
+
+
+def valid_read_only_report_repository_executor_approval(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    expected_keys = {
+        "schema",
+        "executor",
+        "isolation",
+        "access_mode",
+        "runtime_image_ref",
+        "policy_sha256",
+        "openshell_bin_path",
+        "openshell_bin_sha256",
+        "executor_path",
+        "executor_sha256",
+        "platform",
+        "isolation_posture",
+        "python_path",
+        "python_sha256",
+        "executor_script_path",
+        "executor_script_sha256",
+        "source_root",
+        "source_bundle_sha256",
+        "approved",
+    }
+    if set(value) != expected_keys or value.get("approved") is not True:
+        return False
+    attestation = dict(value)
+    attestation["schema"] = REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA
+    attestation["verified"] = attestation.pop("approved")
+    return valid_read_only_report_repository_executor_attestation(attestation)
+
+
+def report_repository_executor_approval_matches_attestation(
+    approval: Any, attestation: Any
+) -> bool:
+    if not valid_read_only_report_repository_executor_approval(approval):
+        return False
+    if not valid_read_only_report_repository_executor_attestation(attestation):
+        return False
+    return all(
+        approval.get(key) == attestation.get(key)
+        for key in (
+            "executor",
+            "isolation",
+            "access_mode",
+            "runtime_image_ref",
+            "policy_sha256",
+            "openshell_bin_path",
+            "openshell_bin_sha256",
+            "executor_path",
+            "executor_sha256",
+            "platform",
+            "isolation_posture",
+            "python_path",
+            "python_sha256",
+            "executor_script_path",
+            "executor_script_sha256",
+            "source_root",
+            "source_bundle_sha256",
+        )
+    )
+
+
+def read_only_report_repository_executor_resource(
+    *,
+    runtime_image_ref: str,
+    policy_sha256: str,
+    openshell_bin_path: str,
+    openshell_bin_sha256: str,
+    executor_path: str,
+    executor_sha256: str,
+    platform: str,
+    isolation_posture: str,
+    python_path: str,
+    python_sha256: str,
+    executor_script_path: str,
+    executor_script_sha256: str,
+    source_root: str,
+    source_bundle_sha256: str,
+) -> JsonDict:
+    """Return the exact controller-owned dispatch marker."""
+
+    return {
+        "schema": REPORT_REPOSITORY_EXECUTOR_SCHEMA,
+        "executor": REPORT_REPOSITORY_EXECUTOR_NAME,
+        "isolation": REPORT_REPOSITORY_EXECUTOR_ISOLATION,
+        "access_mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+        "runtime_image_ref": runtime_image_ref,
+        "policy_sha256": policy_sha256,
+        "openshell_bin_path": openshell_bin_path,
+        "openshell_bin_sha256": openshell_bin_sha256,
+        "executor_path": executor_path,
+        "executor_sha256": executor_sha256,
+        "platform": platform,
+        "isolation_posture": isolation_posture,
+        "python_path": python_path,
+        "python_sha256": python_sha256,
+        "executor_script_path": executor_script_path,
+        "executor_script_sha256": executor_script_sha256,
+        "source_root": source_root,
+        "source_bundle_sha256": source_bundle_sha256,
+        "verified": True,
+    }
+
+
+def agent_has_read_only_report_repository_executor(resources: Any) -> bool:
+    """Whether an agent carries the exact controller-projected marker.
+
+    Equality is intentionally exact: a future schema, a partial claim, an
+    extra override, or a similarly named capability must not cross this
+    isolation boundary accidentally.
+    """
+
+    if not isinstance(resources, Mapping):
+        return False
+    marker = resources.get(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY)
+    if not isinstance(marker, Mapping):
+        return False
+    expected_keys = {
+        "schema",
+        "executor",
+        "isolation",
+        "access_mode",
+        "runtime_image_ref",
+        "policy_sha256",
+        "openshell_bin_path",
+        "openshell_bin_sha256",
+        "executor_path",
+        "executor_sha256",
+        "platform",
+        "isolation_posture",
+        "python_path",
+        "python_sha256",
+        "executor_script_path",
+        "executor_script_sha256",
+        "source_root",
+        "source_bundle_sha256",
+        "verified",
+    }
+    if set(marker) != expected_keys:
+        return False
+    if marker.get("schema") != REPORT_REPOSITORY_EXECUTOR_SCHEMA:
+        return False
+    attestation = dict(marker)
+    attestation["schema"] = REPORT_REPOSITORY_EXECUTOR_ATTESTATION_SCHEMA
+    return valid_read_only_report_repository_executor_attestation(attestation)
 
 
 def normalize_deliverable_kind(value: Any) -> str:
@@ -134,6 +463,30 @@ def metadata_declares_report_deliverable(metadata: Any) -> bool:
     if not isinstance(metadata, Mapping):
         return False
     return normalize_deliverable_kind(metadata.get("deliverable")) == REPORT_DELIVERABLE
+
+
+def metadata_declares_read_only_report_repository(metadata: Any) -> bool:
+    """Return whether an operator opted a report into repository read access.
+
+    Reports remain non-repository deliverables for evidence and publication
+    purposes.  This separate, schema-versioned declaration grants only a
+    task-owned inspection checkout; it never turns the report into a code task.
+    Requiring the exact schema and mode keeps accidental or future metadata
+    shapes fail-closed on the existing no-repository report path.
+    """
+
+    if not metadata_declares_report_deliverable(metadata):
+        return False
+    if not isinstance(metadata, Mapping):
+        return False
+    access = metadata.get(REPORT_REPOSITORY_ACCESS_KEY)
+    if not isinstance(access, Mapping):
+        return False
+    return (
+        str(access.get("schema") or "").strip() == REPORT_REPOSITORY_ACCESS_SCHEMA
+        and str(access.get("mode") or "").strip().lower()
+        == REPORT_REPOSITORY_READ_ONLY_MODE
+    )
 
 
 TASK_TRANSITIONS = {

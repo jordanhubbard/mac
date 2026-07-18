@@ -1814,6 +1814,7 @@ hub_agent_restart_gate() {
   local expected_principal_id="${10:-}"
   local authorized_prior_reason="${11:-}"
   local require_owned_after_prepare="${12:-0}"
+  local require_report_executor="${13:-0}"
   local hub_agent ssh_parts=() ssh_args=() ssh_target last_index item
   hub_agent="$(fleet_hub_agent)"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
@@ -1822,7 +1823,7 @@ hub_agent_restart_gate() {
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
-    "MAC_DEPLOY_GATE_PHASE=$(shell_quote "$phase") MAC_DEPLOY_GATE_AGENT_ID=$(shell_quote "$agent_id") MAC_DEPLOY_GATE_GENERATION=$(shell_quote "$generation") MAC_DEPLOY_GATE_BASELINE=$(shell_quote "$baseline_seen") MAC_DEPLOY_GATE_HOLD_REASON=$(shell_quote "$hold_reason") MAC_DEPLOY_GATE_PRIOR_HOLD_REASON=$(shell_quote "$prior_hold_reason") MAC_DEPLOY_GATE_PRIOR_OWNED=$(shell_quote "$prior_owned") MAC_DEPLOY_GATE_ALLOW_MISSING=$(shell_quote "$allow_missing") MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED=$(shell_quote "$require_authenticated") MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID=$(shell_quote "$expected_principal_id") MAC_DEPLOY_GATE_ADOPT_REASON=$(shell_quote "$authorized_prior_reason") MAC_DEPLOY_GATE_REQUIRE_OWNED=$(shell_quote "$require_owned_after_prepare") MAC_DEPLOY_GATE_TIMEOUT=$(shell_quote "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}") bash -s" <<'REMOTE_HUB_GATE'
+    "MAC_DEPLOY_GATE_PHASE=$(shell_quote "$phase") MAC_DEPLOY_GATE_AGENT_ID=$(shell_quote "$agent_id") MAC_DEPLOY_GATE_GENERATION=$(shell_quote "$generation") MAC_DEPLOY_GATE_BASELINE=$(shell_quote "$baseline_seen") MAC_DEPLOY_GATE_HOLD_REASON=$(shell_quote "$hold_reason") MAC_DEPLOY_GATE_PRIOR_HOLD_REASON=$(shell_quote "$prior_hold_reason") MAC_DEPLOY_GATE_PRIOR_OWNED=$(shell_quote "$prior_owned") MAC_DEPLOY_GATE_ALLOW_MISSING=$(shell_quote "$allow_missing") MAC_DEPLOY_GATE_REQUIRE_AUTHENTICATED=$(shell_quote "$require_authenticated") MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID=$(shell_quote "$expected_principal_id") MAC_DEPLOY_GATE_ADOPT_REASON=$(shell_quote "$authorized_prior_reason") MAC_DEPLOY_GATE_REQUIRE_OWNED=$(shell_quote "$require_owned_after_prepare") MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR=$(shell_quote "$require_report_executor") MAC_DEPLOY_GATE_TIMEOUT=$(shell_quote "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-1800}") bash -s" <<'REMOTE_HUB_GATE'
 set -euo pipefail
 set -a
 # shellcheck source=/dev/null -- owner-only hub deployment environment.
@@ -1836,6 +1837,8 @@ import os
 import time
 import urllib.error
 import urllib.request
+
+from mac.models import agent_has_read_only_report_repository_executor
 
 phase = os.environ["MAC_DEPLOY_GATE_PHASE"]
 agent_id = os.environ["MAC_DEPLOY_GATE_AGENT_ID"]
@@ -1851,6 +1854,9 @@ require_authenticated = (
 expected_principal_id = os.environ.get("MAC_DEPLOY_GATE_EXPECTED_PRINCIPAL_ID", "")
 authorized_prior_reason = os.environ.get("MAC_DEPLOY_GATE_ADOPT_REASON", "")
 require_owned_after_prepare = os.environ.get("MAC_DEPLOY_GATE_REQUIRE_OWNED", "0") == "1"
+require_report_executor = (
+    os.environ.get("MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR", "0") == "1"
+)
 timeout = max(1.0, float(os.environ.get("MAC_DEPLOY_GATE_TIMEOUT") or "1800"))
 hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
 token = os.environ.get("MAC_DEPLOY_GATE_ADMIN_TOKEN") or ""
@@ -1904,6 +1910,26 @@ def parse_seen(value):
     if not value:
         return None
     return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def report_executor_ready(resources):
+    if not require_report_executor:
+        return True
+    startup = resources.get("startup_self_test")
+    checks = startup.get("checks") if isinstance(startup, dict) else None
+    attestation = resources.get("report_repository_executor_attestation")
+    return bool(
+        agent_has_read_only_report_repository_executor(resources)
+        and isinstance(startup, dict)
+        and startup.get("schema") == "mac.agent_startup_self_test.v1"
+        and startup.get("agent_id") == agent_id
+        and startup.get("status") in {"passed", "degraded"}
+        and startup.get("blocking_problems") == []
+        and isinstance(checks, dict)
+        and checks.get("openshell_executor_config") is True
+        and checks.get("report_repository_executor_attestation") is True
+        and startup.get("report_repository_executor_attestation") == attestation
+    )
 
 
 def post_drain():
@@ -2146,10 +2172,11 @@ elif phase in {"arm", "release"}:
             and bool(row.get("dispatch_hold"))
             and resources.get("deployment_generation") == generation
             and auth_ok
+            and report_executor_ready(resources)
             and not active_work()
         ):
             break
-        last_error = "agent lacks strict idle, healthy, generation, hold, lease, or credential proof"
+        last_error = "agent lacks strict idle, healthy, generation, hold, lease, credential, or report-executor proof"
         time.sleep(2)
     else:
         raise RuntimeError("deployment release proof failed: " + last_error)
@@ -2559,6 +2586,7 @@ set_remote_mac_agent_service() {
   local agent="$1" supervisor="$2" fleet_name="$3" action="$4"
   local release_mode="${5:-keep}" release_policy="${6:-authenticated}"
   local expected_principal_id="${7:-}" release_commit_mode="${8:-immediate}"
+  local require_report_executor="${9:-0}"
   local agent_id state deployment_id hold_reason prior_owned gate_result owns_hold release_result hold_cleared
   local agent_existed adopted_from_reason require_owned_after_prepare new_agent=0
   local generation="" baseline_seen="" release_baseline="" require_authenticated=1
@@ -2769,7 +2797,7 @@ REMOTE_RELEASE
       return 1
     fi
     if ! release_result="$(hub_agent_restart_gate "$release_gate_phase" "$agent_id" "$generation" "$release_baseline" \
-      "$hold_reason" "$prior_owned" 0 "$require_authenticated" "$hold_reason" "$expected_principal_id")"; then
+      "$hold_reason" "$prior_owned" 0 "$require_authenticated" "$hold_reason" "$expected_principal_id" "" "$require_owned_after_prepare" "$require_report_executor")"; then
       restore_fence="$(remote_deployment_fenced_exec "$expected_deployment_id" 0 bash -s)"
       ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" \
         "MAC_DEPLOY_RELEASE_GENERATION=$(shell_quote "$generation") $restore_fence" <<'REMOTE_RESTORE'
@@ -2791,8 +2819,9 @@ REMOTE_RESTORE
     if [ "$release_commit_mode" = deferred ]; then
       local ready_file="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
       "$PYTHON_BIN" - "$ready_file" "$agent" "$agent_id" "$supervisor" "$fleet_name" \
-        "$generation" "$release_baseline" "$hold_reason" "$prior_owned" \
-        "$expected_principal_id" "$require_authenticated" "$deployment_id" <<'PY'
+      "$generation" "$release_baseline" "$hold_reason" "$prior_owned" \
+        "$expected_principal_id" "$require_authenticated" "$deployment_id" \
+        "$require_report_executor" <<'PY'
 import json
 import os
 import sys
@@ -2812,6 +2841,7 @@ from pathlib import Path
     principal_id,
     require_authenticated,
     deployment_id,
+    require_report_executor,
 ) = sys.argv[1:]
 path = Path(output)
 fd, raw = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
@@ -2832,6 +2862,7 @@ try:
                 "principal_id": principal_id,
                 "require_authenticated": require_authenticated == "1",
                 "deployment_id": deployment_id,
+                "require_report_executor": require_report_executor == "1",
             },
             stream,
             sort_keys=True,
@@ -4057,6 +4088,24 @@ worker_can_reach_hub_url() {
     "curl -fsS --connect-timeout 3 --max-time 5 '${hub_url%/}/health' >/dev/null 2>&1" 2>/dev/null
 }
 
+spec_requires_report_repository_executor() {
+  # Report repository execution is meaningful only for a loop worker whose
+  # frozen deployment enables OpenShell. The same calculation is used by the
+  # image preflight and remote installer, so selected launchd/systemd targets
+  # and SSH-managed K8s pods cannot disagree about the release requirement.
+  local spec="$1" fields=() worker_mode openshell_required request required
+  IFS='|' read -r -a fields <<<"$spec"
+  worker_mode="${fields[9]:-heartbeat}"
+  [ "$worker_mode" = loop ] || return 1
+  openshell_required="${fields[53]:-0}"
+  request="$(normalize_boolean_token "${MAC_DEPLOY_OPENSHELL:-}")"
+  required="$(normalize_boolean_token "$openshell_required")"
+  case "$request,$required" in
+    1,*|true,*|yes,*|on,*|*,1|*,true|*,yes|*,on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 stable_worker_agent_id() {
   "$PYTHON_BIN" - "$1" <<'PY'
 import re
@@ -4067,6 +4116,414 @@ print("agent_%s" % safe)
 PY
 }
 
+reconcile_bound_worker_attestation_key() (
+  # A bound worker has secret-free verify authority only. Recovery is owned by
+  # this fenced deployment controller: probe the target, ask the hub to rotate
+  # only when the key is missing/stale, relay the one-use key through owner-only
+  # files, restart, and require a second proof before any worker credential is
+  # activated. No raw key is printed or placed in argv/environment variables.
+  set -euo pipefail
+  umask 077
+  local agent="$1" hub_agent="$2" supervisor="$3" fleet_name="$4"
+  local deployment_id agent_id
+  deployment_id="$(deployment_id_for_agent "$agent")"
+  agent_id="$(stable_worker_agent_id "$agent")"
+  assert_remote_deployment_lock "$agent" "$deployment_id"
+
+  local probe="$TMPDIR_LOCAL/attestation-probe-${agent_id}.json"
+  local second_probe="$TMPDIR_LOCAL/attestation-probe-${agent_id}-second.json"
+  local manifest="$TMPDIR_LOCAL/attestation-recovery-${agent_id}.json"
+  # These must remain distinct even when the selected worker is the hub host:
+  # installation consumes the worker copy, while the hub copy is retained
+  # until the restarted worker proves the newly installed key.
+  local hub_manifest="/tmp/mac-attestation-recovery-hub-${agent_id}-${TS}.json"
+  local worker_manifest="/tmp/mac-attestation-recovery-worker-${agent_id}-${TS}.json"
+  local worker_receipt="/tmp/mac-attestation-recovery-${agent_id}-${TS}-receipt.json"
+  local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target
+  local worker_ssh_parts=() worker_ssh_args=() worker_ssh_target
+  local item last_index
+  while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  while IFS= read -r -d '' item; do worker_ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#hub_ssh_parts[@]} - 1))
+  hub_ssh_target="${hub_ssh_parts[$last_index]}"
+  hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  last_index=$((${#worker_ssh_parts[@]} - 1))
+  worker_ssh_target="${worker_ssh_parts[$last_index]}"
+  worker_ssh_args=("${worker_ssh_parts[@]:0:$last_index}")
+
+  cleanup_attestation_relay() {
+    rm -f "$probe" "$second_probe" "$manifest"
+    local cleanup_cmd
+    cleanup_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
+      "rm -f $(shell_quote "$worker_manifest") $(shell_quote "$worker_receipt")")"
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${worker_ssh_args[@]}" "$worker_ssh_target" "$cleanup_cmd" \
+      >/dev/null 2>&1 || true
+    # Recovery cannot be resumed from raw key material after a partial target
+    # install. Always destroy the hub-side copy; a retry performs a fresh probe
+    # and conditional rotation under a new deployment transaction.
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${hub_ssh_args[@]}" "$hub_ssh_target" \
+      "rm -f $(shell_quote "$hub_manifest")" >/dev/null 2>&1 || true
+  }
+  trap cleanup_attestation_relay EXIT
+  rm -f "$probe" "$second_probe" "$manifest"
+
+  local probe_cmd fenced_probe_cmd probe_state probe_b64 recovery_result
+  probe_cmd='"$HOME/.mac/venv/bin/python" -m mac.deployment_attestation probe'
+  probe_cmd+=" --agent-id $(shell_quote "$agent_id")"
+  probe_cmd+=" --deployment-id $(shell_quote "$deployment_id")"
+  probe_cmd+=' --env-file "$HOME/.mac/mac.env"'
+  fenced_probe_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$probe_cmd")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_probe_cmd" > "$probe"
+  chmod 0600 "$probe"
+  probe_state="$("$PYTHON_BIN" - "$probe" "$agent_id" "$deployment_id" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+if (
+    not isinstance(payload, dict)
+    or payload.get("schema") != "mac.agent_attestation_key_probe.v1"
+    or payload.get("agent_id") != sys.argv[2]
+    or payload.get("deployment_id") != sys.argv[3]
+    or payload.get("state") not in {"missing", "present"}
+    or "attestation_key" in payload
+):
+    raise SystemExit("target returned an invalid or secret-bearing key probe")
+print(payload["state"])
+PY
+)"
+  probe_b64="$("$PYTHON_BIN" - "$probe" <<'PY'
+import base64
+import sys
+print(base64.b64encode(open(sys.argv[1], "rb").read()).decode("ascii"))
+PY
+)"
+  echo "==> ${agent}: attestation key probe state=${probe_state}; validating with hub"
+  recovery_result="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "MAC_DEPLOY_ATTESTATION_PROBE_B64=$(shell_quote "$probe_b64") MAC_DEPLOY_ATTESTATION_MANIFEST=$(shell_quote "$hub_manifest") bash -s" <<'REMOTE_ATTESTATION_RECOVERY'
+set -euo pipefail
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"
+"$HOME/.mac/venv/bin/python" - <<'PY'
+import base64
+import json
+import os
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from mac.deployment_attestation import _atomic_private_json, recovery_manifest
+
+probe = json.loads(base64.b64decode(os.environ["MAC_DEPLOY_ATTESTATION_PROBE_B64"]))
+agent_id = str(probe.get("agent_id") or "")
+deployment_id = str(probe.get("deployment_id") or "")
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+token = os.environ["MAC_DEPLOY_GATE_ADMIN_TOKEN"]
+
+
+def api(path, body):
+    request = urllib.request.Request(
+        hub_url + path,
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError("POST %s failed with HTTP %s: %s" % (path, exc.code, detail)) from exc
+
+
+valid = False
+if probe.get("state") == "present":
+    verified = api(
+        "/agents/%s/attestation-key/verify" % agent_id,
+        {"challenge": probe.get("challenge"), "signature": probe.get("signature")},
+    )
+    valid = bool(isinstance(verified, dict) and verified.get("valid") is True)
+if valid:
+    print(json.dumps({"status": "valid", "agent_id": agent_id}, sort_keys=True))
+    raise SystemExit(0)
+
+rotated = api(
+    "/agents/%s/attestation-key/recover" % agent_id,
+    {"probe": probe},
+)
+key = str(rotated.get("attestation_key") or "") if isinstance(rotated, dict) else ""
+manifest = recovery_manifest(agent_id, deployment_id, key)
+_atomic_private_json(Path(os.environ["MAC_DEPLOY_ATTESTATION_MANIFEST"]), manifest)
+print(
+    json.dumps(
+        {
+            "status": "rotated",
+            "agent_id": agent_id,
+            "reason": "missing" if probe.get("state") == "missing" else "stale",
+            "manifest_written": True,
+        },
+        sort_keys=True,
+    )
+)
+PY
+REMOTE_ATTESTATION_RECOVERY
+)"
+  if [ "$(printf '%s' "$recovery_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("status") or "")')" = valid ]; then
+    echo "==> ${agent}: existing attestation key proved valid; no rotation"
+    return 0
+  fi
+  [ "$(printf '%s' "$recovery_result" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("status") or "")')" = rotated ] || {
+    echo "==> ${agent}: hub returned an invalid attestation recovery result" >&2
+    return 1
+  }
+
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "cat $(shell_quote "$hub_manifest")" > "$manifest"
+  chmod 0600 "$manifest"
+  fenced_remote_upload "$agent" "$deployment_id" "$manifest" "$worker_manifest"
+  local install_cmd fenced_install_cmd
+  install_cmd='set -e; umask 077; chmod 0600'
+  install_cmd+=" $(shell_quote "$worker_manifest")"
+  install_cmd+='; "$HOME/.mac/venv/bin/python" -m mac.deployment_attestation install'
+  install_cmd+=" --manifest $(shell_quote "$worker_manifest")"
+  install_cmd+=' --env-file "$HOME/.mac/mac.env"'
+  install_cmd+=" --agent-id $(shell_quote "$agent_id")"
+  install_cmd+=" --deployment-id $(shell_quote "$deployment_id")"
+  install_cmd+=" --receipt-out $(shell_quote "$worker_receipt")"
+  assert_remote_deployment_lock "$agent" "$deployment_id"
+  fenced_install_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$install_cmd")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_install_cmd" >/dev/null
+
+  # The process inherited the old key. Restart behind the same durable hold,
+  # then build a fresh target-owned proof from the atomically installed env.
+  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart keep
+  assert_remote_deployment_lock "$agent" "$deployment_id"
+  fenced_probe_cmd="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c "$probe_cmd")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${worker_ssh_args[@]}" "$worker_ssh_target" "$fenced_probe_cmd" > "$second_probe"
+  chmod 0600 "$second_probe"
+  probe_b64="$("$PYTHON_BIN" - "$second_probe" <<'PY'
+import base64
+import sys
+print(base64.b64encode(open(sys.argv[1], "rb").read()).decode("ascii"))
+PY
+)"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "MAC_DEPLOY_ATTESTATION_PROBE_B64=$(shell_quote "$probe_b64") MAC_DEPLOY_ATTESTATION_MANIFEST=$(shell_quote "$hub_manifest") bash -s" <<'REMOTE_ATTESTATION_SECOND_PROOF'
+set -euo pipefail
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"
+"$HOME/.mac/venv/bin/python" - <<'PY'
+import base64
+import json
+import os
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+probe = json.loads(base64.b64decode(os.environ["MAC_DEPLOY_ATTESTATION_PROBE_B64"]))
+agent_id = str(probe.get("agent_id") or "")
+if probe.get("state") != "present":
+    raise RuntimeError("post-install attestation key is still missing")
+request = urllib.request.Request(
+    str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+    + "/agents/%s/attestation-key/verify" % agent_id,
+    data=json.dumps(
+        {"challenge": probe.get("challenge"), "signature": probe.get("signature")}
+    ).encode("utf-8"),
+    method="POST",
+    headers={
+        "Authorization": "Bearer " + os.environ["MAC_DEPLOY_GATE_ADMIN_TOKEN"],
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    },
+)
+try:
+    with urllib.request.urlopen(request, timeout=20) as response:
+        result = json.load(response)
+except urllib.error.HTTPError as exc:
+    detail = exc.read().decode("utf-8", errors="replace")[:500]
+    raise RuntimeError("post-install key verification failed with HTTP %s: %s" % (exc.code, detail)) from exc
+if not isinstance(result, dict) or result.get("valid") is not True:
+    raise RuntimeError("post-install attestation key proof did not verify")
+Path(os.environ["MAC_DEPLOY_ATTESTATION_MANIFEST"]).unlink(missing_ok=True)
+print(json.dumps({"status": "proved", "agent_id": agent_id}, sort_keys=True))
+PY
+REMOTE_ATTESTATION_SECOND_PROOF
+  echo "==> ${agent}: recovered attestation key installed and proved a second time"
+)
+
+reconcile_report_repository_executor_approval() (
+  # The attestation is worker-authored; approval is controller-authored. Fetch
+  # the exact current tuple and startup report under the target deployment
+  # fence, then let the admin-only API compare-and-set the matching approval.
+  # Any mismatch/failure explicitly revokes eligibility before returning.
+  set -euo pipefail
+  local agent="$1" hub_agent="$2" required="$3"
+  local deployment_id agent_id hub_ssh_parts=() hub_ssh_args=() hub_ssh_target
+  local item last_index
+  deployment_id="$(deployment_id_for_agent "$agent")"
+  agent_id="$(stable_worker_agent_id "$agent")"
+  assert_remote_deployment_lock "$agent" "$deployment_id"
+  while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#hub_ssh_parts[@]} - 1))
+  hub_ssh_target="${hub_ssh_parts[$last_index]}"
+  hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "MAC_DEPLOY_REPORT_AGENT_ID=$(shell_quote "$agent_id") MAC_DEPLOY_REPORT_REQUIRED=$(shell_quote "$required") bash -s" <<'REMOTE_REPORT_EXECUTOR_APPROVAL'
+set -euo pipefail
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+export MAC_DEPLOY_GATE_ADMIN_TOKEN="${MAC_API_TOKEN:?}"
+"$HOME/.mac/venv/bin/python" - <<'PY'
+import json
+import os
+import urllib.error
+import urllib.request
+
+from mac.models import (
+    REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
+    agent_has_read_only_report_repository_executor,
+    valid_read_only_report_repository_executor_attestation,
+)
+
+agent_id = os.environ["MAC_DEPLOY_REPORT_AGENT_ID"]
+required = os.environ.get("MAC_DEPLOY_REPORT_REQUIRED") == "1"
+hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
+token = os.environ["MAC_DEPLOY_GATE_ADMIN_TOKEN"]
+
+
+def api(method, path, body=None):
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        hub_url + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/json",
+            **({"Content-Type": "application/json"} if data is not None else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(
+            "%s %s failed with HTTP %s: %s" % (method, path, exc.code, detail)
+        ) from exc
+    return json.loads(raw) if raw else None
+
+
+def revoke(reason):
+    return api(
+        "POST",
+        "/agents/%s/report-repository-executor/revoke" % agent_id,
+        {"reason": reason, "actor": "fleet-deploy"},
+    )
+
+
+if not required:
+    row = revoke("selected node is not an OpenShell report executor")
+    resources = row.get("resources") if isinstance(row, dict) else {}
+    if agent_has_read_only_report_repository_executor(resources):
+        raise RuntimeError("report executor marker survived explicit revocation")
+    print(json.dumps({"status": "revoked-not-required", "agent_id": agent_id}))
+    raise SystemExit(0)
+
+try:
+    row = api("GET", "/agents/%s" % agent_id)
+    if not isinstance(row, dict) or row.get("id") != agent_id:
+        raise RuntimeError("hub returned the wrong agent row")
+    resources = row.get("resources") if isinstance(row.get("resources"), dict) else {}
+    attestation = resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
+    startup = resources.get("startup_self_test")
+    checks = startup.get("checks") if isinstance(startup, dict) else None
+    if not valid_read_only_report_repository_executor_attestation(attestation):
+        raise RuntimeError("worker lacks a valid current report executor attestation")
+    if not (
+        resources.get("openshell_required") is True
+        and isinstance(startup, dict)
+        and startup.get("schema") == "mac.agent_startup_self_test.v1"
+        and startup.get("agent_id") == agent_id
+        and startup.get("status") in {"passed", "degraded"}
+        and startup.get("blocking_problems") == []
+        and isinstance(checks, dict)
+        and checks.get("openshell_executor_config") is True
+        and checks.get("report_repository_executor_attestation") is True
+        and startup.get("report_repository_executor_attestation") == attestation
+        and str(startup.get("timestamp") or "")
+    ):
+        raise RuntimeError("worker startup proof does not bind the current attestation")
+    approved = api(
+        "POST",
+        "/agents/%s/report-repository-executor/approve" % agent_id,
+        {
+            "expected_attestation": attestation,
+            "expected_startup_timestamp": startup["timestamp"],
+            "actor": "fleet-deploy",
+        },
+    )
+    approved_resources = (
+        approved.get("resources") if isinstance(approved, dict) else {}
+    )
+    approved_startup = approved_resources.get("startup_self_test")
+    if not (
+        isinstance(approved, dict)
+        and approved.get("id") == agent_id
+        and agent_has_read_only_report_repository_executor(approved_resources)
+        and isinstance(approved_startup, dict)
+        and approved_startup.get("timestamp") == startup["timestamp"]
+        and approved_startup.get("report_repository_executor_attestation")
+        == attestation
+    ):
+        raise RuntimeError("hub did not derive the exact approved report marker")
+except Exception:
+    try:
+        revoke("deployment report executor approval failed or drifted")
+    except Exception:
+        pass
+    raise
+print(
+    json.dumps(
+        {
+            "status": "approved",
+            "agent_id": agent_id,
+            "runtime_image_ref": attestation["runtime_image_ref"],
+            "policy_sha256": attestation["policy_sha256"],
+            "source_bundle_sha256": attestation["source_bundle_sha256"],
+            "startup_timestamp": startup["timestamp"],
+        },
+        sort_keys=True,
+    )
+)
+PY
+REMOTE_REPORT_EXECUTOR_APPROVAL
+  if [ "$required" = 1 ]; then
+    echo "==> ${agent}: controller approved exact startup-attested report executor"
+  else
+    echo "==> ${agent}: report executor approval revoked (not required by frozen spec)"
+  fi
+)
+
 provision_bound_worker_credential() (
   # The first deploy starts under the compatibility token so a brand-new agent
   # can register. This second phase replaces it with an exact per-agent token,
@@ -4074,11 +4531,13 @@ provision_bound_worker_credential() (
   # it. Raw token material only crosses owner-only files; it is never argv/log
   # data, and the hub manifest is consumed on successful activation.
   set -euo pipefail
+  umask 077
   local agent="$1" hub_agent="$2" supervisor="$3" fleet_name="$4" worker_capabilities="$5"
+  local require_report_executor="${6:-0}"
   case "$(printf '%s' "${MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN:-}" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|on)
       echo "==> ${agent}: explicit legacy worker-token override; package work remains disabled"
-      set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" release keep legacy "" deferred
+      set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" release keep legacy "" deferred "$require_report_executor"
       return 0
       ;;
   esac
@@ -4088,10 +4547,13 @@ provision_bound_worker_credential() (
   assert_remote_deployment_lock "$agent" "$(deployment_id_for_agent "$agent")"
   local local_manifest="$TMPDIR_LOCAL/worker-credential-${agent_id}.json"
   local local_receipt="$TMPDIR_LOCAL/worker-credential-${agent_id}-receipt.json"
-  local hub_manifest="/tmp/mac-worker-credential-${agent_id}-${TS}.json"
-  local hub_receipt="/tmp/mac-worker-credential-${agent_id}-${TS}-receipt.json"
-  local worker_manifest="/tmp/mac-worker-credential-${agent_id}-${TS}.json"
-  local worker_receipt="/tmp/mac-worker-credential-${agent_id}-${TS}-receipt.json"
+  # Keep relay artifacts distinct when the selected worker and hub resolve to
+  # the same host. Worker EXIT cleanup must not destroy the hub retry manifest
+  # before activation has committed.
+  local hub_manifest="/tmp/mac-worker-credential-hub-${agent_id}-${TS}.json"
+  local hub_receipt="/tmp/mac-worker-credential-hub-${agent_id}-${TS}-receipt.json"
+  local worker_manifest="/tmp/mac-worker-credential-worker-${agent_id}-${TS}.json"
+  local worker_receipt="/tmp/mac-worker-credential-worker-${agent_id}-${TS}-receipt.json"
 
   local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target
   local worker_ssh_parts=() worker_ssh_args=() worker_ssh_target
@@ -4241,15 +4703,18 @@ PY
     echo "    hub retry manifest retained at $hub_manifest" >&2
     return 1
   fi
+  # Activation consumes the hub manifest itself after the database commit.
+  # Remove both hub relay paths defensively only on that successful branch;
+  # the failure branch above intentionally preserves the retry authority.
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" \
+    "rm -f $(shell_quote "$hub_manifest") $(shell_quote "$hub_receipt")"
   # Credential activation is proved while the worker is still drained and
   # held. Arm the worker and prove its exact newly issued principal, but retain
   # the durable hub hold until every selected node is ready for one atomic
   # fleet-epoch commit.
   set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" release \
-    keep authenticated "$principal_id" deferred
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-    "${hub_ssh_args[@]}" "$hub_ssh_target" \
-    "rm -f $(shell_quote "$hub_receipt")"
+    keep authenticated "$principal_id" deferred "$require_report_executor"
   local policy_cmd
   policy_cmd='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials set-mode compatibility --review-live'
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
@@ -4375,6 +4840,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from mac.models import (
+    agent_has_read_only_report_repository_executor,
+    valid_read_only_report_repository_executor_attestation,
+)
+
 plan = json.loads(base64.b64decode(os.environ["MAC_DEPLOY_RELEASE_PLAN_B64"]))
 if plan.get("schema") != "mac.fleet_release_epoch.v1":
     raise SystemExit("invalid fleet release epoch plan")
@@ -4419,6 +4889,28 @@ def parse_seen(value):
     return dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
+def report_executor_ready(agent_id, resources, required):
+    if not required:
+        return True
+    startup = resources.get("startup_self_test")
+    checks = startup.get("checks") if isinstance(startup, dict) else None
+    attestation = resources.get("report_repository_executor_attestation")
+    return bool(
+        agent_has_read_only_report_repository_executor(resources)
+        and valid_read_only_report_repository_executor_attestation(attestation)
+        and isinstance(startup, dict)
+        and startup.get("schema") == "mac.agent_startup_self_test.v1"
+        and startup.get("agent_id") == agent_id
+        and startup.get("status") in {"passed", "degraded"}
+        and startup.get("blocking_problems") == []
+        and isinstance(checks, dict)
+        and checks.get("openshell_executor_config") is True
+        and checks.get("report_repository_executor_attestation") is True
+        and startup.get("report_repository_executor_attestation") == attestation
+        and str(startup.get("timestamp") or "")
+    )
+
+
 rows = {}
 for item in entries:
     agent_id = str(item.get("agent_id") or "")
@@ -4447,6 +4939,11 @@ for item in entries:
             and bool(row.get("dispatch_hold_reason"))
             and resources.get("deployment_generation") == item.get("generation")
             and auth_ok
+            and report_executor_ready(
+                agent_id,
+                resources,
+                bool(item.get("require_report_executor")),
+            )
         ):
             raise RuntimeError(
                 "operator-held agent %s lost release readiness before epoch commit"
@@ -4462,6 +4959,7 @@ holds = [
         "baseline_seen": item["baseline_seen"],
         "principal_id": item.get("principal_id") or None,
         "require_authenticated": bool(item.get("require_authenticated")),
+        "require_report_executor": bool(item.get("require_report_executor")),
     }
     for item in entries
     if item.get("owns_hold")
@@ -4589,7 +5087,7 @@ enforce_bound_worker_credentials() {
 
 main() {
   make_archive
-  local spec agent agent_id adoption_reason hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field
+  local spec agent agent_id adoption_reason hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field report_executor_required
   local selected_specs_file="$TMPDIR_LOCAL/selected-specs.txt" selected_count
   local hold_adoption_plan="$TMPDIR_LOCAL/hold-adoption-plan.json"
   hub_agent="$(fleet_hub_agent)"
@@ -4773,9 +5271,17 @@ main() {
         fi
       fi
     fi
+    report_executor_required=0
+    if spec_requires_report_repository_executor "$spec"; then
+      report_executor_required=1
+    fi
+    reconcile_bound_worker_attestation_key \
+      "$agent" "$hub_agent" "$supervisor_field" "$fleet_name_field"
+    reconcile_report_repository_executor_approval \
+      "$agent" "$hub_agent" "$report_executor_required"
     provision_bound_worker_credential \
       "$agent" "$hub_agent" "$supervisor_field" "$fleet_name_field" \
-      "$worker_capabilities_field"
+      "$worker_capabilities_field" "$report_executor_required"
   done < "$selected_specs_file"
   if [ "$deployed_count" -eq 0 ]; then
     echo "ERROR: no agents were deployed. Check that the fleet config is valid and the requested agents exist." >&2

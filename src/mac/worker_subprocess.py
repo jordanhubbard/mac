@@ -20,9 +20,97 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from mac.api_client import MacApiError
+from mac.models import (
+    REPORT_REPOSITORY_ACCESS_SCHEMA,
+    REPORT_REPOSITORY_READ_ONLY_MODE,
+    metadata_declares_read_only_report_repository,
+)
+from mac.repository_access_env import fence_read_only_repository_environment
+from mac.trusted_artifact import (
+    nofollow_regular_file_identity,
+    nofollow_source_bundle_digest,
+)
 
 JsonDict = Dict[str, Any]
 CommandAuditSink = Callable[[JsonDict], None]
+
+_PYTHON_IMPORT_OVERRIDE_ENV = frozenset(
+    {
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONINSPECT",
+        "PYTHONUSERBASE",
+    }
+)
+
+
+def _assert_approved_read_only_report_host_executor(
+    argv: List[str], environment: Dict[str, str]
+) -> None:
+    """Revalidate every host-side executable/import artifact before spawn."""
+
+    if len(argv) != 1 or Path(argv[0]).name != "mac-task-executor":
+        raise RuntimeError(
+            "read-only repository reports require the approved direct executor"
+        )
+    expected = {
+        "executor_path": environment.get(
+            "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH", ""
+        ),
+        "executor_sha256": environment.get(
+            "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256", ""
+        ),
+        "python_path": environment.get(
+            "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH", ""
+        ),
+        "python_sha256": environment.get(
+            "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256", ""
+        ),
+        "script_path": environment.get(
+            "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH", ""
+        ),
+        "script_sha256": environment.get(
+            "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256", ""
+        ),
+        "source_root": environment.get(
+            "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT", ""
+        ),
+        "source_sha256": environment.get(
+            "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256", ""
+        ),
+    }
+    if not all(expected.values()):
+        raise RuntimeError(
+            "read-only repository report lacks approved host artifact identities"
+        )
+    executor_path, executor_sha256 = nofollow_regular_file_identity(argv[0])
+    python_candidate = environment.get("MAC_TASK_EXECUTOR_PYTHON", "")
+    script_candidate = environment.get("MAC_TASK_EXECUTOR_SCRIPT", "")
+    source_candidate = environment.get("MAC_SELF_UPDATE_REPO", "")
+    if not python_candidate or not script_candidate or not source_candidate:
+        raise RuntimeError(
+            "read-only repository report host artifact paths are not configured"
+        )
+    python_path, python_sha256 = nofollow_regular_file_identity(
+        Path(python_candidate).expanduser().resolve(strict=True)
+    )
+    script_path, script_sha256 = nofollow_regular_file_identity(script_candidate)
+    source_root, source_sha256 = nofollow_source_bundle_digest(source_candidate)
+    observed = {
+        "executor_path": executor_path,
+        "executor_sha256": executor_sha256,
+        "python_path": python_path,
+        "python_sha256": python_sha256,
+        "script_path": script_path,
+        "script_sha256": script_sha256,
+        "source_root": source_root,
+        "source_sha256": source_sha256,
+    }
+    if observed != expected:
+        raise RuntimeError(
+            "read-only repository report host artifacts differ from hub approval"
+        )
 
 
 def _terminate_process_tree(
@@ -146,6 +234,7 @@ class SubprocessExecutor:
             _load_repository_context,
             _repository_context_audit_metadata,
             _repository_context_env,
+            _repository_context_is_read_only_report,
             _sha256_text,
             _summary_from_output,
             _task_iteration_override,
@@ -207,6 +296,29 @@ class SubprocessExecutor:
             env["MAC_TASK_MAX_ITERATIONS"] = str(iteration_override)
         if repository_context:
             env.update(_repository_context_env(repository_context))
+        read_only_repository = metadata_declares_read_only_report_repository(
+            task.get("metadata") if isinstance(task, dict) else None
+        )
+        if read_only_repository:
+            # Review tasks intentionally have no publication-shaped ``repo``
+            # anchor, but retain the original report access declaration. Stamp
+            # the mode from trusted task metadata so their OpenShell child is
+            # fenced even when no repository context is attached.
+            env["MAC_TASK_REPO_ACCESS_SCHEMA"] = REPORT_REPOSITORY_ACCESS_SCHEMA
+            env["MAC_TASK_REPO_ACCESS_MODE"] = REPORT_REPOSITORY_READ_ONLY_MODE
+        if read_only_repository or _repository_context_is_read_only_report(
+            repository_context
+        ):
+            # Repository authentication has no role in an inspection-only
+            # report.  Withhold every supported Git credential source from the
+            # executor before it enters OpenShell (or an approved direct test
+            # boundary), while leaving model-provider credentials untouched.
+            fence_read_only_repository_environment(env)
+        if read_only_repository:
+            for name in _PYTHON_IMPORT_OVERRIDE_ENV:
+                env.pop(name, None)
+            env["PYTHONNOUSERSITE"] = "1"
+            _assert_approved_read_only_report_host_executor(self.argv, env)
         command_id = _command_audit_id()
         started_at = _utcnow()
         started_monotonic = time.monotonic()

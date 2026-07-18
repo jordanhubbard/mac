@@ -23,11 +23,14 @@ deploy/deploy-mac-fleet.sh --hub <hub-agent> <hub-agent>
 
 Legacy bootstrap preserves the existing operator hold. It rejects hold
 adoption, exact-full-cohort mode, and any non-hub target. Afterward, confirm the
-hub OpenAPI document contains all three routes:
+hub OpenAPI document contains all six routes required by the cohort deployer:
 
 - `/agents/{agent_id}/dispatch-hold/acquire`
 - `/agents/{agent_id}/dispatch-hold/release`
 - `/agents/dispatch-hold/release-batch`
+- `/agents/{agent_id}/attestation-key/recover`
+- `/agents/{agent_id}/report-repository-executor/approve`
+- `/agents/{agent_id}/report-repository-executor/revoke`
 
 ## 2. Authorize exact adoption of existing holds
 
@@ -105,6 +108,28 @@ race aborts phase 1, do not clear it manually: it remains safely held under the
 deployment reason. Inspect the hub lifecycle receipt and the node's owner-only
 `~/.mac/deploy-dispatch-hold.json`, then use the documented stale-lock takeover
 only after proving the previous controller is gone.
+
+### Attestation-key recovery and report-executor approval
+
+Every selected loop worker is reconciled while its node-local deployment lock
+and hub dispatch hold are still active. The worker first emits a secret-free
+signed nonce probe. A valid probe leaves the key untouched. A missing or stale
+probe may be recovered only through the admin-only hub endpoint; the new key is
+relayed hub -> deployment controller -> worker in owner-only one-use files,
+atomically installed in `~/.mac/mac.env`, and then proved again after a service
+restart. The worker no longer receives `--rotate-missing-attestation-key` or
+`--rotate-invalid-attestation-key`, and a bound worker credential cannot call a
+rotation endpoint.
+
+For an OpenShell-enabled loop worker, the controller then fetches the exact
+current `report_repository_executor_attestation` plus the matching startup
+self-test timestamp and installs approval with an admin-only compare-and-set.
+The hub derives `report_repository_executor`; workers cannot submit that marker
+or its approval themselves. A mismatch or failed approval explicitly revokes
+eligibility. Both the per-node arm gate and the atomic fleet release transaction
+revalidate the derived marker and its matching startup proof. This path is the
+same for launchd, systemd, supervisord, and the SSH-managed selected GKE worker
+pods; a selected target that cannot complete it remains held.
 
 ## 4. Enable synchronized work only after the epoch is proven
 

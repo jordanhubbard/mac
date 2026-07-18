@@ -9,9 +9,13 @@ from mac.landing_service import LandingServiceConfig
 from mac.models import ValidationError
 from mac.services import _normalize_repository_contract
 from mac.store import SQLiteStore
-from mac.work_package_certification_service import WorkPackageCertificationService
+from mac.work_package_certification_service import (
+    CERTIFICATION_CONTRACT_SCHEMA,
+    WorkPackageCertificationService,
+)
 from mac.work_package_pipeline import PipelineSnapshot
 from mac.work_package_pipeline_runtime import RepositoryPipelineReleaseGateResolver
+from tests.certifier_phase_profile_fixtures import mac_phase_profile
 
 
 POLICY_TEXT = """\
@@ -47,7 +51,7 @@ def _contract() -> dict:
         "evidence": {"required": ["tests"]},
         "landing_certification_policy_id": policy_id,
         "work_package_certification": {
-            "schema": "mac.work_package.certification_contract.v1",
+            "schema": CERTIFICATION_CONTRACT_SCHEMA,
             "policy": {
                 "policy_id": policy_id,
                 "version": 1,
@@ -55,6 +59,7 @@ def _contract() -> dict:
                 + hashlib.sha256(POLICY_TEXT.encode("utf-8")).hexdigest(),
             },
             "policy_text": POLICY_TEXT,
+            "phase_profile": mac_phase_profile(),
             "image_ref": "registry.invalid/mac-certifier@sha256:" + "a" * 64,
             "controller_commands": [
                 {
@@ -76,8 +81,7 @@ def test_repository_loader_preserves_valid_certification_extension() -> None:
         == source["landing_certification_policy_id"]
     )
     assert (
-        normalized["work_package_certification"]
-        == source["work_package_certification"]
+        normalized["work_package_certification"] == source["work_package_certification"]
     )
 
 
@@ -93,18 +97,32 @@ def test_repository_loader_rejects_partial_or_mutable_certification() -> None:
         _normalize_repository_contract(mutable, ".mac/project.yaml")
 
     candidate_owned = _contract()
-    candidate_owned["work_package_certification"]["controller_commands"][0][
-        "argv"
-    ] = ["scripts/run-contract-tests.sh"]
+    candidate_owned["work_package_certification"]["controller_commands"][0]["argv"] = [
+        "scripts/run-contract-tests.sh"
+    ]
     with pytest.raises(ValidationError, match="certification command is invalid"):
         _normalize_repository_contract(candidate_owned, ".mac/project.yaml")
 
     repository_base = _contract()
-    repository_base["work_package_certification"]["controller_commands"][0][
-        "argv"
-    ] += ["--base-sha", "b" * 40]
+    repository_base["work_package_certification"]["controller_commands"][0]["argv"] += [
+        "--base-sha",
+        "b" * 40,
+    ]
     with pytest.raises(ValidationError, match="reserved for the controller"):
         _normalize_repository_contract(repository_base, ".mac/project.yaml")
+
+    missing_profile = _contract()
+    missing_profile["work_package_certification"].pop("phase_profile")
+    with pytest.raises(ValidationError, match="fields"):
+        _normalize_repository_contract(missing_profile, ".mac/project.yaml")
+
+    typo_mode = _contract()
+    profile = typo_mode["work_package_certification"]["phase_profile"]
+    profile["selection_modes"]["documentation_fast_lnae"] = profile[
+        "selection_modes"
+    ].pop("documentation_fast_lane")
+    with pytest.raises(ValidationError, match="phase profile"):
+        _normalize_repository_contract(typo_mode, ".mac/project.yaml")
 
     credential_remote = _contract()
     credential_remote["canonical_remote_url"] = (

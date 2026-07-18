@@ -1526,6 +1526,55 @@ class RemoteDispatch:
     def list_agents(self) -> List[_Dictish]:
         return _wrap_list(self._get("/agents"))
 
+    def get_agent(self, agent_id: str) -> _Dictish:
+        return _Dictish(self._get("/agents/%s" % quote(agent_id, safe="")))
+
+    def recover_agent_attestation_key(
+        self, agent_id: str, probe: Mapping[str, Any]
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agents/%s/attestation-key/recover"
+                % quote(agent_id, safe=""),
+                {"probe": dict(probe)},
+            )
+        )
+
+    def approve_agent_report_repository_executor(
+        self,
+        agent_id: str,
+        expected_attestation: Mapping[str, Any],
+        expected_startup_timestamp: str,
+        *,
+        actor: str = "fleet-deploy",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agents/%s/report-repository-executor/approve"
+                % quote(agent_id, safe=""),
+                {
+                    "expected_attestation": dict(expected_attestation),
+                    "expected_startup_timestamp": expected_startup_timestamp,
+                    "actor": actor,
+                },
+            )
+        )
+
+    def revoke_agent_report_repository_executor(
+        self,
+        agent_id: str,
+        reason: str,
+        *,
+        actor: str = "fleet-deploy",
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agents/%s/report-repository-executor/revoke"
+                % quote(agent_id, safe=""),
+                {"reason": reason, "actor": actor},
+            )
+        )
+
     def list_personas(self) -> List[_Dictish]:
         return _wrap_list(self._get("/personas"))
 

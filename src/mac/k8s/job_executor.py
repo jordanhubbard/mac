@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
+from mac.models import metadata_declares_read_only_report_repository
+
 def _q(value: str) -> str:
     return quote(value, safe="")
 
@@ -21,6 +23,10 @@ log = logging.getLogger(__name__)
 DEFAULT_EXECUTOR_TIMEOUT_SECONDS = 1500  # 25 min < default activeDeadline 30 min
 
 DEFAULT_EVIDENCE_MANIFEST_PATH = "/tmp/mac-evidence.json"
+
+READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON = (
+    "read_only_report_requires_openshell_isolation"
+)
 
 @dataclass
 class JobExecutionResult:
@@ -239,6 +245,19 @@ def _run_one_review(
     task, early = _fetch_task_or_fail(mac, task_id, lease_id=None)
     if early is not None:
         return early
+    # A Job may survive a policy race or be forged independently of the K8s
+    # runner.  Re-check the authoritative task immediately before preparing a
+    # workspace or invoking the legacy review command.  Do not emit review
+    # evidence or block the task: the pending review must remain available for
+    # the hub to reroute to an isolated OpenShell reviewer.
+    if metadata_declares_read_only_report_repository(task.get("metadata")):
+        return JobExecutionResult(
+            status="no-evidence",
+            task_id=task_id,
+            lease_id=None,
+            returncode=None,
+            error=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON,
+        )
     if executor is None:
         try:
             review_env = _prepare_canonical_review_environment(

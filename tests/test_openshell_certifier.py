@@ -12,6 +12,7 @@ import pytest
 from mac.openshell_certifier import (
     CERTIFICATION_ISOLATION_SCHEMA,
     CERTIFICATION_RESULT_SCHEMA,
+    CertifierPhaseProfile,
     CertificationCleanupError,
     CertificationPolicy,
     CertificationValidationError,
@@ -19,6 +20,11 @@ from mac.openshell_certifier import (
     ControllerCommand,
     OpenShellCertificationJob,
     OpenShellCertificationRunner,
+    validate_certifier_phase_manifest,
+)
+from tests.certifier_phase_profile_fixtures import (
+    c26_phase_profile,
+    mac_phase_profile,
 )
 
 
@@ -79,17 +85,36 @@ class MissingPhaseRunner(RecordingRunner):
         )
 
 
+class C26PhaseRunner(RecordingRunner):
+    def run(self, argv, *, env, timeout_seconds):
+        outcome = super().run(argv, env=env, timeout_seconds=timeout_seconds)
+        if "/opt/mac-certifier/bin/run-contract-tests" not in outcome.argv:
+            return outcome
+        return CommandOutcome(
+            outcome.argv,
+            outcome.returncode,
+            _phase_output(outcome.argv, c26=True)
+            + ("ok\n" if outcome.returncode == 0 else ""),
+            outcome.stderr,
+            outcome.timed_out,
+        )
+
+
 def _digest_bytes(value: bytes) -> str:
     return "sha256:%s" % hashlib.sha256(value).hexdigest()
 
 
 def _digest_json(value: object) -> str:
     return _digest_bytes(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode()
     )
 
 
-def _phase_output(command: tuple[str, ...]) -> str:
+def _phase_manifest(
+    command: tuple[str, ...], *, c26: bool = False
+) -> dict[str, object]:
     base = command[command.index("--base-sha") + 1]
     changed = ["docs/canaries/test.md"]
     payload = {
@@ -100,35 +125,60 @@ def _phase_output(command: tuple[str, ...]) -> str:
         "changed_files": changed,
         "changed_file_count": 1,
         "changed_files_digest": _digest_json(changed),
-        "selection_mode": "documentation_fast_lane",
-        "authoritative": {
-            "mode": "focused",
-            "reason": "documentation_only_invariants",
-            "tests": [
-                "tests/test_openshell_certifier.py",
-                "tests/test_publication_lane.py",
-                "tests/test_repository_contract_certification.py",
-            ],
-        },
+        "selection_mode": "c26_full_suite" if c26 else "documentation_fast_lane",
+        "authoritative": (
+            {
+                "mode": "full",
+                "reason": "c26_always_full",
+                "tests": ["Makefile", "scripts/smoke.py", "tests"],
+            }
+            if c26
+            else {
+                "mode": "focused",
+                "reason": "documentation_only_invariants",
+                "tests": [
+                    "tests/test_openshell_certifier.py",
+                    "tests/test_publication_lane.py",
+                    "tests/test_repository_contract_certification.py",
+                ],
+            }
+        ),
         "supplemental": {
             "mode": "skipped",
-            "reason": "documentation_only",
+            "reason": (
+                "c26_full_suite_is_authoritative" if c26 else "documentation_only"
+            ),
             "tests": [],
         },
-        "full_suite_count": 0,
+        "full_suite_count": 1 if c26 else 0,
     }
     payload["manifest_digest"] = _digest_json(payload)
-    return "MAC_CERTIFIER_PHASE_MANIFEST_JSON=" + json.dumps(
-        payload, sort_keys=True, separators=(",", ":")
-    ) + "\n"
+    return payload
 
 
-def _policy(text: str = POLICY_TEXT) -> CertificationPolicy:
+def _phase_output(command: tuple[str, ...], *, c26: bool = False) -> str:
+    payload = _phase_manifest(command, c26=c26)
+    return (
+        "MAC_CERTIFIER_PHASE_MANIFEST_JSON="
+        + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+
+
+def _policy(
+    text: str = POLICY_TEXT, *, policy_id: str = "trusted-repository-default"
+) -> CertificationPolicy:
     return CertificationPolicy(
-        "trusted-repository-default",
+        policy_id,
         7,
         _digest_bytes(text.encode("utf-8")),
         text,
+    )
+
+
+def _phase_profile(*, c26: bool = False) -> CertifierPhaseProfile:
+    return CertifierPhaseProfile.from_mapping(
+        c26_phase_profile() if c26 else mac_phase_profile()
     )
 
 
@@ -157,6 +207,7 @@ def _job(tmp_path: Path, **changes) -> OpenShellCertificationJob:
         "landing_base_sha": "d" * 40,
         "target_ref": "refs/heads/main",
         "policy": _policy(),
+        "phase_profile": _phase_profile(),
         "image_ref": "registry.invalid/mac-certifier@sha256:" + "e" * 64,
         "bundle_path": bundle_path,
         "bundle_digest": bundle_digest,
@@ -261,7 +312,202 @@ def test_runner_enforces_exact_identity_and_captures_result(tmp_path: Path) -> N
         "mac-cert-focused",
     )
     assert [item[2] for item in commands.calls] == [90.0, 90.0, 330.0, 90.0, 90.0]
-    assert all(item[1] == {"HOME": "/tmp", "PATH": "/safe/bin", "LANG": "C"} for item in commands.calls)
+    assert all(
+        item[1] == {"HOME": "/tmp", "PATH": "/safe/bin", "LANG": "C"}
+        for item in commands.calls
+    )
+
+
+def test_phase_profile_is_explicit_and_unknown_or_typed_wrong_fails_closed() -> None:
+    missing = mac_phase_profile()
+    missing.pop("selection_modes")
+    with pytest.raises(CertificationValidationError, match="fields"):
+        CertifierPhaseProfile.from_mapping(missing)
+
+    unknown_schema = mac_phase_profile()
+    unknown_schema["schema"] = "mac.certifier_phase_profile.future"
+    with pytest.raises(CertificationValidationError, match="schema"):
+        CertifierPhaseProfile.from_mapping(unknown_schema)
+
+    unknown_version = mac_phase_profile()
+    unknown_version["version"] = 2
+    unsigned = dict(unknown_version)
+    unsigned.pop("checksum")
+    unknown_version["checksum"] = _digest_json(unsigned)
+    with pytest.raises(CertificationValidationError, match="version"):
+        CertifierPhaseProfile.from_mapping(unknown_version)
+
+    # The checked-in checksum is computed over the canonical integer version.
+    # A numerically equal float or bool therefore reaches the explicit type
+    # gate instead of being accepted through ``int(version)`` normalization.
+    for invalid_version in (1.0, True, "1"):
+        typed_wrong_version = mac_phase_profile()
+        typed_wrong_version["version"] = invalid_version
+        with pytest.raises(CertificationValidationError, match="version"):
+            CertifierPhaseProfile.from_mapping(typed_wrong_version)
+
+    bad_checksum = mac_phase_profile()
+    bad_checksum["checksum"] = "sha256:" + "0" * 64
+    with pytest.raises(CertificationValidationError, match="checksum"):
+        CertifierPhaseProfile.from_mapping(bad_checksum)
+
+
+def test_mac_phase_profile_accepts_only_its_declared_selection_modes() -> None:
+    command = (
+        "/opt/mac-certifier/bin/run-contract-tests",
+        "--base-sha",
+        "c" * 40,
+    )
+    mac_manifest = _phase_manifest(command)
+    mac_full_manifest = json.loads(json.dumps(mac_manifest))
+    mac_full_manifest["selection_mode"] = "authoritative_full"
+    mac_full_manifest["authoritative"] = {
+        "mode": "full",
+        "reason": "source_change_has_no_frozen_test_mapping",
+        "tests": ["plugin/test_tools.py", "tests"],
+    }
+    mac_full_manifest["supplemental"]["reason"] = "authoritative_full_is_sufficient"
+    mac_full_manifest["full_suite_count"] = 1
+    mac_full_manifest.pop("manifest_digest")
+    mac_full_manifest["manifest_digest"] = _digest_json(mac_full_manifest)
+    c26_manifest = _phase_manifest(command, c26=True)
+
+    assert (
+        validate_certifier_phase_manifest(
+            mac_manifest,
+            assembly_base_sha="c" * 40,
+            candidate_sha="a" * 40,
+            phase_profile=_phase_profile(),
+        )
+        == mac_manifest
+    )
+    assert (
+        validate_certifier_phase_manifest(
+            mac_full_manifest,
+            assembly_base_sha="c" * 40,
+            candidate_sha="a" * 40,
+            phase_profile=_phase_profile(),
+        )
+        == mac_full_manifest
+    )
+    with pytest.raises(CertificationValidationError, match="selection mode"):
+        validate_certifier_phase_manifest(
+            c26_manifest,
+            assembly_base_sha="c" * 40,
+            candidate_sha="a" * 40,
+            phase_profile=_phase_profile(),
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "focused",
+        "targets",
+        "supplemental",
+        "count",
+        "selection_mode",
+        "authoritative_reason",
+        "supplemental_reason",
+    ],
+)
+def test_c26_phase_profile_accepts_only_exact_always_full_plan(mutation: str) -> None:
+    command = (
+        "/opt/mac-certifier/bin/run-contract-tests",
+        "--base-sha",
+        "c" * 40,
+    )
+    exact = _phase_manifest(command, c26=True)
+    assert (
+        validate_certifier_phase_manifest(
+            exact,
+            assembly_base_sha="c" * 40,
+            candidate_sha="a" * 40,
+            phase_profile=_phase_profile(c26=True),
+        )
+        == exact
+    )
+
+    adversarial = json.loads(json.dumps(exact))
+    if mutation == "focused":
+        adversarial["authoritative"] = dict(_phase_manifest(command)["authoritative"])
+        adversarial["full_suite_count"] = 0
+    elif mutation == "targets":
+        adversarial["authoritative"]["tests"] = ["scripts/smoke.py", "tests"]
+    elif mutation == "supplemental":
+        adversarial["supplemental"] = {
+            "mode": "full",
+            "reason": "untrusted_second_full_suite",
+            "tests": ["Makefile", "scripts/smoke.py", "tests"],
+        }
+        adversarial["full_suite_count"] = 2
+    elif mutation == "count":
+        adversarial["full_suite_count"] = 0
+    elif mutation == "selection_mode":
+        adversarial["selection_mode"] = "documentation_fast_lane"
+    elif mutation == "authoritative_reason":
+        adversarial["authoritative"]["reason"] = "not_actually_c26"
+    else:
+        adversarial["supplemental"]["reason"] = "documentation_only"
+    adversarial.pop("manifest_digest")
+    adversarial["manifest_digest"] = _digest_json(adversarial)
+
+    with pytest.raises(CertificationValidationError):
+        validate_certifier_phase_manifest(
+            adversarial,
+            assembly_base_sha="c" * 40,
+            candidate_sha="a" * 40,
+            phase_profile=_phase_profile(c26=True),
+        )
+
+
+def test_phase_profile_content_is_part_of_job_identity(tmp_path: Path) -> None:
+    original = _job(tmp_path)
+    changed_value = mac_phase_profile()
+    changed_value["selection_modes"]["documentation_fast_lane"]["supplemental"][
+        "reason"
+    ] = "documentation_only_but_identity_changed"
+    unsigned = dict(changed_value)
+    unsigned.pop("checksum")
+    changed_value["checksum"] = _digest_json(unsigned)
+    changed = _job(
+        tmp_path,
+        bundle_path=original.bundle_path,
+        bundle_digest=original.bundle_digest,
+        phase_profile=CertifierPhaseProfile.from_mapping(changed_value),
+    )
+
+    assert original.identity()["phase_profile"] == mac_phase_profile()
+    assert changed.phase_profile.checksum != original.phase_profile.checksum
+    assert changed.job_digest != original.job_digest
+
+
+def test_runner_enforces_job_bound_c26_phase_profile(tmp_path: Path) -> None:
+    job = _job(
+        tmp_path,
+        policy=_policy(policy_id="unrelated-policy-name"),
+        phase_profile=_phase_profile(c26=True),
+    )
+    rejected = _runner(RecordingRunner([0, 0, 0, 0])).run(
+        job,
+        result_path=tmp_path / "c26-rejected.json",
+    )
+    accepted = _runner(C26PhaseRunner([0, 0, 0, 0, 0])).run(
+        job,
+        result_path=tmp_path / "c26-accepted.json",
+    )
+
+    assert rejected.status == "failed"
+    assert rejected.failure_class == "certifier_phase_manifest_invalid"
+    assert rejected.checks[0].returncode == 78
+    assert accepted.status == "passed"
+    assert accepted.phase_manifest["authoritative"]["tests"] == [
+        "Makefile",
+        "scripts/smoke.py",
+        "tests",
+    ]
+    assert accepted.phase_manifest["supplemental"]["mode"] == "skipped"
+    assert accepted.phase_manifest["full_suite_count"] == 1
 
 
 @pytest.mark.parametrize(
@@ -293,7 +539,13 @@ def test_policy_identity_is_exact() -> None:
 
 
 def test_bundled_lockdown_policy_satisfies_certifier_contract() -> None:
-    path = Path(__file__).resolve().parents[1] / "src" / "mac" / "openshell" / "default-policy.yaml"
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "mac"
+        / "openshell"
+        / "default-policy.yaml"
+    )
     text = path.read_text(encoding="utf-8")
     policy = CertificationPolicy(
         "bundled-lockdown",
@@ -369,7 +621,9 @@ def test_job_requires_one_exact_controller_owned_base_argument(
 ) -> None:
     command = ControllerCommand("contract-tests", argv, 30)
 
-    with pytest.raises(CertificationValidationError, match="controller-owned assembly base"):
+    with pytest.raises(
+        CertificationValidationError, match="controller-owned assembly base"
+    ):
         _job(tmp_path, controller_commands=(command,)).validate()
 
 
@@ -524,7 +778,9 @@ def test_production_binding_rejects_non_loopback_gateway_endpoint(
 def test_bundle_must_be_content_addressed_git_bundle(tmp_path: Path) -> None:
     bad_path, bad_digest = _bundle(tmp_path, content=b"not a tar or git bundle payload")
     commands = RecordingRunner([])
-    with pytest.raises(CertificationValidationError, match="credential-free Git bundle"):
+    with pytest.raises(
+        CertificationValidationError, match="credential-free Git bundle"
+    ):
         _runner(commands).run(
             _job(tmp_path, bundle_path=bad_path, bundle_digest=bad_digest),
             result_path=tmp_path / "bad-result.json",
@@ -570,7 +826,9 @@ def test_controller_failure_is_a_captured_failed_certification(tmp_path: Path) -
     assert len(commands.calls) == 4  # post-identity check is not trusted after failure
 
 
-def test_missing_phase_manifest_fails_even_when_tests_return_zero(tmp_path: Path) -> None:
+def test_missing_phase_manifest_fails_even_when_tests_return_zero(
+    tmp_path: Path,
+) -> None:
     commands = MissingPhaseRunner([0, 0, 0, 0])
 
     result = _runner(commands).run(

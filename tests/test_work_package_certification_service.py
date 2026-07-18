@@ -23,6 +23,10 @@ from mac.work_package_certification_service import (
     CertificationJobLeaseLostError,
     WorkPackageCertificationService,
 )
+from tests.certifier_phase_profile_fixtures import (
+    c26_phase_profile,
+    mac_phase_profile,
+)
 
 
 NOW = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
@@ -113,21 +117,31 @@ def _task(
     )
 
 
-def _seed(tmp_path: Path) -> tuple[SQLiteStore, Path]:
+def _seed(
+    tmp_path: Path,
+    *,
+    policy_id: str = "trusted-repository-default",
+    phase_profile: Mapping[str, Any] | None = None,
+) -> tuple[SQLiteStore, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     store = SQLiteStore(":memory:")
     policy_checksum = _digest_bytes(POLICY_TEXT.encode("utf-8"))
     repository_metadata = {
         "repository_contract": {
-            "landing_certification_policy_id": "trusted-repository-default",
+            "landing_certification_policy_id": policy_id,
             "work_package_certification": {
                 "schema": CERTIFICATION_CONTRACT_SCHEMA,
                 "policy": {
-                    "policy_id": "trusted-repository-default",
+                    "policy_id": policy_id,
                     "version": 7,
                     "checksum": policy_checksum,
                 },
                 "policy_text": POLICY_TEXT,
+                "phase_profile": (
+                    dict(phase_profile)
+                    if phase_profile is not None
+                    else mac_phase_profile()
+                ),
                 "image_ref": "registry.invalid/mac-certifier@sha256:" + "d" * 64,
                 "controller_commands": [
                     {
@@ -441,9 +455,9 @@ def test_repository_contract_validator_rejects_unpinned_image_before_prepare(
         "SELECT metadata FROM project_repositories WHERE id = ?", (REPOSITORY_ID,)
     )
     metadata = json.loads(row["metadata"])
-    metadata["repository_contract"]["work_package_certification"][
-        "image_ref"
-    ] = "registry.invalid/mac-certifier:mutable"
+    metadata["repository_contract"]["work_package_certification"]["image_ref"] = (
+        "registry.invalid/mac-certifier:mutable"
+    )
     store.execute(
         "UPDATE project_repositories SET metadata = ? WHERE id = ?",
         (json_dumps(metadata), REPOSITORY_ID),
@@ -467,7 +481,9 @@ def _service(
     )
 
 
-def _result_from_job(job: Any, *, passed: bool) -> OpenShellCertificationResult:
+def _result_from_job(
+    job: Any, *, passed: bool, c26_profile: bool = False
+) -> OpenShellCertificationResult:
     command = job.controller_commands[0]
     check = CertificationCheckResult(
         command.command_id,
@@ -494,22 +510,36 @@ def _result_from_job(job: Any, *, passed: bool) -> OpenShellCertificationResult:
                 ensure_ascii=True,
             ).encode("utf-8")
         ),
-        "selection_mode": "documentation_fast_lane",
-        "authoritative": {
-            "mode": "focused",
-            "reason": "documentation_only_invariants",
-            "tests": [
-                "tests/test_openshell_certifier.py",
-                "tests/test_publication_lane.py",
-                "tests/test_repository_contract_certification.py",
-            ],
-        },
+        "selection_mode": (
+            "c26_full_suite" if c26_profile else "documentation_fast_lane"
+        ),
+        "authoritative": (
+            {
+                "mode": "full",
+                "reason": "c26_always_full",
+                "tests": ["Makefile", "scripts/smoke.py", "tests"],
+            }
+            if c26_profile
+            else {
+                "mode": "focused",
+                "reason": "documentation_only_invariants",
+                "tests": [
+                    "tests/test_openshell_certifier.py",
+                    "tests/test_publication_lane.py",
+                    "tests/test_repository_contract_certification.py",
+                ],
+            }
+        ),
         "supplemental": {
             "mode": "skipped",
-            "reason": "documentation_only",
+            "reason": (
+                "c26_full_suite_is_authoritative"
+                if c26_profile
+                else "documentation_only"
+            ),
             "tests": [],
         },
-        "full_suite_count": 0,
+        "full_suite_count": 1 if c26_profile else 0,
     }
     phase_manifest["manifest_digest"] = _digest_bytes(
         json.dumps(
@@ -605,6 +635,8 @@ def test_prepare_binds_exact_certification_successor_and_is_idempotent(
         )
         assert definition["prepared_by"] == "pipeline-controller"
         assert definition["certification_task_id"] == CERTIFICATION_TASK_ID
+        assert definition["job"]["phase_profile"] == mac_phase_profile()
+        assert prepared_job.phase_profile.to_dict() == mac_phase_profile()
         expected_argv = [
             "/opt/mac-certifier/bin/run-contract-tests",
             "--base-sha",
@@ -676,9 +708,7 @@ def test_result_integrity_station_projection_and_idempotent_ingestion(
         wrong_base["phase_manifest"]["assembly_base_sha"] = "d" * 40
         unsigned_phase = dict(wrong_base["phase_manifest"])
         unsigned_phase.pop("manifest_digest")
-        wrong_base["phase_manifest"]["manifest_digest"] = _digest_json(
-            unsigned_phase
-        )
+        wrong_base["phase_manifest"]["manifest_digest"] = _digest_json(unsigned_phase)
         wrong_base = _redigest(wrong_base)
         with pytest.raises(ValidationError, match="phase manifest"):
             service.ingest(
@@ -705,12 +735,14 @@ def test_result_integrity_station_projection_and_idempotent_ingestion(
         assert receipt_detail["assembly_base_sha"] == BASE_SHA
         assert receipt_detail["selection_mode"] == "documentation_fast_lane"
         assert receipt_detail["full_suite_count"] == 0
-        assert receipt_detail["phase_manifest_digest"] == payload[
-            "phase_manifest"
-        ]["manifest_digest"]
-        assert receipt_detail["changed_files_digest"] == payload[
-            "phase_manifest"
-        ]["changed_files_digest"]
+        assert (
+            receipt_detail["phase_manifest_digest"]
+            == payload["phase_manifest"]["manifest_digest"]
+        )
+        assert (
+            receipt_detail["changed_files_digest"]
+            == payload["phase_manifest"]["changed_files_digest"]
+        )
         task = store.query_one(
             "SELECT state FROM tasks WHERE id = ?", (CERTIFICATION_TASK_ID,)
         )
@@ -732,13 +764,60 @@ def test_result_integrity_station_projection_and_idempotent_ingestion(
 
         different = replace(
             _result_from_job(job, passed=True),
-            completed_at=(NOW + timedelta(seconds=2)).isoformat(timespec="microseconds"),
+            completed_at=(NOW + timedelta(seconds=2)).isoformat(
+                timespec="microseconds"
+            ),
             result_digest="",
         ).with_digest()
         with pytest.raises(TransitionError, match="immutable"):
             service.ingest(
                 public["id"], different, owner=claim.owner, fence=claim.fence
             )
+    finally:
+        store.close()
+
+
+def test_ingestion_enforces_job_bound_c26_phase_profile(tmp_path: Path) -> None:
+    store, bundle = _seed(
+        tmp_path,
+        policy_id="policy-name-does-not-route-the-profile",
+        phase_profile=c26_phase_profile(),
+    )
+    try:
+        service = _service(store)
+        public, job = _prepared_job(service, bundle)
+        claim = service.claim(public["id"], owner="controller")
+
+        mac_shaped = _result_from_job(job, passed=True)
+        with pytest.raises(ValidationError, match="phase manifest"):
+            service.ingest(
+                public["id"],
+                mac_shaped,
+                owner=claim.owner,
+                fence=claim.fence,
+            )
+
+        c26_shaped = _result_from_job(job, passed=True, c26_profile=True)
+        accepted = service.ingest(
+            public["id"],
+            c26_shaped,
+            owner=claim.owner,
+            fence=claim.fence,
+        )
+
+        assert accepted.status == "passed"
+        certification = store.query_one(
+            "SELECT verification FROM work_package_certifications WHERE id = ?",
+            (accepted.certification_id,),
+        )
+        manifest = json.loads(certification["verification"])["phase_manifest"]
+        assert manifest["authoritative"]["tests"] == [
+            "Makefile",
+            "scripts/smoke.py",
+            "tests",
+        ]
+        assert manifest["supplemental"]["mode"] == "skipped"
+        assert manifest["full_suite_count"] == 1
     finally:
         store.close()
 
@@ -792,13 +871,19 @@ def test_failed_result_is_atomic_andon_and_drains_integration_wip(
         assert wip["release_reason"] == (
             "certification_quarantine:%s" % first.certification_id
         )
-        assert store.query_one(
-            "SELECT state FROM tasks WHERE id = ?", (CERTIFICATION_TASK_ID,)
-        )["state"] == "failed"
-        assert store.query_one(
-            "SELECT node_state FROM work_package_task_links WHERE task_id = ?",
-            (CERTIFICATION_TASK_ID,),
-        )["node_state"] == "rejected"
+        assert (
+            store.query_one(
+                "SELECT state FROM tasks WHERE id = ?", (CERTIFICATION_TASK_ID,)
+            )["state"]
+            == "failed"
+        )
+        assert (
+            store.query_one(
+                "SELECT node_state FROM work_package_task_links WHERE task_id = ?",
+                (CERTIFICATION_TASK_ID,),
+            )["node_state"]
+            == "rejected"
+        )
     finally:
         store.close()
 

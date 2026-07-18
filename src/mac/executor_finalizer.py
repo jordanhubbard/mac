@@ -67,7 +67,13 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac import relay_observability
 from mac.agent_command import PROMPT_SENTINEL
-from mac.models import metadata_declares_report_deliverable
+from mac.models import (
+    REPORT_REPOSITORY_ACCESS_SCHEMA,
+    REPORT_REPOSITORY_READ_ONLY_MODE,
+    metadata_declares_read_only_report_repository,
+    metadata_declares_report_deliverable,
+)
+from mac.repository_access_env import read_only_repository_content_digest
 from mac.codegraph_audit import (
     codegraph_audit_check,
     codegraph_audit_manifest_problems,
@@ -1356,8 +1362,16 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
             exec_ev = {}
     exec_verification = (exec_ev.get("metadata") or {}).get("verification") or {}
     exec_repo = exec_verification.get("repo") or {}
+    exec_access = exec_verification.get("repository_access") or {}
     exec_head = str(exec_repo.get("head_sha") or "").strip()
     repo_review = bool(exec_head)
+    read_only_report_review = (
+        metadata_declares_read_only_report_repository(task.get("metadata"))
+        and isinstance(exec_access, dict)
+        and exec_access.get("schema") == REPORT_REPOSITORY_ACCESS_SCHEMA
+        and exec_access.get("mode") == REPORT_REPOSITORY_READ_ONLY_MODE
+        and not repo_review
+    )
     review_worktree = env_str("MAC_TASK_REPO_WORKTREE")
     tests = None
     bootstrap = None
@@ -1369,7 +1383,64 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     # and pass bootstrap, tests, and CodeGraph.
     independent_pass = semantic_valid and not repo_review
     independent_problem = ""
-    if repo_review and review_worktree and Path(review_worktree).is_dir():
+    if read_only_report_review:
+        independent_pass = False
+        if review_worktree and Path(review_worktree).is_dir():
+            review_worktree_path = Path(review_worktree)
+            expected_head = str(exec_access.get("base_sha") or "").strip()
+            expected_tree = str(exec_access.get("base_tree") or "").strip()
+            expected_refs = str(exec_access.get("refs_digest") or "").strip()
+            expected_content = str(exec_access.get("content_digest") or "").strip()
+            status = _git(["status", "--porcelain"], review_worktree_path)
+            checked_out = _git(["rev-parse", "HEAD"], review_worktree_path)
+            tree = _git(["rev-parse", "HEAD^{tree}"], review_worktree_path)
+            refs = _git(
+                ["for-each-ref", "--format=%(refname) %(objectname)"],
+                review_worktree_path,
+            )
+            remotes = _git(["remote"], review_worktree_path)
+            observed_refs = (
+                hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest()
+                if refs.returncode == 0
+                else ""
+            )
+            invariant_ok = (
+                status.returncode == 0
+                and not status.stdout.strip()
+                and checked_out.returncode == 0
+                and checked_out.stdout.strip() == expected_head
+                and tree.returncode == 0
+                and tree.stdout.strip() == expected_tree
+                and refs.returncode == 0
+                and observed_refs == expected_refs
+                and remotes.returncode == 0
+                and not remotes.stdout.strip()
+                and all((expected_head, expected_tree, expected_refs, expected_content))
+            )
+            if invariant_ok:
+                cleaned = _git(
+                    ["clean", "-fdx", "-e", ".codegraph/"],
+                    review_worktree_path,
+                )
+                try:
+                    observed_content = read_only_repository_content_digest(
+                        review_worktree_path
+                    )
+                except OSError:
+                    observed_content = ""
+                invariant_ok = (
+                    cleaned.returncode == 0
+                    and observed_content == expected_content
+                )
+            independent_pass = semantic_valid and invariant_ok
+            if not independent_pass:
+                independent_problem = (
+                    "independent read-only review checkout did not match the "
+                    "executor exact-base proof"
+                )
+        else:
+            independent_problem = "exact read-only review checkout is unavailable"
+    elif repo_review and review_worktree and Path(review_worktree).is_dir():
         review_worktree_path = Path(review_worktree)
         ck = _git(["cat-file", "-e", "%s^{commit}" % exec_head], review_worktree_path)
         checked_out = _git(["rev-parse", "HEAD"], review_worktree_path)
@@ -1407,7 +1478,8 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
         if semantic_valid and semantic_verdict == "approved" and independent_pass
         else "rejected"
     )
-    digest_input = ("%s|%s|%s" % (exec_head, exec_repo.get("remote_ref") or "", verdict)).encode("utf-8")
+    digest_head = str(exec_access.get("base_sha") or "") if read_only_report_review else exec_head
+    digest_input = ("%s|%s|%s" % (digest_head, exec_repo.get("remote_ref") or "", verdict)).encode("utf-8")
     import hashlib as _hashlib
 
     worktree_digest = "sha256:" + _hashlib.sha256(digest_input).hexdigest()
@@ -1457,6 +1529,11 @@ def run_deterministic_review_verdict(task_workspace: Path, task: Dict[str, Any],
     }
     if repo_manifest:
         manifest["repo"] = repo_manifest
+    if read_only_report_review:
+        manifest["repository_access"] = {
+            **exec_access,
+            "independent_review_verified": independent_pass,
+        }
     for key in ("summary", "feedback", "findings", "llm", "llm_model", "opencode_model", "gateway_model"):
         if key in semantic_manifest:
             manifest[key] = semantic_manifest[key]

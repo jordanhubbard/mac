@@ -165,16 +165,42 @@ def test_review_claim_filters_delivery_and_malformed_messages() -> None:
 def test_review_claim_and_create_failures_then_success() -> None:
     cfg = _cfg(reviewer_agent_ids={"reviewer": "reviewer-agent"})
     assert runner.claim_and_launch_review_one(
-        _Mac([[_nudge()], RuntimeError("claim failed")]), _Jobs(), cfg
+        _Mac([[_nudge()], {"id": "task", "metadata": {}}, RuntimeError("claim failed")]),
+        _Jobs(),
+        cfg,
     ) is None
     assert runner.claim_and_launch_review_one(
-        _Mac([[_nudge()], {"status": "skipped", "reason": "busy"}]), _Jobs(), cfg
+        _Mac(
+            [
+                [_nudge()],
+                {"id": "task", "metadata": {}},
+                {"status": "skipped", "reason": "busy"},
+            ]
+        ),
+        _Jobs(),
+        cfg,
     ) is None
     assert runner.claim_and_launch_review_one(
-        _Mac([[_nudge()], {"status": "claimed"}]), _Jobs(RuntimeError("create failed")), cfg
+        _Mac(
+            [
+                [_nudge()],
+                {"id": "task", "metadata": {}},
+                {"status": "claimed"},
+            ]
+        ),
+        _Jobs(RuntimeError("create failed")),
+        cfg,
     ) is None
     result = runner.claim_and_launch_review_one(
-        _Mac([[_nudge()], {"status": "claimed"}]), _Jobs(), cfg
+        _Mac(
+            [
+                [_nudge()],
+                {"id": "task", "metadata": {}},
+                {"status": "claimed"},
+            ]
+        ),
+        _Jobs(),
+        cfg,
     )
     assert result["status"] == "launched"
     assert result["role"] == "reviewer"

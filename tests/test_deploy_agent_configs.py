@@ -414,8 +414,13 @@ def test_fleet_deploy_persists_or_recovers_worker_attestation_key():
     script = deploy_script_text()
 
     assert '--attestation-key-env "$HOME/.mac/mac.env"' in script
-    assert "--rotate-missing-attestation-key" in script
-    assert "--rotate-invalid-attestation-key" in script
+    assert "--rotate-missing-attestation-key" not in script
+    assert "--rotate-invalid-attestation-key" not in script
+    assert "reconcile_bound_worker_attestation_key" in script
+    assert "mac.deployment_attestation probe" in script
+    assert "/attestation-key/recover" in script
+    assert "mac.deployment_attestation install" in script
+    assert "post-install attestation key proof did not verify" in script
     # loop-01: the reviewer prompt that asks for a signed review_verdict moved
     # into the extracted mac.task_executor module.
     executor_prompt = (ROOT / "src" / "mac" / "executor_prompt.py").read_text(

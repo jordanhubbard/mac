@@ -30,6 +30,7 @@ from mac.openshell_certifier import (
     CERTIFIER_PRIMARY_COMMAND,
     CERTIFICATION_ISOLATION_SCHEMA,
     CERTIFICATION_RESULT_SCHEMA,
+    CertifierPhaseProfile,
     CertificationCleanupError,
     CertificationPolicy,
     CertificationValidationError,
@@ -44,8 +45,8 @@ from mac.openshell_certifier import (
 from mac.store import Store
 
 
-CERTIFICATION_JOB_RECORD_SCHEMA = "mac.work_package.certification_job.v1"
-CERTIFICATION_CONTRACT_SCHEMA = "mac.work_package.certification_contract.v1"
+CERTIFICATION_JOB_RECORD_SCHEMA = "mac.work_package.certification_job.v2"
+CERTIFICATION_CONTRACT_SCHEMA = "mac.work_package.certification_contract.v2"
 CERTIFICATION_INGESTION_SCHEMA = "mac.work_package.certification_ingestion.v1"
 _RESULT_KEYS = frozenset(
     {
@@ -113,7 +114,14 @@ _SAFE_LAUNCH_ENV_NAMES = frozenset(
     }
 )
 _CONTRACT_KEYS = frozenset(
-    {"schema", "policy", "policy_text", "image_ref", "controller_commands"}
+    {
+        "schema",
+        "policy",
+        "policy_text",
+        "phase_profile",
+        "image_ref",
+        "controller_commands",
+    }
 )
 _POLICY_KEYS = frozenset({"policy_id", "version", "checksum"})
 _COMMAND_KEYS = frozenset({"command_id", "argv", "timeout_seconds"})
@@ -176,8 +184,7 @@ def normalize_repository_certification_contract(
         ):
             raise ValidationError("certification command argv is malformed")
         if any(
-            value == "--base-sha" or value.startswith("--base-sha=")
-            for value in argv
+            value == "--base-sha" or value.startswith("--base-sha=") for value in argv
         ):
             raise ValidationError(
                 "certification assembly base is reserved for the controller"
@@ -215,6 +222,11 @@ def normalize_repository_certification_contract(
             "certification contract requires exactly one primary frozen test command"
         )
 
+    try:
+        phase_profile = CertifierPhaseProfile.from_mapping(raw.get("phase_profile"))
+    except CertificationValidationError as exc:
+        raise ValidationError("certifier phase profile is invalid") from exc
+
     value = {
         "policy": {
             "policy_id": policy_id,
@@ -222,6 +234,7 @@ def normalize_repository_certification_contract(
             "checksum": str(policy.get("checksum") or ""),
         },
         "policy_text": str(raw.get("policy_text") or ""),
+        "phase_profile": phase_profile.to_dict(),
         "image_ref": str(raw.get("image_ref") or "").strip(),
         "controller_commands": normalized_commands,
     }
@@ -339,9 +352,7 @@ class WorkPackageCertificationService:
         try:
             self._runtime_runner()
         except CertificationValidationError as exc:
-            raise ValidationError(
-                "OpenShell certifier runtime is unavailable"
-            ) from exc
+            raise ValidationError("OpenShell certifier runtime is unavailable") from exc
 
     def validate_repository_contract(
         self, repository_id: str, *, source: Optional[Any] = None
@@ -385,6 +396,7 @@ class WorkPackageCertificationService:
             "candidate_fence": int(batch["candidate_fence"]),
             "assembly_base_sha": batch["assembly_base_sha"],
             "policy": contract["policy"],
+            "phase_profile": contract["phase_profile"],
             "image_ref": contract["image_ref"],
             "controller_commands": contract["controller_commands"],
             "bundle_digest": bundle_digest,
@@ -478,7 +490,9 @@ class WorkPackageCertificationService:
             ).fetchone()
         return self._job_public(row, created=True)
 
-    def claim(self, job_id: str, *, owner: Optional[str] = None) -> CertificationJobClaim:
+    def claim(
+        self, job_id: str, *, owner: Optional[str] = None
+    ) -> CertificationJobClaim:
         owner_value = self._required(owner or self.owner, "certification job owner")
         job_value = self._required(job_id, "certification job id")
         with self.store.transaction() as conn:
@@ -558,13 +572,13 @@ class WorkPackageCertificationService:
         job = self._job_from_row(row, bundle)
         self._validate_job(job)
         if self._sha256_file(bundle) != str(row["bundle_digest"]):
-            raise ValidationError("certification bundle does not match the prepared job")
+            raise ValidationError(
+                "certification bundle does not match the prepared job"
+            )
         try:
             runner = self._runtime_runner()
         except CertificationValidationError as exc:
-            raise ValidationError(
-                "OpenShell certifier runtime is unavailable"
-            ) from exc
+            raise ValidationError("OpenShell certifier runtime is unavailable") from exc
         temporary = (
             tempfile.TemporaryDirectory(prefix="mac-certification-result-")
             if result_path is None
@@ -665,9 +679,12 @@ class WorkPackageCertificationService:
         )
         self._validate_result(row, payload)
         result_digest = str(payload["result_digest"])
-        certification_id = "wpcert_%s" % hashlib.sha256(
-            (str(job_id) + "\0" + result_digest).encode("utf-8")
-        ).hexdigest()[:32]
+        certification_id = (
+            "wpcert_%s"
+            % hashlib.sha256(
+                (str(job_id) + "\0" + result_digest).encode("utf-8")
+            ).hexdigest()[:32]
+        )
         terminal = "completed" if payload["status"] == "passed" else "failed"
         certification_status = "passed" if terminal == "completed" else "failed"
 
@@ -740,12 +757,18 @@ class WorkPackageCertificationService:
             if not task_id:
                 raise ValidationError("certification job has no exact controller task")
             at = self._iso(now_dt)
-            tests_evidence_id = "ev_%s" % hashlib.sha256(
-                (job_id + "\0tests\0" + result_digest).encode("utf-8")
-            ).hexdigest()[:32]
-            review_evidence_id = "ev_%s" % hashlib.sha256(
-                (job_id + "\0review\0" + result_digest).encode("utf-8")
-            ).hexdigest()[:32]
+            tests_evidence_id = (
+                "ev_%s"
+                % hashlib.sha256(
+                    (job_id + "\0tests\0" + result_digest).encode("utf-8")
+                ).hexdigest()[:32]
+            )
+            review_evidence_id = (
+                "ev_%s"
+                % hashlib.sha256(
+                    (job_id + "\0review\0" + result_digest).encode("utf-8")
+                ).hexdigest()[:32]
+            )
             actor = "openshell-certifier:%s@%s" % (
                 current["policy_id"],
                 current["policy_version"],
@@ -785,10 +808,16 @@ class WorkPackageCertificationService:
                     at,
                 ),
             )
-            checks = payload.get("checks") if isinstance(payload.get("checks"), list) else []
+            checks = (
+                payload.get("checks") if isinstance(payload.get("checks"), list) else []
+            )
             codegraph_evidence_id = (
                 tests_evidence_id
-                if any("codegraph" in str(item.get("command_id") or "").lower() for item in checks if isinstance(item, dict))
+                if any(
+                    "codegraph" in str(item.get("command_id") or "").lower()
+                    for item in checks
+                    if isinstance(item, dict)
+                )
                 else None
             )
             conn.execute(
@@ -893,7 +922,13 @@ class WorkPackageCertificationService:
     ) -> Tuple[JsonDict, ...]:
         limit_value = max(1, min(int(limit), 1000))
         batch_values = tuple(
-            sorted({str(value).strip() for value in (batch_ids or ()) if str(value).strip()})
+            sorted(
+                {
+                    str(value).strip()
+                    for value in (batch_ids or ())
+                    if str(value).strip()
+                }
+            )
         )
         if batch_ids is not None and not batch_values:
             return ()
@@ -990,9 +1025,7 @@ class WorkPackageCertificationService:
                 "integration_task_id": projection["integration_task_id"],
                 "certification_task_id": projection["certification_task_id"],
                 "integration_node_state": projection["integration_node_state"],
-                "certification_node_state": projection[
-                    "certification_node_state"
-                ],
+                "certification_node_state": projection["certification_node_state"],
                 "controller_station_receipt_id": projection[
                     "controller_station_receipt_id"
                 ],
@@ -1125,7 +1158,9 @@ class WorkPackageCertificationService:
             ),
         )
         if len(rows) != 1:
-            raise ValidationError("certification successor task is missing or ambiguous")
+            raise ValidationError(
+                "certification successor task is missing or ambiguous"
+            )
         successor = dict(rows[0])
         if (
             successor["node_state"] != "ready"
@@ -1146,9 +1181,7 @@ class WorkPackageCertificationService:
             node_type="certification",
         )
         try:
-            integration_detail = json_loads(
-                integration["receipt_detail"], None
-            )
+            integration_detail = json_loads(integration["receipt_detail"], None)
         except (TypeError, ValueError) as exc:
             raise ValidationError(
                 "integration controller receipt detail is malformed"
@@ -1200,9 +1233,7 @@ class WorkPackageCertificationService:
             "integration_task_id": str(batch["integration_task_id"]),
             "integration_node_key": integration_key,
             "integration_station_receipt_id": str(integration["receipt_id"]),
-            "integration_station_provenance_digest": str(
-                integration["receipt_digest"]
-            ),
+            "integration_station_provenance_digest": str(integration["receipt_digest"]),
         }
 
     def _assert_certification_station_ready(
@@ -1260,9 +1291,7 @@ class WorkPackageCertificationService:
             "certification_node_key": station["node_key"],
             "integration_task_id": station["integration_task_id"],
             "integration_node_key": station["integration_node_key"],
-            "integration_station_receipt_id": station[
-                "integration_station_receipt_id"
-            ],
+            "integration_station_receipt_id": station["integration_station_receipt_id"],
             "candidate_sha": job["candidate_sha"],
             "assembly_base_sha": job["assembly_base_sha"],
             "job_digest": job["job_digest"],
@@ -1342,7 +1371,9 @@ class WorkPackageCertificationService:
             (task_state, now, now, station["task_id"]),
         )
         if changed.rowcount != 1:
-            raise TransitionError("certification controller task changed during result commit")
+            raise TransitionError(
+                "certification controller task changed during result commit"
+            )
         changed = conn.execute(
             "UPDATE work_package_task_links SET node_state = ? "
             "WHERE task_id = ? AND package_id = ? AND plan_version = ? AND epoch = ? "
@@ -1357,7 +1388,9 @@ class WorkPackageCertificationService:
             ),
         )
         if changed.rowcount != 1:
-            raise TransitionError("certification controller link changed during result commit")
+            raise TransitionError(
+                "certification controller link changed during result commit"
+            )
         transition_detail = {
             "schema": "mac.work_package.controller_task_transition.v1",
             "station_kind": "certification",
@@ -1369,13 +1402,9 @@ class WorkPackageCertificationService:
             "node_key": station["node_key"],
             "node_state": node_state,
             "assembly_base_sha": receipt["detail"].get("assembly_base_sha"),
-            "phase_manifest_digest": receipt["detail"].get(
-                "phase_manifest_digest"
-            ),
+            "phase_manifest_digest": receipt["detail"].get("phase_manifest_digest"),
             "selection_mode": receipt["detail"].get("selection_mode"),
-            "changed_files_digest": receipt["detail"].get(
-                "changed_files_digest"
-            ),
+            "changed_files_digest": receipt["detail"].get("changed_files_digest"),
             "full_suite_count": receipt["detail"].get("full_suite_count"),
         }
         self._append_task_transition(
@@ -1512,7 +1541,9 @@ class WorkPackageCertificationService:
         try:
             detail = json_loads(receipt["detail"], None)
         except (TypeError, ValueError) as exc:
-            raise ValidationError("controller station receipt detail is malformed") from exc
+            raise ValidationError(
+                "controller station receipt detail is malformed"
+            ) from exc
         identity = {
             "station_kind": "certification",
             "task_id": task_id,
@@ -1527,12 +1558,13 @@ class WorkPackageCertificationService:
             "result_digest": job["result_digest"],
             "detail": detail,
         }
-        if (
-            not isinstance(detail, dict)
-            or receipt["provenance_digest"] != self._sha256_json(identity)
-        ):
+        if not isinstance(detail, dict) or receipt[
+            "provenance_digest"
+        ] != self._sha256_json(identity):
             raise TransitionError("controller station receipt digest is incoherent")
-        terminal_task_state = "completed" if expected_outcome == "certified" else "failed"
+        terminal_task_state = (
+            "completed" if expected_outcome == "certified" else "failed"
+        )
         station = conn.execute(
             "SELECT link.node_state, task.state AS task_state "
             "FROM work_package_task_links AS link "
@@ -1593,7 +1625,9 @@ class WorkPackageCertificationService:
             (job["package_id"],),
         ).fetchone()
         if batch is None or package is None:
-            raise TransitionError("terminal certification package projection disappeared")
+            raise TransitionError(
+                "terminal certification package projection disappeared"
+            )
         held_row = conn.execute(
             "SELECT COUNT(*) AS count FROM work_package_wip_tokens "
             "WHERE package_id = ? AND plan_version = ? AND epoch = ? "
@@ -1606,15 +1640,23 @@ class WorkPackageCertificationService:
             ),
         ).fetchone()
         metadata = json_loads(batch["metadata"], {}) or {}
-        rejection = metadata.get("product_rejection") if isinstance(metadata, dict) else None
+        rejection = (
+            metadata.get("product_rejection") if isinstance(metadata, dict) else None
+        )
         if expected_outcome == "certified":
             if batch["state"] not in {"verifying", "certified", "published"}:
-                raise TransitionError("passed certification batch projection is invalid")
+                raise TransitionError(
+                    "passed certification batch projection is invalid"
+                )
             if package["state"] not in {"active", "completed"}:
-                raise TransitionError("passed certification package projection is invalid")
+                raise TransitionError(
+                    "passed certification package projection is invalid"
+                )
         else:
             if batch["state"] != "rejected" or package["state"] != "paused":
-                raise TransitionError("failed certification Andon projection is invalid")
+                raise TransitionError(
+                    "failed certification Andon projection is invalid"
+                )
             if (
                 not isinstance(rejection, Mapping)
                 or rejection.get("status") != "completed"
@@ -1623,7 +1665,9 @@ class WorkPackageCertificationService:
                 or rejection.get("wip_disposition") != "quarantined"
                 or rejection.get("andon_recorded") is not True
             ):
-                raise TransitionError("failed certification rejection receipt is incomplete")
+                raise TransitionError(
+                    "failed certification rejection receipt is incomplete"
+                )
         return {
             "certification_task_id": task_id,
             "certification_node_key": node_key,
@@ -1659,7 +1703,9 @@ class WorkPackageCertificationService:
             metadata = json_loads(raw_metadata, None)
         except (TypeError, ValueError) as exc:
             raise ValidationError("controller task metadata is malformed") from exc
-        projection = metadata.get("work_package") if isinstance(metadata, dict) else None
+        projection = (
+            metadata.get("work_package") if isinstance(metadata, dict) else None
+        )
         try:
             exact = (
                 isinstance(metadata, dict)
@@ -1823,6 +1869,7 @@ class WorkPackageCertificationService:
                 str(policy["checksum"]),
                 str(contract["policy_text"]),
             ),
+            phase_profile=CertifierPhaseProfile.from_mapping(contract["phase_profile"]),
             image_ref=str(contract["image_ref"]),
             bundle_path=Path(bundle_path),
             bundle_digest=bundle_digest,
@@ -1836,12 +1883,15 @@ class WorkPackageCertificationService:
             ),
         )
 
-    def _job_from_row(self, row: Mapping[str, Any], bundle_path: Path) -> OpenShellCertificationJob:
+    def _job_from_row(
+        self, row: Mapping[str, Any], bundle_path: Path
+    ) -> OpenShellCertificationJob:
         definition = self._definition(row)
         job_value = definition["job"]
         contract = {
             "policy": job_value["policy"],
             "policy_text": definition["policy_text"],
+            "phase_profile": job_value["phase_profile"],
             "image_ref": job_value["image_ref"],
             "controller_commands": job_value["controller_commands"],
         }
@@ -1863,7 +1913,9 @@ class WorkPackageCertificationService:
             raise ValidationError("persisted certification job digest is incoherent")
         return job
 
-    def _validate_result(self, row: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
+    def _validate_result(
+        self, row: Mapping[str, Any], payload: Mapping[str, Any]
+    ) -> None:
         try:
             encoded = json_dumps(payload).encode("utf-8")
         except (TypeError, ValueError) as exc:
@@ -1871,7 +1923,9 @@ class WorkPackageCertificationService:
         if len(encoded) > 2 * 1024 * 1024:
             raise ValidationError("certification result exceeds the ingestion limit")
         if set(payload) != _RESULT_KEYS:
-            raise ValidationError("certification result fields do not match the contract")
+            raise ValidationError(
+                "certification result fields do not match the contract"
+            )
         if payload.get("schema") != CERTIFICATION_RESULT_SCHEMA:
             raise ValidationError("certification result schema is invalid")
         claimed_digest = str(payload.get("result_digest") or "")
@@ -1904,7 +1958,9 @@ class WorkPackageCertificationService:
                     "certification result numeric identity is invalid"
                 )
         if any(payload.get(key) != value for key, value in expected.items()):
-            raise ValidationError("certification result identity does not match its job")
+            raise ValidationError(
+                "certification result identity does not match its job"
+            )
         if payload.get("status") not in {"passed", "failed"}:
             raise ValidationError("certification result status is invalid")
         policy = payload.get("policy")
@@ -1941,8 +1997,7 @@ class WorkPackageCertificationService:
             or isinstance(isolation.get("policy_version"), bool)
             or not isinstance(isolation.get("policy_version"), int)
             or any(
-                isolation.get(key) != value
-                for key, value in required_isolation.items()
+                isolation.get(key) != value for key, value in required_isolation.items()
             )
         ):
             raise ValidationError("certification isolation attestation is incomplete")
@@ -1959,6 +2014,15 @@ class WorkPackageCertificationService:
             )
         ):
             raise ValidationError("certification launcher environment is invalid")
+        definition = self._definition(row)
+        try:
+            phase_profile = CertifierPhaseProfile.from_mapping(
+                definition["job"]["phase_profile"]
+            )
+        except (KeyError, TypeError, CertificationValidationError) as exc:
+            raise ValidationError(
+                "persisted certifier phase profile is invalid"
+            ) from exc
         phase_manifest = payload.get("phase_manifest")
         if not isinstance(phase_manifest, Mapping):
             raise ValidationError("certifier phase manifest is malformed")
@@ -1968,6 +2032,7 @@ class WorkPackageCertificationService:
                     phase_manifest,
                     assembly_base_sha=str(row["assembly_base_sha"]),
                     candidate_sha=str(row["candidate_sha"]),
+                    phase_profile=phase_profile,
                 )
             except CertificationValidationError as exc:
                 raise ValidationError("certifier phase manifest is invalid") from exc
@@ -1978,7 +2043,6 @@ class WorkPackageCertificationService:
             and phase_manifest.get("authoritative", {}).get("mode") == "rejected"
         ):
             raise ValidationError("passed certification used a rejected test selection")
-        definition = self._definition(row)
         commands = definition["job"]["controller_commands"]
         checks = payload.get("checks")
         if not isinstance(checks, list):
@@ -2008,7 +2072,9 @@ class WorkPackageCertificationService:
             ):
                 raise ValidationError("certification check status is incoherent")
             if timed_out and returncode != 124:
-                raise ValidationError("timed-out certification check has wrong returncode")
+                raise ValidationError(
+                    "timed-out certification check has wrong returncode"
+                )
             for output_name in ("stdout", "stderr"):
                 output = check.get(output_name)
                 if not isinstance(output, str) or len(output) > 16_000:
@@ -2057,9 +2123,7 @@ class WorkPackageCertificationService:
     def _certification_contract(
         self, repository_id: str, *, source: Optional[Any] = None
     ) -> JsonDict:
-        query = (
-            "SELECT metadata FROM project_repositories WHERE id = ? AND enabled = 1"
-        )
+        query = "SELECT metadata FROM project_repositories WHERE id = ? AND enabled = 1"
         if source is None:
             row = self.store.query_one(query, (repository_id,))
         else:
@@ -2166,13 +2230,32 @@ class WorkPackageCertificationService:
             raise TransitionError("certification job no longer matches the exact batch")
 
     @staticmethod
-    def _assert_job_row_identity(before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
+    def _assert_job_row_identity(
+        before: Mapping[str, Any], after: Mapping[str, Any]
+    ) -> None:
         fields = (
-            "id", "batch_id", "package_id", "plan_version", "epoch", "repository_id",
-            "candidate_sha", "candidate_tree_digest", "candidate_ref", "candidate_fence",
-            "assembly_base_sha", "landing_base_sha", "target_ref", "policy_id",
-            "policy_version", "policy_checksum", "image_ref", "image_digest",
-            "bundle_digest", "commands_digest", "job_digest", "definition",
+            "id",
+            "batch_id",
+            "package_id",
+            "plan_version",
+            "epoch",
+            "repository_id",
+            "candidate_sha",
+            "candidate_tree_digest",
+            "candidate_ref",
+            "candidate_fence",
+            "assembly_base_sha",
+            "landing_base_sha",
+            "target_ref",
+            "policy_id",
+            "policy_version",
+            "policy_checksum",
+            "image_ref",
+            "image_digest",
+            "bundle_digest",
+            "commands_digest",
+            "job_digest",
+            "definition",
         )
         if any(before[name] != after[name] for name in fields):
             raise TransitionError("certification job identity changed")
@@ -2193,9 +2276,7 @@ class WorkPackageCertificationService:
             or definition["certification_task_id"] != successor["task_id"]
             or definition["certification_node_key"] != successor["node_key"]
             or definition["integration_task_id"] != successor["integration_task_id"]
-            or definition["integration_node_key"] != successor[
-                "integration_node_key"
-            ]
+            or definition["integration_node_key"] != successor["integration_node_key"]
             or definition["integration_station_receipt_id"]
             != successor["integration_station_receipt_id"]
         ):
@@ -2299,7 +2380,10 @@ class WorkPackageCertificationService:
             value = json_loads(row["definition"], {})
         except (TypeError, ValueError) as exc:
             raise ValidationError("certification job definition is malformed") from exc
-        if not isinstance(value, dict) or value.get("schema") != CERTIFICATION_JOB_RECORD_SCHEMA:
+        if (
+            not isinstance(value, dict)
+            or value.get("schema") != CERTIFICATION_JOB_RECORD_SCHEMA
+        ):
             raise ValidationError("certification job definition is malformed")
         return value
 
@@ -2365,7 +2449,9 @@ class WorkPackageCertificationService:
 
     @staticmethod
     def _sha256_json(value: Any) -> str:
-        return "sha256:%s" % hashlib.sha256(json_dumps(value).encode("utf-8")).hexdigest()
+        return (
+            "sha256:%s" % hashlib.sha256(json_dumps(value).encode("utf-8")).hexdigest()
+        )
 
     @staticmethod
     def _sha256_file(path: Path) -> str:
@@ -2383,7 +2469,9 @@ class WorkPackageCertificationService:
 
     def _authority_now(self, conn: Any) -> datetime:
         if type(self.store).__module__ == "mac.store_postgres":
-            row = conn.execute("SELECT clock_timestamp() AS authoritative_now").fetchone()
+            row = conn.execute(
+                "SELECT clock_timestamp() AS authoritative_now"
+            ).fetchone()
             if row is None:
                 raise ValidationError("certification authority clock is unavailable")
             return self._parse_time(row["authoritative_now"]) or self._now()

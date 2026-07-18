@@ -33,6 +33,7 @@ from mac.work_package_integration_service import WorkPackageIntegrationService
 from mac.work_package_models import WORK_PACKAGE_PLAN_SCHEMA
 from mac.work_package_output_service import WorkPackageOutputService
 from mac.work_package_publication_finalizer import WorkPackagePublicationFinalizer
+from tests.certifier_phase_profile_fixtures import mac_phase_profile
 
 
 TARGET_REF = "refs/heads/main"
@@ -124,9 +125,8 @@ def _repository_contract(remote: Path) -> dict[str, Any]:
                     "checksum": _sha256(POLICY_TEXT.encode("utf-8")),
                 },
                 "policy_text": POLICY_TEXT,
-                "image_ref": (
-                    "registry.invalid/mac-certifier@sha256:" + "d" * 64
-                ),
+                "phase_profile": mac_phase_profile(),
+                "image_ref": ("registry.invalid/mac-certifier@sha256:" + "d" * 64),
                 "controller_commands": [
                     {
                         "command_id": "contract-tests",
@@ -207,11 +207,17 @@ class _ExternalCertificationRunner:
             for command in job.controller_commands
         )
         changed_files = ["docs/canaries/e2e.md"]
-        digest_json = lambda value: "sha256:" + hashlib.sha256(  # noqa: E731
-            json.dumps(
-                value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-            ).encode("utf-8")
-        ).hexdigest()
+
+        def digest_json(value: Any) -> str:
+            return (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
+
         phase_manifest = {
             "schema": "mac.certifier_phase_manifest.v1",
             "trusted_source_revision": "f" * 40,
@@ -471,9 +477,7 @@ def _run_to_certification(
         "mac.worker_credentials.assert_package_worker_ready",
         lambda conn, agent_id: {"ready": True, "agent_id": agent_id},
     )
-    task, lease = control.claim_task(
-        task_ids["change"], agent.id, sync_beads=False
-    )
+    task, lease = control.claim_task(task_ids["change"], agent.id, sync_beads=False)
     expired_lease_id = None
     if expire_first_claim:
         expired_lease_id = lease.id
@@ -495,9 +499,7 @@ def _run_to_certification(
             grace_seconds=0,
         )
         assert [recovered_task.id for recovered_task in recovered] == [task.id]
-        task, lease = control.claim_task(
-            task_ids["change"], agent.id, sync_beads=False
-        )
+        task, lease = control.claim_task(task_ids["change"], agent.id, sync_beads=False)
         assert lease.id != expired_lease_id
         retry_tokens = store.query_all(
             "SELECT id, generation, predecessor_token_id, "
@@ -509,9 +511,9 @@ def _run_to_certification(
         assert {row["predecessor_token_id"] for row in retry_tokens} == set(
             original_tokens
         )
-        assert {
-            row["acquired_by_assignment_lease_id"] for row in retry_tokens
-        } == {lease.id}
+        assert {row["acquired_by_assignment_lease_id"] for row in retry_tokens} == {
+            lease.id
+        }
         assert all(
             int(row["generation"])
             == original_tokens[str(row["predecessor_token_id"])] + 1
@@ -627,9 +629,7 @@ def _run_to_certification(
     certifier = WorkPackageCertificationService(
         store, owner="certifier-controller-e2e", runner=runner
     )
-    job = certifier.prepare(
-        batch.batch_id, bundle, actor="pipeline-controller-e2e"
-    )
+    job = certifier.prepare(batch.batch_id, bundle, actor="pipeline-controller-e2e")
     certification = certifier.run(
         str(job["id"]), bundle, owner="external-certifier-e2e"
     )
@@ -711,16 +711,18 @@ def test_managed_work_package_reaches_exact_landed_completed_product(
             "SELECT state FROM work_packages WHERE id = ?", (line.package_id,)
         )
         epoch = line.store.query_one(
-            "SELECT status FROM work_package_epochs "
-            "WHERE package_id = ? AND epoch = 1",
+            "SELECT status FROM work_package_epochs WHERE package_id = ? AND epoch = 1",
             (line.package_id,),
         )
         assert package["state"] == "completed"
         assert epoch["status"] == "completed"
-        assert line.store.query_one(
-            "SELECT state FROM work_package_integration_batches WHERE id = ?",
-            (line.batch_id,),
-        )["state"] == "published"
+        assert (
+            line.store.query_one(
+                "SELECT state FROM work_package_integration_batches WHERE id = ?",
+                (line.batch_id,),
+            )["state"]
+            == "published"
+        )
         if line.fast_lane_task_id is not None:
             package = line.store.query_one(
                 "SELECT root_task_id FROM work_packages WHERE id = ?",
@@ -766,11 +768,14 @@ def test_managed_work_package_reaches_exact_landed_completed_product(
                 "task_state": "completed",
             },
         ]
-        assert line.store.query_one(
-            "SELECT COUNT(*) AS count FROM work_package_wip_tokens "
-            "WHERE package_id = ? AND state = 'held'",
-            (line.package_id,),
-        )["count"] == 0
+        assert (
+            line.store.query_one(
+                "SELECT COUNT(*) AS count FROM work_package_wip_tokens "
+                "WHERE package_id = ? AND state = 'held'",
+                (line.package_id,),
+            )["count"]
+            == 0
+        )
         assert line.store.query_all("PRAGMA foreign_key_check") == []
         if expire_first_claim:
             assert line.expired_lease_id is not None
@@ -819,12 +824,18 @@ def test_failed_external_certification_never_lands_and_raises_andon(
             landing.land(line.batch_id, endpoint)
 
         assert _git(line.remote, "rev-parse", TARGET_REF) == line.base_sha
-        assert line.store.query_one(
-            "SELECT COUNT(*) AS count FROM work_package_landing_intents"
-        )["count"] == 0
-        assert line.store.query_one(
-            "SELECT COUNT(*) AS count FROM work_package_landing_receipts"
-        )["count"] == 0
+        assert (
+            line.store.query_one(
+                "SELECT COUNT(*) AS count FROM work_package_landing_intents"
+            )["count"]
+            == 0
+        )
+        assert (
+            line.store.query_one(
+                "SELECT COUNT(*) AS count FROM work_package_landing_receipts"
+            )["count"]
+            == 0
+        )
         package = line.store.query_one(
             "SELECT state FROM work_packages WHERE id = ?", (line.package_id,)
         )
@@ -849,11 +860,14 @@ def test_failed_external_certification_never_lands_and_raises_andon(
         assert tasks["assemble"]["task_state"] == "completed"
         assert tasks["certify"]["node_state"] == "rejected"
         assert tasks["certify"]["task_state"] == "failed"
-        assert line.store.query_one(
-            "SELECT COUNT(*) AS count FROM work_package_wip_tokens "
-            "WHERE package_id = ? AND state = 'held'",
-            (line.package_id,),
-        )["count"] == 0
+        assert (
+            line.store.query_one(
+                "SELECT COUNT(*) AS count FROM work_package_wip_tokens "
+                "WHERE package_id = ? AND state = 'held'",
+                (line.package_id,),
+            )["count"]
+            == 0
+        )
         outcome = line.control.work_package_telemetry.comparable_atomic_outcomes(
             package_id=line.package_id
         )

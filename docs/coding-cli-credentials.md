@@ -122,6 +122,30 @@ it for itself, so it is not a way to dodge the substance gate (it is the
 opposite of the `task_d7c51a0b` incident, where an executor *implicitly*
 emitted `operator_result` for what was really a code task).
 
+A report that must inspect a registered repository can opt in explicitly with
+this versioned metadata in addition to `deliverable: report`:
+
+```json
+{
+  "deliverable": "report",
+  "report_repository_access": {
+    "schema": "mac.report_repository_access.v1",
+    "mode": "read_only"
+  }
+}
+```
+
+MAC then supplies the current repository contract and a detached, task-owned
+clone of the current canonical base at `MAC_TASK_REPO_WORKTREE`. The clone has
+no remote and repository credentials and ambient Git credential configuration
+are withheld. Evidence remains `operator_result`; agent-authored test claims
+are not trusted. MAC runs the current registered contract's `test.command` in a
+separate credential-free OpenShell verifier and requires it to pass. Commits,
+pushes, PRs, and the deterministic repository finalizer are not part of this
+path. Any file, index, HEAD, or remote mutation fails the task. Missing,
+malformed, or future unknown access declarations keep the default no-repository
+report behavior.
+
 This is also the right tool for **smoke-testing the fleet itself** ("report
 which coding CLI you used") — but note that verifying MAC's own behavior
 (routing, metering, sandboxing) is usually better done from the observability

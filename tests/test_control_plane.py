@@ -39,6 +39,11 @@ from mac.models import (
     TaskState,
     TransitionError,
     ValidationError,
+    REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
+    REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY,
+    metadata_declares_read_only_report_repository,
+    read_only_report_repository_executor_approval,
+    read_only_report_repository_executor_attestation,
     utcnow,
 )
 from mac.migration import migrate_acc_sqlite
@@ -135,7 +140,63 @@ def register_agent(cp, name="agent", capabilities=None, resources=None):
             "available": ["python3", "git", "gh"],
         }
     machine = cp.register_machine("%s-host" % name, resources={"cpu": 4, "memory_gb": 8})
-    return cp.register_agent(machine.id, name, capabilities=capabilities, resources=agent_resources)
+    agent = cp.register_agent(
+        machine.id, name, capabilities=capabilities, resources=agent_resources
+    )
+    attestation = agent_resources.get(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY)
+    if isinstance(attestation, dict):
+        approved = read_only_report_repository_executor_approval(
+            **{
+                key: attestation[key]
+                for key in (
+                    "runtime_image_ref",
+                    "policy_sha256",
+                    "openshell_bin_path",
+                    "openshell_bin_sha256",
+                    "executor_path",
+                    "executor_sha256",
+                    "platform",
+                    "isolation_posture",
+                    "python_path",
+                    "python_sha256",
+                    "executor_script_path",
+                    "executor_script_sha256",
+                    "source_root",
+                    "source_bundle_sha256",
+                )
+            }
+        )
+        updated = dict(agent.resources)
+        updated[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY] = approved
+        agent = cp.update_agent(agent.id, resources=updated, actor="test-admin")
+    return agent
+
+
+def read_only_report_executor_resources():
+    return {
+        "openshell_required": True,
+        REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY: (
+            read_only_report_repository_executor_attestation(
+                runtime_image_ref=(
+                    "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:"
+                    + "1" * 64
+                ),
+                policy_sha256="sha256:" + "2" * 64,
+                openshell_bin_path="/approved/openshell",
+                openshell_bin_sha256="sha256:" + "3" * 64,
+                executor_path="/approved/mac-task-executor",
+                executor_sha256="sha256:" + "4" * 64,
+                platform="linux",
+                isolation_posture="landlock_enforced",
+                python_path="/approved/python",
+                python_sha256="sha256:" + "5" * 64,
+                executor_script_path="/approved/mac-task-executor.py",
+                executor_script_sha256="sha256:" + "6" * 64,
+                source_root="/approved/mac",
+                source_bundle_sha256="sha256:" + "7" * 64,
+            )
+        ),
+    }
 
 
 def test_add_evidence_persists_durable_artifacts(cp):
@@ -1528,6 +1589,85 @@ def test_default_review_workflow_approves_repo_less_operator_result(cp):
     assert review.status == ReviewStatus.APPROVED.value
     assert review.evidence_id == verdict_evidence_id
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+
+
+def test_report_ignores_git_publication_targets_and_publishes_evidence(
+    cp, monkeypatch
+):
+    from tests.conftest import submit_review_verdict
+
+    monkeypatch.setenv("MAC_DEFAULT_PUBLICATION_TARGET", "git://main")
+    cp.create_project("report-project", metadata={"publication_target": "git://main"})
+    worker = register_agent(
+        cp, "report-worker", ["ops"], read_only_report_executor_resources()
+    )
+    reviewer = register_agent(
+        cp, "report-reviewer", ["review"], read_only_report_executor_resources()
+    )
+    task = cp.create_task(
+        "Inspect current repository",
+        project="report-project",
+        required_capabilities=["ops"],
+        metadata={
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+            "publication_target": "git://main",
+            "origin": {
+                "repository_path": "/must/not/be/published",
+                "repository_url": "https://example.invalid/project.git",
+            },
+            "execution_contract": {
+                "type": "repository",
+                    "repository_contract": {
+                        "schema": "mac.repository_contract.v1",
+                        "canonical_remote_url": "https://example.invalid/project.git",
+                        "default_branch": "main",
+                        "test": {"command": "true"},
+                    },
+            },
+        },
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    manifest = _sign(
+        cp,
+        worker.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Repository analysis produced",
+            "result": "Substantive findings and prioritized next work.",
+            "repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+        },
+    )
+    evidence = cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://report-result",
+        "Repository analysis produced",
+        worker.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    cp.submit_for_review(task.id, worker.id)
+    first = cp.advance_default_review_workflow(task.id)
+    assert first["status"] == "waiting_for_reviewer_verdict"
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "published"
+    assert cp.get_task(task.id).state == TaskState.COMPLETED.value
+    publication = cp.list_publications(task.id)[-1]
+    assert publication.target == "evidence://%s" % evidence.id
+    assert not publication.target.startswith("git://")
+    assert cp._repository_contract_for_task(cp.get_task(task.id)) == {}
 
 
 def test_default_review_workflow_falls_back_to_project_publication_target(cp):
@@ -3399,6 +3539,140 @@ def test_default_review_falls_back_to_executor_when_no_peer_exists(cp, monkeypat
     assert submitted.status == ReviewStatus.REJECTED.value
 
 
+def test_read_only_repository_report_never_falls_back_to_executor(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
+    executor = register_agent(
+        cp,
+        "report-only-reviewer",
+        ["ops", "review"],
+        read_only_report_executor_resources(),
+    )
+    task = cp.create_task(
+        "independently review repository report",
+        required_capabilities=["ops"],
+        metadata={
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                        "schema": "mac.repository_contract.v1",
+                        "project": "review-routing",
+                        "canonical_remote_url": "https://example.invalid/review-routing.git",
+                        "default_branch": "main",
+                        "test": {"command": "true"},
+                },
+            },
+        },
+    )
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    manifest = _sign(
+        cp,
+        executor.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Repository analysis produced",
+            "result": "Substantive findings and prioritized next work.",
+            "repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+        },
+    )
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://independent-report",
+        "Repository analysis produced",
+        executor.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    cp.submit_for_review(task.id, executor.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "waiting_for_reviewer"
+    assert cp.list_reviews(task.id) == []
+    with pytest.raises(AuthorizationError, match="owned"):
+        cp.request_review(task.id, executor.id, actor="manual")
+
+
+def test_read_only_repository_report_assigns_distinct_eligible_peer(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "0")
+    executor = register_agent(
+        cp,
+        "report-executor",
+        ["ops", "review"],
+        read_only_report_executor_resources(),
+    )
+    peer = register_agent(
+        cp,
+        "independent-report-reviewer",
+        ["review"],
+        read_only_report_executor_resources(),
+    )
+    task = cp.create_task(
+        "peer review repository report",
+        required_capabilities=["ops"],
+        metadata={
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+            "execution_contract": {
+                "type": "repository",
+                "repository_contract": {
+                        "schema": "mac.repository_contract.v1",
+                        "project": "review-routing",
+                        "canonical_remote_url": "https://example.invalid/review-routing.git",
+                        "default_branch": "main",
+                        "test": {"command": "true"},
+                },
+            },
+        },
+    )
+    cp.claim_task(task.id, executor.id)
+    cp.start_task(task.id, executor.id)
+    manifest = _sign(
+        cp,
+        executor.id,
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "summary": "Repository analysis produced",
+            "result": "Substantive findings and prioritized next work.",
+            "repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+        },
+    )
+    cp.add_evidence(
+        task.id,
+        "log",
+        "artifact://peer-reviewed-report",
+        "Repository analysis produced",
+        executor.id,
+        metadata={"returncode": 0, "verification": manifest},
+    )
+    cp.submit_for_review(task.id, executor.id)
+
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "waiting_for_reviewer_verdict"
+    reviews = cp.list_reviews(task.id)
+    assert len(reviews) == 1
+    assert reviews[0].reviewer_agent_id == peer.id
+
+
 def test_fallback_review_is_replaced_when_independent_peer_becomes_available(
     cp, monkeypatch
 ):
@@ -4674,7 +4948,14 @@ def _write_beads(repo_path, issues):
     )
 
 
-def _write_repository_contract(repo_path, project="repo-beads-mac", include_test=True):
+def _write_repository_contract(
+    repo_path,
+    project="repo-beads-mac",
+    include_test=True,
+    *,
+    canonical_remote_url=None,
+    default_branch=None,
+):
     contract_dir = repo_path / ".mac"
     contract_dir.mkdir(parents=True, exist_ok=True)
     test_block = (
@@ -4682,10 +4963,20 @@ def _write_repository_contract(repo_path, project="repo-beads-mac", include_test
         if include_test
         else "test: {}\n"
     )
+    remote_block = (
+        "canonical_remote_url: %s\n" % canonical_remote_url
+        if canonical_remote_url
+        else ""
+    )
+    branch_block = (
+        "default_branch: %s\n" % default_branch if default_branch else ""
+    )
     (contract_dir / "project.yaml").write_text(
         (
             "schema: mac.repository_contract.v1\n"
             "project: %s\n"
+            "%s"
+            "%s"
             "platforms:\n"
             "  - darwin\n"
             "  - linux\n"
@@ -4702,7 +4993,7 @@ def _write_repository_contract(repo_path, project="repo-beads-mac", include_test
             "  required:\n"
             "    - tests\n"
         )
-        % (project, test_block),
+        % (project, remote_block, branch_block, test_block),
         encoding="utf-8",
     )
 
@@ -5174,6 +5465,377 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
     assert task.metadata["execution_contract"]["evidence_type"] == "repo_change"
     assert task.metadata["origin"]["repository_contract"]["project"] == "repo-beads-mac"
     assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
+
+
+def test_registered_read_only_report_has_one_unambiguous_persisted_contract(
+    cp, tmp_path
+):
+    repo = tmp_path / "report-repo"
+    repo.mkdir()
+    _write_repository_contract(
+        repo,
+        canonical_remote_url="https://example.invalid/repo-beads-mac.git",
+        default_branch="main",
+    )
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    worker = register_agent(
+        cp,
+        "report-contract-worker",
+        ["ops"],
+        read_only_report_executor_resources(),
+    )
+
+    created = cp.create_task(
+        "Inspect the registered repository",
+        project="repo-beads-mac",
+        required_capabilities=["ops"],
+        metadata={
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+        },
+    )
+    persisted = cp.get_task(created.id)
+
+    assert persisted.metadata["execution_contract"]["type"] == "repository"
+    assert persisted.metadata["execution_contract"]["repository_contract"] == (
+        cp.get_project_repository("mac").metadata["repository_contract"]
+    )
+    assert "repository_contract" not in persisted.metadata["origin"]
+    assert "repository_contract" not in {
+        key: value
+        for key, value in persisted.metadata.items()
+        if key != "execution_contract"
+    }
+    assert "evidence_type" not in json.dumps(persisted.metadata, sort_keys=True)
+    assert metadata_declares_read_only_report_repository(persisted.metadata)
+    assert persisted.id in {task.id for task in cp.ready_tasks()}
+
+    claimed, _lease = cp.claim_task(persisted.id, worker.id)
+    assert _lease.agent_id == worker.id
+    assert claimed.state == TaskState.CLAIMED.value
+    assert metadata_declares_read_only_report_repository(claimed.metadata)
+    assert "evidence_type" not in json.dumps(claimed.metadata, sort_keys=True)
+
+
+@pytest.mark.parametrize(
+    "contradiction",
+    [
+        {"evidence_type": "investigation"},
+        {"policy": {"expected_evidence_type": "operator_result"}},
+        {"execution_contract": {"type": "repository", "evidence_type": "repo_change"}},
+    ],
+)
+def test_read_only_report_rejects_explicit_evidence_type_overrides(
+    cp, tmp_path, contradiction
+):
+    repo = tmp_path / ("contradictory-report-%d" % len(cp.list_tasks()))
+    repo.mkdir()
+    _write_beads(repo, [])
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    metadata = {
+        "deliverable": "report",
+        "report_repository_access": {
+            "schema": "mac.report_repository_access.v1",
+            "mode": "read_only",
+        },
+        **contradiction,
+    }
+
+    with pytest.raises(
+        ValidationError, match="read-only repository reports forbid evidence-type overrides"
+    ):
+        cp.create_task(
+            "Contradictory repository report",
+            project="repo-beads-mac",
+            metadata=metadata,
+        )
+
+
+def _complete_direct_read_only_report_metadata(*, remote=None, branch="main", command="true"):
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "project": "direct-report",
+        "canonical_remote_url": remote
+        or "https://example.invalid/direct-report.git",
+        "default_branch": branch,
+        "test": {"command": command},
+    }
+    return {
+        "deliverable": "report",
+        "report_repository_access": {
+            "schema": "mac.report_repository_access.v1",
+            "mode": "read_only",
+        },
+        "execution_contract": {
+            "type": "repository",
+            "repository_contract": contract,
+        },
+    }
+
+
+def test_registered_read_only_report_rejects_explicit_contract_drift(cp, tmp_path):
+    repo = tmp_path / "registered-report-drift"
+    repo.mkdir()
+    _write_repository_contract(
+        repo,
+        canonical_remote_url="https://example.invalid/repo-beads-mac.git",
+        default_branch="main",
+    )
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    metadata = _complete_direct_read_only_report_metadata(
+        remote="https://example.invalid/attacker-selected.git"
+    )
+
+    with pytest.raises(
+        ValidationError, match="contradicts the current registered repository contract"
+    ):
+        cp.create_task(
+            "Reject stale or substituted contract",
+            project="repo-beads-mac",
+            metadata=metadata,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (lambda metadata: metadata.pop("execution_contract"), "current execution_contract"),
+        (
+            lambda metadata: metadata["execution_contract"].pop("repository_contract"),
+            "repository_contract must be an object",
+        ),
+        (
+            lambda metadata: metadata["execution_contract"]["repository_contract"].pop(
+                "canonical_remote_url"
+            ),
+            "canonical_remote_url is required",
+        ),
+        (
+            lambda metadata: metadata["execution_contract"]["repository_contract"].pop(
+                "default_branch"
+            ),
+            "default_branch .* is required",
+        ),
+        (
+            lambda metadata: metadata["execution_contract"]["repository_contract"].pop(
+                "test"
+            ),
+            "test.command is required",
+        ),
+    ],
+)
+def test_direct_read_only_report_requires_complete_current_contract(
+    cp, mutate, message
+):
+    metadata = _complete_direct_read_only_report_metadata()
+    mutate(metadata)
+
+    with pytest.raises(ValidationError, match=message):
+        cp.create_task("Incomplete direct report", metadata=metadata)
+
+
+def test_direct_read_only_report_persists_only_current_execution_contract(cp):
+    metadata = _complete_direct_read_only_report_metadata()
+    contract = metadata["execution_contract"]["repository_contract"]
+    contract["canonical_branch"] = contract.pop("default_branch")
+    metadata["origin"] = {
+        "repository_contract": dict(
+            contract
+        )
+    }
+
+    task = cp.create_task("Complete direct report", metadata=metadata)
+
+    assert task.metadata["execution_contract"]["schema"] == (
+        "mac.task_execution_contract.v1"
+    )
+    assert task.metadata["origin"]["repository_url"] == (
+        "https://example.invalid/direct-report.git"
+    )
+    assert task.metadata["origin"]["default_branch"] == "main"
+    assert "repository_contract" not in task.metadata["origin"]
+    assert "repository_contract" not in {
+        key: value
+        for key, value in task.metadata.items()
+        if key != "execution_contract"
+    }
+
+
+def test_read_only_report_update_rejects_drift_and_can_rebind_to_current_contract(
+    cp, tmp_path
+):
+    repo = tmp_path / "report-update"
+    repo.mkdir()
+    remote = "https://example.invalid/repo-beads-mac.git"
+    _write_repository_contract(
+        repo,
+        canonical_remote_url=remote,
+        default_branch="main",
+    )
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    task = cp.create_task(
+        "Update a report safely",
+        project="repo-beads-mac",
+        metadata={
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+        },
+    )
+    changed = json.loads(json.dumps(task.metadata))
+    changed["notes"] = "preserved"
+    changed["execution_contract"]["repository_contract"]["test"]["command"] = (
+        "false"
+    )
+
+    with pytest.raises(
+        ValidationError, match="contradicts the current registered repository contract"
+    ):
+        cp.update_task(task.id, metadata=changed)
+    assert cp.get_task(task.id).metadata == task.metadata
+
+    # Re-register a changed project contract. The old ledger row remains
+    # inspectable but is not dispatchable until an explicit update drops the
+    # stale projection and lets the hub bind the new registered authority.
+    _write_repository_contract(
+        repo,
+        canonical_remote_url=remote,
+        default_branch="main",
+    )
+    contract_path = repo / ".mac" / "project.yaml"
+    contract_path.write_text(
+        contract_path.read_text(encoding="utf-8").replace(
+            "PATH=.venv/bin:$PATH .venv/bin/python -m pytest", "make check"
+        ),
+        encoding="utf-8",
+    )
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    assert cp.get_task(task.id).id == task.id
+    assert task.id not in {item.id for item in cp.ready_tasks()}
+
+    repair = json.loads(json.dumps(task.metadata))
+    repair.pop("execution_contract")
+    repaired = cp.update_task(task.id, metadata=repair)
+    assert repaired.metadata["execution_contract"]["repository_contract"]["test"] == {
+        "command": "make check"
+    }
+    assert repaired.id in {item.id for item in cp.ready_tasks()}
+
+
+def test_read_only_report_child_uses_current_contract_and_invalid_batch_is_atomic(
+    cp, tmp_path
+):
+    repo = tmp_path / "report-child"
+    repo.mkdir()
+    _write_repository_contract(
+        repo,
+        canonical_remote_url="https://example.invalid/repo-beads-mac.git",
+        default_branch="main",
+    )
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    parent = cp.create_task("Plan reports", project="repo-beads-mac")
+    report_metadata = {
+        "deliverable": "report",
+        "report_repository_access": {
+            "schema": "mac.report_repository_access.v1",
+            "mode": "read_only",
+        },
+    }
+
+    result = cp.add_child_tasks(
+        parent.id,
+        [{"title": "Inspect repository", "metadata": report_metadata}],
+    )
+    child = cp.get_task(result["children"][0]["id"])
+    assert child.metadata["execution_contract"]["repository_contract"] == (
+        cp.get_project_repository("mac").metadata["repository_contract"]
+    )
+    assert "repository_contract" not in child.metadata["origin"]
+    assert "evidence_type" not in json.dumps(child.metadata, sort_keys=True)
+
+    direct_parent = cp.create_task("Direct parent")
+    before = cp.get_task(direct_parent.id)
+    with pytest.raises(ValidationError, match="current execution_contract"):
+        cp.add_child_tasks(
+            direct_parent.id,
+            [{"title": "Invalid report", "metadata": report_metadata}],
+        )
+    after = cp.get_task(direct_parent.id)
+    assert after.dependencies == before.dependencies
+    assert after.metadata == before.metadata
+
+
+def test_read_only_report_create_idempotency_preserves_one_normalized_identity(
+    cp, tmp_path
+):
+    repo = tmp_path / "report-idempotency"
+    repo.mkdir()
+    _write_repository_contract(
+        repo,
+        canonical_remote_url="https://example.invalid/repo-beads-mac.git",
+        default_branch="main",
+    )
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    metadata = {
+        "deliverable": "report",
+        "report_repository_access": {
+            "schema": "mac.report_repository_access.v1",
+            "mode": "read_only",
+        },
+    }
+
+    first = cp.create_task(
+        "Idempotent report",
+        project="repo-beads-mac",
+        metadata=metadata,
+        idempotency_key="report-request-1",
+        _idempotency_scope="test:reports",
+    )
+    retry = cp.create_task(
+        "Idempotent report",
+        project="repo-beads-mac",
+        metadata=metadata,
+        idempotency_key="report-request-1",
+        _idempotency_scope="test:reports",
+    )
+
+    assert retry.id == first.id
+    assert retry.metadata == first.metadata
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,)
+    )["n"] == 1
+
+
+def test_legacy_read_only_report_row_is_visible_but_not_ready_or_claimable(cp):
+    worker = register_agent(
+        cp,
+        "legacy-report-worker",
+        ["ops"],
+        read_only_report_executor_resources(),
+    )
+    task = cp.create_task("Pre-cutover report", required_capabilities=["ops"])
+    legacy = _complete_direct_read_only_report_metadata()
+    legacy["execution_contract"]["schema"] = "mac.task_execution_contract.v1"
+    legacy["execution_contract"]["evidence_type"] = "repo_change"
+    cp.store.execute(
+        "UPDATE tasks SET metadata = ? WHERE id = ?",
+        (json.dumps(legacy), task.id),
+    )
+
+    loaded = cp.get_task(task.id)
+    assert metadata_declares_read_only_report_repository(loaded.metadata)
+    assert loaded.id not in {item.id for item in cp.ready_tasks()}
+    assert cp._agent_availability_for_task(worker, loaded) == (
+        False,
+        "report_repository_contract_invalid",
+    )
+    with pytest.raises(ValidationError, match="legacy evidence-type overrides"):
+        cp.claim_task(loaded.id, worker.id)
 
 
 def test_atomic_repository_task_uses_managed_fast_lane_when_ready(

@@ -119,7 +119,7 @@ preparation.
 ```yaml
 landing_certification_policy_id: mac-work-package-v1
 work_package_certification:
-  schema: mac.work_package.certification_contract.v1
+  schema: mac.work_package.certification_contract.v2
   policy:
     policy_id: mac-work-package-v1
     version: 1
@@ -145,6 +145,66 @@ work_package_certification:
       run_as_user: sandbox
       run_as_group: sandbox
     network_policies: {}
+  phase_profile:
+    schema: mac.certifier_phase_profile.v1
+    version: 1
+    checksum: sha256:<canonical-profile-digest>
+    full_targets:
+      - plugin/test_tools.py
+      - tests
+    focused_required_tests:
+      - tests/test_openshell_certifier.py
+      - tests/test_publication_lane.py
+      - tests/test_repository_contract_certification.py
+    selection_modes:
+      authoritative_full:
+        authoritative:
+          mode: full
+          reason: source_change_has_no_frozen_test_mapping
+        supplemental:
+          mode: skipped
+          reason: authoritative_full_is_sufficient
+        expected_full_suite_count: 1
+      candidate_test_focused:
+        authoritative:
+          mode: focused
+          reason: candidate_tests_are_non_authoritative_frozen_invariants
+        supplemental:
+          mode: skipped
+          reason: candidate_tests_are_worker_evidence
+        expected_full_suite_count: 0
+      documentation_fast_lane:
+        authoritative:
+          mode: focused
+          reason: documentation_only_invariants
+        supplemental:
+          mode: skipped
+          reason: documentation_only
+        expected_full_suite_count: 0
+      mixed_unmapped_rejected:
+        authoritative:
+          mode: rejected
+          reason: unmapped_source_and_candidate_root_scope_require_two_full_phases
+        supplemental:
+          mode: skipped
+          reason: selection_rejected
+        expected_full_suite_count: 0
+      source_focused:
+        authoritative:
+          mode: focused
+          reason: mapped_source_and_root_owned_invariants
+        supplemental:
+          mode: skipped
+          reason: no_candidate_root_visible_change
+        expected_full_suite_count: 0
+      supplemental_full:
+        authoritative:
+          mode: focused
+          reason: root_owned_invariants_and_mapped_source_tests
+        supplemental:
+          mode: full
+          reason: candidate_root_visible_change_requires_supplemental_full
+        expected_full_suite_count: 1
   image_ref: registry.example/mac-certifier@sha256:<64-lowercase-hex>
   controller_commands:
     - command_id: contract-tests
@@ -157,13 +217,22 @@ Do not add `--base-sha` to this YAML. Preparation rejects any repository-owned
 attempt to set it, appends the immutable batch value exactly once, and includes
 the resolved argv in the command and job digests.
 
+The required `phase_profile` is complete immutable job data. Compute its
+checksum over canonical JSON (`sort_keys=True`, separators `(',', ':')`,
+`ensure_ascii=True`) after removing only the `checksum` field. MAC rejects an
+unknown schema or version, missing/extra fields, a checksum mismatch, and any
+selector mode or phase mode/reason not declared exactly by the profile. The
+normalized profile is included in the certification job digest and persisted
+definition; a later controller deployment cannot reinterpret already-prepared
+work through project-name or policy-name routing.
+
 The frozen selector records a `mac.certifier_phase_manifest.v1` in the result
 and station receipt. Docs-only and mapped source changes use a focused
 root-owned phase. Unmapped source uses one authoritative full phase;
 root-visible deploy/config changes use one supplemental full phase. A mixed
 unmapped-source/root-visible candidate is rejected for splitting instead of
 running two full suites. The receipt's `full_suite_count` is therefore always
-zero or one.
+zero or one and must equal the selected profile entry exactly.
 
 Validate the checked-in contract before refreshing registration:
 

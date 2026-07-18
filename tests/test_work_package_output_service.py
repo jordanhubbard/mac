@@ -19,6 +19,7 @@ from mac.work_package_output import (
 )
 from mac.work_package_output_service import WorkPackageOutputService
 from mac.work_package_service import RepositoryBaseAttestation, WorkPackageService
+from tests.certifier_phase_profile_fixtures import mac_phase_profile
 
 
 BASE_SHA = "a" * 40
@@ -59,6 +60,7 @@ def _repository_contract() -> dict:
                 + hashlib.sha256(POLICY_TEXT.encode("utf-8")).hexdigest(),
             },
             "policy_text": POLICY_TEXT,
+            "phase_profile": mac_phase_profile(),
             "image_ref": "registry.invalid/mac-certifier@sha256:" + "d" * 64,
             "controller_commands": [
                 {

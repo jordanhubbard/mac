@@ -556,22 +556,25 @@ def test_cli_activation_consumes_one_time_manifest_only_after_success(
         },
         worker_version=manifest["worker_credential_version"],
     )
+    activation_args = [
+        "--db",
+        str(db),
+        "activate",
+        "--agent-id",
+        "agent_alpha",
+        "--principal-id",
+        manifest["principal_id"],
+        "--receipt",
+        str(receipt_path),
+        "--manifest",
+        str(manifest_path),
+    ]
+    # A failed activation retains the hub-side retry authority. Only the
+    # successful, heartbeat-proved activation below consumes it.
+    assert main(activation_args) == 1
+    assert manifest_path.exists()
     _observe(cp, issue, read_env_file(env_path))
-    assert main(
-        [
-            "--db",
-            str(db),
-            "activate",
-            "--agent-id",
-            "agent_alpha",
-            "--principal-id",
-            manifest["principal_id"],
-            "--receipt",
-            str(receipt_path),
-            "--manifest",
-            str(manifest_path),
-        ]
-    ) == 0
+    assert main(activation_args) == 0
     assert not manifest_path.exists()
     assert main(
         [

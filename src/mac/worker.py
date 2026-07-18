@@ -15,6 +15,7 @@ import select
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import struct
 import sys
@@ -75,7 +76,22 @@ from mac.repository_contract import (
     remote_branch_from_ref as _remote_branch_from_ref,
     repo_path_satisfies_requirement as _repo_path_satisfies_requirement,
 )
-from mac.models import metadata_declares_report_deliverable, utcnow
+from mac.repository_access_env import read_only_repository_content_digest
+from mac.trusted_artifact import (
+    nofollow_regular_file_identity,
+    nofollow_source_bundle_digest,
+)
+from mac.models import (
+    REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
+    REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY,
+    REPORT_REPOSITORY_ACCESS_SCHEMA,
+    REPORT_REPOSITORY_READ_ONLY_MODE,
+    agent_has_read_only_report_repository_executor,
+    read_only_report_repository_executor_attestation,
+    metadata_declares_read_only_report_repository,
+    metadata_declares_report_deliverable,
+    utcnow,
+)
 from mac.hermes_config_surface import apply_hermes_surface_payload
 from mac.gitops import (
     guarded_push,
@@ -416,6 +432,157 @@ def _resources_with_command_inventory(
     return merged
 
 
+def _read_only_report_executor_attestation(
+    executor_argv: Optional[List[str]],
+) -> Optional[JsonDict]:
+    """Describe the hardened report executor only when it is usable *now*.
+
+    The hub converts this worker-side claim into a separate controller-owned
+    marker.  Keep the probe fail-closed: the legacy executor alias, ACP,
+    supervisor-only confinement, retained sandboxes, unsafe create arguments,
+    missing policy/binary, and unenforceable Landlock posture all remain
+    ineligible for repository-bearing reports.
+    """
+
+    argv = list(executor_argv or [])
+    if argv and argv[0] == "--":
+        argv = argv[1:]
+    if not argv:
+        return None
+    if len(argv) != 1 or Path(argv[0]).name != "mac-task-executor":
+        return None
+    if not _env_truthy(os.environ.get("MAC_OPENSHELL_SANDBOX")):
+        return None
+    if (os.environ.get("MAC_EXECUTOR_BACKEND") or "hermes").strip().lower() != "hermes":
+        return None
+    if _env_truthy(os.environ.get("MAC_OPENSHELL_KEEP")):
+        return None
+    passthrough = {
+        item.strip()
+        for item in (os.environ.get("MAC_OPENSHELL_ENV_PASSTHROUGH") or "").split(",")
+        if item.strip()
+    }
+    if "PATH" in passthrough:
+        return None
+    openshell_bin = (os.environ.get("MAC_OPENSHELL_BIN") or "openshell").strip()
+    resolved_openshell_bin = shutil.which(openshell_bin) if openshell_bin else None
+    if resolved_openshell_bin is None:
+        return None
+    try:
+        from mac.executor_sandbox import (
+            _kernel_has_landlock,
+            _managed_openshell_runtime_image_ref,
+            _read_only_report_environment_passthrough_valid,
+            _read_only_report_extra_create_argv,
+            _resolve_openshell_policy,
+        )
+
+        executor_path, executor_sha256 = nofollow_regular_file_identity(argv[0])
+        openshell_bin_path, openshell_bin_sha256 = (
+            nofollow_regular_file_identity(resolved_openshell_bin)
+        )
+        _policy_path, policy_sha256 = nofollow_regular_file_identity(
+            _resolve_openshell_policy()
+        )
+        runtime_image_ref = _managed_openshell_runtime_image_ref()
+        # Registration precedes controller approval. Validate the complete
+        # local create contract without requiring the tuple this attestation
+        # is asking the hub to approve.
+        _read_only_report_extra_create_argv(require_approval=False)
+        if not _read_only_report_environment_passthrough_valid():
+            return None
+        python_candidate = (
+            os.environ.get("MAC_TASK_EXECUTOR_PYTHON") or sys.executable
+        ).strip()
+        python_path, python_sha256 = nofollow_regular_file_identity(
+            Path(python_candidate).expanduser().resolve(strict=True)
+        )
+        script_candidate = (
+            os.environ.get("MAC_TASK_EXECUTOR_SCRIPT")
+            or str(Path(executor_path).with_name("mac-task-executor.py"))
+        ).strip()
+        executor_script_path, executor_script_sha256 = (
+            nofollow_regular_file_identity(script_candidate)
+        )
+        source_candidate = (
+            os.environ.get("MAC_SELF_UPDATE_REPO")
+            or str(_default_self_update_repo())
+        ).strip()
+        source_root, source_bundle_sha256 = nofollow_source_bundle_digest(
+            source_candidate
+        )
+        if sys.platform.startswith("linux") and _kernel_has_landlock():
+            platform = "linux"
+            isolation_posture = "landlock_enforced"
+        elif sys.platform == "darwin" and _env_truthy(
+            os.environ.get("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")
+        ):
+            platform = "darwin"
+            isolation_posture = "macos_docker_vm_seccomp_egress"
+        else:
+            return None
+    except Exception:  # noqa: BLE001 - absence means no dispatch attestation
+        return None
+    return read_only_report_repository_executor_attestation(
+        runtime_image_ref=runtime_image_ref,
+        policy_sha256=policy_sha256,
+        openshell_bin_path=openshell_bin_path,
+        openshell_bin_sha256=openshell_bin_sha256,
+        executor_path=executor_path,
+        executor_sha256=executor_sha256,
+        platform=platform,
+        isolation_posture=isolation_posture,
+        python_path=python_path,
+        python_sha256=python_sha256,
+        executor_script_path=executor_script_path,
+        executor_script_sha256=executor_script_sha256,
+        source_root=source_root,
+        source_bundle_sha256=source_bundle_sha256,
+    )
+
+
+_REPORT_EXECUTOR_APPROVAL_ENV = {
+    "runtime_image_ref": "MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_IMAGE_REF",
+    "policy_sha256": "MAC_REPORT_EXECUTOR_APPROVED_POLICY_SHA256",
+    "openshell_bin_path": "MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_PATH",
+    "openshell_bin_sha256": "MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_SHA256",
+    "executor_path": "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_PATH",
+    "executor_sha256": "MAC_REPORT_EXECUTOR_APPROVED_HOST_EXECUTOR_SHA256",
+    "platform": "MAC_REPORT_EXECUTOR_APPROVED_PLATFORM",
+    "isolation_posture": "MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE",
+    "python_path": "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH",
+    "python_sha256": "MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256",
+    "executor_script_path": "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH",
+    "executor_script_sha256": "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256",
+    "source_root": "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT",
+    "source_bundle_sha256": "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256",
+}
+_REPORT_EXECUTOR_RUNTIME_PATH_ENV = {
+    "python_path": "MAC_TASK_EXECUTOR_PYTHON",
+    "executor_script_path": "MAC_TASK_EXECUTOR_SCRIPT",
+    "source_root": "MAC_SELF_UPDATE_REPO",
+}
+
+
+def _apply_read_only_report_executor_approval(
+    resources: Any, environ: Dict[str, str]
+) -> bool:
+    for name in _REPORT_EXECUTOR_APPROVAL_ENV.values():
+        environ.pop(name, None)
+    if not agent_has_read_only_report_repository_executor(resources):
+        return False
+    marker = resources[REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY]
+    for key, name in _REPORT_EXECUTOR_APPROVAL_ENV.items():
+        environ[name] = str(marker[key])
+    # The generated fleet wrapper historically embedded these paths instead of
+    # exporting them. Bind the actual spawned runtime to the exact same paths
+    # the hub approved, including on a deployment-realistic environment where
+    # none of the three variables existed before registration.
+    for key, name in _REPORT_EXECUTOR_RUNTIME_PATH_ENV.items():
+        environ[name] = str(marker[key])
+    return True
+
+
 def _worker_source_state(repo: Path) -> JsonDict:
     """Return secret-free source attestation used by the hub reconciler."""
     state: JsonDict = {
@@ -464,6 +631,7 @@ def register_worker(
     machine_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     hermes_instance_id: Optional[str] = None,
+    executor_argv: Optional[List[str]] = None,
 ) -> JsonDict:
     """Register or refresh the machine and agent rows for this worker process."""
     host = (hostname or socket.gethostname()).strip()
@@ -513,6 +681,17 @@ def register_worker(
             _routes = derived
     if _routes:
         resources = {**(resources or {}), "media_routes": _routes}
+    # This self-report is recomputed from the process that is about to claim
+    # work.  Never trust a similarly named value supplied through --resources.
+    resources = dict(resources or {})
+    resources.pop(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY, None)
+    report_executor_attestation = _read_only_report_executor_attestation(
+        executor_argv
+    )
+    if report_executor_attestation is not None:
+        resources[REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY] = (
+            report_executor_attestation
+        )
     resources = _resources_with_command_inventory(
         resources,
         source_repo=_default_self_update_repo(),
@@ -1394,10 +1573,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             # agent IS busy; idle would wrongly free it for new dispatch. Best
             # effort: never let a liveness ping disturb execution.
             try:
-                self.client.post(
-                    "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
-                    _deployment_heartbeat_payload("busy"),
-                )
+                self._heartbeat(status_override="busy")
             except Exception:  # noqa: BLE001 - liveness ping is best-effort
                 pass
 
@@ -1419,10 +1595,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         """
         while not stop.wait(interval_seconds):
             try:
-                self.client.post(
-                    "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
-                    _deployment_heartbeat_payload("busy"),
-                )
+                self._heartbeat(status_override="busy")
             except Exception:  # noqa: BLE001 - liveness ping is best-effort
                 pass
 
@@ -3250,6 +3423,28 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         task_dir.mkdir(parents=True, exist_ok=True)
         repository_context = self._prepare_repository_worktree(task, lease, task_dir)
         if repository_context is not None:
+            metadata = task.get("metadata") if isinstance(task, dict) else None
+            if metadata_declares_read_only_report_repository(metadata):
+                repository_contract = _current_repository_contract(task)
+                repository_context = dict(repository_context)
+                repository_context.update(
+                    {
+                        "repository_access_mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+                        "repository_access_schema": REPORT_REPOSITORY_ACCESS_SCHEMA,
+                        "repository_contract": repository_contract,
+                    }
+                )
+                # The executor needs only the disposable inspection clone. Do
+                # not expose the registered source checkout as an alternate
+                # writable path in task.json or MAC_TASK_REPO_SOURCE.
+                if isinstance(metadata, dict):
+                    for container_key in ("origin", "execution_contract"):
+                        container = metadata.get(container_key)
+                        if isinstance(container, dict):
+                            container.pop("repository_path", None)
+                            nested_contract = container.get("repository_contract")
+                            if isinstance(nested_contract, dict):
+                                nested_contract.pop("repository_path", None)
             metadata = task.setdefault("metadata", {})
             if isinstance(metadata, dict):
                 runtime = metadata.setdefault("runtime", {})
@@ -3308,8 +3503,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         lease_id: str,
         attempt_state: Optional[JsonDict] = None,
     ) -> JsonDict:
-        (task_dir / "stdout.txt").write_text(execution.stdout, encoding="utf-8")
-        (task_dir / "stderr.txt").write_text(execution.stderr, encoding="utf-8")
+        _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
+        _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         if execution.succeeded:
             self._write_missing_repository_evidence_manifest(
                 task_id,
@@ -3319,7 +3514,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
         metadata = self._execution_metadata(task_dir, execution)
         result_path = task_dir / "worker-result.json"
-        result_path.write_text(
+        _write_host_control_text(
+            result_path,
             json.dumps(
                 {
                     "returncode": execution.returncode,
@@ -3329,7 +3525,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 indent=2,
                 sort_keys=True,
             ),
-            encoding="utf-8",
+            task_dir,
         )
         artifacts = _durable_evidence_artifacts(task_dir, result_path)
         evidence_result = self.client.post(
@@ -3466,10 +3662,22 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         execution: WorkerExecution,
         attempt_state: Optional[JsonDict] = None,
     ) -> bool:
-        context = _load_repository_context(task_dir)
+        task = _task_payload_from_workspace(task_dir)
+        serialized_context = _load_repository_context(task_dir)
+        trusted_context = _trusted_read_only_repository_context(task)
+        if trusted_context:
+            return self._write_read_only_report_evidence_manifest(
+                task_id,
+                task_dir,
+                execution,
+                trusted_context,
+                context_problems=_read_only_repository_context_drift_problems(
+                    trusted_context, serialized_context
+                ),
+            )
+        context = serialized_context
         if not context:
             return False
-        task = _task_payload_from_workspace(task_dir)
         raw_package_assignment = ensure_json_object(task.get("metadata")).get(
             "work_package_assignment"
         )
@@ -3582,6 +3790,84 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 "evidence_type": manifest.get("evidence_type"),
                 "problems": manifest.get("problems") or [],
             },
+        )
+        return True
+
+    def _write_read_only_report_evidence_manifest(
+        self,
+        task_id: str,
+        task_dir: Path,
+        execution: WorkerExecution,
+        context: JsonDict,
+        *,
+        context_problems: Optional[List[str]] = None,
+    ) -> bool:
+        """Ensure repository-inspection reports stay diff-free operator results.
+
+        This deliberately does not call the repository finalizer.  The
+        inspection checkout has no publication remote, and any local mutation
+        turns the result into fail-closed operator evidence for the submission
+        gate to reject.
+        """
+
+        task = _task_payload_from_workspace(task_dir)
+        worktree_raw = str(context.get("repository_worktree") or "").strip()
+        worktree = Path(worktree_raw).expanduser() if worktree_raw else Path()
+        problems = list(context_problems or [])
+        problems.extend(_read_only_repository_problems(worktree, context))
+        if execution.returncode != 0:
+            problems.append(
+                "read-only repository report executor failed with returncode %d"
+                % execution.returncode
+            )
+        manifest_path = task_dir / "mac-evidence.json"
+        try:
+            existing = ensure_json_object(
+                json.loads(manifest_path.read_text(encoding="utf-8"))
+            )
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            existing = {}
+        existing_type = str(existing.get("evidence_type") or "").strip().lower()
+        if existing and existing_type != "operator_result":
+            problems.append(
+                "read-only repository report evidence_type must be operator_result"
+            )
+        result_text = (execution.stdout or execution.stderr or execution.summary or "").strip()
+        summary = str(existing.get("summary") or execution.summary or "").strip()
+        if not summary:
+            summary = next(
+                (line.strip() for line in result_text.splitlines() if line.strip()),
+                "read-only repository analysis completed",
+            )
+        manifest: JsonDict = {
+            **existing,
+            "schema": VERIFICATION_SCHEMA,
+            "status": "invalid" if problems else "complete",
+            "evidence_type": "operator_result",
+            "summary": summary[:1000],
+            "result": str(existing.get("result") or result_text)[-20000:],
+            "repository_access": _read_only_repository_access_evidence(context),
+        }
+        manifest, trusted_test_problems = _attach_trusted_read_only_report_test(
+            manifest, task_dir, task
+        )
+        problems.extend(trusted_test_problems)
+        manifest["status"] = "invalid" if problems else "complete"
+        # A read-only report is never a publication anchor, even when an agent
+        # supplied a repo-shaped lookalike in its mutable manifest.
+        manifest.pop("repo", None)
+        if problems:
+            manifest["problems"] = list(dict.fromkeys(problems))
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        self._observe_log(
+            "worker.repository.read_only_report_validated",
+            level="error" if problems else "info",
+            subject_type="task",
+            subject_id=task_id,
+            detail={"status": manifest["status"], "problems": problems},
         )
         return True
 
@@ -4020,11 +4306,61 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 problems.extend(_worker_review_verdict_executor_repo_problems(task_dir, manifest))
             problems.extend(_worker_required_changed_file_problems(task_payload, manifest))
 
-        repository_context = _load_repository_context(task_dir)
+        serialized_context = _load_repository_context(task_dir)
+        trusted_read_only_context = _trusted_read_only_repository_context(task_payload)
+        repository_context = trusted_read_only_context or serialized_context
+        is_review_task = isinstance(
+            ensure_json_object(task_payload.get("metadata")).get("review_context"),
+            dict,
+        )
         if repository_context:
-            worktree = Path(str(repository_context.get("repository_worktree") or ""))
+            worktree_raw = str(repository_context.get("repository_worktree") or "").strip()
+            worktree = Path(worktree_raw).expanduser() if worktree_raw else Path()
             if not worktree.exists():
                 problems.append("repository worktree is missing: %s" % worktree)
+            elif trusted_read_only_context:
+                problems.extend(
+                    _read_only_repository_context_drift_problems(
+                        trusted_read_only_context, serialized_context
+                    )
+                )
+                expected_evidence_type = (
+                    "review_verdict" if is_review_task else "operator_result"
+                )
+                if evidence_type != expected_evidence_type:
+                    problems.append(
+                        "read-only repository %s evidence_type must be %s"
+                        % (
+                            "review" if is_review_task else "report",
+                            expected_evidence_type,
+                        )
+                    )
+                problems.extend(
+                    _read_only_repository_problems(worktree, repository_context)
+                )
+                expected_access = _read_only_repository_access_evidence(
+                    trusted_read_only_context
+                )
+                if is_review_task:
+                    expected_access["independent_review_verified"] = True
+                if manifest.get("repository_access") != expected_access:
+                    problems.append(
+                        "verification.repository_access does not match the prepared "
+                        "read-only repository contract"
+                    )
+                trusted_test_item, trusted_test_problems = (
+                    _trusted_read_only_report_test_item(task_dir, task_payload)
+                )
+                problems.extend(trusted_test_problems)
+                if _repository_contract_test_command(task_payload):
+                    expected_tests = (
+                        [trusted_test_item] if trusted_test_item is not None else []
+                    )
+                    if manifest.get("tests") != expected_tests:
+                        problems.append(
+                            "verification.tests does not match the trusted OpenShell "
+                            "repository contract result"
+                        )
             else:
                 # New-file handoff: the sandboxed coding agent commonly leaves
                 # intended new source/test files untracked (OpenShell returns
@@ -4114,11 +4450,12 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         executor_evidence_id: str,
         message_id: str,
     ) -> JsonDict:
-        (task_dir / "stdout.txt").write_text(execution.stdout, encoding="utf-8")
-        (task_dir / "stderr.txt").write_text(execution.stderr, encoding="utf-8")
+        _write_host_control_text(task_dir / "stdout.txt", execution.stdout, task_dir)
+        _write_host_control_text(task_dir / "stderr.txt", execution.stderr, task_dir)
         result_path = task_dir / "review-result.json"
         metadata = self._execution_metadata(task_dir, execution)
-        result_path.write_text(
+        _write_host_control_text(
+            result_path,
             json.dumps(
                 {
                     "returncode": execution.returncode,
@@ -4130,7 +4467,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 indent=2,
                 sort_keys=True,
             ),
-            encoding="utf-8",
+            task_dir,
         )
         artifacts = _durable_evidence_artifacts(task_dir, result_path)
         evidence_result = self.client.post(
@@ -4193,14 +4530,52 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # Raw residual tensors can be very large and are an executor-to-auditor
         # handoff, not durable task evidence.  Persist only the bounded result.
         metadata.pop("activation_probe_activations", None)
-        repository_context = _load_repository_context(task_dir)
-        manifest = metadata.get("verification") or self._load_verification_manifest(task_dir)
-        manifest = _enrich_verification_manifest_from_repository_context(
-            ensure_json_object(manifest),
-            repository_context,
-            task=_task_payload_from_workspace(task_dir),
+        task_payload = _task_payload_from_workspace(task_dir)
+        serialized_context = _load_repository_context(task_dir)
+        trusted_read_only_context = _trusted_read_only_repository_context(task_payload)
+        is_review_task = isinstance(
+            ensure_json_object(task_payload.get("metadata")).get("review_context"),
+            dict,
         )
-        manifest = _attach_repository_codegraph_audit(manifest, repository_context)
+        manifest = metadata.get("verification") or self._load_verification_manifest(task_dir)
+        manifest = ensure_json_object(manifest)
+        if trusted_read_only_context:
+            # Read-only report provenance is not a publishable repo anchor.
+            # Keeping it outside ``repo`` prevents the hub/reviewer from
+            # imposing pushed-commit semantics on operator_result evidence.
+            manifest = dict(manifest)
+            manifest.pop("repo", None)
+            manifest["evidence_type"] = (
+                "review_verdict" if is_review_task else "operator_result"
+            )
+            authoritative_access = _read_only_repository_access_evidence(
+                trusted_read_only_context
+            )
+            if is_review_task and ensure_json_object(
+                manifest.get("repository_access")
+            ).get("independent_review_verified") is True:
+                authoritative_access["independent_review_verified"] = True
+            manifest["repository_access"] = authoritative_access
+            manifest, trusted_test_problems = _attach_trusted_read_only_report_test(
+                manifest, task_dir, task_payload
+            )
+            if trusted_test_problems:
+                manifest["status"] = "invalid"
+                manifest["problems"] = list(
+                    dict.fromkeys(
+                        [
+                            *_manifest_list(manifest.get("problems")),
+                            *trusted_test_problems,
+                        ]
+                    )
+                )
+        else:
+            manifest = _enrich_verification_manifest_from_repository_context(
+                manifest,
+                serialized_context,
+                task=task_payload,
+            )
+            manifest = _attach_repository_codegraph_audit(manifest, serialized_context)
         metadata["verification"] = self._sign_verification_manifest(manifest)
         metadata.setdefault(
             "workspace_outputs",
@@ -4227,20 +4602,16 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         return signed
 
     def _heal_attestation_key(self) -> bool:
-        """Recover from a hub-side attestation-key rotation under a live worker.
+        """Diagnose key drift without granting a worker rotation authority.
 
-        Observed 2026-07-14: a gateway deploy rotated an agent's key while its
-        worker process kept running — the worker signed every manifest with the
-        stale in-memory key for 22h, so every finished task was rejected at
-        submit-for-review ("signature does not verify"), blocked, retried the
-        same deterministic failure, and died at max attempts. Startup-only key
-        validation cannot catch a mid-run rotation, so this heals it in-place:
-        verify the current key against the hub; when it no longer matches,
-        rotate, adopt, and persist the new key (env file + process env).
+        Key replacement is an administrator-owned deployment transaction: it
+        proves the target under the deployer lock, conditionally rotates,
+        installs through owner-only files, restarts, and proves the new key a
+        second time. A bound worker may perform this secret-free health check,
+        but must never retrieve or install fresh signing authority itself.
 
-        Returns True only when a stale key was actually replaced (the caller
-        may then re-sign and retry once). Rate-limited so a rejection with a
-        different cause can never drive a rotation loop. Never raises.
+        The historical return contract is retained for the submission caller;
+        it always returns ``False`` because no in-process re-sign is permitted.
         """
         if not self.attestation_key:
             return False
@@ -4250,15 +4621,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             return False
         self._last_attestation_heal_at = now
         try:
-            if _attestation_key_matches_hub(self.client, self.agent_id, self.attestation_key):
-                # Key is fine — the signature rejection has another cause;
-                # do not rotate (that would invalidate a good key).
+            if _attestation_key_matches_hub(
+                self.client, self.agent_id, self.attestation_key
+            ):
                 return False
-            rotated = self.client.post(
-                "/agents/%s/attestation-key/rotate" % quote(self.agent_id, safe=""),
-                {},
-            )
-            new_key = str(rotated["attestation_key"])
         except Exception as exc:  # noqa: BLE001 - healing is best-effort.
             self._observe_log(
                 "worker.attestation.heal_failed",
@@ -4266,28 +4632,18 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 detail={"agent_id": self.agent_id, "error": str(exc)},
             )
             return False
-        self.attestation_key = new_key
-        os.environ["MAC_ATTESTATION_KEY"] = new_key
-        if self.attestation_key_env_path is not None:
-            try:
-                _write_env_value(
-                    self.attestation_key_env_path, "MAC_ATTESTATION_KEY", new_key
-                )
-            except OSError as exc:
-                self._observe_log(
-                    "worker.attestation.heal_persist_failed",
-                    level="warning",
-                    detail={"agent_id": self.agent_id, "error": str(exc)},
-                )
         self._observe_log(
-            "worker.attestation.key_healed",
-            level="warning",
+            "worker.attestation.controller_recovery_required",
+            level="error",
             detail={
                 "agent_id": self.agent_id,
-                "reason": "hub-side rotation detected under a live worker; key rotated, adopted, persisted",
+                "reason": (
+                    "installed key does not match the hub; a fenced admin "
+                    "deployment recovery is required"
+                ),
             },
         )
-        return True
+        return False
 
     def _load_verification_manifest(self, task_dir: Path) -> JsonDict:
         manifest_path = task_dir / "mac-evidence.json"
@@ -4407,27 +4763,50 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         base["media_routes"] = [
             r for r in all_routes if r.get("op") in held or r.get("op") not in managed
         ]
+        base = self._resources_with_live_report_executor_attestation(base)
         try:
-            self.client.post(
+            refreshed = self.client.post(
                 "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
                 _deployment_heartbeat_payload("idle", resources=base),
+            )
+            _apply_read_only_report_executor_approval(
+                refreshed.get("resources") if isinstance(refreshed, Mapping) else None,
+                os.environ,
             )
         except Exception:  # noqa: BLE001
             pass
 
-    def _heartbeat(self) -> None:
+    def _resources_with_live_report_executor_attestation(
+        self, resources: Optional[Mapping[str, Any]]
+    ) -> JsonDict:
+        """Replace the report claim with a fresh local artifact probe."""
+
+        refreshed = dict(resources or {})
+        refreshed.pop(REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY, None)
+        refreshed.pop(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY, None)
+        executor_argv = (
+            list(self.executor.argv)
+            if isinstance(self.executor, SubprocessExecutor)
+            else []
+        )
+        attestation = _read_only_report_executor_attestation(executor_argv)
+        if attestation is not None:
+            refreshed[REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY] = attestation
+        return refreshed
+
+    def _heartbeat(self, status_override: Optional[str] = None) -> None:
         # Push dispatch may have claimed a task since this process last polled.
         # Read our durable agent row before declaring local idleness so the hub
         # sees a truthful BUSY heartbeat and can return that existing lease from
         # claim-next.  Preserve the normal idle fallback when the read itself is
         # transiently unavailable; the heartbeat will surface any real conflict.
-        heartbeat_status = "idle"
+        heartbeat_status = status_override or "idle"
         current_agent: Optional[JsonDict] = None
         try:
             current_agent = self.client.get(
                 "/agents/%s" % quote(self.agent_id, safe="")
             )
-            if (current_agent or {}).get("current_task_id"):
+            if status_override is None and (current_agent or {}).get("current_task_id"):
                 heartbeat_status = "busy"
         except MacApiError:
             pass
@@ -4441,6 +4820,13 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 current_agent.get("resources"), Mapping
             ):
                 command_resources = dict(current_agent["resources"])
+        if command_resources is None and isinstance(current_agent, Mapping):
+            current_resources = current_agent.get("resources")
+            if isinstance(current_resources, Mapping):
+                command_resources = dict(current_resources)
+        command_resources = self._resources_with_live_report_executor_attestation(
+            command_resources
+        )
         # Health is a worker observation, not a controller override. The hub
         # projects this request through sticky startup-self-test resources, so
         # asking for healthy can still correctly remain degraded.
@@ -4453,9 +4839,13 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         # per process; subsequent heartbeats are pure liveness pings.
         if self.running_digest and not self._declared_digest:
             payload["running_digest"] = self.running_digest
-        self.client.post(
+        refreshed = self.client.post(
             "/agents/%s/heartbeat" % quote(self.agent_id, safe=""),
             payload,
+        )
+        _apply_read_only_report_executor_approval(
+            refreshed.get("resources") if isinstance(refreshed, Mapping) else None,
+            os.environ,
         )
         if self.running_digest and not self._declared_digest:
             self._declared_digest = True
@@ -5008,21 +5398,69 @@ def _durable_media_artifacts(task_dir: Path) -> List[JsonDict]:
     return artifacts
 
 
+def _write_host_control_text(path: Path, content: str, workspace: Path) -> None:
+    """Write a host-owned workspace output without following agent symlinks."""
+
+    workspace_resolved = workspace.resolve()
+    try:
+        path.parent.resolve().relative_to(workspace_resolved)
+    except (OSError, ValueError):
+        raise OSError("host control output is outside task workspace") from None
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        info = None
+    if info is not None and not stat.S_ISREG(info.st_mode):
+        path.unlink()
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise OSError("host control output is not a regular file")
+        with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as handle:
+            handle.write(content)
+            handle.flush()
+    finally:
+        os.close(fd)
+
+
 def _capture_evidence_artifact(
     path: Path,
     *,
     name: str,
     artifact_type: str,
     max_bytes: int,
+    allowed_root: Optional[Path] = None,
 ) -> Optional[JsonDict]:
     try:
-        source_size = path.stat().st_size
+        source_info = path.lstat()
     except OSError:
         return None
+    if not stat.S_ISREG(source_info.st_mode):
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+        if allowed_root is not None:
+            resolved.relative_to(allowed_root.resolve())
+    except (OSError, ValueError):
+        return None
+    source_size = source_info.st_size
     source_digest = hashlib.sha256()
     captured = bytearray()
     try:
-        with path.open("rb") as handle:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != source_info.st_dev
+            or opened.st_ino != source_info.st_ino
+        ):
+            os.close(fd)
+            return None
+        with os.fdopen(fd, "rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 source_digest.update(chunk)
                 if len(captured) < max_bytes:
@@ -5037,7 +5475,7 @@ def _capture_evidence_artifact(
     return {
         "name": name,
         "artifact_type": artifact_type,
-        "source_uri": path.resolve().as_uri(),
+        "source_uri": resolved.as_uri(),
         "content_type": _artifact_content_type(path),
         "encoding": "base64",
         "size_bytes": len(content),
@@ -5088,6 +5526,7 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
             name=name,
             artifact_type=artifact_type,
             max_bytes=min(per_artifact_limit, remaining),
+            allowed_root=task_dir,
         )
         if captured is not None:
             artifacts.append(captured)
@@ -5133,10 +5572,12 @@ def _repository_task_origin(task: JsonDict) -> Optional[JsonDict]:
     metadata = task.get("metadata") if isinstance(task, dict) else None
     if not isinstance(metadata, dict):
         return None
-    # Declared report/answer tasks are non-code: no managed worktree/branch is
-    # prepared and the repo finalizer never runs, so the executor's
-    # operator_result fallback provides the (substantive, diff-free) evidence.
-    if metadata_declares_report_deliverable(metadata):
+    # Reports get no repository by default.  The one explicit exception is a
+    # schema-versioned operator opt-in for a task-owned read-only inspection
+    # checkout; it remains an operator_result task and never enters publication.
+    if metadata_declares_report_deliverable(
+        metadata
+    ) and not metadata_declares_read_only_report_repository(metadata):
         return None
     origin = metadata.get("origin")
     if not isinstance(origin, dict):
@@ -5166,6 +5607,95 @@ def _repository_task_origin(task: JsonDict) -> Optional[JsonDict]:
     if str(origin.get("type") or "") in {"beads", "direct_task"}:
         return dict(origin)
     return None
+
+
+def _current_repository_contract(task: JsonDict) -> JsonDict:
+    """Return the normalized current repository contract attached to a task."""
+
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not isinstance(metadata, dict):
+        return {}
+    execution = metadata.get("execution_contract")
+    origin = metadata.get("origin")
+    candidates = (
+        execution.get("repository_contract") if isinstance(execution, dict) else None,
+        origin.get("repository_contract") if isinstance(origin, dict) else None,
+        metadata.get("repository_contract"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            return copy.deepcopy(candidate)
+    return {}
+
+
+def _repository_context_is_read_only_report(context: JsonDict) -> bool:
+    return (
+        isinstance(context, dict)
+        and context.get("repository_access_schema") == REPORT_REPOSITORY_ACCESS_SCHEMA
+        and context.get("repository_access_mode") == REPORT_REPOSITORY_READ_ONLY_MODE
+    )
+
+
+_READ_ONLY_REPOSITORY_CONTEXT_KEYS = (
+    "repository_access_schema",
+    "repository_access_mode",
+    "repository_worktree",
+    "repository_base_sha",
+    "repository_base_tree",
+    "repository_refs_digest",
+    "repository_content_digest",
+    "repository_canonical_remote_url",
+    "repository_canonical_branch",
+)
+
+
+def _trusted_read_only_repository_context(task: JsonDict) -> JsonDict:
+    """Project the host-stamped inspection context from trusted task metadata."""
+
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not metadata_declares_read_only_report_repository(metadata):
+        return {}
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
+    context = copy.deepcopy(runtime) if isinstance(runtime, dict) else {}
+    context["repository_access_schema"] = REPORT_REPOSITORY_ACCESS_SCHEMA
+    context["repository_access_mode"] = REPORT_REPOSITORY_READ_ONLY_MODE
+    contract = _current_repository_contract(task)
+    canonical_remote = str(contract.get("canonical_remote_url") or "").strip()
+    canonical_branch = str(
+        contract.get("default_branch") or contract.get("canonical_branch") or ""
+    ).strip()
+    if canonical_remote:
+        context["repository_canonical_remote_url"] = canonical_remote
+    if canonical_branch:
+        context["repository_canonical_branch"] = canonical_branch
+    return context
+
+
+def _read_only_repository_context_drift_problems(
+    trusted: JsonDict, serialized: JsonDict
+) -> List[str]:
+    """Reject agent-controlled context drift from the host-stamped projection."""
+
+    if not serialized:
+        return ["read-only repository context file is missing"]
+    problems: List[str] = []
+    for key in _READ_ONLY_REPOSITORY_CONTEXT_KEYS:
+        if serialized.get(key) != trusted.get(key):
+            problems.append("read-only repository context drifted at %s" % key)
+    return problems
+
+
+def _read_only_repository_access_evidence(context: JsonDict) -> JsonDict:
+    return {
+        "schema": REPORT_REPOSITORY_ACCESS_SCHEMA,
+        "mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+        "canonical_remote_url": context.get("repository_canonical_remote_url"),
+        "canonical_branch": context.get("repository_canonical_branch"),
+        "base_sha": context.get("repository_base_sha"),
+        "base_tree": context.get("repository_base_tree"),
+        "refs_digest": context.get("repository_refs_digest"),
+        "content_digest": context.get("repository_content_digest"),
+    }
 
 
 def _repository_source_candidates(origin: JsonDict, self_update_repo: Path) -> List[Path]:
@@ -5263,6 +5793,16 @@ def _review_input_task(task: JsonDict) -> JsonDict:
     if isinstance(metadata, dict):
         for key in _BLIND_REVIEW_HIDDEN_METADATA_KEYS:
             metadata.pop(key, None)
+        # Registered host paths are preparation inputs, not semantic-review
+        # inputs. A reviewer receives only its task-owned exact-base checkout;
+        # never reveal an alternate host/source path it could try to access.
+        for container_key in ("origin", "execution_contract"):
+            container = metadata.get(container_key)
+            if isinstance(container, dict):
+                container.pop("repository_path", None)
+                contract = container.get("repository_contract")
+                if isinstance(contract, dict):
+                    contract.pop("repository_path", None)
     for key in (
         "attempt_count",
         "completed_at",
@@ -5498,9 +6038,14 @@ def _repository_context_env(context: JsonDict) -> Dict[str, str]:
         "MAC_TASK_REPO_BRANCH": context.get("repository_branch"),
         "MAC_TASK_REPO_LEASE_ID": context.get("repository_lease_id"),
         "MAC_TASK_REPO_BASE_SHA": context.get("repository_base_sha"),
+        "MAC_TASK_REPO_BASE_TREE": context.get("repository_base_tree"),
+        "MAC_TASK_REPO_REFS_DIGEST": context.get("repository_refs_digest"),
+        "MAC_TASK_REPO_CONTENT_DIGEST": context.get("repository_content_digest"),
         "MAC_TASK_REPO_REMOTE": context.get("repository_origin_remote"),
         "MAC_TASK_CANONICAL_REMOTE": context.get("repository_canonical_remote_url"),
         "MAC_TASK_REPO_DEFAULT_BRANCH": context.get("repository_canonical_branch"),
+        "MAC_TASK_REPO_ACCESS_MODE": context.get("repository_access_mode"),
+        "MAC_TASK_REPO_ACCESS_SCHEMA": context.get("repository_access_schema"),
     }
     return {key: str(value) for key, value in mapping.items() if value not in {None, ""}}
 
@@ -5617,6 +6162,81 @@ def _repository_worktree_is_dirty(worktree: Path) -> bool:
     return status.returncode != 0 or bool(status.stdout.strip())
 
 
+def _read_only_repository_problems(worktree: Path, context: JsonDict) -> List[str]:
+    """Return mutation/isolation failures for a report inspection checkout."""
+
+    if not str(context.get("repository_worktree") or "").strip():
+        return ["read-only repository worktree is not declared"]
+    if not worktree.exists():
+        return ["read-only repository worktree is missing: %s" % worktree]
+    problems: List[str] = []
+    status = _run_git(worktree, ["status", "--porcelain"])
+    if status.returncode != 0:
+        problems.append(
+            "could not inspect read-only repository worktree status: %s"
+            % ((status.stderr or status.stdout or "").strip() or worktree)
+        )
+    elif status.stdout.strip():
+        problems.append("read-only repository worktree was mutated")
+    head = _run_git(worktree, ["rev-parse", "HEAD"])
+    base_sha = str(context.get("repository_base_sha") or "").strip()
+    if head.returncode != 0 or not head.stdout.strip():
+        problems.append("could not resolve read-only repository worktree HEAD")
+    elif not base_sha or head.stdout.strip() != base_sha:
+        problems.append("read-only repository worktree HEAD changed from its prepared base")
+    tree = _run_git(worktree, ["rev-parse", "HEAD^{tree}"])
+    base_tree = str(context.get("repository_base_tree") or "").strip()
+    if tree.returncode != 0 or not base_tree or tree.stdout.strip() != base_tree:
+        problems.append("read-only repository worktree tree changed from its prepared base")
+    refs = _run_git(
+        worktree,
+        ["for-each-ref", "--format=%(refname) %(objectname)"],
+    )
+    refs_digest = str(context.get("repository_refs_digest") or "").strip()
+    observed_refs_digest = (
+        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest()
+        if refs.returncode == 0
+        else ""
+    )
+    if (
+        refs.returncode != 0
+        or not refs_digest
+        or observed_refs_digest != refs_digest
+    ):
+        problems.append("read-only repository refs changed from their prepared state")
+    remotes = _run_git(worktree, ["remote"])
+    if remotes.returncode != 0:
+        problems.append("could not verify read-only repository remote isolation")
+    elif remotes.stdout.strip():
+        problems.append("read-only repository worktree retained a publication remote")
+    # Repository-owned build/test commands may leave ignored disposable output.
+    # Only clean after the ordinary status gate proves there are no tracked or
+    # untracked edits; never reset a source mutation. CodeGraph is a permitted
+    # generated analysis cache and is intentionally retained/excluded.
+    if status.returncode == 0 and not status.stdout.strip():
+        cleaned = _run_git(worktree, ["clean", "-fdx", "-e", ".codegraph/"])
+        if cleaned.returncode != 0:
+            problems.append("could not clean read-only repository disposable outputs")
+    expected_content_digest = str(
+        context.get("repository_content_digest") or ""
+    ).strip()
+    try:
+        observed_content_digest = read_only_repository_content_digest(worktree)
+    except OSError as exc:
+        observed_content_digest = ""
+        problems.append(
+            "could not hash read-only repository content: %s" % str(exc)
+        )
+    if (
+        not expected_content_digest
+        or observed_content_digest != expected_content_digest
+    ):
+        problems.append(
+            "read-only repository content changed from its prepared state"
+        )
+    return problems
+
+
 def _repository_context_repo_snapshot(context: JsonDict) -> JsonDict:
     worktree_raw = str(context.get("repository_worktree") or "").strip()
     worktree = Path(worktree_raw).expanduser() if worktree_raw else None
@@ -5701,6 +6321,14 @@ def _repository_contract_test_command(task: JsonDict) -> str:
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     if not isinstance(metadata, dict):
         return ""
+    if metadata_declares_read_only_report_repository(metadata):
+        # Read-only reports may execute only the test command in their current
+        # execution contract.  Historical origin/top-level contracts are not
+        # authority for executable verification code.
+        current = _nested_dict(
+            metadata, "execution_contract", "repository_contract", "test"
+        )
+        return str(current.get("command") or "").strip()
     candidates = [
         _nested_dict(metadata, "execution_contract", "test"),
         _nested_dict(metadata, "execution_contract", "repository_contract", "test"),
@@ -5946,6 +6574,7 @@ def _sandbox_repository_verification_item(
     command: str,
     *,
     hub_verify: bool = False,
+    require_command_match: bool = False,
 ) -> Optional[JsonDict]:
     if task_dir is None:
         if hub_verify:
@@ -5953,6 +6582,8 @@ def _sandbox_repository_verification_item(
         return None
     path = task_dir / "mac-sandbox-verification.json"
     try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise OSError("sandbox verification evidence is not a regular file")
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         if hub_verify:
@@ -5962,16 +6593,30 @@ def _sandbox_repository_verification_item(
         if hub_verify:
             return _hub_verify_deferred_test_item(command)
         return None
+    observed_command = str(loaded.get("command") or "").strip()
+    record_problem = ""
+    if str(loaded.get("schema") or "").strip() != "mac.sandbox_verification.v1":
+        record_problem = "sandbox verification record has an invalid schema"
+    elif require_command_match and observed_command != command:
+        record_problem = (
+            "sandbox verification command does not match the repository contract"
+        )
     try:
         returncode = int(loaded.get("returncode"))
     except (TypeError, ValueError):
         returncode = 1
+    if record_problem:
+        returncode = 1
     item = _process_check_item(
         "repository contract test",
         returncode,
-        command=str(loaded.get("command") or command),
+        command=command if require_command_match else (observed_command or command),
         stdout=str(loaded.get("stdout") or ""),
-        stderr=str(loaded.get("stderr") or ""),
+        stderr="\n".join(
+            part
+            for part in (str(loaded.get("stderr") or "").strip(), record_problem)
+            if part
+        ),
     )
     item["execution_environment"] = "openshell_sandbox"
     if isinstance(loaded.get("environment_delta"), dict):
@@ -5979,6 +6624,43 @@ def _sandbox_repository_verification_item(
     if loaded.get("worktree"):
         item["worktree"] = loaded.get("worktree")
     return item
+
+
+def _trusted_read_only_report_test_item(
+    task_dir: Path, task: JsonDict
+) -> tuple[Optional[JsonDict], List[str]]:
+    """Return the host-harvested OpenShell contract result and hard failures."""
+
+    command = _repository_contract_test_command(task)
+    if not command:
+        return None, [
+            "read-only repository report current contract lacks test.command"
+        ]
+    item = _sandbox_repository_verification_item(
+        task_dir,
+        command,
+        require_command_match=True,
+    )
+    if item is None:
+        return None, [
+            "read-only repository report lacks trusted OpenShell contract test evidence"
+        ]
+    if _worker_verification_item_passed(item) is not True:
+        return item, ["read-only repository report contract test did not pass"]
+    return item, []
+
+
+def _attach_trusted_read_only_report_test(
+    manifest: JsonDict, task_dir: Path, task: JsonDict
+) -> tuple[JsonDict, List[str]]:
+    item, problems = _trusted_read_only_report_test_item(task_dir, task)
+    candidate = dict(manifest)
+    # These fields are host-owned for the read-only lane. A model can describe
+    # its analysis in result/summary, but cannot claim that the repository's
+    # executable contract passed.
+    candidate["tests"] = [dict(item)] if item is not None else []
+    candidate["checks"] = [dict(item)] if item is not None else []
+    return candidate, problems
 
 
 def _process_check_item(
@@ -6035,6 +6717,8 @@ def _repository_context_audit_metadata(context: JsonDict) -> JsonDict:
         "repository_source_path": context.get("repository_source_path"),
         "repository_branch": context.get("repository_branch"),
         "repository_base_sha": context.get("repository_base_sha"),
+        "repository_access_mode": context.get("repository_access_mode"),
+        "repository_access_schema": context.get("repository_access_schema"),
     }
 
 
@@ -7072,18 +7756,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="env file where a first-registration attestation key should be persisted",
     )
     parser.add_argument(
-        "--rotate-missing-attestation-key",
-        action="store_true",
-        default=_env_bool("MAC_ROTATE_MISSING_ATTESTATION_KEY", False),
-        help="rotate and persist this agent's attestation key when no local key is configured",
-    )
-    parser.add_argument(
-        "--rotate-invalid-attestation-key",
-        action="store_true",
-        default=_env_bool("MAC_ROTATE_INVALID_ATTESTATION_KEY", False),
-        help="rotate and persist this agent's attestation key when the local key no longer matches the hub",
-    )
-    parser.add_argument(
         "--heartbeat-only",
         action="store_true",
         help="register/heartbeat once and exit without claiming tasks",
@@ -7131,6 +7803,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 machine_id=args.machine_id,
                 agent_id=args.agent_id,
                 hermes_instance_id=args.hermes_instance_id,
+                executor_argv=list(args.executor or []),
             )
             agent_id = registered["id"]
             if registered.get("attestation_key"):
@@ -7146,6 +7819,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             from mac.openshell_runtime import apply_openshell_requirement
 
             apply_openshell_requirement(registered.get("resources"), os.environ)
+            _apply_read_only_report_executor_approval(
+                registered.get("resources"), os.environ
+            )
         # --- startup behaviors (all default-on, env-gated) ---
         startup_info: JsonDict = {"agent_id": agent_id}
         # Dispatch holds are hub/operator authority. An ordinary worker restart
@@ -7209,25 +7885,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             print(json.dumps({"status": "self-install", "results": results}, indent=2, sort_keys=True))
             return 0 if all(r.get("ok", True) for r in results.values()) else 1
-        if not attestation_key and args.rotate_missing_attestation_key:
-            rotated = client.post(
-                "/agents/%s/attestation-key/rotate" % quote(agent_id, safe=""),
-                {},
-            )
-            attestation_key = str(rotated["attestation_key"])
-            os.environ["MAC_ATTESTATION_KEY"] = attestation_key
-            if attestation_env_path is not None:
-                _write_env_value(attestation_env_path, "MAC_ATTESTATION_KEY", attestation_key)
-        if attestation_key and args.rotate_invalid_attestation_key:
-            if not _attestation_key_matches_hub(client, agent_id, attestation_key):
-                rotated = client.post(
-                    "/agents/%s/attestation-key/rotate" % quote(agent_id, safe=""),
-                    {},
-                )
-                attestation_key = str(rotated["attestation_key"])
-                os.environ["MAC_ATTESTATION_KEY"] = attestation_key
-                if attestation_env_path is not None:
-                    _write_env_value(attestation_env_path, "MAC_ATTESTATION_KEY", attestation_key)
         if args.heartbeat_only:
             deployment_generation, _ = _deployment_barrier_state()
             heartbeat_resources: Optional[Mapping[str, Any]] = None

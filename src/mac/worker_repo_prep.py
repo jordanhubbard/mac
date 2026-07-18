@@ -10,13 +10,12 @@ see no change.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
-import secrets
 import shutil
 import subprocess
-import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -30,6 +29,12 @@ from mac.fleet_learning import (
 from mac.repository_contract import (
     remote_branch_from_ref as _remote_branch_from_ref,
 )
+from mac.models import (
+    REPORT_REPOSITORY_ACCESS_SCHEMA,
+    REPORT_REPOSITORY_READ_ONLY_MODE,
+    metadata_declares_read_only_report_repository,
+)
+from mac.repository_access_env import read_only_repository_content_digest
 
 JsonDict = Dict[str, Any]
 
@@ -43,6 +48,125 @@ _DISK_FULL_MARKERS = (
     "errno 28",
     "enospc",
 )
+
+
+def _current_read_only_repository_contract(task: JsonDict) -> JsonDict:
+    """Return only the current execution contract for an opted-in report.
+
+    Historical origin contracts and runtime environment values are useful for
+    ordinary compatibility paths, but they are not authority for this
+    security boundary.  An incomplete current contract therefore fails closed
+    instead of silently reviving a stale repository identity.
+    """
+
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    execution = (
+        metadata.get("execution_contract")
+        if isinstance(metadata, dict)
+        else None
+    )
+    contract = (
+        execution.get("repository_contract")
+        if isinstance(execution, dict)
+        else None
+    )
+    if not isinstance(contract, dict):
+        raise RuntimeError(
+            "read-only repository report requires the current "
+            "execution_contract.repository_contract"
+        )
+    return contract
+
+
+def _read_only_contract_default_branch(task: JsonDict, _origin: JsonDict) -> str:
+    contract = _current_read_only_repository_contract(task)
+    branch = str(
+        contract.get("default_branch") or contract.get("canonical_branch") or ""
+    ).strip()
+    if not branch:
+        raise RuntimeError(
+            "read-only repository report current "
+            "execution_contract.repository_contract has no canonical branch"
+        )
+    return branch
+
+
+def _scrub_read_only_git_transport_residue(
+    worktree: Path, *, forbidden_values: tuple[str, ...]
+) -> None:
+    """Remove one-off fetch traces and fail if transport identity leaked to Git metadata."""
+
+    git_dir = worktree / ".git"
+    (git_dir / "FETCH_HEAD").unlink(missing_ok=True)
+    shutil.rmtree(git_dir / "logs", ignore_errors=True)
+    candidates = [
+        git_dir / "config",
+        git_dir / "FETCH_HEAD",
+        git_dir / "objects" / "info" / "alternates",
+    ]
+    forbidden = [
+        value.encode("utf-8", errors="surrogateescape")
+        for value in forbidden_values
+        if value
+    ]
+    for path in candidates:
+        try:
+            payload = path.read_bytes()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise RuntimeError(
+                "could not inspect isolated read-only Git metadata"
+            ) from exc
+        if any(value in payload for value in forbidden):
+            raise RuntimeError(
+                "isolated read-only Git metadata retained transport identity"
+            )
+
+
+def _finish_read_only_checkout(
+    worktree: Path,
+    *,
+    base_sha: str,
+    temporary_ref: str,
+    forbidden_values: tuple[str, ...],
+) -> tuple[str, str, str]:
+    """Detach at *base_sha*, erase refs/transports, and return tree/ref/content proofs."""
+
+    from mac.worker import _run_git  # noqa: PLC0415
+
+    checkout = _run_git(worktree, ["checkout", "--detach", base_sha])
+    if checkout.returncode != 0:
+        raise RuntimeError("could not detach isolated read-only checkout at exact base")
+    deleted = _run_git(worktree, ["update-ref", "-d", temporary_ref])
+    if deleted.returncode != 0:
+        raise RuntimeError("could not erase isolated read-only temporary ref")
+    _scrub_read_only_git_transport_residue(
+        worktree, forbidden_values=forbidden_values
+    )
+    remotes = _run_git(worktree, ["remote"])
+    if remotes.returncode != 0 or remotes.stdout.strip():
+        raise RuntimeError("isolated read-only repository unexpectedly has a remote")
+    tree = _run_git(worktree, ["rev-parse", "HEAD^{tree}"])
+    if tree.returncode != 0 or not tree.stdout.strip():
+        raise RuntimeError("could not resolve isolated read-only repository base tree")
+    refs = _run_git(
+        worktree, ["for-each-ref", "--format=%(refname) %(objectname)"]
+    )
+    if refs.returncode != 0 or refs.stdout.strip():
+        raise RuntimeError("isolated read-only repository unexpectedly contains refs")
+    exclude = worktree / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if ".codegraph/" not in existing.splitlines():
+        exclude.write_text(
+            existing.rstrip("\n") + "\n.codegraph/\n", encoding="utf-8"
+        )
+    return (
+        tree.stdout.strip(),
+        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest(),
+        read_only_repository_content_digest(worktree),
+    )
 
 
 def _is_disk_full_error(text: str) -> bool:
@@ -71,28 +195,44 @@ class RepoPrepMixin:
         task_dir: Path,
     ) -> Optional[JsonDict]:
         from mac.worker import (  # noqa: PLC0415
-            GIT_SHA_RE,
             _inject_git_remote_auth,
             _redact_git_remote_auth,
             _redact_git_remote_auth_in_text,
             _repository_contract_canonical_remote,
             _repository_source_candidates,
             _repository_task_origin,
-            _review_claim_identity,
-            _review_input_task,
             _run_git,
             _run_git_in,
             _safe_path_component,
-            _task_detail_canonical_remote_url,
-            _task_detail_evidence,
             _task_worktree_branch,
             _validate_git_ref,
             _validate_git_remote_url,
-            ensure_json_object,
-            strip_git_remote_auth,
         )
 
+        read_only_report = metadata_declares_read_only_report_repository(
+            task.get("metadata")
+        )
         origin = _repository_task_origin(task)
+        if read_only_report:
+            # Report inspection is deliberately independent of every registered
+            # host checkout.  Parallel workers routinely leave those checkouts
+            # dirty or advance their private refs; consulting one here would
+            # make a credential-free analysis lane inherit unrelated repository
+            # churn and even a read-only fetch would mutate its object store.
+            # Resolve the authoritative current contract and prepare a wholly
+            # disposable clone directly from its canonical remote instead.
+            # The current execution contract is sufficient authority; a stale
+            # origin is neither required nor consulted for repository identity.
+            report_origin = origin if isinstance(origin, dict) else {}
+            remote_url = self._resolve_repository_remote_url(task, report_origin)
+            if not remote_url:
+                raise RuntimeError(
+                    "read-only repository report requires an authoritative "
+                    "canonical remote URL"
+                )
+            return self._prepare_repository_worktree_from_remote(
+                task, lease, task_dir, report_origin, remote_url
+            )
         if origin is None:
             return None
         # K8s mode: when there is no usable local source on disk, fall
@@ -191,7 +331,11 @@ class RepoPrepMixin:
         fetch_remote = _inject_git_remote_auth(canonical_remote)
         canonical_remote_display = _redact_git_remote_auth(fetch_remote)
 
-        canonical_branch = str(origin.get("default_branch") or "").strip()
+        canonical_branch = (
+            _read_only_contract_default_branch(task, origin)
+            if metadata_declares_read_only_report_repository(task.get("metadata"))
+            else str(origin.get("default_branch") or "").strip()
+        )
         if not canonical_branch:
             canonical_branch = os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
         if not canonical_branch:
@@ -260,11 +404,21 @@ class RepoPrepMixin:
             # sharing FETCH_HEAD across concurrent preparations.
             fetch = _run_git(
                 source_root,
-                ["fetch", "--no-tags", fetch_remote,
+                ["fetch", "--no-write-fetch-head", "--no-tags", fetch_remote,
                  "+refs/heads/%s:%s" % (canonical_branch, tmp_ref)],
             )
             _fetch_ok = fetch.returncode == 0
             if not _fetch_ok:
+                if metadata_declares_read_only_report_repository(
+                    task.get("metadata")
+                ):
+                    raise RuntimeError(
+                        "could not fetch canonical base for read-only repository report: %s"
+                        % _redact_git_remote_auth_in_text(
+                            (fetch.stderr or fetch.stdout or "").strip()
+                            or canonical_remote_display
+                        )
+                    )
                 # Fetch failed — network may be unavailable (offline node) or
                 # the remote is temporarily unreachable.  Log a warning and fall
                 # back to the local HEAD so the task can still proceed.  This is
@@ -370,7 +524,6 @@ class RepoPrepMixin:
                 },
             )
 
-            branch = _task_worktree_branch(self.agent_id, str(task.get("id") or ""), str(lease.get("id") or ""))
             worktree_dir = task_dir / ("repo-" + _safe_path_component(str(lease.get("id") or "lease")))
             if worktree_dir.exists():
                 # The directory is lease-scoped and leases are exclusive, so an
@@ -394,6 +547,92 @@ class RepoPrepMixin:
                         },
                     )
                 shutil.rmtree(worktree_dir)
+            if metadata_declares_read_only_report_repository(task.get("metadata")):
+                # A report inspection checkout is an independent clone, not a
+                # linked worktree in the registered repository's object store.
+                # It has no remote and is detached at the fetched canonical
+                # base, so neither commits nor pushes can affect source state.
+                initialize = _run_git_in(
+                    task_dir,
+                    [
+                        "init",
+                        "--quiet",
+                        "--",
+                        str(worktree_dir),
+                    ],
+                )
+                if initialize.returncode != 0:
+                    raise RuntimeError(
+                        "could not initialize isolated read-only repository clone: %s"
+                        % (
+                            (initialize.stderr or initialize.stdout or "").strip()
+                            or worktree_dir
+                        )
+                    )
+                clone_tmp_ref = "refs/mac/read-only/base"
+                fetch_base = _run_git(
+                    worktree_dir,
+                    [
+                        "fetch",
+                        "--no-write-fetch-head",
+                        "--no-tags",
+                        "--",
+                        str(source_root),
+                        "+%s:%s" % (tmp_ref, clone_tmp_ref),
+                    ],
+                )
+                if fetch_base.returncode != 0:
+                    raise RuntimeError(
+                        "could not copy read-only repository base into isolated clone: %s"
+                        % ((fetch_base.stderr or fetch_base.stdout or "").strip() or base_sha)
+                    )
+                fetched_base = _run_git(
+                    worktree_dir, ["rev-parse", "--verify", "%s^{commit}" % clone_tmp_ref]
+                )
+                if (
+                    fetched_base.returncode != 0
+                    or fetched_base.stdout.strip() != base_sha
+                ):
+                    raise RuntimeError(
+                        "isolated read-only repository fetch did not resolve the exact prepared base"
+                    )
+                base_tree, refs_digest, content_digest = _finish_read_only_checkout(
+                    worktree_dir,
+                    base_sha=base_sha,
+                    temporary_ref=clone_tmp_ref,
+                    forbidden_values=(str(source_root), fetch_remote),
+                )
+                context = {
+                    "schema": "mac.repository_task_worktree.v1",
+                    "checkout_policy": "task_owned_read_only_clone",
+                    "repository_declared_path": "",
+                    "repository_source_path": str(worktree_dir),
+                    "repository_worktree": str(worktree_dir),
+                    "repository_branch": "",
+                    "repository_lease_id": lease_id,
+                    "repository_base_sha": base_sha,
+                    "repository_base_tree": base_tree,
+                    "repository_refs_digest": refs_digest,
+                    "repository_content_digest": content_digest,
+                    "repository_local_prior_sha": local_prior_sha,
+                    "repository_canonical_branch": canonical_branch,
+                    "repository_canonical_remote_url": canonical_remote,
+                    "repository_canonical_remote": canonical_remote_display,
+                    "repository_ahead": ahead_count,
+                    "repository_behind": behind_count,
+                    "repository_origin_remote": canonical_remote_display,
+                    "repository_access_mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+                    "repository_access_schema": REPORT_REPOSITORY_ACCESS_SCHEMA,
+                }
+                self._observe_log(
+                    "worker.repository.worktree_prepared",
+                    subject_type="task",
+                    subject_id=str(task.get("id") or ""),
+                    detail=context,
+                )
+                return context
+
+            branch = _task_worktree_branch(self.agent_id, str(task.get("id") or ""), str(lease.get("id") or ""))
             # mac-3qv6: prune any orphaned worktree registration in
             # source_root/.git/worktrees that points at the now-deleted
             # directory. Without this, `git worktree add` below fails with
@@ -498,25 +737,7 @@ class RepoPrepMixin:
 
     def _resolve_repository_source_path(self, origin: JsonDict) -> Path:
         from mac.worker import (  # noqa: PLC0415
-            GIT_SHA_RE,
-            _inject_git_remote_auth,
-            _redact_git_remote_auth,
-            _redact_git_remote_auth_in_text,
-            _repository_contract_canonical_remote,
             _repository_source_candidates,
-            _repository_task_origin,
-            _review_claim_identity,
-            _review_input_task,
-            _run_git,
-            _run_git_in,
-            _safe_path_component,
-            _task_detail_canonical_remote_url,
-            _task_detail_evidence,
-            _task_worktree_branch,
-            _validate_git_ref,
-            _validate_git_remote_url,
-            ensure_json_object,
-            strip_git_remote_auth,
         )
 
         for candidate in _repository_source_candidates(origin, self.self_update_repo):
@@ -527,39 +748,43 @@ class RepoPrepMixin:
     def _resolve_repository_remote_url(self, task: JsonDict, origin: JsonDict) -> str:
         """Return the remote clone URL for a worker without a local source.
 
-        An explicit ``origin.repository_url`` is the task-level override. The
-        durable repository contract is next, followed by the legacy
-        ``MAC_TASK_REPO_URL`` runtime fallback. Empty string means no remote is
-        available. Invalid values fail closed without echoing possible secrets.
+        Explicit read-only reports accept only their current execution
+        contract.  Ordinary tasks preserve the compatibility order of origin,
+        durable contract, then ``MAC_TASK_REPO_URL``. Empty string means no
+        ordinary-task remote is available. Invalid values fail closed without
+        echoing possible secrets.
         """
         from mac.worker import (  # noqa: PLC0415
-            GIT_SHA_RE,
-            _inject_git_remote_auth,
-            _redact_git_remote_auth,
-            _redact_git_remote_auth_in_text,
             _repository_contract_canonical_remote,
-            _repository_source_candidates,
-            _repository_task_origin,
-            _review_claim_identity,
-            _review_input_task,
-            _run_git,
-            _run_git_in,
-            _safe_path_component,
-            _task_detail_canonical_remote_url,
-            _task_detail_evidence,
-            _task_worktree_branch,
-            _validate_git_ref,
             _validate_git_remote_url,
-            ensure_json_object,
-            strip_git_remote_auth,
         )
 
-        raw = str(origin.get("repository_url") or "").strip()
-        source = "origin.repository_url"
-        if not raw:
+        read_only_report = metadata_declares_read_only_report_repository(
+            task.get("metadata")
+        )
+        if read_only_report:
+            contract = _current_read_only_repository_contract(task)
+            raw = str(contract.get("canonical_remote_url") or "").strip()
+            source = (
+                "current execution_contract.repository_contract "
+                "canonical_remote_url"
+            )
+            if not raw:
+                raise RuntimeError(
+                    "read-only repository report current "
+                    "execution_contract.repository_contract has no "
+                    "canonical_remote_url"
+                )
+        else:
+            raw = str(origin.get("repository_url") or "").strip()
+            source = "origin.repository_url"
+        if not raw and not read_only_report:
             raw = _repository_contract_canonical_remote(task)
             source = "repository contract canonical_remote_url"
-        if not raw:
+        if not raw and not read_only_report:
+            raw = str(origin.get("repository_url") or "").strip()
+            source = "origin.repository_url"
+        if not raw and not read_only_report:
             raw = os.environ.get("MAC_TASK_REPO_URL", "").strip()
             source = "MAC_TASK_REPO_URL"
         if not raw:
@@ -588,25 +813,14 @@ class RepoPrepMixin:
         ``_load_repository_context`` and verification stay unchanged.
         """
         from mac.worker import (  # noqa: PLC0415
-            GIT_SHA_RE,
             _inject_git_remote_auth,
             _redact_git_remote_auth,
             _redact_git_remote_auth_in_text,
-            _repository_contract_canonical_remote,
-            _repository_source_candidates,
-            _repository_task_origin,
-            _review_claim_identity,
-            _review_input_task,
             _run_git,
             _run_git_in,
             _safe_path_component,
-            _task_detail_canonical_remote_url,
-            _task_detail_evidence,
             _task_worktree_branch,
             _validate_git_ref,
-            _validate_git_remote_url,
-            ensure_json_object,
-            strip_git_remote_auth,
         )
 
         worktree_dir = task_dir / (
@@ -616,7 +830,14 @@ class RepoPrepMixin:
             shutil.rmtree(worktree_dir)
         worktree_dir.parent.mkdir(parents=True, exist_ok=True)
 
-        default_branch = str(origin.get("default_branch") or "").strip()
+        read_only_report = metadata_declares_read_only_report_repository(
+            task.get("metadata")
+        )
+        default_branch = (
+            _read_only_contract_default_branch(task, origin)
+            if read_only_report
+            else str(origin.get("default_branch") or "").strip()
+        )
         if not default_branch:
             default_branch = os.environ.get("MAC_TASK_REPO_DEFAULT_BRANCH", "").strip()
         if not default_branch:
@@ -625,17 +846,81 @@ class RepoPrepMixin:
 
         auth_url = _inject_git_remote_auth(remote_url)
         remote_display = _redact_git_remote_auth(auth_url)
-        clone_args = ["clone", "--depth=1", "--branch", default_branch, "--", auth_url, str(worktree_dir)]
-        # ``git -C`` requires an existing directory; clone runs from the
-        # parent so we use a separate code path (the helper expects the
-        # repo arg to be cwd, so call git directly here).
-        clone = _run_git_in(task_dir, clone_args)
-        if clone.returncode != 0:
-            raise RuntimeError(
-                "could not clone repository for K8s task: %s"
-                % ((clone.stderr or clone.stdout or "").strip() or remote_url)
+        if read_only_report:
+            initialize = _run_git_in(
+                task_dir, ["init", "--quiet", "--", str(worktree_dir)]
             )
+            if initialize.returncode != 0:
+                raise RuntimeError(
+                    "could not initialize isolated read-only repository clone: %s"
+                    % (
+                        (initialize.stderr or initialize.stdout or "").strip()
+                        or worktree_dir
+                    )
+                )
+            temporary_ref = "refs/mac/read-only/base"
+            fetch = _run_git(
+                worktree_dir,
+                [
+                    "fetch",
+                    "--depth=1",
+                    "--no-write-fetch-head",
+                    "--no-tags",
+                    "--",
+                    auth_url,
+                    "+refs/heads/%s:%s" % (default_branch, temporary_ref),
+                ],
+            )
+            if fetch.returncode != 0:
+                raise RuntimeError(
+                    "could not fetch canonical base for read-only repository report: %s"
+                    % _redact_git_remote_auth_in_text(
+                        (fetch.stderr or fetch.stdout or "").strip()
+                        or remote_display
+                    )
+                )
+            fetched_base = _run_git(
+                worktree_dir,
+                ["rev-parse", "--verify", "%s^{commit}" % temporary_ref],
+            )
+            if fetched_base.returncode != 0 or not fetched_base.stdout.strip():
+                raise RuntimeError(
+                    "could not resolve read-only repository clone canonical base: %s"
+                    % _redact_git_remote_auth_in_text(
+                        (fetched_base.stderr or fetched_base.stdout or "").strip()
+                        or worktree_dir
+                    )
+                )
+            fetched_sha = fetched_base.stdout.strip()
+        else:
+            clone_args = [
+                "clone",
+                "--depth=1",
+                "--branch",
+                default_branch,
+                "--",
+                auth_url,
+                str(worktree_dir),
+            ]
+            # ``git -C`` requires an existing directory; clone runs from the
+            # parent so we use a separate code path (the helper expects the
+            # repo arg to be cwd, so call git directly here).
+            clone = _run_git_in(task_dir, clone_args)
+            if clone.returncode != 0:
+                raise RuntimeError(
+                    "could not clone repository for K8s task: %s"
+                    % _redact_git_remote_auth_in_text(
+                        (clone.stderr or clone.stdout or "").strip() or remote_display
+                    )
+                )
 
+        if read_only_report:
+            base_tree, refs_digest, content_digest = _finish_read_only_checkout(
+                worktree_dir,
+                base_sha=fetched_sha,
+                temporary_ref=temporary_ref,
+                forbidden_values=(auth_url,),
+            )
         head = _run_git(worktree_dir, ["rev-parse", "HEAD"])
         if head.returncode != 0 or not head.stdout.strip():
             raise RuntimeError(
@@ -643,6 +928,33 @@ class RepoPrepMixin:
                 % ((head.stderr or head.stdout or "").strip() or worktree_dir)
             )
         base_sha = head.stdout.strip()
+        if read_only_report:
+            context: JsonDict = {
+                "schema": "mac.repository_task_worktree.v1",
+                "checkout_policy": "task_owned_read_only_clone",
+                "repository_declared_path": "",
+                "repository_source_path": str(worktree_dir),
+                "repository_worktree": str(worktree_dir),
+                "repository_branch": "",
+                "repository_lease_id": str(lease.get("id") or ""),
+                "repository_base_sha": base_sha,
+                "repository_base_tree": base_tree,
+                "repository_refs_digest": refs_digest,
+                "repository_content_digest": content_digest,
+                "repository_canonical_branch": default_branch,
+                "repository_canonical_remote_url": remote_url,
+                "repository_canonical_remote": remote_display,
+                "repository_origin_remote": remote_display,
+                "repository_access_mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+                "repository_access_schema": REPORT_REPOSITORY_ACCESS_SCHEMA,
+            }
+            self._observe_log(
+                "worker.repository.worktree_prepared",
+                subject_type="task",
+                subject_id=str(task.get("id") or ""),
+                detail=context,
+            )
+            return context
         branch = _task_worktree_branch(
             self.agent_id, str(task.get("id") or ""), str(lease.get("id") or "")
         )
@@ -688,25 +1000,11 @@ class RepoPrepMixin:
         claim_result: Optional[JsonDict] = None,
     ) -> Path:
         from mac.worker import (  # noqa: PLC0415
-            GIT_SHA_RE,
-            _inject_git_remote_auth,
-            _redact_git_remote_auth,
-            _redact_git_remote_auth_in_text,
-            _repository_contract_canonical_remote,
-            _repository_source_candidates,
-            _repository_task_origin,
             _review_claim_identity,
             _review_input_task,
-            _run_git,
-            _run_git_in,
             _safe_path_component,
-            _task_detail_canonical_remote_url,
             _task_detail_evidence,
-            _task_worktree_branch,
-            _validate_git_ref,
-            _validate_git_remote_url,
             ensure_json_object,
-            strip_git_remote_auth,
         )
 
         task_dir = self.workspace / "_reviews" / _safe_path_component(review_id)
@@ -783,20 +1081,10 @@ class RepoPrepMixin:
     ) -> Optional[JsonDict]:
         from mac.worker import (  # noqa: PLC0415
             GIT_SHA_RE,
-            _inject_git_remote_auth,
-            _redact_git_remote_auth,
             _redact_git_remote_auth_in_text,
-            _repository_contract_canonical_remote,
-            _repository_source_candidates,
-            _repository_task_origin,
-            _review_claim_identity,
-            _review_input_task,
             _run_git,
-            _run_git_in,
-            _safe_path_component,
             _task_detail_canonical_remote_url,
             _task_detail_evidence,
-            _task_worktree_branch,
             _validate_git_ref,
             _validate_git_remote_url,
             ensure_json_object,
@@ -807,6 +1095,21 @@ class RepoPrepMixin:
         manifest = ensure_json_object(
             ensure_json_object(evidence.get("metadata")).get("verification")
         )
+        original_task = (
+            task_detail.get("task")
+            if isinstance(task_detail.get("task"), dict)
+            else {}
+        )
+        if metadata_declares_read_only_report_repository(
+            original_task.get("metadata")
+        ):
+            return self._prepare_read_only_review_repository_worktree(
+                task_dir=task_dir,
+                task_detail=task_detail,
+                manifest=manifest,
+                executor_evidence_id=executor_evidence_id,
+                review_id=review_id,
+            )
         repo = ensure_json_object(manifest.get("repo"))
         head_sha = str(repo.get("head_sha") or "").strip()
         if not GIT_SHA_RE.match(head_sha):
@@ -960,6 +1263,185 @@ class RepoPrepMixin:
         )
         return context
 
+    def _prepare_read_only_review_repository_worktree(
+        self,
+        *,
+        task_dir: Path,
+        task_detail: JsonDict,
+        manifest: JsonDict,
+        executor_evidence_id: str,
+        review_id: str,
+    ) -> JsonDict:
+        """Prepare a second credential-free exact-base clone for report review."""
+
+        from mac.worker import (  # noqa: PLC0415
+            GIT_SHA_RE,
+            _redact_git_remote_auth_in_text,
+            _run_git,
+            _run_git_in,
+            _validate_git_ref,
+            _validate_git_remote_url,
+            strip_git_remote_auth,
+        )
+
+        access_manifest = manifest.get("repository_access")
+        if not isinstance(access_manifest, dict) or (
+            access_manifest.get("schema") != REPORT_REPOSITORY_ACCESS_SCHEMA
+            or access_manifest.get("mode") != REPORT_REPOSITORY_READ_ONLY_MODE
+        ):
+            raise RuntimeError(
+                "read-only report review lacks host-stamped repository_access evidence"
+            )
+        base_sha = str(access_manifest.get("base_sha") or "").strip()
+        base_tree = str(access_manifest.get("base_tree") or "").strip()
+        refs_digest = str(access_manifest.get("refs_digest") or "").strip()
+        content_digest = str(access_manifest.get("content_digest") or "").strip()
+        if not GIT_SHA_RE.match(base_sha) or not all(
+            (base_tree, refs_digest, content_digest)
+        ):
+            raise RuntimeError(
+                "read-only report review repository_access proof is incomplete"
+            )
+
+        original_task = (
+            task_detail.get("task")
+            if isinstance(task_detail.get("task"), dict)
+            else {}
+        )
+        task_id = str(original_task.get("id") or "").strip()
+        project = str(original_task.get("project") or "default").strip() or "default"
+        contract = _current_read_only_repository_contract(original_task)
+        remote_url = str(contract.get("canonical_remote_url") or "").strip()
+        if not remote_url:
+            raise RuntimeError(
+                "read-only report review current execution contract has no "
+                "authoritative canonical remote"
+            )
+        remote_url = _validate_git_remote_url(strip_git_remote_auth(remote_url))
+        canonical_branch = _read_only_contract_default_branch(original_task, {})
+        try:
+            canonical_branch = _validate_git_ref(canonical_branch)
+        except ValueError as exc:
+            raise RuntimeError(
+                "read-only report review current execution contract has an "
+                "invalid canonical branch"
+            ) from exc
+        evidence_remote = str(
+            access_manifest.get("canonical_remote_url") or ""
+        ).strip()
+        if (
+            not evidence_remote
+            or strip_git_remote_auth(evidence_remote) != remote_url
+        ):
+            raise RuntimeError(
+                "read-only report repository_access remote does not match current contract"
+            )
+        if (
+            str(access_manifest.get("canonical_branch") or "").strip()
+            != canonical_branch
+        ):
+            raise RuntimeError(
+                "read-only report repository_access branch does not match current contract"
+            )
+        access = resolve_git_remote_access(remote_url)
+        review_repo = task_dir / "review-repo"
+        if review_repo.exists():
+            shutil.rmtree(review_repo)
+
+        def fail(action: str, result: subprocess.CompletedProcess[str]) -> None:
+            detail = _redact_git_remote_auth_in_text(
+                (result.stderr or result.stdout or "non-zero exit").strip()
+            )
+            message = "%s %s: %s" % (action, access.display, detail)
+            failure_class = classify_repository_access_failure(message)
+            shutil.rmtree(review_repo, ignore_errors=True)
+            self._record_repository_access_learning(
+                project=project,
+                task_id=task_id,
+                review_id=review_id,
+                remote=remote_url,
+                credential_source=access.credential_source,
+                outcome="failure",
+                error=message,
+                failure_class=failure_class,
+            )
+            raise RepositoryAccessError(message, failure_class=failure_class)
+
+        initialize = _run_git_in(
+            task_dir, ["init", "--quiet", "--", str(review_repo)]
+        )
+        if initialize.returncode != 0:
+            fail("could not initialize read-only review repository", initialize)
+        temporary_ref = "refs/mac/read-only/review-base"
+        fetch = _run_git(
+            review_repo,
+            [
+                "fetch",
+                "--no-write-fetch-head",
+                "--no-tags",
+                "--",
+                access.remote,
+                "+%s:%s" % (base_sha, temporary_ref),
+            ],
+        )
+        if fetch.returncode != 0:
+            fail("could not fetch exact read-only report base", fetch)
+        fetched = _run_git(
+            review_repo, ["rev-parse", "--verify", "%s^{commit}" % temporary_ref]
+        )
+        if fetched.returncode != 0 or fetched.stdout.strip() != base_sha:
+            fail("read-only review fetch did not resolve exact executor base", fetched)
+        observed_tree, observed_refs, observed_content = _finish_read_only_checkout(
+            review_repo,
+            base_sha=base_sha,
+            temporary_ref=temporary_ref,
+            forbidden_values=(access.remote,),
+        )
+        if (
+            observed_tree != base_tree
+            or observed_refs != refs_digest
+            or observed_content != content_digest
+        ):
+            shutil.rmtree(review_repo, ignore_errors=True)
+            raise RuntimeError(
+                "independent read-only review clone does not match executor base proof"
+            )
+        self._record_repository_access_learning(
+            project=project,
+            task_id=task_id,
+            review_id=review_id,
+            remote=remote_url,
+            credential_source=access.credential_source,
+            outcome="success",
+        )
+        context: JsonDict = {
+            "schema": "mac.review_repository_worktree.v1",
+            "checkout_policy": "review_read_only_clone",
+            "repository_worktree": str(review_repo),
+            "repository_source_path": str(review_repo),
+            "repository_branch": "",
+            "repository_base_sha": base_sha,
+            "repository_base_tree": base_tree,
+            "repository_refs_digest": refs_digest,
+            "repository_content_digest": content_digest,
+            "repository_canonical_remote_url": remote_url,
+            "repository_canonical_branch": canonical_branch,
+            "repository_access_schema": REPORT_REPOSITORY_ACCESS_SCHEMA,
+            "repository_access_mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+            "repository_review_id": review_id,
+            "repository_executor_evidence_id": executor_evidence_id,
+        }
+        (task_dir / "repository-worktree.json").write_text(
+            json.dumps(context, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        self._observe_log(
+            "worker.review.read_only_repository_worktree_prepared",
+            subject_type="task",
+            subject_id=task_id,
+            detail=context,
+        )
+        return context
+
     def _record_repository_access_learning(
         self,
         *,
@@ -972,27 +1454,6 @@ class RepoPrepMixin:
         error: str = "",
         failure_class: str = "",
     ) -> Optional[JsonDict]:
-        from mac.worker import (  # noqa: PLC0415
-            GIT_SHA_RE,
-            _inject_git_remote_auth,
-            _redact_git_remote_auth,
-            _redact_git_remote_auth_in_text,
-            _repository_contract_canonical_remote,
-            _repository_source_candidates,
-            _repository_task_origin,
-            _review_claim_identity,
-            _review_input_task,
-            _run_git,
-            _run_git_in,
-            _safe_path_component,
-            _task_detail_canonical_remote_url,
-            _task_detail_evidence,
-            _task_worktree_branch,
-            _validate_git_ref,
-            _validate_git_remote_url,
-            ensure_json_object,
-            strip_git_remote_auth,
-        )
 
         learning = build_repository_access_learning(
             project=project,

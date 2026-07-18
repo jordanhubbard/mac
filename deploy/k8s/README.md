@@ -56,7 +56,8 @@ provides all of the following as one reviewed unit:
    certifier;
 4. repository registrations containing a secret-free canonical remote, a
    `landing_certification_policy_id`, and a fully valid
-   `mac.work_package.certification_contract.v1` with a digest-pinned image;
+   `mac.work_package.certification_contract.v2` with a checksummed phase profile
+   and digest-pinned image;
 5. both activation variables set to `true` only after the preceding probes
    pass.
 
@@ -94,6 +95,18 @@ deploy/k8s/
     │                                            │
     └──────── reconciles stuck Jobs + scales worker pools
 ```
+
+Read-only repository report tasks are excluded from this legacy Job path and
+must run through OpenShell. Task Jobs receive worker, attestation, and optional
+Git credentials in the PID 1 environment, which remains recoverable through
+`/proc` even if a child process clears its own environment. The runner therefore
+blocks a mistakenly claimed report with
+`read_only_report_requires_openshell_isolation` before constructing a Job.
+The review dispatcher applies the same boundary to verdict nudges: it fetches
+the canonical task before claiming, leaves a read-only report review pending
+for OpenShell rerouting, and never constructs a credential-bearing review Job.
+Both review Job construction and the in-pod executor repeat the check as
+defense in depth against stale or forged input.
 
 ## Prerequisites
 

@@ -47,6 +47,7 @@ the wrap is a pure argv transform, so behavior is unchanged unless enabled. See
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -54,6 +55,7 @@ import os
 import re as _re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -67,7 +69,12 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from mac import relay_observability
 from mac.agent_command import PROMPT_SENTINEL
-from mac.models import metadata_declares_report_deliverable
+from mac.models import (
+    REPORT_REPOSITORY_ACCESS_SCHEMA,
+    REPORT_REPOSITORY_READ_ONLY_MODE,
+    metadata_declares_read_only_report_repository,
+    metadata_declares_report_deliverable,
+)
 from mac.codegraph_audit import (
     codegraph_audit_check,
     codegraph_audit_manifest_problems,
@@ -87,6 +94,10 @@ from mac.gitops import (
     resolve_canonical_publication_target,
     sync_worktree_with_canonical,
 )
+from mac.trusted_artifact import (
+    nofollow_regular_file_identity,
+    nofollow_source_bundle_digest,
+)
 from mac.openshell_runtime import (
     SANDBOX_BASE_PATH as _SANDBOX_BASE_PATH,
     openshell_required_for_local_agent as _openshell_required_for_local_agent,
@@ -100,6 +111,15 @@ from mac.env_config import (
 from mac.review_failure_classifier import (
     FinalizerRefusalKind,
     classify_finalizer_refusal,
+)
+from mac.repository_access_env import (
+    REPOSITORY_CREDENTIAL_ENV_NAMES,
+    fence_read_only_repository_environment,
+    read_only_repository_content_digest,
+)
+from mac.read_only_report_verifier import (
+    INTEGRITY_SCHEMA as _READ_ONLY_VERIFICATION_INTEGRITY_SCHEMA,
+    raw_git_control_digest as _authoritative_read_only_git_control_digest,
 )
 
 # ---------------------------------------------------------------------------
@@ -458,6 +478,47 @@ _DEFAULT_OPENSHELL_ENV_PASSTHROUGH = (
 # passthrough fail closed instead of allowing a host virtualenv or
 # package-manager shim to leak into sandbox command resolution.
 _FORBIDDEN_OPENSHELL_ENV_PASSTHROUGH = frozenset({"PATH"})
+_HOST_ONLY_HUB_CREDENTIALS = frozenset(
+    {
+        "MAC_WORKER_TOKEN",
+        "MAC_TOKEN",
+        "MAC_API_TOKEN",
+        "MAC_ATTESTATION_KEY",
+        "MAC_HUB_TOKEN",
+    }
+)
+_DEFAULT_OPENSHELL_ENV_NAMES = frozenset(
+    item.strip()
+    for item in _DEFAULT_OPENSHELL_ENV_PASSTHROUGH.split(",")
+    if item.strip()
+)
+_READ_ONLY_REPORT_ENV_ALLOWLIST = (
+    _DEFAULT_OPENSHELL_ENV_NAMES
+    - _HOST_ONLY_HUB_CREDENTIALS
+    - REPOSITORY_CREDENTIAL_ENV_NAMES
+    - _FORBIDDEN_OPENSHELL_ENV_PASSTHROUGH
+)
+
+
+def _read_only_report_environment_passthrough_valid() -> bool:
+    """Whether the requested report environment is the positive allowlist.
+
+    A custom passthrough is not an extension point for repository reports. It
+    may only select names from the reviewed default model/runtime surface.
+    Controller, worker, attestation, repository, Python-injection, and unknown
+    variables never qualify for the pre-claim attestation.
+    """
+
+    custom = env_str("MAC_OPENSHELL_ENV_PASSTHROUGH")
+    if not custom:
+        # The reviewed default is reduced below before use: host authority is
+        # stripped globally and repository authority is fenced for this lane.
+        return True
+    names = custom
+    requested = {
+        item.strip() for item in names.split(",") if item.strip()
+    }
+    return requested <= _READ_ONLY_REPORT_ENV_ALLOWLIST
 
 
 def _openshell_enabled() -> bool:
@@ -494,6 +555,14 @@ def _openshell_environment() -> Dict[str, str]:
     alias = _openshell_host_alias()
     values: Dict[str, str] = {}
     seen = set()
+    read_only_repository = (
+        env_str("MAC_TASK_REPO_ACCESS_MODE") == REPORT_REPOSITORY_READ_ONLY_MODE
+        and env_str("MAC_TASK_REPO_ACCESS_SCHEMA") == REPORT_REPOSITORY_ACCESS_SCHEMA
+    )
+    if read_only_repository and not _read_only_report_environment_passthrough_valid():
+        raise ValueError(
+            "read-only repository report environment contains a non-allowlisted variable"
+        )
     for raw in names.split(","):
         name = raw.strip()
         if not name or name in seen:
@@ -509,6 +578,14 @@ def _openshell_environment() -> Dict[str, str]:
         if val is None:
             continue
         values[name] = _rewrite_host_local_url(val, alias)
+    # Hub authority stays in the host executor for every task class. The model
+    # sandbox does not need to heartbeat, claim work, mutate the ledger, or sign
+    # controller evidence; forwarding a fleet worker bearer would let it do all
+    # of those things as the host identity.
+    for name in _HOST_ONLY_HUB_CREDENTIALS:
+        values.pop(name, None)
+    if read_only_repository:
+        fence_read_only_repository_environment(values)
     return values
 
 
@@ -607,6 +684,10 @@ def _resolve_openshell_policy() -> str:
 _SANDBOX_WORKDIR = "/sandbox"
 _SANDBOX_HOME = "/tmp"
 _SANDBOX_VERIFICATION_FILE = "mac-sandbox-verification.json"
+_TRUSTED_READ_ONLY_VERIFICATION_FILE = (
+    ".mac-trusted-read-only-sandbox-verification.json"
+)
+_MAX_SANDBOX_VERIFICATION_BYTES = 2 * 1024 * 1024
 
 
 def _openshell_bin() -> str:
@@ -699,9 +780,14 @@ def _sandbox_repository_environment(workspace: Path, sandbox_workspace: str) -> 
         "MAC_TASK_REPO_BRANCH",
         "MAC_TASK_REPO_LEASE_ID",
         "MAC_TASK_REPO_BASE_SHA",
+        "MAC_TASK_REPO_BASE_TREE",
+        "MAC_TASK_REPO_REFS_DIGEST",
+        "MAC_TASK_REPO_CONTENT_DIGEST",
         "MAC_TASK_REPO_REMOTE",
         "MAC_TASK_CANONICAL_REMOTE",
         "MAC_TASK_REPO_DEFAULT_BRANCH",
+        "MAC_TASK_REPO_ACCESS_MODE",
+        "MAC_TASK_REPO_ACCESS_SCHEMA",
     ):
         value = os.environ.get(name)
         if value:
@@ -772,12 +858,25 @@ task = loaded.get("task", loaded) if isinstance(loaded, dict) else {}
 metadata = task.get("metadata") if isinstance(task, dict) else {}
 if not isinstance(metadata, dict):
     metadata = {}
+access = metadata.get("report_repository_access")
+read_only_report = (
+    str(metadata.get("deliverable") or "").strip().lower()
+    in {"report", "answer", "analysis", "investigation", "question", "triage"}
+    and isinstance(access, dict)
+    and str(access.get("schema") or "").strip() == "mac.report_repository_access.v1"
+    and str(access.get("mode") or "").strip().lower() == "read_only"
+)
 contracts = []
-for path in (
-    ("execution_contract", "repository_contract"),
-    ("origin", "repository_contract"),
-    ("repository_contract",),
-):
+contract_paths = (
+    (("execution_contract", "repository_contract"),)
+    if read_only_report
+    else (
+        ("execution_contract", "repository_contract"),
+        ("origin", "repository_contract"),
+        ("repository_contract",),
+    )
+)
+for path in contract_paths:
     node = metadata
     for key in path:
         node = node.get(key) if isinstance(node, dict) else None
@@ -1031,7 +1130,7 @@ PYGH
   bootstrap_ran=0
   bootstrap_returncode=0
   bootstrap_status="skipped"
-  if [ -n "$MAC_REPO_BOOTSTRAP_COMMAND" ]; then
+  if [ -n "$MAC_REPO_BOOTSTRAP_COMMAND" ] && [ "${MAC_READ_ONLY_AUTHORITATIVE_VERIFIER:-0}" != "1" ]; then
     if [ -z "$MAC_REPO_BOOTSTRAP_CREATES" ]; then
       needs_bootstrap=1
     else
@@ -1342,6 +1441,34 @@ PY''',
     )
 
 
+def _sandbox_read_only_repository_verification_shell(
+    environment: Mapping[str, str],
+) -> str:
+    """Run the image-owned report verifier after toolchain-only setup.
+
+    Bootstrap and test execution belong to the trusted module because it
+    installs mutation watches before either command.  The setup helper may
+    provision immutable runtime tools, but the verifier mode prevents it from
+    executing ``bootstrap.command`` early.
+    """
+
+    exports = [
+        "export %s=%s" % (name, shlex.quote(value))
+        for name, value in sorted(environment.items())
+        if _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+    ]
+    return "\n".join(
+        [
+            *exports,
+            'export MAC_READ_ONLY_AUTHORITATIVE_VERIFIER="1"',
+            _sandbox_toolchain_setup_shell(),
+            'cd "$MAC_TASK_WORKSPACE"',
+            "mac_sandbox_toolchain_setup || exit 70",
+            'exec "$MAC_SANDBOX_PYTHON" -I -m mac.read_only_report_verifier',
+        ]
+    )
+
+
 def _write_private_shell_env(path: Path, values: Mapping[str, str]) -> Path:
     env_lines = [
         "export %s=%s" % (name, shlex.quote(value))
@@ -1426,8 +1553,249 @@ def _openshell_extra_create_argv() -> List[str]:
     return filtered
 
 
+_MANAGED_OPENSHELL_RUNTIME_REF_RE = _re.compile(
+    r"ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}"
+)
+
+
+def _managed_openshell_runtime_image_ref() -> str:
+    """Return the deployment-pinned OpenShell image, or fail closed."""
+
+    mac_home = Path(os.environ.get("MAC_HOME") or Path.home() / ".mac").expanduser()
+    path = Path(
+        env_str("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
+        or mac_home / "openshell" / "runtime-image-ref"
+    ).expanduser()
+    try:
+        image_ref = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError(
+            "read-only repository reports require a readable immutable "
+            "OpenShell runtime image reference at %s" % path
+        ) from exc
+    if not _MANAGED_OPENSHELL_RUNTIME_REF_RE.fullmatch(image_ref):
+        raise RuntimeError(
+            "read-only repository reports require the managed immutable "
+            "mac-openshell-runtime@sha256 image reference"
+        )
+    return image_ref
+
+
+def _assert_approved_read_only_report_runtime(
+    *, runtime_image_ref: str
+) -> None:
+    """Revalidate the hub-approved tuple immediately before sandbox create."""
+
+    expected_runtime = env_str("MAC_REPORT_EXECUTOR_APPROVED_RUNTIME_IMAGE_REF")
+    expected_policy = env_str("MAC_REPORT_EXECUTOR_APPROVED_POLICY_SHA256")
+    expected_bin_path = env_str("MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_PATH")
+    expected_bin_digest = env_str(
+        "MAC_REPORT_EXECUTOR_APPROVED_OPENSHELL_BIN_SHA256"
+    )
+    expected_platform = env_str("MAC_REPORT_EXECUTOR_APPROVED_PLATFORM")
+    expected_posture = env_str("MAC_REPORT_EXECUTOR_APPROVED_ISOLATION_POSTURE")
+    expected_python_path = env_str("MAC_REPORT_EXECUTOR_APPROVED_PYTHON_PATH")
+    expected_python_digest = env_str("MAC_REPORT_EXECUTOR_APPROVED_PYTHON_SHA256")
+    expected_script_path = env_str(
+        "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_PATH"
+    )
+    expected_script_digest = env_str(
+        "MAC_REPORT_EXECUTOR_APPROVED_EXECUTOR_SCRIPT_SHA256"
+    )
+    expected_source_root = env_str("MAC_REPORT_EXECUTOR_APPROVED_SOURCE_ROOT")
+    expected_source_digest = env_str(
+        "MAC_REPORT_EXECUTOR_APPROVED_SOURCE_BUNDLE_SHA256"
+    )
+    if not all(
+        (
+            expected_runtime,
+            expected_policy,
+            expected_bin_path,
+            expected_bin_digest,
+            expected_platform,
+            expected_posture,
+            expected_python_path,
+            expected_python_digest,
+            expected_script_path,
+            expected_script_digest,
+            expected_source_root,
+            expected_source_digest,
+        )
+    ):
+        raise RuntimeError(
+            "read-only repository report lacks the hub-approved runtime tuple"
+        )
+    if runtime_image_ref != expected_runtime:
+        raise RuntimeError(
+            "read-only repository report runtime image differs from hub approval"
+        )
+    _policy_path, policy_digest = nofollow_regular_file_identity(
+        _resolve_openshell_policy()
+    )
+    if policy_digest != expected_policy:
+        raise RuntimeError(
+            "read-only repository report policy differs from hub approval"
+        )
+    resolved_bin = shutil.which(_openshell_bin())
+    if resolved_bin is None:
+        raise RuntimeError("approved OpenShell binary is unavailable")
+    bin_path, bin_digest = nofollow_regular_file_identity(resolved_bin)
+    if bin_path != expected_bin_path or bin_digest != expected_bin_digest:
+        raise RuntimeError(
+            "read-only repository report OpenShell binary differs from hub approval"
+        )
+    python_candidate = env_str("MAC_TASK_EXECUTOR_PYTHON") or sys.executable
+    python_path, python_digest = nofollow_regular_file_identity(
+        Path(python_candidate).expanduser().resolve(strict=True)
+    )
+    if python_path != expected_python_path or python_digest != expected_python_digest:
+        raise RuntimeError(
+            "read-only repository report Python differs from hub approval"
+        )
+    script_candidate = env_str("MAC_TASK_EXECUTOR_SCRIPT")
+    if not script_candidate:
+        raise RuntimeError(
+            "read-only repository report executor script is not configured"
+        )
+    script_path, script_digest = nofollow_regular_file_identity(script_candidate)
+    if script_path != expected_script_path or script_digest != expected_script_digest:
+        raise RuntimeError(
+            "read-only repository report executor script differs from hub approval"
+        )
+    source_candidate = env_str("MAC_SELF_UPDATE_REPO")
+    if not source_candidate:
+        raise RuntimeError(
+            "read-only repository report MAC source root is not configured"
+        )
+    source_root, source_digest = nofollow_source_bundle_digest(source_candidate)
+    if source_root != expected_source_root or source_digest != expected_source_digest:
+        raise RuntimeError(
+            "read-only repository report MAC source differs from hub approval"
+        )
+    if sys.platform.startswith("linux"):
+        if (
+            expected_platform != "linux"
+            or expected_posture != "landlock_enforced"
+            or not _kernel_has_landlock()
+        ):
+            raise RuntimeError(
+                "read-only repository reports on Linux require approved, enforced Landlock"
+            )
+    elif sys.platform == "darwin":
+        if (
+            expected_platform != "darwin"
+            or expected_posture != "macos_docker_vm_seccomp_egress"
+            or not env_bool("MAC_OPENSHELL_ALLOW_NO_LANDLOCK")
+        ):
+            raise RuntimeError(
+                "read-only repository report lacks the approved macOS Docker isolation posture"
+            )
+    else:
+        raise RuntimeError(
+            "read-only repository reports are unsupported on this platform"
+        )
+
+
+def _read_only_report_extra_create_argv(
+    *, require_approval: bool = True
+) -> List[str]:
+    """Return the complete allowlisted extra argv for a report sandbox.
+
+    The ordinary coding lane permits operator conveniences. Repository reports
+    do not: duplicate policy/name flags can override the controller's boundary,
+    uploads can import host data, and a fixed sandbox name defeats per-task
+    isolation. The only accepted extras are bounded CPU/memory/GPU requests;
+    the image is always replaced with the deployment-pinned immutable digest.
+    Unknown and boundary-changing arguments are errors, never silently dropped.
+    """
+
+    if env_str("MAC_OPENSHELL_SANDBOX_NAME"):
+        raise RuntimeError(
+            "read-only repository reports forbid MAC_OPENSHELL_SANDBOX_NAME; "
+            "a fresh per-task sandbox identity is mandatory"
+        )
+    source = _openshell_extra_create_argv()
+    runtime_image_ref = _managed_openshell_runtime_image_ref()
+    if require_approval:
+        _assert_approved_read_only_report_runtime(
+            runtime_image_ref=runtime_image_ref
+        )
+    filtered: List[str] = ["--from", runtime_image_ref]
+    saw_from = False
+    index = 0
+    while index < len(source):
+        token = source[index]
+        if token == "--from" or token.startswith("--from="):
+            if saw_from:
+                raise ValueError(
+                    "read-only repository reports forbid duplicate --from arguments"
+                )
+            saw_from = True
+            if token == "--from":
+                if index + 1 >= len(source) or source[index + 1].startswith("-"):
+                    raise ValueError("MAC_OPENSHELL_CREATE_ARGS --from requires a value")
+                index += 2
+            else:
+                if not token.partition("=")[2]:
+                    raise ValueError("MAC_OPENSHELL_CREATE_ARGS --from requires a value")
+                index += 1
+            continue
+        if token == "--cpu" or token.startswith("--cpu="):
+            value = (
+                source[index + 1]
+                if token == "--cpu" and index + 1 < len(source)
+                else token.partition("=")[2]
+            )
+            if not value.isdigit() or not 1 <= int(value) <= 256:
+                raise ValueError("read-only repository report --cpu must be 1..256")
+            filtered.extend(("--cpu", value))
+            index += 2 if token == "--cpu" else 1
+            continue
+        if token == "--memory" or token.startswith("--memory="):
+            value = (
+                source[index + 1]
+                if token == "--memory" and index + 1 < len(source)
+                else token.partition("=")[2]
+            )
+            match = _re.fullmatch(
+                r"([1-9][0-9]{0,5})([KMGTP]i?B?|[kmgpt])?", value
+            )
+            if match is None or int(match.group(1)) > 65536:
+                raise ValueError(
+                    "read-only repository report --memory is missing or unbounded"
+                )
+            filtered.extend(("--memory", value))
+            index += 2 if token == "--memory" else 1
+            continue
+        if token == "--gpu" or token.startswith("--gpu="):
+            filtered.append("--gpu")
+            if token.startswith("--gpu="):
+                value = token.partition("=")[2]
+                if not value.isdigit() or not 0 <= int(value) <= 64:
+                    raise ValueError("read-only repository report --gpu must be 0..64")
+                filtered.append(value)
+            elif index + 1 < len(source) and source[index + 1].isdigit():
+                value = source[index + 1]
+                if not 0 <= int(value) <= 64:
+                    raise ValueError("read-only repository report --gpu must be 0..64")
+                filtered.append(value)
+                index += 1
+            index += 1
+            continue
+        raise ValueError(
+            "MAC_OPENSHELL_CREATE_ARGS argument %r is forbidden for read-only "
+            "repository reports" % token
+        )
+    return filtered
+
+
 def _build_sandbox_create_argv(
-    name: str, workspace: Path, basename: str, agent_argv: List[str]
+    name: str,
+    workspace: Path,
+    basename: str,
+    agent_argv: List[str],
+    *,
+    extra_create_argv: Optional[List[str]] = None,
 ) -> List[str]:
     """``openshell sandbox create`` argv that uploads the task workspace, runs the
     agent inside it, and KEEPS the sandbox so results can be downloaded.
@@ -1450,7 +1818,11 @@ def _build_sandbox_create_argv(
     argv += _sandbox_label_argv(
         "task", keep=env_bool("MAC_OPENSHELL_KEEP")
     )
-    argv += _openshell_extra_create_argv()
+    argv += (
+        _openshell_extra_create_argv()
+        if extra_create_argv is None
+        else list(extra_create_argv)
+    )
     argv += ["--upload", "%s:%s" % (str(workspace), _SANDBOX_WORKDIR)]
     inner = "\n".join(
         [
@@ -1480,12 +1852,18 @@ def _build_sandbox_create_argv(
             # deterministic host finalizer commits and publishes the harvested
             # file changes using the real task worktree.
             'if [ -n "${MAC_TASK_REPO_WORKTREE:-}" ] && [ -d "$MAC_TASK_REPO_WORKTREE" ] && command -v git >/dev/null 2>&1; then',
-            '  rm -rf "$MAC_TASK_REPO_WORKTREE/.git"',
-            '  git -C "$MAC_TASK_REPO_WORKTREE" init -q',
-            '  git -C "$MAC_TASK_REPO_WORKTREE" config user.email mac-sandbox@invalid',
-            '  git -C "$MAC_TASK_REPO_WORKTREE" config user.name "MAC OpenShell sandbox"',
-            '  git -C "$MAC_TASK_REPO_WORKTREE" add -A',
-            '  git -C "$MAC_TASK_REPO_WORKTREE" commit -q --allow-empty -m "MAC OpenShell sandbox baseline"',
+            '  if [ "${MAC_TASK_REPO_ACCESS_SCHEMA:-}" = "mac.report_repository_access.v1" ] && [ "${MAC_TASK_REPO_ACCESS_MODE:-}" = "read_only" ]; then',
+            '    test -d "$MAC_TASK_REPO_WORKTREE/.git"',
+            "  else",
+            '    rm -rf "$MAC_TASK_REPO_WORKTREE/.git"',
+            '    git -C "$MAC_TASK_REPO_WORKTREE" init -q',
+            '    mkdir -p "$MAC_TASK_REPO_WORKTREE/.git/info"',
+            '    printf ".codegraph/\\n" > "$MAC_TASK_REPO_WORKTREE/.git/info/exclude"',
+            '    git -C "$MAC_TASK_REPO_WORKTREE" config user.email mac-sandbox@invalid',
+            '    git -C "$MAC_TASK_REPO_WORKTREE" config user.name "MAC OpenShell sandbox"',
+            '    git -C "$MAC_TASK_REPO_WORKTREE" add -A',
+            '    git -C "$MAC_TASK_REPO_WORKTREE" commit -q --allow-empty -m "MAC OpenShell sandbox baseline"',
+            "  fi",
             "fi",
             "exec %s" % shlex.join(agent_argv),
         ]
@@ -1509,6 +1887,7 @@ def _sandbox_step(args: List[str], *, timeout: float) -> "tuple[bool, str]":
 
 
 _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES = {
+    ".codegraph",
     ".venv",
     "venv",
     "node_modules",
@@ -1531,7 +1910,10 @@ def _sandbox_repository_roots(workspace: Path, download_root: Path) -> set[Path]
         if rel is not None:
             roots.add(rel)
 
-    for context_file in (workspace / "repository-worktree.json", download_root / "repository-worktree.json"):
+    # Only the host-authored context can define protected repository roots.
+    # The downloaded copy is agent-controlled and must never repoint merge
+    # exclusions away from the real task checkout.
+    for context_file in (workspace / "repository-worktree.json",):
         try:
             context = json.loads(context_file.read_text(encoding="utf-8"))
         except Exception:
@@ -1556,13 +1938,89 @@ def _sandbox_download_path_is_git_backup(rel_path: Path) -> bool:
     return any(part.startswith(".git.bak") for part in rel_path.parts)
 
 
+def _sandbox_download_path_is_host_control(rel_path: Path) -> bool:
+    if len(rel_path.parts) != 1:
+        return False
+    name = rel_path.name
+    if name in {
+        "task.json",
+        "repository-worktree.json",
+        "executor-task.json",
+        "executor-evidence.json",
+        ".mac-executor-policy.txt",
+        ".mac-openshell-env.sh",
+        ".mac-sandbox-toolchain.sh",
+        ".mac-sandbox-repository-verify.sh",
+        _TRUSTED_READ_ONLY_VERIFICATION_FILE,
+        "worker-result.json",
+        "review-result.json",
+        "stdout.txt",
+        "stderr.txt",
+    }:
+        return True
+    return name.startswith((".mac-agent-command-", ".mac-agent-prompt-"))
+
+
+_SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES = {
+    "mac-evidence.json",
+    _SANDBOX_VERIFICATION_FILE,
+    "review-independent-findings.json",
+    "review-protocol.json",
+}
+
+
+def _validate_sandbox_download_symlinks(
+    download_root: Path, workspace: Path, repository_roots: set[Path]
+) -> None:
+    """Validate every symlink before the merge mutates host workspace state."""
+
+    download_root_resolved = download_root.resolve()
+    workspace_resolved = workspace.resolve()
+    for root, dirs, files in os.walk(download_root, topdown=True, followlinks=False):
+        root_path = Path(root)
+        rel_root = root_path.relative_to(download_root)
+        for name in [*dirs, *files]:
+            src = root_path / name
+            if not src.is_symlink():
+                continue
+            rel = rel_root / name
+            if _sandbox_download_path_is_host_control(rel) or (
+                len(rel.parts) == 1
+                and rel.name in _SANDBOX_DOWNLOAD_REGULAR_OUTPUT_NAMES
+            ):
+                raise ValueError(
+                    "sandbox download attempted to replace host/evidence control %s with a symlink"
+                    % rel
+                )
+            if _sandbox_download_path_excluded(rel, repository_roots):
+                continue
+            target = os.readlink(src)
+            if os.path.isabs(target):
+                raise ValueError(
+                    "sandbox download symlink has an absolute target: %s" % rel
+                )
+            try:
+                src.resolve(strict=False).relative_to(download_root_resolved)
+                (workspace / rel).parent.joinpath(target).resolve(
+                    strict=False
+                ).relative_to(workspace_resolved)
+            except (OSError, RuntimeError, ValueError):
+                raise ValueError(
+                    "sandbox download symlink escapes the task workspace: %s" % rel
+                ) from None
+
+
 def _sandbox_download_path_excluded(rel_path: Path, repository_roots: set[Path]) -> bool:
     # Git metadata is never a legitimate file payload. Copying a sandbox .git
     # directory over a host git-worktree .git file caused the live P0 failure.
     # OpenShell transfers can also materialize a sibling .git.bak* when a
     # container checkout and host git-worktree metadata differ; treat that as
     # transfer metadata too, while preserving real repo files like .gitignore.
-    if ".git" in rel_path.parts or _sandbox_download_path_is_git_backup(rel_path):
+    if (
+        ".git" in rel_path.parts
+        or _sandbox_download_path_is_git_backup(rel_path)
+        or _sandbox_download_path_is_host_control(rel_path)
+    ):
         return True
     for root in repository_roots:
         for name in _SANDBOX_DOWNLOAD_RUNTIME_ROOT_NAMES:
@@ -1570,6 +2028,44 @@ def _sandbox_download_path_excluded(rel_path: Path, repository_roots: set[Path])
             if _path_is_under(rel_path, runtime_root):
                 return True
     return False
+
+
+def _ensure_sandbox_destination_directory(workspace: Path, rel_path: Path) -> None:
+    """Create ``rel_path`` without ever following a destination symlink.
+
+    A safe symlink harvested by one attempt may occupy a path which a later
+    attempt supplies as a real directory. Path-based ``mkdir``/``copy2`` would
+    follow that stale link and could redirect a nested output onto a top-level
+    host control. Walk with directory descriptors and ``O_NOFOLLOW`` instead,
+    replacing every non-directory component before descending.
+    """
+
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(workspace, os.O_RDONLY | directory | nofollow)
+    try:
+        for part in rel_path.parts:
+            if part in {"", ".", ".."}:
+                if part in {"", "."}:
+                    continue
+                raise ValueError("sandbox destination path is not relative")
+            try:
+                observed = os.stat(part, dir_fd=descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                os.mkdir(part, mode=0o755, dir_fd=descriptor)
+            else:
+                if not stat.S_ISDIR(observed.st_mode):
+                    os.unlink(part, dir_fd=descriptor)
+                    os.mkdir(part, mode=0o755, dir_fd=descriptor)
+            child = os.open(
+                part,
+                os.O_RDONLY | directory | nofollow,
+                dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = child
+    finally:
+        os.close(descriptor)
 
 
 def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
@@ -1583,8 +2079,12 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
     """
     workspace.mkdir(parents=True, exist_ok=True)
     repository_roots = _sandbox_repository_roots(workspace, download_root)
+    _validate_sandbox_download_symlinks(
+        download_root, workspace, repository_roots
+    )
     source_files: set[Path] = set()
     source_dirs: set[Path] = {Path(".")}
+    source_links: set[Path] = set()
 
     for root, dirs, files in os.walk(download_root, topdown=True, followlinks=False):
         root_path = Path(root)
@@ -1596,8 +2096,12 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
             rel = rel_root / name
             if _sandbox_download_path_excluded(rel, repository_roots):
                 continue
-            source_dirs.add(rel)
-            kept_dirs.append(name)
+            src = root_path / name
+            if src.is_symlink():
+                source_links.add(rel)
+            else:
+                source_dirs.add(rel)
+                kept_dirs.append(name)
         dirs[:] = kept_dirs
         for name in files:
             rel = rel_root / name
@@ -1621,12 +2125,19 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
             if _sandbox_download_path_is_git_backup(rel):
                 shutil.rmtree(target, ignore_errors=True)
                 continue
-            if _sandbox_download_path_excluded(rel, repository_roots) or rel in source_dirs:
+            if (
+                _sandbox_download_path_excluded(rel, repository_roots)
+                or rel in source_dirs
+                or rel in source_links
+            ):
                 continue
             if target.is_symlink() or target.is_file():
                 target.unlink(missing_ok=True)
             else:
                 shutil.rmtree(target, ignore_errors=True)
+
+    for rel in sorted(source_dirs, key=lambda item: (len(item.parts), str(item))):
+        _ensure_sandbox_destination_directory(workspace, rel)
 
     for root, dirs, files in os.walk(download_root, topdown=True, followlinks=False):
         root_path = Path(root)
@@ -1638,6 +2149,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
             if _sandbox_download_path_excluded(rel, repository_roots):
                 continue
             if src.is_symlink():
+                _ensure_sandbox_destination_directory(workspace, rel.parent)
                 dst = workspace / rel
                 if dst.exists() or dst.is_symlink():
                     if dst.is_dir() and not dst.is_symlink():
@@ -1647,7 +2159,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.symlink_to(os.readlink(src))
             else:
-                (workspace / rel).mkdir(parents=True, exist_ok=True)
+                _ensure_sandbox_destination_directory(workspace, rel)
                 kept_dirs.append(name)
         dirs[:] = kept_dirs
         for name in files:
@@ -1655,6 +2167,7 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
             if _sandbox_download_path_excluded(rel, repository_roots):
                 continue
             src = root_path / name
+            _ensure_sandbox_destination_directory(workspace, rel.parent)
             dst = workspace / rel
             if dst.exists() or dst.is_symlink():
                 if dst.is_dir() and not dst.is_symlink():
@@ -1668,11 +2181,643 @@ def _merge_sandbox_download_tree(download_root: Path, workspace: Path) -> None:
                 shutil.copy2(src, dst)
 
 
+def _read_only_verifier_extra_create_argv() -> List[str]:
+    """Return executor-owned OpenShell arguments safe for a verifier sandbox.
+
+    The ordinary task sandbox may receive provider attachments, credential
+    uploads, and debugger conveniences for the coding agent.  The independent
+    verifier runs repository-owned commands only; none of those surfaces are
+    needed, and carrying them into the second sandbox would reintroduce the
+    credentials that read-only reports deliberately fence.  Preserve runtime,
+    resource, and gateway selection while stripping every attachment/identity
+    override and every option that could prevent deterministic teardown.
+    """
+
+    # Use the same fail-closed boundary as the report agent sandbox. In
+    # particular, never silently filter an unknown option: that would let the
+    # agent and verifier run under different isolation contracts.
+    return _read_only_report_extra_create_argv()
+
+
+_READ_ONLY_GIT_CONTROL_PATHS = (
+    "HEAD",
+    "config",
+    "config.worktree",
+    "commondir",
+    "gitdir",
+    "packed-refs",
+    "shallow",
+    "refs",
+    "info",
+    "objects/info",
+    "worktrees",
+    "modules",
+)
+
+
+def _read_only_git_control_digest(worktree: Path) -> str:
+    """Hash security-sensitive Git controls without following any symlink.
+
+    The index and object store are intentionally excluded: ordinary read-only
+    Git inspection may refresh index stat data, while object identity is proved
+    separately by HEAD/tree checks.  Configuration, ref routing, alternates,
+    excludes, linked-worktree controls, and submodule controls are immutable for
+    a read-only report and are hashed as raw directory entries and bytes.
+    """
+
+    candidate = Path(worktree).expanduser()
+    if candidate.is_symlink():
+        raise ValueError("read-only repository worktree is a symlink")
+    root = candidate.resolve(strict=True)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    digest = hashlib.sha256()
+
+    def _record(parent_fd: int, name: str, relative: str) -> None:
+        try:
+            info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            digest.update(b"M\0" + relative.encode("utf-8", "surrogateescape") + b"\0")
+            return
+        relative_bytes = relative.encode("utf-8", "surrogateescape")
+        if stat.S_ISLNK(info.st_mode):
+            payload = os.readlink(name, dir_fd=parent_fd).encode(
+                "utf-8", "surrogateescape"
+            )
+            digest.update(b"L\0" + relative_bytes + b"\0")
+            digest.update(hashlib.sha256(payload).digest())
+            return
+        if stat.S_ISREG(info.st_mode):
+            descriptor = os.open(
+                name,
+                os.O_RDONLY | nofollow | cloexec,
+                dir_fd=parent_fd,
+            )
+            try:
+                observed = os.fstat(descriptor)
+                if not stat.S_ISREG(observed.st_mode):
+                    raise OSError("Git control changed type while being read")
+                payload = hashlib.sha256()
+                while True:
+                    chunk = os.read(descriptor, 1024 * 1024)
+                    if not chunk:
+                        break
+                    payload.update(chunk)
+            finally:
+                os.close(descriptor)
+            digest.update(b"F\0" + relative_bytes + b"\0")
+            digest.update(payload.digest())
+            return
+        if stat.S_ISDIR(info.st_mode):
+            descriptor = os.open(
+                name,
+                os.O_RDONLY | directory | nofollow | cloexec,
+                dir_fd=parent_fd,
+            )
+            try:
+                digest.update(b"D\0" + relative_bytes + b"\0")
+                for child in sorted(os.listdir(descriptor)):
+                    _record(descriptor, child, "%s/%s" % (relative, child))
+            finally:
+                os.close(descriptor)
+            return
+        digest.update(b"O\0" + relative_bytes + b"\0")
+
+    root_fd = os.open(root, os.O_RDONLY | directory | nofollow | cloexec)
+    try:
+        git_info = os.stat(".git", dir_fd=root_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(git_info.st_mode):
+            raise ValueError("read-only repository .git control is not a directory")
+        git_fd = os.open(
+            ".git",
+            os.O_RDONLY | directory | nofollow | cloexec,
+            dir_fd=root_fd,
+        )
+        try:
+            digest.update(b"D\0.git\0")
+            for relative in _READ_ONLY_GIT_CONTROL_PATHS:
+                parts = relative.split("/")
+                parent_fd = os.dup(git_fd)
+                try:
+                    traversed: List[str] = []
+                    for part in parts[:-1]:
+                        traversed.append(part)
+                        try:
+                            child_fd = os.open(
+                                part,
+                                os.O_RDONLY | directory | nofollow | cloexec,
+                                dir_fd=parent_fd,
+                            )
+                        except OSError:
+                            _record(parent_fd, part, "/".join(traversed))
+                            digest.update(
+                                b"M\0"
+                                + relative.encode("utf-8", "surrogateescape")
+                                + b"\0"
+                            )
+                            break
+                        os.close(parent_fd)
+                        parent_fd = child_fd
+                    else:
+                        _record(parent_fd, parts[-1], relative)
+                finally:
+                    os.close(parent_fd)
+        finally:
+            os.close(git_fd)
+    finally:
+        os.close(root_fd)
+    return digest.hexdigest()
+
+
+def _read_only_git_control_digest_program() -> str:
+    """Standalone equivalent used before Git in the OpenShell postcheck."""
+
+    paths = repr(_READ_ONLY_GIT_CONTROL_PATHS)
+    return r'''import hashlib, os, stat, sys
+paths = %s
+root = os.path.realpath(sys.argv[1])
+directory = getattr(os, "O_DIRECTORY", 0)
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+cloexec = getattr(os, "O_CLOEXEC", 0)
+digest = hashlib.sha256()
+
+def record(parent_fd, name, relative):
+    try:
+        info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        digest.update(b"M\0" + relative.encode("utf-8", "surrogateescape") + b"\0")
+        return
+    relative_bytes = relative.encode("utf-8", "surrogateescape")
+    if stat.S_ISLNK(info.st_mode):
+        payload = os.readlink(name, dir_fd=parent_fd).encode("utf-8", "surrogateescape")
+        digest.update(b"L\0" + relative_bytes + b"\0")
+        digest.update(hashlib.sha256(payload).digest())
+    elif stat.S_ISREG(info.st_mode):
+        descriptor = os.open(name, os.O_RDONLY | nofollow | cloexec, dir_fd=parent_fd)
+        try:
+            observed = os.fstat(descriptor)
+            if not stat.S_ISREG(observed.st_mode):
+                raise OSError("Git control changed type while being read")
+            payload = hashlib.sha256()
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                payload.update(chunk)
+        finally:
+            os.close(descriptor)
+        digest.update(b"F\0" + relative_bytes + b"\0")
+        digest.update(payload.digest())
+    elif stat.S_ISDIR(info.st_mode):
+        descriptor = os.open(name, os.O_RDONLY | directory | nofollow | cloexec, dir_fd=parent_fd)
+        try:
+            digest.update(b"D\0" + relative_bytes + b"\0")
+            for child in sorted(os.listdir(descriptor)):
+                record(descriptor, child, relative + "/" + child)
+        finally:
+            os.close(descriptor)
+    else:
+        digest.update(b"O\0" + relative_bytes + b"\0")
+
+root_fd = os.open(root, os.O_RDONLY | directory | nofollow | cloexec)
+try:
+    git_info = os.stat(".git", dir_fd=root_fd, follow_symlinks=False)
+    if not stat.S_ISDIR(git_info.st_mode):
+        raise ValueError("read-only repository .git control is not a directory")
+    git_fd = os.open(".git", os.O_RDONLY | directory | nofollow | cloexec, dir_fd=root_fd)
+    try:
+        digest.update(b"D\0.git\0")
+        for relative in paths:
+            parts = relative.split("/")
+            parent_fd = os.dup(git_fd)
+            try:
+                traversed = []
+                for part in parts[:-1]:
+                    traversed.append(part)
+                    try:
+                        child_fd = os.open(part, os.O_RDONLY | directory | nofollow | cloexec, dir_fd=parent_fd)
+                    except OSError:
+                        record(parent_fd, part, "/".join(traversed))
+                        digest.update(b"M\0" + relative.encode("utf-8", "surrogateescape") + b"\0")
+                        break
+                    os.close(parent_fd)
+                    parent_fd = child_fd
+                else:
+                    record(parent_fd, parts[-1], relative)
+            finally:
+                os.close(parent_fd)
+    finally:
+        os.close(git_fd)
+finally:
+    os.close(root_fd)
+print(digest.hexdigest())
+''' % paths
+
+
+def _git_for_read_only_verifier(
+    worktree: Path, args: List[str]
+) -> subprocess.CompletedProcess[str]:
+    """Run an absolute, environment- and worktree-fenced Git postcheck."""
+
+    resolved = Path(worktree).expanduser().resolve(strict=True)
+    git_control = resolved / ".git"
+    try:
+        git_info = git_control.lstat()
+    except OSError as exc:
+        return subprocess.CompletedProcess(args, 128, "", str(exc))
+    if not stat.S_ISDIR(git_info.st_mode):
+        return subprocess.CompletedProcess(
+            args, 128, "", "read-only repository .git control is not a directory"
+        )
+    git = shutil.which("git")
+    if not git:
+        return subprocess.CompletedProcess(args, 127, "", "git executable not found")
+    git = str(Path(git).resolve(strict=True))
+    # Start from an empty environment.  In particular this excludes less common
+    # Git routing variables (GIT_DIR, GIT_WORK_TREE, GIT_OBJECT_DIRECTORY,
+    # GIT_INDEX_FILE) instead of trying to maintain a fragile denylist.
+    environment: Dict[str, str] = {}
+    fence_read_only_repository_environment(environment)
+    environment.update(
+        {
+            "HOME": "/tmp/mac-read-only-postcheck",
+            "PATH": os.defpath,
+            "LC_ALL": "C",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+        }
+    )
+    return subprocess.run(
+        [
+            git,
+            "--no-optional-locks",
+            "--git-dir=%s" % git_control,
+            "--work-tree=%s" % resolved,
+            "-c",
+            "safe.directory=%s" % resolved,
+            "-c",
+            "core.worktree=%s" % resolved,
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "credential.helper=",
+            "-c",
+            "protocol.file.allow=never",
+            *args,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=environment,
+    )
+
+
+def _prepare_read_only_verifier_workspace(
+    workspace: Path,
+    verifier_workspace: Path,
+    task: Mapping[str, Any],
+) -> tuple[Path, Path]:
+    """Copy and prove one pristine exact-base checkout for independent tests."""
+
+    metadata = task.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    runtime = metadata.get("runtime")
+    runtime = runtime if isinstance(runtime, Mapping) else {}
+    worktree_raw = str(runtime.get("repository_worktree") or "").strip()
+    expected_head = str(runtime.get("repository_base_sha") or "").strip()
+    expected_tree = str(runtime.get("repository_base_tree") or "").strip()
+    expected_refs = str(runtime.get("repository_refs_digest") or "").strip()
+    expected_content = str(runtime.get("repository_content_digest") or "").strip()
+    if not all(
+        (worktree_raw, expected_head, expected_tree, expected_refs, expected_content)
+    ):
+        raise ValueError("read-only verifier exact-base context is incomplete")
+
+    workspace_resolved = workspace.resolve()
+    source = Path(worktree_raw).resolve()
+    try:
+        relative = source.relative_to(workspace_resolved)
+    except ValueError as exc:
+        raise ValueError("read-only verifier checkout is outside its task workspace") from exc
+    if not source.is_dir() or not (source / ".git").is_dir():
+        raise ValueError("read-only verifier source checkout is unavailable")
+
+    verifier_workspace.mkdir(parents=True, mode=0o700)
+    target = verifier_workspace / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source,
+        target,
+        symlinks=True,
+        ignore=shutil.ignore_patterns(".codegraph"),
+    )
+    for name in ("task.json", "repository-worktree.json"):
+        control = workspace / name
+        if control.is_file() and not control.is_symlink():
+            shutil.copy2(control, verifier_workspace / name)
+
+    clean = _git_for_read_only_verifier(target, ["clean", "-fdx"])
+    status = _git_for_read_only_verifier(target, ["status", "--porcelain"])
+    head = _git_for_read_only_verifier(target, ["rev-parse", "HEAD"])
+    tree = _git_for_read_only_verifier(target, ["rev-parse", "HEAD^{tree}"])
+    refs = _git_for_read_only_verifier(
+        target, ["for-each-ref", "--format=%(refname) %(objectname)"]
+    )
+    remotes = _git_for_read_only_verifier(target, ["remote"])
+    observed_refs = (
+        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest()
+        if refs.returncode == 0
+        else ""
+    )
+    try:
+        observed_content = read_only_repository_content_digest(target)
+    except OSError:
+        observed_content = ""
+    if not (
+        clean.returncode == 0
+        and status.returncode == 0
+        and not status.stdout.strip()
+        and head.returncode == 0
+        and head.stdout.strip() == expected_head
+        and tree.returncode == 0
+        and tree.stdout.strip() == expected_tree
+        and refs.returncode == 0
+        and observed_refs == expected_refs
+        and remotes.returncode == 0
+        and not remotes.stdout.strip()
+        and observed_content == expected_content
+    ):
+        raise ValueError("read-only verifier copy failed its exact-base proof")
+    return relative, target
+
+
+def _store_trusted_read_only_verification(
+    source: Path,
+    workspace: Path,
+    task: Mapping[str, Any],
+) -> bool:
+    """Validate and stage the independent verifier's bounded JSON result."""
+
+    descriptor: Optional[int] = None
+    try:
+        descriptor = os.open(
+            source,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        )
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_size <= 0
+            or info.st_size > _MAX_SANDBOX_VERIFICATION_BYTES
+        ):
+            return False
+        chunks: List[bytes] = []
+        remaining = info.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 1024 * 1024))
+            if not chunk:
+                return False
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = json.loads(b"".join(chunks).decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    expected_command = _repository_contract_test_command(dict(task))
+    integrity = payload.get("integrity") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "mac.sandbox_verification.v1"
+        or payload.get("command") != expected_command
+        or payload.get("status") not in {"pass", "fail"}
+        or isinstance(payload.get("returncode"), bool)
+        or not isinstance(payload.get("returncode"), int)
+        or not isinstance(integrity, dict)
+        or integrity.get("schema") != _READ_ONLY_VERIFICATION_INTEGRITY_SCHEMA
+        or integrity.get("fresh_control_process") is not True
+        or integrity.get("raw_git_control_first") is not True
+        or integrity.get("cgroup_quiescent") is not True
+        or not isinstance(integrity.get("problems"), list)
+    ):
+        return False
+    passed = payload["status"] == "pass" and payload["returncode"] == 0
+    if passed and (
+        integrity.get("immutable_inputs") is not True
+        or integrity.get("exact_base_revalidated") is not True
+        or integrity.get("problems")
+    ):
+        return False
+    trusted = workspace / _TRUSTED_READ_ONLY_VERIFICATION_FILE
+    temp: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=workspace,
+            prefix=trusted.name + ".host-",
+            delete=False,
+        ) as handle:
+            temp = Path(handle.name)
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp.chmod(0o600)
+        os.replace(temp, trusted)
+    except OSError:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+        return False
+    return passed
+
+
+def _sandbox_run_read_only_repository_verification(
+    name: str, workspace: Path, task: Mapping[str, Any]
+) -> bool:
+    """Run contract tests in a second, fresh exact-base OpenShell sandbox.
+
+    The coding-agent sandbox is adversary-controlled after the agent returns:
+    ignored build products, task-local executables, HOME state, and background
+    processes can all survive a second ``exec``.  Reusing it cannot produce a
+    host-authoritative test result.  This path copies the still-pristine host
+    checkout, proves its exact identity, uploads only secret-free controls to a
+    separately named sandbox, and downloads exactly one bounded result file.
+    """
+
+    import uuid
+
+    verifier_name = "%s-verify-%s" % (name[:38], uuid.uuid4().hex[:8])
+    trusted = workspace / _TRUSTED_READ_ONLY_VERIFICATION_FILE
+    trusted.unlink(missing_ok=True)
+    try:
+        timeout = float(env_str("MAC_WORKER_REPOSITORY_TEST_TIMEOUT") or "1800")
+    except ValueError:
+        timeout = 1800.0
+    timeout = max(1.0, timeout)
+    created = False
+    downloaded = False
+    stored_pass = False
+    deletion_succeeded = [False]
+
+    def _delete_verifier() -> None:
+        deletion_succeeded[0] = _sandbox_delete(verifier_name)
+
+    with contextlib.ExitStack() as cleanup, tempfile.TemporaryDirectory(
+        prefix=".%s-read-only-verifier-" % workspace.name,
+        dir=str(workspace.parent) if workspace.parent.is_dir() else None,
+    ) as temp:
+        # Register before any preparation or OpenShell call so even early
+        # returns and unexpected exceptions cannot strand the verifier.
+        cleanup.callback(_delete_verifier)
+        root = Path(temp)
+        verifier_workspace = root / "workspace"
+        try:
+            relative, target = _prepare_read_only_verifier_workspace(
+                workspace, verifier_workspace, task
+            )
+            expected_git_control = _authoritative_read_only_git_control_digest(
+                target
+            )
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(
+                "[executor] WARNING: could not prepare independent read-only "
+                "verifier: %s\n" % exc
+            )
+            return False
+
+        basename = _workspace_basename(verifier_workspace)
+        sandbox_workspace = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+        sandbox_worktree = "%s/%s" % (
+            sandbox_workspace.rstrip("/"),
+            str(relative).replace(os.sep, "/"),
+        )
+        script_path = verifier_workspace / ".mac-sandbox-repository-verify.sh"
+        verification_environment = {
+            "HOME": "/tmp/mac-read-only-verifier-home",
+            "PATH": _SANDBOX_BASE_PATH,
+            "MAC_SANDBOX_BASE_PATH": _SANDBOX_BASE_PATH,
+            "MAC_TASK_FILE": "%s/task.json" % sandbox_workspace,
+            "MAC_TASK_WORKSPACE": sandbox_workspace,
+            "MAC_TASK_REPO_WORKTREE": sandbox_worktree,
+            "MAC_TASK_REPO_ACCESS_SCHEMA": REPORT_REPOSITORY_ACCESS_SCHEMA,
+            "MAC_TASK_REPO_ACCESS_MODE": REPORT_REPOSITORY_READ_ONLY_MODE,
+            "MAC_TASK_REPO_GIT_CONTROL_DIGEST": expected_git_control,
+        }
+        metadata = task.get("metadata")
+        runtime = metadata.get("runtime") if isinstance(metadata, Mapping) else None
+        runtime = runtime if isinstance(runtime, Mapping) else {}
+        for environment_name, runtime_name in (
+            ("MAC_TASK_REPO_BASE_SHA", "repository_base_sha"),
+            ("MAC_TASK_REPO_BASE_TREE", "repository_base_tree"),
+            ("MAC_TASK_REPO_REFS_DIGEST", "repository_refs_digest"),
+            ("MAC_TASK_REPO_CONTENT_DIGEST", "repository_content_digest"),
+        ):
+            value = str(runtime.get(runtime_name) or "").strip()
+            if value:
+                verification_environment[environment_name] = value
+        script_path.write_text(
+            _sandbox_read_only_repository_verification_shell(
+                verification_environment
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        script_path.chmod(0o700)
+        sandbox_script = "%s/%s" % (sandbox_workspace, script_path.name)
+        create_args: List[str] = [
+            "create",
+            "--no-auto-providers",
+            "--policy",
+            _resolve_openshell_policy(),
+            "--name",
+            verifier_name,
+            *_sandbox_label_argv("read-only-verifier"),
+            *_read_only_verifier_extra_create_argv(),
+            "--no-git-ignore",
+            "--no-tty",
+            "--upload",
+            "%s:%s" % (verifier_workspace, _SANDBOX_WORKDIR),
+            "--",
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            sandbox_script,
+        ]
+        created, create_message = _sandbox_step(
+            create_args, timeout=timeout + 90.0
+        )
+        if not created and create_message:
+            sys.stderr.write(
+                "[executor] independent read-only verifier returned non-zero: %s\n"
+                % create_message[:500]
+            )
+        destination = root / _SANDBOX_VERIFICATION_FILE
+        downloaded, download_message = _sandbox_step(
+            [
+                "download",
+                verifier_name,
+                "%s/%s" % (sandbox_workspace, _SANDBOX_VERIFICATION_FILE),
+                str(destination),
+            ],
+            timeout=120.0,
+        )
+        if downloaded:
+            stored_pass = _store_trusted_read_only_verification(
+                destination, workspace, task
+            )
+        elif download_message:
+            sys.stderr.write(
+                "[executor] WARNING: independent read-only verifier result "
+                "download failed: %s\n" % download_message[:500]
+            )
+    return bool(created and downloaded and stored_pass and deletion_succeeded[0])
+
+
+def _promote_trusted_read_only_verification(workspace: Path) -> bool:
+    """Replace any agent-authored verification file with the trusted result."""
+
+    trusted = workspace / _TRUSTED_READ_ONLY_VERIFICATION_FILE
+    destination = workspace / _SANDBOX_VERIFICATION_FILE
+    try:
+        info = trusted.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            trusted.unlink(missing_ok=True)
+            destination.unlink(missing_ok=True)
+            return False
+        os.replace(trusted, destination)
+        destination.chmod(0o600)
+        return True
+    except OSError:
+        with contextlib.suppress(OSError):
+            trusted.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            destination.unlink(missing_ok=True)
+        return False
+
+
 def _sandbox_run_repository_verification(
     name: str, basename: str, workspace: Path, task: Any
 ) -> Optional[bool]:
-    if not isinstance(task, dict) or not task_is_repo_coupled(task):
+    if not isinstance(task, dict):
         return None
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not task_is_repo_coupled(task) and not metadata_declares_read_only_report_repository(
+        metadata
+    ):
+        return None
+    if metadata_declares_read_only_report_repository(metadata):
+        # A read-only report is trusted only after the CURRENT repository
+        # contract has supplied and passed its test command.  Returning None
+        # here used to mean "verification not applicable", allowing a stale or
+        # absent contract to preserve agent-authored success evidence.
+        if not _repository_contract_test_command(task):
+            return False
+        return _sandbox_run_read_only_repository_verification(name, workspace, task)
     if not _repository_contract_test_command(task):
         return None
     sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
@@ -1719,6 +2864,89 @@ def _sandbox_run_repository_verification(
     if not ok:
         sys.stderr.write("[executor] WARNING: sandbox repository verification failed: %s\n" % msg)
     return ok
+
+
+def _sandbox_read_only_repository_violation(
+    name: str,
+    basename: str,
+    workspace: Path,
+    task: Any,
+    expected_git_control_digest: str = "",
+) -> str:
+    """Verify sandbox-only Git state before throwaway metadata is discarded."""
+
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not metadata_declares_read_only_report_repository(metadata):
+        return ""
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
+    runtime = runtime if isinstance(runtime, dict) else {}
+    expected_head = str(runtime.get("repository_base_sha") or "").strip()
+    expected_tree = str(runtime.get("repository_base_tree") or "").strip()
+    host_worktree = str(runtime.get("repository_worktree") or "").strip()
+    sub = "%s/%s" % (_SANDBOX_WORKDIR, basename)
+    repo = _sandbox_path_for_workspace_child(workspace, sub, host_worktree) or ""
+    if not all((repo, expected_head, expected_tree, expected_git_control_digest)):
+        return "read-only repository report sandbox proof is incomplete"
+    digest_program = _read_only_git_control_digest_program()
+    script = "\n".join(
+        [
+            "set -eu",
+            "repo=%s" % shlex.quote(repo),
+            "expected_head=%s" % shlex.quote(expected_head),
+            "expected_tree=%s" % shlex.quote(expected_tree),
+            "expected_git_control=%s"
+            % shlex.quote(expected_git_control_digest),
+            'fail() { printf "%s\\n" "$1" >&2; exit 66; }',
+            'test ! -L "$repo" || fail "read-only repository worktree became a symlink"',
+            'test -d "$repo/.git" || fail "read-only repository Git metadata is missing"',
+            # This raw, O_NOFOLLOW digest is deliberately the FIRST
+            # post-agent repository interpretation.  In particular, do not run
+            # `git -C`: a poisoned core.worktree would make Git inspect an
+            # attacker-selected clean tree instead of the uploaded checkout.
+            'python_bin=/opt/mac-venv/bin/python',
+            '[ -x "$python_bin" ] || python_bin="$(PATH=%s command -v python3 || PATH=%s command -v python || true)"'
+            % (shlex.quote(_SANDBOX_BASE_PATH), shlex.quote(_SANDBOX_BASE_PATH)),
+            '[ -n "$python_bin" ] || fail "trusted Python is unavailable for Git control validation"',
+            'observed_git_control="$("$python_bin" - "$repo" <<\'PY\'',
+            digest_program,
+            "PY",
+            ')" || fail "could not digest read-only repository Git controls"',
+            'test "$observed_git_control" = "$expected_git_control" || fail "read-only repository Git control metadata changed"',
+            'git_bin="$(PATH=%s command -v git || true)"'
+            % shlex.quote(_SANDBOX_BASE_PATH),
+            'case "$git_bin" in /*) ;; *) fail "trusted absolute Git executable is unavailable" ;; esac',
+            'trusted_git() { env -i HOME=/tmp/mac-read-only-postcheck PATH=%s GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 "$git_bin" --no-optional-locks --git-dir="$repo/.git" --work-tree="$repo" -c "safe.directory=$repo" -c "core.worktree=$repo" -c core.fsmonitor=false -c core.hooksPath=/dev/null -c credential.helper= -c protocol.file.allow=never "$@"; }'
+            % shlex.quote(_SANDBOX_BASE_PATH),
+            'status="$(trusted_git status --porcelain)" || fail "could not inspect read-only repository status"',
+            'test -z "$status" || fail "read-only repository files were mutated"',
+            'head="$(trusted_git rev-parse HEAD)" || fail "could not inspect read-only repository HEAD"',
+            'test "$head" = "$expected_head" || fail "read-only repository HEAD changed"',
+            'tree="$(trusted_git rev-parse HEAD^{tree})" || fail "could not inspect read-only repository tree"',
+            'test "$tree" = "$expected_tree" || fail "read-only repository tree changed"',
+            'refs="$(trusted_git for-each-ref --format="%(refname) %(objectname)")" || fail "could not inspect read-only repository refs"',
+            'test -z "$refs" || fail "read-only repository refs changed"',
+            'remotes="$(trusted_git remote)" || fail "could not inspect read-only repository remotes"',
+            'test -z "$remotes" || fail "read-only repository retained a publication remote"',
+        ]
+    )
+    ok, message = _sandbox_step(
+        [
+            "exec",
+            "--name",
+            name,
+            "--workdir",
+            sub,
+            "--timeout",
+            "120",
+            "--no-tty",
+            "--",
+            "/bin/bash",
+            "-c",
+            script,
+        ],
+        timeout=150.0,
+    )
+    return "" if ok else (message or "read-only repository sandbox validation failed")
 
 
 def _sandbox_download(name: str, basename: str, workspace: Path) -> bool:
@@ -1954,17 +3182,54 @@ def _run_sandboxed(
     _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
     _ensure_landlock_or_fail()
     _sandbox_gc_best_effort()
+    task = opts.get("task")
+    task_metadata = task.get("metadata") if isinstance(task, dict) else None
+    read_only_report = metadata_declares_read_only_report_repository(task_metadata)
+    expected_git_control_digest = ""
+    report_extra_create_argv: Optional[List[str]] = None
+    if read_only_report:
+        if env_bool("MAC_OPENSHELL_KEEP"):
+            raise RuntimeError(
+                "read-only repository reports forbid MAC_OPENSHELL_KEEP; "
+                "successful sandbox deletion is mandatory"
+            )
+        runtime = task_metadata.get("runtime") if isinstance(task_metadata, dict) else None
+        worktree_raw = (
+            str(runtime.get("repository_worktree") or "").strip()
+            if isinstance(runtime, dict)
+            else ""
+        )
+        if not worktree_raw:
+            raise RuntimeError(
+                "read-only repository report has no task-owned worktree for Git control proof"
+            )
+        try:
+            worktree = Path(worktree_raw).expanduser().resolve(strict=True)
+            worktree.relative_to(workspace.expanduser().resolve(strict=True))
+            expected_git_control_digest = _read_only_git_control_digest(worktree)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(
+                "could not capture pre-agent read-only Git controls: %s" % exc
+            ) from exc
+        report_extra_create_argv = _read_only_report_extra_create_argv()
     name = _sandbox_name()
     basename = _workspace_basename(workspace)
     sandbox_workspace = "%s/%s" % (_SANDBOX_WORKDIR, basename)
     runtime_files = _write_sandbox_runtime_files(workspace, sandbox_workspace)
     try:
-        create_argv = _build_sandbox_create_argv(name, workspace, basename, agent_argv)
+        create_argv = _build_sandbox_create_argv(
+            name,
+            workspace,
+            basename,
+            agent_argv,
+            extra_create_argv=report_extra_create_argv,
+        )
     except Exception:
         for path in runtime_files:
             path.unlink(missing_ok=True)
         raise
     runner_completed = False
+    result: Any = None
     harvested = False
     kept = env_bool("MAC_OPENSHELL_KEEP")
     emit_telemetry(
@@ -1974,10 +3239,21 @@ def _run_sandboxed(
         workspace=basename,
     )
     progress = _SandboxProgressMonitor(name, basename, workspace, audit_id)
+    if read_only_report:
+        # The progress observer uses Git for ordinary coding tasks.  A read-only
+        # report must perform its raw control comparison before ANY post-agent
+        # Git process, so disable that advisory observer for this task class.
+        progress.interval = 0.0
     progress.start()
     try:
         result = runner(create_argv, workspace, audit_id, opts)
         runner_completed = True
+        if read_only_report:
+            setattr(
+                result,
+                "mac_read_only_git_control_digest",
+                expected_git_control_digest,
+            )
         progress.stop()
         emit_telemetry(
             "sandbox_agent_completed",
@@ -1992,6 +3268,38 @@ def _run_sandboxed(
         # clean authentication failure look like a hung task. Preserve harvest
         # and teardown in ``finally``, but return the original failure promptly.
         progress_evidence = progress.evidence()
+        read_only_violation = _sandbox_read_only_repository_violation(
+            name,
+            basename,
+            workspace,
+            task,
+            expected_git_control_digest,
+        )
+        if read_only_violation:
+            result = subprocess.CompletedProcess(
+                getattr(result, "args", ["read_only_repository_report"]),
+                66,
+                getattr(result, "stdout", "") or "",
+                "\n".join(
+                    part
+                    for part in (
+                        (getattr(result, "stderr", "") or "").strip(),
+                        read_only_violation,
+                    )
+                    if part
+                ),
+            )
+            setattr(
+                result,
+                "mac_read_only_repository_violation",
+                read_only_violation,
+            )
+            setattr(
+                result,
+                "mac_read_only_git_control_digest",
+                expected_git_control_digest,
+            )
+            return result
         if (
             int(getattr(result, "returncode", 1)) != 0
             and progress_evidence.get("ready_observed") is True
@@ -2011,10 +3319,10 @@ def _run_sandboxed(
                 returncode=int(getattr(result, "returncode", 1)),
             )
             return result
-        verification_expected = (
-            isinstance(opts.get("task"), dict)
-            and task_is_repo_coupled(opts["task"])
-            and bool(_repository_contract_test_command(opts["task"]))
+        verification_expected = read_only_report or (
+            isinstance(task, dict)
+            and task_is_repo_coupled(task)
+            and bool(_repository_contract_test_command(task))
         )
         if verification_expected:
             emit_telemetry(
@@ -2023,7 +3331,7 @@ def _run_sandboxed(
                 sandbox=name,
             )
         verification = _sandbox_run_repository_verification(
-            name, basename, workspace, opts.get("task")
+            name, basename, workspace, task
         )
         if verification is not None:
             emit_telemetry(
@@ -2033,11 +3341,56 @@ def _run_sandboxed(
                 sandbox=name,
                 passed=verification,
             )
+            metadata = (
+                task.get("metadata")
+                if isinstance(task, dict)
+                else None
+            )
+            if (
+                verification is False
+                and metadata_declares_read_only_report_repository(metadata)
+            ):
+                result = subprocess.CompletedProcess(
+                    getattr(result, "args", ["read_only_repository_report"]),
+                    67,
+                    getattr(result, "stdout", "") or "",
+                    "\n".join(
+                        part
+                        for part in (
+                            (getattr(result, "stderr", "") or "").strip(),
+                            "read-only repository contract verification failed",
+                        )
+                        if part
+                    ),
+                )
+                setattr(result, "mac_read_only_verification_failure", True)
         return result
     finally:
         active_error = sys.exc_info()[1]
         progress.stop()
-        harvested = _sandbox_download(name, basename, workspace)
+        try:
+            harvested = _sandbox_download(name, basename, workspace)
+        except Exception as exc:  # noqa: BLE001 - teardown must continue to delete
+            harvested = False
+            sys.stderr.write(
+                "[executor] WARNING: sandbox download raised unexpectedly: %s\n"
+                % exc
+            )
+        promoted: Optional[bool] = None
+        if read_only_report:
+            # The agent sandbox is allowed to contain a same-named file, but it
+            # is never authoritative for a read-only report.  Install the
+            # separately-sandboxed verifier result only after the agent harvest
+            # has finished, or remove the untrusted copy when no trusted result
+            # was produced.
+            try:
+                promoted = _promote_trusted_read_only_verification(workspace)
+            except Exception as exc:  # noqa: BLE001 - teardown must still delete
+                promoted = False
+                sys.stderr.write(
+                    "[executor] WARNING: trusted verification promotion raised: %s\n"
+                    % exc
+                )
         salvage = {
             "schema": "mac.openshell_salvage.v1",
             "sandbox": name,
@@ -2074,6 +3427,37 @@ def _run_sandboxed(
                 sandbox=name,
                 deleted=deleted,
             )
+        if read_only_report and runner_completed and result is not None:
+            lifecycle_problems: List[str] = []
+            if not harvested:
+                lifecycle_problems.append("sandbox result harvest failed")
+            if promoted is not True:
+                lifecycle_problems.append(
+                    "trusted repository verification result was not promoted"
+                )
+            if kept:
+                lifecycle_problems.append(
+                    "sandbox deletion was skipped by MAC_OPENSHELL_KEEP"
+                )
+            elif not deleted:
+                lifecycle_problems.append("sandbox deletion failed")
+            if lifecycle_problems:
+                detail = "read-only report lifecycle incomplete: %s" % "; ".join(
+                    lifecycle_problems
+                )
+                # A return expression inside the try has already retained this
+                # object when finally runs, so mutate it rather than rebinding
+                # the local.  This makes teardown failures authoritative at the
+                # caller and causes _run_executor to replace agent evidence.
+                setattr(result, "returncode", 68)
+                prior_stderr = str(getattr(result, "stderr", "") or "").strip()
+                setattr(
+                    result,
+                    "stderr",
+                    "\n".join(part for part in (prior_stderr, detail) if part),
+                )
+                setattr(result, "mac_read_only_lifecycle_failure", detail)
+                setattr(result, "mac_read_only_repository_violation", detail)
         for path in runtime_files:
             path.unlink(missing_ok=True)
         (workspace / ".mac-sandbox-repository-verify.sh").unlink(missing_ok=True)
@@ -2945,7 +4329,18 @@ def _invoke_agent(
     The agent argv is a detected coding-agent CLI when one is available + authed;
     otherwise execution fails closed (see :func:`_agent_argv`).
     Returns the runner's result (carries .returncode)."""
+    metadata = (
+        opts.get("task", {}).get("metadata")
+        if isinstance(opts.get("task"), dict)
+        else None
+    )
+    read_only_repository = metadata_declares_read_only_report_repository(metadata)
     if _executor_backend() == "acp":
+        if read_only_repository:
+            raise RuntimeError(
+                "read-only repository reports require per-task OpenShell confinement; "
+                "the ACP backend is not supported"
+            )
         return _invoke_acp_agent(prompt, workspace, audit_id, opts)
     # `wrap` is the per-task OpenShell wrap launch model; `confined` is whether
     # OpenShell confinement is in effect by EITHER model — the per-task wrap or
@@ -2958,6 +4353,11 @@ def _invoke_agent(
     if break_glass_authorization is not None:
         _prepare_host_break_glass_environment(break_glass_authorization)
     wrap = _openshell_enabled() and break_glass_authorization is None
+    if read_only_repository and (break_glass_authorization is not None or not wrap):
+        raise RuntimeError(
+            "read-only repository reports require per-task OpenShell confinement; "
+            "direct, supervisor-only, and host break-glass execution are forbidden"
+        )
     confined = (
         wrap or _openshell_required_for_local_agent()
     ) and break_glass_authorization is None
@@ -3164,6 +4564,137 @@ def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
         finally:
             relay_observability.flush()
     return rc
+
+
+def _read_only_report_repository_violation(
+    task: Any, expected_git_control_digest: str = ""
+) -> str:
+    """Return a fail-closed reason when an inspection checkout was mutated."""
+
+    metadata = task.get("metadata") if isinstance(task, dict) else None
+    if not metadata_declares_read_only_report_repository(metadata):
+        return ""
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else None
+    worktree_raw = env_str("MAC_TASK_REPO_WORKTREE") or (
+        str(runtime.get("repository_worktree") or "")
+        if isinstance(runtime, dict)
+        else ""
+    )
+    if not worktree_raw:
+        return "read-only repository report has no task-owned worktree"
+    worktree = Path(worktree_raw).expanduser()
+    if not worktree.is_dir():
+        return "read-only repository report worktree is missing"
+    if not expected_git_control_digest:
+        return "read-only repository report has no pre-agent Git control proof"
+    try:
+        observed_git_control_digest = _read_only_git_control_digest(worktree)
+    except (OSError, ValueError):
+        return "could not inspect read-only repository report Git controls"
+    if observed_git_control_digest != expected_git_control_digest:
+        return "read-only repository report Git control metadata changed"
+    base_sha = env_str("MAC_TASK_REPO_BASE_SHA") or (
+        str(runtime.get("repository_base_sha") or "")
+        if isinstance(runtime, dict)
+        else ""
+    )
+    status = _git_for_read_only_verifier(worktree, ["status", "--porcelain"])
+    if status.returncode != 0:
+        return "could not inspect read-only repository report worktree status"
+    if status.stdout.strip():
+        return "read-only repository report mutated repository files"
+    head = _git_for_read_only_verifier(worktree, ["rev-parse", "HEAD"])
+    if head.returncode != 0 or not base_sha or head.stdout.strip() != base_sha:
+        return "read-only repository report changed repository HEAD"
+    base_tree = env_str("MAC_TASK_REPO_BASE_TREE") or (
+        str(runtime.get("repository_base_tree") or "")
+        if isinstance(runtime, dict)
+        else ""
+    )
+    tree = _git_for_read_only_verifier(worktree, ["rev-parse", "HEAD^{tree}"])
+    if tree.returncode != 0 or not base_tree or tree.stdout.strip() != base_tree:
+        return "read-only repository report changed repository tree"
+    expected_refs_digest = env_str("MAC_TASK_REPO_REFS_DIGEST") or (
+        str(runtime.get("repository_refs_digest") or "")
+        if isinstance(runtime, dict)
+        else ""
+    )
+    refs = _git_for_read_only_verifier(
+        worktree, ["for-each-ref", "--format=%(refname) %(objectname)"]
+    )
+    observed_refs_digest = (
+        hashlib.sha256(refs.stdout.encode("utf-8")).hexdigest()
+        if refs.returncode == 0
+        else ""
+    )
+    if (
+        refs.returncode != 0
+        or not expected_refs_digest
+        or observed_refs_digest != expected_refs_digest
+    ):
+        return "read-only repository report changed repository refs"
+    remotes = _git_for_read_only_verifier(worktree, ["remote"])
+    if remotes.returncode != 0 or remotes.stdout.strip():
+        return "read-only repository report checkout retained a publication remote"
+    # A repository-owned validation command may leave ignored build artifacts.
+    # The clean status above proves there are no tracked or untracked edits, so
+    # it is safe to remove only the remaining disposable/ignored output while
+    # preserving the generated CodeGraph analysis cache.
+    cleaned = _git_for_read_only_verifier(
+        worktree, ["clean", "-fdx", "-e", ".codegraph/"]
+    )
+    if cleaned.returncode != 0:
+        return "could not clean read-only repository report disposable outputs"
+    expected_content_digest = env_str("MAC_TASK_REPO_CONTENT_DIGEST") or (
+        str(runtime.get("repository_content_digest") or "")
+        if isinstance(runtime, dict)
+        else ""
+    )
+    try:
+        observed_content_digest = read_only_repository_content_digest(worktree)
+    except OSError:
+        observed_content_digest = ""
+    if (
+        not expected_content_digest
+        or observed_content_digest != expected_content_digest
+    ):
+        return "read-only repository report changed repository content"
+    return ""
+
+
+def _write_read_only_report_violation_manifest(
+    task_workspace: Path,
+    task: Any,
+    detail: str,
+    *,
+    verification_failure: bool = False,
+) -> None:
+    summary = (
+        "Read-only repository contract verification failed."
+        if verification_failure
+        else "Read-only repository analysis violated its access contract."
+    )
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "invalid",
+        "evidence_type": "operator_result",
+        "summary": summary,
+        "result": detail,
+        "problems": [detail],
+        "task": {
+            "id": task.get("id") if isinstance(task, dict) else None,
+            "title": task.get("title") if isinstance(task, dict) else None,
+            "project": task.get("project") if isinstance(task, dict) else None,
+        },
+        "repository_access": {
+            "schema": REPORT_REPOSITORY_ACCESS_SCHEMA,
+            "mode": REPORT_REPOSITORY_READ_ONLY_MODE,
+        },
+    }
+    (task_workspace / "mac-evidence.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _run_executor(
@@ -3384,6 +4915,73 @@ def _run_executor(
         returncode=result.returncode,
         duration_ms=(time.monotonic() - started) * 1000.0,
     )
+    read_only_violation = str(
+        getattr(result, "mac_read_only_repository_violation", "") or ""
+    ).strip() or _read_only_report_repository_violation(
+        task,
+        str(getattr(result, "mac_read_only_git_control_digest", "") or ""),
+    )
+    read_only_verification_failure = bool(
+        getattr(result, "mac_read_only_verification_failure", False)
+    )
+    authoritative_read_only_failure = bool(
+        read_only_violation or read_only_verification_failure
+    )
+    if read_only_violation:
+        result = subprocess.CompletedProcess(
+            getattr(result, "args", ["read_only_repository_report"]),
+            66,
+            getattr(result, "stdout", "") or "",
+            "\n".join(
+                part
+                for part in (
+                    (getattr(result, "stderr", "") or "").strip(),
+                    read_only_violation,
+                )
+                if part
+            ),
+        )
+        _write_read_only_report_violation_manifest(
+            task_workspace,
+            task,
+            read_only_violation,
+        )
+        emit_telemetry(
+            "read_only_repository_violation",
+            task_id=task_id,
+            level="warning",
+            detail=read_only_violation,
+        )
+    elif read_only_verification_failure:
+        detail = "read-only repository contract verification failed"
+        result = subprocess.CompletedProcess(
+            getattr(result, "args", ["read_only_repository_report"]),
+            67,
+            getattr(result, "stdout", "") or "",
+            "\n".join(
+                part
+                for part in (
+                    (getattr(result, "stderr", "") or "").strip(),
+                    detail,
+                )
+                if part
+            ),
+        )
+        # Once the repository-owned contract gate fails, any model-written
+        # complete manifest is untrusted. Replace it authoritatively before the
+        # generic evidence-salvage path can observe it.
+        _write_read_only_report_violation_manifest(
+            task_workspace,
+            task,
+            detail,
+            verification_failure=True,
+        )
+        emit_telemetry(
+            "read_only_repository_verification_failed",
+            task_id=task_id,
+            level="warning",
+            detail=detail,
+        )
     clean_agent_failure = bool(
         getattr(result, "mac_clean_agent_failure", False)
     )
@@ -3394,6 +4992,16 @@ def _run_executor(
             task_id=task_id,
             level="warning",
             reason="clean_agent_failure",
+            returncode=result.returncode,
+        )
+    elif not is_review and metadata_declares_report_deliverable(
+        task.get("metadata") if isinstance(task, dict) else None
+    ):
+        emit_telemetry(
+            "executor_finalization_skipped",
+            task_id=task_id,
+            level="info",
+            reason="report_deliverable",
             returncode=result.returncode,
         )
     elif not is_review:
@@ -3426,7 +5034,11 @@ def _run_executor(
 
     # Task-sizing: if the agent wrote plan_steps in its evidence, auto-post them
     # as child tasks so the parent blocks on the children.  Best-effort.
-    if not is_review and not clean_agent_failure:
+    if (
+        not is_review
+        and not clean_agent_failure
+        and not authoritative_read_only_failure
+    ):
         try:
             decomposed = maybe_auto_decompose(task_workspace, task)
             if decomposed:
@@ -3441,7 +5053,11 @@ def _run_executor(
     # complete, typed manifest, don't discard that verified work — finalize as
     # success. The downstream verification gate still validates the content.
     rc = result.returncode
-    if rc != 0 and _manifest_is_complete(task_workspace):
+    if (
+        rc != 0
+        and not authoritative_read_only_failure
+        and _manifest_is_complete(task_workspace)
+    ):
         emit_telemetry("evidence_salvaged", task_id=task_id, level="warning", original_returncode=rc)
         rc = 0
 

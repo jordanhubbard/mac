@@ -2279,7 +2279,11 @@ def test_lease_renewal_ticker_heartbeats_busy_agent_so_it_is_not_marked_stale(tm
 
     heartbeats = [body for path, body in posts if path.endswith("/heartbeat")]
     assert heartbeats, "lease-renewal ticker did not heartbeat the agent"
-    assert heartbeats[0] == {"status": "busy"}
+    assert heartbeats[0]["status"] == "busy"
+    assert heartbeats[0]["health_status"] == "healthy"
+    # Busy heartbeats now refresh the complete worker resource attestation so
+    # report-executor eligibility cannot remain stale during a long task.
+    assert isinstance(heartbeats[0]["resources"], dict)
 
 
 def test_mac_worker_resolves_hub_repository_path_to_local_self_update_repo(tmp_path: Path):

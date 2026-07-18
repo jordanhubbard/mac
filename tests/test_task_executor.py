@@ -365,6 +365,67 @@ PY''',
     assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
+def test_read_only_sandbox_toolchain_ignores_stale_contracts(tmp_path):
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    stale = {
+        "toolchain": {"required_commands": ["stale-tool"]},
+        "bootstrap": {"command": "printf STALE_BOOTSTRAP"},
+        "test": {"command": "printf STALE_TEST"},
+    }
+    (workspace / "task.json").write_text(
+        json.dumps(
+            {
+                "task": {
+                    "metadata": {
+                        "deliverable": "report",
+                        "report_repository_access": {
+                            "schema": "mac.report_repository_access.v1",
+                            "mode": "read_only",
+                        },
+                        "execution_contract": {
+                            "repository_contract": {
+                                "canonical_remote_url": (
+                                    "https://example.invalid/repo.git"
+                                ),
+                                "default_branch": "main",
+                            }
+                        },
+                        "origin": {"repository_contract": stale},
+                        "repository_contract": stale,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n".join(
+        [
+            te._sandbox_toolchain_setup_shell(),
+            "mac_sandbox_toolchain_setup",
+            'test -z "$MAC_REPO_REQUIRED_COMMANDS"',
+            'test -z "$MAC_REPO_BOOTSTRAP_COMMAND"',
+            'test -z "$MAC_REPO_TEST_COMMAND"',
+        ]
+    )
+
+    completed = subprocess.run(
+        ["bash", "-lc", script],
+        cwd=workspace,
+        env={
+            **os.environ,
+            "MAC_TASK_WORKSPACE": str(workspace),
+            "MAC_TASK_FILE": str(workspace / "task.json"),
+            "MAC_SANDBOX_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
 def test_sandbox_repository_verification_retries_and_records_bootstrap(tmp_path):
     workspace = tmp_path / "task"
     worktree = workspace / "repo"

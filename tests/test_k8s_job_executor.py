@@ -13,6 +13,7 @@ import pytest
 
 from mac.k8s.job_executor import (
     DEFAULT_EVIDENCE_MANIFEST_PATH,
+    READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON,
     JobExecutionResult,
     _prepare_canonical_review_environment,
     _default_subprocess_executor,
@@ -231,6 +232,41 @@ def test_review_mode_executor_exception_blocks_task_without_evidence() -> None:
     assert blocked_post["body"]["detail"]["reason"] == "review_executor_exception"
     assert blocked_post["body"]["detail"]["review_id"] == "review-1"
     assert blocked_post["body"]["detail"]["manual_repair_required"] is True
+
+
+def test_review_mode_rejects_read_only_report_before_legacy_executor() -> None:
+    task = {
+        "id": "task-1",
+        "title": "inspect repository",
+        "metadata": {
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+        },
+    }
+    calls: List[Dict[str, Any]] = []
+
+    def legacy_executor(value: Dict[str, Any]) -> _ExecResult:
+        calls.append(value)
+        return _exec_ok(value)
+
+    mac = _FakeMac(task=task)
+    result = run_one_lease(
+        env=_env(
+            MAC_REVIEW_ID="review-1",
+            MAC_REVIEW_TARGET_EVIDENCE_ID="ev-target",
+        ),
+        mac=mac,
+        executor=legacy_executor,
+        sleeper=_no_sleep,
+    )
+
+    assert result.status == "no-evidence"
+    assert result.error == READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON
+    assert calls == []
+    assert mac.posts == []
 
 
 def test_canonical_review_environment_materializes_exact_evidence(tmp_path: Path) -> None:

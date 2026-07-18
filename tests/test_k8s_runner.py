@@ -12,6 +12,7 @@ from mac.k8s.runner import (
     DEFAULT_TASK_IMAGE,
     MAC_CONTAINER_GID,
     MAC_CONTAINER_UID,
+    READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON,
     RunnerConfig,
     _job_is_terminal,
     _job_name_for,
@@ -145,6 +146,35 @@ class TestBuildJobSpec:
         assert labels["app.kubernetes.io/managed-by"] == "mac-k8s-runner"
         assert labels["mac.task.id"] == "task-abc"
         assert labels["mac.lease.id"] == "lease-xyz"
+
+    def test_read_only_report_fails_before_secret_env_projection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        projected: List[bool] = []
+
+        def record_projection(*_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
+            projected.append(True)
+            return []
+
+        monkeypatch.setattr(
+            "mac.k8s.runner._build_executor_container_env", record_projection
+        )
+        task = _task(
+            metadata={
+                "deliverable": "report",
+                "report_repository_access": {
+                    "schema": "mac.report_repository_access.v1",
+                    "mode": "read_only",
+                },
+            }
+        )
+
+        with pytest.raises(
+            ValueError, match=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON
+        ):
+            build_job_spec(task, _lease(), _cfg())
+
+        assert projected == []
 
     def test_job_name_is_dns_safe(self) -> None:
         spec = build_job_spec(
@@ -487,6 +517,44 @@ def test_claim_and_launch_happy_path() -> None:
     assert result["job_uid"] == "uid-123"
     assert jobs.last_namespace == "mac"
     assert len(jobs.created) == 1
+
+
+def test_claim_and_launch_blocks_read_only_report_without_creating_job() -> None:
+    task = _task(
+        metadata={
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+        }
+    )
+    mac = _FakeMac(claim_response={"task": task, "lease": _lease()})
+    jobs = _FakeJobs()
+
+    result = claim_and_launch_one(mac, jobs, _cfg())
+
+    assert result == {
+        "status": "blocked",
+        "reason": READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON,
+        "task_id": "task-abc",
+        "lease_id": "lease-xyz",
+        "required_execution_boundary": "openshell",
+    }
+    assert jobs.created == []
+    assert not any(post["path"].endswith("/delegate") for post in mac.posted)
+    transition = next(
+        post for post in mac.posted if post["path"].endswith("/transition")
+    )
+    assert transition["body"]["target_state"] == "blocked"
+    assert transition["body"]["lease_id"] == "lease-xyz"
+    assert transition["body"]["detail"] == {
+        "reason": READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON,
+        "manual_repair_required": True,
+        "required_execution_boundary": "openshell",
+        "rejected_execution_boundary": "kubernetes_job",
+    }
+
 
 def test_claim_and_launch_passes_capability_filter() -> None:
     mac = _FakeMac(claim_response=None)
@@ -1334,6 +1402,7 @@ def test_build_review_job_spec_sets_required_env() -> None:
         "mac-worker-python-reviewer",
         "ev-target",
         cfg,
+        canonical_task={"id": "task-abc", "metadata": {}},
     )
     envs = {
         e["name"]: e
@@ -1358,17 +1427,63 @@ def test_build_review_job_spec_sets_required_env() -> None:
 
 
 def test_build_review_job_spec_uses_reviewer_image() -> None:
-    spec = build_review_job_spec("r1", "t1", "mac-worker-python-reviewer", "ev1", _review_cfg())
+    spec = build_review_job_spec(
+        "r1",
+        "t1",
+        "mac-worker-python-reviewer",
+        "ev1",
+        _review_cfg(),
+        canonical_task={"id": "t1", "metadata": {}},
+    )
     image = spec["spec"]["template"]["spec"]["containers"][0]["image"]
     assert image == "ghcr.io/x/reviewer:latest"
 
 
+def test_build_review_job_spec_rejects_read_only_report_before_secret_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    projected: List[bool] = []
+
+    def record_projection(*_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
+        projected.append(True)
+        return []
+
+    monkeypatch.setattr(
+        "mac.k8s.runner._build_executor_container_env", record_projection
+    )
+    with pytest.raises(
+        ValueError, match=READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON
+    ):
+        build_review_job_spec(
+            "r1",
+            "t1",
+            "mac-worker-python-reviewer",
+            "ev1",
+            _review_cfg(),
+            canonical_task={
+                "id": "t1",
+                "metadata": {
+                    "deliverable": "report",
+                    "report_repository_access": {
+                        "schema": "mac.report_repository_access.v1",
+                        "mode": "read_only",
+                    },
+                },
+            },
+        )
+
+    assert projected == []
+
+
 class _FakeMacForReview:
     def __init__(self, deliver_responses: Dict[str, List[Dict[str, Any]]],
-                 claim_response: Optional[Dict[str, Any]] = None) -> None:
+                 claim_response: Optional[Dict[str, Any]] = None,
+                 task_response: Optional[Dict[str, Any]] = None) -> None:
         self._deliver = deliver_responses
         self._claim = claim_response or {"status": "claimed"}
+        self._task = task_response or {"id": "task-abc", "metadata": {}}
         self.posted: List[Dict[str, Any]] = []
+        self.gotten: List[str] = []
 
     def post(self, path: str, body: Dict[str, Any]) -> Any:
         self.posted.append({"path": path, "body": body})
@@ -1382,7 +1497,8 @@ class _FakeMacForReview:
         return {}
 
     def get(self, path: str) -> Dict[str, Any]:
-        return {}
+        self.gotten.append(path)
+        return self._task
 
 
 def test_claim_and_launch_review_returns_none_when_no_reviewers() -> None:
@@ -1425,6 +1541,51 @@ def test_claim_and_launch_review_happy_path() -> None:
     assert len(jobs.created) == 1
     claim_posts = [p for p in mac.posted if p["path"].endswith("/claim")]
     assert claim_posts and claim_posts[0]["body"]["reviewer_agent_id"] == "mac-worker-python-reviewer"
+
+
+def test_claim_and_launch_review_leaves_read_only_report_unclaimed_without_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _review_cfg()
+    nudge = {
+        "id": "msg-1",
+        "message_type": "nudge",
+        "payload": {
+            "reason": "produce_review_verdict",
+            "task_id": "task-abc",
+            "review_id": "review-1",
+            "executor_evidence_id": "ev-target",
+        },
+    }
+    task = {
+        "id": "task-abc",
+        "metadata": {
+            "deliverable": "report",
+            "report_repository_access": {
+                "schema": "mac.report_repository_access.v1",
+                "mode": "read_only",
+            },
+        },
+    }
+    projected: List[bool] = []
+
+    def record_projection(*_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
+        projected.append(True)
+        return []
+
+    monkeypatch.setattr(
+        "mac.k8s.runner._build_executor_container_env", record_projection
+    )
+    mac = _FakeMacForReview(
+        {"mac-worker-python-reviewer": [nudge]}, task_response=task
+    )
+    jobs = _FakeJobs()
+
+    assert claim_and_launch_review_one(mac, jobs, cfg) is None
+    assert mac.gotten == ["/tasks/task-abc"]
+    assert not any(post["path"].endswith("/claim") for post in mac.posted)
+    assert jobs.created == []
+    assert projected == []
 
 
 def test_claim_and_launch_review_skips_when_claim_rejected() -> None:

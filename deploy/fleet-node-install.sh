@@ -5127,7 +5127,16 @@ install_mac_agent_wrapper() {
   local selftest="$MAC_HOME/bin/mac-agent-startup-self-test"
   local executor="$MAC_HOME/bin/mac-task-executor"
   local executor_py="$MAC_HOME/bin/mac-task-executor.py"
+  local report_python="$MAC_HOME/venv/bin/mac-report-python"
   mkdir -p "$MAC_HOME/bin"
+  # venv/bin/python is normally a symlink. A retarget between attestation and
+  # exec would select an unapproved interpreter, so install a real immutable-by-
+  # identity launcher within the venv and attest/invoke this exact file.
+  local resolved_python
+  resolved_python="$("$VENV/bin/python" -c 'import os, sys; print(os.path.realpath(sys.executable))')"
+  [ -f "$resolved_python" ] || die "resolved worker Python is missing: $resolved_python"
+  install -m 0755 "$resolved_python" "${report_python}.new"
+  mv -f "${report_python}.new" "$report_python"
   # Deliberately run outside the MAC virtualenv: it must remain usable when a
   # broken MAC import graph is the reason the worker cannot start.
   install -m 0755 "$SRC_DIR/deploy/mac-crash-observer.py" "$MAC_HOME/bin/mac-crash-observer"
@@ -5208,8 +5217,6 @@ common=(
   --lease-seconds "${MAC_WORKER_LEASE_SECONDS:-900}"
   --poll-interval "${MAC_WORKER_POLL_INTERVAL:-2}"
   --attestation-key-env "$HOME/.mac/mac.env"
-  --rotate-missing-attestation-key
-  --rotate-invalid-attestation-key
 )
 worker_resources="${MAC_WORKER_RESOURCES:-}"
 if [ -n "${MAC_WORKER_RESOURCES_FILE:-}" ] && [ -f "$MAC_WORKER_RESOURCES_FILE" ]; then
@@ -5434,6 +5441,7 @@ checks: dict[str, object] = {
     "identity_env": False,
     "openclaw_runtime": False,
     "openshell_executor_config": False,
+    "report_repository_executor_attestation": False,
     "qdrant_shared_memory": False,
     "firecrawl_web_search": False,
     "openclaw_agent": False,
@@ -5466,6 +5474,29 @@ checks["openshell_executor_config"] = not any(
     problem.startswith(("MAC_OPENSHELL_CREATE_ARGS", "OpenShell sandbox is enabled"))
     for problem in problems
 )
+report_executor_attestation: dict[str, object] = {}
+if openshell_enabled and str(os.environ.get("MAC_WORKER_MODE") or "").strip() == "loop":
+    try:
+        from mac.worker import _read_only_report_executor_attestation
+
+        observed_report_attestation = _read_only_report_executor_attestation(
+            [str(mac_home / "bin" / "mac-task-executor")]
+        )
+    except Exception as exc:
+        observed_report_attestation = None
+        problems.append(
+            "report repository executor attestation probe failed: "
+            + safe_error(exc)
+        )
+    if not isinstance(observed_report_attestation, dict):
+        problems.append(
+            "report repository executor lacks the exact hardened OpenShell attestation"
+        )
+    else:
+        report_executor_attestation = observed_report_attestation
+        checks["report_repository_executor_attestation"] = True
+else:
+    checks["report_repository_executor_attestation"] = not openshell_enabled
 
 for key, value in {
     "MAC_WORKER_AGENT_NAME": agent_name,
@@ -5679,6 +5710,7 @@ report = {
     "persona_id": persona_id,
     "tenant_id": tenant_id,
     "checks": checks,
+    "report_repository_executor_attestation": report_executor_attestation,
     "mandatory_services": {
         "qdrant_shared_memory": {
             "required": qdrant_required,
@@ -5779,12 +5811,13 @@ EOF
   chmod 700 "$selftest"
 
   cat > "$executor" <<'EOF'
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
-set -a
-. "$HOME/.mac/mac.env"
-set +a
-exec "$HOME/.mac/venv/bin/python" "$HOME/.mac/bin/mac-task-executor.py"
+: "${MAC_TASK_EXECUTOR_PYTHON:?hub-approved executor Python is required}"
+: "${MAC_TASK_EXECUTOR_SCRIPT:?hub-approved executor script is required}"
+unset PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONINSPECT PYTHONUSERBASE
+export PYTHONNOUSERSITE=1
+exec "$MAC_TASK_EXECUTOR_PYTHON" "$MAC_TASK_EXECUTOR_SCRIPT"
 EOF
   chmod 700 "$executor"
 

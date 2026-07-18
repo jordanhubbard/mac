@@ -35,19 +35,18 @@ from urllib.parse import urlsplit
 import yaml
 
 
-CERTIFICATION_JOB_SCHEMA = "mac.openshell_certification_job.v1"
+CERTIFICATION_JOB_SCHEMA = "mac.openshell_certification_job.v2"
 CERTIFICATION_RESULT_SCHEMA = "mac.openshell_certification_result.v1"
 CERTIFICATION_ISOLATION_SCHEMA = "mac.certification_isolation.v1"
 CERTIFIER_PHASE_MANIFEST_SCHEMA = "mac.certifier_phase_manifest.v1"
+CERTIFIER_PHASE_PROFILE_SCHEMA = "mac.certifier_phase_profile.v1"
 CLEANUP_ALERT_SCHEMA = "mac.openshell_certification_cleanup_alert.v1"
 
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _TREE_RE = re.compile(r"^git-tree:[0-9a-f]{40}$")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
-_IMAGE_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$"
-)
+_IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$")
 _REF_RE = re.compile(r"^refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,240}$")
 _SAFE_LAUNCH_ENV = frozenset(
     {
@@ -92,14 +91,265 @@ _PHASE_MANIFEST_KEYS = frozenset(
     }
 )
 _PHASE_KEYS = frozenset({"mode", "reason", "tests"})
-_CERTIFIER_FULL_TARGETS = ["plugin/test_tools.py", "tests"]
-_CERTIFIER_INVARIANT_TESTS = frozenset(
+_PHASE_PROFILE_KEYS = frozenset(
     {
-        "tests/test_openshell_certifier.py",
-        "tests/test_publication_lane.py",
-        "tests/test_repository_contract_certification.py",
+        "schema",
+        "version",
+        "checksum",
+        "full_targets",
+        "focused_required_tests",
+        "selection_modes",
     }
 )
+_PHASE_PROFILE_SELECTION_KEYS = frozenset(
+    {"authoritative", "supplemental", "expected_full_suite_count"}
+)
+_PHASE_PROFILE_EXPECTATION_KEYS = frozenset({"mode", "reason"})
+_AUTHORITATIVE_PHASE_MODES = frozenset({"focused", "full", "rejected"})
+_SUPPLEMENTAL_PHASE_MODES = frozenset({"skipped", "full"})
+
+
+@dataclass(frozen=True)
+class CertifierPhaseExpectation:
+    """One exact image-owned phase outcome allowed by a selection mode."""
+
+    mode: str
+    reason: str
+
+    def to_dict(self) -> Mapping[str, Any]:
+        return {"mode": self.mode, "reason": self.reason}
+
+
+@dataclass(frozen=True)
+class CertifierPhaseSelection:
+    """The exact two-phase shape and full-suite count for one selector result."""
+
+    selection_mode: str
+    authoritative: CertifierPhaseExpectation
+    supplemental: CertifierPhaseExpectation
+    expected_full_suite_count: int
+
+    def to_dict(self) -> Mapping[str, Any]:
+        return {
+            "authoritative": self.authoritative.to_dict(),
+            "supplemental": self.supplemental.to_dict(),
+            "expected_full_suite_count": int(self.expected_full_suite_count),
+        }
+
+
+@dataclass(frozen=True)
+class CertifierPhaseProfile:
+    """Immutable, checksummed contract for interpreting certifier receipts.
+
+    The profile is repository data, not a controller-side project-name switch.
+    Its complete normalized form is included in the certification job digest so
+    queued work cannot silently acquire different phase semantics after a MAC
+    deployment.
+    """
+
+    schema: str
+    version: int
+    checksum: str
+    full_targets: Tuple[str, ...]
+    focused_required_tests: Tuple[str, ...]
+    selection_modes: Tuple[CertifierPhaseSelection, ...]
+
+    @classmethod
+    def from_mapping(cls, value: Any) -> "CertifierPhaseProfile":
+        if not isinstance(value, Mapping) or set(value) != _PHASE_PROFILE_KEYS:
+            raise CertificationValidationError(
+                "certifier phase profile fields are invalid"
+            )
+        raw_modes = value.get("selection_modes")
+        if (
+            not isinstance(raw_modes, Mapping)
+            or not raw_modes
+            or len(raw_modes) > 128
+            or any(not isinstance(name, str) for name in raw_modes)
+        ):
+            raise CertificationValidationError(
+                "certifier phase profile selection modes are invalid"
+            )
+        selections = []
+        for selection_mode in sorted(raw_modes):
+            raw_selection = raw_modes.get(selection_mode)
+            if (
+                not isinstance(selection_mode, str)
+                or not isinstance(raw_selection, Mapping)
+                or set(raw_selection) != _PHASE_PROFILE_SELECTION_KEYS
+            ):
+                raise CertificationValidationError(
+                    "certifier phase profile selection is malformed"
+                )
+            phases = []
+            for name in ("authoritative", "supplemental"):
+                raw_phase = raw_selection.get(name)
+                if (
+                    not isinstance(raw_phase, Mapping)
+                    or set(raw_phase) != _PHASE_PROFILE_EXPECTATION_KEYS
+                    or not isinstance(raw_phase.get("mode"), str)
+                    or not isinstance(raw_phase.get("reason"), str)
+                ):
+                    raise CertificationValidationError(
+                        "certifier phase profile expectation is malformed"
+                    )
+                phases.append(
+                    CertifierPhaseExpectation(
+                        raw_phase["mode"],
+                        raw_phase["reason"],
+                    )
+                )
+            expected_count = raw_selection.get("expected_full_suite_count")
+            if isinstance(expected_count, bool) or not isinstance(expected_count, int):
+                raise CertificationValidationError(
+                    "certifier phase profile full-suite count is invalid"
+                )
+            selections.append(
+                CertifierPhaseSelection(
+                    selection_mode,
+                    phases[0],
+                    phases[1],
+                    expected_count,
+                )
+            )
+        full_targets = value.get("full_targets")
+        focused_required = value.get("focused_required_tests")
+        if not isinstance(full_targets, list) or not isinstance(focused_required, list):
+            raise CertificationValidationError(
+                "certifier phase profile test inventories are malformed"
+            )
+        profile = cls(
+            str(value.get("schema") or ""),
+            value.get("version"),
+            str(value.get("checksum") or ""),
+            tuple(full_targets),
+            tuple(focused_required),
+            tuple(selections),
+        )
+        profile.validate()
+        return profile
+
+    def unsigned_dict(self) -> Mapping[str, Any]:
+        return {
+            "schema": self.schema,
+            "version": int(self.version),
+            "full_targets": list(self.full_targets),
+            "focused_required_tests": list(self.focused_required_tests),
+            "selection_modes": {
+                item.selection_mode: item.to_dict() for item in self.selection_modes
+            },
+        }
+
+    def to_dict(self) -> Mapping[str, Any]:
+        value = dict(self.unsigned_dict())
+        value["checksum"] = self.checksum
+        return value
+
+    def validate(self) -> None:
+        if self.schema != CERTIFIER_PHASE_PROFILE_SCHEMA:
+            raise CertificationValidationError(
+                "certifier phase profile schema is invalid"
+            )
+        if type(self.version) is not int or self.version != 1:
+            raise CertificationValidationError(
+                "certifier phase profile version is unsupported"
+            )
+        _validate_profile_paths(
+            self.full_targets,
+            "full targets",
+            allow_empty=False,
+        )
+        _validate_profile_paths(
+            self.focused_required_tests,
+            "focused required tests",
+            allow_empty=True,
+        )
+        _require_sha256(self.checksum, "certifier phase profile checksum")
+        if self.checksum != _sha256_json(self.unsigned_dict()):
+            raise CertificationValidationError(
+                "certifier phase profile checksum does not match its content"
+            )
+        if not self.selection_modes or len(self.selection_modes) > 128:
+            raise CertificationValidationError(
+                "certifier phase profile selection modes are invalid"
+            )
+        names = [item.selection_mode for item in self.selection_modes]
+        if names != sorted(set(names)):
+            raise CertificationValidationError(
+                "certifier phase profile selection modes are not canonical"
+            )
+        focused_used = False
+        for selection in self.selection_modes:
+            if not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", selection.selection_mode):
+                raise CertificationValidationError(
+                    "certifier phase profile selection mode is invalid"
+                )
+            self._validate_expectation(
+                selection.authoritative,
+                allowed=_AUTHORITATIVE_PHASE_MODES,
+                label="authoritative",
+            )
+            self._validate_expectation(
+                selection.supplemental,
+                allowed=_SUPPLEMENTAL_PHASE_MODES,
+                label="supplemental",
+            )
+            focused_used = focused_used or any(
+                phase.mode == "focused"
+                for phase in (selection.authoritative, selection.supplemental)
+            )
+            observed_full = sum(
+                phase.mode == "full"
+                for phase in (selection.authoritative, selection.supplemental)
+            )
+            if (
+                isinstance(selection.expected_full_suite_count, bool)
+                or selection.expected_full_suite_count != observed_full
+                or not 0 <= selection.expected_full_suite_count <= 1
+            ):
+                raise CertificationValidationError(
+                    "certifier phase profile full-suite count is incoherent"
+                )
+            rejected = selection.authoritative.mode == "rejected"
+            if rejected != selection.selection_mode.endswith("_rejected"):
+                raise CertificationValidationError(
+                    "certifier phase profile rejected selection is incoherent"
+                )
+        if focused_used and not self.focused_required_tests:
+            raise CertificationValidationError(
+                "certifier phase profile lacks focused required tests"
+            )
+
+    @staticmethod
+    def _validate_expectation(
+        expectation: CertifierPhaseExpectation,
+        *,
+        allowed: frozenset[str],
+        label: str,
+    ) -> None:
+        if expectation.mode not in allowed:
+            raise CertificationValidationError(
+                "certifier phase profile %s mode is invalid" % label
+            )
+        if (
+            not expectation.reason
+            or len(expectation.reason) > 256
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in expectation.reason
+            )
+        ):
+            raise CertificationValidationError(
+                "certifier phase profile %s reason is invalid" % label
+            )
+
+    def selection(self, selection_mode: str) -> CertifierPhaseSelection:
+        for item in self.selection_modes:
+            if item.selection_mode == selection_mode:
+                return item
+        raise CertificationValidationError(
+            "certifier selection mode is not allowed by the phase profile"
+        )
 
 
 class OpenShellCertificationError(RuntimeError):
@@ -156,11 +406,15 @@ def validate_certifier_phase_manifest(
     *,
     assembly_base_sha: str,
     candidate_sha: str,
+    phase_profile: CertifierPhaseProfile,
 ) -> Mapping[str, Any]:
     """Validate the image-owned proportional-execution receipt exactly."""
 
+    phase_profile.validate()
     if not isinstance(value, Mapping) or set(value) != _PHASE_MANIFEST_KEYS:
-        raise CertificationValidationError("certifier phase manifest fields are invalid")
+        raise CertificationValidationError(
+            "certifier phase manifest fields are invalid"
+        )
     manifest = dict(value)
     if manifest.get("schema") != CERTIFIER_PHASE_MANIFEST_SCHEMA:
         raise CertificationValidationError("certifier phase manifest schema is invalid")
@@ -181,7 +435,9 @@ def validate_certifier_phase_manifest(
         or any(not isinstance(path, str) for path in changed)
         or changed != sorted(set(changed))
     ):
-        raise CertificationValidationError("certifier changed-file inventory is invalid")
+        raise CertificationValidationError(
+            "certifier changed-file inventory is invalid"
+        )
     for path in changed:
         if (
             not isinstance(path, str)
@@ -200,22 +456,33 @@ def validate_certifier_phase_manifest(
     if manifest.get("changed_files_digest") != _sha256_json(changed):
         raise CertificationValidationError("certifier changed-file digest is invalid")
 
+    selection_mode = manifest.get("selection_mode")
+    if not isinstance(selection_mode, str) or not re.fullmatch(
+        r"[a-z][a-z0-9_]{0,79}", selection_mode
+    ):
+        raise CertificationValidationError("certifier selection mode is invalid")
+    selection = phase_profile.selection(selection_mode)
+
     phases: list[Mapping[str, Any]] = []
     for name in ("authoritative", "supplemental"):
         phase = manifest.get(name)
         if not isinstance(phase, Mapping) or set(phase) != _PHASE_KEYS:
             raise CertificationValidationError("certifier %s phase is malformed" % name)
         mode = phase.get("mode")
-        allowed = (
-            {"focused", "full", "rejected"}
+        expected = (
+            selection.authoritative
             if name == "authoritative"
-            else {"skipped", "full"}
+            else selection.supplemental
         )
-        if mode not in allowed:
-            raise CertificationValidationError("certifier %s phase mode is invalid" % name)
+        if mode != expected.mode:
+            raise CertificationValidationError(
+                "certifier %s phase mode does not match its selection" % name
+            )
         reason = phase.get("reason")
-        if not isinstance(reason, str) or not reason or len(reason) > 256:
-            raise CertificationValidationError("certifier %s phase reason is invalid" % name)
+        if reason != expected.reason:
+            raise CertificationValidationError(
+                "certifier %s phase reason does not match its selection" % name
+            )
         tests = phase.get("tests")
         if (
             not isinstance(tests, list)
@@ -223,9 +490,7 @@ def validate_certifier_phase_manifest(
             or any(not isinstance(path, str) for path in tests)
             or tests != sorted(set(tests))
             or any(
-                not path
-                or path.startswith("/")
-                or ".." in path.split("/")
+                not path or path.startswith("/") or ".." in path.split("/")
                 for path in tests
             )
         ):
@@ -236,14 +501,12 @@ def validate_certifier_phase_manifest(
             raise CertificationValidationError(
                 "certifier inactive phase unexpectedly names tests"
             )
-        if mode == "full" and tests != _CERTIFIER_FULL_TARGETS:
+        if mode == "full" and tests != list(phase_profile.full_targets):
             raise CertificationValidationError(
                 "certifier full phase does not name the exact frozen suite"
             )
-        if (
-            name == "authoritative"
-            and mode == "focused"
-            and not _CERTIFIER_INVARIANT_TESTS.issubset(tests)
+        if mode == "focused" and not set(phase_profile.focused_required_tests).issubset(
+            tests
         ):
             raise CertificationValidationError(
                 "certifier focused phase lacks root-owned invariants"
@@ -257,15 +520,11 @@ def validate_certifier_phase_manifest(
         or not isinstance(full_count, int)
         or full_count != observed_full
         or full_count > 1
+        or full_count != selection.expected_full_suite_count
     ):
         raise CertificationValidationError(
-            "certifier phase manifest exceeds the one-full-suite limit"
+            "certifier phase manifest full-suite count does not match its selection"
         )
-    selection_mode = manifest.get("selection_mode")
-    if not isinstance(selection_mode, str) or not re.fullmatch(
-        r"[a-z][a-z0-9_]{0,79}", selection_mode
-    ):
-        raise CertificationValidationError("certifier selection mode is invalid")
     rejected = phases[0].get("mode") == "rejected"
     if rejected != selection_mode.endswith("_rejected"):
         raise CertificationValidationError("certifier rejected selection is incoherent")
@@ -351,28 +610,38 @@ class CertificationPolicy:
         _require_sha256(self.checksum, "policy checksum")
         observed_checksum = _sha256_bytes(self.policy_text.encode("utf-8"))
         if observed_checksum != self.checksum:
-            raise CertificationValidationError("policy checksum does not match policy text")
+            raise CertificationValidationError(
+                "policy checksum does not match policy text"
+            )
         if not self.policy_text or len(self.policy_text.encode("utf-8")) > 1024 * 1024:
             raise CertificationValidationError("certifier policy text size is invalid")
         try:
             parsed = yaml.safe_load(self.policy_text)
         except yaml.YAMLError as exc:
-            raise CertificationValidationError("certifier policy is invalid YAML") from exc
+            raise CertificationValidationError(
+                "certifier policy is invalid YAML"
+            ) from exc
         if not isinstance(parsed, dict):
             raise CertificationValidationError("certifier policy must be a YAML object")
         unknown = sorted(set(parsed) - _POLICY_KEYS)
         if unknown:
             raise CertificationValidationError(
-                "certifier policy has unreviewed top-level keys: %s" % ", ".join(unknown)
+                "certifier policy has unreviewed top-level keys: %s"
+                % ", ".join(unknown)
             )
         if parsed.get("version") != 1:
-            raise CertificationValidationError("certifier policy version must be exactly 1")
+            raise CertificationValidationError(
+                "certifier policy version must be exactly 1"
+            )
         if parsed.get("network_policies") != {}:
             raise CertificationValidationError(
                 "certifier policy must disable all network egress"
             )
         landlock = parsed.get("landlock")
-        if not isinstance(landlock, dict) or landlock.get("compatibility") != "hard_requirement":
+        if (
+            not isinstance(landlock, dict)
+            or landlock.get("compatibility") != "hard_requirement"
+        ):
             raise CertificationValidationError(
                 "certifier policy must require hard Landlock enforcement"
             )
@@ -382,19 +651,28 @@ class CertificationPolicy:
             )
         process = parsed.get("process")
         if not isinstance(process, dict):
-            raise CertificationValidationError("certifier policy requires a process section")
+            raise CertificationValidationError(
+                "certifier policy requires a process section"
+            )
         user = str(process.get("run_as_user") or "").strip()
         group = str(process.get("run_as_group") or "").strip()
         if not user or user.lower() == "root" or user == "0":
-            raise CertificationValidationError("certifier policy must run as a non-root user")
+            raise CertificationValidationError(
+                "certifier policy must run as a non-root user"
+            )
         if not group or group.lower() == "root" or group == "0":
-            raise CertificationValidationError("certifier policy must run as a non-root group")
+            raise CertificationValidationError(
+                "certifier policy must run as a non-root group"
+            )
         if set(process) - _PROCESS_POLICY_KEYS:
             raise CertificationValidationError(
                 "certifier policy has unreviewed process controls"
             )
         filesystem = parsed.get("filesystem_policy")
-        if not isinstance(filesystem, dict) or filesystem.get("include_workdir") is not True:
+        if (
+            not isinstance(filesystem, dict)
+            or filesystem.get("include_workdir") is not True
+        ):
             raise CertificationValidationError(
                 "certifier policy must confine and include the sandbox workdir"
             )
@@ -445,11 +723,23 @@ class ControllerCommand:
         if len(self.argv) > 256:
             raise CertificationValidationError("controller command argv is too large")
         for index, item in enumerate(self.argv):
-            if not isinstance(item, str) or not item or "\x00" in item or len(item) > 8192:
-                raise CertificationValidationError("controller command has an invalid argv item")
+            if (
+                not isinstance(item, str)
+                or not item
+                or "\x00" in item
+                or len(item) > 8192
+            ):
+                raise CertificationValidationError(
+                    "controller command has an invalid argv item"
+                )
             if index == 0 and item.startswith("-"):
-                raise CertificationValidationError("controller command executable is invalid")
-        if isinstance(self.timeout_seconds, bool) or not 1 <= int(self.timeout_seconds) <= 3600:
+                raise CertificationValidationError(
+                    "controller command executable is invalid"
+                )
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not 1 <= int(self.timeout_seconds) <= 3600
+        ):
             raise CertificationValidationError(
                 "controller command timeout must be between 1 and 3600 seconds"
             )
@@ -475,6 +765,7 @@ class OpenShellCertificationJob:
     landing_base_sha: str
     target_ref: str
     policy: CertificationPolicy
+    phase_profile: CertifierPhaseProfile
     image_ref: str
     bundle_path: Path = field(repr=False)
     bundle_digest: str
@@ -506,7 +797,9 @@ class OpenShellCertificationJob:
             ("landing_base_sha", self.landing_base_sha),
         ):
             if not _SHA40_RE.fullmatch(str(value or "")):
-                raise CertificationValidationError("%s must be an exact lowercase Git SHA" % name)
+                raise CertificationValidationError(
+                    "%s must be an exact lowercase Git SHA" % name
+                )
         if not _TREE_RE.fullmatch(str(self.candidate_tree_digest or "")):
             raise CertificationValidationError(
                 "candidate_tree_digest must be git-tree plus an exact lowercase Git SHA"
@@ -514,27 +807,34 @@ class OpenShellCertificationJob:
         if not _REF_RE.fullmatch(str(self.target_ref or "")) or any(
             token in self.target_ref for token in ("..", "//", "@{")
         ):
-            raise CertificationValidationError("target_ref must be a safe refs/heads ref")
+            raise CertificationValidationError(
+                "target_ref must be a safe refs/heads ref"
+            )
         self.policy.validate()
+        self.phase_profile.validate()
         validate_certifier_image_ref(self.image_ref)
         _require_sha256(self.bundle_digest, "bundle digest")
         if not self.controller_commands:
-            raise CertificationValidationError("certification requires controller commands")
+            raise CertificationValidationError(
+                "certification requires controller commands"
+            )
         seen = set()
         primary_commands = 0
         for command in self.controller_commands:
             validate_certifier_controller_command(command)
             if command.command_id in seen:
-                raise CertificationValidationError("controller command ids must be unique")
+                raise CertificationValidationError(
+                    "controller command ids must be unique"
+                )
             seen.add(command.command_id)
             base_flags = [
                 index
                 for index, item in enumerate(command.argv)
                 if item == "--base-sha" or item.startswith("--base-sha=")
             ]
-            if (
-                base_flags != [len(command.argv) - 2]
-                or command.argv[-2:] != ("--base-sha", self.assembly_base_sha)
+            if base_flags != [len(command.argv) - 2] or command.argv[-2:] != (
+                "--base-sha",
+                self.assembly_base_sha,
             ):
                 raise CertificationValidationError(
                     "controller command must end with the exact controller-owned assembly base"
@@ -575,12 +875,15 @@ class OpenShellCertificationJob:
             "landing_base_sha": self.landing_base_sha,
             "target_ref": self.target_ref,
             "policy": self.policy.identity(),
+            "phase_profile": self.phase_profile.to_dict(),
             "image_ref": self.image_ref,
             "image_digest": self.image_digest,
             "bundle_digest": self.bundle_digest,
             "bundle_format": "git_bundle",
             "commands_digest": self.commands_digest,
-            "controller_commands": [item.to_dict() for item in self.controller_commands],
+            "controller_commands": [
+                item.to_dict() for item in self.controller_commands
+            ],
         }
 
     @property
@@ -675,7 +978,9 @@ class OpenShellCertificationResult:
         return payload
 
     def with_digest(self) -> "OpenShellCertificationResult":
-        return replace(self, result_digest=_sha256_json(self._payload(include_digest=False)))
+        return replace(
+            self, result_digest=_sha256_json(self._payload(include_digest=False))
+        )
 
     def to_dict(self) -> Mapping[str, Any]:
         if not self.result_digest:
@@ -838,7 +1143,9 @@ class OpenShellCertificationRunner:
         job.validate()
         sandbox_name = self._name_factory()
         if not re.fullmatch(r"mac-cert-[A-Za-z0-9._-]{1,80}", sandbox_name):
-            raise CertificationValidationError("sandbox name factory returned an unsafe name")
+            raise CertificationValidationError(
+                "sandbox name factory returned an unsafe name"
+            )
         started_at = _iso(self._now())
         checks: list[CertificationCheckResult] = []
         phase_manifest: Mapping[str, Any] = {}
@@ -892,6 +1199,7 @@ class OpenShellCertificationRunner:
                                         outcome.stdout,
                                         assembly_base_sha=job.assembly_base_sha,
                                         candidate_sha=job.candidate_sha,
+                                        phase_profile=job.phase_profile,
                                     )
                                     if (
                                         outcome.returncode == 0
@@ -935,7 +1243,9 @@ class OpenShellCertificationRunner:
                             )
                         if not failure_class:
                             postcheck = self._invoke(
-                                self._identity_exec_argv(job, sandbox_name, setup=False),
+                                self._identity_exec_argv(
+                                    job, sandbox_name, setup=False
+                                ),
                                 timeout_seconds=job.lifecycle_timeout_seconds,
                             )
                             if postcheck.returncode != 0:
@@ -972,7 +1282,11 @@ class OpenShellCertificationRunner:
                         False,
                     )
             if cleanup is None or cleanup.returncode != 0:
-                detail = "cleanup was not attempted" if cleanup is None else _outcome_detail(cleanup)
+                detail = (
+                    "cleanup was not attempted"
+                    if cleanup is None
+                    else _outcome_detail(cleanup)
+                )
                 alert = CleanupAlert(
                     job.job_id,
                     sandbox_name,
@@ -1048,16 +1362,24 @@ class OpenShellCertificationRunner:
         try:
             before = source.lstat()
         except OSError as exc:
-            raise CertificationValidationError("certification Git bundle is unavailable") from exc
+            raise CertificationValidationError(
+                "certification Git bundle is unavailable"
+            ) from exc
         if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
-            raise CertificationValidationError("certification input must be a regular Git bundle")
+            raise CertificationValidationError(
+                "certification input must be a regular Git bundle"
+            )
         if before.st_size < 16 or before.st_size > self.max_bundle_bytes:
-            raise CertificationValidationError("certification Git bundle size is invalid")
+            raise CertificationValidationError(
+                "certification Git bundle size is invalid"
+            )
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         try:
             descriptor = os.open(source, flags)
         except OSError as exc:
-            raise CertificationValidationError("certification Git bundle cannot be opened safely") from exc
+            raise CertificationValidationError(
+                "certification Git bundle cannot be opened safely"
+            ) from exc
         destination = temp / "candidate.bundle"
         digest = hashlib.sha256()
         header = b""
@@ -1065,7 +1387,9 @@ class OpenShellCertificationRunner:
         try:
             opened = os.fstat(descriptor)
             if not stat.S_ISREG(opened.st_mode):
-                raise CertificationValidationError("certification input is not a regular file")
+                raise CertificationValidationError(
+                    "certification input is not a regular file"
+                )
             with os.fdopen(descriptor, "rb", closefd=True) as reader:
                 descriptor = -1
                 with destination.open("xb") as writer:
@@ -1091,7 +1415,9 @@ class OpenShellCertificationRunner:
             )
         observed_digest = "sha256:%s" % digest.hexdigest()
         if observed_digest != job.bundle_digest:
-            raise CertificationValidationError("Git bundle digest does not match the job")
+            raise CertificationValidationError(
+                "Git bundle digest does not match the job"
+            )
         destination.chmod(0o400)
         return destination
 
@@ -1216,7 +1542,11 @@ class OpenShellCertificationRunner:
         failure_class: str,
         failure_reason: str,
     ) -> OpenShellCertificationResult:
-        status = "passed" if not failure_class and len(checks) == len(job.controller_commands) else "failed"
+        status = (
+            "passed"
+            if not failure_class and len(checks) == len(job.controller_commands)
+            else "failed"
+        )
         isolation = {
             "schema": CERTIFICATION_ISOLATION_SCHEMA,
             "network": "disabled",
@@ -1262,7 +1592,7 @@ class OpenShellCertificationRunner:
         ).with_digest()
 
 
-_SETUP_IDENTITY_SCRIPT = r'''import json, os, shutil, subprocess, sys
+_SETUP_IDENTITY_SCRIPT = r"""import json, os, shutil, subprocess, sys
 sha, expected_tree = sys.argv[1], sys.argv[2]
 bundle = "/sandbox/input/candidate.bundle"
 repo = "/sandbox/work/repo"
@@ -1289,10 +1619,10 @@ observed_tree = "git-tree:" + tree.stdout.strip()
 if tree.returncode or observed_tree != expected_tree:
     raise SystemExit(64)
 print(json.dumps({"candidate_sha": sha, "candidate_tree_digest": observed_tree}, sort_keys=True))
-'''
+"""
 
 
-_POSTCHECK_IDENTITY_SCRIPT = r'''import subprocess, sys
+_POSTCHECK_IDENTITY_SCRIPT = r"""import subprocess, sys
 sha, expected_tree = sys.argv[1], sys.argv[2]
 
 def value(argv):
@@ -1306,7 +1636,7 @@ head = value(["git", "rev-parse", "HEAD"])
 tree = "git-tree:" + value(["git", "rev-parse", "HEAD^{tree}"])
 if head != sha or tree != expected_tree:
     raise SystemExit(72)
-'''
+"""
 
 
 def _phase_manifest_from_output(
@@ -1314,6 +1644,7 @@ def _phase_manifest_from_output(
     *,
     assembly_base_sha: str,
     candidate_sha: str,
+    phase_profile: CertifierPhaseProfile,
 ) -> Mapping[str, Any]:
     lines = [
         line[len(_CERTIFIER_PHASE_PREFIX) :]
@@ -1334,6 +1665,7 @@ def _phase_manifest_from_output(
         payload,
         assembly_base_sha=assembly_base_sha,
         candidate_sha=candidate_sha,
+        phase_profile=phase_profile,
     )
 
 
@@ -1352,7 +1684,9 @@ def _sanitized_launcher_environment(
     for name, value in supplied.items():
         text = str(value)
         if "\x00" in text:
-            raise CertificationValidationError("certifier launcher environment is invalid")
+            raise CertificationValidationError(
+                "certifier launcher environment is invalid"
+            )
         if name == "OPENSHELL_GATEWAY_ENDPOINT":
             text = _validated_loopback_gateway_endpoint(text)
         values[name] = text
@@ -1393,7 +1727,9 @@ def _validated_loopback_gateway_endpoint(value: str) -> str:
 def _write_result(path: Path, result: OpenShellCertificationResult) -> None:
     target = Path(path)
     if target.is_symlink():
-        raise CertificationValidationError("certification result path may not be a symlink")
+        raise CertificationValidationError(
+            "certification result path may not be a symlink"
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n"
     descriptor, temp_name = tempfile.mkstemp(
@@ -1439,6 +1775,36 @@ def _sha256_json(value: Any) -> str:
     return _sha256_bytes(encoded)
 
 
+def _validate_profile_paths(
+    values: Tuple[str, ...],
+    label: str,
+    *,
+    allow_empty: bool,
+) -> None:
+    if (
+        (not values and not allow_empty)
+        or len(values) > 4096
+        or any(not isinstance(path, str) for path in values)
+        or list(values) != sorted(set(values))
+    ):
+        raise CertificationValidationError(
+            "certifier phase profile %s are invalid" % label
+        )
+    for path in values:
+        if (
+            not path
+            or len(path.encode("utf-8")) > 1024
+            or path.startswith("/")
+            or path.endswith("/")
+            or posixpath.normpath(path) != path
+            or ".." in path.split("/")
+            or any(ord(character) < 32 or ord(character) == 127 for character in path)
+        ):
+            raise CertificationValidationError(
+                "certifier phase profile %s are unsafe" % label
+            )
+
+
 def _clip(value: Any, limit: int = _OUTPUT_LIMIT) -> str:
     text = str(value or "")
     if len(text) <= limit:
@@ -1470,11 +1836,15 @@ __all__ = [
     "CERTIFICATION_ISOLATION_SCHEMA",
     "CERTIFICATION_JOB_SCHEMA",
     "CERTIFICATION_RESULT_SCHEMA",
+    "CERTIFIER_PHASE_PROFILE_SCHEMA",
     "CLEANUP_ALERT_SCHEMA",
     "CertificationCheckResult",
     "CertificationCleanupError",
     "CertificationPolicy",
     "CertificationValidationError",
+    "CertifierPhaseExpectation",
+    "CertifierPhaseProfile",
+    "CertifierPhaseSelection",
     "CleanupAlert",
     "CommandOutcome",
     "CommandRunner",
@@ -1486,4 +1856,5 @@ __all__ = [
     "SubprocessCommandRunner",
     "validate_certifier_controller_command",
     "validate_certifier_image_ref",
+    "validate_certifier_phase_manifest",
 ]

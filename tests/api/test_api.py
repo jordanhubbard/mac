@@ -1671,12 +1671,18 @@ def test_evidence_created_by_bound_to_principal():
     assert ok.status_code == 200, ok.text
 
 
-def test_attestation_key_rotation_requires_global_fleet_token():
+def test_attestation_key_rotation_is_admin_only_and_worker_attempts_do_not_mutate():
+    cp = ControlPlane.in_memory()
     client = TestClient(
         create_app(
-            control_plane=ControlPlane.in_memory(),
+            control_plane=cp,
             auth_tokens={
                 "tenant": {"scopes": ["write"], "tenant_id": "tenant-a"},
+                "worker-a": {
+                    "scopes": ["agent", "write"],
+                    "agent_id": "agent-a",
+                    "principal_kind": "worker",
+                },
                 "admin": ["admin"],
             },
         )
@@ -1689,15 +1695,72 @@ def test_attestation_key_rotation_requires_global_fleet_token():
     agent = client.post(
         "/agents",
         headers={"Authorization": "Bearer admin"},
-        json={"machine_id": machine["id"], "name": "worker", "capabilities": ["python"]},
+        json={
+            "agent_id": "agent-a",
+            "machine_id": machine["id"],
+            "name": "worker-a",
+            "capabilities": ["python"],
+        },
+    ).json()
+    other = client.post(
+        "/agents",
+        headers={"Authorization": "Bearer admin"},
+        json={
+            "agent_id": "agent-b",
+            "machine_id": machine["id"],
+            "name": "worker-b",
+            "capabilities": ["python"],
+        },
     ).json()
     original_key = agent["attestation_key"]
+    original_other_key = other["attestation_key"]
+
+    before = cp.store.query_one(
+        "SELECT attestation_key_ciphertext, attestation_key_prev_ciphertext, "
+        "attestation_key_rotated_at, updated_at FROM agents WHERE id = ?",
+        (agent["id"],),
+    )
+    before_other = cp.store.query_one(
+        "SELECT attestation_key_ciphertext, attestation_key_prev_ciphertext, "
+        "attestation_key_rotated_at, updated_at FROM agents WHERE id = ?",
+        (other["id"],),
+    )
+    assert before is not None and before_other is not None
+    before_state = dict(before)
+    before_other_state = dict(before_other)
 
     blocked = client.post(
         "/agents/%s/attestation-key/rotate" % agent["id"],
         headers={"Authorization": "Bearer tenant"},
     )
     assert blocked.status_code == 403
+
+    blocked_self = client.post(
+        "/agents/%s/attestation-key/rotate" % agent["id"],
+        headers={"Authorization": "Bearer worker-a"},
+    )
+    assert blocked_self.status_code == 403
+    blocked_peer = client.post(
+        "/agents/%s/attestation-key/rotate" % other["id"],
+        headers={"Authorization": "Bearer worker-a"},
+    )
+    assert blocked_peer.status_code == 403
+
+    after_blocked = cp.store.query_one(
+        "SELECT attestation_key_ciphertext, attestation_key_prev_ciphertext, "
+        "attestation_key_rotated_at, updated_at FROM agents WHERE id = ?",
+        (agent["id"],),
+    )
+    after_other_blocked = cp.store.query_one(
+        "SELECT attestation_key_ciphertext, attestation_key_prev_ciphertext, "
+        "attestation_key_rotated_at, updated_at FROM agents WHERE id = ?",
+        (other["id"],),
+    )
+    assert after_blocked is not None and after_other_blocked is not None
+    assert dict(after_blocked) == before_state
+    assert dict(after_other_blocked) == before_other_state
+    assert cp._agent_attestation_key(agent["id"]) == original_key
+    assert cp._agent_attestation_key(other["id"]) == original_other_key
 
     rotated = client.post(
         "/agents/%s/attestation-key/rotate" % agent["id"],
@@ -1711,52 +1774,79 @@ def test_attestation_key_rotation_requires_global_fleet_token():
 
 def test_attestation_key_verify_uses_challenge_response():
     cp = ControlPlane.in_memory()
+    machine = cp.register_machine("host-1")
+    registered = cp.register_agent(
+        machine.id,
+        "worker",
+        agent_id="verify-agent",
+        capabilities=["python"],
+    )
+    other = cp.register_agent(
+        machine.id,
+        "other-worker",
+        agent_id="other-agent",
+        capabilities=["python"],
+    )
+    attestation_key = getattr(registered, "attestation_key")
     client = TestClient(
         create_app(
             control_plane=cp,
             auth_tokens={
                 "tenant": {"scopes": ["write"], "tenant_id": "tenant-a"},
+                "worker": {
+                    "scopes": ["agent", "write"],
+                    "agent_id": registered.id,
+                    "principal_kind": "worker",
+                },
                 "admin": ["admin"],
             },
         )
     )
-    machine = client.post(
-        "/machines",
-        headers={"Authorization": "Bearer admin"},
-        json={"hostname": "host-1"},
-    ).json()
-    agent = client.post(
-        "/agents",
-        headers={"Authorization": "Bearer admin"},
-        json={"machine_id": machine["id"], "name": "worker", "capabilities": ["python"]},
-    ).json()
     challenge = {
         "schema": "mac.agent_attestation_challenge.v1",
         "purpose": "attestation-key-healthcheck",
-        "agent_id": agent["id"],
+        "agent_id": registered.id,
         "nonce": "test-nonce",
     }
 
     blocked = client.post(
-        "/agents/%s/attestation-key/verify" % agent["id"],
+        "/agents/%s/attestation-key/verify" % registered.id,
         headers={"Authorization": "Bearer tenant"},
         json={"challenge": challenge, "signature": "v1:bad"},
     )
     assert blocked.status_code == 403
 
+    blocked_peer = client.post(
+        "/agents/%s/attestation-key/verify" % other.id,
+        headers={"Authorization": "Bearer worker"},
+        json={"challenge": challenge, "signature": "v1:bad"},
+    )
+    assert blocked_peer.status_code == 403
+
+    worker_valid = client.post(
+        "/agents/%s/attestation-key/verify" % registered.id,
+        headers={"Authorization": "Bearer worker"},
+        json={
+            "challenge": challenge,
+            "signature": sign_verification_manifest(attestation_key, challenge),
+        },
+    )
+    assert worker_valid.status_code == 200
+    assert worker_valid.json()["valid"] is True
+
     valid = client.post(
-        "/agents/%s/attestation-key/verify" % agent["id"],
+        "/agents/%s/attestation-key/verify" % registered.id,
         headers={"Authorization": "Bearer admin"},
         json={
             "challenge": challenge,
-            "signature": sign_verification_manifest(agent["attestation_key"], challenge),
+            "signature": sign_verification_manifest(attestation_key, challenge),
         },
     )
     assert valid.status_code == 200
     assert valid.json()["valid"] is True
 
     invalid = client.post(
-        "/agents/%s/attestation-key/verify" % agent["id"],
+        "/agents/%s/attestation-key/verify" % registered.id,
         headers={"Authorization": "Bearer admin"},
         json={"challenge": challenge, "signature": "v1:wrong"},
     )

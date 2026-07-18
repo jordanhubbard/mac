@@ -392,7 +392,17 @@ def test_sandbox_verification_item_returns_none_when_no_hub_verify_missing_file(
 def test_sandbox_verification_item_returns_real_result_when_file_present_hub_verify(tmp_path) -> None:
     """A present sandbox-verification file takes precedence over deferred mode."""
     path = tmp_path / "mac-sandbox-verification.json"
-    path.write_text(json.dumps({"returncode": 0, "command": "make test", "stdout": "ok", "stderr": ""}))
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "mac.sandbox_verification.v1",
+                "returncode": 0,
+                "command": "cmd",
+                "stdout": "ok",
+                "stderr": "",
+            }
+        )
+    )
     item = worker._sandbox_repository_verification_item(tmp_path, "cmd", hub_verify=True)
     assert item is not None
     assert item["status"] == "pass"
@@ -480,5 +490,4 @@ def test_sandbox_verification_item_hub_verify_non_dict_json_returns_deferred(tmp
     item = worker._sandbox_repository_verification_item(tmp_path, "cmd", hub_verify=True)
     assert item is not None
     assert worker._is_hub_verify_deferred_item(item)
-
 
