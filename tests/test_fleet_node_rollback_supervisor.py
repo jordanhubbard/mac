@@ -190,7 +190,10 @@ if manager == "launchctl":
         target = args[1]
         item = jobs.get(target)
         if item is None:
-            if state.get("ambiguous_absent") == target:
+            if state.get("canonical_macos_absent") == target:
+                print("Bad request.", file=sys.stderr)
+                print('Could not find service "com.mac.agent" in domain for user gui: 501', file=sys.stderr)
+            elif state.get("ambiguous_absent") == target:
                 print("Could not find service; extra detail", file=sys.stderr)
                 print("second line", file=sys.stderr)
             else:
@@ -1014,6 +1017,39 @@ def test_launchd_rejects_ambiguous_job_state(tmp_path: Path) -> None:
     result = _run(command)
 
     assert result.returncode == 1
+    assert not receipt.exists()
+
+
+def test_launchd_accepts_canonical_macos_two_line_absent_state(
+    tmp_path: Path,
+) -> None:
+    launchctl = _write_manager(tmp_path, "launchctl")
+    target = "gui/501/" + LAUNCHD_NAMES["agent"]
+    _write_state(tmp_path, {"jobs": {}, "canonical_macos_absent": target})
+    command, receipt = _launchd_args(
+        tmp_path, "quiesce", _closed_port(), launchctl
+    )
+
+    result = _run(command)
+
+    assert result.returncode == 0, result.stderr
+    _assert_passed_receipt(receipt, "quiesce", "launchd")
+
+
+def test_launchd_rejects_noncanonical_multiline_absent_state(
+    tmp_path: Path,
+) -> None:
+    launchctl = _write_manager(tmp_path, "launchctl")
+    target = "gui/501/" + LAUNCHD_NAMES["agent"]
+    _write_state(tmp_path, {"jobs": {}, "ambiguous_absent": target})
+    command, receipt = _launchd_args(
+        tmp_path, "quiesce", _closed_port(), launchctl
+    )
+
+    result = _run(command)
+
+    assert result.returncode == 1
+    assert "ambiguous absent state" in result.stderr
     assert not receipt.exists()
 
 

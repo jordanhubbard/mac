@@ -777,7 +777,18 @@ class LaunchdSupervisor(BaseSupervisor):
             lines = [
                 line.strip() for line in result.combined.splitlines() if line.strip()
             ]
-            if len(lines) == 1 and "Could not find service" in lines[0]:
+            legacy_absent = len(lines) == 1 and "Could not find service" in lines[0]
+            current_macos_absent = (
+                len(lines) == 2
+                and lines[0] == "Bad request."
+                and re.fullmatch(
+                    r'Could not find service "[^"\r\n]+" in domain for '
+                    r'(?:system|user gui: [0-9]+)',
+                    lines[1],
+                )
+                is not None
+            )
+            if legacy_absent or current_macos_absent:
                 return LaunchdState(False, "absent", 0)
             raise ProtocolError("launchd returned ambiguous absent state")
         if result.returncode != 0:
