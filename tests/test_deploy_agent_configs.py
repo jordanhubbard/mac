@@ -579,6 +579,9 @@ def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
     verifier = _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude")
     assert "reviewed CodeGraph bundle is missing" in verifier
     assert "onboarded CodeGraph version differs" in verifier
+    assert 'bundle="$MAC_HOME/lib/codegraph/versions/$MAC_REVIEWED_CODEGRAPH_VERSION"' in verifier
+    assert '"$(readlink "$target" 2>/dev/null || true)" = "$binary"' in verifier
+    assert '[ -x "$node" ] && [ ! -L "$node" ]' in verifier
     assert "mac_install_reviewed_codegraph" not in verifier
     assert "mac.codegraph_background_init.v1" in script
     assert "CodeGraph index initialization queued" in script
@@ -622,19 +625,25 @@ def test_codegraph_phase2_verifier_accepts_onboarded_pinned_binary(tmp_path):
                 'MAC_HOME="$PWD/mac-home"',
                 'HOME="$PWD/home"',
                 'LOG_DIR="$PWD/logs"',
-                "mkdir -p \"$MAC_HOME/bin\" \"$HOME\" \"$LOG_DIR\"",
+                'bundle="$MAC_HOME/lib/codegraph/versions/v1.1.6"',
+                "mkdir -p \"$MAC_HOME/bin\" \"$bundle/bin\" \"$HOME\" \"$LOG_DIR\"",
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
                 'die() { printf "%s\\n" "$*" >&2; return 1; }',
                 'run_without_deploy_credentials() { "$@"; }',
                 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"',
-                "cat > \"$MAC_HOME/bin/codegraph\" <<'EOF'",
+                "cat > \"$bundle/bin/codegraph\" <<'EOF'",
                 "#!/bin/sh",
                 '[ "$1" = --version ] && echo 1.1.6',
                 "EOF",
-                'chmod +x "$MAC_HOME/bin/codegraph"',
+                "cat > \"$bundle/node\" <<'EOF'",
+                "#!/bin/sh",
+                "exit 0",
+                "EOF",
+                'chmod +x "$bundle/bin/codegraph" "$bundle/node"',
+                'ln -s "$bundle/bin/codegraph" "$MAC_HOME/bin/codegraph"',
                 _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
                 "install_codegraph_cli",
-                'test -x "$MAC_HOME/bin/codegraph"',
+                'test -L "$MAC_HOME/bin/codegraph"',
                 'grep -q "verified onboarded CodeGraph" "$LOG_DIR/log.txt"',
                 "",
             ]

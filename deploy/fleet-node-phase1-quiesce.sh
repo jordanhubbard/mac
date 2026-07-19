@@ -181,6 +181,22 @@ def regular_directory(path: Path) -> bool:
 mac_home = Path(os.environ["MAC_HOME"])
 source = mac_home / "src" / "mac"
 venv = mac_home / "venv"
+codegraph_version = os.environ.get("MAC_PHASE1_CODEGRAPH_VERSION", "")
+codegraph_link = mac_home / "bin" / "codegraph"
+codegraph_bundle = mac_home / "lib" / "codegraph" / "versions" / codegraph_version
+codegraph_binary = codegraph_bundle / "bin" / "codegraph"
+codegraph_node = codegraph_bundle / "node"
+codegraph_ready = (
+    bool(codegraph_version)
+    and codegraph_link.is_symlink()
+    and os.readlink(codegraph_link) == str(codegraph_binary)
+    and codegraph_binary.is_file()
+    and not codegraph_binary.is_symlink()
+    and os.access(codegraph_binary, os.X_OK)
+    and codegraph_node.is_file()
+    and not codegraph_node.is_symlink()
+    and os.access(codegraph_node, os.X_OK)
+)
 trusted_command_path = os.pathsep.join(
     (
         str(mac_home / "bin"),
@@ -242,9 +258,7 @@ payload = {
     "prerequisites": {
         "python": sys.executable,
         "github_cli": shutil.which("gh", path=trusted_command_path),
-        "codegraph": str(mac_home / "bin" / "codegraph")
-        if os.access(mac_home / "bin" / "codegraph", os.X_OK)
-        else None,
+        "codegraph": str(codegraph_binary) if codegraph_ready else None,
     },
     "contracts": {
         "phase1_receipt": os.environ["PHASE1_RECEIPT"],

@@ -7503,9 +7503,14 @@ install_github_cli() {
 
 install_codegraph_cli() {
   local target="$MAC_HOME/bin/codegraph"
-  [ -x "$target" ] && [ ! -L "$target" ] \
+  local bundle="$MAC_HOME/lib/codegraph/versions/$MAC_REVIEWED_CODEGRAPH_VERSION"
+  local binary="$bundle/bin/codegraph" node="$bundle/node"
+  [ -L "$target" ] \
+    && [ "$(readlink "$target" 2>/dev/null || true)" = "$binary" ] \
+    && [ -x "$binary" ] && [ ! -L "$binary" ] \
+    && [ -x "$node" ] && [ ! -L "$node" ] \
     || die "reviewed CodeGraph bundle is missing; complete node onboarding before phase 2"
-  run_without_deploy_credentials "$target" --version 2>/dev/null \
+  run_without_deploy_credentials "$binary" --version 2>/dev/null \
     | grep -qx "${MAC_REVIEWED_CODEGRAPH_VERSION#v}" \
     || die "onboarded CodeGraph version differs from $MAC_REVIEWED_CODEGRAPH_VERSION"
   log "verified onboarded CodeGraph $MAC_REVIEWED_CODEGRAPH_VERSION"

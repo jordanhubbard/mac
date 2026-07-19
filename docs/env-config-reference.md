@@ -658,6 +658,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSH_GW` | str | consumer-defined | core | Core setting: opensh gw. |
 | `MAC_PG_POOL_SIZE` | int | consumer-defined | core | Core setting: pg pool size. |
 | `MAC_PHASE1_AGENT` | str | consumer-defined | core | Core setting: phase1 agent. |
+| `MAC_PHASE1_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: phase1 codegraph version. |
 | `MAC_PHASE1_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: phase1 command timeout seconds. |
 | `MAC_PHASE1_DAEMON_FUNCTIONS_FILE` | str | consumer-defined | core | Core setting: phase1 daemon functions file. |
 | `MAC_PHASE1_DAEMON_FUNCTIONS_SHA256` | str | consumer-defined | core | Core setting: phase1 daemon functions sha256. |
@@ -705,6 +706,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PREFER_CODING_AGENT` | bool | consumer-defined | core | Core setting: prefer coding agent. |
 | `MAC_PREREQ_AGENT` | str | consumer-defined | core | Core setting: prereq agent. |
 | `MAC_PREREQ_AGENT_ID` | str | consumer-defined | core | Core setting: prereq agent id. |
+| `MAC_PREREQ_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: prereq codegraph version. |
 | `MAC_PREREQ_FIRECRAWL_REQUIRED` | bool | consumer-defined | core | Core setting: prereq firecrawl required. |
 | `MAC_PREREQ_FIRECRAWL_URL` | str | consumer-defined | core | Core setting: prereq firecrawl url. |
 | `MAC_PREREQ_HELPER` | str | consumer-defined | core | Core setting: prereq helper. |

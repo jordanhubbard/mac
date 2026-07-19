@@ -7885,6 +7885,18 @@
   },
   {
     "default": null,
+    "description": "Core setting: phase1 codegraph version.",
+    "family": "core",
+    "name": "MAC_PHASE1_CODEGRAPH_VERSION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: phase1 command timeout seconds.",
     "family": "core",
     "name": "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS",
@@ -8400,6 +8412,17 @@
     "description": "Core setting: prereq agent id.",
     "family": "core",
     "name": "MAC_PREREQ_AGENT_ID",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq codegraph version.",
+    "family": "core",
+    "name": "MAC_PREREQ_CODEGRAPH_VERSION",
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh"
@@ -9359,6 +9382,7 @@
     "name": "MAC_REVIEWED_CODEGRAPH_VERSION",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
       "deploy/openshell/prepare-runtime-image-assets.sh",
       "deploy/reviewed-tool-assets.sh"

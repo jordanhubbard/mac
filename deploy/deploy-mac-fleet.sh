@@ -2,6 +2,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REVIEWED_TOOL_ASSETS_SOURCE="$ROOT/deploy/reviewed-tool-assets.sh"
+[ -r "$REVIEWED_TOOL_ASSETS_SOURCE" ] || {
+  echo "ERROR: reviewed tool asset contract is unavailable: $REVIEWED_TOOL_ASSETS_SOURCE" >&2
+  exit 1
+}
+# shellcheck disable=SC1090 -- frozen and hash-checked before fleet mutation.
+. "$REVIEWED_TOOL_ASSETS_SOURCE"
 # load_env_file_with_caller_precedence <path>
 #
 # Precedence contract: variables already set in the caller's environment always
@@ -3773,7 +3780,7 @@ preflight_legacy_hub_prerequisites() {
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" \
-    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$(deployment_id_for_agent "$agent")") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") bash -s" > "$receipt" <<'REMOTE_LEGACY_PREREQUISITES'
+    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$(deployment_id_for_agent "$agent")") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") bash -s" > "$receipt" <<'REMOTE_LEGACY_PREREQUISITES'
 set -euo pipefail
 helper="${MAC_PHASE1_HELPER:?}"
 cleanup() { rm -f "$helper"; }
@@ -3808,6 +3815,7 @@ OS_KIND="${MAC_PHASE1_OS:?}" \
 DEPLOY_REV="${MAC_PHASE1_REV:?}" \
 DEPLOY_GENERATION="${MAC_PHASE1_GENERATION:?}" \
 SUPERVISOR_KIND="${MAC_PHASE1_SUPERVISOR:?}" \
+MAC_PHASE1_CODEGRAPH_VERSION="${MAC_PHASE1_CODEGRAPH_VERSION:?}" \
 MAC_HOME="$HOME/.mac" \
 PY="$phase1_python" \
   bash "$helper" identify
@@ -4329,7 +4337,7 @@ prepare_remote_prerequisite_bundle() {
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
-    "set -e; umask 077; rm -rf $(shell_quote "$remote_root"); mkdir -m 0700 $(shell_quote "$remote_root"); MAC_PREREQ_AGENT=$(shell_quote "$agent") MAC_PREREQ_AGENT_ID=$(shell_quote "$agent_id") MAC_PREREQ_IDENTITY=$(shell_quote "$identity_sha") MAC_PREREQ_HELPER=$(shell_quote "$remote_helper") MAC_PREREQ_ROOT=$(shell_quote "$remote_root") MAC_PREREQ_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_PREREQ_QDRANT_REQUIRED=$(shell_quote "$qdrant_required") MAC_PREREQ_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_PREREQ_FIRECRAWL_REQUIRED=$(shell_quote "$firecrawl_required") MAC_PREREQ_WEBDAV_URL=$(shell_quote "$webdav_url") MAC_PREREQ_WEBDAV_ENABLED=$(shell_quote "$webdav_enabled") MAC_PREREQ_OPENSHELL_REQUIRED=$(shell_quote "$openshell_required") MAC_PREREQ_SUPERVISOR=$(shell_quote "$supervisor") MAC_PREREQ_OS=$(shell_quote "$os_kind") python3 -")"
+    "set -e; umask 077; rm -rf $(shell_quote "$remote_root"); mkdir -m 0700 $(shell_quote "$remote_root"); MAC_PREREQ_AGENT=$(shell_quote "$agent") MAC_PREREQ_AGENT_ID=$(shell_quote "$agent_id") MAC_PREREQ_IDENTITY=$(shell_quote "$identity_sha") MAC_PREREQ_HELPER=$(shell_quote "$remote_helper") MAC_PREREQ_ROOT=$(shell_quote "$remote_root") MAC_PREREQ_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_PREREQ_QDRANT_REQUIRED=$(shell_quote "$qdrant_required") MAC_PREREQ_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_PREREQ_FIRECRAWL_REQUIRED=$(shell_quote "$firecrawl_required") MAC_PREREQ_WEBDAV_URL=$(shell_quote "$webdav_url") MAC_PREREQ_WEBDAV_ENABLED=$(shell_quote "$webdav_enabled") MAC_PREREQ_OPENSHELL_REQUIRED=$(shell_quote "$openshell_required") MAC_PREREQ_SUPERVISOR=$(shell_quote "$supervisor") MAC_PREREQ_OS=$(shell_quote "$os_kind") MAC_PREREQ_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") python3 -")"
   ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command" <<'PY'
 import hashlib
@@ -4416,7 +4424,27 @@ github_cli = next(
 )
 if github_cli is None:
     raise SystemExit("GitHub CLI onboarding prerequisite is unavailable")
-codegraph_bin = (mac_home / "bin" / "codegraph").resolve(strict=True)
+codegraph_link = mac_home / "bin" / "codegraph"
+codegraph_bundle = (
+    mac_home
+    / "lib"
+    / "codegraph"
+    / "versions"
+    / os.environ["MAC_PREREQ_CODEGRAPH_VERSION"]
+)
+codegraph_bin = codegraph_bundle / "bin" / "codegraph"
+codegraph_node = codegraph_bundle / "node"
+if (
+    not codegraph_link.is_symlink()
+    or os.readlink(codegraph_link) != str(codegraph_bin)
+    or not codegraph_bin.is_file()
+    or codegraph_bin.is_symlink()
+    or not os.access(codegraph_bin, os.X_OK)
+    or not codegraph_node.is_file()
+    or codegraph_node.is_symlink()
+    or not os.access(codegraph_node, os.X_OK)
+):
+    raise SystemExit("reviewed CodeGraph onboarding prerequisite is unavailable")
 python_bin = (mac_home / "venv" / "bin" / "python").resolve(strict=True)
 hermes_root = (mac_home / "src" / "mac" / "src" / "mac" / "_hermes").resolve(strict=True)
 requested_supervisor = os.environ["MAC_PREREQ_SUPERVISOR"]
@@ -4451,6 +4479,7 @@ checks = {
         path_check("mac-cli", mac_bin, executable=True),
         path_check("github-cli", github_cli, executable=True),
         path_check("codegraph-cli", codegraph_bin, executable=True),
+        path_check("codegraph-node", codegraph_node, executable=True),
     ],
     "route-tunnel": [path_check("route-config", mac_env)],
     "openshell": [path_check("openshell-contract", openshell_path)],
