@@ -3,17 +3,21 @@
 Covers:
   - diagnostics: basic health report
   - artifact: register, list, show, delete
-  - env: register, list, show, deploy, current, history
+  - env: deploy, current, history
   - notifier: configure, list, delete, deliver
-  - action-events: list (empty and post-event)
   - command-audit: list
   - observability: list, prune
   - rollout extended: verify-artifact, health
-  - memory extended: health, recall, recall-dreams, summarize-actions, decay
   - nap extended: cycle, due
   - agentbus extended: publish, repo-update, artifact-publish
   - secret: access (with trusted machine)
   - task extended: detect-beads, detect-ticketing
+
+Duplicate smoke-tests for memory (health/recall/recall-dreams/decay/
+summarize-actions), ``env register/list/show``, ``env current`` (empty), and
+``action-events list`` were removed: they executed identical code paths to the
+stronger dedicated suites in ``tests/cli/test_cli_memory.py`` and
+``tests/cli/test_domains_cli.py``.
 
 Each test exercises: exit code, parsed JSON output, and (for mutating
 commands) visible side-effect against the same in-file SQLite store.
@@ -202,29 +206,6 @@ def test_artifact_register_with_signers_and_sbom(tmp_path):
 # ===========================================================================
 
 
-def test_env_register_list_show(tmp_path):
-    """env register + list + show round-trip."""
-    rc, env = _run(
-        tmp_path,
-        "env", "register",
-        "staging",
-        "--channel", "fleet",
-        "--created-by", "ops",
-    )
-    assert rc == 0
-    assert env["name"] == "staging"
-    assert "_" in env["id"]
-
-    rc, envs = _run(tmp_path, "env", "list")
-    assert rc == 0
-    assert isinstance(envs, list)
-    assert any(e["id"] == env["id"] for e in envs)
-
-    rc, shown = _run(tmp_path, "env", "show", env["id"])
-    assert rc == 0
-    assert shown["name"] == "staging"
-
-
 def test_env_deploy_current_history(tmp_path):
     """env deploy records a deployment; current and history reflect it."""
     rc, env = _run(tmp_path, "env", "register", "prod", "--created-by", "ops")
@@ -261,16 +242,6 @@ def test_env_deploy_current_history(tmp_path):
     assert rc == 0
     assert isinstance(history, list)
     assert any(d["id"] == deployment["id"] for d in history)
-
-
-def test_env_current_empty(tmp_path):
-    """env current returns null when no deployment exists."""
-    rc, env = _run(tmp_path, "env", "register", "no-deploy-env", "--created-by", "ops")
-    assert rc == 0
-
-    rc, current = _run(tmp_path, "env", "current", env["id"])
-    assert rc == 0
-    assert current is None
 
 
 # ===========================================================================
@@ -328,18 +299,6 @@ def test_notifier_list_filter_enabled(tmp_path):
     rc, enabled_only = _run(tmp_path, "notifier", "list", "--enabled")
     assert rc == 0
     assert not any(c.get("name") == "disabled-channel" for c in enabled_only)
-
-
-# ===========================================================================
-# action-events
-# ===========================================================================
-
-
-def test_action_events_list_empty(tmp_path):
-    """action-events list returns empty list on a fresh db."""
-    rc, events = _run(tmp_path, "action-events", "list", "--limit", "10")
-    assert rc == 0
-    assert isinstance(events, list)
 
 
 # ===========================================================================
@@ -423,56 +382,6 @@ def test_rollout_health(tmp_path):
     assert isinstance(result, dict)
     # health report always has a 'healthy' key
     assert "healthy" in result
-
-
-# ===========================================================================
-# memory extended: health, recall, recall-dreams, decay, summarize-actions
-# ===========================================================================
-
-
-def test_memory_health(tmp_path):
-    """memory health returns a health report for the memory store."""
-    rc, result = _run(tmp_path, "memory", "health")
-    assert rc == 0
-    assert isinstance(result, (dict, list))
-
-
-def test_memory_recall_empty(tmp_path):
-    """memory recall returns empty list when no vector store is configured (fallback)."""
-    # recall requires a positional query arg
-    rc, hits = _run(tmp_path, "memory", "recall", "test query")
-    # Recall may fail gracefully (rc != 0) if Qdrant is not available,
-    # or succeed with empty results if the SQLite fallback is used.
-    # Either outcome is acceptable — what matters is no unhandled crash.
-    assert isinstance(rc, int)
-
-
-def test_memory_recall_dreams_empty(tmp_path):
-    """memory recall-dreams returns graceful result on fresh db without vector store."""
-    rc, result = _run(tmp_path, "memory", "recall-dreams", "test query")
-    # Same tolerance as recall: Qdrant may not be available
-    assert isinstance(rc, int)
-
-
-def test_memory_decay(tmp_path):
-    """memory decay runs the decay pass and returns a summary."""
-    rc, result = _run(tmp_path, "memory", "decay")
-    assert rc == 0
-    assert isinstance(result, (dict, list))
-
-
-def test_memory_summarize_actions(tmp_path):
-    """memory summarize-actions with --dry-run returns a preview without writing."""
-    agent = _make_agent(tmp_path, "summarize-agent", agent_id="agent_summarize")
-    rc, result = _run(
-        tmp_path,
-        "memory", "summarize-actions",
-        "--agent", agent["id"],
-        "--dry-run",
-    )
-    assert rc == 0
-    # Returns a summary dict or list; may be empty on a fresh db
-    assert result is not None or result is None
 
 
 # ===========================================================================
@@ -649,7 +558,6 @@ def test_extended_cli_coverage_gate():
         "artifact",
         "env",
         "notifier",
-        "action-events",
         "command-audit",
         "observability",
     }
