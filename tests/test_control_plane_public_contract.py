@@ -10,6 +10,7 @@ validation while exercising the complete public facade.
 from __future__ import annotations
 
 import inspect
+import sqlite3
 from types import SimpleNamespace
 from typing import Any
 
@@ -17,6 +18,41 @@ import pytest
 
 from mac.models import MACError
 from mac.services import ControlPlane
+from mac.store import SQLiteStore
+
+
+_SECRET_KEY = "test-key-with-enough-entropy-32+chars"
+
+
+@pytest.fixture(scope="module")
+def _schema_snapshot() -> sqlite3.Connection:
+    """One-time empty-schema snapshot cloned to build each case's plane.
+
+    Constructing ``SQLiteStore(":memory:")`` runs the full ``CREATE TABLE`` and
+    migration suite (~110ms), which dominated this file's runtime once every one
+    of ~500 parametrized cases paid it.  SQLite's online backup API clones that
+    freshly-migrated, empty schema in well under a millisecond, so each case
+    still starts from an independent, byte-identical empty schema.
+    """
+    template = SQLiteStore(":memory:")
+    snapshot = sqlite3.connect(":memory:")
+    template._conn.backup(snapshot)
+    template.close()
+    return snapshot
+
+
+@pytest.fixture
+def plane(_schema_snapshot: sqlite3.Connection) -> ControlPlane:
+    """A fresh, empty, initialized ``ControlPlane`` for a single case.
+
+    Behaviourally equivalent to ``ControlPlane.in_memory()``: a brand-new store
+    and plane per case (no state shared between cases) running the identical
+    constructor and default-seeding path.  The empty schema is cloned from the
+    module snapshot instead of re-running every DDL/migration statement.
+    """
+    store = SQLiteStore(":memory:", initialize_schema=False)
+    _schema_snapshot.backup(store._conn)
+    return ControlPlane(store, secret_key=_SECRET_KEY)
 
 
 _NAMED_VALUES: dict[str, Any] = {
@@ -131,8 +167,8 @@ _METHODS = _explicit_public_methods()
 def test_control_plane_public_methods_return_or_raise_domain_error(
     name: str,
     method: Any,
+    plane: ControlPlane,
 ) -> None:
-    plane = ControlPlane.in_memory()
     args: list[Any] = []
     kwargs: dict[str, Any] = {}
     for parameter in list(inspect.signature(method).parameters.values())[1:]:
@@ -154,6 +190,7 @@ def test_control_plane_public_methods_return_or_raise_domain_error(
 def test_control_plane_public_methods_accept_or_reject_complete_requests(
     name: str,
     method: Any,
+    plane: ControlPlane,
 ) -> None:
     """Exercise each facade method with every optional field populated.
 
@@ -162,7 +199,6 @@ def test_control_plane_public_methods_accept_or_reject_complete_requests(
     the facade grows.
     """
 
-    plane = ControlPlane.in_memory()
     args: list[Any] = []
     kwargs: dict[str, Any] = {}
     for parameter in list(inspect.signature(method).parameters.values())[1:]:

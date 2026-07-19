@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import stat
 from pathlib import Path
 
 import pytest
@@ -34,25 +33,50 @@ def write_jobs(home: Path, jobs: list) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Shared audit fixtures
+#
+# Several tests audit the *same* home layout and only differ in which field of
+# the resulting report they assert on. Computing the audit once per module (via
+# tmp_path_factory, since tmp_path is function-scoped) avoids re-running the
+# identical scan for every such test while keeping each named test and its
+# assertion intact.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def empty_home_report(tmp_path_factory) -> dict:
+    """Audit report for a bare, freshly-created hermes home (no scripts/cron)."""
+    home = tmp_path_factory.mktemp("hermes_empty") / ".hermes"
+    home.mkdir()
+    return audit_hermes_home(home)
+
+
+@pytest.fixture(scope="module")
+def empty_cron_dir_report(tmp_path_factory) -> dict:
+    """Audit report for a home whose cron dir exists but has no jobs file."""
+    home = tmp_path_factory.mktemp("hermes_cron") / ".hermes"
+    home.mkdir()
+    (home / "cron").mkdir()
+    return audit_hermes_home(home)
+
+
+# ---------------------------------------------------------------------------
 # Schema / structure
 # ---------------------------------------------------------------------------
 
 
-def test_audit_returns_correct_schema_key(tmp_path):
-    report = audit_hermes_home(make_home(tmp_path))
-    assert report["schema"] == HERMES_HOME_AUDIT_SCHEMA
+def test_audit_returns_correct_schema_key(empty_home_report):
+    assert empty_home_report["schema"] == HERMES_HOME_AUDIT_SCHEMA
 
 
-def test_audit_includes_required_top_level_keys(tmp_path):
-    report = audit_hermes_home(make_home(tmp_path))
+def test_audit_includes_required_top_level_keys(empty_home_report):
     for key in ("schema", "home_path", "audited_at", "home_exists",
                 "scripts", "cron_jobs", "cron_error", "nonstandard_paths", "summary"):
-        assert key in report, f"missing key: {key}"
+        assert key in empty_home_report, f"missing key: {key}"
 
 
-def test_audit_home_path_is_absolute(tmp_path):
-    report = audit_hermes_home(make_home(tmp_path))
-    assert Path(report["home_path"]).is_absolute()
+def test_audit_home_path_is_absolute(empty_home_report):
+    assert Path(empty_home_report["home_path"]).is_absolute()
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +190,8 @@ def test_audit_script_count_in_summary(tmp_path):
     assert report["summary"]["script_count"] == 3
 
 
-def test_audit_no_scripts_returns_empty_list(tmp_path):
-    home = make_home(tmp_path)
-    report = audit_hermes_home(home)
-    assert report["scripts"] == []
+def test_audit_no_scripts_returns_empty_list(empty_home_report):
+    assert empty_home_report["scripts"] == []
 
 
 def test_audit_detects_toplevel_executable_file(tmp_path):
@@ -188,11 +210,9 @@ def test_audit_detects_toplevel_executable_file(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_audit_no_cron_dir_returns_empty_jobs(tmp_path):
-    home = make_home(tmp_path)
-    report = audit_hermes_home(home)
-    assert report["cron_jobs"] == []
-    assert report["cron_error"] is None
+def test_audit_no_cron_dir_returns_empty_jobs(empty_home_report):
+    assert empty_home_report["cron_jobs"] == []
+    assert empty_home_report["cron_error"] is None
 
 
 def test_audit_reads_cron_jobs_basic(tmp_path):
@@ -231,18 +251,37 @@ def test_audit_cron_enabled_defaults_to_true(tmp_path):
     assert report["cron_jobs"][0]["enabled"] is True
 
 
-def test_audit_cron_dict_schedule_normalised(tmp_path):
+@pytest.mark.parametrize(
+    "schedule, expected_substrings",
+    [
+        pytest.param(
+            {"type": "cron", "expression": "*/5 * * * *"},
+            ["cron", "*/5"],
+            id="normalised",
+        ),
+        pytest.param(
+            {"type": "cron", "expression": "0 6 * * 1"},
+            ["cron"],
+            id="expression-key",
+        ),
+        pytest.param(
+            {"type": "interval", "cron": "*/5 * * * *"},
+            ["interval"],
+            id="cron-key",
+        ),
+    ],
+)
+def test_audit_cron_dict_schedule_variants(tmp_path, schedule, expected_substrings):
     home = make_home(tmp_path)
-    jobs = [
-        {"id": "j1", "schedule": {"type": "cron", "expression": "*/5 * * * *"},
-         "command": "echo x", "enabled": True},
-    ]
-    write_jobs(home, jobs)
+    write_jobs(home, [
+        {"id": "j1", "schedule": schedule, "command": "echo x", "enabled": True},
+    ])
 
     report = audit_hermes_home(home)
     sched = report["cron_jobs"][0]["schedule"]
-    assert "cron" in sched
-    assert "*/5" in sched
+    assert sched is not None
+    for substring in expected_substrings:
+        assert substring in sched
 
 
 def test_audit_cron_prompt_field_used_as_command(tmp_path):
@@ -362,13 +401,8 @@ def test_audit_nonstandard_count_in_summary(tmp_path):
     assert report["summary"]["nonstandard_count"] == 3
 
 
-def test_audit_cron_dir_not_flagged_nonstandard(tmp_path):
-    home = make_home(tmp_path)
-    cron = home / "cron"
-    cron.mkdir()
-
-    report = audit_hermes_home(home)
-    paths = [e["path"] for e in report["nonstandard_paths"]]
+def test_audit_cron_dir_not_flagged_nonstandard(empty_cron_dir_report):
+    paths = [e["path"] for e in empty_cron_dir_report["nonstandard_paths"]]
     assert "cron" not in paths
 
 
@@ -437,13 +471,9 @@ def test_audit_full_scenario(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_audit_cron_dir_exists_but_no_jobs_file(tmp_path):
-    home = make_home(tmp_path)
-    (home / "cron").mkdir()
-
-    report = audit_hermes_home(home)
-    assert report["cron_jobs"] == []
-    assert report["cron_error"] is None
+def test_audit_cron_dir_exists_but_no_jobs_file(empty_cron_dir_report):
+    assert empty_cron_dir_report["cron_jobs"] == []
+    assert empty_cron_dir_report["cron_error"] is None
 
 
 def test_audit_script_source_field_reflects_scan_dir(tmp_path):
@@ -467,34 +497,6 @@ def test_audit_script_source_hooks(tmp_path):
     report = audit_hermes_home(home)
     entry = next(e for e in report["scripts"] if "hooks" in e["path"])
     assert entry["source"] == "hooks"
-
-
-def test_audit_cron_dict_schedule_expression_key(tmp_path):
-    home = make_home(tmp_path)
-    write_jobs(home, [
-        {"id": "s1", "name": "expr-job",
-         "schedule": {"type": "cron", "expression": "0 6 * * 1"},
-         "command": "weekly.sh", "enabled": True},
-    ])
-
-    report = audit_hermes_home(home)
-    j = report["cron_jobs"][0]
-    assert j["schedule"] is not None
-    assert "cron" in j["schedule"]
-
-
-def test_audit_cron_dict_schedule_cron_key(tmp_path):
-    home = make_home(tmp_path)
-    write_jobs(home, [
-        {"id": "s2", "name": "cron-key-job",
-         "schedule": {"type": "interval", "cron": "*/5 * * * *"},
-         "command": "ping.sh", "enabled": True},
-    ])
-
-    report = audit_hermes_home(home)
-    j = report["cron_jobs"][0]
-    assert j["schedule"] is not None
-    assert "interval" in j["schedule"]
 
 
 def test_audit_cron_task_field_used_as_command(tmp_path):

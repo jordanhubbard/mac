@@ -17,6 +17,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from mac.skill_auto_repair import (
     SKILL_AUTO_REPAIR_SCHEMA,
     stage_skill_patch,
@@ -112,11 +114,29 @@ def test_refuses_traversal_path() -> None:
     assert "path_not_allowlisted" in (result["reason"] or "")
 
 
-def test_refuses_path_outside_skill_directories() -> None:
-    for bad_path in ("src/mac/worker.py", "tests/test_worker.py", "README.md", "docs/guide.md"):
-        result = stage_skill_patch(bad_path, _generic_patch(), _evidence())
-        assert result["status"] == "refused", "expected refusal for %r" % bad_path
-        assert "path_not_allowlisted" in (result["reason"] or ""), bad_path
+@pytest.mark.parametrize(
+    "target_path",
+    [
+        "",
+        "src/mac/worker.py",
+        "tests/test_worker.py",
+        "README.md",
+        "docs/guide.md",
+        "skills/",
+    ],
+    ids=[
+        "empty",
+        "src_module",
+        "test_module",
+        "readme",
+        "docs_guide",
+        "skills_prefix_only",
+    ],
+)
+def test_refuses_path_not_allowlisted(target_path: str) -> None:
+    result = stage_skill_patch(target_path, _generic_patch(), _evidence())
+    assert result["status"] == "refused", "expected refusal for %r" % target_path
+    assert "path_not_allowlisted" in (result["reason"] or ""), target_path
 
 
 def test_accepts_skills_prefix() -> None:
@@ -154,21 +174,19 @@ def test_refuses_empty_evidence_list() -> None:
     assert "evidence" not in result["audit"]
 
 
-def test_refuses_evidence_without_excerpt() -> None:
-    result = stage_skill_patch(
-        "skills/test-skill/SKILL.md",
-        _generic_patch(),
+@pytest.mark.parametrize(
+    "evidence",
+    [
         [{"memory_id": "mem-no-excerpt", "record_type": "note"}],
-    )
-    assert result["status"] == "refused"
-    assert "evidence_required" in (result["reason"] or "")
-
-
-def test_refuses_evidence_with_only_empty_excerpt() -> None:
+        [{"memory_id": "mem-blank", "excerpt": "   "}],
+    ],
+    ids=["without_excerpt", "only_empty_excerpt"],
+)
+def test_refuses_evidence_without_usable_excerpt(evidence: list[dict[str, Any]]) -> None:
     result = stage_skill_patch(
         "skills/test-skill/SKILL.md",
         _generic_patch(),
-        [{"memory_id": "mem-blank", "excerpt": "   "}],
+        evidence,
     )
     assert result["status"] == "refused"
     assert "evidence_required" in (result["reason"] or "")
@@ -179,26 +197,20 @@ def test_refuses_evidence_with_only_empty_excerpt() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_refuses_patch_with_bearer_token() -> None:
-    patch = "# Skill\n\nBearer sk-this-is-a-secret-token-abcdefg\n"
+@pytest.mark.parametrize(
+    "patch",
+    [
+        "# Skill\n\nBearer sk-this-is-a-secret-token-abcdefg\n",
+        "## Setup\n\ntoken=ghp_ABCDEFGHIJKLMNOPabcdefghijk\n",
+        "## Config\n\nSee /home/operator/.mac/fleets.yaml for details.\n",
+    ],
+    ids=["bearer_token", "known_credential_prefix", "home_directory_path"],
+)
+def test_refuses_patch_with_secret(patch: str) -> None:
     result = stage_skill_patch("skills/test-skill/SKILL.md", patch, _evidence())
     assert result["status"] == "refused"
     assert "secret_detected" in (result["reason"] or "")
     assert "secret_scan" not in result["audit"]
-
-
-def test_refuses_patch_with_known_credential_prefix() -> None:
-    patch = "## Setup\n\ntoken=ghp_ABCDEFGHIJKLMNOPabcdefghijk\n"
-    result = stage_skill_patch("skills/test-skill/SKILL.md", patch, _evidence())
-    assert result["status"] == "refused"
-    assert "secret_detected" in (result["reason"] or "")
-
-
-def test_refuses_patch_with_home_directory_path() -> None:
-    patch = "## Config\n\nSee /home/operator/.mac/fleets.yaml for details.\n"
-    result = stage_skill_patch("skills/test-skill/SKILL.md", patch, _evidence())
-    assert result["status"] == "refused"
-    assert "secret_detected" in (result["reason"] or "")
 
 
 def test_refuses_patch_with_url_credentials() -> None:
@@ -213,20 +225,22 @@ def test_refuses_patch_with_url_credentials() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_refuses_patch_with_real_agent_name_in_content() -> None:
-    for identity_token in ("rocky", "natasha", "bullwinkle", "jkh"):
-        patch = "## Usage\n\nRun on agent_%s to complete the task.\n" % identity_token
-        result = stage_skill_patch("skills/test-skill/SKILL.md", patch, _evidence())
-        assert result["status"] == "refused", "expected refusal for identity token %r" % identity_token
-        assert "identity_detected" in (result["reason"] or ""), identity_token
-        assert "identity_scan" not in result["audit"], identity_token
-
-
-def test_refuses_patch_with_do_host_identity() -> None:
-    patch = "## Host\n\nDeploy on do-host for best results.\n"
+@pytest.mark.parametrize(
+    "patch",
+    [
+        "## Host\n\nDeploy on do-host for best results.\n",
+        "## Usage\n\nRun on agent_rocky to complete the task.\n",
+        "## Usage\n\nRun on agent_natasha to complete the task.\n",
+        "## Usage\n\nRun on agent_bullwinkle to complete the task.\n",
+        "## Usage\n\nRun on agent_jkh to complete the task.\n",
+    ],
+    ids=["do_host", "rocky", "natasha", "bullwinkle", "jkh"],
+)
+def test_refuses_patch_with_identity_token(patch: str) -> None:
     result = stage_skill_patch("skills/test-skill/SKILL.md", patch, _evidence())
-    assert result["status"] == "refused"
-    assert "identity_detected" in (result["reason"] or "")
+    assert result["status"] == "refused", "expected refusal for patch %r" % patch
+    assert "identity_detected" in (result["reason"] or ""), patch
+    assert "identity_scan" not in result["audit"], patch
 
 
 def test_accepts_generic_role_names_in_patch() -> None:
@@ -350,17 +364,6 @@ def test_batch_result_schema() -> None:
 # ---------------------------------------------------------------------------
 # Ambiguous / edge cases
 # ---------------------------------------------------------------------------
-
-
-def test_refuses_empty_target_path() -> None:
-    result = stage_skill_patch("", _generic_patch(), _evidence())
-    assert result["status"] == "refused"
-    assert "path_not_allowlisted" in (result["reason"] or "")
-
-
-def test_refuses_skills_path_that_is_just_the_prefix() -> None:
-    result = stage_skill_patch("skills/", _generic_patch(), _evidence())
-    assert result["status"] == "refused"
 
 
 def test_evidence_fingerprint_is_stable_across_calls() -> None:

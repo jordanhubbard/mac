@@ -49,17 +49,27 @@ def node_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.fixture()
-def python_repo(tmp_path: Path) -> Path:
-    """A minimal Python repo with pyproject.toml."""
-    (tmp_path / "pyproject.toml").write_text(
-        textwrap.dedent("""\
-            [project]
-            name = "my-package"
-            requires-python = ">=3.11"
-        """)
-    )
-    return tmp_path
+@pytest.fixture(scope="module")
+def empty_repo_contract(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """Contract derived once from an empty repo.
+
+    GROUP1 tests each make a DIFFERENT assertion about the same derivation,
+    so the expensive-ish derivation is computed once and shared (read-only).
+    """
+    repo = tmp_path_factory.mktemp("empty_repo_contract")
+    return derive_environment_contract(repo)
+
+
+@pytest.fixture(scope="module")
+def binding_gyp_contract(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """Contract derived once from a repo containing binding.gyp.
+
+    GROUP9 tests assert DIFFERENT things (native_build vs egress) about the
+    same derivation, so it is computed once and shared (read-only).
+    """
+    repo = tmp_path_factory.mktemp("binding_gyp_repo")
+    (repo / "binding.gyp").write_text("{}")
+    return derive_environment_contract(repo)
 
 
 # ===========================================================================
@@ -67,40 +77,34 @@ def python_repo(tmp_path: Path) -> Path:
 # ===========================================================================
 
 
-def test_derive_returns_correct_schema(empty_repo: Path):
-    contract = derive_environment_contract(empty_repo)
-    assert contract["schema"] == ENVIRONMENT_CONTRACT_SCHEMA
+def test_derive_returns_correct_schema(empty_repo_contract: dict):
+    assert empty_repo_contract["schema"] == ENVIRONMENT_CONTRACT_SCHEMA
 
 
-def test_derive_returns_all_top_level_keys(empty_repo: Path):
-    contract = derive_environment_contract(empty_repo)
+def test_derive_returns_all_top_level_keys(empty_repo_contract: dict):
     for key in ("schema", "repository_path", "runtime_versions", "native_build", "egress", "preflight"):
-        assert key in contract, "missing top-level key: %s" % key
+        assert key in empty_repo_contract, "missing top-level key: %s" % key
 
 
-def test_derive_empty_repo_has_null_version_floors(empty_repo: Path):
-    contract = derive_environment_contract(empty_repo)
-    rv = contract["runtime_versions"]
+def test_derive_empty_repo_has_null_version_floors(empty_repo_contract: dict):
+    rv = empty_repo_contract["runtime_versions"]
     assert rv["node_min"] is None
     assert rv["python_min"] is None
     assert rv["pnpm_min"] is None
 
 
-def test_derive_empty_repo_no_native_build(empty_repo: Path):
-    contract = derive_environment_contract(empty_repo)
-    assert contract["native_build"]["required"] is False
-    assert contract["native_build"]["signals"] == []
+def test_derive_empty_repo_no_native_build(empty_repo_contract: dict):
+    assert empty_repo_contract["native_build"]["required"] is False
+    assert empty_repo_contract["native_build"]["signals"] == []
 
 
-def test_derive_empty_repo_no_egress_hosts(empty_repo: Path):
-    contract = derive_environment_contract(empty_repo)
-    assert contract["egress"]["hosts"] == []
+def test_derive_empty_repo_no_egress_hosts(empty_repo_contract: dict):
+    assert empty_repo_contract["egress"]["hosts"] == []
 
 
-def test_derive_preflight_initialised_as_pending(empty_repo: Path):
-    contract = derive_environment_contract(empty_repo)
-    assert contract["preflight"]["status"] == "pending"
-    assert contract["preflight"]["checks"] == []
+def test_derive_preflight_initialised_as_pending(empty_repo_contract: dict):
+    assert empty_repo_contract["preflight"]["status"] == "pending"
+    assert empty_repo_contract["preflight"]["checks"] == []
 
 
 # ===========================================================================
@@ -108,16 +112,18 @@ def test_derive_preflight_initialised_as_pending(empty_repo: Path):
 # ===========================================================================
 
 
-def test_node_min_from_nvmrc(tmp_path: Path):
-    (tmp_path / ".nvmrc").write_text("v20.11.0\n")
+@pytest.mark.parametrize(
+    ("nvmrc_content", "expected_node_min"),
+    [
+        ("v20.11.0\n", "20.11.0"),
+        ("18\n", "18"),
+    ],
+    ids=["semver", "bare_major"],
+)
+def test_node_min_from_nvmrc(tmp_path: Path, nvmrc_content: str, expected_node_min: str):
+    (tmp_path / ".nvmrc").write_text(nvmrc_content)
     c = derive_environment_contract(tmp_path)
-    assert c["runtime_versions"]["node_min"] == "20.11.0"
-
-
-def test_node_min_from_nvmrc_bare_major(tmp_path: Path):
-    (tmp_path / ".nvmrc").write_text("18\n")
-    c = derive_environment_contract(tmp_path)
-    assert c["runtime_versions"]["node_min"] == "18"
+    assert c["runtime_versions"]["node_min"] == expected_node_min
 
 
 def test_node_min_from_node_version_file(tmp_path: Path):
@@ -126,21 +132,19 @@ def test_node_min_from_node_version_file(tmp_path: Path):
     assert c["runtime_versions"]["node_min"] == "22.1.0"
 
 
-def test_node_min_from_package_json_engines(node_repo: Path):
-    c = derive_environment_contract(node_repo)
-    assert c["runtime_versions"]["node_min"] == "20.0.0"
-
-
-def test_node_min_from_package_json_engines_caret(tmp_path: Path):
-    (tmp_path / "package.json").write_text(json.dumps({"engines": {"node": "^18.12.0"}}))
+@pytest.mark.parametrize(
+    ("node_engine", "expected_node_min"),
+    [
+        (">=20.0.0", "20.0.0"),
+        ("^18.12.0", "18.12.0"),
+        ("~18.0", "18.0"),
+    ],
+    ids=["gte", "caret", "tilde"],
+)
+def test_node_min_from_package_json_engines(tmp_path: Path, node_engine: str, expected_node_min: str):
+    (tmp_path / "package.json").write_text(json.dumps({"engines": {"node": node_engine}}))
     c = derive_environment_contract(tmp_path)
-    assert c["runtime_versions"]["node_min"] == "18.12.0"
-
-
-def test_node_min_from_package_json_engines_tilde(tmp_path: Path):
-    (tmp_path / "package.json").write_text(json.dumps({"engines": {"node": "~18.0"}}))
-    c = derive_environment_contract(tmp_path)
-    assert c["runtime_versions"]["node_min"] == "18.0"
+    assert c["runtime_versions"]["node_min"] == expected_node_min
 
 
 def test_nvmrc_takes_precedence_over_package_json(tmp_path: Path):
@@ -169,16 +173,18 @@ def test_pnpm_min_from_package_manager(tmp_path: Path):
     assert c["runtime_versions"]["pnpm_min"] == "9.1.0"
 
 
-def test_pnpm_min_from_lockfile_version_9(tmp_path: Path):
-    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+@pytest.mark.parametrize(
+    ("lockfile_version", "expected_pnpm_min"),
+    [
+        ("9.0", "9"),
+        ("6.0", "7"),
+    ],
+    ids=["version_9", "version_6"],
+)
+def test_pnpm_min_from_lockfile(tmp_path: Path, lockfile_version: str, expected_pnpm_min: str):
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '%s'\n" % lockfile_version)
     c = derive_environment_contract(tmp_path)
-    assert c["runtime_versions"]["pnpm_min"] == "9"
-
-
-def test_pnpm_min_from_lockfile_version_6(tmp_path: Path):
-    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '6.0'\n")
-    c = derive_environment_contract(tmp_path)
-    assert c["runtime_versions"]["pnpm_min"] == "7"
+    assert c["runtime_versions"]["pnpm_min"] == expected_pnpm_min
 
 
 # ===========================================================================
@@ -186,17 +192,20 @@ def test_pnpm_min_from_lockfile_version_6(tmp_path: Path):
 # ===========================================================================
 
 
-def test_python_min_from_pyproject_toml(python_repo: Path):
-    c = derive_environment_contract(python_repo)
-    assert c["runtime_versions"]["python_min"] == "3.11"
-
-
-def test_python_min_from_pyproject_toml_double_quoted(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("requires_python", "expected_python_min"),
+    [
+        (">=3.11", "3.11"),
+        (">=3.12", "3.12"),
+    ],
+    ids=["floor_3_11", "floor_3_12"],
+)
+def test_python_min_from_pyproject_toml(tmp_path: Path, requires_python: str, expected_python_min: str):
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\nrequires-python = ">=3.12"\n'
+        '[project]\nrequires-python = "%s"\n' % requires_python
     )
     c = derive_environment_contract(tmp_path)
-    assert c["runtime_versions"]["python_min"] == "3.12"
+    assert c["runtime_versions"]["python_min"] == expected_python_min
 
 
 def test_python_min_from_setup_cfg(tmp_path: Path):
@@ -220,11 +229,9 @@ def test_python_min_from_setup_py(tmp_path: Path):
 # ===========================================================================
 
 
-def test_native_build_binding_gyp(tmp_path: Path):
-    (tmp_path / "binding.gyp").write_text("{}")
-    c = derive_environment_contract(tmp_path)
-    assert c["native_build"]["required"] is True
-    assert any("binding.gyp" in s for s in c["native_build"]["signals"])
+def test_native_build_binding_gyp(binding_gyp_contract: dict):
+    assert binding_gyp_contract["native_build"]["required"] is True
+    assert any("binding.gyp" in s for s in binding_gyp_contract["native_build"]["signals"])
 
 
 def test_native_build_cargo_toml(tmp_path: Path):
@@ -248,41 +255,43 @@ def test_native_build_cmake(tmp_path: Path):
     assert any("CMakeLists" in s for s in c["native_build"]["signals"])
 
 
-def test_native_build_known_npm_dep_sqlite3(tmp_path: Path):
-    pkg = {"dependencies": {"better-sqlite3": "^8.0.0"}}
+@pytest.mark.parametrize(
+    ("dep_name", "dep_version", "expected_signal"),
+    [
+        ("better-sqlite3", "^8.0.0", "better-sqlite3"),
+        ("@vscode/sqlite3", "^5.1.6", None),
+        ("sharp", "^0.33.0", None),
+    ],
+    ids=["sqlite3", "vscode_sqlite3", "sharp"],
+)
+def test_native_build_known_npm_dep(
+    tmp_path: Path, dep_name: str, dep_version: str, expected_signal: str | None
+):
+    pkg = {"dependencies": {dep_name: dep_version}}
     (tmp_path / "package.json").write_text(json.dumps(pkg))
     c = derive_environment_contract(tmp_path)
     assert c["native_build"]["required"] is True
-    assert any("better-sqlite3" in s for s in c["native_build"]["signals"])
+    if expected_signal is not None:
+        assert any(expected_signal in s for s in c["native_build"]["signals"])
 
 
-def test_native_build_known_npm_dep_vscode_sqlite3(tmp_path: Path):
-    pkg = {"dependencies": {"@vscode/sqlite3": "^5.1.6"}}
+@pytest.mark.parametrize(
+    ("install_script", "expected_signal"),
+    [
+        ("node-gyp rebuild", "node-gyp"),
+        ("node-pre-gyp install --fallback-to-build", None),
+    ],
+    ids=["node_gyp_rebuild", "node_pre_gyp"],
+)
+def test_native_build_gyp_install_script(
+    tmp_path: Path, install_script: str, expected_signal: str | None
+):
+    pkg = {"scripts": {"install": install_script}}
     (tmp_path / "package.json").write_text(json.dumps(pkg))
     c = derive_environment_contract(tmp_path)
     assert c["native_build"]["required"] is True
-
-
-def test_native_build_known_npm_dep_sharp(tmp_path: Path):
-    pkg = {"dependencies": {"sharp": "^0.33.0"}}
-    (tmp_path / "package.json").write_text(json.dumps(pkg))
-    c = derive_environment_contract(tmp_path)
-    assert c["native_build"]["required"] is True
-
-
-def test_native_build_node_gyp_rebuild_script(tmp_path: Path):
-    pkg = {"scripts": {"install": "node-gyp rebuild"}}
-    (tmp_path / "package.json").write_text(json.dumps(pkg))
-    c = derive_environment_contract(tmp_path)
-    assert c["native_build"]["required"] is True
-    assert any("node-gyp" in s for s in c["native_build"]["signals"])
-
-
-def test_native_build_node_pre_gyp_script(tmp_path: Path):
-    pkg = {"scripts": {"install": "node-pre-gyp install --fallback-to-build"}}
-    (tmp_path / "package.json").write_text(json.dumps(pkg))
-    c = derive_environment_contract(tmp_path)
-    assert c["native_build"]["required"] is True
+    if expected_signal is not None:
+        assert any(expected_signal in s for s in c["native_build"]["signals"])
 
 
 def test_no_native_build_plain_js_package(tmp_path: Path):
@@ -307,10 +316,8 @@ def test_egress_from_npmrc(tmp_path: Path):
     assert "npm.pkg.github.com" in c["egress"]["hosts"]
 
 
-def test_egress_nodejs_org_added_when_native_build(tmp_path: Path):
-    (tmp_path / "binding.gyp").write_text("{}")
-    c = derive_environment_contract(tmp_path)
-    assert "nodejs.org" in c["egress"]["hosts"]
+def test_egress_nodejs_org_added_when_native_build(binding_gyp_contract: dict):
+    assert "nodejs.org" in binding_gyp_contract["egress"]["hosts"]
 
 
 def test_egress_nodejs_org_absent_without_native_build(tmp_path: Path):

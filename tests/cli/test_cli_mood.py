@@ -51,35 +51,43 @@ def _register_agent(tmp_path, name="worker-1", machine_name=None):
     return agent
 
 
+# Sentinel used in parametrized expected-field specs to assert a field is
+# populated (``is not None``) without pinning it to an exact value.
+_NOT_NONE = object()
+
+
 # ---------------------------------------------------------------------------
 # mood set
 # ---------------------------------------------------------------------------
 
 
-def test_mood_set_returns_overlay_record(tmp_path):
-    """mood set creates a MoodOverlay and returns it as JSON."""
+@pytest.mark.parametrize(
+    "mode, set_args, expected",
+    [
+        ("warm", [], {}),
+        (
+            "cheerful",
+            ["--reason", "three consecutive approvals", "--set-by", "hub"],
+            {"reason": "three consecutive approvals", "set_by": "hub"},
+        ),
+    ],
+    ids=["returns_overlay_record", "with_reason_and_set_by"],
+)
+def test_mood_set_returns_overlay(tmp_path, mode, set_args, expected):
+    """mood set creates a MoodOverlay and returns it as JSON.
+
+    The bare case asserts the overlay's core shape; the flagged case also
+    asserts that --reason / --set-by are reflected in the returned overlay.
+    """
     agent = _register_agent(tmp_path)
-    rc, overlay = _run(tmp_path, "mood", "set", agent["id"], "warm")
+    rc, overlay = _run(tmp_path, "mood", "set", agent["id"], mode, *set_args)
     assert rc == 0
     assert overlay["id"].startswith("mood_")
     assert overlay["agent_id"] == agent["id"]
-    assert overlay["mode"] == "warm"
+    assert overlay["mode"] == mode
     assert overlay["cleared_at"] is None
-
-
-def test_mood_set_with_reason_and_set_by(tmp_path):
-    """mood set --reason and --set-by are reflected in the overlay."""
-    agent = _register_agent(tmp_path)
-    rc, overlay = _run(
-        tmp_path,
-        "mood", "set", agent["id"], "cheerful",
-        "--reason", "three consecutive approvals",
-        "--set-by", "hub",
-    )
-    assert rc == 0
-    assert overlay["mode"] == "cheerful"
-    assert overlay["reason"] == "three consecutive approvals"
-    assert overlay["set_by"] == "hub"
+    for field, value in expected.items():
+        assert overlay[field] == value
 
 
 def test_mood_set_replaces_prior_active_overlay(tmp_path):
@@ -153,36 +161,38 @@ def test_mood_show_returns_null_after_clear(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_mood_clear_returns_cleared_overlay(tmp_path):
-    """mood clear returns the overlay record with cleared_at set."""
+@pytest.mark.parametrize(
+    "mode, clear_args, expected",
+    [
+        ("curt", [], {"cleared_at": _NOT_NONE}),
+        (
+            "angry",
+            ["--reason", "cooled down after break"],
+            {"cleared_reason": "cooled down after break"},
+        ),
+        ("warm", ["--cleared-by", "hub"], {"cleared_by": "hub"}),
+    ],
+    ids=["returns_cleared_overlay", "with_reason", "with_cleared_by"],
+)
+def test_mood_clear_returns_cleared_overlay(tmp_path, mode, clear_args, expected):
+    """mood clear returns the cleared overlay for the active mood.
+
+    Every variant clears the same active overlay (so the returned id matches
+    the set overlay); each case additionally asserts the field it exercises:
+    cleared_at is populated, or --reason / --cleared-by is stored.
+    """
     agent = _register_agent(tmp_path)
-    rc, overlay = _run(tmp_path, "mood", "set", agent["id"], "curt")
+    rc, overlay = _run(tmp_path, "mood", "set", agent["id"], mode)
     assert rc == 0
 
-    rc, cleared = _run(tmp_path, "mood", "clear", agent["id"])
+    rc, cleared = _run(tmp_path, "mood", "clear", agent["id"], *clear_args)
     assert rc == 0
     assert cleared["id"] == overlay["id"]
-    assert cleared["cleared_at"] is not None
-
-
-def test_mood_clear_with_reason(tmp_path):
-    """mood clear --reason is stored in the cleared overlay."""
-    agent = _register_agent(tmp_path)
-    _run(tmp_path, "mood", "set", agent["id"], "angry")
-    rc, cleared = _run(tmp_path, "mood", "clear", agent["id"],
-                       "--reason", "cooled down after break")
-    assert rc == 0
-    assert cleared["cleared_reason"] == "cooled down after break"
-
-
-def test_mood_clear_with_cleared_by(tmp_path):
-    """mood clear --cleared-by is stored on the overlay."""
-    agent = _register_agent(tmp_path)
-    _run(tmp_path, "mood", "set", agent["id"], "warm")
-    rc, cleared = _run(tmp_path, "mood", "clear", agent["id"],
-                       "--cleared-by", "hub")
-    assert rc == 0
-    assert cleared["cleared_by"] == "hub"
+    for field, value in expected.items():
+        if value is _NOT_NONE:
+            assert cleared[field] is not None
+        else:
+            assert cleared[field] == value
 
 
 def test_mood_clear_when_no_active_mood_returns_null(tmp_path):

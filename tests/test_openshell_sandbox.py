@@ -109,6 +109,25 @@ def _inner(out):
     return out[i + 3]
 
 
+@pytest.fixture(scope="module")
+def create_argv(tmp_path_factory):
+    """The default create-argv, built exactly ONCE for the whole module.
+
+    `_build_sandbox_create_argv` is pure and its output does not depend on
+    MAC_TASK_REPO_WORKTREE (that name is only a runtime shell variable inside
+    the emitted bash), so every ``_build()`` in this group is byte-identical.
+    Rather than recompute the spec per test, build it a single time and let each
+    test assert its own field/section. Built under a scrubbed OpenShell env with
+    an empty HOME so a dev-machine ~/.mac/openshell-policy.yaml can't leak in and
+    make policy resolution non-deterministic (mirrors the autouse `_clean`)."""
+    home = tmp_path_factory.mktemp("openshell-clean-home")
+    with pytest.MonkeyPatch.context() as mp:
+        for name in _OPENSHELL_ENVS:
+            mp.delenv(name, raising=False)
+        mp.setenv("HOME", str(home))
+        return _build()
+
+
 # ---------------------------------------------------------------------------
 # truthy / enabled
 # ---------------------------------------------------------------------------
@@ -152,8 +171,8 @@ def test_invoke_unsandboxed_uses_private_prompt_wrapper(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_build_has_create_prefix_and_bundled_policy():
-    out = _build()
+def test_build_has_create_prefix_and_bundled_policy(create_argv):
+    out = create_argv
     assert out[:4] == ["openshell", "sandbox", "create", "--no-auto-providers"]
     assert _policy_of(out) == str(te._bundled_default_policy())
 
@@ -188,13 +207,13 @@ def test_build_deployed_policy_preferred_over_bundled(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_build_names_the_sandbox():
-    out = _build()
+def test_build_names_the_sandbox(create_argv):
+    out = create_argv
     assert "--name" in out and out[out.index("--name") + 1] == "sb-test"
 
 
-def test_build_labels_sandbox_for_safe_orphan_collection():
-    out = _build()
+def test_build_labels_sandbox_for_safe_orphan_collection(create_argv):
+    out = create_argv
     labels = [out[index + 1] for index, token in enumerate(out) if token == "--label"]
     assert "mac.owner=mac" in labels
     assert "mac.kind=task" in labels
@@ -207,14 +226,14 @@ def test_build_marks_debug_kept_sandbox(monkeypatch):
     assert "mac.keep=true" in _build()
 
 
-def test_build_uploads_workspace_to_sandbox_root():
-    out = _build("/work/task-7")
+def test_build_uploads_workspace_to_sandbox_root(create_argv):
+    out = create_argv
     assert "--upload" in out
     assert "/work/task-7:/sandbox" in out
 
 
-def test_build_runs_private_agent_wrapper_in_workspace_subdir():
-    inner = _inner(_build("/work/task-7"))
+def test_build_runs_private_agent_wrapper_in_workspace_subdir(create_argv):
+    inner = _inner(create_argv)
     assert inner.startswith("cd /sandbox/task-7\n")
     assert "mac_sandbox_toolchain_setup" in inner
     assert 'rm -rf "$MAC_TASK_REPO_WORKTREE/.git"' in inner
@@ -227,14 +246,14 @@ def test_build_runs_private_agent_wrapper_in_workspace_subdir():
     assert "hermes_cli.main" not in inner
 
 
-def test_build_whitelists_uploaded_paths_for_git():
+def test_build_whitelists_uploaded_paths_for_git(create_argv):
     # The workspace is tar-uploaded, so its files can be owned by a different
     # uid than the sandbox user; without a safe.directory whitelist every git
     # command against uploaded paths dies with "dubious ownership" — including
     # the contract tests the agent runs before declaring done (observed live:
     # workers failed verification on the only 4 tests that run git against the
     # checkout, then correctly refused to push).
-    inner = _inner(_build("/work/task-7"))
+    inner = _inner(create_argv)
     assert "GIT_CONFIG_KEY_0=safe.directory" in inner
     assert "GIT_CONFIG_VALUE_0='*'" in inner
     # Must be in force before the git snapshot section AND the agent exec.
@@ -255,8 +274,8 @@ def test_private_env_file_repoints_workspace_without_argv_exposure(tmp_path):
     assert toolchain_file.stat().st_mode & 0o777 == 0o700
 
 
-def test_build_separator_appears_once_before_command():
-    out = _build()
+def test_build_separator_appears_once_before_command(create_argv):
+    out = create_argv
     assert out.count("--") == 1
     assert out.index("--") < out.index("/bin/bash")
 
@@ -1158,9 +1177,11 @@ def test_env_flags_rewrite_loopback_urls(monkeypatch):
     assert "MAC_WORKER_TOKEN" not in values
 
 
-def test_repo_worktree_aliases_hermes_clone_path(monkeypatch):
-    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", "/work/task-7/repo-lease")
-    inner = _inner(_build())
+def test_repo_worktree_aliases_hermes_clone_path(create_argv):
+    # The clone alias is emitted unconditionally as a runtime-guarded bash line;
+    # it does not depend on MAC_TASK_REPO_WORKTREE being set at build time, so
+    # the shared (byte-identical) create-argv exercises this section.
+    inner = _inner(create_argv)
     assert "/sandbox/mac-clone" in inner
     assert 'ln -s "$MAC_TASK_REPO_WORKTREE" /sandbox/mac-clone' in inner
 

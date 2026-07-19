@@ -64,18 +64,25 @@ def _make_candidate(
 # ---------------------------------------------------------------------------
 
 
-def test_report_has_required_keys():
+@pytest.fixture(scope="module")
+def default_report():
+    """Classification of a default (no-signal) candidate, computed once.
+
+    Shared by the structural tests below, which assert on different fields of
+    the same report and therefore only need the computation performed once.
+    """
+    return classify_candidate(_make_candidate())
+
+
+def test_report_has_required_keys(default_report):
     """Every report must carry the stable JSON shape keys."""
-    cand = _make_candidate()
-    report = classify_candidate(cand)
     for key in ("schema", "kind", "scope", "areas", "overall_confidence",
                  "overall_confidence_score", "evidence_count", "redacted"):
-        assert key in report, "missing key: %s" % key
+        assert key in default_report, "missing key: %s" % key
 
 
-def test_schema_version_is_classifier():
-    report = classify_candidate(_make_candidate())
-    assert report["schema"] == CLASSIFIER_SCHEMA
+def test_schema_version_is_classifier(default_report):
+    assert default_report["schema"] == CLASSIFIER_SCHEMA
 
 
 def test_report_is_json_serialisable():
@@ -397,28 +404,22 @@ def test_area_signals_is_non_empty_list():
 # ---------------------------------------------------------------------------
 
 
-def test_skill_curator_pattern_detected():
-    """Candidate with 'curator' keyword triggers a skill area."""
-    cand = _make_candidate(
-        summary="curator updated the skill bundle",
-        evidence_count=1,
-    )
+@pytest.mark.parametrize(
+    "summary",
+    [
+        pytest.param("curator updated the skill bundle", id="curator"),
+        pytest.param(
+            "hermes.skill invocation failed during agent startup",
+            id="hermes_skill",
+        ),
+    ],
+)
+def test_skill_keyword_variant_detected(summary):
+    """'curator' and 'hermes.skill' keywords each trigger a named skill area."""
+    cand = _make_candidate(summary=summary, evidence_count=1)
     report = classify_candidate(cand)
     skill_areas = [a for a in report["areas"] if a["area_type"] == "skill"]
-    assert len(skill_areas) >= 1, "expected at least one skill area for 'curator'"
-    area_names = {a["area_name"] for a in skill_areas}
-    assert "skill" in area_names
-
-
-def test_skill_hermes_skill_pattern_detected():
-    """Candidate with 'hermes.skill' triggers a skill area."""
-    cand = _make_candidate(
-        summary="hermes.skill invocation failed during agent startup",
-        evidence_count=1,
-    )
-    report = classify_candidate(cand)
-    skill_areas = [a for a in report["areas"] if a["area_type"] == "skill"]
-    assert len(skill_areas) >= 1, "expected at least one skill area for 'hermes.skill'"
+    assert len(skill_areas) >= 1, "expected at least one skill area"
     area_names = {a["area_name"] for a in skill_areas}
     assert "skill" in area_names
 
@@ -544,59 +545,35 @@ def test_generic_tool_suppressed_when_specific_tool_present():
 # ---------------------------------------------------------------------------
 
 
-def test_cargo_home_routes_to_task_executor():
-    """CARGO_HOME in a failure summary should route to mac.task_executor repo area."""
-    cand = _make_candidate(
-        summary="cargo provisioning failed: CARGO_HOME not on PATH in sandbox",
-        evidence_count=1,
-    )
+@pytest.mark.parametrize(
+    "summary",
+    [
+        pytest.param(
+            "cargo provisioning failed: CARGO_HOME not on PATH in sandbox",
+            id="cargo_home",
+        ),
+        pytest.param(
+            "rustup install failed during toolchain provisioning step",
+            id="rustup",
+        ),
+        pytest.param(
+            "command not found: checked cargo/bin but symlink missing from MAC_TOOLCHAIN_BIN",
+            id="cargo_bin_path",
+        ),
+        pytest.param(
+            "rust-toolchain override file not found; falling back to stable",
+            id="rust_toolchain",
+        ),
+    ],
+)
+def test_rust_toolchain_signal_routes_to_task_executor(summary):
+    """Rust/Cargo toolchain signals all route to the mac.task_executor repo area."""
+    cand = _make_candidate(summary=summary, evidence_count=1)
     report = classify_candidate(cand)
     repo_areas = [a for a in report["areas"] if a["area_type"] == "repo_area"]
     names = {a["area_name"] for a in repo_areas}
     assert "mac.task_executor" in names, (
-        "expected CARGO_HOME signal to route to mac.task_executor, got: %s" % names
-    )
-
-
-def test_rustup_routes_to_task_executor():
-    """rustup mention in failure text should route to mac.task_executor."""
-    cand = _make_candidate(
-        summary="rustup install failed during toolchain provisioning step",
-        evidence_count=1,
-    )
-    report = classify_candidate(cand)
-    repo_areas = [a for a in report["areas"] if a["area_type"] == "repo_area"]
-    names = {a["area_name"] for a in repo_areas}
-    assert "mac.task_executor" in names, (
-        "expected rustup signal to route to mac.task_executor, got: %s" % names
-    )
-
-
-def test_cargo_bin_path_routes_to_task_executor():
-    """A reference to cargo/bin in a stack trace routes to mac.task_executor."""
-    cand = _make_candidate(
-        summary="command not found: checked cargo/bin but symlink missing from MAC_TOOLCHAIN_BIN",
-        evidence_count=1,
-    )
-    report = classify_candidate(cand)
-    repo_areas = [a for a in report["areas"] if a["area_type"] == "repo_area"]
-    names = {a["area_name"] for a in repo_areas}
-    assert "mac.task_executor" in names, (
-        "expected cargo/bin signal to route to mac.task_executor, got: %s" % names
-    )
-
-
-def test_rust_toolchain_routes_to_task_executor():
-    """rust-toolchain keyword routes to mac.task_executor."""
-    cand = _make_candidate(
-        summary="rust-toolchain override file not found; falling back to stable",
-        evidence_count=1,
-    )
-    report = classify_candidate(cand)
-    repo_areas = [a for a in report["areas"] if a["area_type"] == "repo_area"]
-    names = {a["area_name"] for a in repo_areas}
-    assert "mac.task_executor" in names, (
-        "expected rust-toolchain signal to route to mac.task_executor, got: %s" % names
+        "expected toolchain signal to route to mac.task_executor, got: %s" % names
     )
 
 
@@ -634,7 +611,7 @@ def test_unknown_confidence_string_normalised_to_low():
     """A candidate with an unrecognised confidence value is treated as 'low' (line 318)."""
     cand = _make_candidate(confidence="low")
     cand["confidence"] = "bogus_confidence_level"
-    report = classify_candidate(cand)
+    classify_candidate(cand)
     # When no areas match, overall_confidence falls back to 'low'
     cand_no_signals = {
         "schema": "mac.dream.v1",

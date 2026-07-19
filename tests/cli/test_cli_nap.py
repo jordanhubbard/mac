@@ -62,48 +62,49 @@ def _register_agent(tmp_path, name="worker-1", machine_name=None):
 # ---------------------------------------------------------------------------
 
 
-def test_nap_configure_creates_schedule(tmp_path):
-    agent = _register_agent(tmp_path)
-    rc, schedule = _run(tmp_path, "nap", "configure", agent["id"])
-    assert rc == 0
-    assert schedule["agent_id"] == agent["id"]
+def _assert_configure_defaults(schedule):
     assert schedule["enabled"] is True
     assert 0 <= schedule["offset_minutes"] < 60
     assert schedule["window_minutes"] > 0
 
 
-def test_nap_configure_explicit_offset(tmp_path):
-    agent = _register_agent(tmp_path)
-    rc, schedule = _run(
-        tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "45"
-    )
-    assert rc == 0
+def _assert_configure_offset_45(schedule):
     assert schedule["offset_minutes"] == 45
 
 
-def test_nap_configure_window_minutes(tmp_path):
-    agent = _register_agent(tmp_path)
-    rc, schedule = _run(
-        tmp_path,
-        "nap",
-        "configure",
-        agent["id"],
-        "--offset-minutes",
-        "30",
-        "--window-minutes",
-        "20",
-    )
-    assert rc == 0
+def _assert_configure_window_20(schedule):
     assert schedule["window_minutes"] == 20
 
 
-def test_nap_configure_disabled_flag(tmp_path):
-    agent = _register_agent(tmp_path)
-    rc, schedule = _run(
-        tmp_path, "nap", "configure", agent["id"], "--disabled"
-    )
-    assert rc == 0
+def _assert_configure_disabled(schedule):
     assert schedule["enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "extra_args, check",
+    [
+        pytest.param([], _assert_configure_defaults, id="defaults"),
+        pytest.param(
+            ["--offset-minutes", "45"],
+            _assert_configure_offset_45,
+            id="explicit_offset",
+        ),
+        pytest.param(
+            ["--offset-minutes", "30", "--window-minutes", "20"],
+            _assert_configure_window_20,
+            id="window_minutes",
+        ),
+        pytest.param(
+            ["--disabled"], _assert_configure_disabled, id="disabled_flag"
+        ),
+    ],
+)
+def test_nap_configure_variants(tmp_path, extra_args, check):
+    agent = _register_agent(tmp_path)
+    rc, schedule = _run(tmp_path, "nap", "configure", agent["id"], *extra_args)
+    assert rc == 0
+    assert schedule["agent_id"] == agent["id"]
+    check(schedule)
 
 
 def test_nap_configure_is_idempotent(tmp_path):
@@ -161,25 +162,39 @@ def test_nap_show_null_for_unconfigured_agent(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_nap_next_returns_window_fields(tmp_path):
-    agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "45")
-
-    rc, window = _run(tmp_path, "nap", "next", agent["id"])
-    assert rc == 0
+def _assert_next_window_present(window):
     assert window is not None
     assert "start" in window
     assert "end" in window
     assert window["offset_minutes"] == 45
 
 
-def test_nap_next_returns_null_when_disabled(tmp_path):
+def _assert_next_window_absent(window):
+    assert window is None
+
+
+@pytest.mark.parametrize(
+    "configure_args, check",
+    [
+        pytest.param(
+            ["--offset-minutes", "45"],
+            _assert_next_window_present,
+            id="enabled_returns_window_fields",
+        ),
+        pytest.param(
+            ["--disabled"],
+            _assert_next_window_absent,
+            id="disabled_returns_null",
+        ),
+    ],
+)
+def test_nap_next_variants(tmp_path, configure_args, check):
     agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"], "--disabled")
+    _run(tmp_path, "nap", "configure", agent["id"], *configure_args)
 
     rc, window = _run(tmp_path, "nap", "next", agent["id"])
     assert rc == 0
-    assert window is None
+    check(window)
 
 
 # ---------------------------------------------------------------------------
@@ -357,8 +372,33 @@ def test_nap_begin_fail_run_appears_in_list(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_nap_due_lists_agent_with_open_window(tmp_path):
-    """An agent with offset_minutes=0 and no prior completion is due hourly."""
+def _assert_due_contains_agent(due, agent):
+    assert any(d["agent_id"] == agent["id"] for d in due)
+
+
+def _assert_due_entry_fields(due, agent):
+    entry = next((d for d in due if d["agent_id"] == agent["id"]), None)
+    assert entry is not None
+    assert "window_start" in entry
+    assert "window_end" in entry
+    assert "in_window" in entry
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        pytest.param(
+            _assert_due_contains_agent, id="lists_agent_with_open_window"
+        ),
+        pytest.param(_assert_due_entry_fields, id="returns_expected_fields"),
+    ],
+)
+def test_nap_due_variants(tmp_path, check):
+    """An agent with offset_minutes=0 and no prior completion is due hourly.
+
+    Both variants share identical setup and execution; each asserts a
+    distinct facet of the due-list response (membership vs. entry fields).
+    """
     from datetime import datetime, timezone
 
     agent = _register_agent(tmp_path)
@@ -368,12 +408,10 @@ def test_nap_due_lists_agent_with_open_window(tmp_path):
     # Use a reference timestamp after the top of the current hour.
     as_of = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
 
-    rc, due = _run(
-        tmp_path, "nap", "due", "--as-of", as_of.isoformat()
-    )
+    rc, due = _run(tmp_path, "nap", "due", "--as-of", as_of.isoformat())
     assert rc == 0
     assert isinstance(due, list)
-    assert any(d["agent_id"] == agent["id"] for d in due)
+    check(due, agent)
 
 
 def test_nap_due_excludes_completed_agent(tmp_path):
@@ -394,23 +432,3 @@ def test_nap_due_excludes_completed_agent(tmp_path):
     rc, due = _run(tmp_path, "nap", "due", "--as-of", as_of.isoformat())
     assert rc == 0
     assert not any(d["agent_id"] == agent["id"] for d in due)
-
-
-def test_nap_due_returns_list_with_expected_fields(tmp_path):
-    """Each due entry has the required fields for schedule inspection."""
-    from datetime import datetime, timezone
-
-    agent = _register_agent(tmp_path)
-    _run(tmp_path, "nap", "configure", agent["id"], "--offset-minutes", "0")
-
-    as_of = datetime.now(timezone.utc).replace(minute=5, second=0, microsecond=0)
-    rc, due = _run(
-        tmp_path, "nap", "due", "--as-of", as_of.isoformat()
-    )
-    assert rc == 0
-    assert isinstance(due, list)
-    entry = next((d for d in due if d["agent_id"] == agent["id"]), None)
-    assert entry is not None
-    assert "window_start" in entry
-    assert "window_end" in entry
-    assert "in_window" in entry
