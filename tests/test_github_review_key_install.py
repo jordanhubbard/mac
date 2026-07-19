@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import base64
 import os
 from pathlib import Path
 import subprocess
-import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +24,7 @@ def _mock_ssh_tools(tmp_path: Path) -> Path:
     bin_dir.mkdir()
     tools = {
         "ssh": """#!/usr/bin/env bash
-if printf '%s\n' "$@" | grep -q '\\.candidate'; then
+if printf '%s\n' "$@" | grep -q 'mac_github_review_id'; then
   mode="${MOCK_CANDIDATE_AUTH:-fail}"
 else
   mode="${MOCK_AMBIENT_AUTH:-fail}"
@@ -38,8 +36,6 @@ fi
 echo 'git@github.com: Permission denied (publickey).' >&2
 exit 255
 """,
-        "ssh-keygen": "#!/usr/bin/env bash\nexit 0\n",
-        "ssh-keyscan": "#!/usr/bin/env bash\necho 'github.com ssh-ed25519 TEST'\n",
     }
     for name, content in tools.items():
         path = bin_dir / name
@@ -67,6 +63,7 @@ def _run_installer(
         "  IdentitiesOnly yes\n",
         encoding="utf-8",
     )
+    (ssh_dir / "mac_github_review_id").write_bytes(b"onboarded-key")
     mock_bin = _mock_ssh_tools(tmp_path)
     script = (
         "set -euo pipefail\n"
@@ -78,8 +75,7 @@ def _run_installer(
         **os.environ,
         "HOME": str(home),
         "PATH": f"{mock_bin}:{os.environ['PATH']}",
-        "PYTHON_BIN": sys.executable,
-        "GITHUB_REVIEW_KEY_B64": base64.b64encode(b"candidate-key").decode(),
+        "GITHUB_REVIEW_KEY_B64": "ignored-secret-stream-candidate",
         "MOCK_CANDIDATE_AUTH": candidate_auth,
         "MOCK_AMBIENT_AUTH": ambient_auth,
         "AGENT": agent,
@@ -94,7 +90,7 @@ def _run_installer(
     )
 
 
-def test_unverified_review_key_falls_back_without_masking_ambient_identity(tmp_path):
+def test_unverified_onboarded_key_falls_back_without_rewriting_ambient_identity(tmp_path):
     result = _run_installer(
         tmp_path,
         candidate_auth="fail",
@@ -104,9 +100,11 @@ def test_unverified_review_key_falls_back_without_masking_ambient_identity(tmp_p
     assert result.returncode == 0, result.stderr
     config = (tmp_path / "home" / ".ssh" / "config").read_text(encoding="utf-8")
     assert "Host keep.example" in config
-    assert "mac GitHub review deploy key" not in config
-    assert not (tmp_path / "home" / ".ssh" / "mac_github_review_id").exists()
-    assert "using the host's verified ambient GitHub SSH identity" in result.stdout
+    assert config.count("# mac GitHub review deploy key") == 1
+    assert (
+        tmp_path / "home" / ".ssh" / "mac_github_review_id"
+    ).read_bytes() == b"onboarded-key"
+    assert "verified onboarded ambient GitHub SSH identity" in result.stdout
 
 
 def test_hub_deploy_fails_early_when_no_github_identity_is_authorized(tmp_path):
@@ -122,7 +120,7 @@ def test_hub_deploy_fails_early_when_no_github_identity_is_authorized(tmp_path):
     )
 
 
-def test_authorized_review_key_is_installed_exclusively(tmp_path):
+def test_authorized_onboarded_review_key_is_verified_without_rewrite(tmp_path):
     result = _run_installer(
         tmp_path,
         candidate_auth="pass",
@@ -131,12 +129,12 @@ def test_authorized_review_key_is_installed_exclusively(tmp_path):
 
     assert result.returncode == 0, result.stderr
     key = tmp_path / "home" / ".ssh" / "mac_github_review_id"
-    assert key.read_bytes() == b"candidate-key"
+    assert key.read_bytes() == b"onboarded-key"
     config = (tmp_path / "home" / ".ssh" / "config").read_text(encoding="utf-8")
     assert config.count("# mac GitHub review deploy key") == 1
     assert "IdentityFile ~/.ssh/mac_github_review_id" in config
     assert "IdentitiesOnly yes" in config
-    assert "installed and verified GitHub review deploy key" in result.stdout
+    assert "verified onboarded GitHub review identity" in result.stdout
 
 
 def test_github_auth_probe_cannot_consume_remote_deploy_stdin():

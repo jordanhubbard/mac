@@ -262,6 +262,16 @@ class PostgresStore:
         self.ensure_column(
             "agents", "installed_packages", "installed_packages TEXT NOT NULL DEFAULT '{}'"
         )
+        self.ensure_column(
+            "agents",
+            "attestation_key_prev_ciphertext",
+            "attestation_key_prev_ciphertext TEXT",
+        )
+        self.ensure_column(
+            "fleet_release_epoch_agents",
+            "prior_report_executor_projection_sha256",
+            "prior_report_executor_projection_sha256 TEXT",
+        )
         # schema_dispatch_hold: per-agent dispatch hold + zombie-detection counters.
         self.ensure_column(
             "agents", "dispatch_hold", "dispatch_hold INTEGER NOT NULL DEFAULT 0"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,10 +12,12 @@ from mac import deployment_attestation
 from mac.api import create_app
 from mac.deployment_attestation import (
     DeploymentAttestationError,
+    build_candidate_proof,
     build_key_probe,
     install_recovery_manifest,
     recovery_manifest,
 )
+from mac.services import sign_verification_manifest
 from mac.models import (
     REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY,
     REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
@@ -404,6 +407,55 @@ def test_command_handoff_writes_private_probe_and_install_artifacts(tmp_path, ca
     receipt_stdout = json.loads(capsys.readouterr().out)
     assert json.loads(receipt_output.read_text(encoding="utf-8")) == receipt_stdout
     assert stat_mode(receipt_output) == 0o600
+
+
+def test_candidate_proof_is_exact_and_signed_by_installed_key(tmp_path, capsys):
+    key = "candidate-key-" + ("x" * 40)
+    env_file = tmp_path / "mac.env"
+    _write_env(env_file, key)
+    challenge = {
+        "schema": "mac.fleet_release_attestation_candidate_proof.v1",
+        "purpose": "synchronized-fleet-release-candidate",
+        "epoch_id": "epoch-one",
+        "agent_id": "agent_worker",
+        "generation": "generation-one",
+        "principal_id": "principal-one",
+        "candidate_fingerprint": "sha256:"
+        + hashlib.sha256(key.encode()).hexdigest(),
+        "nonce": "n" * 40,
+    }
+    challenge_file = tmp_path / "challenge.json"
+    _write_manifest(challenge_file, challenge)
+    proof = build_candidate_proof(challenge_file, env_file)
+    assert proof == {
+        "challenge": challenge,
+        "signature": sign_verification_manifest(key, challenge),
+    }
+
+    output = tmp_path / "proof.json"
+    assert deployment_attestation.main(
+        [
+            "prove-candidate",
+            "--challenge",
+            str(challenge_file),
+            "--env-file",
+            str(env_file),
+            "--output",
+            str(output),
+        ]
+    ) == 0
+    assert json.loads(output.read_text()) == proof
+    assert stat_mode(output) == 0o600
+    assert json.loads(capsys.readouterr().out) == {
+        "proof_written": True,
+        "status": "proved",
+    }
+
+    changed = dict(challenge)
+    changed["candidate_fingerprint"] = "sha256:" + ("0" * 64)
+    _write_manifest(challenge_file, changed)
+    with pytest.raises(DeploymentAttestationError, match="differs"):
+        build_candidate_proof(challenge_file, env_file)
 
 
 def test_command_reports_contract_errors_without_traceback(tmp_path, capsys):

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import signal
+import subprocess
+import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -113,6 +118,76 @@ def test_every_deployment_supervisor_uses_external_crash_observer():
     assert "runAsUser: 10001" in manifest
     assert "runAsGroup: 10001" in manifest
     assert "fsGroup: 10001" in manifest
+
+
+def test_observer_forwards_termination_and_reaps_child(tmp_path):
+    ready = tmp_path / "ready"
+    signal_seen = tmp_path / "signal"
+    child_code = """
+import os
+import signal
+import sys
+import time
+
+ready, signal_seen = sys.argv[1:]
+
+def stop(signum, _frame):
+    with open(signal_seen, "w", encoding="utf-8") as stream:
+        stream.write(str(signum))
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, stop)
+with open(ready, "w", encoding="utf-8") as stream:
+    stream.write(str(os.getpid()))
+while True:
+    time.sleep(0.1)
+"""
+    observer = subprocess.Popen(
+        [
+            sys.executable,
+            str(OBSERVER_PATH),
+            "--supervisor",
+            "launchd",
+            "--",
+            sys.executable,
+            "-c",
+            child_code,
+            str(ready),
+            str(signal_seen),
+        ],
+        env={**os.environ, "MAC_HOME": str(tmp_path / "mac-home")},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    child_pid = None
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            assert observer.poll() is None
+            time.sleep(0.05)
+        assert ready.exists()
+        child_pid = int(ready.read_text(encoding="utf-8"))
+
+        observer.send_signal(signal.SIGTERM)
+        stdout, stderr = observer.communicate(timeout=10)
+        assert observer.returncode == 0, (stdout, stderr)
+        assert signal_seen.read_text(encoding="utf-8") == str(signal.SIGTERM)
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise AssertionError("crash observer returned before its managed child exited")
+    finally:
+        if observer.poll() is None:
+            observer.kill()
+            observer.wait(timeout=5)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_filesystem_core_is_retained_with_bounded_permissions(tmp_path):

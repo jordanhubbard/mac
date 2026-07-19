@@ -56,7 +56,8 @@ def test_codegraph_presence_and_behavior_have_basic_runtime_coverage():
     )
 
     assert "reviewed-tool-assets.sh" in deploy
-    assert "mac_install_reviewed_codegraph" in deploy
+    assert "mac_install_reviewed_codegraph" in reviewed_assets
+    assert "mac_install_reviewed_codegraph" not in deploy
     assert 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"' in reviewed_assets
     assert "mac_verify_reviewed_asset" in reviewed_assets
     assert MUTABLE_CODEGRAPH_INSTALL not in deploy
@@ -71,9 +72,12 @@ def test_codegraph_presence_and_behavior_have_basic_runtime_coverage():
         in containerfile
     )
     assert "chmod 0755 /usr/local/bin/codegraph" in containerfile
-    assert '"$target" install --yes' in deploy
     assert "codegraph install --yes" in containerfile
-    assert 'install_codegraph_cli\ninitialize_codegraph_repository "$SRC_DIR"' in deploy
+    assert "reviewed CodeGraph bundle is missing; complete node onboarding" in deploy
+    assert "onboarded CodeGraph version differs" in deploy
+    assert "validate_typed_prerequisite_bundle" in deploy
+    assert "install_codegraph_cli" in deploy
+    assert 'initialize_codegraph_repository "$SRC_DIR"' in deploy
     assert "install_codegraph_cli || true" not in deploy
     assert 'initialize_codegraph_repository "$SRC_DIR" || true' not in deploy
     assert "codegraph init" in deploy

@@ -22,7 +22,7 @@ from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Union
 from fastapi import BackgroundTasks, Depends, FastAPI, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from starlette.middleware.gzip import GZipMiddleware
 
 from mac.agentbus_control import (
@@ -1184,6 +1184,64 @@ class DispatchHoldBatchReleaseRequest(BaseModel):
 
 class DispatchHoldBatchTransitionRequest(DispatchHoldBatchReleaseRequest):
     successor_reason: str
+
+
+class FleetReleaseAttestationCandidateRequest(BaseModel):
+    key: SecretStr
+
+
+class FleetReleaseEpochParticipantRequest(BaseModel):
+    agent_id: str
+    expected_dispatch_hold: bool
+    expected_hold_reason: Optional[str] = None
+    expected_hold_at: Optional[str] = None
+    generation: str
+    baseline_seen: str
+    principal_id: str
+    attestation_candidate: Optional[
+        FleetReleaseAttestationCandidateRequest
+    ] = None
+    report_executor_action: Literal["preserve", "approve", "revoke"] = (
+        "preserve"
+    )
+    report_executor_attestation: Optional[Dict[str, Any]] = None
+
+
+class FleetReleaseEpochOpenRequest(BaseModel):
+    epoch_id: str
+    participants: List[FleetReleaseEpochParticipantRequest] = Field(
+        default_factory=list
+    )
+    successor_hold_reason: Optional[str] = None
+    desired_worker_credential_mode: Optional[
+        Literal["compatibility", "enforced"]
+    ] = None
+
+
+class FleetReleaseEpochCommitRequest(BaseModel):
+    identity_sha256: str
+
+
+class FleetReleaseAttestationProofRequest(BaseModel):
+    challenge: Dict[str, Any] = Field(default_factory=dict)
+    signature: str
+
+
+class FleetReleaseEpochParticipantProofRequest(BaseModel):
+    agent_id: str
+    install_receipt: Dict[str, Any] = Field(default_factory=dict)
+    attestation_proof: Optional[FleetReleaseAttestationProofRequest] = None
+    report_executor_startup_timestamp: Optional[str] = None
+
+
+class FleetReleaseEpochProveRequest(FleetReleaseEpochCommitRequest):
+    proofs: List[FleetReleaseEpochParticipantProofRequest] = Field(
+        default_factory=list
+    )
+
+
+class FleetReleaseEpochAbortRequest(FleetReleaseEpochCommitRequest):
+    reason: str
 
 
 class BreakGlassAuthorizeRequest(BaseModel):
@@ -6307,6 +6365,117 @@ def create_app(
             "epoch_id": body.epoch_id,
             "agents": [agent.to_dict() for agent in agents],
         }
+
+    @app.get("/agents/dispatch-hold/authority")
+    def dispatch_hold_authority(
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Return the durable hub identity used to bind a fleet transaction."""
+
+        principal.require_global_fleet()
+        principal.require_admin()
+        return {
+            "schema": "mac.fleet_release_hub_authority.v1",
+            "hub_authority_id": cp.fleet_release_epochs.hub_authority_id,
+        }
+
+    @app.get("/agents/dispatch-hold/epochs/{epoch_id}")
+    def dispatch_hold_epoch_status(
+        epoch_id: str,
+        identity_sha256: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Read one durable fleet-release epoch without replaying it."""
+
+        principal.require_global_fleet()
+        principal.require_admin()
+        if identity_sha256.startswith("sha256:"):
+            return cp.fleet_release_epochs.status(epoch_id, identity_sha256)
+        return cp.agent_dispatch_hold_epoch_status(epoch_id, identity_sha256)
+
+    @app.post("/agents/dispatch-hold/epochs/open")
+    def open_fleet_release_epoch(
+        body: FleetReleaseEpochOpenRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Atomically reserve one exact cohort without promoting authority."""
+
+        principal.require_global_fleet()
+        principal.require_admin()
+        participants: List[Dict[str, Any]] = []
+        for item in body.participants:
+            value = item.model_dump(exclude={"attestation_candidate"})
+            if item.attestation_candidate is not None:
+                value["attestation_candidate"] = {
+                    "key": item.attestation_candidate.key.get_secret_value(),
+                }
+            participants.append(value)
+        return cp.fleet_release_epochs.open_epoch(
+            body.epoch_id,
+            participants,
+            successor_hold_reason=body.successor_hold_reason,
+            desired_policy_mode=body.desired_worker_credential_mode,
+            actor=principal.client_id or principal.agent_id or "admin",
+        )
+
+    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/prove")
+    def prove_fleet_release_epoch(
+        epoch_id: str,
+        body: FleetReleaseEpochProveRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Verify exact post-apply evidence without promoting authority."""
+
+        principal.require_global_fleet()
+        principal.require_admin()
+        proofs: List[Dict[str, Any]] = []
+        for item in body.proofs:
+            value = item.model_dump(exclude={"attestation_proof"})
+            value["attestation_proof"] = (
+                item.attestation_proof.model_dump()
+                if item.attestation_proof is not None
+                else None
+            )
+            proofs.append(value)
+        return cp.fleet_release_epochs.prove(
+            epoch_id,
+            body.identity_sha256,
+            proofs,
+            actor=principal.client_id or principal.agent_id or "admin",
+        )
+
+    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/commit")
+    def commit_fleet_release_epoch(
+        epoch_id: str,
+        body: FleetReleaseEpochCommitRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Promote identity, approval, policy, and holds in one transaction."""
+
+        principal.require_global_fleet()
+        principal.require_admin()
+        return cp.fleet_release_epochs.commit(
+            epoch_id,
+            body.identity_sha256,
+            actor=principal.client_id or principal.agent_id or "admin",
+        )
+
+    @app.post("/agents/dispatch-hold/epochs/{epoch_id}/abort")
+    def abort_fleet_release_epoch(
+        epoch_id: str,
+        body: FleetReleaseEpochAbortRequest,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Discard epoch staging and restore each exact pre-open authority."""
+
+        principal.require_global_fleet()
+        principal.require_admin()
+        return cp.fleet_release_epochs.abort(
+            epoch_id,
+            body.identity_sha256,
+            reason=body.reason,
+            actor=principal.client_id or principal.agent_id or "admin",
+        )
 
     @app.post("/agents/dispatch-hold/transition-batch")
     def transition_dispatch_holds_batch(

@@ -895,6 +895,97 @@ class SQLiteStore:
                     updated_at TEXT NOT NULL
                 );
 
+                -- Stable physical authority for the hub database. Runtime
+                -- code inserts the random UUID once with ON CONFLICT and all
+                -- replicas subsequently read the winning singleton.
+                CREATE TABLE IF NOT EXISTS hub_authority_identity (
+                    singleton_key TEXT PRIMARY KEY CHECK (singleton_key = 'hub'),
+                    authority_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                );
+
+                -- Durable hub participant in a synchronized fleet cutover.
+                -- The canonical identity payload and every receipt are
+                -- secret-free. Symmetric attestation candidates live in the
+                -- separate encrypted staging table below and are deleted on
+                -- either commit or abort.
+                CREATE TABLE IF NOT EXISTS fleet_release_epochs (
+                    epoch_id TEXT PRIMARY KEY,
+                    request_sha256 TEXT NOT NULL,
+                    identity_sha256 TEXT NOT NULL UNIQUE,
+                    identity_payload TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (
+                        state IN ('open', 'proved', 'committed', 'aborted')
+                    ),
+                    proof_sha256 TEXT,
+                    successor_hold_reason TEXT,
+                    desired_policy_mode TEXT CHECK (
+                        desired_policy_mode IS NULL OR
+                        desired_policy_mode IN ('compatibility', 'enforced')
+                    ),
+                    policy_snapshot TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    prepared_at TEXT NOT NULL,
+                    proved_at TEXT,
+                    committed_at TEXT,
+                    aborted_at TEXT,
+                    abort_reason TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS fleet_release_epoch_agents (
+                    epoch_id TEXT NOT NULL REFERENCES fleet_release_epochs(epoch_id)
+                        ON DELETE RESTRICT,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+                    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+                    open_state INTEGER NOT NULL DEFAULT 1 CHECK (open_state IN (0, 1)),
+                    prior_dispatch_hold INTEGER NOT NULL CHECK (
+                        prior_dispatch_hold IN (0, 1)
+                    ),
+                    prior_hold_reason TEXT,
+                    prior_hold_at TEXT,
+                    epoch_hold_reason TEXT NOT NULL,
+                    epoch_hold_at TEXT NOT NULL,
+                    prior_active_service_claim_ids TEXT NOT NULL,
+                    generation TEXT NOT NULL,
+                    baseline_seen TEXT NOT NULL,
+                    principal_id TEXT NOT NULL REFERENCES worker_credentials(id)
+                        ON DELETE RESTRICT,
+                    principal_version INTEGER NOT NULL CHECK (principal_version >= 1),
+                    principal_fingerprint TEXT NOT NULL,
+                    install_receipt TEXT,
+                    install_receipt_sha256 TEXT,
+                    prior_live_principal_ids TEXT NOT NULL,
+                    prior_attestation_ciphertext_sha256 TEXT NOT NULL,
+                    attestation_candidate_fingerprint TEXT,
+                    attestation_proof TEXT,
+                    attestation_proof_sha256 TEXT,
+                    report_executor_action TEXT NOT NULL CHECK (
+                        report_executor_action IN ('preserve', 'approve', 'revoke')
+                    ),
+                    prior_report_executor_projection_sha256 TEXT NOT NULL,
+                    report_executor_attestation TEXT,
+                    report_executor_startup_timestamp TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (epoch_id, agent_id),
+                    UNIQUE (epoch_id, ordinal)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS uniq_fleet_release_open_agent
+                    ON fleet_release_epoch_agents (agent_id) WHERE open_state = 1;
+                CREATE INDEX IF NOT EXISTS idx_fleet_release_epoch_agents_epoch
+                    ON fleet_release_epoch_agents (epoch_id, ordinal);
+
+                CREATE TABLE IF NOT EXISTS fleet_release_attestation_candidates (
+                    epoch_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    key_ciphertext TEXT NOT NULL,
+                    key_fingerprint TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (epoch_id, agent_id),
+                    FOREIGN KEY (epoch_id, agent_id)
+                        REFERENCES fleet_release_epoch_agents(epoch_id, agent_id)
+                        ON DELETE RESTRICT
+                );
+
                 -- One-way authority for ordinary atomic task publication. The
                 -- row is absent before rollout and is inserted exactly once
                 -- after the reviewed package-worker policy and controller
@@ -5810,6 +5901,11 @@ class SQLiteStore:
             "agents",
             "attestation_key_prev_ciphertext",
             "attestation_key_prev_ciphertext TEXT",
+        )
+        self._ensure_column(
+            "fleet_release_epoch_agents",
+            "prior_report_executor_projection_sha256",
+            "prior_report_executor_projection_sha256 TEXT",
         )
         # mac-1oi4: capture who asked for an agent so fulfill can refuse
         # a self-fulfill (the same actor approving its own request).

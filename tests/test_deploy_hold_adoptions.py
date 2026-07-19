@@ -1,4 +1,6 @@
 import base64
+import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -50,9 +52,7 @@ def run_helper(*arguments: str):
 def test_owner_only_authority_is_frozen_and_scoped_to_exact_cohort(tmp_path):
     source = write_authority(tmp_path / "authority.json")
     snapshot = tmp_path / "snapshot.json"
-    frozen = run_helper(
-        "snapshot", source, snapshot, "--source-commit", COMMIT
-    )
+    frozen = run_helper("snapshot", source, snapshot, "--source-commit", COMMIT)
     assert frozen.returncode == 0, frozen.stderr
     assert stat.S_IMODE(snapshot.stat().st_mode) == 0o600
     payload = json.loads(snapshot.read_text(encoding="utf-8"))
@@ -147,15 +147,14 @@ def test_authority_rejects_ambiguous_or_non_exact_json(tmp_path, raw, message):
 def test_authority_rejects_commit_hub_fleet_and_selected_agent_drift(tmp_path):
     source = write_authority(tmp_path / "authority.json")
     snapshot = tmp_path / "snapshot.json"
-    wrong_commit = run_helper(
-        "snapshot", source, snapshot, "--source-commit", "2" * 40
-    )
+    wrong_commit = run_helper("snapshot", source, snapshot, "--source-commit", "2" * 40)
     assert wrong_commit.returncode == 2
     assert "does not match deploy commit" in wrong_commit.stderr
 
-    assert run_helper(
-        "snapshot", source, snapshot, "--source-commit", COMMIT
-    ).returncode == 0
+    assert (
+        run_helper("snapshot", source, snapshot, "--source-commit", COMMIT).returncode
+        == 0
+    )
     wrong_hub = run_helper(
         "validate-selected",
         snapshot,
@@ -208,19 +207,24 @@ def test_deploy_contract_has_explicit_adoption_and_exact_release_mode():
     parser = deploy.split('while [ "$#" -gt 0 ]; do', 1)[1].split(
         'if ! PYTHON_BIN="$(resolve_python_bin)"', 1
     )[0]
-    assert "HOLD_ADOPTIONS_SOURCE=\"$2\"" in parser
+    assert 'HOLD_ADOPTIONS_SOURCE="$2"' in parser
     assert "REQUIRE_RELEASE_ALL_SELECTED=1" in parser
     assert parser.index('if [ -n "$HOLD_ADOPTIONS_SOURCE" ]') < parser.index(
-        'REQUIRE_RELEASE_ALL_SELECTED=1',
+        "REQUIRE_RELEASE_ALL_SELECTED=1",
         parser.index('if [ -n "$HOLD_ADOPTIONS_SOURCE" ]'),
     )
 
     main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
-    preflight = main.index("preflight_cohort_hold_adoptions")
-    phase_one = main.index("phase 1/3 holding and draining")
-    prepare = main.index("prepare_remote_mac_agent_deployment", phase_one)
-    assert preflight < phase_one < prepare
-    assert 'hold_adoption_reason_for_agent "$hold_adoption_plan" "$agent_id"' in main
+    typed = deploy.split("run_typed_cohort() {", 1)[1].split(
+        "\n}\n\nmain()", 1
+    )[0]
+    preflight = typed.index("preflight_cohort_hold_adoptions")
+    restore_arm = typed.index("prepare_remote_phase1_restore_contract")
+    prerequisite = typed.index("prepare_remote_prerequisite_bundle")
+    hub_open = typed.index("build_and_open_hub_epoch")
+    assert preflight < restore_arm < prerequisite < hub_open
+    assert "run_typed_cohort" in main
+    assert '"$hold_adoption_plan"' in main
 
     gate = deploy.split("hub_agent_restart_gate() {", 1)[1].split(
         "remote_deployment_hold_state() {", 1
@@ -255,7 +259,10 @@ def test_successor_hold_is_frozen_and_proved_before_any_cohort_mutation():
     deploy = DEPLOY.read_text(encoding="utf-8")
     assert "MAC_DEPLOY_SUCCESSOR_HOLD_REASON" in deploy
     assert "--successor-hold-reason" in deploy
-    assert "readonly HOLD_ADOPTIONS_FILE REQUIRE_RELEASE_ALL_SELECTED SUCCESSOR_HOLD_REASON" in deploy
+    assert (
+        "readonly HOLD_ADOPTIONS_FILE REQUIRE_RELEASE_ALL_SELECTED SUCCESSOR_HOLD_REASON"
+        in deploy
+    )
 
     parser = deploy.split('while [ "$#" -gt 0 ]; do', 1)[1].split(
         'if ! PYTHON_BIN="$(resolve_python_bin)"', 1
@@ -263,7 +270,7 @@ def test_successor_hold_is_frozen_and_proved_before_any_cohort_mutation():
     assert 'SUCCESSOR_HOLD_REASON_RAW="$2"' in parser
     assert 'SUCCESSOR_HOLD_REASON_RAW="${1#--successor-hold-reason=}"' in parser
     normalization = deploy.split('if ! PYTHON_BIN="$(resolve_python_bin)"', 1)[1].split(
-        'DEPLOY_CONTROLLER_NONCE=', 1
+        "DEPLOY_CONTROLLER_NONCE=", 1
     )[0]
     assert "raw_reason = sys.argv[1]" in normalization
     assert "if not reason:" in normalization
@@ -271,17 +278,25 @@ def test_successor_hold_is_frozen_and_proved_before_any_cohort_mutation():
     assert "not character.isprintable()" in normalization
     assert "REQUIRE_RELEASE_ALL_SELECTED=1" in normalization
 
-    availability = deploy.split(
-        "hub_dispatch_hold_transition_available() {", 1
-    )[1].split("preflight_cohort_hold_adoptions() {", 1)[0]
+    availability = deploy.split("hub_dispatch_hold_transition_available() {", 1)[
+        1
+    ].split("preflight_cohort_hold_adoptions() {", 1)[0]
     assert 'paths.get("/agents/dispatch-hold/transition-batch")' in availability
     assert 'operation.get("post")' in availability
 
     main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
-    transition_preflight = main.index("hub_dispatch_hold_transition_available")
-    phase_one = main.index("phase 1/3 holding and draining")
-    assert transition_preflight < phase_one
-    assert '"$REQUIRE_RELEASE_ALL_SELECTED" "$SUCCESSOR_HOLD_REASON"' in main
+    typed = deploy.split("run_typed_cohort() {", 1)[1].split(
+        "\n}\n\nmain()", 1
+    )[0]
+    hub_open = deploy.split("build_and_open_hub_epoch() {", 1)[1].split(
+        "\n}\n\nprove_and_commit_hub_epoch", 1
+    )[0]
+    assert typed.index("preflight_cohort_hold_adoptions") < typed.index(
+        "build_and_open_hub_epoch"
+    )
+    assert '"$SUCCESSOR_HOLD_REASON"' in hub_open
+    assert '"$REQUIRE_RELEASE_ALL_SELECTED"' in hub_open
+    assert "run_typed_cohort" in main
 
 
 @pytest.mark.parametrize(
@@ -357,14 +372,47 @@ def test_embedded_epoch_commit_atomically_transitions_or_releases(
 ):
     deploy = DEPLOY.read_text(encoding="utf-8")
     function_start = deploy.index("commit_fleet_release_epoch() {")
-    marker = '"$HOME/.mac/venv/bin/python" - <<\'PY\'\n'
+    marker = "\"$HOME/.mac/venv/bin/python\" - <<'PY'\n"
     python_start = deploy.index(marker, function_start) + len(marker)
-    embedded = deploy[python_start : deploy.index("\nPY\nREMOTE_RELEASE_EPOCH", python_start)]
+    embedded = deploy[
+        python_start : deploy.index("\nPY\nREMOTE_RELEASE_EPOCH", python_start)
+    ]
 
     generation = "generation-1"
+    deployment_id = "1" * 40 + ":worker-1:20260718T000000Z:controller"
     baseline = "2026-07-18T00:00:00+00:00"
     deployment_reason = "mac fleet deployment test"
-    epoch_id = "1" * 40 + ":20260718T000000Z:nonce"
+    digest = "a" * 64
+    quiescence = {
+        "schema": "mac.daemon_resource_quiescence_attestation.v1",
+        "agent": "worker-1",
+        "receipt_sha256": digest,
+        "phase1_receipt_sha256": digest,
+        "phase1_daemon_receipt_sha256": digest,
+        "phase1_function_block_sha256": digest,
+        "phase1_supervisor": {"manager": "systemd", "resources": []},
+        "generation": deployment_id,
+        "revision": "1" * 40,
+        "gateway_implementation": "none",
+        "gateway_readiness_sha256": digest,
+        "gateway_supervisor": "systemd",
+        "gateway_identities": {},
+        "required_phases": ["pre_source", "post_install"],
+        "container_runtimes": [],
+        "stable_absence_observations": 2,
+        "observed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+    evidence = [
+        {
+            "agent_id": AGENT,
+            "quiescence": quiescence,
+            "commit_quiescence": quiescence,
+        }
+    ]
+    evidence_digest = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    epoch_id = "1" * 40 + ":20260718T000000Z:nonce:" + evidence_digest
     row = {
         "id": AGENT,
         "status": "idle",
@@ -384,14 +432,18 @@ def test_embedded_epoch_commit_atomically_transitions_or_releases(
         "agents": [
             {
                 "schema": "mac.deploy_release_ready.v1",
+                "agent": "worker-1",
                 "agent_id": AGENT,
                 "generation": generation,
+                "deployment_id": deployment_id,
                 "baseline_seen": baseline,
                 "hold_reason": deployment_reason,
                 "owns_hold": True,
                 "principal_id": "",
                 "require_authenticated": False,
                 "require_report_executor": False,
+                "quiescence": quiescence,
+                "commit_quiescence": quiescence,
             }
         ],
     }
@@ -477,9 +529,7 @@ def test_embedded_epoch_commit_atomically_transitions_or_releases(
     assert receipt["operator_holds_preserved"] == 0
     assert row["dispatch_hold"] is reported_hold
     assert ("POST", endpoint) in calls
-    assert not any(
-        method == "POST" and path != endpoint for method, path in calls
-    )
+    assert not any(method == "POST" and path != endpoint for method, path in calls)
     if successor_reason:
         assert receipt["outcome"] == "successor_hold"
         assert receipt["successor_hold_reason"] == successor_reason
@@ -512,15 +562,16 @@ def test_remote_ssh_heredocs_keep_stdin_open():
 
     assert sites == [
         "REMOTE",
+        "REMOTE_RESTORE",
         "REMOTE_HOLD_PREFLIGHT",
         "REMOTE_HUB_GATE",
         "REMOTE",
         "REMOTE_RELEASE",
-        "REMOTE_RESTORE",
         "HUBSCRIPT",
         "REMOTE_ATTESTATION_RECOVERY",
         "REMOTE_ATTESTATION_SECOND_PROOF",
         "REMOTE_REPORT_EXECUTOR_APPROVAL",
+        "REMOTE_RELEASE_STATUS",
         "REMOTE_RELEASE_EPOCH",
     ]
 
@@ -530,7 +581,7 @@ def test_legacy_hub_gate_does_not_import_post_upgrade_model_helpers(
 ):
     deploy = DEPLOY.read_text(encoding="utf-8")
     gate_start = deploy.index("hub_agent_restart_gate() {")
-    python_marker = '"$HOME/.mac/venv/bin/python" - <<\'PY\'\n'
+    python_marker = "\"$HOME/.mac/venv/bin/python\" - <<'PY'\n"
     python_start = deploy.index(python_marker, gate_start) + len(python_marker)
     gate = deploy[python_start : deploy.index("\nPY\nREMOTE_HUB_GATE", python_start)]
 
@@ -561,9 +612,9 @@ def test_legacy_hub_gate_does_not_import_post_upgrade_model_helpers(
 
     def urlopen(request, timeout=0):
         del timeout
-        if request.full_url.endswith("/tasks?state=claimed") or request.full_url.endswith(
-            "/tasks?state=running"
-        ):
+        if request.full_url.endswith(
+            "/tasks?state=claimed"
+        ) or request.full_url.endswith("/tasks?state=running"):
             return Response([])
         if request.full_url.endswith("/agents/" + AGENT):
             if request.get_method() == "PUT":
@@ -591,7 +642,10 @@ def test_legacy_hub_gate_does_not_import_post_upgrade_model_helpers(
     monkeypatch.setitem(sys.modules, "mac.models", types.ModuleType("mac.models"))
 
     with pytest.raises(SystemExit) as stopped:
-        exec(compile(gate, "<embedded-legacy-hub-gate>", "exec"), {"__name__": "__main__"})
+        exec(
+            compile(gate, "<embedded-legacy-hub-gate>", "exec"),
+            {"__name__": "__main__"},
+        )
 
     assert stopped.value.code == 0
     result = json.loads(capsys.readouterr().out)
@@ -616,7 +670,7 @@ def test_post_preflight_operator_hold_race_fails_before_drain(
 ):
     deploy = DEPLOY.read_text(encoding="utf-8")
     gate_start = deploy.index("hub_agent_restart_gate() {")
-    python_marker = '"$HOME/.mac/venv/bin/python" - <<\'PY\'\n'
+    python_marker = "\"$HOME/.mac/venv/bin/python\" - <<'PY'\n"
     python_start = deploy.index(python_marker, gate_start) + len(python_marker)
     gate = deploy[python_start : deploy.index("\nPY\nREMOTE_HUB_GATE", python_start)]
 

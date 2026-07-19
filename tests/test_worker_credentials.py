@@ -161,6 +161,43 @@ def test_db_issuance_stores_only_hash_and_projects_exact_agent(tmp_path: Path) -
         lifecycle.issue("agent_alpha", environment="vm", expires_in=59)
 
 
+def test_recovery_discards_only_exact_unreserved_pending_issuance(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    lifecycle = WorkerCredentialLifecycle(cp.store)
+    active = _package_issue(lifecycle)
+    _activate_vm(cp, active, tmp_path / "active.env")
+    orphan = lifecycle.issue(
+        "agent_alpha",
+        fleet="test",
+        environment="vm",
+        actor="fleet-release:epoch-a",
+    )
+    unrelated = lifecycle.issue(
+        "agent_alpha",
+        fleet="test",
+        environment="vm",
+        actor="fleet-release:epoch-b",
+    )
+
+    discarded = lifecycle.discard_unreserved_pending(
+        "agent_alpha", created_by="fleet-release:epoch-a"
+    )
+
+    assert [item["id"] for item in discarded] == [orphan.record["id"]]
+    states = {item["id"]: item["state"] for item in lifecycle.list(agent_id="agent_alpha")}
+    assert states[active.record["id"]] == "active"
+    assert states[orphan.record["id"]] == "revoked"
+    assert states[unrelated.record["id"]] == "pending_install"
+    assert (
+        lifecycle.discard_unreserved_pending(
+            "agent_alpha", created_by="fleet-release:epoch-a"
+        )
+        == []
+    )
+
+
 def test_deleted_agent_rejects_issued_token_issue_and_activation(tmp_path: Path) -> None:
     cp = _plane(tmp_path / "mac.db")
     lifecycle = WorkerCredentialLifecycle(cp.store)
@@ -640,8 +677,20 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     )
 
     main_body = script.split("main() {", 1)[1]
-    assert main_body.index("provision_bound_worker_credential") < main_body.index(
-        "enforce_bound_worker_credentials"
+    typed = script.split("run_typed_cohort() {", 1)[1].split(
+        "\n}\n\nmain()", 1
+    )[0]
+    hub_open = script.split("build_and_open_hub_epoch() {", 1)[1].split(
+        "\n}\n\nprove_and_commit_hub_epoch", 1
+    )[0]
+    assert "provision_bound_worker_credential" not in main_body
+    assert "enforce_bound_worker_credentials" not in main_body
+    assert "issue_pending_worker_credential" in hub_open
+    assert typed.index("build_and_open_hub_epoch") < typed.index(
+        "install_pending_worker_credential"
+    )
+    assert typed.index("install_pending_worker_credential") < typed.index(
+        "prove_and_commit_hub_epoch"
     )
     assert "set-mode enforced --review-live" in script
     assert 'add_remote_secret_env MAC_DEPLOY_HUB_TOKEN "$hub_token"' in script

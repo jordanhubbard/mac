@@ -6,6 +6,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1110,6 +1113,7 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     managed = mac_home / "openclaw" / "managed"
     config_path = managed / "openclaw.json"
     runtime_path = managed / "runtime.env"
+    sandbox_identity_path = managed / "sandbox-name"
     wrapper_path = mac_home / "bin" / "openclaw-gateway"
     stop_wrapper_path = mac_home / "bin" / "openclaw-gateway-stop"
     first_runtime = runtime_path.read_text(encoding="utf-8")
@@ -1172,6 +1176,8 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert all(secret not in config_path.read_text(encoding="utf-8") for secret in secrets)
     assert config_path.stat().st_mode & 0o777 == 0o600
     assert runtime_path.stat().st_mode & 0o777 == 0o600
+    assert sandbox_identity_path.read_text(encoding="utf-8") == "mac-openclaw-test\n"
+    assert sandbox_identity_path.stat().st_mode & 0o777 == 0o600
     runtime_keys = {
         line.split("=", 1)[0]
         for line in runtime_path.read_text(encoding="utf-8").splitlines()
@@ -1228,6 +1234,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert managed_entrypoint.startswith("#!/bin/bash\nset -euo pipefail\n")
     assert "sandbox delete" in stop_wrapper
     assert "sandbox download" in stop_wrapper
+    assert "sandbox_state" in stop_wrapper
+    assert "wait_for_sandbox_absent" in stop_wrapper
+    assert 'sandbox delete "$SANDBOX" >/dev/null 2>&1 || true' not in stop_wrapper
     assert "/sandbox/workspace" in stop_wrapper
     assert "/sandbox/state" in stop_wrapper
     assert "pgrep -x openclaw" not in stop_wrapper
@@ -1255,6 +1264,195 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "host: 100.64.0.1" in rendered_policy
     assert "port: 8789" in rendered_policy
     assert "__MAC_" not in rendered_policy
+
+
+def _render_stop_wrapper_with_fake_openshell(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, str], Path]:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True)
+    _seed_hermes_identity(home)
+    calls = tmp_path / "openshell-calls"
+    openshell = bin_dir / "openshell"
+    openshell.write_text(
+        """#!/bin/sh
+printf '%s\n' "$*" >> "$MAC_TEST_OPEN_SHELL_CALLS"
+case "$1:$2" in
+  sandbox:get)
+    case "${MAC_TEST_SANDBOX_MODE:-active}" in
+      active|delete-failure|persistent) exit 0 ;;
+      sleeping-inspection) sleep 30 ;;
+      absent)
+        cat >&2 <<'DIAGNOSTIC'
+Error:   × code: 'Some requested entity was not found', message: "sandbox not found"
+DIAGNOSTIC
+        exit 1
+        ;;
+      inspection-error)
+        echo 'synthetic OpenShell inspection failure' >&2
+        exit 70
+        ;;
+    esac
+    ;;
+  sandbox:download)
+    mkdir -p "$5"
+    printf '%s\n' checkpoint-preserved > "$5/checkpoint.txt"
+    ;;
+  sandbox:delete)
+    if [ "${MAC_TEST_SANDBOX_MODE:-active}" = delete-failure ]; then
+      echo 'synthetic delete rejection' >&2
+      exit 9
+    fi
+    ;;
+  *) echo "unexpected openshell invocation: $*" >&2; exit 99 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    openshell.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": str(openshell),
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_stop_contract",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_stop_contract",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_TEST_OPEN_SHELL_CALLS": str(calls),
+    }
+    subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    return mac_home / "bin" / "openclaw-gateway-stop", env, calls
+
+
+@pytest.mark.parametrize(
+    ("sandbox_mode", "expected_error"),
+    (
+        ("delete-failure", "sandbox delete failed (exit 9)"),
+        ("persistent", "sandbox remained present after deletion"),
+        ("inspection-error", "could not inspect sandbox"),
+    ),
+)
+def test_stop_wrapper_fails_closed_without_sandbox_absence_proof(
+    tmp_path: Path,
+    sandbox_mode: str,
+    expected_error: str,
+) -> None:
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
+        tmp_path
+    )
+    env = {
+        **base_env,
+        "MAC_TEST_SANDBOX_MODE": sandbox_mode,
+        "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS": "0",
+    }
+
+    result = subprocess.run(
+        [str(stop_wrapper)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    calls = calls_path.read_text(encoding="utf-8").splitlines()
+    if sandbox_mode == "inspection-error":
+        assert "exit 70" in result.stderr
+        assert not any("sandbox download" in call for call in calls)
+        assert not any("sandbox delete" in call for call in calls)
+    else:
+        download_indexes = [
+            index for index, call in enumerate(calls) if "sandbox download" in call
+        ]
+        delete_index = next(
+            index for index, call in enumerate(calls) if "sandbox delete" in call
+        )
+        assert len(download_indexes) == 2
+        assert max(download_indexes) < delete_index
+        assert "sandbox remained present after deletion" in result.stderr
+
+
+def test_stop_wrapper_bounds_hung_openshell_inspection(tmp_path: Path) -> None:
+    stop_wrapper, base_env, _calls_path = _render_stop_wrapper_with_fake_openshell(
+        tmp_path
+    )
+    env = {
+        **base_env,
+        "MAC_TEST_SANDBOX_MODE": "sleeping-inspection",
+        "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS": "1",
+    }
+
+    started = time.monotonic()
+    result = subprocess.run(
+        [str(stop_wrapper)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=6,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.returncode != 0
+    assert elapsed < 4
+    assert "OpenClaw subprocess timed out" in result.stderr
+    assert "could not inspect sandbox" in result.stderr
+
+
+def test_prepare_rejects_unsafe_sandbox_identity_without_replacing_last_good_value(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    managed = mac_home / "openclaw" / "managed"
+    managed.mkdir(parents=True)
+    sandbox_identity = managed / "sandbox-name"
+    sandbox_identity.write_text("mac-openclaw-last-good\n", encoding="utf-8")
+    sandbox_identity.chmod(0o600)
+    _seed_hermes_identity(home)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": "/bin/true",
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_identity_contract",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_identity_contract",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_SANDBOX_NAME": "unsafe\nsecond-record",
+    }
+
+    result = subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=20,
+    )
+
+    assert result.returncode != 0
+    assert "MAC_OPENCLAW_SANDBOX_NAME must be a lowercase mac-openclaw-* identity" in result.stderr
+    assert sandbox_identity.read_text(encoding="utf-8") == "mac-openclaw-last-good\n"
 
 
 def test_prepare_migrates_legacy_slack_routing_into_openclaw_state(
@@ -1457,12 +1655,13 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "OPENCLAW_SUPERVISORD_PROG" in deploy
     assert "verify_openclaw_gateway" in deploy
     assert "finalize_openclaw_gateway" in deploy
-    assert "rollback_openclaw_gateway" in deploy
+    assert "ROLLBACK_SUPERVISOR_HELPER" in deploy
+    assert '--active-gateway "\\$ROLLBACK_ACTIVE_GATEWAY"' in deploy
     assert "MAC_DEPLOY_OPENCLAW_LIVE_CANARY" in deploy
     assert "MAC_WORKER_RESOURCES_FILE" in deploy
     assert "representation_mode: delegated" in config
     assert "OPENCLAW_REPRESENTATION_MODE" in deploy
-    assert "disable --now \"$HERMES_SERVICE_NAME\"" in deploy
+    assert 'disable_systemd_service_if_present "$HERMES_SERVICE_NAME"' in deploy
     assert "ExecStart=__MAC_HOME__/bin/openclaw-gateway" in unit
     assert "ExecStop=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
     assert "ExecStopPost=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
@@ -1487,6 +1686,225 @@ def test_openclaw_verification_probes_then_advertises_after_exclusive_cutover() 
     assert "http://127.0.0.1:${GATEWAY_PORT}/healthz" not in installer
 
 
+def _run_launchd_finalizer(
+    tmp_path: Path, launchctl_script: str, *, sandbox_mode: str = "active"
+) -> tuple[subprocess.CompletedProcess[str], Path, dict[str, dict[str, object]]]:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openclaw_home = mac_home / "openclaw"
+    bin_dir = tmp_path / "bin"
+    openclaw_home.mkdir(parents=True)
+    bin_dir.mkdir()
+    pending = {
+        "openclaw_runtime": {"implementation": "openclaw", "verified": True},
+        "chat_gateway": {"implementation": "openclaw", "verified": True},
+    }
+    (openclaw_home / "verification-pending.json").write_text(
+        json.dumps(pending), encoding="utf-8"
+    )
+    launchctl = bin_dir / "launchctl"
+    launchctl.write_text(
+        "#!/bin/sh\n" + launchctl_script,
+        encoding="utf-8",
+    )
+    launchctl.chmod(0o700)
+    openshell = bin_dir / "openshell"
+    openshell.write_text(
+        "#!/bin/sh\n"
+        "case \"${MAC_TEST_SANDBOX_MODE:-active}:$1:$2\" in\n"
+        "  active:sandbox:get) exit 0 ;;\n"
+        "  absent:sandbox:get)\n"
+        "    printf '%s\\n' \"Error:   × code: 'Some requested entity was not found', message: \\\"sandbox not found\\\"\" >&2\n"
+        "    exit 1\n"
+        "    ;;\n"
+        "  inspection-error:sandbox:get)\n"
+        "    echo 'synthetic OpenShell inspection failure' >&2\n"
+        "    exit 70\n"
+        "    ;;\n"
+        "  *) echo \"unexpected openshell invocation: $*\" >&2; exit 99 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    openshell.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENCLAW_AGENT_ID": "agent_test",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_test",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_OPENCLAW_SUPERVISOR": "launchd",
+        "MAC_OPENSHELL_BIN": str(openshell),
+        "MAC_TEST_SANDBOX_MODE": sandbox_mode,
+    }
+    result = subprocess.run(
+        [str(INSTALLER), "finalize"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=20,
+    )
+    return result, openclaw_home, pending
+
+
+def test_finalize_launchd_publishes_only_for_active_openclaw_and_absent_legacy_jobs(
+    tmp_path: Path,
+) -> None:
+    result, openclaw_home, _pending = _run_launchd_finalizer(
+        tmp_path,
+        """case "$2" in
+  *.openclaw-gateway) exit 0 ;;
+  *.hermes-gateway|*.nemoclaw-gateway)
+    echo 'Could not find service in domain for user' >&2
+    exit 113
+    ;;
+  *) echo "unexpected launchctl target: $*" >&2; exit 99 ;;
+esac
+""",
+    )
+
+    assert result.returncode == 0, result.stderr
+    advertisement = json.loads(
+        (openclaw_home / "service-advertisement.json").read_text(encoding="utf-8")
+    )
+    assert advertisement["gateway_ownership"] == {
+        "schema": "mac.gateway_ownership.v1",
+        "exclusive": True,
+        "owner": "openclaw",
+        "supervisor": "launchd",
+        "services": {
+            "openclaw": "active",
+            "hermes": "inactive",
+            "nemoclaw": "inactive",
+        },
+        "verified_at": advertisement["gateway_ownership"]["verified_at"],
+    }
+    assert advertisement["openclaw_runtime"]["exclusive_service_owner"] is True
+    assert advertisement["chat_gateway"]["exclusive_channel_owner"] is True
+    assert not (openclaw_home / "verification-pending.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("invalid_state", "expected_error"),
+    (
+        ("openclaw-inactive", "OpenClaw service is not active after cutover"),
+        ("hermes-active", "Hermes gateway remains active after OpenClaw cutover"),
+        ("nemoclaw-active", "NemoClaw gateway remains active after OpenClaw cutover"),
+    ),
+)
+def test_finalize_launchd_rejects_every_false_exclusivity_state(
+    tmp_path: Path,
+    invalid_state: str,
+    expected_error: str,
+) -> None:
+    result, openclaw_home, pending = _run_launchd_finalizer(
+        tmp_path,
+        f"""case "$2" in
+  *.openclaw-gateway)
+    if [ "{invalid_state}" = openclaw-inactive ]; then
+      echo 'Could not find service synthetic' >&2
+      exit 113
+    fi
+    exit 0
+    ;;
+  *.hermes-gateway)
+    if [ "{invalid_state}" = hermes-active ]; then exit 0; fi
+    echo 'Could not find service synthetic' >&2
+    exit 113
+    ;;
+  *.nemoclaw-gateway)
+    if [ "{invalid_state}" = nemoclaw-active ]; then exit 0; fi
+    echo 'Could not find service synthetic' >&2
+    exit 113
+    ;;
+  *) echo "unexpected launchctl target: $*" >&2; exit 99 ;;
+esac
+""",
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert not (openclaw_home / "service-advertisement.json").exists()
+    assert json.loads(
+        (openclaw_home / "verification-pending.json").read_text(encoding="utf-8")
+    ) == pending
+
+
+@pytest.mark.parametrize("failed_service", ["hermes", "nemoclaw"])
+def test_finalize_launchd_inspection_error_fails_closed_and_preserves_pending(
+    tmp_path: Path,
+    failed_service: str,
+) -> None:
+    result, openclaw_home, pending = _run_launchd_finalizer(
+        tmp_path,
+        f"""case "$2" in
+  *.openclaw-gateway) exit 0 ;;
+  *.{failed_service}-gateway)
+    echo 'synthetic launchctl transport failure' >&2
+    exit 70
+    ;;
+  *.hermes-gateway|*.nemoclaw-gateway)
+    echo 'Could not find service in domain for user' >&2
+    exit 113
+    ;;
+  *) echo "unexpected launchctl target: $*" >&2; exit 99 ;;
+esac
+""",
+    )
+
+    assert result.returncode != 0
+    assert (
+        f"could not inspect launchd job com.mac.{failed_service}-gateway (exit 70)"
+        in result.stderr
+    )
+    assert "synthetic launchctl transport failure" in result.stderr
+    assert not (openclaw_home / "service-advertisement.json").exists()
+    pending_path = openclaw_home / "verification-pending.json"
+    assert json.loads(pending_path.read_text(encoding="utf-8")) == pending
+
+
+@pytest.mark.parametrize(
+    ("sandbox_mode", "expected_error"),
+    (
+        ("absent", "OpenClaw sandbox is not active after cutover"),
+        ("inspection-error", "could not inspect OpenShell sandbox"),
+    ),
+)
+def test_finalize_requires_proven_active_openshell_sandbox_and_preserves_pending(
+    tmp_path: Path,
+    sandbox_mode: str,
+    expected_error: str,
+) -> None:
+    result, openclaw_home, pending = _run_launchd_finalizer(
+        tmp_path,
+        """case "$2" in
+  *.openclaw-gateway) exit 0 ;;
+  *.hermes-gateway|*.nemoclaw-gateway)
+    echo 'Could not find service in domain for user' >&2
+    exit 113
+    ;;
+  *) echo "unexpected launchctl target: $*" >&2; exit 99 ;;
+esac
+""",
+        sandbox_mode=sandbox_mode,
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    if sandbox_mode == "inspection-error":
+        assert "exit 70" in result.stderr
+        assert "synthetic OpenShell inspection failure" in result.stderr
+    assert not (openclaw_home / "service-advertisement.json").exists()
+    assert json.loads(
+        (openclaw_home / "verification-pending.json").read_text(encoding="utf-8")
+    ) == pending
+
+
 def test_finalize_publishes_only_after_legacy_gateways_are_inactive(
     tmp_path: Path,
 ) -> None:
@@ -1504,14 +1922,17 @@ def test_finalize_publishes_only_after_legacy_gateways_are_inactive(
         json.dumps(pending), encoding="utf-8"
     )
     sudo = bin_dir / "sudo"
-    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.write_text(
+        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        encoding="utf-8",
+    )
     sudo.chmod(0o700)
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\n"
         "case \"$2\" in\n"
-        "  *-openclaw-gateway.service) echo active; exit 0 ;;\n"
-        "  *) echo inactive; exit 3 ;;\n"
+        "  *-openclaw-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
+        "  *) printf 'LoadState=loaded\\nActiveState=inactive\\n' ;;\n"
         "esac\n",
         encoding="utf-8",
     )
@@ -1528,6 +1949,7 @@ def test_finalize_publishes_only_after_legacy_gateways_are_inactive(
         "MAC_OPENCLAW_MODEL": "test/model",
         "MAC_OPENCLAW_FLEET_NAME": "mac",
         "MAC_OPENCLAW_SUPERVISOR": "systemd",
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
     }
 
     subprocess.run(
@@ -1671,7 +2093,10 @@ def test_finalize_supervisord_nemoclaw_no_such_process_yields_not_installed(
         json.dumps(pending), encoding="utf-8"
     )
     sudo = bin_dir / "sudo"
-    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.write_text(
+        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        encoding="utf-8",
+    )
     sudo.chmod(0o700)
     supervisorctl = bin_dir / "supervisorctl"
     supervisorctl.write_text(
@@ -1696,6 +2121,7 @@ def test_finalize_supervisord_nemoclaw_no_such_process_yields_not_installed(
         "MAC_OPENCLAW_MODEL": "test/model",
         "MAC_OPENCLAW_FLEET_NAME": "mac",
         "MAC_OPENCLAW_SUPERVISOR": "supervisord",
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
     }
 
     subprocess.run(
@@ -1718,8 +2144,7 @@ def test_finalize_supervisord_nemoclaw_no_such_process_yields_not_installed(
 def test_finalize_systemd_nemoclaw_unknown_unit_yields_not_installed(
     tmp_path: Path,
 ) -> None:
-    """systemctl is-active returning 'unknown' for the nemoclaw unit must be
-    normalized to not_installed in the service advertisement."""
+    """An exact systemd LoadState=not-found result is recorded as absent."""
     home = tmp_path / "home"
     mac_home = home / ".mac"
     openclaw_home = mac_home / "openclaw"
@@ -1734,15 +2159,18 @@ def test_finalize_systemd_nemoclaw_unknown_unit_yields_not_installed(
         json.dumps(pending), encoding="utf-8"
     )
     sudo = bin_dir / "sudo"
-    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.write_text(
+        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        encoding="utf-8",
+    )
     sudo.chmod(0o700)
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\n"
         "case \"$2\" in\n"
-        "  *-openclaw-gateway.service) echo active; exit 0 ;;\n"
-        "  *-hermes-gateway.service)   echo inactive; exit 3 ;;\n"
-        "  *-nemoclaw-gateway.service) echo unknown; exit 4 ;;\n"
+        "  *-openclaw-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
+        "  *-hermes-gateway.service) printf 'LoadState=loaded\\nActiveState=inactive\\n' ;;\n"
+        "  *-nemoclaw-gateway.service) printf 'LoadState=not-found\\nActiveState=inactive\\n' ;;\n"
         "esac\n",
         encoding="utf-8",
     )
@@ -1759,6 +2187,7 @@ def test_finalize_systemd_nemoclaw_unknown_unit_yields_not_installed(
         "MAC_OPENCLAW_MODEL": "test/model",
         "MAC_OPENCLAW_FLEET_NAME": "mac",
         "MAC_OPENCLAW_SUPERVISOR": "systemd",
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
     }
 
     subprocess.run(
@@ -1781,8 +2210,8 @@ def test_finalize_systemd_nemoclaw_unknown_unit_yields_not_installed(
 def test_finalize_systemd_hermes_failed_state_normalized_to_inactive(
     tmp_path: Path,
 ) -> None:
-    """systemctl is-active returning 'failed' (exit 3) for the hermes unit must
-    be normalized to inactive; finalize() must succeed and publish
+    """systemd ActiveState=failed for the Hermes unit must be normalized to
+    inactive; finalize() must succeed and publish
     services.hermes == 'inactive' (the normalized value) with exclusive == True."""
     home = tmp_path / "home"
     mac_home = home / ".mac"
@@ -1798,17 +2227,20 @@ def test_finalize_systemd_hermes_failed_state_normalized_to_inactive(
         json.dumps(pending), encoding="utf-8"
     )
     sudo = bin_dir / "sudo"
-    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.write_text(
+        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        encoding="utf-8",
+    )
     sudo.chmod(0o700)
-    # hermes returns "failed" with exit 3 — exactly what systemd emits when a
-    # unit stopped with an error but reset-failed was not yet called.
+    # A failed ActiveState is the durable state of a unit that stopped with an
+    # error but has not had reset-failed called yet.
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\n"
         "case \"$2\" in\n"
-        "  *-openclaw-gateway.service) echo active; exit 0 ;;\n"
-        "  *-hermes-gateway.service)   echo failed; exit 3 ;;\n"
-        "  *-nemoclaw-gateway.service) echo unknown; exit 4 ;;\n"
+        "  *-openclaw-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
+        "  *-hermes-gateway.service) printf 'LoadState=loaded\\nActiveState=failed\\n' ;;\n"
+        "  *-nemoclaw-gateway.service) printf 'LoadState=not-found\\nActiveState=inactive\\n' ;;\n"
         "esac\n",
         encoding="utf-8",
     )
@@ -1825,6 +2257,7 @@ def test_finalize_systemd_hermes_failed_state_normalized_to_inactive(
         "MAC_OPENCLAW_MODEL": "test/model",
         "MAC_OPENCLAW_FLEET_NAME": "mac",
         "MAC_OPENCLAW_SUPERVISOR": "systemd",
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
     }
 
     result = subprocess.run(
@@ -1853,8 +2286,7 @@ def test_finalize_systemd_hermes_failed_state_normalized_to_inactive(
 def test_finalize_systemd_hermes_active_still_dies(
     tmp_path: Path,
 ) -> None:
-    """When systemctl is-active returns 'active' for the hermes unit, finalize()
-    must exit with a non-zero code and must NOT publish a service advertisement."""
+    """An active Hermes unit must block finalization and publication."""
     home = tmp_path / "home"
     mac_home = home / ".mac"
     openclaw_home = mac_home / "openclaw"
@@ -1869,16 +2301,19 @@ def test_finalize_systemd_hermes_active_still_dies(
         json.dumps(pending), encoding="utf-8"
     )
     sudo = bin_dir / "sudo"
-    sudo.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
+    sudo.write_text(
+        "#!/bin/sh\n[ \"$1\" != -n ] || shift\nexec \"$@\"\n",
+        encoding="utf-8",
+    )
     sudo.chmod(0o700)
     # hermes is still active — OpenClaw cutover has not completed.
     systemctl = bin_dir / "systemctl"
     systemctl.write_text(
         "#!/bin/sh\n"
         "case \"$2\" in\n"
-        "  *-openclaw-gateway.service) echo active; exit 0 ;;\n"
-        "  *-hermes-gateway.service)   echo active; exit 0 ;;\n"
-        "  *-nemoclaw-gateway.service) echo unknown; exit 4 ;;\n"
+        "  *-openclaw-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
+        "  *-hermes-gateway.service) printf 'LoadState=loaded\\nActiveState=active\\n' ;;\n"
+        "  *-nemoclaw-gateway.service) printf 'LoadState=not-found\\nActiveState=inactive\\n' ;;\n"
         "esac\n",
         encoding="utf-8",
     )
@@ -1895,6 +2330,7 @@ def test_finalize_systemd_hermes_active_still_dies(
         "MAC_OPENCLAW_MODEL": "test/model",
         "MAC_OPENCLAW_FLEET_NAME": "mac",
         "MAC_OPENCLAW_SUPERVISOR": "systemd",
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
     }
 
     result = subprocess.run(
@@ -1911,3 +2347,685 @@ def test_finalize_systemd_hermes_active_still_dies(
     assert not (openclaw_home / "service-advertisement.json").exists(), (
         "service-advertisement.json must NOT be written when hermes is still active"
     )
+
+
+def _run_linux_finalizer_with_probe(
+    tmp_path: Path, supervisor: str, probe_script: str
+) -> tuple[subprocess.CompletedProcess[str], Path, dict[str, object]]:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openclaw_home = mac_home / "openclaw"
+    bin_dir = tmp_path / "bin"
+    openclaw_home.mkdir(parents=True)
+    bin_dir.mkdir()
+    pending: dict[str, object] = {
+        "openclaw_runtime": {"implementation": "openclaw", "verified": True},
+        "chat_gateway": {"implementation": "openclaw", "verified": True},
+    }
+    (openclaw_home / "verification-pending.json").write_text(
+        json.dumps(pending), encoding="utf-8"
+    )
+    sudo = bin_dir / "sudo"
+    sudo.write_text(
+        '#!/bin/sh\n[ "$1" != -n ] || shift\nexec "$@"\n',
+        encoding="utf-8",
+    )
+    sudo.chmod(0o700)
+    probe = bin_dir / ("systemctl" if supervisor == "systemd" else "supervisorctl")
+    probe.write_text("#!/bin/sh\n" + probe_script, encoding="utf-8")
+    probe.chmod(0o700)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENCLAW_AGENT_ID": "agent_probe_contract",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_probe_contract",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_OPENCLAW_SUPERVISOR": supervisor,
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
+    }
+    result = subprocess.run(
+        [str(INSTALLER), "finalize"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=20,
+    )
+    return result, openclaw_home, pending
+
+
+@pytest.mark.parametrize(
+    ("supervisor", "probe_script", "expected_error"),
+    (
+        (
+            "systemd",
+            """case "$2" in
+  *-openclaw-gateway.service) printf 'LoadState=loaded\nActiveState=active\n' ;;
+  *-hermes-gateway.service) echo 'transport unavailable'; exit 70 ;;
+  *-nemoclaw-gateway.service) printf 'LoadState=not-found\nActiveState=inactive\n' ;;
+esac
+""",
+            "could not inspect systemd unit mac-hermes-gateway.service (exit 70)",
+        ),
+        (
+            "supervisord",
+            """case "$2" in
+  *-openclaw-gateway) echo 'mac-openclaw-gateway RUNNING pid 12'; exit 0 ;;
+  *-hermes-gateway) echo 'supervisor transport unavailable'; exit 70 ;;
+  *-nemoclaw-gateway) echo 'mac-nemoclaw-gateway: ERROR (no such process)'; exit 1 ;;
+esac
+""",
+            "could not inspect supervisord program mac-hermes-gateway (exit 70)",
+        ),
+    ),
+)
+def test_finalize_linux_legacy_probe_errors_are_unknown_not_absent(
+    tmp_path: Path,
+    supervisor: str,
+    probe_script: str,
+    expected_error: str,
+) -> None:
+    result, openclaw_home, pending = _run_linux_finalizer_with_probe(
+        tmp_path, supervisor, probe_script
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert not (openclaw_home / "service-advertisement.json").exists()
+    assert json.loads(
+        (openclaw_home / "verification-pending.json").read_text(encoding="utf-8")
+    ) == pending
+
+
+def _run_rollback(
+    tmp_path: Path,
+    supervisor: str,
+    scenario: str = "success",
+    *,
+    action: str = "rollback",
+    fleet_transaction: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    openclaw_home = mac_home / "openclaw"
+    managed = openclaw_home / "managed"
+    bin_dir = tmp_path / "bin"
+    state_dir = tmp_path / "state"
+    managed.mkdir(parents=True)
+    bin_dir.mkdir()
+    state_dir.mkdir()
+    (managed / "sandbox-name").write_text(
+        "mac-openclaw-rollback-contract\n", encoding="utf-8"
+    )
+    (openclaw_home / "service-advertisement.json").write_text(
+        '{"advertised": true}\n', encoding="utf-8"
+    )
+    (openclaw_home / "verification-pending.json").write_text(
+        '{"verified": true}\n', encoding="utf-8"
+    )
+    calls = tmp_path / "rollback-calls"
+
+    openshell = bin_dir / "openshell"
+    openshell.write_text(
+        """#!/bin/sh
+printf 'openshell %s\n' "$*" >> "$MAC_TEST_CALLS"
+case "$1:$2" in
+  sandbox:get)
+    case "$MAC_TEST_SCENARIO" in
+      sandbox-inspection-error)
+        echo 'synthetic sandbox inspection failure' >&2
+        exit 70
+        ;;
+      sandbox-timeout) sleep 30 ;;
+    esac
+    if [ -f "$MAC_TEST_STATE/sandbox-deleted" ]; then
+      cat >&2 <<'DIAGNOSTIC'
+Error:   × code: 'Some requested entity was not found', message: "sandbox not found"
+DIAGNOSTIC
+      exit 1
+    fi
+    exit 0
+    ;;
+  sandbox:delete)
+    if [ "$MAC_TEST_SCENARIO" = sandbox-delete-failure ]; then
+      echo 'synthetic sandbox delete failure' >&2
+      exit 9
+    fi
+    touch "$MAC_TEST_STATE/sandbox-deleted"
+    ;;
+  *) echo "unexpected openshell invocation: $*" >&2; exit 99 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    openshell.chmod(0o700)
+    sudo = bin_dir / "sudo"
+    sudo.write_text(
+        """#!/bin/sh
+printf 'sudo %s\n' "$*" >> "$MAC_TEST_CALLS"
+[ "$1" = -n ] || exit 98
+shift
+exec "$@"
+""",
+        encoding="utf-8",
+    )
+    sudo.chmod(0o700)
+
+    if supervisor == "systemd":
+        command = bin_dir / "systemctl"
+        command.write_text(
+            """#!/bin/sh
+printf 'systemctl %s\n' "$*" >> "$MAC_TEST_CALLS"
+case "$1" in
+  show)
+    case "$2" in
+      *-openclaw-gateway.service)
+        if [ "$MAC_TEST_SCENARIO" = supervisor-inspection-error ]; then
+          echo 'synthetic systemd transport failure'; exit 70
+        fi
+        if [ -f "$MAC_TEST_STATE/openclaw-stopped" ]; then
+          printf 'LoadState=loaded\nActiveState=inactive\n'; exit 0
+        fi
+        printf 'LoadState=loaded\nActiveState=active\n'; exit 0
+        ;;
+      *-hermes-gateway.service)
+        if [ -f "$MAC_TEST_STATE/hermes-started" ] \
+            && [ "$MAC_TEST_SCENARIO" != hermes-stays-inactive ]; then
+          case " $* " in
+            *" -p SubState "*)
+              if [ "$MAC_TEST_SCENARIO" = hermes-bad-runtime-state ]; then
+                printf 'LoadState=loaded\nActiveState=active\nSubState=exited\nMainPID=13\nUnitFileState=enabled\n'
+              else
+                printf 'LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=13\nUnitFileState=enabled\n'
+              fi
+              ;;
+            *) printf 'LoadState=loaded\nActiveState=active\n' ;;
+          esac
+          exit 0
+        fi
+        printf 'LoadState=loaded\nActiveState=inactive\n'; exit 0
+        ;;
+    esac
+    ;;
+  disable)
+    if [ "$MAC_TEST_SCENARIO" = supervisor-stop-failure ]; then exit 71; fi
+    if [ "$MAC_TEST_SCENARIO" != supervisor-still-active ]; then
+      touch "$MAC_TEST_STATE/openclaw-stopped"
+    fi
+    ;;
+  enable)
+    case "$MAC_TEST_SCENARIO" in
+      hermes-start-failure) exit 72 ;;
+      hermes-start-timeout) sleep 30 ;;
+      *) touch "$MAC_TEST_STATE/hermes-started" ;;
+    esac
+    ;;
+esac
+""",
+            encoding="utf-8",
+        )
+    elif supervisor == "supervisord":
+        command = bin_dir / "supervisorctl"
+        command.write_text(
+            """#!/bin/sh
+printf 'supervisorctl %s\n' "$*" >> "$MAC_TEST_CALLS"
+case "$1:$2" in
+  status:*-openclaw-gateway)
+    if [ "$MAC_TEST_SCENARIO" = supervisor-inspection-error ]; then
+      echo 'synthetic supervisor transport failure'; exit 70
+    fi
+    if [ -f "$MAC_TEST_STATE/openclaw-stopped" ]; then
+      echo 'mac-openclaw-gateway STOPPED'; exit 0
+    fi
+    echo 'mac-openclaw-gateway RUNNING pid 12'; exit 0
+    ;;
+  stop:*-openclaw-gateway)
+    if [ "$MAC_TEST_SCENARIO" = supervisor-stop-failure ]; then exit 71; fi
+    if [ "$MAC_TEST_SCENARIO" != supervisor-still-active ]; then
+      touch "$MAC_TEST_STATE/openclaw-stopped"
+    fi
+    ;;
+  start:*-hermes-gateway)
+    case "$MAC_TEST_SCENARIO" in
+      hermes-start-failure) exit 72 ;;
+      hermes-start-timeout) sleep 30 ;;
+      *) touch "$MAC_TEST_STATE/hermes-started" ;;
+    esac
+    ;;
+  status:*-hermes-gateway)
+    if [ -f "$MAC_TEST_STATE/hermes-started" ] \
+        && [ "$MAC_TEST_SCENARIO" != hermes-stays-inactive ]; then
+      if [ "$MAC_TEST_SCENARIO" = hermes-missing-pid ]; then
+        echo 'mac-hermes-gateway RUNNING'
+      else
+        echo 'mac-hermes-gateway RUNNING pid 13'
+      fi
+    else
+      echo 'mac-hermes-gateway STOPPED'
+    fi
+    ;;
+  *) echo "unexpected supervisorctl invocation: $*" >&2; exit 99 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+    else:
+        command = bin_dir / "launchctl"
+        command.write_text(
+            """#!/bin/sh
+printf 'launchctl %s\n' "$*" >> "$MAC_TEST_CALLS"
+case "$1" in
+  print)
+    case "$2" in
+      *.openclaw-gateway)
+        if [ "$MAC_TEST_SCENARIO" = supervisor-inspection-error ]; then
+          echo 'synthetic launchctl transport failure' >&2; exit 70
+        fi
+        if [ -f "$MAC_TEST_STATE/openclaw-stopped" ]; then
+          echo 'Could not find service synthetic' >&2; exit 113
+        fi
+        exit 0
+        ;;
+      *.hermes-gateway)
+        if [ -f "$MAC_TEST_STATE/hermes-started" ]; then exit 0; fi
+        echo 'Could not find service synthetic' >&2; exit 113
+        ;;
+    esac
+    ;;
+  bootout)
+    if [ "$MAC_TEST_SCENARIO" = supervisor-stop-failure ]; then exit 71; fi
+    if [ "$MAC_TEST_SCENARIO" != supervisor-still-active ]; then
+      touch "$MAC_TEST_STATE/openclaw-stopped"
+    fi
+    ;;
+  disable|enable) exit 0 ;;
+  bootstrap) touch "$MAC_TEST_STATE/hermes-started" ;;
+  *) echo "unexpected launchctl invocation: $*" >&2; exit 99 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+    command.chmod(0o700)
+
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+        "MAC_OPENCLAW_SUPERVISOR": supervisor,
+        "MAC_OPENSHELL_BIN": str(openshell),
+        "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS": "1",
+        "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS": "0",
+        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "0.2",
+        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.3",
+        "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
+        "MAC_TEST_CALLS": str(calls),
+        "MAC_TEST_SCENARIO": scenario,
+        "MAC_TEST_STATE": str(state_dir),
+    }
+    if fleet_transaction:
+        env["MAC_DEPLOY_GENERATION"] = "release-epoch:agent-test:attempt-1"
+    result = subprocess.run(
+        [str(INSTALLER), action],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=8,
+    )
+    return (
+        result,
+        calls.read_text(encoding="utf-8").splitlines(),
+        openclaw_home,
+    )
+
+
+@pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
+def test_fleet_transaction_rollback_withdraws_without_guessing_prior_gateway(
+    tmp_path: Path, supervisor: str
+) -> None:
+    result, calls, openclaw_home = _run_rollback(
+        tmp_path,
+        supervisor,
+        fleet_transaction=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not any(
+        "mac-hermes-gateway" in call
+        and ("enable" in call or "start" in call or "bootstrap" in call)
+        for call in calls
+    )
+    assert not (openclaw_home / "service-advertisement.json").exists()
+    assert not (openclaw_home / "verification-pending.json").exists()
+    assert "exact prior gateway restoration delegated" in result.stdout
+    assert "rollback complete" not in result.stdout
+
+
+@pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
+def test_rollback_restores_hermes_only_after_supervisor_and_sandbox_absence(
+    tmp_path: Path, supervisor: str
+) -> None:
+    result, calls, _ = _run_rollback(tmp_path, supervisor)
+
+    assert result.returncode == 0, result.stderr
+    hermes_start = next(
+        index
+        for index, call in enumerate(calls)
+        if (
+            "enable --now mac-hermes-gateway.service" in call
+            or "bootstrap " in call
+            or "supervisorctl start mac-hermes-gateway" in call
+        )
+    )
+    sandbox_probes = [
+        index for index, call in enumerate(calls) if "openshell sandbox get" in call
+    ]
+    assert sandbox_probes
+    assert max(sandbox_probes) < hermes_start
+    assert any("openshell sandbox delete" in call for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("supervisor", "manager_call", "proof_call"),
+    (
+        (
+            "systemd",
+            "sudo -n systemctl enable --now mac-hermes-gateway.service",
+            "systemctl show mac-hermes-gateway.service --no-pager -p LoadState "
+            "-p ActiveState -p SubState -p MainPID -p UnitFileState",
+        ),
+        (
+            "supervisord",
+            "sudo -n supervisorctl start mac-hermes-gateway",
+            "supervisorctl status mac-hermes-gateway",
+        ),
+    ),
+)
+def test_rollback_uses_bounded_exact_system_scope_and_proves_hermes_running(
+    tmp_path: Path,
+    supervisor: str,
+    manager_call: str,
+    proof_call: str,
+) -> None:
+    result, calls, _ = _run_rollback(tmp_path, supervisor)
+
+    assert result.returncode == 0, result.stderr
+    assert manager_call in calls
+    assert proof_call in calls
+    assert calls.index(manager_call) < calls.index(proof_call)
+
+
+@pytest.mark.parametrize("supervisor", ["systemd", "supervisord"])
+def test_rollback_propagates_bounded_hermes_start_failure(
+    tmp_path: Path, supervisor: str
+) -> None:
+    result, calls, _ = _run_rollback(
+        tmp_path, supervisor, "hermes-start-failure"
+    )
+
+    assert result.returncode == 72
+    assert f"bounded {supervisor} Hermes restore failed (exit 72)" in result.stderr
+    assert "rollback complete" not in result.stdout
+    assert not any(
+        "status mac-hermes-gateway" in call
+        or ("show mac-hermes-gateway.service" in call and "SubState" in call)
+        for call in calls
+    )
+
+
+@pytest.mark.parametrize(
+    ("supervisor", "scenario", "expected_error"),
+    (
+        ("systemd", "hermes-stays-inactive", "positive main PID"),
+        ("systemd", "hermes-bad-runtime-state", "exact running-state proof"),
+        ("supervisord", "hermes-stays-inactive", "did not become active"),
+        ("supervisord", "hermes-missing-pid", "lacks a positive pid"),
+    ),
+)
+def test_rollback_rejects_incomplete_hermes_running_state_proof(
+    tmp_path: Path,
+    supervisor: str,
+    scenario: str,
+    expected_error: str,
+) -> None:
+    result, _calls, _ = _run_rollback(tmp_path, supervisor, scenario)
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert "rollback complete" not in result.stdout
+
+
+@pytest.mark.parametrize("supervisor", ["systemd", "supervisord"])
+def test_rollback_bounds_hung_hermes_restore_command(
+    tmp_path: Path, supervisor: str
+) -> None:
+    started = time.monotonic()
+    result, _calls, _ = _run_rollback(
+        tmp_path, supervisor, "hermes-start-timeout"
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.returncode == 124
+    assert elapsed < 5
+    assert "OpenClaw subprocess timed out" in result.stderr
+    assert f"bounded {supervisor} Hermes restore failed (exit 124)" in result.stderr
+
+
+def test_rollback_restore_has_no_unbounded_or_cross_scope_linux_fallback() -> None:
+    installer = INSTALLER.read_text(encoding="utf-8")
+    restore = installer.split("restore_hermes_gateway() {", 1)[1].split(
+        "\n}\n\nwithdraw()", 1
+    )[0]
+
+    assert "run_systemd_system_scope enable --now" in restore
+    assert "run_supervisord_system_scope start" in restore
+    assert "prove_systemd_service_running" in restore
+    assert "supervisord_program_state" in restore
+    assert "sudo systemctl" not in restore
+    assert "sudo supervisorctl" not in restore
+    assert "systemctl --user" not in restore
+    assert "supervisorctl \"$@\" ||" not in restore
+
+
+@pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
+def test_withdraw_removes_openclaw_without_starting_hermes(
+    tmp_path: Path, supervisor: str
+) -> None:
+    result, calls, openclaw_home = _run_rollback(
+        tmp_path, supervisor, action="withdraw"
+    )
+
+    assert result.returncode == 0, result.stderr
+    if supervisor == "systemd":
+        assert "systemctl disable --now mac-openclaw-gateway.service" in calls
+    elif supervisor == "launchd":
+        assert any(
+            call.startswith("launchctl bootout gui/")
+            and call.endswith("/com.mac.openclaw-gateway")
+            for call in calls
+        )
+        assert any(
+            call.startswith("launchctl disable gui/")
+            and call.endswith("/com.mac.openclaw-gateway")
+            for call in calls
+        )
+    else:
+        assert "supervisorctl stop mac-openclaw-gateway" in calls
+
+    delete_index = next(
+        index
+        for index, call in enumerate(calls)
+        if "openshell sandbox delete mac-openclaw-rollback-contract" in call
+    )
+    assert any(
+        index > delete_index
+        and "openshell sandbox get mac-openclaw-rollback-contract" in call
+        for index, call in enumerate(calls)
+    )
+    assert not any("mac-hermes-gateway" in call for call in calls)
+    assert not (openclaw_home / "service-advertisement.json").exists()
+    assert not (openclaw_home / "verification-pending.json").exists()
+    assert "withdrawal complete" in result.stdout
+
+
+@pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])
+def test_rollback_propagates_supervisor_stop_failure_without_starting_hermes(
+    tmp_path: Path, supervisor: str
+) -> None:
+    result, calls, _ = _run_rollback(
+        tmp_path, supervisor, "supervisor-stop-failure"
+    )
+
+    assert result.returncode != 0
+    assert not any(
+        "mac-hermes-gateway" in call and ("enable" in call or "start" in call or "bootstrap" in call)
+        for call in calls
+    )
+    assert not any("openshell" in call for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("supervisor", "scenario", "expected_error"),
+    (
+        ("systemd", "supervisor-still-active", "absence is unproven"),
+        ("supervisord", "sandbox-inspection-error", "could not inspect OpenShell sandbox"),
+        ("systemd", "sandbox-delete-failure", "sandbox delete failed"),
+        ("launchd", "sandbox-timeout", "OpenClaw subprocess timed out"),
+    ),
+)
+def test_rollback_fails_closed_on_absence_proof_delete_or_inspection_failure(
+    tmp_path: Path,
+    supervisor: str,
+    scenario: str,
+    expected_error: str,
+) -> None:
+    started = time.monotonic()
+    result, calls, _ = _run_rollback(tmp_path, supervisor, scenario)
+    elapsed = time.monotonic() - started
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert elapsed < 5
+    assert not any(
+        "mac-hermes-gateway" in call and ("enable" in call or "start" in call or "bootstrap" in call)
+        for call in calls
+    )
+
+
+def test_verify_channel_probe_has_monotonic_bounded_subprocess_deadline(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    mac_home = home / ".mac"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _seed_hermes_identity(home)
+    env = {
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "MAC_HOME": str(mac_home),
+        "MAC_SRC": str(ROOT),
+        "MAC_OPENSHELL_BIN": "/usr/bin/true",
+        "MAC_OPENCLAW_DRY_RUN": "1",
+        "MAC_OPENCLAW_AGENT_ID": "agent_channel_timeout",
+        "MAC_OPENCLAW_INSTANCE_ID": "instance_channel_timeout",
+        "MAC_OPENCLAW_ROUTER_URL": "http://100.64.0.1:8789/v1",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "router-secret",
+        "MAC_OPENCLAW_MODEL": "test/model",
+        "MAC_OPENCLAW_FLEET_NAME": "mac",
+    }
+    subprocess.run(
+        [str(INSTALLER), "prepare"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+
+    tools = [
+        "memory_search",
+        "memory_get",
+        "memory_store",
+        "mac_memory_recall",
+        "mac_memory_store",
+        "mac_mood_current",
+        "mac_mood_set",
+        "mac_mood_clear",
+        "mac_config_flag_list",
+        "mac_config_flag_set",
+        "mac_config_flag_clear",
+        "mac_fleet_status",
+        "mac_agent_send",
+        "mac_agent_share",
+        "mac_notify_human",
+        "mac_fs_put",
+        "mac_fs_get",
+        "mac_directive_verify",
+        "mac_agent_inbox",
+        "mac_image_generate",
+        "curiosity_candidate_submit",
+        "curiosity_candidates_list",
+        "curiosity_abuse_frame",
+    ]
+    plugin_payload = json.dumps(
+        {
+            "plugin": {
+                "imported": True,
+                "status": "loaded",
+                "toolNames": tools,
+                "hookNames": ["before_prompt_build"],
+            }
+        }
+    )
+    openshell = bin_dir / "openshell"
+    openshell.write_text(
+        f"""#!/bin/sh
+case "$1:$2:$*" in
+  sandbox:get:*) exit 0 ;;
+  *"channels status"*) sleep 30 ;;
+  *"plugins inspect"*) printf '%s\n' '{plugin_payload}' ;;
+  *mac-verify-bash-contract*) exit 0 ;;
+  *'/usr/local/bin/node'*) echo OPENCLAW_CONTROL_PROBE_OK ;;
+  *'curiosity verify'*) echo '{{"valid": true}}' ;;
+  *'curiosity abuse-frame'*) echo '{{"possible_false_equivalence": true}}' ;;
+  sandbox:exec:*) echo '{{}}' ;;
+  *) echo "unexpected openshell invocation: $*" >&2; exit 99 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    openshell.chmod(0o700)
+    verify_env = {
+        **env,
+        "MAC_OPENSHELL_BIN": str(openshell),
+        "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS": "1",
+        "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT": "1",
+        "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL": "0",
+    }
+
+    started = time.monotonic()
+    result = subprocess.run(
+        [str(INSTALLER), "verify"],
+        env=verify_env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=6,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.returncode != 0
+    assert elapsed < 5
+    assert "gateway/channel probes did not become healthy within 1s" in result.stderr
+    assert not (mac_home / "openclaw" / "verification-pending.json").exists()
+    installer_text = INSTALLER.read_text(encoding="utf-8")
+    assert "$SECONDS" not in installer_text
+    assert " SECONDS +" not in installer_text

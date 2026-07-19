@@ -37,7 +37,7 @@ def test_direct_mesh_flag_reaches_remote_deploy() -> None:
         'add_remote_env MAC_DEPLOY_DIRECT_HUB "${direct_mesh_hub_flag:-0}"' in text
     )
     assert (
-        '"$allow_degraded_services" "$github_review_key_b64" "$direct_mesh_hub"'
+        '"$github_review_key_b64" "$direct_mesh_hub" 1 apply-phase2'
         in text
     )
 

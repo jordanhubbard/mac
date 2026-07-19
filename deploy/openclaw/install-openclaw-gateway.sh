@@ -36,6 +36,7 @@ GATEWAY_PORT="${MAC_OPENCLAW_GATEWAY_PORT:-18789}"
 DRY_RUN="${MAC_OPENCLAW_DRY_RUN:-0}"
 SKIP_IMAGE="${MAC_OPENCLAW_SKIP_IMAGE:-0}"
 LIVE_CANARY="${MAC_OPENCLAW_LIVE_CANARY:-0}"
+OPENSHELL_SANDBOX_NOT_FOUND_DIAGNOSTIC="Error:   × code: 'Some requested entity was not found', message: \"sandbox not found\""
 
 # The gateway registration is user-local, while deployment may invoke this
 # installer from a supervisor/root context.  Always address the node-local
@@ -53,6 +54,14 @@ truthy() {
   esac
 }
 
+SCRIPT_DIR="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MAC_LAUNCHD_LOG_PREFIX="[install-openclaw-gateway]"
+# shellcheck source=../lib/launchd-lifecycle.sh
+[ -r "$SCRIPT_DIR/../lib/launchd-lifecycle.sh" ] || {
+  die "shared launchd lifecycle library is missing"
+}
+. "$SCRIPT_DIR/../lib/launchd-lifecycle.sh"
+
 find_openshell() {
   if [ -n "${MAC_OPENSHELL_BIN:-}" ] && [ -x "$MAC_OPENSHELL_BIN" ]; then
     printf '%s\n' "$MAC_OPENSHELL_BIN"
@@ -69,6 +78,440 @@ find_openshell() {
     fi
   done
   return 1
+}
+
+openclaw_subprocess_timeout() {
+  local value="${MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS:-30}"
+  case "$value" in
+    ''|*[!0-9]*)
+      log "ERROR: MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS must be a positive integer" >&2
+      return 2
+      ;;
+  esac
+  if [ "$value" -eq 0 ] || [ "$value" -gt 300 ]; then
+    log "ERROR: MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS must be between 1 and 300" >&2
+    return 2
+  fi
+  printf '%s\n' "$value"
+}
+
+monotonic_millis() {
+  python3 - <<'PY'
+import ctypes
+import sys
+
+# Apple's system Python reports time.monotonic() relative to interpreter
+# startup, so separate helper processes cannot compare its values. Query the
+# OS clock directly: CLOCK_MONOTONIC is 6 on Darwin and 1 on Linux.
+class Timespec(ctypes.Structure):
+    _fields_ = [("tv_sec", ctypes.c_long), ("tv_nsec", ctypes.c_long)]
+
+clock_id = 6 if sys.platform == "darwin" else 1
+value = Timespec()
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.clock_gettime(clock_id, ctypes.byref(value)) != 0:
+    raise OSError(ctypes.get_errno(), "clock_gettime failed")
+print(value.tv_sec * 1000 + value.tv_nsec // 1_000_000)
+PY
+}
+
+monotonic_deadline() {
+  local seconds="$1" now
+  case "$seconds" in
+    ''|*[!0-9]*) return 2 ;;
+  esac
+  now="$(monotonic_millis)" || return $?
+  printf '%s\n' "$((now + seconds * 1000))"
+}
+
+monotonic_deadline_expired() {
+  local deadline="$1" now
+  now="$(monotonic_millis)" || return $?
+  [ "$now" -ge "$deadline" ]
+}
+
+sleep_before_deadline() {
+  local deadline="$1" interval="$2"
+  python3 - "$deadline" "$interval" <<'PY'
+import ctypes
+import sys
+import time
+
+deadline_ms = int(sys.argv[1])
+interval = int(sys.argv[2])
+class Timespec(ctypes.Structure):
+    _fields_ = [("tv_sec", ctypes.c_long), ("tv_nsec", ctypes.c_long)]
+value = Timespec()
+clock_id = 6 if sys.platform == "darwin" else 1
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.clock_gettime(clock_id, ctypes.byref(value)) != 0:
+    raise OSError(ctypes.get_errno(), "clock_gettime failed")
+now = value.tv_sec + value.tv_nsec / 1_000_000_000.0
+remaining = max(0.0, (deadline_ms / 1000.0) - now)
+time.sleep(min(float(interval), remaining))
+PY
+}
+
+# Execute a child in its own process group, with a bounded TERM/KILL cleanup.
+# Python's monotonic timeout works on the system Python available on both the
+# macOS (Bash 3.2) and Linux fleet images and avoids GNU-timeout portability
+# assumptions. Exit 124 is reserved for a deadline expiry.
+run_bounded_command_ms() {
+  local timeout_ms="$1"
+  shift
+  python3 - "$timeout_ms" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout_ms = int(sys.argv[1])
+argv = sys.argv[2:]
+if timeout_ms <= 0 or not argv:
+    raise SystemExit(124)
+
+proc = subprocess.Popen(
+    argv,
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    start_new_session=True,
+)
+try:
+    stdout, stderr = proc.communicate(timeout=timeout_ms / 1000.0)
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        stdout, stderr = proc.communicate(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = proc.communicate(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = b"", b""
+    sys.stdout.buffer.write(stdout or b"")
+    sys.stderr.buffer.write(stderr or b"")
+    sys.stderr.write(
+        "OpenClaw subprocess timed out after %.3fs: %s\n"
+        % (timeout_ms / 1000.0, argv[0])
+    )
+    raise SystemExit(124)
+
+sys.stdout.buffer.write(stdout or b"")
+sys.stderr.buffer.write(stderr or b"")
+raise SystemExit(proc.returncode)
+PY
+}
+
+run_bounded_command() {
+  local timeout
+  timeout="$(openclaw_subprocess_timeout)" || return $?
+  run_bounded_command_ms "$((timeout * 1000))" "$@"
+}
+
+# OpenClaw service ownership is system-scoped on Linux.  Select that scope
+# once, require non-interactive privilege, and never retry a failed operation
+# against a user manager with different state.
+run_systemd_system_scope() {
+  run_bounded_command sudo -n systemctl "$@"
+}
+
+run_supervisord_system_scope() {
+  run_bounded_command sudo -n supervisorctl "$@"
+}
+
+run_bounded_command_until() {
+  local deadline="$1" max_seconds now remaining max_ms
+  shift
+  max_seconds="$(openclaw_subprocess_timeout)" || return $?
+  now="$(monotonic_millis)" || return $?
+  remaining=$((deadline - now))
+  [ "$remaining" -gt 0 ] || return 124
+  max_ms=$((max_seconds * 1000))
+  [ "$remaining" -le "$max_ms" ] || remaining="$max_ms"
+  run_bounded_command_ms "$remaining" "$@"
+}
+
+openshell_sandbox_delete_timeout() {
+  local value="${MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS:-45}"
+  case "$value" in
+    ''|*[!0-9]*)
+      log "ERROR: MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS must be an integer" >&2
+      return 2
+      ;;
+  esac
+  if [ "$value" -gt 300 ]; then
+    log "ERROR: MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS exceeds 300" >&2
+    return 2
+  fi
+  printf '%s\n' "$value"
+}
+
+openshell_sandbox_state() {
+  local openshell_bin="$1" sandbox="$2" output="" rc=0
+  output="$(run_bounded_command /usr/bin/env BASH_ENV=/dev/null \
+    "$openshell_bin" sandbox get "$sandbox" 2>&1)" \
+    || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' active
+    return 0
+  fi
+  if [ "$rc" -eq 1 ] \
+    && [ "$output" = "$OPENSHELL_SANDBOX_NOT_FOUND_DIAGNOSTIC" ]; then
+    printf '%s\n' inactive
+    return 0
+  fi
+  log "ERROR: could not inspect OpenShell sandbox $sandbox (exit $rc): $output" >&2
+  return 2
+}
+
+wait_for_openshell_sandbox_absent() {
+  local openshell_bin="$1" sandbox="$2" state="" timeout=""
+  timeout="$(openshell_sandbox_delete_timeout)" || return $?
+  local deadline
+  deadline="$(monotonic_deadline "$timeout")" || return $?
+  while :; do
+    state="$(openshell_sandbox_state "$openshell_bin" "$sandbox")" || return $?
+    if [ "$state" = inactive ]; then
+      return 0
+    fi
+    if monotonic_deadline_expired "$deadline"; then
+      log "ERROR: OpenShell sandbox remained present after deletion: $sandbox" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+delete_openshell_sandbox_if_present() {
+  local openshell_bin="$1" sandbox="$2" state=""
+  local delete_output="" delete_rc=0 wait_rc=0
+  state="$(openshell_sandbox_state "$openshell_bin" "$sandbox")" || return $?
+  [ "$state" = active ] || return 0
+  delete_output="$(run_bounded_command /usr/bin/env BASH_ENV=/dev/null \
+    "$openshell_bin" sandbox delete "$sandbox" 2>&1)" \
+    || delete_rc=$?
+  wait_for_openshell_sandbox_absent "$openshell_bin" "$sandbox" || wait_rc=$?
+  if [ "$delete_rc" -ne 0 ]; then
+    log "ERROR: OpenShell sandbox delete failed for $sandbox (exit $delete_rc): $delete_output" >&2
+    return "$delete_rc"
+  fi
+  if [ "$wait_rc" -ne 0 ]; then
+    return "$wait_rc"
+  fi
+}
+
+systemd_service_state() {
+  local unit="$1" output="" rc=0 load_state="" active_state="" key value
+  output="$(run_systemd_system_scope show \
+    "$unit" -p LoadState -p ActiveState --no-pager 2>&1)" \
+    || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "ERROR: could not inspect systemd unit $unit (exit $rc): $output" >&2
+    return 2
+  fi
+  while IFS='=' read -r key value; do
+    case "$key" in
+      LoadState)
+        [ -z "$load_state" ] || {
+          log "ERROR: duplicate systemd LoadState for $unit" >&2
+          return 2
+        }
+        load_state="$value"
+        ;;
+      ActiveState)
+        [ -z "$active_state" ] || {
+          log "ERROR: duplicate systemd ActiveState for $unit" >&2
+          return 2
+        }
+        active_state="$value"
+        ;;
+      *)
+        log "ERROR: malformed systemd status for $unit: $output" >&2
+        return 2
+        ;;
+    esac
+  done <<EOF
+$output
+EOF
+  case "$load_state:$active_state" in
+    not-found:inactive) printf '%s\n' not_installed ;;
+    loaded:active|masked:active) printf '%s\n' active ;;
+    loaded:inactive|loaded:failed|masked:inactive|masked:failed)
+      printf '%s\n' inactive
+      ;;
+    loaded:activating|loaded:reloading|loaded:deactivating|loaded:maintenance|masked:activating|masked:reloading|masked:deactivating|masked:maintenance)
+      printf '%s\n' transitional
+      ;;
+    *)
+      log "ERROR: could not classify systemd unit $unit (LoadState=${load_state:-missing} ActiveState=${active_state:-missing})" >&2
+      return 2
+      ;;
+  esac
+}
+
+prove_systemd_service_running() {
+  local unit="$1" output="" rc=0 key value
+  local load_state="" active_state="" sub_state="" main_pid="" unit_file_state=""
+  output="$(run_systemd_system_scope show "$unit" --no-pager \
+    -p LoadState -p ActiveState -p SubState -p MainPID -p UnitFileState 2>&1)" \
+    || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "ERROR: could not prove restored systemd unit $unit (exit $rc)" >&2
+    return 2
+  fi
+  while IFS='=' read -r key value; do
+    case "$key" in
+      LoadState)
+        [ -z "$load_state" ] || {
+          log "ERROR: restored systemd proof duplicated LoadState for $unit" >&2
+          return 2
+        }
+        load_state="$value"
+        ;;
+      ActiveState)
+        [ -z "$active_state" ] || {
+          log "ERROR: restored systemd proof duplicated ActiveState for $unit" >&2
+          return 2
+        }
+        active_state="$value"
+        ;;
+      SubState)
+        [ -z "$sub_state" ] || {
+          log "ERROR: restored systemd proof duplicated SubState for $unit" >&2
+          return 2
+        }
+        sub_state="$value"
+        ;;
+      MainPID)
+        [ -z "$main_pid" ] || {
+          log "ERROR: restored systemd proof duplicated MainPID for $unit" >&2
+          return 2
+        }
+        main_pid="$value"
+        ;;
+      UnitFileState)
+        [ -z "$unit_file_state" ] || {
+          log "ERROR: restored systemd proof duplicated UnitFileState for $unit" >&2
+          return 2
+        }
+        unit_file_state="$value"
+        ;;
+      *)
+        log "ERROR: restored systemd proof was malformed for $unit" >&2
+        return 2
+        ;;
+    esac
+  done <<EOF
+$output
+EOF
+  case "$main_pid" in
+    ''|0|*[!0-9]*)
+      log "ERROR: restored systemd unit $unit lacks a positive main PID" >&2
+      return 1
+      ;;
+  esac
+  if [ "$load_state" != loaded ] \
+      || [ "$active_state" != active ] \
+      || [ "$sub_state" != running ] \
+      || [ "$unit_file_state" != enabled ]; then
+    log "ERROR: restored systemd unit $unit failed exact running-state proof" >&2
+    return 1
+  fi
+}
+
+supervisord_program_state() {
+  local program="$1" output="" rc=0 reported_program="" reported_state=""
+  local reported_pid=""
+  output="$(run_supervisord_system_scope status "$program" 2>&1)" \
+    || rc=$?
+  if [ "$rc" -eq 1 ] && [ "$output" = "$program: ERROR (no such process)" ]; then
+    printf '%s\n' not_installed
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    log "ERROR: could not inspect supervisord program $program (exit $rc): $output" >&2
+    return 2
+  fi
+  reported_program="$(printf '%s\n' "$output" | awk 'NR == 1 {print $1}')"
+  reported_state="$(printf '%s\n' "$output" | awk 'NR == 1 {print $2}')"
+  if [ "$reported_program" != "$program" ] \
+      || [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -ne 1 ]; then
+    log "ERROR: malformed supervisord status for $program: $output" >&2
+    return 2
+  fi
+  case "$reported_state" in
+    RUNNING)
+      reported_pid="$(printf '%s\n' "$output" | awk '
+        {
+          for (field = 1; field <= NF; field++) {
+            if ($field == "pid" && field < NF) {
+              value = $(field + 1)
+              sub(/,$/, "", value)
+              print value
+              exit
+            }
+          }
+        }
+      ')"
+      case "$reported_pid" in
+        ''|0|*[!0-9]*)
+          log "ERROR: running supervisord program $program lacks a positive pid" >&2
+          return 2
+          ;;
+      esac
+      printf '%s\n' active
+      ;;
+    STOPPED|EXITED|FATAL) printf '%s\n' inactive ;;
+    STARTING|BACKOFF|STOPPING) printf '%s\n' transitional ;;
+    *)
+      log "ERROR: unrecognized supervisord status for $program: $output" >&2
+      return 2
+      ;;
+  esac
+}
+
+require_service_absent() {
+  local owner="$1" supervisor="$2" state="$3"
+  case "$state" in
+    inactive|not_installed) return 0 ;;
+    *)
+      log "ERROR: $owner gateway absence is unproven ($supervisor state=${state:-unknown})" >&2
+      return 1
+      ;;
+  esac
+}
+
+resolve_rollback_sandbox_name() {
+  local configured="${MAC_OPENCLAW_SANDBOX_NAME:-}"
+  python3 - "$MANAGED_DIR/sandbox-name" "$configured" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+configured = sys.argv[2]
+if configured:
+    value = configured
+else:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit("could not read managed OpenClaw sandbox identity: %s" % exc)
+    lines = raw.splitlines()
+    if len(lines) != 1 or raw != lines[0] + "\n":
+        raise SystemExit("managed OpenClaw sandbox identity is malformed")
+    value = lines[0]
+if not re.fullmatch(r"mac-openclaw-[a-z0-9][a-z0-9._-]{0,127}", value):
+    raise SystemExit("managed OpenClaw sandbox identity is unsafe")
+print(value)
+PY
 }
 
 find_docker() {
@@ -394,6 +837,8 @@ validate_env() {
     direct|delegated) ;;
     *) die "MAC_OPENCLAW_REPRESENTATION_MODE must be direct or delegated" ;;
   esac
+  [[ "$SANDBOX_NAME" =~ ^mac-openclaw-[a-z0-9][a-z0-9._-]{0,127}$ ]] \
+    || die "MAC_OPENCLAW_SANDBOX_NAME must be a lowercase mac-openclaw-* identity"
   if truthy "$LIVE_CANARY"; then
     case ",$MAC_OPENCLAW_CHANNELS," in
       *,slack,*)
@@ -429,6 +874,17 @@ prepare_directories() {
   else
     rm -f "$OPENCLAW_HOST_DIR/home-channel-target"
   fi
+}
+
+write_sandbox_identity() {
+  local destination="$MANAGED_DIR/sandbox-name" temporary
+  temporary="$(mktemp "$MANAGED_DIR/.sandbox-name.XXXXXX")"
+  if ! printf '%s\n' "$SANDBOX_NAME" > "$temporary"; then
+    rm -f "$temporary"
+    die "could not write OpenClaw sandbox identity"
+  fi
+  chmod 0600 "$temporary"
+  mv -f "$temporary" "$destination"
 }
 
 write_config() {
@@ -982,7 +1438,170 @@ SANDBOX=$(printf '%q' "$SANDBOX_NAME")
 HOST_ROOT=$(printf '%q' "$OPENCLAW_HOST_DIR")
 WORKSPACE=$(printf '%q' "$WORKSPACE_DIR")
 STATE=$(printf '%q' "$STATE_DIR")
-"\$OPEN_SHELL" sandbox get "\$SANDBOX" >/dev/null 2>&1 || exit 0
+SANDBOX_NOT_FOUND_DIAGNOSTIC=$(printf '%q' "$OPENSHELL_SANDBOX_NOT_FOUND_DIAGNOSTIC")
+
+subprocess_timeout() {
+  local value="\${MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS:-30}"
+  case "\$value" in
+    ''|*[!0-9]*)
+      echo "openclaw-gateway-stop: invalid subprocess timeout: \$value" >&2
+      return 2
+      ;;
+  esac
+  if [ "\$value" -eq 0 ] || [ "\$value" -gt 300 ]; then
+    echo "openclaw-gateway-stop: subprocess timeout must be between 1 and 300: \$value" >&2
+    return 2
+  fi
+  printf '%s\n' "\$value"
+}
+
+monotonic_millis() {
+  python3 - <<'PY'
+import ctypes
+import sys
+
+class Timespec(ctypes.Structure):
+    _fields_ = [("tv_sec", ctypes.c_long), ("tv_nsec", ctypes.c_long)]
+clock_id = 6 if sys.platform == "darwin" else 1
+value = Timespec()
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.clock_gettime(clock_id, ctypes.byref(value)) != 0:
+    raise OSError(ctypes.get_errno(), "clock_gettime failed")
+print(value.tv_sec * 1000 + value.tv_nsec // 1_000_000)
+PY
+}
+
+monotonic_deadline() {
+  local seconds="\$1" now
+  now="\$(monotonic_millis)" || return \$?
+  printf '%s\n' "\$((now + seconds * 1000))"
+}
+
+run_bounded_ms() {
+  local timeout_ms="\$1"
+  shift
+  python3 - "\$timeout_ms" "\$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout_ms = int(sys.argv[1])
+argv = sys.argv[2:]
+if timeout_ms <= 0 or not argv:
+    raise SystemExit(124)
+proc = subprocess.Popen(
+    argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE, start_new_session=True,
+)
+try:
+    stdout, stderr = proc.communicate(timeout=timeout_ms / 1000.0)
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        stdout, stderr = proc.communicate(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            stdout, stderr = proc.communicate(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = b"", b""
+    sys.stdout.buffer.write(stdout or b"")
+    sys.stderr.buffer.write(stderr or b"")
+    sys.stderr.write(
+        "OpenClaw subprocess timed out after %.3fs: %s\n"
+        % (timeout_ms / 1000.0, argv[0])
+    )
+    raise SystemExit(124)
+sys.stdout.buffer.write(stdout or b"")
+sys.stderr.buffer.write(stderr or b"")
+raise SystemExit(proc.returncode)
+PY
+}
+
+run_bounded() {
+  local timeout
+  timeout="\$(subprocess_timeout)" || return \$?
+  run_bounded_ms "\$((timeout * 1000))" "\$@"
+}
+
+sandbox_delete_timeout() {
+  local value="\${MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS:-45}"
+  case "\$value" in
+    ''|*[!0-9]*)
+      echo "openclaw-gateway-stop: invalid sandbox delete timeout: \$value" >&2
+      return 2
+      ;;
+  esac
+  if [ "\$value" -gt 300 ]; then
+    echo "openclaw-gateway-stop: sandbox delete timeout exceeds 300: \$value" >&2
+    return 2
+  fi
+  printf '%s\n' "\$value"
+}
+
+sandbox_state() {
+  local output="" rc=0
+  output="\$(run_bounded /usr/bin/env BASH_ENV=/dev/null \
+    "\$OPEN_SHELL" sandbox get "\$SANDBOX" 2>&1)" \
+    || rc=\$?
+  if [ "\$rc" -eq 0 ]; then
+    printf '%s\n' active
+    return 0
+  fi
+  if [ "\$rc" -eq 1 ] \
+    && [ "\$output" = "\$SANDBOX_NOT_FOUND_DIAGNOSTIC" ]; then
+    printf '%s\n' inactive
+    return 0
+  fi
+  echo "openclaw-gateway-stop: could not inspect sandbox \$SANDBOX (exit \$rc): \$output" >&2
+  return 2
+}
+
+wait_for_sandbox_absent() {
+  local state="" timeout=""
+  timeout="\$(sandbox_delete_timeout)" || return \$?
+  local deadline now
+  deadline="\$(monotonic_deadline "\$timeout")" || return \$?
+  while :; do
+    state="\$(sandbox_state)" || return \$?
+    if [ "\$state" = inactive ]; then
+      return 0
+    fi
+    now="\$(monotonic_millis)" || return \$?
+    if [ "\$now" -ge "\$deadline" ]; then
+      echo "openclaw-gateway-stop: sandbox remained present after deletion: \$SANDBOX" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+delete_sandbox_and_wait() {
+  local state="" output="" delete_rc=0 wait_rc=0
+  state="\$(sandbox_state)" || return \$?
+  [ "\$state" = active ] || return 0
+  output="\$(run_bounded /usr/bin/env BASH_ENV=/dev/null \
+    "\$OPEN_SHELL" sandbox delete "\$SANDBOX" 2>&1)" \
+    || delete_rc=\$?
+  wait_for_sandbox_absent || wait_rc=\$?
+  if [ "\$delete_rc" -ne 0 ]; then
+    echo "openclaw-gateway-stop: sandbox delete failed (exit \$delete_rc): \$output" >&2
+    return "\$delete_rc"
+  fi
+  if [ "\$wait_rc" -ne 0 ]; then
+    return "\$wait_rc"
+  fi
+}
+
+sandbox_state_value="\$(sandbox_state)" || exit \$?
+[ "\$sandbox_state_value" = active ] || exit 0
 tmp="\$HOST_ROOT/.checkpoint-\$\$"
 rm -rf "\$tmp"
 mkdir -p "\$tmp"
@@ -990,8 +1609,10 @@ mkdir -p "\$tmp"
 # shutdown.  Preserve the rest of the checkpoint instead of failing the whole
 # service stop on that benign race.
 export TAR_OPTIONS="\${TAR_OPTIONS:-} --ignore-failed-read"
-if "\$OPEN_SHELL" sandbox download "\$SANDBOX" /sandbox/workspace "\$tmp/workspace" </dev/null \
-    && "\$OPEN_SHELL" sandbox download "\$SANDBOX" /sandbox/state "\$tmp/state" </dev/null; then
+if run_bounded "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
+      /sandbox/workspace "\$tmp/workspace" \
+    && run_bounded "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
+      /sandbox/state "\$tmp/state"; then
   chmod -R go-rwx "\$tmp"
   stamp="\$HOST_ROOT/archive/checkpoint-\$(date -u +%Y%m%dT%H%M%SZ)-\$\$"
   mkdir -p "\$stamp"
@@ -1004,7 +1625,7 @@ if "\$OPEN_SHELL" sandbox download "\$SANDBOX" /sandbox/workspace "\$tmp/workspa
     while IFS= read -r obsolete; do rm -rf "\$obsolete"; done
 fi
 rm -rf "\$tmp"
-"\$OPEN_SHELL" sandbox delete "\$SANDBOX" >/dev/null 2>&1 || true
+delete_sandbox_and_wait
 EOF
   chmod 0700 "$STOP_WRAPPER_PATH"
   cat > "$WRAPPER_PATH" <<EOF
@@ -1020,7 +1641,7 @@ STATE=$(printf '%q' "$STATE_DIR")
 STOPPER=$(printf '%q' "$STOP_WRAPPER_PATH")
 
 stop_gateway() {
-  "\$STOPPER" || true
+  "\$STOPPER"
 }
 
 run_attached() {
@@ -1150,25 +1771,31 @@ build_image() {
 }
 
 backup_and_delete_stale_sandbox() {
-  local openshell_bin="$1"
-  "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1 || return 0
+  local openshell_bin="$1" state=""
+  state="$(openshell_sandbox_state "$openshell_bin" "$SANDBOX_NAME")" || return $?
+  [ "$state" = active ] || return 0
   local version
-  version="$(HOME=/tmp BASH_ENV=/dev/null $openshell_bin sandbox exec --name "$SANDBOX_NAME" --no-tty -- /usr/local/bin/openclaw --version 2>/dev/null || true)"
+  version="$(run_bounded_command /usr/bin/env HOME=/tmp BASH_ENV=/dev/null \
+    "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
+    /usr/local/bin/openclaw --version 2>/dev/null || true)"
   local image_revision
-  image_revision="$(HOME=/tmp BASH_ENV=/dev/null $openshell_bin sandbox exec --name "$SANDBOX_NAME" --no-tty -- cat /etc/mac-openclaw-image-revision 2>/dev/null || true)"
+  image_revision="$(run_bounded_command /usr/bin/env HOME=/tmp BASH_ENV=/dev/null \
+    "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
+    cat /etc/mac-openclaw-image-revision 2>/dev/null || true)"
   if [[ "$version" == *"$OPENCLAW_VERSION"* ]] \
     && [ "$image_revision" = "$OPENCLAW_IMAGE_REVISION" ]; then
-    return 0
+    die "sandbox $SANDBOX_NAME is active at the current revision but no checkpoint wrapper is available; refusing to mutate its mounted state"
   fi
   local stamp="$BACKUP_DIR/$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$stamp"
   chmod 0700 "$stamp"
   # OpenShell only permits host downloads from /sandbox. Stage the previous
   # image's legacy /home paths there before replacing revision 5 and earlier.
-  "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- /bin/bash -c \
+  run_bounded_command "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" \
+    --no-tty -- /bin/bash -c \
     'rm -rf /sandbox/mac-openclaw-legacy-export; mkdir -p /sandbox/mac-openclaw-legacy-export; cp -a /home/sandbox/.openclaw-data /sandbox/mac-openclaw-legacy-export/state 2>/dev/null || true; cp -a /home/sandbox/workspace /sandbox/mac-openclaw-legacy-export/workspace 2>/dev/null || true' \
     </dev/null >/dev/null 2>&1 || true
-  "$openshell_bin" sandbox download "$SANDBOX_NAME" \
+  run_bounded_command "$openshell_bin" sandbox download "$SANDBOX_NAME" \
     /sandbox/mac-openclaw-legacy-export "$stamp/export" \
     </dev/null >/dev/null 2>&1 || true
   python3 - "$stamp/export" "$STATE_DIR" "$WORKSPACE_DIR" "$stamp/conflicts" <<'PY'
@@ -1209,8 +1836,29 @@ for root in (state, workspace, conflicts):
             except OSError:
                 pass
 PY
-  "$openshell_bin" sandbox delete "$SANDBOX_NAME" >/dev/null
+  delete_openshell_sandbox_if_present "$openshell_bin" "$SANDBOX_NAME"
   log "replaced stale sandbox (version=$version image_revision=${image_revision:-missing}) after owner-only state backup at $stamp"
+}
+
+retire_existing_sandbox_before_prepare() {
+  local openshell_bin="$1" state=""
+  state="$(openshell_sandbox_state "$openshell_bin" "$SANDBOX_NAME")" || return $?
+  [ "$state" = active ] || return 0
+
+  if [ -x "$STOP_WRAPPER_PATH" ]; then
+    # The existing wrapper is the authoritative checkpoint path.  Run it
+    # before replacing any host-mounted configuration, then independently
+    # prove absence so an older best-effort delete wrapper cannot hide a live
+    # sandbox from this deployment.
+    "$STOP_WRAPPER_PATH"
+    delete_openshell_sandbox_if_present "$openshell_bin" "$SANDBOX_NAME"
+    log "checkpointed and retired existing sandbox before prepare"
+    return 0
+  fi
+
+  # Pre-wrapper revisions used a different on-disk layout.  Preserve that
+  # legacy export path, but still require strict deletion and absence proof.
+  backup_and_delete_stale_sandbox "$openshell_bin"
 }
 
 schedule_launchd_script_job() {
@@ -1221,7 +1869,9 @@ schedule_launchd_script_job() {
     specs="$7" scripts_dir="$8" output_dir="$9"
   local label="com.${fleet}.openclaw-script-${slug}"
   local plist="$HOME/Library/LaunchAgents/${label}.plist"
+  local tmp_plist uid target
   mkdir -p "$HOME/Library/LaunchAgents"
+  tmp_plist="$(mktemp "$HOME/Library/LaunchAgents/.${label}.XXXXXX")"
   local cal="  <key>StartCalendarInterval</key>
   <dict>
     <key>Minute</key><integer>${minute}</integer>"
@@ -1231,7 +1881,7 @@ schedule_launchd_script_job() {
   fi
   cal="$cal
   </dict>"
-  cat > "$plist" <<EOF
+  cat > "$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1263,14 +1913,13 @@ ${cal}
 </plist>
 EOF
   if command -v plutil >/dev/null 2>&1; then
-    plutil -lint "$plist" >/dev/null || true
+    plutil -lint "$tmp_plist" >/dev/null
   fi
-  local uid
   uid="$(id -u)"
-  launchctl bootout "gui/$uid/${label}" >/dev/null 2>&1 || true
-  launchctl enable "gui/$uid/${label}" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/$uid" "$plist" >/dev/null 2>&1 \
-    || launchctl kickstart -k "gui/$uid/${label}" >/dev/null 2>&1 || true
+  target="gui/$uid/${label}"
+  mac_launchd_stop_job_if_present "$target" "$label"
+  mv -f "$tmp_plist" "$plist"
+  mac_launchd_bootstrap_job "gui/$uid" "$plist" "$target" "$label"
   log "scheduled host script job '$name' via launchd ($label)"
 }
 
@@ -1392,6 +2041,11 @@ PY
     return 0
   fi
 
+  if truthy "${MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION:-0}"; then
+    rm -f "$tsv"
+    die "host script automation is blocked until its scheduler topology has an exact rollback journal"
+  fi
+
   if truthy "$DRY_RUN"; then
     log "DRY-RUN: host script runner installed at $runner_dst; would schedule jobs from $specs"
     rm -f "$tsv"
@@ -1436,12 +2090,19 @@ PY
 prepare() {
   source_host_env
   validate_env
-  # An advertisement is live-state evidence, not desired state.  Withdraw the
-  # prior record before changing the service and republish only after the
-  # post-cutover exclusivity check succeeds.
-  rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"
   prepare_directories
   resolve_image_reference
+  local openshell_bin
+  openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
+  build_image
+  if ! truthy "$DRY_RUN"; then
+    retire_existing_sandbox_before_prepare "$openshell_bin"
+  fi
+  # An advertisement is live-state evidence, not desired state.  Withdraw the
+  # prior record only after the old sandbox has checkpointed and stopped, and
+  # republish only after the post-cutover exclusivity check succeeds.
+  rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"
+  write_sandbox_identity
   write_config
   write_runtime_env
   write_agent_config_summary
@@ -1449,12 +2110,6 @@ prepare() {
   write_workspace_context
   migrate_continuity
   render_policy
-  local openshell_bin
-  openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
-  build_image
-  if ! truthy "$DRY_RUN"; then
-    backup_and_delete_stale_sandbox "$openshell_bin"
-  fi
   write_host_wrapper "$openshell_bin"
   install_host_script_runner
   printf '%s\n' "$OPENCLAW_IMAGE" > "$OPENCLAW_HOST_DIR/image-ref"
@@ -1462,26 +2117,50 @@ prepare() {
   log "prepared stock OpenClaw $OPENCLAW_VERSION for sandbox $SANDBOX_NAME"
 }
 
-sandbox_command() {
-  local openshell_bin="$1"
-  shift
-  local attempt output rc
+sandbox_command_until() {
+  local deadline="$1" openshell_bin="$2"
+  shift 2
+  local attempt=0 output rc
   output="$(mktemp "${TMPDIR:-/tmp}/mac-openclaw-exec.XXXXXX")"
   trap 'rm -f "${output:-}"' RETURN
-  for attempt in $(seq 1 30); do
-    if HOME=/tmp BASH_ENV=/dev/null "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
-      env HOME=/home/sandbox BASH_ENV=/dev/null /bin/bash --noprofile --norc -c 'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' mac-openclaw "$@" >"$output" 2>&1; then
+  while :; do
+    if monotonic_deadline_expired "$deadline"; then
+      printf '%s\n' "OpenClaw sandbox command deadline expired" >&2
+      return 124
+    fi
+    attempt=$((attempt + 1))
+    rc=0
+    if run_bounded_command_until "$deadline" /usr/bin/env HOME=/tmp BASH_ENV=/dev/null \
+      "$openshell_bin" sandbox exec --name "$SANDBOX_NAME" --no-tty -- \
+      env HOME=/home/sandbox BASH_ENV=/dev/null /bin/bash --noprofile --norc -c \
+      'set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a; exec "$@"' \
+      mac-openclaw "$@" >"$output" 2>&1; then
       cat "$output"
       return 0
+    else
+      rc=$?
     fi
-    rc=$?
-    if [ "$attempt" -lt 30 ] && grep -Eqi 'sandbox is not ready|sandbox not found|gateway unavailable|connection refused' "$output"; then
-      sleep 2
+    if [ "$attempt" -lt 30 ] \
+        && grep -Eqi 'sandbox is not ready|sandbox not found|gateway unavailable|connection refused' "$output" \
+        && ! monotonic_deadline_expired "$deadline"; then
+      sleep_before_deadline "$deadline" 2
       continue
     fi
     cat "$output" >&2
     return "$rc"
   done
+}
+
+sandbox_command() {
+  local openshell_bin="$1" timeout deadline
+  shift
+  timeout="${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}"
+  case "$timeout" in
+    ''|*[!0-9]*) die "MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT must be a non-negative integer" ;;
+  esac
+  deadline="$(monotonic_deadline "$timeout")" \
+    || die "could not establish OpenClaw sandbox command deadline"
+  sandbox_command_until "$deadline" "$openshell_bin" "$@"
 }
 
 wait_for_sandbox_ready() {
@@ -1495,15 +2174,18 @@ wait_for_sandbox_ready() {
     ''|*[!0-9]*) die "MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL must be a non-negative integer" ;;
   esac
 
-  local deadline=$((SECONDS + timeout))
+  local deadline
+  deadline="$(monotonic_deadline "$timeout")" \
+    || die "could not establish OpenClaw startup deadline"
   while :; do
-    if "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
+    if run_bounded_command_until "$deadline" /usr/bin/env BASH_ENV=/dev/null \
+      "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
       return 0
     fi
-    if [ "$SECONDS" -ge "$deadline" ]; then
+    if monotonic_deadline_expired "$deadline"; then
       die "sandbox $SANDBOX_NAME did not become healthy within ${timeout}s"
     fi
-    sleep "$interval"
+    sleep_before_deadline "$deadline" "$interval"
   done
 }
 
@@ -1534,7 +2216,7 @@ PY
   wait_for_sandbox_ready "$openshell_bin"
   sandbox_command "$openshell_bin" /usr/local/bin/mac-verify-bash-contract
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw config validate --json >/dev/null
-  "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null
+  run_bounded_command "$openshell_bin" sandbox get "$SANDBOX_NAME" >/dev/null
   local plugin_status="$OPENCLAW_HOST_DIR/continuity-plugin-status.json"
   sandbox_command "$openshell_bin" /usr/local/bin/openclaw plugins inspect \
     mac-continuity --runtime --json > "$plugin_status"
@@ -1652,9 +2334,12 @@ PY
   esac
   local channel_status="$OPENCLAW_HOST_DIR/channel-status.json"
   local channel_status_tmp="$channel_status.tmp"
-  local channel_deadline=$((SECONDS + ${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}))
+  local channel_deadline
+  channel_deadline="$(monotonic_deadline "${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}")" \
+    || die "could not establish OpenClaw channel verification deadline"
   while :; do
-    if sandbox_command "$openshell_bin" /usr/local/bin/openclaw channels status \
+    if sandbox_command_until "$channel_deadline" "$openshell_bin" \
+      /usr/local/bin/openclaw channels status \
       --probe --json > "$channel_status_tmp" 2>&1 \
       && python3 "$MAC_SRC/scripts/validate-openclaw-channel-status.py" \
         "$channel_status_tmp" --required "$MAC_OPENCLAW_CHANNELS"; then
@@ -1662,12 +2347,13 @@ PY
       chmod 0600 "$channel_status"
       break
     fi
-    if [ "$SECONDS" -ge "$channel_deadline" ]; then
+    if monotonic_deadline_expired "$channel_deadline"; then
       mv -f "$channel_status_tmp" "$channel_status" 2>/dev/null || true
       chmod 0600 "$channel_status" 2>/dev/null || true
       die "OpenClaw gateway/channel probes did not become healthy within ${MAC_OPENCLAW_VERIFY_STARTUP_TIMEOUT:-90}s"
     fi
-    sleep "${MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL:-2}"
+    sleep_before_deadline "$channel_deadline" \
+      "${MAC_OPENCLAW_VERIFY_STARTUP_INTERVAL:-2}"
   done
   if truthy "$LIVE_CANARY"; then
     local output
@@ -1827,49 +2513,52 @@ finalize() {
   local openclaw_state="unknown" hermes_state="unknown" nemoclaw_state="unknown"
   case "$supervisor" in
     systemd)
-      openclaw_state="$(sudo systemctl is-active "${fleet}-openclaw-gateway.service" 2>/dev/null || true)"
-      hermes_state="$(sudo systemctl is-active "${fleet}-hermes-gateway.service" 2>/dev/null || true)"
-      nemoclaw_state="$(sudo systemctl is-active "${fleet}-nemoclaw-gateway.service" 2>/dev/null || true)"
-      [ "$nemoclaw_state" = unknown ] && nemoclaw_state=not_installed
-      # Belt-and-suspenders: if reset-failed did not run, systemd may report
-      # "failed" for a stopped unit. Normalize failed -> inactive so the
-      # ownership check does not reject a legitimately stopped hermes service.
-      case "$hermes_state" in
-        active|running|starting|backoff) ;;
-        failed) hermes_state=inactive ;;
-      esac
+      openclaw_state="$(systemd_service_state "${fleet}-openclaw-gateway.service")" \
+        || return $?
+      hermes_state="$(systemd_service_state "${fleet}-hermes-gateway.service")" \
+        || return $?
+      nemoclaw_state="$(systemd_service_state "${fleet}-nemoclaw-gateway.service")" \
+        || return $?
       ;;
     launchd)
       local uid
       uid="$(id -u)"
-      if launchctl print "gui/$uid/com.${fleet}.openclaw-gateway" >/dev/null 2>&1; then openclaw_state=active; else openclaw_state=inactive; fi
-      if launchctl print "gui/$uid/com.${fleet}.hermes-gateway" >/dev/null 2>&1; then hermes_state=active; else hermes_state=inactive; fi
-      if launchctl print "gui/$uid/com.${fleet}.nemoclaw-gateway" >/dev/null 2>&1; then nemoclaw_state=active; else nemoclaw_state=inactive; fi
+      openclaw_state="$(mac_launchd_job_state "gui/$uid/com.${fleet}.openclaw-gateway" "com.${fleet}.openclaw-gateway")" \
+        || return $?
+      hermes_state="$(mac_launchd_job_state "gui/$uid/com.${fleet}.hermes-gateway" "com.${fleet}.hermes-gateway")" \
+        || return $?
+      nemoclaw_state="$(mac_launchd_job_state "gui/$uid/com.${fleet}.nemoclaw-gateway" "com.${fleet}.nemoclaw-gateway")" \
+        || return $?
       ;;
     supervisord)
-      openclaw_state="$(sudo supervisorctl status "${fleet}-openclaw-gateway" 2>/dev/null | awk '{print tolower($2)}' || true)"
-      hermes_state="$(sudo supervisorctl status "${fleet}-hermes-gateway" 2>/dev/null | awk '{print tolower($2)}' || true)"
-      local _nemoclaw_raw
-      _nemoclaw_raw="$(sudo supervisorctl status "${fleet}-nemoclaw-gateway" 2>/dev/null || true)"
-      if printf '%s' "$_nemoclaw_raw" | grep -qi 'no such process'; then
-        nemoclaw_state=not_installed
-      else
-        nemoclaw_state="$(printf '%s' "$_nemoclaw_raw" | awk '{print tolower($2)}')"
-      fi
+      openclaw_state="$(supervisord_program_state "${fleet}-openclaw-gateway")" \
+        || return $?
+      hermes_state="$(supervisord_program_state "${fleet}-hermes-gateway")" \
+        || return $?
+      nemoclaw_state="$(supervisord_program_state "${fleet}-nemoclaw-gateway")" \
+        || return $?
       ;;
     *) die "unsupported supervisor for OpenClaw finalization: $supervisor" ;;
   esac
 
   case "$openclaw_state" in
-    active|running) ;;
+    active) ;;
     *) die "OpenClaw service is not active after cutover ($supervisor state=${openclaw_state:-missing})" ;;
   esac
   case "$hermes_state" in
-    active|running|starting|backoff) die "Hermes gateway remains active after OpenClaw cutover ($supervisor state=$hermes_state)" ;;
+    inactive|not_installed) ;;
+    *) die "Hermes gateway remains active after OpenClaw cutover or its absence is unproven ($supervisor state=$hermes_state)" ;;
   esac
   case "$nemoclaw_state" in
-    active|running|starting|backoff) die "NemoClaw gateway remains active after OpenClaw cutover ($supervisor state=$nemoclaw_state)" ;;
+    inactive|not_installed) ;;
+    *) die "NemoClaw gateway remains active after OpenClaw cutover or its absence is unproven ($supervisor state=$nemoclaw_state)" ;;
   esac
+
+  local openshell_bin sandbox_state
+  openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
+  sandbox_state="$(openshell_sandbox_state "$openshell_bin" "$SANDBOX_NAME")" || return $?
+  [ "$sandbox_state" = active ] \
+    || die "OpenClaw sandbox is not active after cutover (sandbox=$SANDBOX_NAME state=$sandbox_state)"
 
   MAC_OPENCLAW_FINALIZE_SUPERVISOR="$supervisor" \
   MAC_OPENCLAW_FINALIZE_OPENCLAW_STATE="$openclaw_state" \
@@ -1916,10 +2605,8 @@ PY
   log "published OpenClaw service advertisement after exclusive gateway ownership was proved"
 }
 
-rollback() {
-  local fleet="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
-  local supervisor="${MAC_OPENCLAW_SUPERVISOR:-auto}"
-  rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"
+resolve_gateway_supervisor() {
+  local supervisor="${1:-auto}"
   if [ "$supervisor" = auto ]; then
     if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
       supervisor=systemd
@@ -1930,28 +2617,148 @@ rollback() {
     fi
   fi
   case "$supervisor" in
+    systemd|launchd|supervisord) printf '%s\n' "$supervisor" ;;
+    *) die "unsupported supervisor for OpenClaw withdrawal: $supervisor" ;;
+  esac
+}
+
+withdraw_openclaw_gateway() {
+  local fleet="$1" supervisor="$2"
+  local openshell_bin sandbox_state openclaw_state
+  local uid="" openclaw_target="" openclaw_label=""
+
+  # Publications are withdrawn before any destructive compensation. If a
+  # subsequent stop or absence proof fails, the node remains fail-closed and
+  # cannot advertise a gateway whose ownership is uncertain.
+  rm -f "$ADVERTISEMENT_PATH" "$VERIFICATION_RECORD_PATH"
+  SANDBOX_NAME="$(resolve_rollback_sandbox_name)" \
+    || die "cannot withdraw OpenClaw without a trustworthy managed sandbox identity"
+  openshell_bin="$(find_openshell)" || die "OpenShell CLI not found"
+  case "$supervisor" in
     systemd)
-      sudo systemctl disable --now "${fleet}-openclaw-gateway.service" || true
-      [ ! -x "$STOP_WRAPPER_PATH" ] || "$STOP_WRAPPER_PATH" || true
-      sudo systemctl enable --now "${fleet}-hermes-gateway.service"
+      openclaw_state="$(systemd_service_state "${fleet}-openclaw-gateway.service")" \
+        || return $?
+      case "$openclaw_state" in
+        not_installed) ;;
+        *)
+          run_systemd_system_scope disable --now \
+            "${fleet}-openclaw-gateway.service"
+          ;;
+      esac
+      openclaw_state="$(systemd_service_state "${fleet}-openclaw-gateway.service")" \
+        || return $?
+      require_service_absent OpenClaw systemd "$openclaw_state"
       ;;
     launchd)
-      local uid
       uid="$(id -u)"
-      launchctl bootout "gui/$uid/com.${fleet}.openclaw-gateway" >/dev/null 2>&1 || true
-      launchctl disable "gui/$uid/com.${fleet}.openclaw-gateway" >/dev/null 2>&1 || true
-      [ ! -x "$STOP_WRAPPER_PATH" ] || "$STOP_WRAPPER_PATH" || true
-      launchctl enable "gui/$uid/com.${fleet}.hermes-gateway"
-      launchctl bootstrap "gui/$uid" "$HOME/Library/LaunchAgents/com.${fleet}.hermes-gateway.plist" >/dev/null 2>&1 || true
-      launchctl kickstart -k "gui/$uid/com.${fleet}.hermes-gateway"
+      openclaw_target="gui/$uid/com.${fleet}.openclaw-gateway"
+      openclaw_label="com.${fleet}.openclaw-gateway"
+      mac_launchd_stop_job_if_present "$openclaw_target" "$openclaw_label" \
+        || return $?
+      mac_run_bounded \
+        "${MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS:-10}" \
+        launchctl disable "$openclaw_target" >/dev/null || return $?
+      openclaw_state="$(mac_launchd_job_state "$openclaw_target" "$openclaw_label")" \
+        || return $?
+      require_service_absent OpenClaw launchd "$openclaw_state"
       ;;
     supervisord)
-      sudo supervisorctl stop "${fleet}-openclaw-gateway" >/dev/null 2>&1 || true
-      [ ! -x "$STOP_WRAPPER_PATH" ] || "$STOP_WRAPPER_PATH" || true
-      sudo supervisorctl start "${fleet}-hermes-gateway"
+      openclaw_state="$(supervisord_program_state "${fleet}-openclaw-gateway")" \
+        || return $?
+      case "$openclaw_state" in
+        active|transitional)
+          run_supervisord_system_scope stop \
+            "${fleet}-openclaw-gateway"
+          ;;
+      esac
+      openclaw_state="$(supervisord_program_state "${fleet}-openclaw-gateway")" \
+        || return $?
+      require_service_absent OpenClaw supervisord "$openclaw_state"
       ;;
-    *) die "unsupported supervisor for rollback: $supervisor" ;;
+    *) die "unsupported supervisor for OpenClaw withdrawal: $supervisor" ;;
   esac
+
+  # A supervisor stop is not sufficient: OpenShell can keep the gateway
+  # sandbox alive after its launcher exits. Checkpoint through the managed
+  # wrapper when present, then independently delete and prove exact absence.
+  if [ -x "$STOP_WRAPPER_PATH" ]; then
+    run_bounded_command "$STOP_WRAPPER_PATH"
+  fi
+  delete_openshell_sandbox_if_present "$openshell_bin" "$SANDBOX_NAME"
+  sandbox_state="$(openshell_sandbox_state "$openshell_bin" "$SANDBOX_NAME")" \
+    || return $?
+  [ "$sandbox_state" = inactive ] \
+    || die "OpenClaw sandbox absence is unproven during withdrawal (sandbox=$SANDBOX_NAME state=$sandbox_state)"
+
+  log "withdrawal complete: OpenClaw is inactive under its supervisor; sandbox and publications are absent"
+}
+
+restore_hermes_gateway() {
+  local fleet="$1" supervisor="$2"
+  local hermes_state uid="" restore_rc=0
+
+  # Hermes restoration is the commit point and is unreachable until both
+  # independent OpenClaw ownership surfaces have proved quiescent.
+  case "$supervisor" in
+    systemd)
+      run_systemd_system_scope enable --now \
+        "${fleet}-hermes-gateway.service" || restore_rc=$?
+      if [ "$restore_rc" -ne 0 ]; then
+        log "ERROR: bounded systemd Hermes restore failed (exit $restore_rc)" >&2
+        return "$restore_rc"
+      fi
+      prove_systemd_service_running "${fleet}-hermes-gateway.service"
+      ;;
+    launchd)
+      uid="$(id -u)"
+      mac_launchd_stop_job_if_present \
+        "gui/$uid/com.${fleet}.hermes-gateway" "com.${fleet}.hermes-gateway"
+      mac_launchd_bootstrap_job \
+        "gui/$uid" \
+        "$HOME/Library/LaunchAgents/com.${fleet}.hermes-gateway.plist" \
+        "gui/$uid/com.${fleet}.hermes-gateway" \
+        "com.${fleet}.hermes-gateway"
+      ;;
+    supervisord)
+      run_supervisord_system_scope start \
+        "${fleet}-hermes-gateway" || restore_rc=$?
+      if [ "$restore_rc" -ne 0 ]; then
+        log "ERROR: bounded supervisord Hermes restore failed (exit $restore_rc)" >&2
+        return "$restore_rc"
+      fi
+      hermes_state="$(supervisord_program_state "${fleet}-hermes-gateway")" \
+        || return $?
+      [ "$hermes_state" = active ] \
+        || die "Hermes gateway did not become active after rollback (supervisord state=$hermes_state)"
+      ;;
+  esac
+}
+
+withdraw() {
+  local fleet="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
+  local supervisor
+  supervisor="$(resolve_gateway_supervisor \
+    "${MAC_OPENCLAW_SUPERVISOR:-auto}")" || return $?
+  withdraw_openclaw_gateway "$fleet" "$supervisor"
+}
+
+rollback() {
+  local fleet="${MAC_OPENCLAW_FLEET_NAME:-${MAC_FLEET_NAME:-mac}}"
+  local supervisor
+  supervisor="$(resolve_gateway_supervisor \
+    "${MAC_OPENCLAW_SUPERVISOR:-auto}")" || return $?
+  withdraw_openclaw_gateway "$fleet" "$supervisor"
+  if [ -n "${MAC_DEPLOY_GENERATION:-}" ]; then
+    # A synchronized fleet deployment records the exact prior gateway owner
+    # before mutation.  This component does not own that topology record and
+    # must not guess Hermes: the outer rollback transaction will restore and
+    # prove the recorded Hermes/OpenClaw/NemoClaw/none owner after every
+    # generation artifact has been put back.  Keeping this path withdraw-only
+    # also leaves a failed new-node install safely without a channel owner.
+    log "fleet transaction rollback: OpenClaw withdrawn; exact prior gateway restoration delegated to the deployment transaction"
+    return 0
+  fi
+  restore_hermes_gateway "$fleet" "$supervisor"
   log "rollback complete: OpenClaw stopped and Hermes gateway restored"
 }
 
@@ -1959,6 +2766,7 @@ case "${1:-prepare}" in
   prepare) prepare ;;
   verify) verify ;;
   finalize) finalize ;;
+  withdraw) withdraw ;;
   rollback) rollback ;;
-  *) die "usage: $0 [prepare|verify|finalize|rollback]" ;;
+  *) die "usage: $0 [prepare|verify|finalize|withdraw|rollback]" ;;
 esac

@@ -1367,6 +1367,12 @@ class ControlPlane:
             get_machine=self.get_machine,
             machine_allows_tenant=self._machine_allows_tenant,
         )
+        from mac.fleet_release_epoch_service import FleetReleaseEpochService
+
+        self.fleet_release_epochs = FleetReleaseEpochService(
+            self,
+            verify_signature=verify_verification_manifest_signature,
+        )
         self.memory = MemoryService(
             self.store,
             get_task=self.get_task,
@@ -14412,23 +14418,33 @@ class ControlPlane:
         can produce a clearer "key was rotated" error for pending
         verdicts signed under the previous key (mac-s2vz).
         """
-        self.get_agent(agent_id)
         key = _generate_attestation_key()
         now = utcnow()
         # Retain the current key as the previous key BEFORE overwriting it, so
         # verdicts signed under it prior to this rotation can still be verified
         # against the key that was active at signing time (mac-s2vz followup).
-        self.store.execute(
-            """
-            UPDATE agents
-            SET attestation_key_prev_ciphertext = attestation_key_ciphertext,
-                attestation_key_ciphertext = ?,
-                attestation_key_rotated_at = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (self.secrets._encrypt(key), now, now, agent_id),
-        )
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (agent_id,),
+            )
+            if locked.rowcount != 1:
+                raise NotFoundError("agent not found: %s" % agent_id)
+            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(
+                conn, agent_id
+            )
+            conn.execute(
+                """
+                UPDATE agents
+                SET attestation_key_prev_ciphertext = attestation_key_ciphertext,
+                    attestation_key_ciphertext = ?,
+                    attestation_key_rotated_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (self.secrets._encrypt(key), now, now, agent_id),
+            )
         return key
 
     def verify_agent_attestation_challenge(
@@ -14526,6 +14542,9 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
+            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(
+                conn, agent_id
+            )
             row = conn.execute(
                 "SELECT attestation_key_ciphertext FROM agents WHERE id = ?",
                 (agent_id,),
@@ -14650,6 +14669,9 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
+            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(
+                conn, agent_id
+            )
             row = conn.execute(
                 "SELECT resources FROM agents WHERE id = ?", (agent_id,)
             ).fetchone()
@@ -14740,6 +14762,9 @@ class ControlPlane:
             )
             if locked.rowcount != 1:
                 raise NotFoundError("agent not found: %s" % agent_id)
+            self.fleet_release_epochs.assert_agent_unreserved_in_transaction(
+                conn, agent_id
+            )
             row = conn.execute(
                 "SELECT resources FROM agents WHERE id = ?", (agent_id,)
             ).fetchone()
@@ -15110,6 +15135,280 @@ class ControlPlane:
             agent = self._agent_from_row(row)
         return released.rowcount == 1, agent
 
+    @staticmethod
+    def _dispatch_hold_epoch_receipt_id(epoch_id: str) -> str:
+        return "alce_epoch_%s" % hashlib.sha256(
+            epoch_id.encode("utf-8")
+        ).hexdigest()[:32]
+
+    @staticmethod
+    def _dispatch_hold_epoch_identity_payload(
+        *,
+        epoch_id: str,
+        normalized: Sequence[Tuple[str, str]],
+        requested_expectations: Sequence[Mapping[str, Any]],
+        successor_reason: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "epoch_id": epoch_id,
+            "holds": [
+                {"agent_id": agent_id, "hold_reason": reason}
+                for agent_id, reason in normalized
+            ],
+            "outcome": (
+                "successor_hold" if successor_reason is not None else "released"
+            ),
+            "successor_hold_reason": successor_reason,
+            "expectations": [dict(item) for item in requested_expectations],
+        }
+
+    @staticmethod
+    def _dispatch_hold_epoch_identity_sha256(payload: Mapping[str, Any]) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                dict(payload), sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def _replayed_agent_dispatch_hold_epoch_agents(
+        self,
+        conn: Any,
+        *,
+        epoch_id: str,
+        normalized: Sequence[Tuple[str, str]],
+        requested_expectations: Sequence[Mapping[str, Any]],
+        successor_reason_value: Optional[str],
+        require_agent_rows: bool = True,
+    ) -> Optional[List[Agent]]:
+        """Read and validate one exact durable epoch without mutating it."""
+
+        def query_one(sql: str, parameters: Tuple[Any, ...]) -> Any:
+            if hasattr(conn, "query_one"):
+                return conn.query_one(sql, parameters)
+            return conn.execute(sql, parameters).fetchone()
+
+        def query_all(sql: str, parameters: Tuple[Any, ...]) -> List[Any]:
+            if hasattr(conn, "query_all"):
+                return list(conn.query_all(sql, parameters))
+            return list(conn.execute(sql, parameters).fetchall())
+
+        epoch_outcome = (
+            "successor_hold" if successor_reason_value is not None else "released"
+        )
+        receipt_event_type = (
+            "agent.dispatch_hold_epoch_transitioned"
+            if successor_reason_value is not None
+            else "agent.dispatch_hold_epoch_released"
+        )
+        epoch_event_type = "agent.dispatch_hold_epoch_committed"
+        epoch_receipt_id = self._dispatch_hold_epoch_receipt_id(epoch_id)
+        requested_holds = [
+            {"agent_id": agent_id, "hold_reason": reason}
+            for agent_id, reason in normalized
+        ]
+
+        marker = query_one(
+            "SELECT event_type, detail FROM agent_lifecycle_events WHERE id = ?",
+            (epoch_receipt_id,),
+        )
+        marker_matches = marker is None
+        if marker is not None and marker["event_type"] == epoch_event_type:
+            marker_detail = ensure_json_object(json_loads(marker["detail"], {}))
+            marker_holds = marker_detail.get("holds")
+            marker_successor_reason = marker_detail.get("successor_hold_reason")
+            if marker_successor_reason is not None:
+                marker_successor_reason = str(marker_successor_reason).strip()
+            marker_outcome = str(marker_detail.get("outcome") or "released")
+            marker_expectations = marker_detail.get("expectations")
+            expectations_match = (
+                marker_expectations == list(requested_expectations)
+                if isinstance(marker_expectations, list)
+                else not requested_expectations
+            )
+            marker_matches = (
+                str(marker_detail.get("epoch_id") or "") == epoch_id
+                and isinstance(marker_holds, list)
+                and marker_holds == requested_holds
+                and marker_outcome == epoch_outcome
+                and marker_successor_reason == successor_reason_value
+                and expectations_match
+            )
+        if not marker_matches:
+            raise ValidationError(
+                "fleet release epoch id was already used with a different "
+                "or incomplete hold set, successor outcome, or expectations"
+            )
+
+        if marker is None:
+            receipt_rows = query_all(
+                "SELECT agent_id, event_type, detail "
+                "FROM agent_lifecycle_events WHERE event_type IN (?, ?)",
+                (
+                    "agent.dispatch_hold_epoch_released",
+                    "agent.dispatch_hold_epoch_transitioned",
+                ),
+            )
+        else:
+            receipt_rows = []
+            for agent_id, _reason in normalized:
+                receipt_rows.extend(
+                    query_all(
+                        "SELECT agent_id, event_type, detail "
+                        "FROM agent_lifecycle_events "
+                        "WHERE agent_id = ? AND event_type = ?",
+                        (agent_id, receipt_event_type),
+                    )
+                )
+        observed_holds: List[Dict[str, str]] = []
+        for receipt_row in receipt_rows:
+            detail = ensure_json_object(json_loads(receipt_row["detail"], {}))
+            if str(detail.get("epoch_id") or "") != epoch_id:
+                continue
+            if str(receipt_row["event_type"] or "") != receipt_event_type:
+                raise ValidationError(
+                    "fleet release epoch id was already used with a different "
+                    "successor outcome"
+                )
+            if successor_reason_value is not None and str(
+                detail.get("successor_hold_reason") or ""
+            ) != successor_reason_value:
+                raise ValidationError(
+                    "fleet release epoch receipt has a different successor outcome"
+                )
+            observed_holds.append(
+                {
+                    "agent_id": str(receipt_row["agent_id"] or ""),
+                    "hold_reason": str(detail.get("hold_reason") or ""),
+                }
+            )
+
+        if marker is None and not observed_holds:
+            return None
+        observed_holds.sort(key=lambda item: item["agent_id"])
+        if observed_holds != requested_holds:
+            raise ValidationError(
+                "fleet release epoch id was already used with a different "
+                "or incomplete hold set or successor outcome"
+            )
+        if marker is None and requested_expectations:
+            raise ValidationError(
+                "legacy fleet release epoch receipt lacks expectation identity"
+            )
+
+        if not require_agent_rows:
+            return []
+        replayed: List[Agent] = []
+        for agent_id, _reason in normalized:
+            row = query_one(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            )
+            if row is None:
+                raise NotFoundError(
+                    "fleet release epoch receipt references missing agent: %s"
+                    % agent_id
+                )
+            replayed.append(self._agent_from_row(row))
+        return replayed
+
+    def agent_dispatch_hold_epoch_status(
+        self, epoch_id: str, identity_sha256: str
+    ) -> Dict[str, Any]:
+        """Return absent, exact committed, or identity mismatch without writes."""
+
+        epoch_id = str(epoch_id or "").strip()
+        if (
+            not epoch_id
+            or len(epoch_id.encode("utf-8")) > 512
+            or any(not character.isprintable() for character in epoch_id)
+        ):
+            raise ValidationError("fleet release epoch id is invalid")
+        identity_sha256 = str(identity_sha256 or "").strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", identity_sha256):
+            raise ValidationError("fleet release epoch identity digest is invalid")
+
+        epoch_receipt_id = self._dispatch_hold_epoch_receipt_id(epoch_id)
+        conn = self.store
+        marker = conn.query_one(
+            "SELECT event_type, detail FROM agent_lifecycle_events WHERE id = ?",
+            (epoch_receipt_id,),
+        )
+        if marker is None:
+            return {
+                "status": "absent",
+                "epoch_id": epoch_id,
+                "identity_sha256": identity_sha256,
+            }
+        if marker["event_type"] != "agent.dispatch_hold_epoch_committed":
+            return {
+                "status": "mismatch",
+                "epoch_id": epoch_id,
+                "identity_sha256": identity_sha256,
+            }
+        detail = ensure_json_object(json_loads(marker["detail"], {}))
+        holds = detail.get("holds")
+        expectations = detail.get("expectations")
+        outcome = str(detail.get("outcome") or "released")
+        successor_reason = detail.get("successor_hold_reason")
+        if successor_reason is not None:
+            successor_reason = str(successor_reason).strip()
+        if (
+            str(detail.get("epoch_id") or "") != epoch_id
+            or not isinstance(holds, list)
+            or not isinstance(expectations, list)
+            or outcome not in {"released", "successor_hold"}
+            or (outcome == "successor_hold") != (successor_reason is not None)
+        ):
+            return {
+                "status": "mismatch",
+                "epoch_id": epoch_id,
+                "identity_sha256": identity_sha256,
+            }
+        normalized: List[Tuple[str, str]] = []
+        for item in holds:
+            if not isinstance(item, Mapping):
+                break
+            agent_id = str(item.get("agent_id") or "").strip()
+            reason = str(item.get("hold_reason") or "").strip()
+            if not agent_id or not reason:
+                break
+            normalized.append((agent_id, reason))
+        else:
+            normalized.sort(key=lambda item: item[0])
+            if len(normalized) == len(set(agent_id for agent_id, _ in normalized)):
+                identity = self._dispatch_hold_epoch_identity_payload(
+                    epoch_id=epoch_id,
+                    normalized=normalized,
+                    requested_expectations=expectations,
+                    successor_reason=successor_reason,
+                )
+                actual_digest = self._dispatch_hold_epoch_identity_sha256(identity)
+                if actual_digest == identity_sha256:
+                    try:
+                        replayed = self._replayed_agent_dispatch_hold_epoch_agents(
+                            conn,
+                            epoch_id=epoch_id,
+                            normalized=normalized,
+                            requested_expectations=expectations,
+                            successor_reason_value=successor_reason,
+                            require_agent_rows=False,
+                        )
+                    except (NotFoundError, ValidationError):
+                        replayed = None
+                    if replayed is not None:
+                        return {
+                            "status": "committed",
+                            "epoch_id": epoch_id,
+                            "identity_sha256": actual_digest,
+                            "outcome": outcome,
+                            "successor_hold_reason": successor_reason,
+                            "agent_ids": [agent_id for agent_id, _ in normalized],
+                        }
+        return {
+            "status": "mismatch",
+            "epoch_id": epoch_id,
+            "identity_sha256": identity_sha256,
+        }
+
     def release_agent_dispatch_holds_batch(
         self,
         holds: Iterable[Tuple[str, str]],
@@ -15229,117 +15528,13 @@ class ControlPlane:
         def replayed_epoch_agents(conn: Any) -> Optional[List[Agent]]:
             """Return an exact prior commit, or reject partial/changed reuse."""
 
-            marker = conn.execute(
-                "SELECT event_type, detail FROM agent_lifecycle_events WHERE id = ?",
-                (epoch_receipt_id,),
-            ).fetchone()
-            marker_matches = marker is None
-            if marker is not None and marker["event_type"] == epoch_event_type:
-                marker_detail = ensure_json_object(
-                    json_loads(marker["detail"], {})
-                )
-                marker_holds = marker_detail.get("holds")
-                marker_successor_reason = marker_detail.get(
-                    "successor_hold_reason"
-                )
-                if marker_successor_reason is not None:
-                    marker_successor_reason = str(marker_successor_reason).strip()
-                marker_outcome = str(marker_detail.get("outcome") or "released")
-                marker_expectations = marker_detail.get("expectations")
-                expectations_match = (
-                    marker_expectations == requested_expectations
-                    if isinstance(marker_expectations, list)
-                    else not requested_expectations
-                )
-                marker_matches = (
-                    str(marker_detail.get("epoch_id") or "") == epoch_id
-                    and isinstance(marker_holds, list)
-                    and marker_holds == requested_holds
-                    and marker_outcome == epoch_outcome
-                    and marker_successor_reason == successor_reason_value
-                    and expectations_match
-                )
-            if not marker_matches:
-                raise ValidationError(
-                    "fleet release epoch id was already used with a different "
-                    "or incomplete hold set, successor outcome, or expectations"
-                )
-
-            if marker is None:
-                # Compatibility for a commit created before deterministic epoch
-                # markers existed. Scan both outcomes so an old released epoch
-                # cannot be reused once as a successor transition (or vice
-                # versa) merely because the requested receipt type differs.
-                receipt_rows = conn.execute(
-                    "SELECT agent_id, event_type, detail "
-                    "FROM agent_lifecycle_events WHERE event_type IN (?, ?)",
-                    (
-                        "agent.dispatch_hold_epoch_released",
-                        "agent.dispatch_hold_epoch_transitioned",
-                    ),
-                ).fetchall()
-            else:
-                # Normal retries have a marker whose full hold set already
-                # matched. Use the existing per-agent index rather than scanning
-                # a potentially large lifecycle ledger.
-                receipt_rows = []
-                for agent_id, _reason in normalized:
-                    receipt_rows.extend(
-                        conn.execute(
-                            "SELECT agent_id, event_type, detail "
-                            "FROM agent_lifecycle_events "
-                            "WHERE agent_id = ? AND event_type = ?",
-                            (agent_id, receipt_event_type),
-                        ).fetchall()
-                    )
-            observed_holds: List[Dict[str, str]] = []
-            for receipt_row in receipt_rows:
-                detail = ensure_json_object(json_loads(receipt_row["detail"], {}))
-                if str(detail.get("epoch_id") or "") != epoch_id:
-                    continue
-                if str(receipt_row["event_type"] or "") != receipt_event_type:
-                    raise ValidationError(
-                        "fleet release epoch id was already used with a different "
-                        "successor outcome"
-                    )
-                if successor_reason_value is not None and str(
-                    detail.get("successor_hold_reason") or ""
-                ) != successor_reason_value:
-                    raise ValidationError(
-                        "fleet release epoch receipt has a different successor outcome"
-                    )
-                observed_holds.append(
-                    {
-                        "agent_id": str(receipt_row["agent_id"] or ""),
-                        "hold_reason": str(detail.get("hold_reason") or ""),
-                    }
-                )
-
-            if marker is None and not observed_holds:
-                return None
-            observed_holds.sort(key=lambda item: item["agent_id"])
-            if observed_holds != requested_holds:
-                raise ValidationError(
-                    "fleet release epoch id was already used with a different "
-                    "or incomplete hold set or successor outcome"
-                )
-            if marker is None and requested_expectations:
-                raise ValidationError(
-                    "legacy fleet release epoch receipt lacks expectation identity"
-                )
-
-            replayed: List[Agent] = []
-            for agent_id, _reason in normalized:
-                row = conn.execute(
-                    "SELECT * FROM agents WHERE id = ?", (agent_id,)
-                ).fetchone()
-                if row is None:
-                    raise NotFoundError(
-                        "fleet release epoch receipt references missing agent: %s"
-                        % agent_id
-                    )
-                replayed.append(self._agent_from_row(row))
-            return replayed
+            return self._replayed_agent_dispatch_hold_epoch_agents(
+                conn,
+                epoch_id=epoch_id,
+                normalized=normalized,
+                requested_expectations=requested_expectations,
+                successor_reason_value=successor_reason_value,
+            )
 
         with self.store.transaction() as conn:
             # BEGIN IMMEDIATE already serializes SQLite writers, but Postgres
@@ -15356,6 +15551,15 @@ class ControlPlane:
                 )
                 if locked.rowcount != 1:
                     raise NotFoundError("agent not found: %s" % agent_id)
+                reserved = conn.execute(
+                    "SELECT epoch_id FROM fleet_release_epoch_agents "
+                    "WHERE agent_id = ? AND open_state = 1",
+                    (agent_id,),
+                ).fetchone()
+                if reserved is not None:
+                    raise ValidationError(
+                        "agent belongs to an open prepared fleet release epoch"
+                    )
             replayed = replayed_epoch_agents(conn)
             if replayed is not None:
                 return replayed

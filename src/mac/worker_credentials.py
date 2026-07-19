@@ -318,6 +318,379 @@ class WorkerCredentialLifecycle:
             ),
         )
 
+    @staticmethod
+    def _assert_release_epoch_reservation(
+        conn: Any,
+        agent_id: str,
+        *,
+        expected_epoch_id: Optional[str] = None,
+    ) -> None:
+        """Fence ordinary credential changes while a cutover owns the agent."""
+
+        reservation = conn.execute(
+            "SELECT epoch_id FROM fleet_release_epoch_agents "
+            "WHERE agent_id = ? AND open_state = 1",
+            (agent_id,),
+        ).fetchone()
+        if expected_epoch_id is None:
+            if reservation is not None:
+                raise WorkerCredentialError(
+                    "worker credential is reserved by an open fleet release epoch"
+                )
+            return
+        if reservation is None or str(reservation["epoch_id"]) != expected_epoch_id:
+            raise WorkerCredentialError(
+                "worker credential is not reserved by the committing fleet release epoch"
+            )
+
+    @staticmethod
+    def _validate_install_receipt(
+        exact_agent: str,
+        principal_id: str,
+        receipt: Mapping[str, Any],
+    ) -> Tuple[Mapping[str, Any], str]:
+        expected_receipt_keys = {
+            "schema",
+            "agent_id",
+            "principal_id",
+            "worker_credential_version",
+            "token_fingerprint",
+            "destination",
+            "installed_at",
+            "destination_verification",
+        }
+        if not isinstance(receipt, Mapping) or set(receipt) != expected_receipt_keys:
+            raise WorkerCredentialError(
+                "activation install receipt has unexpected or missing fields"
+            )
+        if receipt.get("schema") != INSTALL_RECEIPT_SCHEMA:
+            raise WorkerCredentialError("activation requires a worker install receipt")
+        if (
+            receipt.get("agent_id") != exact_agent
+            or receipt.get("principal_id") != principal_id
+        ):
+            raise WorkerCredentialError(
+                "install receipt does not match the requested principal"
+            )
+        verification = receipt.get("destination_verification")
+        expected_verification_keys = {
+            "schema",
+            "verified",
+            "method",
+            "destination",
+            "agent_id",
+            "principal_id",
+            "worker_credential_version",
+            "token_fingerprint",
+            "verified_at",
+        }
+        if (
+            not isinstance(verification, Mapping)
+            or set(verification) != expected_verification_keys
+            or verification.get("schema") != DESTINATION_VERIFICATION_SCHEMA
+            or not verification.get("verified")
+        ):
+            raise WorkerCredentialError(
+                "activation requires verified destination readback"
+            )
+        destination = str(receipt.get("destination") or "")
+        if not destination or verification.get("destination") != destination:
+            raise WorkerCredentialError(
+                "destination verification does not match install receipt"
+            )
+        return verification, destination
+
+    def validate_activation_in_transaction(
+        self,
+        conn: Any,
+        agent_id: str,
+        principal_id: str,
+        *,
+        receipt: Mapping[str, Any],
+        expected_epoch_id: Optional[str] = None,
+        require_pending: bool = False,
+    ) -> Dict[str, Any]:
+        """Validate an installed, authenticating principal without promoting it.
+
+        The caller owns the surrounding transaction. This is the prepare seam
+        for synchronized cutover: pending principals remain accepted by the API
+        provider, while the old active principal remains authoritative until
+        the cohort commit.
+        """
+
+        exact_agent = _validate_agent_id(agent_id)
+        verification, destination = self._validate_install_receipt(
+            exact_agent, principal_id, receipt
+        )
+        agent_lock = conn.execute(
+            "UPDATE agents SET updated_at = updated_at "
+            "WHERE id = ? AND deleted_at IS NULL",
+            (exact_agent,),
+        )
+        if agent_lock.rowcount != 1:
+            raise WorkerCredentialError("worker agent does not exist")
+        self._assert_release_epoch_reservation(
+            conn, exact_agent, expected_epoch_id=expected_epoch_id
+        )
+        credential_lock = conn.execute(
+            "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ?",
+            (principal_id,),
+        )
+        if credential_lock.rowcount != 1:
+            raise WorkerCredentialError("worker principal does not exist")
+        row = conn.execute(
+            "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
+        ).fetchone()
+        record = _record_from_row(row, include_hash=True)
+        if (
+            record.get("agent_id") != exact_agent
+            or record.get("principal_kind") != "worker"
+        ):
+            raise WorkerCredentialError(
+                "principal is not bound to the requested agent"
+            )
+        allowed_states = {"pending_install"} if require_pending else {
+            "pending_install",
+            "active",
+        }
+        if record.get("state") not in allowed_states or not _not_expired(record):
+            raise WorkerCredentialError("worker principal is revoked or expired")
+        if receipt.get("token_fingerprint") != record.get("token_fingerprint"):
+            raise WorkerCredentialError(
+                "install receipt fingerprint does not match issuance"
+            )
+        expected_destination = bool(
+            (
+                record.get("environment") == "vm"
+                and destination == "vm_env"
+                and verification.get("method") == "vm_env_readback"
+            )
+            or (
+                record.get("environment") == "k8s"
+                and destination.startswith("k8s_secret:")
+                and len(destination) > len("k8s_secret:")
+                and verification.get("method") == "k8s_secret_readback"
+            )
+        )
+        if not expected_destination:
+            raise WorkerCredentialError(
+                "install receipt destination does not match credential environment"
+            )
+        if receipt.get("worker_credential_version") != record.get(
+            "credential_version"
+        ):
+            raise WorkerCredentialError(
+                "install receipt credential version does not match issuance"
+            )
+        for key in (
+            "principal_id",
+            "agent_id",
+            "worker_credential_version",
+            "token_fingerprint",
+        ):
+            if verification.get(key) != receipt.get(key):
+                raise WorkerCredentialError(
+                    "destination verification does not match install receipt"
+                )
+
+        agent_row = conn.execute(
+            "SELECT * FROM agents WHERE id = ?", (exact_agent,)
+        ).fetchone()
+        readiness = _credential_readiness(agent_row, record)
+        if not readiness["credential_bound"]:
+            raise WorkerCredentialError(
+                "activation requires live authenticated heartbeat proof"
+            )
+        if record.get("package_capable") and not readiness["ready"]:
+            raise WorkerCredentialError(
+                "activation requires compatible source, runtime, and capability proof"
+            )
+        return {
+            "record": record,
+            "destination": destination,
+            "readiness": readiness,
+        }
+
+    def stage_pending_in_transaction(
+        self,
+        conn: Any,
+        agent_id: str,
+        principal_id: str,
+        *,
+        expected_epoch_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Validate an uninstalled pending principal without node-side proof."""
+
+        exact_agent = _validate_agent_id(agent_id)
+        locked = conn.execute(
+            "UPDATE agents SET updated_at = updated_at "
+            "WHERE id = ? AND deleted_at IS NULL",
+            (exact_agent,),
+        )
+        if locked.rowcount != 1:
+            raise WorkerCredentialError("worker agent does not exist")
+        self._assert_release_epoch_reservation(
+            conn, exact_agent, expected_epoch_id=expected_epoch_id
+        )
+        credential_lock = conn.execute(
+            "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ?",
+            (principal_id,),
+        )
+        if credential_lock.rowcount != 1:
+            raise WorkerCredentialError("worker principal does not exist")
+        row = conn.execute(
+            "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
+        ).fetchone()
+        record = _record_from_row(row, include_hash=True)
+        if record.get("agent_id") != exact_agent:
+            raise WorkerCredentialError(
+                "principal is not bound to the requested agent"
+            )
+        if record.get("state") != "pending_install" or not _not_expired(record):
+            raise WorkerCredentialError(
+                "fleet release requires an unexpired pending principal"
+            )
+        return record
+
+    def discard_pending_in_transaction(
+        self,
+        conn: Any,
+        agent_id: str,
+        principal_id: str,
+        *,
+        expected_epoch_id: str,
+        actor: str = "operator",
+    ) -> Dict[str, Any]:
+        """Revoke exactly the pending principal owned by an open epoch.
+
+        The caller owns the surrounding transaction.  This is deliberately
+        narrower than :meth:`revoke`: abort must make the staged successor
+        stop authenticating without disturbing any identity that was live
+        before the epoch opened.
+        """
+
+        exact_agent = _validate_agent_id(agent_id)
+        exact_epoch = str(expected_epoch_id or "").strip()
+        if not exact_epoch:
+            raise WorkerCredentialError("fleet release epoch id is required")
+        agent_lock = conn.execute(
+            "UPDATE agents SET updated_at = updated_at "
+            "WHERE id = ? AND deleted_at IS NULL",
+            (exact_agent,),
+        )
+        if agent_lock.rowcount != 1:
+            raise WorkerCredentialError("worker agent does not exist")
+        self._assert_release_epoch_reservation(
+            conn, exact_agent, expected_epoch_id=exact_epoch
+        )
+        participant = conn.execute(
+            "SELECT principal_id FROM fleet_release_epoch_agents "
+            "WHERE epoch_id = ? AND agent_id = ? AND open_state = 1",
+            (exact_epoch, exact_agent),
+        ).fetchone()
+        if participant is None or str(participant["principal_id"]) != principal_id:
+            raise WorkerCredentialError(
+                "worker principal is not the pending identity owned by the epoch"
+            )
+        credential_lock = conn.execute(
+            "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ?",
+            (principal_id,),
+        )
+        if credential_lock.rowcount != 1:
+            raise WorkerCredentialError("worker principal does not exist")
+        row = conn.execute(
+            "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
+        ).fetchone()
+        record = _record_from_row(row, include_hash=True)
+        if (
+            record.get("agent_id") != exact_agent
+            or record.get("principal_kind") != "worker"
+            or record.get("state") != "pending_install"
+        ):
+            raise WorkerCredentialError(
+                "epoch-owned worker principal is no longer pending"
+            )
+        now = _timestamp()
+        discarded = conn.execute(
+            "UPDATE worker_credentials SET state = ?, revoked_at = ?, "
+            "updated_at = ? WHERE id = ? AND agent_id = ? "
+            "AND state = 'pending_install'",
+            ("revoked", now, now, principal_id, exact_agent),
+        )
+        if discarded.rowcount != 1:
+            raise WorkerCredentialError(
+                "epoch-owned worker principal could not be discarded"
+            )
+        record["state"] = "revoked"
+        record["revoked_at"] = now
+        self._event(
+            conn,
+            record,
+            "worker_credential.discarded",
+            actor=actor,
+            detail={"epoch_id": exact_epoch},
+        )
+        return _safe_record(record)
+
+    def promote_in_transaction(
+        self,
+        conn: Any,
+        agent_id: str,
+        principal_id: str,
+        *,
+        receipt: Mapping[str, Any],
+        actor: str = "operator",
+        expected_epoch_id: Optional[str] = None,
+        require_pending: bool = False,
+    ) -> Dict[str, Any]:
+        """Promote one validated principal in the caller's transaction."""
+
+        validated = self.validate_activation_in_transaction(
+            conn,
+            agent_id,
+            principal_id,
+            receipt=receipt,
+            expected_epoch_id=expected_epoch_id,
+            require_pending=require_pending,
+        )
+        record = dict(validated["record"])
+        destination = str(validated["destination"])
+        now = _timestamp()
+        conn.execute(
+            "UPDATE worker_credentials SET state = ?, destination = ?, "
+            "activated_at = COALESCE(activated_at, ?), revoked_at = NULL, "
+            "superseded_by = NULL, updated_at = ? WHERE id = ?",
+            ("active", destination, now, now, principal_id),
+        )
+        old_rows = conn.execute(
+            "SELECT * FROM worker_credentials WHERE agent_id = ? AND id <> ? "
+            "AND state IN ('pending_install', 'active')",
+            (agent_id, principal_id),
+        ).fetchall()
+        conn.execute(
+            "UPDATE worker_credentials SET state = ?, revoked_at = ?, "
+            "superseded_by = ?, updated_at = ? WHERE agent_id = ? AND id <> ? "
+            "AND state IN ('pending_install', 'active')",
+            ("superseded", now, principal_id, now, agent_id, principal_id),
+        )
+        record["state"] = "active"
+        record["destination"] = destination
+        record["activated_at"] = record.get("activated_at") or now
+        record["revoked_at"] = None
+        record["superseded_by"] = None
+        self._event(conn, record, "worker_credential.activated", actor=actor)
+        for old_row in old_rows:
+            old = _record_from_row(old_row)
+            old["state"] = "superseded"
+            self._event(
+                conn,
+                old,
+                "worker_credential.superseded",
+                actor=actor,
+                detail={"superseded_by": principal_id},
+            )
+        return _safe_record(record)
+
     def issue(
         self,
         agent_id: str,
@@ -372,6 +745,7 @@ class WorkerCredentialLifecycle:
                 raise WorkerCredentialError(
                     "worker credential requires a registered agent"
                 )
+            self._assert_release_epoch_reservation(conn, exact_agent)
             version_row = conn.execute(
                 "SELECT COALESCE(MAX(credential_version), 0) AS version "
                 "FROM worker_credentials WHERE agent_id = ?",
@@ -434,132 +808,27 @@ class WorkerCredentialLifecycle:
         principal/fingerprint/agent tuple.
         """
 
-        exact_agent = _validate_agent_id(agent_id)
-        if receipt.get("schema") != INSTALL_RECEIPT_SCHEMA:
-            raise WorkerCredentialError("activation requires a worker install receipt")
-        if receipt.get("agent_id") != exact_agent or receipt.get("principal_id") != principal_id:
-            raise WorkerCredentialError("install receipt does not match the requested principal")
-        verification = receipt.get("destination_verification")
-        if not isinstance(verification, Mapping) or verification.get(
-            "schema"
-        ) != DESTINATION_VERIFICATION_SCHEMA or not verification.get("verified"):
-            raise WorkerCredentialError(
-                "activation requires verified destination readback"
-            )
-        destination = str(receipt.get("destination") or "")
-        if not destination or verification.get("destination") != destination:
-            raise WorkerCredentialError(
-                "destination verification does not match install receipt"
-            )
-
         with self.store.transaction() as conn:
-            # All operations that can create, activate, or invalidate a worker
-            # principal take the owning agent row first.  In particular,
-            # ControlPlane.delete_agent uses this same agent -> credential lock
-            # order, so a concurrent activation cannot deadlock while the
-            # decommission path is revoking the credential set.
-            agent_lock = conn.execute(
-                "UPDATE agents SET updated_at = updated_at "
-                "WHERE id = ? AND deleted_at IS NULL",
-                (exact_agent,),
+            return self.promote_in_transaction(
+                conn,
+                agent_id,
+                principal_id,
+                receipt=receipt,
+                actor=actor,
             )
-            if agent_lock.rowcount != 1:
-                raise WorkerCredentialError("worker agent does not exist")
-            credential_lock = conn.execute(
-                "UPDATE worker_credentials SET updated_at = updated_at WHERE id = ?",
-                (principal_id,),
-            )
-            if credential_lock.rowcount != 1:
-                raise WorkerCredentialError("worker principal does not exist")
-            row = conn.execute(
-                "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
-            ).fetchone()
-            record = _record_from_row(row, include_hash=True)
-            if record.get("agent_id") != exact_agent or record.get("principal_kind") != "worker":
-                raise WorkerCredentialError("principal is not bound to the requested agent")
-            if record.get("state") not in {"pending_install", "active"} or not _not_expired(record):
-                raise WorkerCredentialError("worker principal is revoked or expired")
-            if receipt.get("token_fingerprint") != record.get("token_fingerprint"):
-                raise WorkerCredentialError("install receipt fingerprint does not match issuance")
-            expected_destination = bool(
-                (
-                    record.get("environment") == "vm"
-                    and destination == "vm_env"
-                    and verification.get("method") == "vm_env_readback"
-                )
-                or (
-                    record.get("environment") == "k8s"
-                    and destination.startswith("k8s_secret:")
-                    and len(destination) > len("k8s_secret:")
-                    and verification.get("method") == "k8s_secret_readback"
-                )
-            )
-            if not expected_destination:
-                raise WorkerCredentialError(
-                    "install receipt destination does not match credential environment"
-                )
-            if receipt.get("worker_credential_version") != record.get(
-                "credential_version"
-            ):
-                raise WorkerCredentialError(
-                    "install receipt credential version does not match issuance"
-                )
-            for key in ("principal_id", "agent_id", "worker_credential_version", "token_fingerprint"):
-                if verification.get(key) != receipt.get(key):
-                    raise WorkerCredentialError(
-                        "destination verification does not match install receipt"
-                    )
-
-            agent_row = conn.execute(
-                "SELECT * FROM agents WHERE id = ?", (exact_agent,)
-            ).fetchone()
-            readiness = _credential_readiness(agent_row, record)
-            if not readiness["credential_bound"]:
-                raise WorkerCredentialError(
-                    "activation requires live authenticated heartbeat proof"
-                )
-            if record.get("package_capable") and not readiness["ready"]:
-                raise WorkerCredentialError(
-                    "activation requires compatible source, runtime, and capability proof"
-                )
-
-            now = _timestamp()
-            conn.execute(
-                "UPDATE worker_credentials SET state = ?, destination = ?, "
-                "activated_at = COALESCE(activated_at, ?), updated_at = ? WHERE id = ?",
-                ("active", str(receipt.get("destination") or ""), now, now, principal_id),
-            )
-            old_rows = conn.execute(
-                "SELECT * FROM worker_credentials WHERE agent_id = ? AND id <> ? "
-                "AND state IN ('pending_install', 'active')",
-                (exact_agent, principal_id),
-            ).fetchall()
-            conn.execute(
-                "UPDATE worker_credentials SET state = ?, revoked_at = ?, superseded_by = ?, "
-                "updated_at = ? WHERE agent_id = ? AND id <> ? "
-                "AND state IN ('pending_install', 'active')",
-                ("superseded", now, principal_id, now, exact_agent, principal_id),
-            )
-            record["state"] = "active"
-            record["destination"] = str(receipt.get("destination") or "")
-            record["activated_at"] = record.get("activated_at") or now
-            self._event(conn, record, "worker_credential.activated", actor=actor)
-            for old_row in old_rows:
-                old = _record_from_row(old_row)
-                old["state"] = "superseded"
-                self._event(
-                    conn,
-                    old,
-                    "worker_credential.superseded",
-                    actor=actor,
-                    detail={"superseded_by": principal_id},
-                )
-            return _safe_record(record)
 
     def revoke(self, agent_id: str, *, actor: str = "operator") -> List[Dict[str, Any]]:
         exact_agent = _validate_agent_id(agent_id)
         revoked: List[Dict[str, Any]] = []
         with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (exact_agent,),
+            )
+            if locked.rowcount != 1:
+                raise WorkerCredentialError("worker agent does not exist")
+            self._assert_release_epoch_reservation(conn, exact_agent)
             rows = conn.execute(
                 "SELECT * FROM worker_credentials WHERE agent_id = ? "
                 "AND state IN ('pending_install', 'active')",
@@ -578,6 +847,76 @@ class WorkerCredentialLifecycle:
                 revoked.append(record)
                 self._event(conn, record, "worker_credential.revoked", actor=actor)
         return [_safe_record(record) for record in revoked]
+
+    def discard_unreserved_pending(
+        self,
+        agent_id: str,
+        *,
+        created_by: str,
+        actor: str = "fleet-recovery",
+    ) -> List[Dict[str, Any]]:
+        """Revoke only orphaned pending credentials from one exact issuance owner.
+
+        This closes the crash window between issuing successor credentials and
+        opening their fleet-release epoch.  It refuses to operate while any
+        epoch owns the agent and never touches an active credential.
+        """
+
+        exact_agent = _validate_agent_id(agent_id)
+        exact_creator = str(created_by or "").strip()
+        if not exact_creator or len(exact_creator.encode("utf-8")) > 512:
+            raise WorkerCredentialError("pending credential creator is invalid")
+        discarded: List[Dict[str, Any]] = []
+        with self.store.transaction() as conn:
+            locked = conn.execute(
+                "UPDATE agents SET updated_at = updated_at "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (exact_agent,),
+            )
+            if locked.rowcount != 1:
+                raise WorkerCredentialError("worker agent does not exist")
+            self._assert_release_epoch_reservation(conn, exact_agent)
+            rows = conn.execute(
+                "SELECT * FROM worker_credentials WHERE agent_id = ? "
+                "AND created_by = ? AND state = 'pending_install'",
+                (exact_agent, exact_creator),
+            ).fetchall()
+            if len(rows) > 1:
+                raise WorkerCredentialError(
+                    "issuance owner has multiple pending credentials for one agent"
+                )
+            now = _timestamp()
+            for row in rows:
+                principal_id = str(row["id"])
+                updated = conn.execute(
+                    "UPDATE worker_credentials SET state = ?, revoked_at = ?, "
+                    "updated_at = ? WHERE id = ? AND agent_id = ? "
+                    "AND created_by = ? AND state = 'pending_install'",
+                    (
+                        "revoked",
+                        now,
+                        now,
+                        principal_id,
+                        exact_agent,
+                        exact_creator,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise WorkerCredentialError(
+                        "orphaned pending credential changed during discard"
+                    )
+                record = _record_from_row(row)
+                record["state"] = "revoked"
+                record["revoked_at"] = now
+                discarded.append(record)
+                self._event(
+                    conn,
+                    record,
+                    "worker_credential.discarded",
+                    actor=actor,
+                    detail={"created_by": exact_creator, "reason": "epoch_not_opened"},
+                )
+        return [_safe_record(record) for record in discarded]
 
     def list(self, *, agent_id: str = "") -> List[Dict[str, Any]]:
         params: Tuple[Any, ...] = ()
@@ -1202,33 +1541,55 @@ def _live_inventory(store: Store, mode: str) -> Dict[str, Any]:
     return build_readiness_inventory(agents, records, mode=mode)
 
 
-def write_policy_state(
+def live_inventory_in_transaction(conn: Any, mode: str) -> Dict[str, Any]:
+    """Build the rollout inventory from one caller-owned DB snapshot."""
+
+    rows = conn.execute(
+        "SELECT * FROM agents WHERE deleted_at IS NULL"
+    ).fetchall()
+    agents = [
+        {key: row[key] for key in row.keys()}
+        if hasattr(row, "keys")
+        else dict(row)
+        for row in rows
+    ]
+    credential_rows = conn.execute(
+        "SELECT * FROM worker_credentials ORDER BY agent_id, credential_version"
+    ).fetchall()
+    records = [_record_from_row(row) for row in credential_rows]
+    return build_readiness_inventory(agents, records, mode=mode)
+
+
+def write_policy_state_in_transaction(
+    conn: Any,
     mode: str,
     *,
-    inventory: Optional[Mapping[str, Any]] = None,
-    store: Optional[Store] = None,
-    path: Optional[Path] = None,
+    reviewed_inventory: Optional[Mapping[str, Any]] = None,
     actor: str = "operator",
 ) -> Dict[str, Any]:
+    """Validate and write fleet identity policy in an existing transaction."""
+
     if mode not in POLICY_MODES:
-        raise WorkerCredentialError("worker credential mode must be compatibility or enforced")
-    reviewed_inventory = inventory
-    if store is not None:
-        live_inventory = _live_inventory(store, mode)
-        if reviewed_inventory is not None and _inventory_facts(
-            reviewed_inventory
-        ) != _inventory_facts(live_inventory):
-            raise WorkerCredentialError(
-                "worker credential readiness inventory is stale or does not match hub authority"
-            )
-        inventory = live_inventory
+        raise WorkerCredentialError(
+            "worker credential mode must be compatibility or enforced"
+        )
+    inventory = live_inventory_in_transaction(conn, mode)
+    if reviewed_inventory is not None and _inventory_facts(
+        reviewed_inventory
+    ) != _inventory_facts(inventory):
+        raise WorkerCredentialError(
+            "worker credential readiness inventory is stale or does not match hub authority"
+        )
     if mode == MODE_ENFORCED:
         if (
             reviewed_inventory is None
             or reviewed_inventory.get("schema") != INVENTORY_SCHEMA
         ):
             raise WorkerCredentialError("enforcement requires a readiness inventory")
-        if not inventory.get("all_ready") or float(inventory.get("readiness_percent") or 0) != 100.0:
+        if (
+            not inventory.get("all_ready")
+            or float(inventory.get("readiness_percent") or 0) != 100.0
+        ):
             raise WorkerCredentialError(
                 "refusing worker identity enforcement: active fleet is not 100% ready"
             )
@@ -1237,42 +1598,95 @@ def write_policy_state(
         "mode": mode,
         "updated_at": _timestamp(),
         "updated_by": str(actor or "operator"),
-        "inventory_digest": inventory_digest(inventory) if inventory else None,
+        "inventory_digest": inventory_digest(inventory),
+        "ready_agent_ids": [
+            str(item["agent_id"])
+            for item in inventory.get("workers") or []
+            if item.get("ready")
+        ],
+    }
+    row = conn.execute(
+        "SELECT revision FROM worker_credential_policy_state "
+        "WHERE singleton_key = ?",
+        ("fleet",),
+    ).fetchone()
+    revision = int(row["revision"] or 0) + 1 if row is not None else 1
+    payload["revision"] = revision
+    conn.execute(
+        "INSERT INTO worker_credential_policy_state ("
+        "singleton_key, mode, inventory_digest, ready_agent_ids, revision, "
+        "updated_by, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(singleton_key) DO UPDATE SET "
+        "mode = excluded.mode, inventory_digest = excluded.inventory_digest, "
+        "ready_agent_ids = excluded.ready_agent_ids, revision = excluded.revision, "
+        "updated_by = excluded.updated_by, updated_at = excluded.updated_at",
+        (
+            "fleet",
+            payload["mode"],
+            payload["inventory_digest"],
+            json_dumps(payload["ready_agent_ids"]),
+            revision,
+            payload["updated_by"],
+            payload["updated_at"],
+        ),
+    )
+    return payload
+
+
+def write_policy_state(
+    mode: str,
+    *,
+    inventory: Optional[Mapping[str, Any]] = None,
+    store: Optional[Store] = None,
+    path: Optional[Path] = None,
+    actor: str = "operator",
+) -> Dict[str, Any]:
+    if store is not None:
+        with store.transaction() as conn:
+            return write_policy_state_in_transaction(
+                conn,
+                mode,
+                reviewed_inventory=inventory,
+                actor=actor,
+            )
+    if mode not in POLICY_MODES:
+        raise WorkerCredentialError(
+            "worker credential mode must be compatibility or enforced"
+        )
+    reviewed_inventory = inventory
+    if mode == MODE_ENFORCED:
+        if (
+            reviewed_inventory is None
+            or reviewed_inventory.get("schema") != INVENTORY_SCHEMA
+        ):
+            raise WorkerCredentialError("enforcement requires a readiness inventory")
+        if (
+            not reviewed_inventory.get("all_ready")
+            or float(reviewed_inventory.get("readiness_percent") or 0) != 100.0
+        ):
+            raise WorkerCredentialError(
+                "refusing worker identity enforcement: active fleet is not 100% ready"
+            )
+    payload = {
+        "schema": POLICY_SCHEMA,
+        "mode": mode,
+        "updated_at": _timestamp(),
+        "updated_by": str(actor or "operator"),
+        "inventory_digest": (
+            inventory_digest(reviewed_inventory) if reviewed_inventory else None
+        ),
         "ready_agent_ids": (
-            [str(item["agent_id"]) for item in inventory.get("workers") or [] if item.get("ready")]
-            if inventory
+            [
+                str(item["agent_id"])
+                for item in reviewed_inventory.get("workers") or []
+                if item.get("ready")
+            ]
+            if reviewed_inventory
             else []
         ),
     }
-    if store is not None:
-        with store.transaction() as conn:
-            row = conn.execute(
-                "SELECT revision FROM worker_credential_policy_state "
-                "WHERE singleton_key = ?",
-                ("fleet",),
-            ).fetchone()
-            revision = int(row["revision"] or 0) + 1 if row is not None else 1
-            payload["revision"] = revision
-            conn.execute(
-                "INSERT INTO worker_credential_policy_state ("
-                "singleton_key, mode, inventory_digest, ready_agent_ids, revision, "
-                "updated_by, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(singleton_key) DO UPDATE SET "
-                "mode = excluded.mode, inventory_digest = excluded.inventory_digest, "
-                "ready_agent_ids = excluded.ready_agent_ids, revision = excluded.revision, "
-                "updated_by = excluded.updated_by, updated_at = excluded.updated_at",
-                (
-                    "fleet",
-                    payload["mode"],
-                    payload["inventory_digest"],
-                    json_dumps(payload["ready_agent_ids"]),
-                    revision,
-                    payload["updated_by"],
-                    payload["updated_at"],
-                ),
-            )
-    elif path is not None:
+    if path is not None:
         # Explicit standalone/testing mode only. Production API replicas and
         # the rollout CLI use the shared control-plane store.
         _atomic_json(Path(path).expanduser(), payload)
@@ -1514,6 +1928,7 @@ def _build_parser() -> argparse.ArgumentParser:
     issue.add_argument("--capability", action="append", default=[])
     issue.add_argument("--package-capable", action="store_true")
     issue.add_argument("--expires-in", type=int, default=30 * 24 * 60 * 60)
+    issue.add_argument("--created-by", default="operator")
     issue.add_argument("--manifest-out", required=True)
 
     install = sub.add_parser("install-vm")
@@ -1541,6 +1956,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     revoke = sub.add_parser("revoke")
     revoke.add_argument("--agent-id", required=True)
+
+    discard_pending = sub.add_parser("discard-unreserved-pending")
+    discard_pending.add_argument("--agent-id", required=True)
+    discard_pending.add_argument("--created-by", required=True)
 
     inventory = sub.add_parser("inventory")
     inventory.add_argument("--agents", required=True, help="hub /agents JSON file or -")
@@ -1594,6 +2013,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 required_capabilities=args.capability,
                 package_capable=args.package_capable,
                 expires_in=args.expires_in,
+                actor=args.created_by,
             )
             manifest = installation_manifest(issued)
             _write_private_json(Path(args.manifest_out), manifest)
@@ -1667,6 +2087,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "status": "revoked",
                     "agent_id": args.agent_id,
                     "credential_count": len(revoked),
+                }
+            )
+            return 0
+        if args.command == "discard-unreserved-pending":
+            discarded = authority().discard_unreserved_pending(
+                args.agent_id,
+                created_by=args.created_by,
+            )
+            _safe_print(
+                {
+                    "status": "discarded",
+                    "agent_id": args.agent_id,
+                    "credential_count": len(discarded),
                 }
             )
             return 0

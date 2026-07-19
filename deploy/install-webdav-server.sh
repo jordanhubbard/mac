@@ -181,7 +181,7 @@ set_env_key "${MAC_HOME}/mac.env" MAC_WEBDAV_ROOT "$WEBDAV_ROOT"
 set_env_key "${MAC_HOME}/mac.env" MAC_WEBDAV_MAX_UPLOAD_BYTES "$WEBDAV_MAX_UPLOAD_BYTES"
 
 write_webdav_wrapper() {
-  local wrapper="$MAC_HOME/bin/mac-webdav-server-run"
+  local wrapper="${1:-$MAC_HOME/bin/mac-webdav-server-run}"
   cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -199,11 +199,10 @@ EOF
   chmod 700 "$wrapper"
 }
 
-write_webdav_wrapper
-
 case "$SUPERVISOR_KIND" in
   systemd)
     echo "[webdav] Installing systemd unit"
+    write_webdav_wrapper
     sudo tee "/etc/systemd/system/${SERVICE_NAME}" >/dev/null <<EOF
 [Unit]
 Description=mac public artifact WebDAV server
@@ -237,6 +236,7 @@ EOF
     ;;
   supervisord)
     echo "[webdav] Installing supervisord program"
+    write_webdav_wrapper
     conf_dir="$(supervisord_conf_dir)"
     sudo install -d -m 0755 "$conf_dir"
     sudo tee "$conf_dir/${FLEET_NAME}-webdav.conf" >/dev/null <<EOF
@@ -258,15 +258,35 @@ EOF
     ;;
   launchd)
     echo "[webdav] Installing launchd agent"
-    plist="$HOME/Library/LaunchAgents/com.${FLEET_NAME}.webdav.plist"
+    uid="$(id -u)"
+    label="com.${FLEET_NAME}.webdav"
+    target="gui/$uid/$label"
+    script_dir="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    MAC_LAUNCHD_LOG_PREFIX="[webdav]"
+    # shellcheck source=lib/launchd-lifecycle.sh
+    [ -r "$script_dir/lib/launchd-lifecycle.sh" ] || {
+      echo "[webdav] ERROR: shared launchd lifecycle library is missing" >&2
+      exit 1
+    }
+    . "$script_dir/lib/launchd-lifecycle.sh"
+    plist="$HOME/Library/LaunchAgents/${label}.plist"
+    wrapper="$MAC_HOME/bin/mac-webdav-server-run"
     mkdir -p "$HOME/Library/LaunchAgents"
-    cat > "$plist" <<EOF
+    mac_launchd_transaction_begin "gui/$uid" "$plist" "$target" "$label"
+    mac_launchd_transaction_track_file "$wrapper"
+    tmp_wrapper="$(mktemp "$MAC_HOME/bin/.mac-webdav-server-run.XXXXXX")"
+    mac_launchd_transaction_track_temporary "$tmp_wrapper"
+    write_webdav_wrapper "$tmp_wrapper"
+    /bin/bash -n "$tmp_wrapper"
+    tmp_plist="$(mktemp "$HOME/Library/LaunchAgents/.${label}.XXXXXX")"
+    mac_launchd_transaction_track_temporary "$tmp_plist"
+    cat > "$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.${FLEET_NAME}.webdav</string>
+  <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key>
   <array><string>${MAC_HOME}/bin/mac-webdav-server-run</string></array>
   <key>RunAtLoad</key><true/>
@@ -278,15 +298,13 @@ EOF
 </plist>
 EOF
     if command -v plutil >/dev/null 2>&1; then
-      plutil -lint "$plist"
+      plutil -lint "$tmp_plist"
     fi
-    uid="$(id -u)"
-    launchctl bootout "gui/$uid" "$plist" >/dev/null 2>&1 || true
-    launchctl bootout "gui/$uid/com.${FLEET_NAME}.webdav" >/dev/null 2>&1 || true
-    launchctl enable "gui/$uid/com.${FLEET_NAME}.webdav"
-    if ! launchctl bootstrap "gui/$uid" "$plist"; then
-      launchctl kickstart -k "gui/$uid/com.${FLEET_NAME}.webdav"
-    fi
+    mac_launchd_transaction_mark_mutating
+    mac_launchd_stop_job_if_present "$target" "$label"
+    mac_launchd_transaction_replace "$tmp_wrapper" "$wrapper"
+    mac_launchd_transaction_replace "$tmp_plist" "$plist"
+    mac_launchd_bootstrap_job "gui/$uid" "$plist" "$target" "$label"
     ;;
 esac
 
@@ -297,6 +315,9 @@ fi
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
   if curl -fsS --connect-timeout 2 --max-time 5 "$health_url" >/dev/null 2>&1; then
     echo "[webdav] Server ready at $health_url"
+    if [ "$SUPERVISOR_KIND" = launchd ]; then
+      mac_launchd_transaction_commit
+    fi
     exit 0
   fi
   sleep 2

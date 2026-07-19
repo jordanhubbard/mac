@@ -378,6 +378,17 @@
   },
   {
     "default": null,
+    "description": "Agent setting: agent plist mutated.",
+    "family": "agent",
+    "name": "MAC_AGENT_PLIST_MUTATED",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Agent setting: agent quarantine threshold.",
     "family": "agent",
     "name": "MAC_AGENT_QUARANTINE_THRESHOLD",
@@ -472,6 +483,17 @@
     "description": "Agent setting: agent unit backup.",
     "family": "agent",
     "name": "MAC_AGENT_UNIT_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Agent setting: agent unit mutated.",
+    "family": "agent",
+    "name": "MAC_AGENT_UNIT_MUTATED",
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh"
@@ -871,6 +893,28 @@
   },
   {
     "default": null,
+    "description": "Core setting: certifier status command timeout seconds.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/openshell/install-certifier-gateway-tunnel.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: certifier tunnel health timeout seconds.",
+    "family": "core",
+    "name": "MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/openshell/install-certifier-gateway-tunnel.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: chat gateway impl.",
     "family": "core",
     "name": "MAC_CHAT_GATEWAY_IMPL",
@@ -1143,6 +1187,50 @@
       "src/mac/k8s/bootstrap.py",
       "src/mac/k8s/config_loader.py",
       "src/mac/k8s/runner.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: contract description.",
+    "family": "core",
+    "name": "MAC_CONTRACT_DESCRIPTION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: contract marker.",
+    "family": "core",
+    "name": "MAC_CONTRACT_MARKER",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: contract snapshot.",
+    "family": "core",
+    "name": "MAC_CONTRACT_SNAPSHOT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: contract source.",
+    "family": "core",
+    "name": "MAC_CONTRACT_SOURCE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -1633,6 +1721,50 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy attest agent.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ATTEST_AGENT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy attest generation.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ATTEST_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy attest rev.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ATTEST_REV",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy attest ts.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ATTEST_TS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy barrier file.",
     "family": "deployment",
     "name": "MAC_DEPLOY_BARRIER_FILE",
@@ -1691,6 +1823,28 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy controller nonce.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_CONTROLLER_NONCE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-cohort-transaction.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy controller pid.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_CONTROLLER_PID",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-cohort-transaction.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy control bind host.",
     "family": "deployment",
     "name": "MAC_DEPLOY_CONTROL_BIND_HOST",
@@ -1709,6 +1863,94 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy daemon command timeout seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy daemon inject receipt post replace failure.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_INJECT_RECEIPT_POST_REPLACE_FAILURE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy daemon quiescence poll seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy daemon quiescence timeout seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy daemon runtime paths.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_RUNTIME_PATHS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy daemon runtime paths configured.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_RUNTIME_PATHS_CONFIGURED",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy daemon test mode.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_TEST_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy daemon total timeout seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
       "deploy/fleet-node-install.sh"
     ],
     "type": "int"
@@ -2142,7 +2384,20 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
+      "deploy/fleet-node-phase1-quiesce.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy generation expected.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_GENERATION_EXPECTED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -2206,6 +2461,7 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
+      "deploy/fleet-node-phase1-quiesce.sh",
       "src/mac/deploy_env.py"
     ],
     "type": "str"
@@ -2518,6 +2774,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy launchd lifecycle.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_LAUNCHD_LIFECYCLE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy lock dir.",
     "family": "deployment",
     "name": "MAC_DEPLOY_LOCK_DIR",
@@ -2745,6 +3013,29 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy node action.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_NODE_ACTION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy node identity sha256.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_NODE_IDENTITY_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy openclaw live canary.",
     "family": "deployment",
     "name": "MAC_DEPLOY_OPENCLAW_LIVE_CANARY",
@@ -2913,6 +3204,65 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy prerequisite bundle.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PREREQUISITE_BUNDLE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy prerequisite expectations.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PREREQUISITE_EXPECTATIONS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy prerequisite helper.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PREREQUISITE_HELPER",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy prerequisite helper sha256.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PREREQUISITE_HELPER_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy prerequisite max age seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PREREQUISITE_MAX_AGE_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy qdrant bind addr.",
     "family": "deployment",
     "name": "MAC_DEPLOY_QDRANT_BIND_ADDR",
@@ -3052,6 +3402,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy remote phase timeout seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REMOTE_PHASE_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy report agent id.",
     "family": "deployment",
     "name": "MAC_DEPLOY_REPORT_AGENT_ID",
@@ -3133,6 +3494,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy require phase1 quiescence.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy require qdrant memory.",
     "family": "deployment",
     "name": "MAC_DEPLOY_REQUIRE_QDRANT_MEMORY",
@@ -3180,6 +3553,18 @@
     "description": "Deployment setting: deploy reviewed tool assets.",
     "family": "deployment",
     "name": "MAC_DEPLOY_REVIEWED_TOOL_ASSETS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy rollback supervisor helper.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_ROLLBACK_SUPERVISOR_HELPER",
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
@@ -3312,6 +3697,17 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy service ts.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_SERVICE_TS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -3515,6 +3911,28 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy test inject openclaw snapshot failure.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_TEST_INJECT_OPENCLAW_SNAPSHOT_FAILURE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy test interrupt after phase2 intent.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_TEST_INTERRUPT_AFTER_PHASE2_INTENT",
+    "retired": false,
+    "sources": [
       "deploy/fleet-node-install.sh"
     ],
     "type": "str"
@@ -4083,6 +4501,83 @@
   },
   {
     "default": null,
+    "description": "Core setting: finalize agent.",
+    "family": "core",
+    "name": "MAC_FINALIZE_AGENT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: finalize fleet.",
+    "family": "core",
+    "name": "MAC_FINALIZE_FLEET",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: finalize generation.",
+    "family": "core",
+    "name": "MAC_FINALIZE_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: finalize post manifest.",
+    "family": "core",
+    "name": "MAC_FINALIZE_POST_MANIFEST",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: finalize receipt.",
+    "family": "core",
+    "name": "MAC_FINALIZE_RECEIPT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: finalize revision.",
+    "family": "core",
+    "name": "MAC_FINALIZE_REVISION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: finalize rollback intent.",
+    "family": "core",
+    "name": "MAC_FINALIZE_ROLLBACK_INTENT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Firecrawl Gateway setting: firecrawl check timeout seconds.",
     "family": "firecrawl-gateway",
     "name": "MAC_FIRECRAWL_CHECK_TIMEOUT_SECONDS",
@@ -4181,6 +4676,18 @@
       "src/mac/hermes_config_surface.py",
       "src/mac/openshell_reconcile.py",
       "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: fleet cohort journal dir.",
+    "family": "core",
+    "name": "MAC_FLEET_COHORT_JOURNAL_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-cohort-transaction.py"
     ],
     "type": "str"
   },
@@ -4312,6 +4819,17 @@
       "src/mac/github_ingest.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: headscale command timeout seconds.",
+    "family": "core",
+    "name": "MAC_HEADSCALE_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/install-headscale.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -4708,6 +5226,7 @@
       "deploy/agent-resource-health.sh",
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
+      "deploy/fleet-node-phase1-quiesce.sh",
       "deploy/install-firecrawl-gateway.sh",
       "deploy/install-headscale.sh",
       "deploy/install-qdrant-service.sh",
@@ -5127,6 +5646,32 @@
   },
   {
     "default": null,
+    "description": "Core setting: launchd artifact timeout seconds.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd command timeout seconds.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
+      "deploy/lib/launchd-lifecycle.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: launchd label.",
     "family": "core",
     "name": "MAC_LAUNCHD_LABEL",
@@ -5135,6 +5680,300 @@
       "deploy/fleet-node-install.sh"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd log prefix.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_LOG_PREFIX",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/install-firecrawl-gateway.sh",
+      "deploy/install-headscale.sh",
+      "deploy/install-qdrant-service.sh",
+      "deploy/install-webdav-server.sh",
+      "deploy/lib/launchd-lifecycle.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openshell/install-certifier-gateway-tunnel.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd max output bytes.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_MAX_OUTPUT_BYTES",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd poll interval seconds.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_POLL_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd python bin.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_PYTHON_BIN",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd transition timeout seconds.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx active.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_ACTIVE",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx after restore hook.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_AFTER_RESTORE_HOOK",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx backups.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_BACKUPS",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx count.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_COUNT",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx dir.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx domain.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_DOMAIN",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx existed.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_EXISTED",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx label.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_LABEL",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx mode.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx mutating.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_MUTATING",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx observed state.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_OBSERVED_STATE",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx old state.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_OLD_STATE",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx paths.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_PATHS",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx rollback hook.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_ROLLBACK_HOOK",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx saved exit trap.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_SAVED_EXIT_TRAP",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx saved hup trap.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_SAVED_HUP_TRAP",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx saved int trap.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_SAVED_INT_TRAP",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx saved term trap.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_SAVED_TERM_TRAP",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx target.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_TARGET",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx temporaries.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_TEMPORARIES",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx temp count.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_TEMP_COUNT",
+    "retired": false,
+    "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -5295,6 +6134,149 @@
     "retired": false,
     "sources": [
       "src/mac/executor_memory.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux manager command timeout seconds.",
+    "family": "core",
+    "name": "MAC_LINUX_MANAGER_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx active.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_ACTIVE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx backup.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx dir.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx existed.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_EXISTED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx label.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_LABEL",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx mutating.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_MUTATING",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx path.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx rollback hook.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_ROLLBACK_HOOK",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx saved exit trap.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_SAVED_EXIT_TRAP",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx saved hup trap.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_SAVED_HUP_TRAP",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx saved int trap.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_SAVED_INT_TRAP",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: linux service tx saved term trap.",
+    "family": "core",
+    "name": "MAC_LINUX_SERVICE_TX_SAVED_TERM_TRAP",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
   },
@@ -6166,6 +7148,18 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw require no host script automation.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw router api key.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_ROUTER_API_KEY",
@@ -6195,9 +7189,22 @@
     "name": "MAC_OPENCLAW_SANDBOX",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw sandbox delete timeout seconds.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -6314,6 +7321,18 @@
       "deploy/fleet-node-install.sh"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Openclaw Runtime setting: openclaw subprocess timeout seconds.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -6843,9 +7862,419 @@
   },
   {
     "default": null,
+    "description": "Core setting: phase1 agent.",
+    "family": "core",
+    "name": "MAC_PHASE1_AGENT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 command timeout seconds.",
+    "family": "core",
+    "name": "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 daemon functions file.",
+    "family": "core",
+    "name": "MAC_PHASE1_DAEMON_FUNCTIONS_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 daemon functions sha256.",
+    "family": "core",
+    "name": "MAC_PHASE1_DAEMON_FUNCTIONS_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 daemon functions snapshot.",
+    "family": "core",
+    "name": "MAC_PHASE1_DAEMON_FUNCTIONS_SNAPSHOT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 daemon functions source.",
+    "family": "core",
+    "name": "MAC_PHASE1_DAEMON_FUNCTIONS_SOURCE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 daemon receipt path.",
+    "family": "core",
+    "name": "MAC_PHASE1_DAEMON_RECEIPT_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 daemon restore contract path.",
+    "family": "core",
+    "name": "MAC_PHASE1_DAEMON_RESTORE_CONTRACT_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 daemon restore receipt path.",
+    "family": "core",
+    "name": "MAC_PHASE1_DAEMON_RESTORE_RECEIPT_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 expected contract sha256.",
+    "family": "core",
+    "name": "MAC_PHASE1_EXPECTED_CONTRACT_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 expect agent.",
+    "family": "core",
+    "name": "MAC_PHASE1_EXPECT_AGENT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 expect generation.",
+    "family": "core",
+    "name": "MAC_PHASE1_EXPECT_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 expect restore sha256.",
+    "family": "core",
+    "name": "MAC_PHASE1_EXPECT_RESTORE_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 expect rev.",
+    "family": "core",
+    "name": "MAC_PHASE1_EXPECT_REV",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 fleet.",
+    "family": "core",
+    "name": "MAC_PHASE1_FLEET",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 functions.",
+    "family": "core",
+    "name": "MAC_PHASE1_FUNCTIONS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 generation.",
+    "family": "core",
+    "name": "MAC_PHASE1_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 helper.",
+    "family": "core",
+    "name": "MAC_PHASE1_HELPER",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 helper source.",
+    "family": "core",
+    "name": "MAC_PHASE1_HELPER_SOURCE",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 local restore manifest.",
+    "family": "core",
+    "name": "MAC_PHASE1_LOCAL_RESTORE_MANIFEST",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 os.",
+    "family": "core",
+    "name": "MAC_PHASE1_OS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 poll seconds.",
+    "family": "core",
+    "name": "MAC_PHASE1_POLL_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 receipt path.",
+    "family": "core",
+    "name": "MAC_PHASE1_RECEIPT_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 restore artifact dir.",
+    "family": "core",
+    "name": "MAC_PHASE1_RESTORE_ARTIFACT_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 restore contract path.",
+    "family": "core",
+    "name": "MAC_PHASE1_RESTORE_CONTRACT_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 restore contract sha256.",
+    "family": "core",
+    "name": "MAC_PHASE1_RESTORE_CONTRACT_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 restore executable.",
+    "family": "core",
+    "name": "MAC_PHASE1_RESTORE_EXECUTABLE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 restore receipt path.",
+    "family": "core",
+    "name": "MAC_PHASE1_RESTORE_RECEIPT_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 restore sha256.",
+    "family": "core",
+    "name": "MAC_PHASE1_RESTORE_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 retained daemon functions.",
+    "family": "core",
+    "name": "MAC_PHASE1_RETAINED_DAEMON_FUNCTIONS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 rev.",
+    "family": "core",
+    "name": "MAC_PHASE1_REV",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 supervisor.",
+    "family": "core",
+    "name": "MAC_PHASE1_SUPERVISOR",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 supervisor kind.",
+    "family": "core",
+    "name": "MAC_PHASE1_SUPERVISOR_KIND",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 supervisor proof path.",
+    "family": "core",
+    "name": "MAC_PHASE1_SUPERVISOR_PROOF_PATH",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 test mode.",
+    "family": "core",
+    "name": "MAC_PHASE1_TEST_MODE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 total timeout seconds.",
+    "family": "core",
+    "name": "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: plist backup.",
     "family": "core",
     "name": "MAC_PLIST_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: plist mutated.",
+    "family": "core",
+    "name": "MAC_PLIST_MUTATED",
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh"
@@ -6942,6 +8371,182 @@
       "src/mac/coding_agent.py"
     ],
     "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq agent.",
+    "family": "core",
+    "name": "MAC_PREREQ_AGENT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq agent id.",
+    "family": "core",
+    "name": "MAC_PREREQ_AGENT_ID",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq firecrawl required.",
+    "family": "core",
+    "name": "MAC_PREREQ_FIRECRAWL_REQUIRED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq firecrawl url.",
+    "family": "core",
+    "name": "MAC_PREREQ_FIRECRAWL_URL",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq helper.",
+    "family": "core",
+    "name": "MAC_PREREQ_HELPER",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq identity.",
+    "family": "core",
+    "name": "MAC_PREREQ_IDENTITY",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq openshell required.",
+    "family": "core",
+    "name": "MAC_PREREQ_OPENSHELL_REQUIRED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq os.",
+    "family": "core",
+    "name": "MAC_PREREQ_OS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq qdrant required.",
+    "family": "core",
+    "name": "MAC_PREREQ_QDRANT_REQUIRED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq qdrant url.",
+    "family": "core",
+    "name": "MAC_PREREQ_QDRANT_URL",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq root.",
+    "family": "core",
+    "name": "MAC_PREREQ_ROOT",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq supervisor.",
+    "family": "core",
+    "name": "MAC_PREREQ_SUPERVISOR",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq webdav enabled.",
+    "family": "core",
+    "name": "MAC_PREREQ_WEBDAV_ENABLED",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prereq webdav url.",
+    "family": "core",
+    "name": "MAC_PREREQ_WEBDAV_URL",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prior env file.",
+    "family": "core",
+    "name": "MAC_PRIOR_ENV_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: prior revision file.",
+    "family": "core",
+    "name": "MAC_PRIOR_REVISION_FILE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
   },
   {
     "default": null,
@@ -7117,6 +8722,17 @@
       "src/mac/hermes_startup.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Qdrant Memory setting: qdrant runtime command timeout seconds.",
+    "family": "qdrant-memory",
+    "name": "MAC_QDRANT_RUNTIME_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/install-qdrant-service.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -7744,7 +9360,6 @@
     "name": "MAC_REVIEWED_PYTHON_VERSION",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/reviewed-tool-assets.sh"
     ],
     "type": "str"
@@ -7756,7 +9371,6 @@
     "name": "MAC_REVIEWED_UV_VERSION",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/reviewed-tool-assets.sh"
     ],
     "type": "str"
@@ -7899,6 +9513,336 @@
     "retired": false,
     "sources": [
       "src/mac/k8s/job_executor.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback active gateway.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_ACTIVE_GATEWAY",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback agent.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_AGENT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback agent prior state.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_AGENT_PRIOR_STATE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback bin backup.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_BIN_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback completion.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_COMPLETION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback directory snapshot timeout seconds.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_DIRECTORY_SNAPSHOT_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback fleet.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_FLEET",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback generation.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback hermes.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_HERMES",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback hermes backup.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_HERMES_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback intent.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_INTENT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback lifecycle.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_LIFECYCLE",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback lifecycle sha256.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_LIFECYCLE_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback node identity sha256.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_NODE_IDENTITY_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback openclaw backup.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_OPENCLAW_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback openclaw existed.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_OPENCLAW_EXISTED",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback os.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_OS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback prerequisite bundle sha256.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_PREREQUISITE_BUNDLE_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback prerequisite expectations sha256.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_PREREQUISITE_EXPECTATIONS_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback prior generation.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_PRIOR_GENERATION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback prior revision.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_PRIOR_REVISION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback revision.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_REVISION",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback script.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_SCRIPT",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback src.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_SRC",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback src backup.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_SRC_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback supervisor.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_SUPERVISOR",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback supervisor helper.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_SUPERVISOR_HELPER",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback supervisor helper sha256.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_SUPERVISOR_HELPER_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback venv.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_VENV",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: rollback venv backup.",
+    "family": "core",
+    "name": "MAC_ROLLBACK_VENV_BACKUP",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -9014,6 +10958,18 @@
   },
   {
     "default": null,
+    "description": "Core setting: supervisor command timeout seconds.",
+    "family": "core",
+    "name": "MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: supervisor disabled.",
     "family": "core",
     "name": "MAC_SUPERVISOR_DISABLED",
@@ -9192,6 +11148,18 @@
       "src/mac/supervisor.py"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: systemd command timeout seconds.",
+    "family": "core",
+    "name": "MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -9722,6 +11690,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: unit mutated.",
+    "family": "core",
+    "name": "MAC_UNIT_MUTATED",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: url.",
     "family": "core",
     "name": "MAC_URL",
@@ -10176,6 +12155,8 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
+      "deploy/fleet-node-phase1-quiesce.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],

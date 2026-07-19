@@ -64,11 +64,11 @@ def test_configures_gh_as_scoped_https_credential_helper(tmp_path: Path) -> None
     assert result.returncode == 0
     assert calls.read_text(encoding="utf-8").splitlines() == [
         "auth",
-        "setup-git",
+        "status",
         "--hostname",
         "github.com",
     ]
-    assert "credential helper configured" in result.stdout
+    assert "credential verified without changing host Git configuration" in result.stdout
 
 
 def test_promotes_secret_stream_deploy_token_before_required_preflight(
@@ -78,7 +78,7 @@ def test_promotes_secret_stream_deploy_token_before_required_preflight(
     assert result.returncode == 0
     assert calls.read_text(encoding="utf-8").splitlines() == [
         "auth",
-        "setup-git",
+        "status",
         "--hostname",
         "github.com",
     ]
@@ -103,13 +103,18 @@ def test_setup_failure_is_nonfatal(tmp_path: Path) -> None:
     assert "WARNING" in result.stdout
 
 
-def test_deploy_configures_https_before_worker_drain_and_source_replacement() -> None:
+def test_typed_phase2_consumes_credential_receipt_before_source_replacement() -> None:
     script = (
         (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
         + "\n"
         + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     )
-    main = script.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
-    auth = main.index("configure_github_https_credentials")
-    assert auth < main.index("drain_mac_agent_before_deploy")
-    assert auth < main.index('log "installing mac source"')
+    pre_mutation = script.split(
+        'if [ "$NODE_ACTION" = arm-phase2 ] || [ "$NODE_ACTION" = apply-phase2 ]; then',
+        1,
+    )[1].split("capture_darwin_launchd_prestate", 1)[0]
+    assert pre_mutation.index("validate_typed_prerequisite_bundle") < pre_mutation.index(
+        "configure_github_https_credentials"
+    )
+    after_intent = script.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
+    assert "configure_github_https_credentials" not in after_intent

@@ -16,7 +16,7 @@ from mac.agentbus_control import (
     DEBUG_TERMINAL_OUTPUT_TOPIC,
 )
 from mac.api import create_app
-from mac.models import read_only_report_repository_executor_attestation
+from mac.models import read_only_report_repository_executor_attestation, utcnow
 from mac.services import ControlPlane, sign_verification_manifest
 
 
@@ -108,14 +108,13 @@ def _delta_payload(ctx: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _prepare_reviewing_task(
+def _prepare_reviewable_task(
     cp: ControlPlane,
     *,
     task_id: str,
     worker_id: str,
     worker_key: str,
-    reviewer_id: str,
-) -> Dict[str, Any]:
+) -> str:
     cp.claim_task(task_id, worker_id, sync_beads=False)
     cp.start_task(task_id, worker_id, drain_outbox=False)
     evidence = cp.add_evidence(
@@ -135,8 +134,25 @@ def _prepare_reviewing_task(
         sync_beads=False,
     )
     cp.submit_for_review(task_id, worker_id, drain_outbox=False)
+    return evidence.id
+
+
+def _prepare_reviewing_task(
+    cp: ControlPlane,
+    *,
+    task_id: str,
+    worker_id: str,
+    worker_key: str,
+    reviewer_id: str,
+) -> Dict[str, Any]:
+    evidence_id = _prepare_reviewable_task(
+        cp,
+        task_id=task_id,
+        worker_id=worker_id,
+        worker_key=worker_key,
+    )
     review = cp.request_review(task_id, reviewer_id)
-    return {"executor_evidence_id": evidence.id, "review_id": review.id}
+    return {"executor_evidence_id": evidence_id, "review_id": review.id}
 
 
 def _prepare_publishable_task(
@@ -1177,6 +1193,7 @@ network_policies:
     ctx["health_rollout_id"] = rollout("route-rollout-health")["id"]
     ctx["rescue_rollout_id"] = rollout("route-rollout-rescue")["id"]
 
+    ctx["absent_dispatch_hold_epoch_id"] = "route-coverage-absent-epoch"
     return ctx
 
 
@@ -1219,6 +1236,18 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("PUT", "/v1/agents/{agent_id}/agentbus-cursor"): {"agent_id": "agent_id"},
         ("POST", "/agents/bulk"): {},
         ("POST", "/agents/dispatch-hold/release-batch"): {},
+        ("GET", "/agents/dispatch-hold/epochs/{epoch_id}"): {
+            "epoch_id": "absent_dispatch_hold_epoch_id"
+        },
+        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/prove"): {
+            "epoch_id": "absent_dispatch_hold_epoch_id"
+        },
+        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/commit"): {
+            "epoch_id": "absent_dispatch_hold_epoch_id"
+        },
+        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/abort"): {
+            "epoch_id": "absent_dispatch_hold_epoch_id"
+        },
         ("POST", "/agents/dispatch-hold/transition-batch"): {},
         ("POST", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
         ("DELETE", "/agents/{agent_id}/dispatch-hold"): {"agent_id": "dispatch_hold_agent_id"},
@@ -1368,6 +1397,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         # schema-valid requests to explicit missing product identities and
         # treats the fail-closed domain guard as successful route coverage.
         expected = (200, 400, 404, 409)
+    if path_template.startswith("/agents/dispatch-hold/epochs/"):
+        expected = (200, 400, 404)
     if method == "GET":
         if path_template == "/dashboard/service-links/tokenhub/sso":
             kwargs["follow_redirects"] = False
@@ -1397,6 +1428,8 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"q": "route coverage", "limit": 1}
         elif path_template == "/v1/agents/{agent_id}/agentbus-cursor":
             kwargs["params"] = {"topic": "peer.message.v1"}
+        elif path_template == "/agents/dispatch-hold/epochs/{epoch_id}":
+            kwargs["params"] = {"identity_sha256": "a" * 64}
         elif path_template == "/v1/memory/dreams/recall":
             kwargs["params"] = {"q": "route coverage dream", "limit": 1, "min_confidence": "low"}
         elif path_template == "/tasks/search":
@@ -2297,6 +2330,21 @@ edges:
             "actor": "route-coverage", "reason": "route coverage"},
         ("POST", "/optimizer/experiments/{experiment_id}/promote"): {
             "actor": "route-coverage", "reason": "route coverage"},
+        ("POST", "/agents/dispatch-hold/epochs/open"): {
+            "epoch_id": "route-coverage-open-empty",
+            "participants": [],
+        },
+        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/prove"): {
+            "identity_sha256": "sha256:" + "a" * 64,
+            "proofs": [],
+        },
+        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/commit"): {
+            "identity_sha256": "sha256:" + "a" * 64,
+        },
+        ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/abort"): {
+            "identity_sha256": "sha256:" + "a" * 64,
+            "reason": "route coverage absent epoch",
+        },
         ("POST", "/tasks/{task_id}/activity"): {
             "phase": "worker",
             "actor": "operator",
@@ -2393,6 +2441,50 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
     executed: set[RouteKey] = set()
     failures = []
     for method, route_path in _ordered_route_keys(app):
+        if route_path in {
+            "/tasks/{task_id}/reviews",
+            "/reviews/{review_id}/claim",
+            "/reviews/{review_id}/decision",
+        }:
+            now = utcnow()
+            for agent_id in (
+                ctx["review_worker_id"],
+                ctx["reviewer_agent_id"],
+            ):
+                cp.store.execute(
+                    "UPDATE agents SET last_seen_at = ?, updated_at = ? WHERE id = ?",
+                    (now, now, agent_id),
+                )
+        if route_path == "/tasks/{task_id}/reviews":
+            fresh_worker = _ok(
+                client.post(
+                    "/agents",
+                    json={
+                        "machine_id": ctx["machine_id"],
+                        "name": "route-fresh-review-worker",
+                        "capabilities": ["python"],
+                    },
+                )
+            )
+            ctx["review_worker_id"] = fresh_worker["id"]
+            ctx["review_worker_key"] = fresh_worker["attestation_key"]
+            fresh_task = _ok(
+                client.post(
+                    "/tasks",
+                    json={
+                        "title": "Route coverage fresh review request",
+                        "project": ctx["project_name"],
+                        "required_capabilities": ["python"],
+                    },
+                )
+            )
+            ctx["review_task_id"] = fresh_task["id"]
+            ctx["executor_evidence_id"] = _prepare_reviewable_task(
+                cp,
+                task_id=fresh_task["id"],
+                worker_id=ctx["review_worker_id"],
+                worker_key=ctx["review_worker_key"],
+            )
         try:
             case = _case_for(method, route_path, ctx)
         except Exception as exc:  # noqa: BLE001 - fail with the uncovered route name.
@@ -2412,6 +2504,10 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
                 )
             )
             continue
+        if route_path == "/tasks/{task_id}/reviews":
+            ctx["review_id"] = response.json()["id"]
+        elif route_path == "/secrets/{secret_id}/access":
+            ctx["secret_audit_id"] = response.json()["audit_id"]
         executed.add((method, route_path))
 
     route_set = set(_route_keys(app))

@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shlex
 import subprocess
 import sys
 import time
@@ -10,6 +11,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = ROOT / "deploy" / "deploy-mac-fleet.sh"
 NODE_INSTALL_SCRIPT = ROOT / "deploy" / "fleet-node-install.sh"
+LAUNCHD_LIFECYCLE_SCRIPT = ROOT / "deploy" / "lib" / "launchd-lifecycle.sh"
 
 
 def script_text():
@@ -18,6 +20,534 @@ def script_text():
         + "\n"
         + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     )
+
+
+def _launchd_stop_function_variants():
+    lifecycle = LAUNCHD_LIFECYCLE_SCRIPT.read_text(encoding="utf-8")
+    return (
+        (
+            lifecycle,
+            "mac_launchd_stop_job_if_present "
+            '"gui/501/com.mac.agent" "com.mac.agent" user',
+            "bootout gui/501/com.mac.agent",
+        ),
+        (
+            lifecycle,
+            'mac_launchd_stop_job_if_present "system/com.mac.hub" "com.mac.hub" system',
+            "bootout system/com.mac.hub",
+        ),
+    )
+
+
+def _run_launchd_stop_harness(tmp_path, functions, command, mode):
+    case_dir = tmp_path / mode
+    fake_bin = case_dir / "bin"
+    fake_bin.mkdir(parents=True)
+    state = case_dir / "state"
+    count = case_dir / "count"
+    calls = case_dir / "calls"
+    state.write_text(mode + "\n", encoding="utf-8")
+    count.write_text("0\n", encoding="utf-8")
+
+    launchctl = fake_bin / "launchctl"
+    launchctl.write_text(
+        """#!/bin/sh
+set -eu
+mode=$(sed -n '1p' "$FAKE_LAUNCHCTL_STATE")
+case "$1" in
+  print)
+    value=$(sed -n '1p' "$FAKE_LAUNCHCTL_COUNT")
+    value=$((value + 1))
+    printf '%s\n' "$value" > "$FAKE_LAUNCHCTL_COUNT"
+    case "$mode" in
+      absent) echo 'Could not find service synthetic' >&2; exit 113 ;;
+      delayed)
+        if [ "$value" -lt 4 ]; then
+          exit 0
+        fi
+        echo 'Could not find service synthetic' >&2
+        exit 113
+        ;;
+      persistent|failed) exit 0 ;;
+      inspect-error) echo 'synthetic launchctl transport failure' >&2; exit 70 ;;
+      post-inspect-error)
+        if [ "$value" -eq 1 ]; then exit 0; fi
+        echo 'synthetic launchctl transport failure' >&2
+        exit 70
+        ;;
+      failed-then-absent)
+        if [ "$value" -eq 1 ]; then exit 0; fi
+        echo 'Could not find service synthetic' >&2
+        exit 113
+        ;;
+    esac
+    ;;
+  bootout)
+    printf '%s\n' "$*" >> "$FAKE_LAUNCHCTL_CALLS"
+    if [ "$mode" = failed ] || [ "$mode" = failed-then-absent ]; then
+      echo 'synthetic bootout refusal' >&2
+      exit 9
+    fi
+    exit 0
+    ;;
+esac
+exit 64
+""",
+        encoding="utf-8",
+    )
+    launchctl.chmod(0o755)
+    sudo = fake_bin / "sudo"
+    sudo.write_text(
+        """#!/bin/sh
+set -eu
+if [ "${1:-}" = -n ]; then
+  shift
+fi
+exec "$@"
+""",
+        encoding="utf-8",
+    )
+    sudo.chmod(0o755)
+
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            "set -euo pipefail\n"
+            "log() { printf '%s\\n' \"$*\" >&2; }\n" + functions + "\n" + command,
+        ],
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "FAKE_LAUNCHCTL_STATE": str(state),
+            "FAKE_LAUNCHCTL_COUNT": str(count),
+            "FAKE_LAUNCHCTL_CALLS": str(calls),
+            "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.15",
+            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "0.05",
+            "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_node_launchd_mutation_boundary(
+    tmp_path,
+    *,
+    supervisor_prestate,
+    control_prestate,
+    helper_rc=0,
+):
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    stop_function = (
+        "stop_existing_services_for_deploy() {"
+        + node.split("stop_existing_services_for_deploy() {", 1)[1].split(
+            "\n}\n\nload_drain_api_env() {", 1
+        )[0]
+        + "\n}"
+    )
+    tmp_path.mkdir(parents=True)
+    arguments = tmp_path / "arguments"
+    command = f"""set -euo pipefail
+SUPERVISOR_KIND=launchd
+DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE={supervisor_prestate}
+DARWIN_SYSTEM_LAUNCHD_ACTIVE={control_prestate}
+DARWIN_GUI_LAUNCHD_ACTIVE=0
+DARWIN_SYSTEM_SUPERVISOR_LABEL=com.mac.supervisor
+MAC_LAUNCHD_LABEL=com.mac.control-plane
+MAC_AGENT_LAUNCHD_LABEL=com.mac.agent
+HERMES_LAUNCHD_LABEL=com.mac.hermes-gateway
+OPENCLAW_LAUNCHD_LABEL=com.mac.openclaw-gateway
+NEMOCLAW_LAUNCHD_LABEL=com.mac.nemoclaw-gateway
+MAC_SERVICE_NAME=mac.service
+HERMES_SERVICE_NAME=mac-hermes.service
+OPENCLAW_SERVICE_NAME=mac-openclaw.service
+NEMOCLAW_SERVICE_NAME=mac-nemoclaw.service
+MAC_AGENT_SERVICE_NAME=mac-agent.service
+MAC_SUPERVISORD_PROG=mac
+HERMES_SUPERVISORD_PROG=mac-hermes
+OPENCLAW_SUPERVISORD_PROG=mac-openclaw
+NEMOCLAW_SUPERVISORD_PROG=mac-nemoclaw
+AGENT_SUPERVISORD_PROG=mac-agent
+MAC_PORT=8000
+LOG_DIR={shlex.quote(str(tmp_path))}
+ROLLBACK_SUPERVISOR_HELPER=/tmp/fleet-node-rollback-supervisor.py
+PY=rollback_helper
+log() {{ printf '%s\n' "$*" >&2; }}
+control_plane_enabled() {{
+  [ "$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ]
+}}
+rollback_helper() {{
+  printf '%s\n' "$@" > "$ARGUMENTS"
+  return {helper_rc}
+}}
+{stop_function}
+stop_existing_services_for_deploy
+"""
+    result = subprocess.run(
+        ["bash", "-c", command],
+        env={
+            **os.environ,
+            "ARGUMENTS": str(arguments),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result, arguments
+
+
+def test_launchd_quiescence_waits_for_removal_and_fails_closed(tmp_path):
+    for variant, (functions, command, expected_call) in enumerate(
+        _launchd_stop_function_variants()
+    ):
+        variant_dir = tmp_path / str(variant)
+
+        delayed = _run_launchd_stop_harness(variant_dir, functions, command, "delayed")
+        assert delayed.returncode == 0, delayed.stderr
+        assert (variant_dir / "delayed" / "calls").read_text(encoding="utf-8") == (
+            f"{expected_call}\n"
+        )
+
+        absent = _run_launchd_stop_harness(variant_dir, functions, command, "absent")
+        assert absent.returncode == 0, absent.stderr
+        assert not (variant_dir / "absent" / "calls").exists()
+
+        persistent = _run_launchd_stop_harness(
+            variant_dir, functions, command, "persistent"
+        )
+        assert persistent.returncode != 0
+        assert "remained loaded" in persistent.stderr
+        assert (variant_dir / "persistent" / "calls").read_text(
+            encoding="utf-8"
+        ) == f"{expected_call}\n"
+
+        failed = _run_launchd_stop_harness(variant_dir, functions, command, "failed")
+        assert failed.returncode != 0
+        assert "launchctl bootout failed" in failed.stderr
+        assert "synthetic bootout refusal" in failed.stderr
+        assert (variant_dir / "failed" / "calls").read_text(
+            encoding="utf-8"
+        ) == f"{expected_call}\n"
+
+        inspect_error = _run_launchd_stop_harness(
+            variant_dir, functions, command, "inspect-error"
+        )
+        assert inspect_error.returncode != 0
+        assert "could not inspect" in inspect_error.stderr
+        assert "synthetic launchctl transport failure" in inspect_error.stderr
+
+        post_inspect_error = _run_launchd_stop_harness(
+            variant_dir, functions, command, "post-inspect-error"
+        )
+        assert post_inspect_error.returncode != 0
+        assert "could not inspect" in post_inspect_error.stderr
+        assert "synthetic launchctl transport failure" in post_inspect_error.stderr
+        assert (variant_dir / "post-inspect-error" / "calls").read_text(
+            encoding="utf-8"
+        ) == f"{expected_call}\n"
+
+        failed_then_absent = _run_launchd_stop_harness(
+            variant_dir, functions, command, "failed-then-absent"
+        )
+        assert failed_then_absent.returncode == 0, failed_then_absent.stderr
+        assert (variant_dir / "failed-then-absent" / "calls").read_text(
+            encoding="utf-8"
+        ) == f"{expected_call}\n"
+
+
+def test_launchd_mutation_boundary_delegates_to_exact_bounded_helper_and_fails_closed(
+    tmp_path,
+):
+    expected, arguments = _run_node_launchd_mutation_boundary(
+        tmp_path / "expected",
+        supervisor_prestate=1,
+        control_prestate=1,
+    )
+    assert expected.returncode == 0, expected.stderr
+    expected_arguments = arguments.read_text(encoding="utf-8").splitlines()
+    assert expected_arguments[:4] == [
+        "/tmp/fleet-node-rollback-supervisor.py",
+        "quiesce",
+        "--supervisor",
+        "launchd",
+    ]
+    assert (
+        expected_arguments[expected_arguments.index("--control-plane-mode") + 1]
+        == "system"
+    )
+    assert "--launchd-system-supervisor-was-active" in expected_arguments
+    assert expected_arguments[expected_arguments.index("--receipt") + 1].endswith(
+        "/pre-artifact-supervisor-quiescence.json"
+    )
+
+    absent, arguments = _run_node_launchd_mutation_boundary(
+        tmp_path / "absent",
+        supervisor_prestate=0,
+        control_prestate=0,
+    )
+    assert absent.returncode == 0, absent.stderr
+    absent_arguments = arguments.read_text(encoding="utf-8").splitlines()
+    assert (
+        absent_arguments[absent_arguments.index("--control-plane-mode") + 1]
+        == "inactive"
+    )
+    assert "--launchd-system-supervisor-was-active" not in absent_arguments
+
+    rejected, arguments = _run_node_launchd_mutation_boundary(
+        tmp_path / "helper-failure",
+        supervisor_prestate=0,
+        control_prestate=0,
+        helper_rc=73,
+    )
+    assert rejected.returncode == 73
+    assert arguments.exists()
+
+
+def test_outer_agent_restart_uses_the_shared_bounded_launchd_contract():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
+        "validate_router_topology_spec() {", 1
+    )[0]
+    assert (
+        'lifecycle="$HOME/.mac/logs/launchd-lifecycle-${MAC_DEPLOY_SERVICE_TS:?}.sh"'
+        in service
+    )
+    assert '. "$lifecycle"' in service
+    assert 'mac_launchd_stop_job_if_present "$domain/$label" "$label" user' in service
+    assert "deadline=$(( SECONDS + 45 ))" not in service
+    assert "launchctl " not in service
+
+
+def test_outer_linux_worker_restart_uses_exact_bounded_manager_commands():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
+        "validate_router_topology_spec() {", 1
+    )[0]
+    supervisor = service.split('case "$supervisor" in', 1)[1].split("  systemd)", 1)[0]
+    systemd = service.split("  systemd)", 1)[1].split("  launchd)", 1)[0]
+
+    assert service.index('. "$lifecycle"') < service.index('case "$supervisor" in')
+    assert service.count("mac_run_bounded") >= 4
+    assert "MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS" in service
+    assert "MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS" in service
+    assert 'sudo -n supervisorctl "$@"' in service
+    assert 'sudo -n systemctl "$@"' in service
+
+    assert 'program="${MAC_DEPLOY_FLEET_NAME:?}-agent"' in supervisor
+    assert 'run_fleet_supervisorctl stop "$program"' in supervisor
+    assert 'run_fleet_supervisorctl start "$program"' in supervisor
+    assert 'run_fleet_supervisorctl status "$program"' in service
+    assert '"$observed_program" != "$program"' in service
+    assert "no such process" not in supervisor
+    assert "|| true" not in supervisor
+
+    assert 'unit="${MAC_DEPLOY_FLEET_NAME:?}-agent.service"' in systemd
+    assert 'run_fleet_systemctl stop "$unit"' in systemd
+    assert 'run_fleet_systemctl start "$unit"' in systemd
+    for field in ("LoadState", "ActiveState", "SubState", "MainPID"):
+        assert field in systemd
+    assert '"$main_pid" != 0' in systemd
+    assert "*[!0-9]*" in systemd
+    assert "|| true" not in systemd
+    assert "sudo systemctl" not in systemd
+
+
+def test_outer_coordinator_never_prompts_for_launchd_definition_privilege():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'sudo test -e "$plist"' not in deploy
+    assert 'sudo grep -Fqx "$marker_line" "$plist"' not in deploy
+    assert 'sudo -n test -e "$plist"' in deploy
+    assert 'sudo -n grep -Fqx "$marker_line" "$plist"' in deploy
+
+
+def _run_outer_linux_worker_manager(tmp_path, supervisor, *, stop_fails=False):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
+        "validate_router_topology_spec() {", 1
+    )[0]
+    remote = service.split("<<'REMOTE'\n", 1)[1].split("\nREMOTE\n", 1)[0]
+    manager = (
+        'lifecycle="$HOME/.mac/logs/'
+        + remote.split('lifecycle="$HOME/.mac/logs/', 1)[1]
+    )
+
+    home = tmp_path / supervisor / "home"
+    fake_bin = tmp_path / supervisor / "bin"
+    logs = home / ".mac" / "logs"
+    fake_bin.mkdir(parents=True)
+    logs.mkdir(parents=True)
+    (logs / "launchd-lifecycle-fixture.sh").write_text(
+        LAUNCHD_LIFECYCLE_SCRIPT.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    state = tmp_path / supervisor / "state"
+    calls = tmp_path / supervisor / "calls"
+    state.write_text("active\n", encoding="utf-8")
+
+    sudo = fake_bin / "sudo"
+    sudo.write_text(
+        '#!/bin/sh\nset -eu\nif [ "${1:-}" = -n ]; then shift; fi\nexec "$@"\n',
+        encoding="utf-8",
+    )
+    sudo.chmod(0o755)
+    if supervisor == "supervisord":
+        manager_bin = fake_bin / "supervisorctl"
+        manager_bin.write_text(
+            """#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$FAKE_MANAGER_CALLS"
+[ "${2:-}" = mac-agent ] || exit 61
+case "$1" in
+  status)
+    state=$(cat "$FAKE_MANAGER_STATE")
+    if [ "$state" = active ]; then
+      printf 'mac-agent RUNNING pid 4321, uptime 0:00:10\n'
+    else
+      printf 'mac-agent STOPPED Not started\n'
+    fi
+    ;;
+  stop)
+    [ "${FAKE_STOP_FAIL:-0}" != 1 ] || exit 9
+    printf 'inactive\n' > "$FAKE_MANAGER_STATE"
+    ;;
+  start) printf 'active\n' > "$FAKE_MANAGER_STATE" ;;
+  *) exit 62 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+    else:
+        manager_bin = fake_bin / "systemctl"
+        manager_bin.write_text(
+            """#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$FAKE_MANAGER_CALLS"
+[ "${2:-}" = mac-agent.service ] || exit 61
+case "$1" in
+  show)
+    property=${3#--property=}
+    state=$(cat "$FAKE_MANAGER_STATE")
+    case "$property" in
+      LoadState) printf 'loaded\n' ;;
+      ActiveState) [ "$state" = active ] && printf 'active\n' || printf 'inactive\n' ;;
+      SubState) [ "$state" = active ] && printf 'running\n' || printf 'dead\n' ;;
+      MainPID) [ "$state" = active ] && printf '4321\n' || printf '0\n' ;;
+      *) exit 63 ;;
+    esac
+    ;;
+  stop)
+    [ "${FAKE_STOP_FAIL:-0}" != 1 ] || exit 9
+    printf 'inactive\n' > "$FAKE_MANAGER_STATE"
+    ;;
+  start) printf 'active\n' > "$FAKE_MANAGER_STATE" ;;
+  *) exit 62 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+    manager_bin.chmod(0o755)
+
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'set -euo pipefail\naction=restart\nsupervisor="$1"\n' + manager,
+            "outer-manager",
+            supervisor,
+        ],
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "MAC_DEPLOY_SERVICE_TS": "fixture",
+            "MAC_DEPLOY_FLEET_NAME": "mac",
+            "MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS": "1",
+            "MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS": "1",
+            "FAKE_MANAGER_STATE": str(state),
+            "FAKE_MANAGER_CALLS": str(calls),
+            "FAKE_STOP_FAIL": "1" if stop_fails else "0",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    ), calls
+
+
+def test_outer_linux_worker_manager_runtime_is_exact_and_fail_closed(tmp_path):
+    for supervisor in ("supervisord", "systemd"):
+        succeeded, calls_path = _run_outer_linux_worker_manager(
+            tmp_path / "success", supervisor
+        )
+        assert succeeded.returncode == 0, succeeded.stderr
+        calls = calls_path.read_text(encoding="utf-8").splitlines()
+        assert any(call.startswith("stop mac-agent") for call in calls)
+        assert any(call.startswith("start mac-agent") for call in calls)
+        assert all("mac-agent" in call for call in calls)
+
+        failed, failed_calls_path = _run_outer_linux_worker_manager(
+            tmp_path / "failure", supervisor, stop_fails=True
+        )
+        assert failed.returncode != 0
+        failed_calls = failed_calls_path.read_text(encoding="utf-8").splitlines()
+        assert any(call.startswith("stop mac-agent") for call in failed_calls)
+        assert not any(call.startswith("start mac-agent") for call in failed_calls)
+
+
+def test_failed_release_compensation_is_required_bounded_and_never_success():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    restore = deploy.split("restore_remote_agent_release_barrier() {", 1)[1].split(
+        "hub_dispatch_hold_cas_available() {", 1
+    )[0]
+    restore_only, fail_only = restore.split("fail_release_with_compensation() {", 1)
+    fail_function = "fail_release_with_compensation() {" + fail_only
+    service = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
+        "validate_router_topology_spec() {", 1
+    )[0]
+    rehold = deploy.split('elif phase == "rehold":', 1)[1].split(
+        'else:\n    raise RuntimeError("unsupported hub restart gate phase', 1
+    )[0]
+
+    assert "hub_agent_restart_gate rehold" in restore_only
+    assert restore_only.index("hub_agent_restart_gate rehold") < restore_only.index(
+        "ssh -o BatchMode=yes"
+    )
+    assert "ServerAliveInterval=10" in restore_only
+    assert "ServerAliveCountMax=3" in restore_only
+    assert "rehold_rc" in restore_only
+    assert "barrier_rc" in restore_only
+    assert "|| true" not in restore_only
+    assert "REQUIRED compensation failed" in fail_only
+    assert "cohort release aborted" in fail_only
+    assert service.count("fail_release_with_compensation") == 3
+    assert "could not restore the deployment-owned dispatch hold exactly" in rehold
+    assert "active work attached while release compensation ran" in rehold
+
+    for compensation_rc, expected in (
+        (0, "compensation result: restored"),
+        (9, "REQUIRED compensation failed (rc=9)"),
+    ):
+        harness = (
+            "set -euo pipefail\n"
+            "restore_remote_agent_release_barrier() { "
+            "printf 'restored\\n'; return \"${COMPENSATION_RC:?}\"; }\n"
+            + fail_function
+            + "\nif fail_release_with_compensation primary a b c d e f; then "
+            "exit 90; fi\n"
+        )
+        result = subprocess.run(
+            ["bash", "-c", harness],
+            env={**os.environ, "COMPENSATION_RC": str(compensation_rc)},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "primary" in result.stderr
+        assert expected in result.stderr
+        assert "cohort release aborted" in result.stderr
 
 
 def test_deploy_drains_worker_before_stopping_services():
@@ -31,7 +561,10 @@ def test_deploy_drains_worker_before_stopping_services():
     assert 'add_remote_env MAC_DEPLOY_DRAIN_MODE "${MAC_DEPLOY_DRAIN_MODE:-}"' in deploy
     assert "add_remote_env MAC_DEPLOY_DEFER_CLEAR_DRAIN 1" in deploy
     assert "add_remote_env MAC_DEPLOY_DEFER_AGENT_RESTART 1" in deploy
-    assert 'timeout = float(os.environ.get("MAC_DEPLOY_API_TIMEOUT_SECONDS") or "30")' in node
+    assert (
+        'timeout = float(os.environ.get("MAC_DEPLOY_API_TIMEOUT_SECONDS") or "30")'
+        in node
+    )
     assert 'health_status":"degraded' in node
 
     main = node.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
@@ -50,8 +583,13 @@ def test_deploy_freezes_every_fleet_route_before_any_lookup_or_mutation():
     assert new_hub_update < snapshot_start < query_start
     assert 'FLEET_REGISTRY_SOURCE="$FLEET_REGISTRY_CONFIG"' in snapshot
     assert 'FLEET_CONFIG_SOURCE="$FLEET_CONFIG"' in snapshot
-    assert 'cp -f "$FLEET_REGISTRY_SOURCE" "$TMPDIR_LOCAL/fleets-source.yaml"' in snapshot
-    assert 'cp -f "$FLEET_CONFIG_SOURCE" "$TMPDIR_LOCAL/fleet-defaults-source.yaml"' in snapshot
+    assert (
+        'cp -f "$FLEET_REGISTRY_SOURCE" "$TMPDIR_LOCAL/fleets-source.yaml"' in snapshot
+    )
+    assert (
+        'cp -f "$FLEET_CONFIG_SOURCE" "$TMPDIR_LOCAL/fleet-defaults-source.yaml"'
+        in snapshot
+    )
     chmod = snapshot.index(
         'chmod 0600 "$TMPDIR_LOCAL/fleets-source.yaml" '
         '"$TMPDIR_LOCAL/fleet-defaults-source.yaml"'
@@ -83,65 +621,89 @@ def test_deploy_freezes_every_fleet_route_before_any_lookup_or_mutation():
     assert "immutable invocation snapshot" in reconcile
 
 
-def test_main_prepares_entire_cohort_before_first_node_deploy():
+def test_deploy_refuses_controller_bytes_outside_the_frozen_source_commit():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    freeze = deploy.split("assert_frozen_deployment_source() {", 1)[1].split(
+        "\n}\n\nmake_archive() {", 1
+    )[0]
+    assert 'git -C "$ROOT" diff --quiet --no-ext-diff "$GIT_REV"' in freeze
+    assert "ls-files --others --exclude-standard" in freeze
+    assert 'rev-parse "$GIT_REV:$asset"' in freeze
+    assert 'hash-object -- "$ROOT/$asset"' in freeze
+    for asset in (
+        "deploy/deploy-mac-fleet.sh",
+        "deploy/fleet-node-install.sh",
+        "deploy/fleet-node-phase1-quiesce.sh",
+        "deploy/fleet-node-rollback-supervisor.py",
+        "deploy/lib/launchd-lifecycle.sh",
+        "scripts/deploy-hold-adoptions.py",
+    ):
+        assert asset in freeze
+
+    main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
+    assert main.index("assert_frozen_deployment_source") < main.index("make_archive")
+    assert main.index("assert_frozen_deployment_source") < main.index(
+        "start_ssh_control_master"
+    )
+
+
+def test_typed_cohort_orders_receipts_before_mutation_and_commit_before_finalize():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
-    phase_one = main.split(
-        'echo "==> fleet: phase 1/3 holding and draining all', 1
-    )[1].split('echo "==> fleet: phase 2/3 deploying and proving', 1)[0]
-    phase_two = main.split(
-        'echo "==> fleet: phase 2/3 deploying and proving', 1
-    )[1].split('echo "==> fleet: phase 3/3 atomically releasing', 1)[0]
-    phase_three = main.split(
-        'echo "==> fleet: phase 3/3 atomically releasing', 1
-    )[1]
+    typed = deploy.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
 
-    assert "prepare_remote_mac_agent_deployment" in phase_one
-    assert '"$agent" "$(deployment_id_for_agent "$agent")"' in phase_one
-    assert "deploy_host " not in phase_one
-    assert 'deploy_host "$spec"' in phase_two
-    assert "provision_bound_worker_credential" in phase_two
-    assert "prepare_remote_mac_agent_deployment" not in phase_two
-    assert "commit_fleet_release_epoch" in phase_three
-    assert '"$deployed_count" "$hub_agent" "$hold_adoption_plan"' in phase_three
-    assert '"$REQUIRE_RELEASE_ALL_SELECTED"' in phase_three
+    assert main.index("bind_live_cohort_routes") < main.index("run_typed_cohort")
+    order = [
+        "cohort_journal_mutate phase1-armed",
+        "prepare_remote_prerequisite_bundle",
+        "build_and_open_hub_epoch",
+        "cohort_journal_mutate quiesce-start",
+        "cohort_journal_mutate phase2-armed",
+        "cohort_journal_mutate phase2-start",
+        "cohort_journal_mutate prepared",
+        "prove_and_commit_hub_epoch",
+        "cohort_journal_mutate finalize-start",
+        "cohort_journal_mutate finalized-node",
+    ]
+    positions = [typed.index(item) for item in order]
+    assert positions == sorted(positions)
+    assert positions[-1] < typed.rindex('cohort_journal_mutate finalize "$COHORT')
+    assert "phase1-proved" not in main
+    assert "prepare-start" not in main
 
 
-def test_deployment_controller_owns_key_recovery_and_report_approval():
+def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
-    main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
-    recovery = deploy.split(
-        "reconcile_bound_worker_attestation_key() (", 1
-    )[1].split("\n)\n\nreconcile_report_repository_executor_approval", 1)[0]
-    approval = deploy.split(
-        "reconcile_report_repository_executor_approval() (", 1
-    )[1].split("\n)\n\nprovision_bound_worker_credential", 1)[0]
-    release = deploy.split("commit_fleet_release_epoch() {", 1)[1].split(
-        "\n}\n\nenforce_bound_worker_credentials", 1
+    candidate = deploy.split("install_and_prove_attestation_candidate() (", 1)[
+        1
+    ].split("\n)\n\nhub_receipt_identity_sha256", 1)[0]
+    approval = deploy.split("reconcile_report_repository_executor_approval() (", 1)[
+        1
+    ].split("\n)\n\nprovision_bound_worker_credential", 1)[0]
+    prove = deploy.split("prove_and_commit_hub_epoch() {", 1)[1].split(
+        "\n}\n\ncollect_finalize_evidence", 1
+    )[0]
+    recovery = deploy.split("recover_committed_cohort_node() {", 1)[1].split(
+        "\n}\n\ndiscard_unopened_epoch_pending_credentials", 1
     )[0]
 
     assert "--rotate-missing-attestation-key" not in node
     assert "--rotate-invalid-attestation-key" not in node
-    assert "mac.deployment_attestation probe" in recovery
-    assert "/attestation-key/verify" in recovery
-    assert "/attestation-key/recover" in recovery
-    assert "mac.deployment_attestation install" in recovery
-    assert "post-install attestation key proof did not verify" in recovery
-    cleanup = recovery.split("cleanup_attestation_relay() {", 1)[1].split(
-        "trap cleanup_attestation_relay EXIT", 1
-    )[0]
-    assert 'rm -f "$probe" "$second_probe" "$manifest"' in cleanup
-    assert '"rm -f $(shell_quote "$hub_manifest")"' in cleanup
-    assert recovery.index("trap cleanup_attestation_relay EXIT") < recovery.index(
-        '"cat $(shell_quote "$hub_manifest")"'
+    assert "mac.deployment_attestation install" in candidate
+    assert "mac.deployment_attestation prove-candidate" in candidate
+    assert candidate.index(" install ") < candidate.index("set_remote_mac_agent_service")
+    assert candidate.index("set_remote_mac_agent_service") < candidate.index(
+        " prove-candidate "
     )
-    assert recovery.index("/attestation-key/verify") < recovery.index(
-        "/attestation-key/recover"
+    assert prove.index("cohort_journal_mutate hub-prove-start") < prove.index(
+        "cohort_journal_mutate hub-proved"
     )
-    assert "set_remote_mac_agent_service" in recovery
-    assert recovery.rindex("/attestation-key/verify") > recovery.index(
-        "set_remote_mac_agent_service"
+    assert prove.index("cohort_journal_mutate hub-proved") < prove.index(
+        "cohort_journal_mutate commit-start"
+    )
+    assert prove.index("hub_epoch_client_request") < prove.index(
+        "cohort_journal_mutate commit"
     )
 
     assert "/report-repository-executor/approve" in approval
@@ -150,19 +712,17 @@ def test_deployment_controller_owns_key_recovery_and_report_approval():
     assert "agent_has_read_only_report_repository_executor" in approval
     assert "deployment report executor approval failed or drifted" in approval
 
-    key_pos = main.index("reconcile_bound_worker_attestation_key")
-    approve_pos = main.index("reconcile_report_repository_executor_approval")
-    credential_pos = main.index("provision_bound_worker_credential")
-    assert key_pos < approve_pos < credential_pos
-    assert '"require_report_executor": bool(item.get("require_report_executor"))' in release
-    assert "report_executor_ready(" in release
+    assert "report_executor_required" in (
+        ROOT / "deploy" / "fleet-cohort-transaction.py"
+    ).read_text(encoding="utf-8")
+    assert "reconcile_report_repository_executor_approval" in recovery
 
 
 def test_same_host_attestation_recovery_keeps_distinct_hub_and_worker_copies():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    recovery = deploy.split(
-        "reconcile_bound_worker_attestation_key() (", 1
-    )[1].split("\n)\n\nreconcile_report_repository_executor_approval", 1)[0]
+    recovery = deploy.split("reconcile_bound_worker_attestation_key() (", 1)[1].split(
+        "\n)\n\nreconcile_report_repository_executor_approval", 1
+    )[0]
 
     hub_path = next(
         line.strip() for line in recovery.splitlines() if "local hub_manifest=" in line
@@ -186,9 +746,7 @@ def test_same_host_worker_credential_failure_preserves_hub_retry_manifest():
     )[0]
     assignments = {
         name: next(
-            line.strip()
-            for line in rollout.splitlines()
-            if "local %s=" % name in line
+            line.strip() for line in rollout.splitlines() if "local %s=" % name in line
         )
         for name in (
             "hub_manifest",
@@ -219,7 +777,7 @@ def test_same_host_worker_credential_failure_preserves_hub_retry_manifest():
     )
     release = rollout.index("set_remote_mac_agent_service", success_cleanup)
     assert failure < preserve < failure_return < success_cleanup < release
-    assert "--manifest $(shell_quote \"$hub_manifest\")" in rollout
+    assert '--manifest $(shell_quote "$hub_manifest")' in rollout
 
 
 def test_report_executor_release_gate_applies_to_all_selected_supervisors():
@@ -276,79 +834,47 @@ def test_remote_restart_helper_keeps_then_releases_the_deployment_barrier():
     assert verify_pos < defer_pos < post_manifest_pos
 
 
-def test_each_remote_restart_establishes_a_fresh_generation_and_durable_hold():
+def test_typed_restarts_reuse_the_one_journal_bound_generation():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    service_control = deploy.split("set_remote_mac_agent_service() {", 1)[1].split(
-        "validate_router_topology_spec() {", 1
+    generation = deploy.split("worker_generation_for_agent() {", 1)[1].split(
+        "\n}", 1
     )[0]
-    pre_service_start = service_control.split('case "$supervisor" in', 1)[0]
-
-    # This code is inside the helper, so every restart invocation gets a new
-    # nonce instead of reusing the generation installed by the node transaction.
-    assert "import secrets" in pre_service_start
-    assert "secrets.token_hex(" in pre_service_start
-    assert "MAC_WORKER_DEPLOY_GENERATION" in pre_service_start
-    assert "MAC_WORKER_DEPLOY_BARRIER_FILE" in pre_service_start
-    assert "write_env_file" in pre_service_start
-    assert "barrier_tmp.write_text" in pre_service_start
-    assert "barrier_tmp.chmod(0o600)" in pre_service_start
-
-    # A durable hub hold is acquired before drain/lease proof and before any
-    # service manager can start the replacement worker.
-    hub_gate = deploy.split("hub_agent_restart_gate() {", 1)[1].split(
-        "remote_deployment_hold_state() {", 1
+    restart = deploy.split("restart_remote_mac_agent_under_epoch() {", 1)[1].split(
+        "\n}\n\nrun_typed_cohort", 1
     )[0]
-    prepare = hub_gate.split('if phase == "prepare":', 1)[1].split(
-        'elif phase == "verify":', 1
-    )[0]
-    hold_pos = prepare.index("cas_hold(")
-    drain_pos = prepare.index("post_drain()")
-    tasks_pos = prepare.index("active_work()")
-    assert hold_pos < drain_pos < tasks_pos
-    assert 'task.get("owner_agent_id") == agent_id' in hub_gate
-    assert 'for state in ("claimed", "running")' in hub_gate
-    assert 'task.get("lease_id")' in hub_gate
-    assert "active work did not drain before worker restart" in hub_gate
-    service_start = service_control.index('sudo supervisorctl start "$program"')
-    assert service_control.index("hub_agent_restart_gate prepare") < service_start
+    typed = deploy.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
 
-
-def test_deploy_restarts_under_hold_then_releases_only_after_activation():
-    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    keep_call = (
-        'set_remote_mac_agent_service "$agent" "$supervisor" '
-        '"$fleet_name" restart keep'
-    )
-    release_call = (
-        'set_remote_mac_agent_service "$agent" "$supervisor" '
-        '"$fleet_name" release'
-    )
-
+    assert 'deployment_id_for_agent "$1"' in generation
+    assert "secrets.token_hex" not in restart
+    assert 'generation="$(worker_generation_for_agent "$agent")"' in typed
+    assert '--generation "$generation"' in typed
     deploy_host = deploy.split("deploy_host() {", 1)[1].split(
-        "\n}\n\nhub_target()", 1
+        "\n}\n\nrestart_remote_mac_agent_under_epoch", 1
     )[0]
-    credential = deploy.split("provision_bound_worker_credential() (", 1)[1].split(
-        "\n)\n\nenforce_bound_worker_credentials()", 1
+    assert typed.index("cohort_journal_mutate phase2-start") < typed.index(
+        'deploy_host "$spec"', typed.index("phase2-start")
+    )
+    assert 'if [ "$node_action" = apply-phase2 ]' in deploy_host
+    assert "restart_remote_mac_agent_under_epoch" in deploy_host
+
+
+def test_typed_deploy_proves_pending_identity_before_atomic_hub_commit():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    typed = deploy.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
+    prove = deploy.split("prove_and_commit_hub_epoch() {", 1)[1].split(
+        "\n}\n\ncollect_finalize_evidence", 1
     )[0]
-    assert deploy_host.count(keep_call) == 1
-    assert keep_call in credential
-    assert release_call in credential
 
-    legacy_override = credential.split(
-        "MAC_DEPLOY_ALLOW_LEGACY_WORKER_TOKEN", 1
-    )[1].split("esac", 1)[0]
-    assert release_call in legacy_override
-    assert legacy_override.index(release_call) < legacy_override.index("return 0")
-
-    credentialed_restart = credential.index(keep_call)
-    activate = credential.index("worker_credentials activate", credentialed_restart)
-    activation_proof = credential.index("activate_ok=1", activate)
-    final_release = credential.rindex(release_call)
-    assert credentialed_restart < activate < activation_proof < final_release
-
-    # Tunnel setup must not restart a worker behind the generation/barrier
-    # protocol. It may invoke the helper again, but never supervisorctl directly.
-    assert "supervisorctl restart '$agent_prog'" not in deploy
+    install = typed.index("install_pending_worker_credential")
+    candidate = typed.index("install_and_prove_attestation_candidate", install)
+    prepared = typed.index("cohort_journal_mutate prepared", candidate)
+    commit = typed.index("prove_and_commit_hub_epoch", prepared)
+    finalize = typed.index("cohort_journal_mutate finalize-start", commit)
+    assert install < candidate < prepared < commit < finalize
+    commit_start = prove.index("cohort_journal_mutate commit-start")
+    commit_request = prove.index("hub_epoch_client_request", commit_start)
+    commit_receipt = prove.index("cohort_journal_mutate commit", commit_request)
+    assert commit_start < commit_request < commit_receipt
 
 
 def test_deferred_supervisord_worker_never_autostarts_during_transaction():
@@ -397,17 +923,15 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
     # or a durable post manifest can make the node appear deployable.
     assert "bootstrap_enabled_openshell || true" not in main
 
-    deploy_host = deploy.split("deploy_host() {", 1)[1].split(
-        "\n}\n\nhub_target()", 1
-    )[0]
+    deploy_host = deploy.split("deploy_host() {", 1)[1].split("\n}\n\nhub_target()", 1)[
+        0
+    ]
     assert "run_openshell_bootstrap" not in deploy_host
     assert (
-        'set_remote_mac_agent_service "$agent" "$supervisor" '
-        '"$fleet_name" stop'
+        'set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" stop'
     ) not in deploy_host
     restart = (
-        'set_remote_mac_agent_service "$agent" "$supervisor" '
-        '"$fleet_name" restart keep'
+        'set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart keep'
     )
     assert deploy_host.count(restart) == 1
     reconcile = deploy_host.index('reconcile_remote_deploy "$agent" "$target"')
@@ -418,13 +942,16 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
     text = script_text()
 
     assert 'DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"' in text
-    assert text.count("deferring mac-agent restart until post-manifest reconciliation") == 3
+    assert (
+        text.count("deferring mac-agent restart until post-manifest reconciliation")
+        == 3
+    )
     assert "An intentionally STOPPED supervisord program makes" in text
     assert "restart deferred until post-manifest reconciliation" in text
     assert "Keep executing the remote deployment" in text
     reconcile_pos = text.index('reconcile_remote_deploy "$agent" "$target"')
     external_restart_pos = text.index(
-        'restarting mac-agent after post-manifest reconciliation', reconcile_pos
+        "restarting mac-agent after post-manifest reconciliation", reconcile_pos
     )
     assert reconcile_pos < external_restart_pos
 
@@ -432,9 +959,23 @@ def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
         "validate_router_topology_spec() {", 1
     )[0]
     assert 'plist="$HOME/Library/LaunchAgents/${label}.plist"' in service_control
-    assert 'if ! launchctl print "$domain/$label"' in service_control
-    assert 'launchctl bootstrap "$domain" "$plist"' in service_control
-    assert 'launchctl kickstart "$domain/$label"' in service_control
+    assert "MAC_DEPLOY_SERVICE_TS=" in service_control
+    assert (
+        'lifecycle="$HOME/.mac/logs/launchd-lifecycle-${MAC_DEPLOY_SERVICE_TS:?}.sh"'
+        in service_control
+    )
+    assert '. "$lifecycle"' in service_control
+    stop = service_control.index(
+        'mac_launchd_stop_job_if_present "$domain/$label" "$label" user'
+    )
+    bootstrap = service_control.index("mac_launchd_bootstrap_job", stop)
+    assert (
+        '"$domain" "$plist" "$domain/$label" "$label" user'
+        in service_control[bootstrap:]
+    )
+    assert stop < bootstrap
+    assert "launchctl " not in service_control
+    assert "$(( SECONDS" not in service_control
 
 
 def test_deployment_preserves_operator_holds_and_clears_only_its_own():
@@ -445,7 +986,9 @@ def test_deployment_preserves_operator_holds_and_clears_only_its_own():
 
     assert "mac.deploy_dispatch_hold.v1" in deploy
     assert "prior_hold_reason" in hub_gate
-    assert 'owns_hold = prior_owned and row.get("dispatch_hold_reason") in {' in hub_gate
+    assert (
+        'owns_hold = prior_owned and row.get("dispatch_hold_reason") in {' in hub_gate
+    )
     release = hub_gate.split('elif phase in {"arm", "release"}:', 1)[1].split(
         'elif phase == "rehold":', 1
     )[0]
@@ -459,27 +1002,21 @@ def test_deployment_preserves_operator_holds_and_clears_only_its_own():
     assert 'set_remote_mac_startup_hold_policy "$agent" 0' in deploy
 
 
-def test_outer_hold_cannot_be_cleared_by_a_failed_transaction_rollback():
+def test_failed_typed_transaction_aborts_exact_epoch_before_node_rollback():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
-    prepare = deploy.split("prepare_remote_mac_agent_deployment() {", 1)[1].split(
-        "set_remote_mac_agent_service() {", 1
+    recovery = deploy.split("recover_active_cohort_transaction_v2() {", 1)[1].split(
+        "\n}\n\nrecover_incomplete_cohort_transaction_before_deploy", 1
     )[0]
-    main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
 
-    assert 'set_remote_mac_startup_hold_policy "$agent" 0' in prepare
-    assert "MAC_STARTUP_CLEAR_HOLD" in deploy
-    # The fail-closed startup policy lands before personality/source/runtime
-    # mutation, so the node backup and rollback both preserve it.
-    barrier = main.index("prepare_remote_mac_agent_deployment")
-    deploy_call = main.index('deploy_host "$spec"', barrier)
-    assert barrier < deploy_call
-    assert 'values["MAC_STARTUP_CLEAR_HOLD"] = "0"' in (
-        ROOT / "src" / "mac" / "deploy_env.py"
-    ).read_text(encoding="utf-8")
-    backup = node.index("backup_existing_artifacts")
-    rollback = node.index("write_rollback_script", backup)
-    assert backup < rollback
+    abort_hub = recovery.index("abort_hub_epoch_exact")
+    journal_hub_abort = recovery.index("cohort_journal_mutate hub-aborted", abort_hub)
+    rollback_nodes = recovery.index("recover_cohort_node", journal_hub_abort)
+    journal_abort = recovery.index("cohort_journal_mutate abort", rollback_nodes)
+    assert abort_hub < journal_hub_abort < rollback_nodes < journal_abort
+    assert "commit_hub_epoch_exact" in recovery
+    assert recovery.index("commit_hub_epoch_exact") < recovery.index(
+        "cohort_journal_mutate commit"
+    )
 
 
 def test_brand_new_agent_registers_draining_before_hub_hold_acquisition():
@@ -493,10 +1030,15 @@ def test_brand_new_agent_registers_draining_before_hub_hold_acquisition():
 
     assert "agent_existed" in deploy
     assert 'phase == "prepare-new"' in hub_gate
-    assert "new worker never atomically registered under its local deployment barrier" in hub_gate
+    assert (
+        "new worker never atomically registered under its local deployment barrier"
+        in hub_gate
+    )
     barrier_write = service_control.index("barrier_tmp.write_text")
-    service_start = service_control.index('sudo supervisorctl start "$program"')
-    prepare_new = service_control.index("hub_agent_restart_gate prepare-new", service_start)
+    service_start = service_control.index('run_fleet_supervisorctl start "$program"')
+    prepare_new = service_control.index(
+        "hub_agent_restart_gate prepare-new", service_start
+    )
     strict_verify = service_control.index("hub_agent_restart_gate verify", prepare_new)
     assert barrier_write < service_start < prepare_new < strict_verify
 
@@ -522,7 +1064,7 @@ def test_tombstoned_configured_agent_reenters_through_prepare_new_gate():
     new_agent = service_control.index(
         'new_agent="$(printf \'%s\' "$gate_result"',
     )
-    service_start = service_control.index('sudo supervisorctl start "$program"')
+    service_start = service_control.index('run_fleet_supervisorctl start "$program"')
     prepare_new = service_control.index(
         "hub_agent_restart_gate prepare-new", service_start
     )
@@ -574,9 +1116,7 @@ def test_deployment_controller_lock_assertion_executes_and_renews(tmp_path):
     function = deploy.split("assert_remote_deployment_lock() {", 1)[1].split(
         "release_remote_deployment_lock() {", 1
     )[0]
-    embedded_python = function.split("python3 - <<'PY'\n", 1)[1].split(
-        '\nPY"', 1
-    )[0]
+    embedded_python = function.split("python3 - <<'PY'\n", 1)[1].split('\nPY"', 1)[0]
     lock_dir = tmp_path / ".mac" / "deploy-controller.lock"
     lock_dir.mkdir(parents=True)
     owner = lock_dir / "owner.json"
@@ -610,9 +1150,7 @@ def test_node_install_lock_renewal_executes_and_fails_closed_on_fence_loss(tmp_p
     function = node.split("deployment_lock_assert_and_renew() {", 1)[1].split(
         "\n}\n\ndeployment_lock_assert_and_renew", 1
     )[0]
-    embedded_python = function.split("python3 - <<'PY'\n", 1)[1].split(
-        "\nPY", 1
-    )[0]
+    embedded_python = function.split("python3 - <<'PY'\n", 1)[1].split("\nPY", 1)[0]
     lock_dir = tmp_path / ".mac" / "deploy-controller.lock"
     lock_dir.mkdir(parents=True)
     owner = lock_dir / "owner.json"
@@ -656,10 +1194,21 @@ def test_node_install_lock_renewal_executes_and_fails_closed_on_fence_loss(tmp_p
     )[0]
     assert 'sleep "${MAC_DEPLOY_LOCK_RENEW_SECONDS:-20}"' in renewer
     assert 'kill -TERM "$controller_pid"' in renewer
-    assert "trap stop_deployment_lock_renewer EXIT" in node
+    exit_handler = node.split("deployment_exit_handler() {", 1)[1].split(
+        "\n}\ntrap", 1
+    )[0]
+    assert "if deployment_lock_assert_and_renew; then" in exit_handler
+    assert '"${ROLLBACK_SCRIPT}" || rollback_rc=$?' in exit_handler
+    assert '[ -x "${ROLLBACK_SCRIPT:-}" ]' in exit_handler
+    assert exit_handler.index('"${ROLLBACK_SCRIPT}" || rollback_rc=$?') < (
+        exit_handler.index("stop_deployment_lock_renewer")
+    )
+    assert "trap 'deployment_exit_handler \"$?\"' EXIT" in node
 
 
-def _wait_for_path(path: Path, process: subprocess.Popen, timeout: float = 10.0) -> None:
+def _wait_for_path(
+    path: Path, process: subprocess.Popen, timeout: float = 10.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if path.exists():
@@ -687,7 +1236,7 @@ def test_node_renewer_cannot_aba_over_a_replaced_lock_directory(tmp_path):
     )
     ready = tmp_path / "holder-ready"
     replace = tmp_path / "replace-now"
-    holder_code = r'''
+    holder_code = r"""
 import fcntl
 import json
 import os
@@ -712,7 +1261,7 @@ lock.mkdir(mode=0o700)
 )
 fcntl.flock(guard, fcntl.LOCK_UN)
 os.close(guard)
-'''
+"""
     holder = subprocess.Popen(
         [sys.executable, "-c", holder_code, str(tmp_path), str(ready), str(replace)],
         stdout=subprocess.PIPE,
@@ -748,9 +1297,7 @@ def test_stale_takeover_rechecks_freshness_under_the_stable_guard(tmp_path):
     function = deploy.split("acquire_remote_deployment_lock() {", 1)[1].split(
         "assert_remote_deployment_lock() {", 1
     )[0]
-    acquire_python = function.split("python3 - <<'PY'\n", 1)[1].split(
-        '\nPY"', 1
-    )[0]
+    acquire_python = function.split("python3 - <<'PY'\n", 1)[1].split('\nPY"', 1)[0]
     mac_home = tmp_path / ".mac"
     lock_dir = mac_home / "deploy-controller.lock"
     lock_dir.mkdir(parents=True)
@@ -761,7 +1308,7 @@ def test_stale_takeover_rechecks_freshness_under_the_stable_guard(tmp_path):
     )
     ready = tmp_path / "refresh-ready"
     refresh = tmp_path / "refresh-now"
-    holder_code = r'''
+    holder_code = r"""
 import fcntl
 import json
 import os
@@ -782,7 +1329,7 @@ payload["renewed_at_epoch"] = time.time()
 owner.write_text(json.dumps(payload), encoding="utf-8")
 fcntl.flock(guard, fcntl.LOCK_UN)
 os.close(guard)
-'''
+"""
     holder = subprocess.Popen(
         [sys.executable, "-c", holder_code, str(tmp_path), str(ready), str(refresh)],
         stdout=subprocess.PIPE,
@@ -819,12 +1366,20 @@ os.close(guard)
 
 def test_secret_stream_waits_for_same_session_exact_fence(tmp_path):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    shell_quote = "shell_quote() {" + deploy.split("shell_quote() {", 1)[1].split(
-        "\n}\n\n# Resolve every operator-side", 1
-    )[0] + "\n}"
-    fence_helpers = "remote_deployment_fenced_exec() {" + deploy.split(
-        "remote_deployment_fenced_exec() {", 1
-    )[1].split("\n}\n\nfenced_remote_upload() {", 1)[0] + "\n}"
+    shell_quote = (
+        "shell_quote() {"
+        + deploy.split("shell_quote() {", 1)[1].split(
+            "\n}\n\n# Resolve every operator-side", 1
+        )[0]
+        + "\n}"
+    )
+    fence_helpers = (
+        "remote_deployment_fenced_exec() {"
+        + deploy.split("remote_deployment_fenced_exec() {", 1)[1].split(
+            "\n}\n\nfenced_remote_upload() {", 1
+        )[0]
+        + "\n}"
+    )
     mac_home = tmp_path / ".mac"
     lock = mac_home / "deploy-controller.lock"
     lock.mkdir(parents=True)
@@ -834,13 +1389,13 @@ def test_secret_stream_waits_for_same_session_exact_fence(tmp_path):
     source = tmp_path / "secret.env"
     output = tmp_path / "received.env"
     source.write_text("TOKEN=not-a-real-secret\n", encoding="utf-8")
-    snippet = f'''set -euo pipefail
+    snippet = f"""set -euo pipefail
 PYTHON_BIN={sys.executable!s}
 {shell_quote}
 {fence_helpers}
 remote_cmd="$(remote_deployment_fenced_exec expected-controller 1 sh -c 'cat > {output}')"
 stream_file_after_remote_fence {source} MAC_DEPLOY_FENCE_READY:expected-controller sh -c "$remote_cmd"
-'''
+"""
     result = subprocess.run(
         ["bash", "-c", snippet],
         env={**os.environ, "HOME": str(tmp_path)},
@@ -852,13 +1407,13 @@ stream_file_after_remote_fence {source} MAC_DEPLOY_FENCE_READY:expected-controll
     assert output.read_bytes() == source.read_bytes()
 
     missing = tmp_path / "must-not-be-opened"
-    wrong = f'''set -euo pipefail
+    wrong = f"""set -euo pipefail
 PYTHON_BIN={sys.executable!s}
 {shell_quote}
 {fence_helpers}
 remote_cmd="$(remote_deployment_fenced_exec wrong-controller 1 sh -c 'cat >/dev/null')"
 stream_file_after_remote_fence {missing} MAC_DEPLOY_FENCE_READY:wrong-controller sh -c "$remote_cmd"
-'''
+"""
     rejected = subprocess.run(
         ["bash", "-c", wrong],
         env={**os.environ, "HOME": str(tmp_path)},
@@ -868,6 +1423,70 @@ stream_file_after_remote_fence {missing} MAC_DEPLOY_FENCE_READY:wrong-controller
     )
     assert rejected.returncode != 0
     assert "did not emit the exact READY receipt" in rejected.stderr
+    assert "No such file" not in rejected.stderr
+
+
+def test_fenced_upload_uses_random_exclusive_atomic_materialization():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    upload = deploy.split("fenced_remote_upload() {", 1)[1].split(
+        "\n}\n\nenv_value_or_empty() {", 1
+    )[0]
+
+    assert ".upload.$$" not in upload
+    assert "tempfile.mkstemp" in upload
+    assert "os.fchmod(fd,0o600)" in upload
+    assert "os.fsync(output.fileno())" in upload
+    assert "os.replace(tmp,target)" in upload
+    assert "os.fsync(directory_fd)" in upload
+    assert 'python3 -c "$upload_code" "$destination"' in upload
+
+
+def test_fenced_stream_deadline_covers_ready_upload_output_and_child_reap(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    stream = (
+        "stream_file_after_remote_fence() {"
+        + deploy.split("stream_file_after_remote_fence() {", 1)[1].split(
+            "\n}\n\nfenced_remote_upload() {", 1
+        )[0]
+        + "\n}"
+    )
+    source = tmp_path / "payload"
+    source.write_text("not-a-secret\n", encoding="utf-8")
+    snippet = f"""set -euo pipefail
+PYTHON_BIN={sys.executable!s}
+MAC_DEPLOY_REMOTE_PHASE_TIMEOUT_SECONDS=0.2
+{stream}
+stream_file_after_remote_fence {source} READY sh -c 'printf "READY\\n"; sleep 10'
+"""
+    started = time.monotonic()
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    elapsed = time.monotonic() - started
+    assert result.returncode != 0
+    assert "monotonic deadline" in result.stderr
+    assert elapsed < 3
+
+    missing = tmp_path / "must-not-open-before-complete-ready"
+    partial = f"""set -euo pipefail
+PYTHON_BIN={sys.executable!s}
+MAC_DEPLOY_REMOTE_PHASE_TIMEOUT_SECONDS=0.2
+{stream}
+stream_file_after_remote_fence {missing} READY sh -c 'printf REA; sleep 10'
+"""
+    rejected = subprocess.run(
+        ["bash", "-c", partial],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert rejected.returncode != 0
+    assert "monotonic deadline" in rejected.stderr
     assert "No such file" not in rejected.stderr
 
 
@@ -887,8 +1506,29 @@ def test_all_deploy_credentials_use_the_fenced_stdin_secret_channel():
         assert f"add_remote_env {name} " not in deploy
         assert f"add_remote_secret_env {name} " in deploy
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
-    assert 'base64.b64decode(sys.argv[2])' not in node
-    assert 'base64.b64decode(sys.stdin.buffer.read())' in node
+    assert "base64.b64decode(sys.argv[2])" not in node
+    deploy_host = deploy.split("deploy_host() {", 1)[1].split("hub_target() {", 1)[0]
+    assert "mac-node-install-${agent}-${TS}.env" not in deploy_host
+    assert "_mac_secret_file" not in deploy_host
+    assert ". /dev/stdin" in deploy_host
+    assert 'local_secret_payload="$TMPDIR_LOCAL/node-secrets-${agent}.env"' in deploy_host
+    assert "stream_file_after_remote_fence" in deploy_host
+    assert "remote_secret_env" not in deploy_host.split("remote_cmd=", 1)[1].split(
+        "local_secret_payload=", 1
+    )[0]
+
+    direct = subprocess.run(
+        [
+            "sh",
+            "-c",
+            'set -eu; set -a; . /dev/stdin; set +a; test "$TOKEN" = expected',
+        ],
+        input="TOKEN=expected\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert direct.returncode == 0, direct.stderr
 
 
 def test_control_master_and_fenced_streams_are_required_before_phase_one():
@@ -897,8 +1537,9 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
     masters = main.index('start_ssh_control_master "$hub_agent"')
     required = main.index("SSH_CONTROL_REQUIRED=1", masters)
     remote_secret_read = main.index('hub_token="$(read_hub_token)"', required)
-    phase_one = main.index("phase 1/3 holding", required)
-    assert masters < required < remote_secret_read < phase_one
+    route_binding = main.index("bind_live_cohort_routes", required)
+    typed = main.index("run_typed_cohort", route_binding)
+    assert masters < required < remote_secret_read < route_binding < typed
     assert "-o ControlMaster=yes -o ControlPersist=no" in deploy
     pinned = deploy.split("pinned_fleet_route_args() {", 1)[1].split(
         "\n}\n\nssh_target_args() {", 1
@@ -907,9 +1548,9 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
     assert pinned.index("pinned SSH control socket is unavailable") < pinned.index(
         "printf '%s\\0' -S \"$control_path\""
     )
-    assert 'ProxyCommand=/usr/bin/false' in pinned
+    assert "ProxyCommand=/usr/bin/false" in pinned
     assert "printf '%s\\0' -S \"$control_path\" -O proxy" not in pinned
-    assert 'printf \'%s\\0\' -F /dev/null' in pinned
+    assert "printf '%s\\0' -F /dev/null" in pinned
     assert "return 1" not in pinned
     assert "scp -O" not in deploy
     assert "MAC_DEPLOY_FENCE_READY:" in deploy
@@ -922,9 +1563,13 @@ def test_control_master_and_fenced_streams_are_required_before_phase_one():
 
 def test_pinned_route_executes_a_normal_mux_session_and_has_no_network_fallback():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    pinned = "pinned_fleet_route_args() {" + deploy.split(
-        "pinned_fleet_route_args() {", 1
-    )[1].split("\n}\n\nssh_target_args() {", 1)[0] + "\n}"
+    pinned = (
+        "pinned_fleet_route_args() {"
+        + deploy.split("pinned_fleet_route_args() {", 1)[1].split(
+            "\n}\n\nssh_target_args() {", 1
+        )[0]
+        + "\n}"
+    )
     snippet = (
         "set -euo pipefail\n"
         "SSH_CONTROL_REQUIRED=1\n"
@@ -958,12 +1603,20 @@ def test_pinned_route_executes_a_normal_mux_session_and_has_no_network_fallback(
 
 def test_required_openshell_image_is_rejected_before_any_remote_fleet_action():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    normalize = "normalize_boolean_token() {" + deploy.split(
-        "normalize_boolean_token() {", 1
-    )[1].split("\n}\n\nresolve_python_bin() {", 1)[0] + "\n}"
-    preflight = "validate_openshell_runtime_image_spec() {" + deploy.split(
-        "validate_openshell_runtime_image_spec() {", 1
-    )[1].split("\n}\n\ndeploy_host() {", 1)[0] + "\n}"
+    normalize = (
+        "normalize_boolean_token() {"
+        + deploy.split("normalize_boolean_token() {", 1)[1].split(
+            "\n}\n\nresolve_python_bin() {", 1
+        )[0]
+        + "\n}"
+    )
+    preflight = (
+        "validate_openshell_runtime_image_spec() {"
+        + deploy.split("validate_openshell_runtime_image_spec() {", 1)[1].split(
+            "\n}\n\ndeploy_host() {", 1
+        )[0]
+        + "\n}"
+    )
     fields = [""] * 55
     fields[0] = "worker1"
     fields[53] = "true"
@@ -996,8 +1649,8 @@ def test_required_openshell_image_is_rejected_before_any_remote_fleet_action():
     main = deploy.split("main() {", 1)[1]
     local_preflight = main.index('validate_openshell_runtime_image_spec "$spec"')
     first_remote = main.index('start_ssh_control_master "$hub_agent"')
-    first_hold = main.index("phase 1/3 holding")
-    assert local_preflight < first_remote < first_hold
+    first_epoch = main.index("run_typed_cohort")
+    assert local_preflight < first_remote < first_epoch
 
 
 def test_reverse_tunnel_manager_mutation_holds_the_exact_hub_fence():
@@ -1011,23 +1664,31 @@ def test_reverse_tunnel_manager_mutation_holds_the_exact_hub_fence():
     )
     assertion = tunnel.index("assert_remote_deployment_lock", deployment_id)
     temporary_acquire = tunnel.index("acquire_remote_deployment_lock", assertion)
+    lifecycle_upload = tunnel.index("fenced_remote_upload", temporary_acquire)
     fence = tunnel.index(
         'remote_deployment_fenced_exec "$hub_deployment_id" 0 bash -s',
-        temporary_acquire,
+        lifecycle_upload,
     )
     hub_script = tunnel.index("<<'HUBSCRIPT'", fence)
+    lifecycle_cleanup = tunnel.index("cleanup_fence=", hub_script)
     temporary_release = tunnel.index("release_remote_deployment_lock", hub_script)
-    assert deployment_id < assertion < temporary_acquire < fence < hub_script
-    assert hub_script < temporary_release
-    assert 'TUNNEL_FLEET_NAME=$(shell_quote "$fleet_name_local") $fence_exec' in tunnel
+    assert deployment_id < assertion < temporary_acquire < lifecycle_upload
+    assert lifecycle_upload < fence < hub_script < lifecycle_cleanup < temporary_release
+    assert 'TUNNEL_FLEET_NAME=$(shell_quote "$fleet_name_local")' in tunnel
+    assert (
+        'TUNNEL_LAUNCHD_LIFECYCLE=$(shell_quote "$remote_launchd_lifecycle")' in tunnel
+    )
 
 
 def test_reverse_tunnel_definitions_adopt_only_exact_legacy_mac_shape(tmp_path):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     hub_script = deploy.split("<<'HUBSCRIPT'\n", 1)[1].split("\nHUBSCRIPT", 1)[0]
-    helpers = "managed_marker=" + hub_script.split("managed_marker=", 1)[1].split(
-        'if [ "$(uname -s)" = "Darwin" ]; then', 1
-    )[0]
+    helpers = (
+        "managed_marker="
+        + hub_script.split("managed_marker=", 1)[1].split(
+            'if [ "$(uname -s)" = "Darwin" ]; then', 1
+        )[0]
+    )
     user = subprocess.check_output(["whoami"], text=True).strip()
     legacy = tmp_path / "legacy.conf"
     forwards = (
@@ -1059,14 +1720,14 @@ def test_reverse_tunnel_definitions_adopt_only_exact_legacy_mac_shape(tmp_path):
         ),
         encoding="utf-8",
     )
-    setup = f'''set -euo pipefail
+    setup = f"""set -euo pipefail
 fleet_name=mac
 worker_agent=worker1
 managed_marker=mac.managed-reverse-tunnel.v1:mac:worker1
 definition_tmp=""
-sudo() {{ "$@"; }}
+sudo() {{ [ "${{1:-}}" != -n ] || shift; "$@"; }}
 {helpers}
-'''
+"""
     ssh_bin = subprocess.check_output(
         ["bash", "-c", "command -v ssh"], text=True
     ).strip()
@@ -1075,13 +1736,20 @@ sudo() {{ "$@"; }}
         args = [
             binary,
             "-N",
-            "-o", "BatchMode=yes",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "ServerAliveInterval=30",
-            "-o", "ServerAliveCountMax=3",
-            "-o", "ExitOnForwardFailure=yes",
-            "-i", f"{tmp_path}/.ssh/mac_tunnel_id",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-i",
+            f"{tmp_path}/.ssh/mac_tunnel_id",
         ]
         for forward in forwards:
             args.extend(("-R", forward))
@@ -1128,7 +1796,11 @@ sudo() {{ "$@"; }}
         encoding="utf-8",
     )
     for path, marker, kind in (
-        (launchd_legacy, "<!-- mac.managed-reverse-tunnel.v1:mac:worker1 -->", "launchd"),
+        (
+            launchd_legacy,
+            "<!-- mac.managed-reverse-tunnel.v1:mac:worker1 -->",
+            "launchd",
+        ),
         (systemd_legacy, "# mac.managed-reverse-tunnel.v1:mac:worker1", "systemd"),
         (legacy, "; mac.managed-reverse-tunnel.v1:mac:worker1", "supervisor"),
     ):
@@ -1150,9 +1822,21 @@ sudo() {{ "$@"; }}
         assert adopted.returncode == 0, f"{kind}: {adopted.stderr}"
 
     for kind, marker, original in (
-        ("launchd", "<!-- mac.managed-reverse-tunnel.v1:mac:worker1 -->", b"not a plist\n"),
-        ("systemd", "# mac.managed-reverse-tunnel.v1:mac:worker1", b"[Service]\nExecStart=/operator\n"),
-        ("supervisor", "; mac.managed-reverse-tunnel.v1:mac:worker1", b"[program:mac-tunnel-worker1]\ncommand=/operator\n"),
+        (
+            "launchd",
+            "<!-- mac.managed-reverse-tunnel.v1:mac:worker1 -->",
+            b"not a plist\n",
+        ),
+        (
+            "systemd",
+            "# mac.managed-reverse-tunnel.v1:mac:worker1",
+            b"[Service]\nExecStart=/operator\n",
+        ),
+        (
+            "supervisor",
+            "; mac.managed-reverse-tunnel.v1:mac:worker1",
+            b"[program:mac-tunnel-worker1]\ncommand=/operator\n",
+        ),
     ):
         collision = tmp_path / f"collision-{kind}"
         collision.write_bytes(original)
@@ -1180,55 +1864,189 @@ sudo() {{ "$@"; }}
 
 def test_reverse_tunnel_manager_identity_checks_precede_atomic_replacement():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    controller = deploy.split("install_reverse_tunnel_on_hub() {", 1)[1].split(
+        "uses_direct_mesh_hub() {", 1
+    )[0]
     hub_script = deploy.split("<<'HUBSCRIPT'\n", 1)[1].split("\nHUBSCRIPT", 1)[0]
     assert "mac.managed-reverse-tunnel.v1:" in hub_script
-    assert 'sudo test -L "$path"' in hub_script
+    assert 'run_root_noninteractive test -L "$path"' in hub_script
+    upload = controller.index("fenced_remote_upload")
+    assert '"$hub_agent" "$hub_deployment_id"' in controller[upload:]
+    assert "TUNNEL_LAUNCHD_LIFECYCLE=" in controller
+    assert "could not remove temporary launchd lifecycle contract" in controller
 
     launchd = hub_script.split('if [ "$(uname -s)" = "Darwin" ]; then', 1)[1].split(
         "\nfi\nif command -v systemctl", 1
     )[0]
-    assert launchd.index('assert_managed_definition_or_absent "$plist"') < launchd.index(
-        'stage_managed_definition "$plist"'
-    )
+    source = launchd.index('. "$launchd_lifecycle"')
+    preflight = launchd.index('assert_managed_definition_or_absent "$plist"')
+    begin = launchd.index("mac_launchd_transaction_begin")
+    track = launchd.index("mac_launchd_transaction_track_temporary", begin)
+    mark = launchd.index("mac_launchd_transaction_mark_mutating", track)
+    stop = launchd.index("mac_launchd_stop_job_if_present", mark)
+    recheck = launchd.index('assert_managed_definition_or_absent "$plist"', stop)
+    replace = launchd.index("mac_launchd_transaction_replace", recheck)
+    bootstrap = launchd.index("mac_launchd_bootstrap_job", replace)
+    identity = launchd.index("launchd_state_has_managed_identity managed", bootstrap)
+    commit = launchd.index("mac_launchd_transaction_commit", identity)
+    assert source < preflight < begin < track < mark < stop
+    assert stop < recheck < replace < bootstrap < identity < commit
     assert 'one("\\tpath = ") != plist' in launchd
     assert 'lines[0] != f"system/{label} = {{"' in launchd
-    assert 'args[:-1] != expected' in launchd
-    assert 'MAC_MANAGED_REVERSE_TUNNEL => {marker}' in launchd
+    assert "args[:-1] != expected" in launchd
+    assert "MAC_MANAGED_REVERSE_TUNNEL => {marker}" in launchd
     assert "launchd_loaded_legacy=1" in launchd
-    assert 'sudo launchctl bootout system "$plist"' in launchd
-    assert 'sudo launchctl bootstrap system "$plist"' in launchd
-    assert 'sudo launchctl enable "system/${label}"' in launchd
-    assert 'sudo launchctl kickstart -k "system/${label}"' in launchd
+    assert "mac_launchd_run_control_bounded system" in launchd
+    assert 'system "$plist" "system/${label}" "$label" system' in launchd
+    assert '"$definition_tmp" "$plist" 0644 0 0' in launchd
+    assert "launchctl " not in launchd
+    assert "$SECONDS" not in launchd
+    assert "deadline=$(( SECONDS" not in launchd
+    assert launchd.count('*) exit "$launchd_probe_rc"') == 2
 
-    systemd = hub_script.split(
-        "if command -v systemctl >/dev/null 2>&1", 1
-    )[1].split("\nfi\nconf_dir=", 1)[0]
-    fragment_preflight = systemd.index('systemctl show -p FragmentPath --value')
-    stage = systemd.index('stage_managed_definition "$unit"')
-    restart = systemd.index('systemctl restart "$service"')
-    assert fragment_preflight < stage < restart
-    assert systemd.count('systemctl show -p LoadState --value') >= 2
-    assert systemd.count('systemctl show -p FragmentPath --value') >= 3
-    assert systemd.count('systemctl show -p DropInPaths --value') >= 3
-    assert 'systemctl show -p Restart --value' in systemd
+    systemd = hub_script.split("if command -v systemctl >/dev/null 2>&1", 1)[1].split(
+        "\nfi\nconf_dir=", 1
+    )[0]
+    assert 'linux_root_bounded systemctl "$@"' in systemd
+    assert "sudo systemctl" not in systemd
+    assert 'systemctl "$@" ||' not in systemd
+    capture = systemd.index('SYSTEMD_PRIOR_LOAD_STATE="$SYSTEMD_LOAD_STATE"')
+    begin = systemd.index('linux_service_tx_begin "$unit"', capture)
+    mark = systemd.index("linux_service_tx_mark_mutating", begin)
+    stop = systemd.index("systemd_stop_current", mark)
+    recheck = systemd.index('assert_managed_definition_or_absent "$unit"', stop)
+    snapshot = systemd.index("linux_service_tx_verify_snapshot_current", recheck)
+    replace = systemd.index(
+        'linux_service_tx_replace "$definition_tmp" "$unit"', snapshot
+    )
+    reload = systemd.index("systemd_control daemon-reload", replace)
+    enable = systemd.index("systemd_control enable", reload)
+    identity = systemd.index("systemd_validate_identity", enable)
+    start = systemd.index("systemd_control start", identity)
+    proof = systemd.index("systemd_prove_running_or_retrying", start)
+    commit = systemd.index("linux_service_tx_commit", proof)
+    assert capture < begin < mark < stop < recheck < snapshot < replace
+    assert replace < reload < enable < identity < start < proof < commit
+    rollback = systemd.split("systemd_restore_previous_generation() {", 1)[1].split(
+        "\n  }", 1
+    )[0]
+    assert "systemd_stop_current" in rollback
+    assert "linux_service_tx_restore_artifact" in rollback
+    assert 'case "$SYSTEMD_PRIOR_ENABLEMENT"' in rollback
+    assert "systemd_prove_running_or_retrying" in rollback
+    assert "loaded:activating:auto-restart:[0-9]*" in systemd
 
     supervisor = hub_script.split("\nfi\nconf_dir=", 1)[1]
-    assert supervisor.index('preexisting_status="$(supervisor_status_output)"') < supervisor.index(
-        'stage_managed_definition "$conf"'
-    )
+    assert 'linux_root_bounded supervisorctl "$@"' in supervisor
+    assert "sudo supervisorctl" not in supervisor
+    assert 'supervisorctl "$@" >/dev/null 2>&1 ||' not in supervisor
     assert supervisor.count('assert_no_duplicate_supervisor_program "$conf"') >= 2
     assert "refusing same-name supervisor program from another include" in supervisor
-    final_status = supervisor.split('status="$(supervisor_status_output)"', 1)[1]
-    assert "*RUNNING*|*STARTING*|*BACKOFF*)" in final_status
-    assert "*STOPPED*)" not in final_status
+    capture = supervisor.index('SUPERVISOR_PRIOR_STATE="$SUPERVISOR_STATE"')
+    begin = supervisor.index('linux_service_tx_begin "$conf"', capture)
+    mark = supervisor.index("linux_service_tx_mark_mutating", begin)
+    quiesce = supervisor.index("supervisor_quiesce_current", mark)
+    recheck = supervisor.index('assert_managed_definition_or_absent "$conf"', quiesce)
+    snapshot = supervisor.index("linux_service_tx_verify_snapshot_current", recheck)
+    replace = supervisor.index(
+        'linux_service_tx_replace "$definition_tmp" "$conf"', snapshot
+    )
+    reread = supervisor.index("supervisor_control reread", replace)
+    update = supervisor.index("supervisor_control update", reread)
+    proof = supervisor.index("supervisor_prove_running_or_retrying", update)
+    commit = supervisor.index("linux_service_tx_commit", proof)
+    assert capture < begin < mark < quiesce < recheck < snapshot < replace
+    assert replace < reread < update < proof < commit
+    rollback = supervisor.split("supervisor_restore_previous_generation() {", 1)[
+        1
+    ].split("\n}", 1)[0]
+    assert "supervisor_quiesce_current" in rollback
+    assert "linux_service_tx_restore_artifact" in rollback
+    assert "supervisor_control reread" in rollback
+    assert "supervisor_control update" in rollback
+    assert "supervisor_prove_running_or_retrying" in rollback
+
+    generic = hub_script.split("MAC_LINUX_SERVICE_TX_ACTIVE=0", 1)[1].split(
+        "if command -v systemctl", 1
+    )[0]
+    assert "mac_launchd_snapshot_file" in generic
+    assert "mac_launchd_atomic_replace" in generic
+    assert "mac_launchd_atomic_restore" in generic
+    assert "linux_service_tx_verify_snapshot_current" in generic
+    assert "linux_service_tx_on_exit" in generic
+    assert '"$MAC_LINUX_SERVICE_TX_ROLLBACK_HOOK"' in generic
+    assert "$SECONDS" not in generic
+
+
+def test_linux_reverse_tunnel_transaction_compensates_and_chains_exit_cleanup(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    hub_script = deploy.split("<<'HUBSCRIPT'\n", 1)[1].split("\nHUBSCRIPT", 1)[0]
+    transaction = (
+        "MAC_LINUX_SERVICE_TX_ACTIVE=0"
+        + hub_script.split("MAC_LINUX_SERVICE_TX_ACTIVE=0", 1)[1].split(
+            "\nif command -v systemctl", 1
+        )[0]
+    )
+
+    artifact = tmp_path / "synthetic.service"
+    artifact.write_text("prior-generation\n", encoding="utf-8")
+    artifact.chmod(0o640)
+    rollback_receipt = tmp_path / "rollback-receipt"
+    cleanup_receipt = tmp_path / "cleanup-receipt"
+    harness = f"""set -euo pipefail
+. "$1"
+linux_root_mode=user
+linux_root_bounded() {{ mac_run_bounded 2 "$@"; }}
+definition_tmp=""
+rollback_receipt="$3"
+cleanup_receipt="$4"
+cleanup_definition_tmp() {{ printf chained > "$cleanup_receipt"; }}
+trap cleanup_definition_tmp EXIT
+{transaction}
+restore_synthetic() {{
+  linux_service_tx_restore_artifact
+  printf compensated > "$rollback_receipt"
+}}
+linux_service_tx_begin "$2" synthetic restore_synthetic
+printf new-generation > "$2.stage"
+chmod 0600 "$2.stage"
+linux_service_tx_mark_mutating
+linux_service_tx_replace "$2.stage" "$2"
+false
+"""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            harness,
+            "transaction",
+            str(LAUNCHD_LIFECYCLE_SCRIPT),
+            str(artifact),
+            str(rollback_receipt),
+            str(cleanup_receipt),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert artifact.read_text(encoding="utf-8") == "prior-generation\n"
+    assert artifact.stat().st_mode & 0o777 == 0o640
+    assert rollback_receipt.read_text(encoding="utf-8") == "compensated"
+    assert cleanup_receipt.read_text(encoding="utf-8") == "chained"
+    assert not list(tmp_path.glob(".synthetic.rollback.*"))
 
 
 def test_launchd_interrupted_adoption_is_exact_and_retryable(tmp_path):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     hub_script = deploy.split("<<'HUBSCRIPT'\n", 1)[1].split("\nHUBSCRIPT", 1)[0]
-    state_function = "launchd_state_has_managed_identity() {" + hub_script.split(
-        "launchd_state_has_managed_identity() {", 1
-    )[1].split("\n  }\n  launchd_state=", 1)[0] + "\n}"
+    state_function = (
+        "launchd_state_has_managed_identity() {"
+        + hub_script.split("launchd_state_has_managed_identity() {", 1)[1].split(
+            "\n  }\n  load_launchd_job_state() {", 1
+        )[0]
+        + "\n}"
+    )
     ssh_bin = subprocess.check_output(
         ["bash", "-c", "command -v ssh"], text=True
     ).strip()
@@ -1239,17 +2057,28 @@ def test_launchd_interrupted_adoption_is_exact_and_retryable(tmp_path):
     args = [
         ssh_bin,
         "-N",
-        "-o", "BatchMode=yes",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ServerAliveInterval=30",
-        "-o", "ServerAliveCountMax=3",
-        "-o", "ExitOnForwardFailure=yes",
-        "-i", f"{tmp_path}/.ssh/mac_tunnel_id",
-        "-R", "127.0.0.1:18789:127.0.0.1:8789",
-        "-R", "127.0.0.1:18090:127.0.0.1:8090",
-        "-R", "127.0.0.1:16333:127.0.0.1:6333",
-        "-R", "127.0.0.1:13002:127.0.0.1:3002",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ServerAliveInterval=30",
+        "-o",
+        "ServerAliveCountMax=3",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-i",
+        f"{tmp_path}/.ssh/mac_tunnel_id",
+        "-R",
+        "127.0.0.1:18789:127.0.0.1:8789",
+        "-R",
+        "127.0.0.1:18090:127.0.0.1:8090",
+        "-R",
+        "127.0.0.1:16333:127.0.0.1:6333",
+        "-R",
+        "127.0.0.1:13002:127.0.0.1:3002",
         "old@old-host",
     ]
 
@@ -1268,7 +2097,7 @@ def test_launchd_interrupted_adoption_is_exact_and_retryable(tmp_path):
         lines.extend(("\t}", "}"))
         return "\n".join(lines)
 
-    setup = f'''set -euo pipefail
+    setup = f"""set -euo pipefail
 plist={str(plist)!r}
 label=com.mac.tunnel-worker1
 managed_marker={marker!r}
@@ -1279,13 +2108,13 @@ launchd_file_legacy=0
 launchd_loaded_legacy=0
 sudo() {{ "$@"; }}
 {state_function}
-'''
+"""
     interrupted = subprocess.run(
         [
             "bash",
             "-c",
             setup
-            + '''state="$1"
+            + """state="$1"
 if launchd_state_has_managed_identity managed "$state"; then
   :
 elif launchd_state_has_managed_identity legacy "$state"; then
@@ -1294,7 +2123,7 @@ elif launchd_state_has_managed_identity legacy "$state"; then
 else
   exit 1
 fi
-[ "$launchd_loaded_legacy" = 1 ]''',
+[ "$launchd_loaded_legacy" = 1 ]""",
             "interrupted-adoption",
             launchd_state(plist, marked=False),
         ],
@@ -1306,8 +2135,11 @@ fi
 
     managed = subprocess.run(
         [
-            "bash", "-c", setup + 'launchd_state_has_managed_identity managed "$1"',
-            "managed-state", launchd_state(plist, marked=True),
+            "bash",
+            "-c",
+            setup + 'launchd_state_has_managed_identity managed "$1"',
+            "managed-state",
+            launchd_state(plist, marked=True),
         ],
         check=False,
         capture_output=True,
@@ -1316,8 +2148,11 @@ fi
     assert managed.returncode == 0, managed.stderr
     wrong_path = subprocess.run(
         [
-            "bash", "-c", setup + 'launchd_state_has_managed_identity legacy "$1"',
-            "wrong-path", launchd_state(Path(str(plist) + ".backup"), marked=False),
+            "bash",
+            "-c",
+            setup + 'launchd_state_has_managed_identity legacy "$1"',
+            "wrong-path",
+            launchd_state(Path(str(plist) + ".backup"), marked=False),
         ],
         check=False,
         capture_output=True,
@@ -1329,9 +2164,13 @@ fi
 def test_supervisor_duplicate_program_include_is_rejected(tmp_path):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     hub_script = deploy.split("<<'HUBSCRIPT'\n", 1)[1].split("\nHUBSCRIPT", 1)[0]
-    duplicate_function = "assert_no_duplicate_supervisor_program() {" + hub_script.split(
-        "assert_no_duplicate_supervisor_program() {", 1
-    )[1].split("\n}\nsupervisor_status_output() {", 1)[0] + "\n}"
+    duplicate_function = (
+        "assert_no_duplicate_supervisor_program() {"
+        + hub_script.split("assert_no_duplicate_supervisor_program() {", 1)[1].split(
+            "\n}\nsupervisor_control() {", 1
+        )[0]
+        + "\n}"
+    )
     include_a = tmp_path / "etc" / "supervisor" / "conf.d"
     include_b = tmp_path / "etc" / "supervisord.d"
     include_a.mkdir(parents=True)
@@ -1339,13 +2178,15 @@ def test_supervisor_duplicate_program_include_is_rejected(tmp_path):
     expected = include_a / "mac-tunnel-worker1.conf"
     expected.write_text("[program:mac-tunnel-worker1]\ncommand=ssh\n", encoding="utf-8")
     duplicate = include_b / "operator.conf"
-    duplicate.write_text("[program:mac-tunnel-worker1]\ncommand=/operator\n", encoding="utf-8")
-    snippet = f'''set -euo pipefail
+    duplicate.write_text(
+        "[program:mac-tunnel-worker1]\ncommand=/operator\n", encoding="utf-8"
+    )
+    snippet = f"""set -euo pipefail
 program=mac-tunnel-worker1
-sudo() {{ "$@"; }}
+sudo() {{ [ "${{1:-}}" != -n ] || shift; "$@"; }}
 {duplicate_function}
 assert_no_duplicate_supervisor_program "$1"
-'''
+"""
     rejected = subprocess.run(
         ["bash", "-c", snippet, "duplicate", str(expected)],
         env={**os.environ, "MAC_SUPERVISOR_INCLUDE_ROOT": str(tmp_path)},
@@ -1382,9 +2223,7 @@ def test_deferred_release_arms_each_worker_then_uses_one_batch_commit():
     )[0]
 
     assert 'release_commit_mode="${8:-immediate}"' in service
-    deferred = service.split(
-        'if [ "$release_commit_mode" = deferred ]; then', 1
-    )[1]
+    deferred = service.split('if [ "$release_commit_mode" = deferred ]; then', 1)[1]
     assert "release_gate_phase=arm" in deferred
     assert "mac.deploy_release_ready.v1" in deferred
     arm = hub_gate.split('if phase == "arm":', 1)[1].split("cleared = False", 1)[0]
@@ -1428,20 +2267,12 @@ def test_release_readiness_is_bound_to_the_newly_issued_principal():
     activate = credential.index(
         'activate_cmd+=" --principal-id $(shell_quote "$principal_id")"', extract
     )
-    arm = credential.index(
-        'keep authenticated "$principal_id" deferred', activate
-    )
+    arm = credential.index('keep authenticated "$principal_id" deferred', activate)
     assert extract < activate < arm
     assert "if require_authenticated and not expected_principal_id" in hub_gate
-    assert (
-        'authenticated.get("principal_id") == expected_principal_id'
-        in hub_gate
-    )
+    assert 'authenticated.get("principal_id") == expected_principal_id' in hub_gate
     assert '"principal_id": principal_id' in deploy
-    assert (
-        'authenticated.get("principal_id") == item.get("principal_id")'
-        in commit
-    )
+    assert 'authenticated.get("principal_id") == item.get("principal_id")' in commit
 
 
 def test_live_hub_cas_cutover_is_explicit_and_preheld_only():
@@ -1481,11 +2312,16 @@ def test_release_health_is_worker_reported_and_startup_verdict_is_registered():
     )[0]
 
     assert 'row.get("health_status") == "healthy"' in release
-    assert 'api("PUT", "/agents/%s" % agent_id, {"health_status": "healthy"})' not in release
+    assert (
+        'api("PUT", "/agents/%s" % agent_id, {"health_status": "healthy"})'
+        not in release
+    )
     assert '"degraded" if barrier_active else "healthy"' in worker
     assert 'registration_resources["startup_self_test"] = report' in node
     wrapper_start = node.index('if [ "${MAC_AGENT_STARTUP_SELF_TEST:-1}" != "0" ]')
-    resource_read = node.index('worker_resources="${MAC_WORKER_RESOURCES:-}"', wrapper_start)
+    resource_read = node.index(
+        'worker_resources="${MAC_WORKER_RESOURCES:-}"', wrapper_start
+    )
     assert wrapper_start < resource_read
 
 
@@ -1493,60 +2329,80 @@ def test_darwin_deploy_preserves_an_active_system_control_plane_domain():
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
 
     capture = node.split("capture_darwin_launchd_prestate() {", 1)[1].split(
-        "wait_for_system_launchd_job_unloaded() {", 1
+        "system_launchd_job_is_loaded() {", 1
     )[0]
-    assert 'if ! sudo -n true; then' in capture
-    assert 'DARWIN_SYSTEM_LAUNCHD_ACTIVE=1' in capture
+    assert "if ! sudo -n true; then" in capture
+    assert "DARWIN_SYSTEM_LAUNCHD_ACTIVE=1" in capture
     assert 'sudo -n test -r "$system_plist"' in capture
-    assert 'DARWIN_GUI_LAUNCHD_ACTIVE=1' in capture
-    assert 'DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE=1' in capture
-    assert 'control plane is loaded in both system and GUI launchd domains' in capture
+    assert "DARWIN_GUI_LAUNCHD_ACTIVE=1" in capture
+    assert "DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE=1" in capture
+    assert "control plane is loaded in both system and GUI launchd domains" in capture
     assert "write_rollback_script" in capture
+    assert 'system_launchd_job_is_loaded "$MAC_LAUNCHD_LABEL"' in capture
+    assert 'gui_launchd_job_is_loaded "$uid" "$MAC_LAUNCHD_LABEL"' in capture
+    assert 'system_launchd_job_is_loaded "$DARWIN_SYSTEM_SUPERVISOR_LABEL"' in capture
+    assert capture.count('*) return "$probe_rc"') == 3
 
     stop = node.split("stop_existing_services_for_deploy() {", 1)[1].split(
         "load_drain_api_env() {", 1
     )[0]
-    supervisor_bootout = stop.index(
-        'sudo -n launchctl bootout "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL"'
-    )
-    control_bootout = stop.index(
-        'sudo -n launchctl bootout "system/$MAC_LAUNCHD_LABEL"',
-        supervisor_bootout,
-    )
-    stopped = stop.index("wait_for_local_control_plane_stop", control_bootout)
-    assert supervisor_bootout < control_bootout < stopped
-    assert '|| [ "$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ]' in stop
-    assert '|| [ "$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ]' in stop
+    assert "control_mode=system" in stop
+    assert '--launchd-system-supervisor "$DARWIN_SYSTEM_SUPERVISOR_LABEL"' in stop
+    assert "--launchd-system-supervisor-was-active" in stop
+    assert '"$PY" "$ROLLBACK_SUPERVISOR_HELPER" quiesce' in stop
+    assert '--receipt "$LOG_DIR/pre-artifact-supervisor-quiescence.json"' in stop
+    assert "system_launchd_job_is_loaded" not in stop
+    assert "stop_system_launchd_job_if_present" not in stop
 
     install = node.split("install_darwin_service() {", 1)[1].split(
         "install_darwin_openclaw_service() {", 1
     )[0]
-    assert 'sudo -n launchctl bootstrap system "$system_plist"' in install
-    assert 'sudo -n launchctl kickstart -k "system/$MAC_LAUNCHD_LABEL"' in install
-    assert 'wait_for_local_control_plane_health' in install
-    assert 'sudo -n launchctl bootstrap system "$system_supervisor_plist"' in install
-    atomic_install = install.index(
-        'sudo -n install -o root -g wheel -m 0644 '
-        '"$system_plist_staging" "$system_plist_tmp"'
+    assert (
+        'mac_launchd_transaction_begin \\\n      system "$system_plist" "system/$MAC_LAUNCHD_LABEL"'
+        in install
     )
+    assert (
+        'mac_launchd_transaction_set_expected_prior_state "$expected_state"' in install
+    )
+    assert 'mac_launchd_transaction_track_file "$wrapper"' in install
+    assert 'mac_launchd_transaction_track_file "$plist"' in install
+    assert "mac_launchd_transaction_mark_mutating" in install
+    assert (
+        'mac_launchd_transaction_replace \\\n      "$system_plist_staging" "$system_plist" 0644 0 0'
+        in install
+    )
+    assert (
+        'mac_launchd_bootstrap_job \\\n      system "$system_plist" "system/$MAC_LAUNCHD_LABEL"'
+        in install
+    )
+    assert "mac_launchd_transaction_commit" in install
+    assert "wait_for_local_control_plane_health" in install
+    assert (
+        'mac_launchd_bootstrap_job \\\n        system "$system_supervisor_plist"'
+        in install
+    )
+    transaction = install.index("mac_launchd_transaction_begin")
     atomic_replace = install.index(
-        'sudo -n mv -f "$system_plist_tmp" "$system_plist"', atomic_install
+        'mac_launchd_transaction_replace \\\n      "$system_plist_staging" "$system_plist"',
+        transaction,
     )
     control_bootstrap = install.index(
-        'sudo -n launchctl bootstrap system "$system_plist"', atomic_replace
+        'mac_launchd_bootstrap_job \\\n      system "$system_plist"', atomic_replace
     )
     healthy = install.index("wait_for_local_control_plane_health", control_bootstrap)
     supervisor_bootstrap = install.index(
-        'sudo -n launchctl bootstrap system "$system_supervisor_plist"', healthy
+        'mac_launchd_bootstrap_job \\\n        system "$system_supervisor_plist"',
+        healthy,
     )
     health_recheck = install.index(
         "wait_for_local_control_plane_health", supervisor_bootstrap
     )
-    assert atomic_install < atomic_replace < control_bootstrap < healthy < supervisor_bootstrap
-    assert supervisor_bootstrap < health_recheck
+    committed = install.index("mac_launchd_transaction_commit", health_recheck)
+    assert atomic_replace < control_bootstrap < healthy < supervisor_bootstrap
+    assert supervisor_bootstrap < health_recheck < committed
     assert "com.${FLEET_NAME}.supervisor" not in install
 
-    capture_call = node.index('capture_darwin_launchd_prestate\n')
+    capture_call = node.index("capture_darwin_launchd_prestate\n")
     pre_manifest = node.index('write_deploy_manifest "pre"', capture_call)
     service_stop = node.index("stop_existing_services_for_deploy\n", pre_manifest)
     assert capture_call < pre_manifest < service_stop
@@ -1561,29 +2417,38 @@ def test_darwin_rollback_restores_the_original_system_launchd_scope():
     assert "DARWIN_SYSTEM_PLIST_BACKUP='$DARWIN_SYSTEM_PLIST_BACKUP'" in rollback
     assert "DARWIN_SYSTEM_LAUNCHD_ACTIVE='$DARWIN_SYSTEM_LAUNCHD_ACTIVE'" in rollback
     assert (
-        'sudo -n cp -f "\\$DARWIN_SYSTEM_PLIST_BACKUP" '
-        '"/Library/LaunchDaemons/\\$MAC_LAUNCHD_LABEL.plist"'
-        in rollback
+        '[ "\\$DARWIN_SYSTEM_PLIST_MUTATED" != 1 ] \\\n'
+        '      || restore_file_or_remove "\\$DARWIN_SYSTEM_PLIST_BACKUP" '
+        '"/Library/LaunchDaemons/\\$MAC_LAUNCHD_LABEL.plist" system' in rollback
     )
     assert 'if [ "\\$DARWIN_SYSTEM_LAUNCHD_ACTIVE" = 1 ]; then' in rollback
     assert 'elif [ "\\$DARWIN_GUI_LAUNCHD_ACTIVE" = 1 ]; then' in rollback
-    rollback_stop = rollback.index("wait_control_plane_stopped\n")
+    rollback_stop = rollback.index(
+        'verified_contract_call \\\n'
+        '  python "\\$ROLLBACK_SUPERVISOR_HELPER" '
+        '"\\$ROLLBACK_SUPERVISOR_HELPER_SHA256" quiesce'
+    )
     restore_source = rollback.index(
-        'restore_dir "\\$SRC_BACKUP" "\\$SRC_DIR"', rollback_stop
+        'restore_dir_or_keep_prior "\\$SRC_BACKUP" "\\$SRC_DIR" '
+        '"\\$SRC_ROLLBACK_STATE"',
+        rollback_stop,
     )
     assert rollback_stop < restore_source
-    assert 'wait_system_job_unloaded "\\$DARWIN_SYSTEM_SUPERVISOR_LABEL"' in rollback
-    assert 'wait_system_job_unloaded "\\$MAC_LAUNCHD_LABEL"' in rollback
-    system_bootstrap = rollback.index(
-        'sudo -n launchctl bootstrap system '
-        '"/Library/LaunchDaemons/\\$MAC_LAUNCHD_LABEL.plist"'
+    assert '--launchd-system-supervisor "\\$DARWIN_SYSTEM_SUPERVISOR_LABEL"' in rollback
+    assert "--launchd-control-system-plist "
+    '"/Library/LaunchDaemons/\\$MAC_LAUNCHD_LABEL.plist"' in rollback
+    system_restore = rollback.index(
+        'restore_file_or_remove "\\$DARWIN_SYSTEM_PLIST_BACKUP" '
+        '"/Library/LaunchDaemons/\\$MAC_LAUNCHD_LABEL.plist" system',
+        restore_source,
     )
-    gui_fallback = rollback.index(
-        'launchctl bootstrap "gui/\\$uid" '
-        '"\\$HOME/Library/LaunchAgents/\\$MAC_LAUNCHD_LABEL.plist"',
-        system_bootstrap,
+    supervisor_restore = rollback.index(
+        'verified_contract_call \\\n'
+        '  python "\\$ROLLBACK_SUPERVISOR_HELPER" '
+        '"\\$ROLLBACK_SUPERVISOR_HELPER_SHA256" restore',
+        system_restore,
     )
-    assert system_bootstrap < gui_fallback
+    assert restore_source < system_restore < supervisor_restore
 
 
 def test_deploy_manifest_records_system_launchd_backup_and_original_scope():
@@ -1610,7 +2475,7 @@ def test_remote_deploy_payload_is_materialized_before_execution():
     assert node.splitlines()[1] == "set -euo pipefail"
     # The old stdin-based payload approach must no longer be present.
     assert 'payload="$(mktemp "${TMPDIR:-/tmp}/mac-deploy.XXXXXX")"' not in deploy
-    assert '${remote_env[*]} bash -s' not in deploy
+    assert "${remote_env[*]} bash -s" not in deploy
 
 
 def test_supervisord_rotates_each_gateway_implementation_log_before_classification():

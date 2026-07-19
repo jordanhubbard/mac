@@ -6,6 +6,15 @@
 # hub's Tailscale IPv4 when available; never bind to all interfaces.
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+launchd_lib="$SCRIPT_DIR/lib/launchd-lifecycle.sh"
+if [ ! -r "$launchd_lib" ]; then
+  echo "[qdrant] ERROR: launchd lifecycle helper is missing: $launchd_lib" >&2
+  exit 1
+fi
+MAC_LAUNCHD_LOG_PREFIX="[qdrant]"
+# shellcheck source=lib/launchd-lifecycle.sh
+. "$launchd_lib"
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 WORKSPACE="${WORKSPACE:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
@@ -136,25 +145,41 @@ if [ "${1:-}" = "--print-bind-addr" ]; then
 fi
 
 CONTAINER_CMD=""
+CONTAINER_RUNTIME_PATHS=()
+CONTAINER_RUNTIME_PATH_COUNT=0
 QDRANT_BINARY="${QDRANT_BINARY:-$MAC_HOME/bin/qdrant}"
 USE_NATIVE_BINARY=0
 
 _container_works() {
+  local info=""
   command -v "$1" >/dev/null 2>&1 || return 1
-  "$1" info >/dev/null 2>&1 || return 1
+  info="$(mac_run_bounded \
+    "${MAC_QDRANT_RUNTIME_COMMAND_TIMEOUT_SECONDS:-10}" \
+    "$1" info 2>/dev/null)" || return 1
   # podman rootless without cgroup delegation can't start containers (empty
   # cgroupControllers). Docker (Engine or Desktop) manages cgroups inside its
   # own daemon/VM and never prints that podman-specific field, so a successful
   # `docker info` is sufficient.
   if [ "$1" = "podman" ]; then
-    "$1" info 2>/dev/null | grep -qE 'cgroupControllers:.*\S'
+    printf '%s\n' "$info" | grep -qE 'cgroupControllers:.*\S'
   fi
+}
+
+remember_container_runtime() {
+  local runtime="$1" existing="" index=0
+  while [ "$index" -lt "$CONTAINER_RUNTIME_PATH_COUNT" ]; do
+    existing="${CONTAINER_RUNTIME_PATHS[$index]}"
+    [ "$existing" = "$runtime" ] && return 0
+    index=$(( index + 1 ))
+  done
+  CONTAINER_RUNTIME_PATHS[$CONTAINER_RUNTIME_PATH_COUNT]="$runtime"
+  CONTAINER_RUNTIME_PATH_COUNT=$(( CONTAINER_RUNTIME_PATH_COUNT + 1 ))
 }
 
 for _candidate in podman docker; do
   if command -v "$_candidate" >/dev/null 2>&1 && _container_works "$_candidate"; then
-    CONTAINER_CMD="$_candidate"
-    break
+    remember_container_runtime "$(command -v "$_candidate")"
+    [ -n "$CONTAINER_CMD" ] || CONTAINER_CMD="$_candidate"
   fi
 done
 if [ -z "$CONTAINER_CMD" ] && command -v apt-get >/dev/null 2>&1; then
@@ -162,6 +187,7 @@ if [ -z "$CONTAINER_CMD" ] && command -v apt-get >/dev/null 2>&1; then
   sudo apt-get install -y podman >/dev/null 2>&1 || true
   if command -v podman >/dev/null 2>&1 && _container_works podman; then
     CONTAINER_CMD="podman"
+    remember_container_runtime "$(command -v podman)"
   fi
 fi
 if [ -z "$CONTAINER_CMD" ] && [ "$OS_NAME" = "Darwin" ]; then
@@ -263,7 +289,7 @@ set_env_key "${MAC_HOME}/mac.env" MAC_REQUIRE_QDRANT_MEMORY "1"
 set_env_key "${MAC_HOME}/mac.env" MAC_QDRANT_MEMORY_ROLE "shared_level2"
 
 write_qdrant_wrapper() {
-  local wrapper="$MAC_HOME/bin/mac-qdrant-run"
+  local wrapper="${1:-$MAC_HOME/bin/mac-qdrant-run}"
   if [ "$USE_NATIVE_BINARY" = 1 ]; then
     cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
@@ -314,6 +340,68 @@ EOF
   chmod 700 "$wrapper"
 }
 
+qdrant_container_is_present() {
+  local runtime="$1" output="" rc=0 container_name="" matches=0
+  output="$(mac_run_bounded \
+    "${MAC_QDRANT_RUNTIME_COMMAND_TIMEOUT_SECONDS:-10}" \
+    "$runtime" ps -a --format '{{.Names}}' 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "[qdrant] ERROR: could not inspect the managed container (exit $rc): $output" >&2
+    return 2
+  fi
+  while IFS= read -r container_name; do
+    [ "$container_name" = "$QDRANT_CONTAINER_NAME" ] \
+      && matches=$(( matches + 1 ))
+  done <<EOF
+$output
+EOF
+  case "$matches" in
+    0) return 1 ;;
+    1) return 0 ;;
+    *)
+      echo "[qdrant] ERROR: container lookup returned duplicate exact names" >&2
+      return 2
+      ;;
+  esac
+}
+
+stop_qdrant_container_for_runtime() {
+  local runtime="$1" probe_rc=0 remove_output="" remove_rc=0
+  qdrant_container_is_present "$runtime" || probe_rc=$?
+  case "$probe_rc" in
+    0) ;;
+    1) return 0 ;;
+    *) return "$probe_rc" ;;
+  esac
+  remove_output="$(mac_run_bounded \
+    "${MAC_QDRANT_RUNTIME_COMMAND_TIMEOUT_SECONDS:-10}" \
+    "$runtime" rm -f "$QDRANT_CONTAINER_NAME" 2>&1)" \
+    || remove_rc=$?
+  if [ "$remove_rc" -ne 0 ]; then
+    echo "[qdrant] ERROR: could not retire the managed container (exit $remove_rc): $remove_output" >&2
+    return 1
+  fi
+  probe_rc=0
+  qdrant_container_is_present "$runtime" || probe_rc=$?
+  case "$probe_rc" in
+    1) return 0 ;;
+    0)
+      echo "[qdrant] ERROR: managed container remained after removal: $QDRANT_CONTAINER_NAME" >&2
+      return 1
+      ;;
+    *) return "$probe_rc" ;;
+  esac
+}
+
+stop_qdrant_container_if_present() {
+  local runtime="" index=0
+  while [ "$index" -lt "$CONTAINER_RUNTIME_PATH_COUNT" ]; do
+    runtime="${CONTAINER_RUNTIME_PATHS[$index]}"
+    stop_qdrant_container_for_runtime "$runtime"
+    index=$(( index + 1 ))
+  done
+}
+
 case "$SUPERVISOR_KIND" in
   systemd)
     echo "[qdrant] Installing systemd unit"
@@ -351,10 +439,24 @@ EOF
     ;;
   launchd)
     echo "[qdrant] Installing launchd agent"
-    write_qdrant_wrapper
-    plist="$HOME/Library/LaunchAgents/com.${FLEET_NAME}.qdrant.plist"
+    uid="$(id -u)"
+    launchd_domain="gui/$uid"
+    launchd_label="com.${FLEET_NAME}.qdrant"
+    launchd_target="$launchd_domain/$launchd_label"
+    plist="$HOME/Library/LaunchAgents/${launchd_label}.plist"
+    wrapper="$MAC_HOME/bin/mac-qdrant-run"
     mkdir -p "$HOME/Library/LaunchAgents"
-    cat > "$plist" <<EOF
+    mac_launchd_transaction_begin \
+      "$launchd_domain" "$plist" "$launchd_target" "$launchd_label"
+    mac_launchd_transaction_track_file "$wrapper"
+    mac_launchd_transaction_set_rollback_hook stop_qdrant_container_if_present
+    tmp_wrapper="$(mktemp "$MAC_HOME/bin/.mac-qdrant-run.XXXXXX")"
+    mac_launchd_transaction_track_temporary "$tmp_wrapper"
+    write_qdrant_wrapper "$tmp_wrapper"
+    /bin/bash -n "$tmp_wrapper"
+    tmp_plist="$(mktemp "$HOME/Library/LaunchAgents/.${launchd_label}.XXXXXX")"
+    mac_launchd_transaction_track_temporary "$tmp_plist"
+    cat > "$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -372,15 +474,15 @@ EOF
 </plist>
 EOF
     if command -v plutil >/dev/null 2>&1; then
-      plutil -lint "$plist"
+      plutil -lint "$tmp_plist"
     fi
-    uid="$(id -u)"
-    launchctl bootout "gui/$uid" "$plist" >/dev/null 2>&1 || true
-    launchctl bootout "gui/$uid/com.${FLEET_NAME}.qdrant" >/dev/null 2>&1 || true
-    launchctl enable "gui/$uid/com.${FLEET_NAME}.qdrant"
-    if ! launchctl bootstrap "gui/$uid" "$plist"; then
-      launchctl kickstart -k "gui/$uid/com.${FLEET_NAME}.qdrant"
-    fi
+    mac_launchd_transaction_mark_mutating
+    mac_launchd_stop_job_if_present "$launchd_target" "$launchd_label"
+    stop_qdrant_container_if_present
+    mac_launchd_transaction_replace "$tmp_wrapper" "$wrapper"
+    mac_launchd_transaction_replace "$tmp_plist" "$plist"
+    mac_launchd_bootstrap_job \
+      "$launchd_domain" "$plist" "$launchd_target" "$launchd_label"
     ;;
 esac
 
@@ -427,6 +529,9 @@ JSON
   }
   provision_collection mac_memory_medium 100
   provision_collection mac_memory_long   200
+  if [ "$SUPERVISOR_KIND" = launchd ]; then
+    mac_launchd_transaction_commit
+  fi
   exit 0
 fi
 
@@ -434,6 +539,8 @@ echo "[qdrant] ERROR: Qdrant did not become ready at $health_url" >&2
 case "$SUPERVISOR_KIND" in
   systemd) systemctl status "${FLEET_NAME}-qdrant.service" --no-pager -n 40 >&2 || true ;;
   supervisord) supervisorctl status "${FLEET_NAME}-qdrant" >&2 || true ;;
-  launchd) launchctl list "com.${FLEET_NAME}.qdrant" >&2 || true ;;
+  launchd)
+    mac_run_bounded 5 launchctl print "$launchd_target" >&2 || true
+    ;;
 esac
 exit 1

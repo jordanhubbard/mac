@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-from mac.deploy_env import read_env_file, write_env_file
+from mac.deploy_env import parse_env_text, write_env_file
 from mac.services import sign_verification_manifest
 
 
@@ -27,6 +27,9 @@ PROBE_SCHEMA = "mac.agent_attestation_key_probe.v1"
 CHALLENGE_SCHEMA = "mac.agent_attestation_challenge.v1"
 RECOVERY_MANIFEST_SCHEMA = "mac.agent_attestation_key_recovery.v1"
 INSTALL_RECEIPT_SCHEMA = "mac.agent_attestation_key_install_receipt.v1"
+CANDIDATE_PROOF_SCHEMA = "mac.fleet_release_attestation_candidate_proof.v1"
+CANDIDATE_PROOF_PURPOSE = "synchronized-fleet-release-candidate"
+MAX_PRIVATE_BYTES = 1024 * 1024
 
 
 class DeploymentAttestationError(ValueError):
@@ -40,20 +43,90 @@ def _required(value: Any, label: str) -> str:
     return text
 
 
-def _private_regular_file(path: Path, *, label: str) -> None:
+def _private_regular_file(path: Path, *, label: str) -> os.stat_result:
     try:
         observed = path.lstat()
     except OSError as exc:
         raise DeploymentAttestationError("%s is unreadable" % label) from exc
     if not stat.S_ISREG(observed.st_mode) or stat.S_ISLNK(observed.st_mode):
         raise DeploymentAttestationError("%s must be a regular file" % label)
+    if observed.st_uid != os.getuid():
+        raise DeploymentAttestationError("%s must be owned by this user" % label)
+    if observed.st_nlink != 1:
+        raise DeploymentAttestationError("%s must have one hard link" % label)
     if stat.S_IMODE(observed.st_mode) & 0o077:
         raise DeploymentAttestationError("%s must be owner-only" % label)
+    if not 1 <= observed.st_size <= MAX_PRIVATE_BYTES:
+        raise DeploymentAttestationError("%s must be bounded" % label)
+    return observed
+
+
+def _private_bytes(path: Path, *, label: str) -> tuple[bytes, os.stat_result]:
+    before = _private_regular_file(path, label=label)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise DeploymentAttestationError("%s is unreadable" % label) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise DeploymentAttestationError("%s changed while opening" % label)
+        raw = bytearray()
+        while len(raw) < opened.st_size:
+            chunk = os.read(descriptor, min(64 * 1024, opened.st_size - len(raw)))
+            if not chunk:
+                raise DeploymentAttestationError("%s was truncated" % label)
+            raw.extend(chunk)
+        if os.read(descriptor, 1):
+            raise DeploymentAttestationError("%s grew while reading" % label)
+        after = os.fstat(descriptor)
+        def identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+            return (
+                value.st_dev,
+                value.st_ino,
+                value.st_nlink,
+                value.st_size,
+                value.st_mtime_ns,
+                value.st_ctime_ns,
+            )
+        if identity(opened) != identity(after):
+            raise DeploymentAttestationError("%s changed while reading" % label)
+        return bytes(raw), after
+    finally:
+        os.close(descriptor)
+
+
+def _private_json(path: Path, *, label: str) -> tuple[dict[str, Any], os.stat_result]:
+    raw, identity = _private_bytes(path, label=label)
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DeploymentAttestationError("%s is unreadable" % label) from exc
+    if not isinstance(value, dict):
+        raise DeploymentAttestationError("%s is malformed" % label)
+    return value, identity
+
+
+def _private_env(path: Path, *, label: str) -> Dict[str, str]:
+    raw, _identity = _private_bytes(path, label=label)
+    try:
+        return parse_env_text(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise DeploymentAttestationError("%s is unreadable" % label) from exc
 
 
 def _atomic_private_json(path: Path, value: Mapping[str, Any]) -> None:
     path = path.expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    parent = path.parent.lstat()
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or stat.S_ISLNK(parent.st_mode)
+        or parent.st_uid != os.getuid()
+        or stat.S_IMODE(parent.st_mode) & 0o077
+    ):
+        raise DeploymentAttestationError("output directory must be owner-only")
     descriptor, raw = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
     temporary = Path(raw)
     try:
@@ -85,9 +158,8 @@ def build_key_probe(
     exact_agent = _required(agent_id, "agent id")
     exact_deployment = _required(deployment_id, "deployment id")
     path = env_file.expanduser()
-    if path.exists():
-        _private_regular_file(path, label="attestation environment")
-    key = read_env_file(path).get("MAC_ATTESTATION_KEY", "")
+    values = _private_env(path, label="attestation environment") if path.exists() else {}
+    key = values.get("MAC_ATTESTATION_KEY", "")
     if not key:
         return {
             "schema": PROBE_SCHEMA,
@@ -141,13 +213,9 @@ def install_recovery_manifest(
     """Consume one private manifest and atomically install its key."""
 
     source = manifest_path.expanduser()
-    _private_regular_file(source, label="attestation recovery manifest")
-    try:
-        manifest = json.loads(source.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError) as exc:
-        raise DeploymentAttestationError(
-            "attestation recovery manifest is unreadable"
-        ) from exc
+    manifest, source_identity = _private_json(
+        source, label="attestation recovery manifest"
+    )
     if not isinstance(manifest, dict) or set(manifest) != {
         "schema",
         "agent_id",
@@ -173,8 +241,22 @@ def install_recovery_manifest(
     destination = env_file.expanduser()
     if destination.exists():
         _private_regular_file(destination, label="attestation environment")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    values = read_env_file(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    parent = destination.parent.lstat()
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or stat.S_ISLNK(parent.st_mode)
+        or parent.st_uid != os.getuid()
+        or stat.S_IMODE(parent.st_mode) & 0o077
+    ):
+        raise DeploymentAttestationError(
+            "attestation environment directory must be owner-only"
+        )
+    values = (
+        _private_env(destination, label="attestation environment")
+        if destination.exists()
+        else {}
+    )
     values["MAC_ATTESTATION_KEY"] = key
     descriptor, raw = tempfile.mkstemp(
         prefix=destination.name + ".", dir=str(destination.parent)
@@ -197,6 +279,14 @@ def install_recovery_manifest(
     fingerprint = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     # Successful installation consumes the worker-side raw-key copy. The hub
     # copy remains until the controller observes a second signed proof.
+    current = _private_regular_file(source, label="attestation recovery manifest")
+    if (current.st_dev, current.st_ino) != (
+        source_identity.st_dev,
+        source_identity.st_ino,
+    ):
+        raise DeploymentAttestationError(
+            "attestation recovery manifest changed before consumption"
+        )
     source.unlink()
     return {
         "schema": INSTALL_RECEIPT_SCHEMA,
@@ -205,6 +295,49 @@ def install_recovery_manifest(
         "destination": str(destination),
         "key_fingerprint": fingerprint,
         "installed": True,
+    }
+
+
+def build_candidate_proof(challenge_path: Path, env_file: Path) -> Dict[str, Any]:
+    """Sign one exact hub-epoch challenge with the installed candidate key."""
+
+    source = challenge_path.expanduser()
+    challenge, _identity = _private_json(source, label="candidate challenge")
+    required = {
+        "schema",
+        "purpose",
+        "epoch_id",
+        "agent_id",
+        "generation",
+        "principal_id",
+        "candidate_fingerprint",
+        "nonce",
+    }
+    if not isinstance(challenge, dict) or set(challenge) != required:
+        raise DeploymentAttestationError("candidate challenge schema is not exact")
+    if (
+        challenge.get("schema") != CANDIDATE_PROOF_SCHEMA
+        or challenge.get("purpose") != CANDIDATE_PROOF_PURPOSE
+    ):
+        raise DeploymentAttestationError("candidate challenge purpose is unsupported")
+    for field in required - {"schema", "purpose"}:
+        _required(challenge.get(field), f"candidate challenge {field}")
+
+    environment = env_file.expanduser()
+    key = _required(
+        _private_env(environment, label="attestation environment").get(
+            "MAC_ATTESTATION_KEY", ""
+        ),
+        "installed attestation key",
+    )
+    fingerprint = "sha256:" + hashlib.sha256(key.encode()).hexdigest()
+    if fingerprint != challenge["candidate_fingerprint"]:
+        raise DeploymentAttestationError(
+            "installed attestation key differs from the candidate challenge"
+        )
+    return {
+        "challenge": challenge,
+        "signature": sign_verification_manifest(key, challenge),
     }
 
 
@@ -222,6 +355,10 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--agent-id", required=True)
     install.add_argument("--deployment-id", required=True)
     install.add_argument("--receipt-out", required=True)
+    candidate = sub.add_parser("prove-candidate")
+    candidate.add_argument("--challenge", required=True)
+    candidate.add_argument("--env-file", required=True)
+    candidate.add_argument("--output", required=True)
     return parser
 
 
@@ -247,6 +384,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             _atomic_private_json(Path(args.receipt_out), result)
             print(json.dumps(result, sort_keys=True))
+            return 0
+        if args.command == "prove-candidate":
+            result = build_candidate_proof(
+                Path(args.challenge),
+                Path(args.env_file),
+            )
+            _atomic_private_json(Path(args.output), result)
+            print(json.dumps({"status": "proved", "proof_written": True}, sort_keys=True))
             return 0
     except DeploymentAttestationError as exc:
         print("deployment attestation error: %s" % exc, file=os.sys.stderr)

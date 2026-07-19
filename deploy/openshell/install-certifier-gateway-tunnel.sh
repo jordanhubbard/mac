@@ -66,7 +66,8 @@ for port_name in SSH_PORT LOCAL_PORT REMOTE_PORT; do
   port_value="${!port_name}"
   [[ "$port_value" =~ ^[1-9][0-9]{0,4}$ ]] \
     && (( 10#$port_value <= 65535 )) || {
-      echo "ERROR: invalid ${port_name,,}" >&2
+      port_label="$(printf '%s' "$port_name" | tr '[:upper:]' '[:lower:]')"
+      echo "ERROR: invalid ${port_label}" >&2
       exit 2
     }
 done
@@ -74,9 +75,17 @@ done
 domain="gui/$(id -u)"
 launch_agents="$HOME/Library/LaunchAgents"
 plist="$launch_agents/$LABEL.plist"
+SCRIPT_DIR="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MAC_LAUNCHD_LOG_PREFIX="[certifier-tunnel]"
+# shellcheck source=../lib/launchd-lifecycle.sh
+[ -r "$SCRIPT_DIR/../lib/launchd-lifecycle.sh" ] || {
+  echo "ERROR: shared launchd lifecycle library is missing" >&2
+  exit 1
+}
+. "$SCRIPT_DIR/../lib/launchd-lifecycle.sh"
 
 if [ "$REMOVE" = "1" ]; then
-  launchctl bootout "$domain/$LABEL" >/dev/null 2>&1 || true
+  mac_launchd_stop_job_if_present "$domain/$LABEL" "$LABEL"
   rm -f "$plist"
   echo "removed $LABEL"
   exit 0
@@ -115,8 +124,9 @@ fi
 
 mkdir -p "$launch_agents" "$HOME/.mac/logs"
 chmod 700 "$launch_agents" "$HOME/.mac/logs" 2>/dev/null || true
+mac_launchd_transaction_begin "$domain" "$plist" "$domain/$LABEL" "$LABEL"
 tmp_plist="$(mktemp "$launch_agents/.${LABEL}.XXXXXX")"
-trap 'rm -f "$tmp_plist"' EXIT HUP INT TERM
+mac_launchd_transaction_track_temporary "$tmp_plist"
 
 "$python_bin" - \
   "$tmp_plist" "$LABEL" "$TARGET" "$SSH_PORT" "$LOCAL_PORT" "$REMOTE_PORT" \
@@ -176,24 +186,27 @@ with open(path, "wb") as stream:
 PY
 
 chmod 600 "$tmp_plist"
-launchctl bootout "$domain/$LABEL" >/dev/null 2>&1 || true
-mv -f "$tmp_plist" "$plist"
-trap - EXIT HUP INT TERM
-launchctl bootstrap "$domain" "$plist"
-launchctl kickstart -k "$domain/$LABEL"
+mac_launchd_transaction_mark_mutating
+mac_launchd_stop_job_if_present "$domain/$LABEL" "$LABEL"
+mac_launchd_transaction_replace "$tmp_plist" "$plist"
+mac_launchd_bootstrap_job "$domain" "$plist" "$domain/$LABEL" "$LABEL"
 
 endpoint="http://127.0.0.1:$LOCAL_PORT"
-for _attempt in $(seq 1 20); do
-  if OPENSHELL_GATEWAY_ENDPOINT="$endpoint" "$OPENSH_BIN" status \
-    >/dev/null 2>&1; then
-    launchctl print "$domain/$LABEL" >/dev/null
-    echo "certifier OpenShell tunnel healthy: $endpoint -> $TARGET:$REMOTE_PORT"
-    exit 0
+if OPENSHELL_GATEWAY_ENDPOINT="$endpoint" mac_retry_bounded \
+  "${MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS:-20}" \
+  "${MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS:-5}" 1 \
+  "$OPENSH_BIN" status >/dev/null 2>&1; then
+  launchd_state="$(mac_launchd_job_state "$domain/$LABEL" "$LABEL")"
+  if [ "$launchd_state" != active ]; then
+    echo "ERROR: certifier OpenShell endpoint is healthy but launchd job is absent: $LABEL" >&2
+    exit 1
   fi
-  sleep 1
-done
+  mac_launchd_transaction_commit
+  echo "certifier OpenShell tunnel healthy: $endpoint -> $TARGET:$REMOTE_PORT"
+  exit 0
+fi
 
 echo "ERROR: certifier OpenShell tunnel did not become healthy at $endpoint" >&2
-launchctl print "$domain/$LABEL" >&2 || true
+mac_run_bounded 5 launchctl print "$domain/$LABEL" >&2 || true
 tail -40 "$HOME/.mac/logs/certifier-openshell-tunnel.err.log" >&2 2>/dev/null || true
 exit 1

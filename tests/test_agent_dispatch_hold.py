@@ -10,6 +10,7 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -45,6 +46,28 @@ def _expire_claim(cp: ControlPlane, task_id: str, lease_id: str) -> None:
         "UPDATE tasks SET leased_until = ? WHERE id = ?",
         (expired_at, task_id),
     )
+
+
+def _epoch_identity_sha256(
+    epoch_id: str,
+    holds,
+    *,
+    expectations=(),
+    successor_reason=None,
+) -> str:
+    payload = {
+        "epoch_id": epoch_id,
+        "holds": [
+            {"agent_id": agent_id, "hold_reason": reason}
+            for agent_id, reason in sorted(holds)
+        ],
+        "outcome": "successor_hold" if successor_reason is not None else "released",
+        "successor_hold_reason": successor_reason,
+        "expectations": list(expectations),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +355,91 @@ def test_dispatch_hold_batch_release_exact_epoch_retry_returns_committed_receipt
         )["count"]
         == receipt_count
     )
+
+
+def test_dispatch_hold_epoch_status_distinguishes_absent_exact_and_mismatch():
+    cp = _make_cp()
+    first = _register_agent(cp, "agent-epoch-status-first")
+    second = _register_agent(cp, "agent-epoch-status-second")
+    holds = (
+        (first.id, "epoch-status-first"),
+        (second.id, "epoch-status-second"),
+    )
+    epoch_id = "epoch-status-exact"
+    digest = _epoch_identity_sha256(epoch_id, holds)
+
+    assert cp.agent_dispatch_hold_epoch_status(epoch_id, digest) == {
+        "status": "absent",
+        "epoch_id": epoch_id,
+        "identity_sha256": digest,
+    }
+
+    for agent_id, reason in holds:
+        cp.set_agent_dispatch_hold(agent_id, reason)
+    cp.release_agent_dispatch_holds_batch(holds, epoch_id=epoch_id)
+    event_count = cp.store.query_one(
+        "SELECT COUNT(*) AS count FROM agent_lifecycle_events"
+    )["count"]
+
+    exact = cp.agent_dispatch_hold_epoch_status(epoch_id, digest)
+    assert exact == {
+        "status": "committed",
+        "epoch_id": epoch_id,
+        "identity_sha256": digest,
+        "outcome": "released",
+        "successor_hold_reason": None,
+        "agent_ids": sorted((first.id, second.id)),
+    }
+    mismatch = cp.agent_dispatch_hold_epoch_status(epoch_id, "f" * 64)
+    assert mismatch["status"] == "mismatch"
+    assert mismatch["epoch_id"] == epoch_id
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS count FROM agent_lifecycle_events"
+    )["count"] == event_count
+
+
+def test_dispatch_hold_epoch_status_refuses_incomplete_durable_receipts():
+    cp = _make_cp()
+    agent = _register_agent(cp, "agent-epoch-status-incomplete")
+    holds = ((agent.id, "epoch-status-incomplete"),)
+    epoch_id = "epoch-status-incomplete"
+    digest = _epoch_identity_sha256(epoch_id, holds)
+    cp.set_agent_dispatch_hold(agent.id, holds[0][1])
+    cp.release_agent_dispatch_holds_batch(holds, epoch_id=epoch_id)
+    cp.store.execute(
+        "DELETE FROM agent_lifecycle_events "
+        "WHERE agent_id = ? AND event_type = ?",
+        (agent.id, "agent.dispatch_hold_epoch_released"),
+    )
+
+    status = cp.agent_dispatch_hold_epoch_status(epoch_id, digest)
+    assert status["status"] == "mismatch"
+
+
+def test_dispatch_hold_successor_epoch_status_binds_outcome_and_reason():
+    cp = _make_cp()
+    agent = _register_agent(cp, "agent-successor-epoch-status")
+    holds = ((agent.id, "deployment-successor-status"),)
+    epoch_id = "epoch-successor-status"
+    successor = "synchronized successor hold"
+    digest = _epoch_identity_sha256(
+        epoch_id, holds, successor_reason=successor
+    )
+    cp.set_agent_dispatch_hold(agent.id, holds[0][1])
+    cp.release_agent_dispatch_holds_batch(
+        holds,
+        epoch_id=epoch_id,
+        successor_reason=successor,
+    )
+
+    status = cp.agent_dispatch_hold_epoch_status(epoch_id, digest)
+    assert status["status"] == "committed"
+    assert status["outcome"] == "successor_hold"
+    assert status["successor_hold_reason"] == successor
+    release_digest = _epoch_identity_sha256(epoch_id, holds)
+    assert cp.agent_dispatch_hold_epoch_status(epoch_id, release_digest)[
+        "status"
+    ] == "mismatch"
 
 
 def test_dispatch_hold_epoch_retry_binds_readiness_expectations():
@@ -715,6 +823,68 @@ def test_dispatch_hold_batch_release_http_route_is_admin_only():
         )["count"]
         == receipt_count
     )
+
+
+def test_dispatch_hold_epoch_status_http_route_is_admin_only_and_read_only():
+    cp = _make_cp()
+    worker = _register_agent(cp, "epoch-status-http-worker")
+    agent = _register_agent(cp, "epoch-status-http-agent")
+    holds = ((agent.id, "epoch-status-http-hold"),)
+    epoch_id = "epoch-status-http"
+    digest = _epoch_identity_sha256(epoch_id, holds)
+    cp.set_agent_dispatch_hold(agent.id, holds[0][1])
+    cp.release_agent_dispatch_holds_batch(holds, epoch_id=epoch_id)
+    event_count = cp.store.query_one(
+        "SELECT COUNT(*) AS count FROM agent_lifecycle_events"
+    )["count"]
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "worker": {
+                    "scopes": ["agent", "read"],
+                    "tenant_id": None,
+                    "agent_id": worker.id,
+                    "principal_kind": "worker",
+                },
+                "admin": ["admin"],
+            },
+        )
+    )
+    path = "/agents/dispatch-hold/epochs/%s" % epoch_id
+
+    rejected = client.get(
+        path,
+        params={"identity_sha256": digest},
+        headers={"Authorization": "Bearer worker"},
+    )
+    assert rejected.status_code == 403
+    exact = client.get(
+        path,
+        params={"identity_sha256": digest},
+        headers={"Authorization": "Bearer admin"},
+    )
+    assert exact.status_code == 200
+    assert exact.json() == {
+        "status": "committed",
+        "epoch_id": epoch_id,
+        "identity_sha256": digest,
+        "outcome": "released",
+        "successor_hold_reason": None,
+        "agent_ids": [agent.id],
+    }
+    assert "resources" not in exact.text
+    assert "principal" not in exact.text
+    mismatch = client.get(
+        path,
+        params={"identity_sha256": "f" * 64},
+        headers={"Authorization": "Bearer admin"},
+    )
+    assert mismatch.status_code == 200
+    assert mismatch.json()["status"] == "mismatch"
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS count FROM agent_lifecycle_events"
+    )["count"] == event_count
 
 
 def test_dispatch_hold_batch_transition_http_route_is_admin_only():

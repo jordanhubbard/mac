@@ -298,8 +298,17 @@ def test_fleet_deploy_syncs_hermes_chat_config_from_mac_env():
     assert "sync_hermes_chat_config()" in script
     assert "-m mac.hermes_chat_config" in script
     assert '--mac-env "$ENV_FILE"' in script
-    # runs in the main flow right after the gateway runtime shim, before services
-    assert "apply_hermes_gateway_runtime_shim\nsync_hermes_chat_config\n" in script
+    # Legacy one-shot deploys still repair durable Hermes state in-order. Typed
+    # phase 2 consumes the prerequisite receipt and does not rewrite it.
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    legacy = installer.split(
+        'if [ "$NODE_ACTION" = legacy-one-shot ]; then\n  initialize_hermes_home', 1
+    )[1].split("\nelse\n  log \"typed phase 2 retained", 1)[0]
+    assert legacy.index("apply_hermes_gateway_runtime_shim") < legacy.index(
+        "sync_hermes_chat_config"
+    ) < legacy.index("install_fleet_skills")
 
 
 def test_fleet_deploy_exports_python_bin_to_remote():
@@ -481,37 +490,44 @@ def test_fleet_deploy_drain_agent_lookup_uses_file_for_large_json_payload():
 
 
 
-def test_fleet_deploy_installs_github_cli_for_workers():
-    script = deploy_script_text()
+def test_fleet_deploy_verifies_onboarded_github_cli_before_phase2_mutation():
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    function = _deploy_function(installer, "install_github_cli", "install_codegraph_cli")
+    pre_mutation = installer.split(
+        'if [ "$NODE_ACTION" = arm-phase2 ] || [ "$NODE_ACTION" = apply-phase2 ]; then',
+        1,
+    )[1].split("capture_darwin_launchd_prestate", 1)[0]
 
-    assert "install_github_cli()" in script
-    main = script.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
-    install = main.index("install_github_cli || true")
-    assert install < main.index("drain_mac_agent_before_deploy")
-    assert install < main.index('log "installing mac source"')
-    assert 'brew install gh' in script
-    assert 'sudo apt-get install -y gh' in script
-    assert 'https://cli.github.com/packages' in script
+    assert "install_github_cli()" in installer
+    assert "GitHub CLI is missing; complete node onboarding before phase 2" in function
+    assert '"$existing" --version' in function
+    assert "brew install" not in function
+    assert "apt-get" not in function
+    assert pre_mutation.index("validate_typed_prerequisite_bundle") < pre_mutation.index(
+        "install_github_cli"
+    )
 
 
 def test_fleet_deploy_never_forces_an_unverified_github_review_key():
-    script = deploy_script_text()
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    function = installer.split("install_github_review_key() {", 1)[1].split(
+        "\n}\n\nconfigure_github_https_credentials", 1
+    )[0]
 
-    assert "github_ssh_auth_succeeds()" in script
-    assert "ssh-keygen -y -f \"$candidate_file\"" in script
-    assert "github_ssh_auth_succeeds \"$candidate_file\"" in script
-    assert "refusing to make it the exclusive identity" in script
-    assert "using the host's verified ambient GitHub SSH identity" in script
-    assert "the hub cannot authenticate to github.com for review publication" in script
-    assert "remove_managed_github_review_key_config \"$config_file\"" in script
-
-    exclusive_identity = "  IdentitiesOnly yes"
-    assert script.count(exclusive_identity) == 2
-    assert 'ssh_args+=(-o IdentitiesOnly=yes -i "$key_file")' in script
-    assert exclusive_identity in script.split(
-        "github_ssh_auth_succeeds \"$candidate_file\"", 1
-    )[1]
-    assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
+    assert "github_ssh_auth_succeeds()" in installer
+    assert '[ -f "$key_file" ] && [ ! -L "$key_file" ]' in function
+    assert 'github_ssh_auth_succeeds "$key_file"' in function
+    assert "verified onboarded ambient GitHub SSH identity" in function
+    assert "the hub cannot authenticate to github.com for review publication" in function
+    assert "Install and authorize the GitHub review identity during onboarding" in function
+    assert "ssh-keygen" not in function
+    assert "IdentityFile" not in function
+    assert "remove_managed_github_review_key_config" not in function
+    assert 'ssh_args+=(-o IdentitiesOnly=yes -i "$key_file")' in installer
 
 
 def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
@@ -523,7 +539,7 @@ def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
 
     assert "install_codegraph_cli()" in script
     assert "initialize_codegraph_repository()" in script
-    assert "mac_install_reviewed_codegraph" in script
+    assert "mac_install_reviewed_codegraph" in assets
     assert 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"' in assets
     for name in (
         "codegraph-linux-x64.tar.gz",
@@ -538,14 +554,16 @@ def test_fleet_deploy_installs_and_initializes_codegraph_for_workers():
     assert 'env -i PATH="${PATH:-/usr/bin:/bin}"' in assets
     assert "GH_TOKEN=" not in assets
     assert "MAC_DEPLOY_HUB_TOKEN=" not in assets
-    assert '"$target" install --yes' in script
+    assert 'ln -s "$bundle/bin/codegraph"' in assets
     assert "run_without_deploy_credentials" in script
     assert "codegraph init" in script
-    assert 'install_codegraph_cli\ninitialize_codegraph_repository "$SRC_DIR"' in install_window
-    assert 'install_codegraph_cli || true' not in install_window
+    assert 'initialize_codegraph_repository "$SRC_DIR"' in install_window
+    assert "typed phase 2 defers CodeGraph indexing to post-commit maintenance" in install_window
     assert 'initialize_codegraph_repository "$SRC_DIR" || true' not in install_window
-    assert "ERROR: reviewed CodeGraph asset installation failed" in script
-    assert "ERROR: codegraph install failed" in script
+    verifier = _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude")
+    assert "reviewed CodeGraph bundle is missing" in verifier
+    assert "onboarded CodeGraph version differs" in verifier
+    assert "mac_install_reviewed_codegraph" not in verifier
     assert "mac.codegraph_background_init.v1" in script
     assert "CodeGraph index initialization queued" in script
     assert 'grep -qxF ".codegraph/"' in script
@@ -560,7 +578,7 @@ def test_fleet_deploy_transports_reviewed_tool_contract_outside_secret_stdin():
     assert "copying reviewed native-tool checksum contract" in driver
     assert 'reviewed_tool_assets="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh"' in driver
     assert "MAC_DEPLOY_REVIEWED_TOOL_ASSETS=" in driver
-    assert r'_mac_tool_assets=\$3' in driver
+    assert r'_mac_tool_assets=\$2' in driver
     assert r'\$_mac_tool_assets' in driver
     assert 'REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-' in installer
     assert '. "$REVIEWED_TOOL_ASSETS"' in installer
@@ -577,7 +595,7 @@ def _deploy_function(script: str, name: str, next_name: str) -> str:
     return f"{name}() {{{body}\n"
 
 
-def test_codegraph_installer_function_links_installed_binary(tmp_path):
+def test_codegraph_phase2_verifier_accepts_onboarded_pinned_binary(tmp_path):
     script = deploy_script_text()
     runner = tmp_path / "run-install.sh"
     runner.write_text(
@@ -588,26 +606,20 @@ def test_codegraph_installer_function_links_installed_binary(tmp_path):
                 'MAC_HOME="$PWD/mac-home"',
                 'HOME="$PWD/home"',
                 'LOG_DIR="$PWD/logs"',
-                "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
+                "mkdir -p \"$MAC_HOME/bin\" \"$HOME\" \"$LOG_DIR\"",
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
+                'die() { printf "%s\\n" "$*" >&2; return 1; }',
                 'run_without_deploy_credentials() { "$@"; }',
                 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"',
-                "mac_install_reviewed_codegraph() {",
-                '  mkdir -p "$(dirname "$2")"',
-                "  cat > \"$2\" <<'EOF'",
+                "cat > \"$MAC_HOME/bin/codegraph\" <<'EOF'",
                 "#!/bin/sh",
-                'case "$1" in',
-                "  install) echo installed; exit 0 ;;",
-                "  --version) echo 1.1.6; exit 0 ;;",
-                "  *) exit 0 ;;",
-                "esac",
+                '[ "$1" = --version ] && echo 1.1.6',
                 "EOF",
-                '  chmod +x "$2"',
-                "}",
+                'chmod +x "$MAC_HOME/bin/codegraph"',
                 _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
                 "install_codegraph_cli",
                 'test -x "$MAC_HOME/bin/codegraph"',
-                'test -s "$LOG_DIR/codegraph-install.txt"',
+                'grep -q "verified onboarded CodeGraph" "$LOG_DIR/log.txt"',
                 "",
             ]
         ),
@@ -624,12 +636,12 @@ def test_codegraph_installer_function_links_installed_binary(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert "installed" in (tmp_path / "logs" / "codegraph-install.txt").read_text(
-        encoding="utf-8"
-    )
+    assert "verified onboarded CodeGraph v1.1.6" in (
+        tmp_path / "logs" / "log.txt"
+    ).read_text(encoding="utf-8")
 
 
-def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
+def test_codegraph_phase2_verifier_fails_when_onboarding_is_missing(tmp_path):
     script = deploy_script_text()
     runner = tmp_path / "run-install-fail.sh"
     runner.write_text(
@@ -642,9 +654,9 @@ def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
                 'LOG_DIR="$PWD/logs"',
                 "mkdir -p \"$MAC_HOME\" \"$HOME\" \"$LOG_DIR\"",
                 'log() { printf "%s\\n" "$*" >> "$LOG_DIR/log.txt"; }',
+                'die() { printf "%s\\n" "$*" >&2; return 1; }',
                 'run_without_deploy_credentials() { "$@"; }',
                 'MAC_REVIEWED_CODEGRAPH_VERSION="v1.1.6"',
-                "mac_install_reviewed_codegraph() { return 1; }",
                 _deploy_function(script, "install_codegraph_cli", "ensure_codegraph_git_exclude"),
                 "install_codegraph_cli",
                 "",
@@ -663,9 +675,7 @@ def test_codegraph_installer_function_fails_when_installer_fails(tmp_path):
     )
 
     assert result.returncode != 0
-    assert "ERROR: reviewed CodeGraph asset installation failed" in (
-        tmp_path / "logs" / "log.txt"
-    ).read_text(encoding="utf-8")
+    assert "reviewed CodeGraph bundle is missing" in result.stderr
 
 
 def test_reviewed_tool_asset_checksum_mismatch_fails_closed(tmp_path):
@@ -889,7 +899,7 @@ def test_fleet_deploy_declares_shared_memory_and_supervision_contract(tmp_path):
 
     assert 'SUPERVISOR_REQUESTED="${MAC_DEPLOY_SUPERVISOR:-auto}"' in script
     assert "detect_supervisor()" in script
-    assert "systemd|launchd|supervisord" in script
+    assert "MAC_DEPLOY_SUPERVISOR=systemd, launchd, or supervisord" in script
     assert "install_supervisord_service()" in script
     assert "write_hermes_memory_topology()" in script
     assert "write_hermes_runtime_context()" in script
@@ -1007,7 +1017,7 @@ def test_fleet_deploy_linux_control_plane_uses_service_wrapper():
 
     assert "install_mac_control_wrapper" in linux_service
     assert "if control_plane_enabled; then" in linux_service
-    assert 'systemctl disable --now "$MAC_SERVICE_NAME"' in linux_service
+    assert 'disable_systemd_service_if_present "$MAC_SERVICE_NAME"' in linux_service
     assert 'export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"' in script
     assert "ExecStart=$MAC_HOME/bin/mac-service" in linux_service
     assert "ExecStart=$VENV/bin/uvicorn" not in linux_service
@@ -1019,20 +1029,14 @@ def test_supervisord_pure_worker_has_no_gateway_program_or_restart():
         "install_darwin_service() {", 1
     )[0]
 
-    assert (
-        '  elif [ "${HERMES_GATEWAY_IMPL:-hermes}" = "none" ]; then\n'
-        '    # A pure worker must not retain or start either chat-gateway program.  An\n'
-        '    # empty block also lets ``supervisorctl update`` remove stale gateway\n'
-        '    # programs from a node that was converted from a conversational role.\n'
-        '    active_gateway_program=""\n'
-        '    gateway_program=""'
-    ) in supervisor
+    assert '  none)\n    # A pure worker must not retain or start either chat-gateway program.' in supervisor
+    assert '    active_gateway_program=""\n    gateway_program=""' in supervisor
     assert (
         '  if [ -n "$active_gateway_program" ]; then\n'
         '    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then\n'
         '      prepare_openclaw_gateway\n'
         '    fi\n'
-        '    run_supervisorctl restart "$active_gateway_program"'
+        '    start_supervisord_program "$active_gateway_program"'
     ) in supervisor
     assert (
         '    log "gateway_impl=none: pure worker; skipping gateway program '
@@ -1204,10 +1208,13 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
         # degraded early-return guarded by the flag.
         assert validator.count('if [ "$degraded" = "1" ]; then') == 2
         assert "proceeding degraded (first deploy" in validator
-    # The flag is plumbed into the remote deploy env and consumed by the
-    # post-deploy reconnect path in main().
+    # Legacy compatibility still transports the flag. Typed cohorts do not use
+    # it: exact prerequisite receipts must pass before the hub epoch opens.
     assert 'add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"' in script
-    assert '[ "${allow_degraded_services:-0}" = "1" ]' in script
+    typed = script.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
+    assert 'deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0' in typed
+    assert "prepare_remote_prerequisite_bundle" in typed
+    assert "MAC_DEPLOY_ALLOW_DEGRADED_SERVICES" not in typed
 
 
 def _run_env_writer(
@@ -1579,8 +1586,7 @@ def test_router_topology_preflight_runs_before_remote_mutation():
 
     assert "validate_router_topology_spec()" in script
     validation = main_body.index('validate_router_topology_spec "$spec" "$hub_token"')
-    assert validation < main_body.index("install_reverse_tunnel_on_hub")
-    assert validation < main_body.index('deploy_host "$spec"')
+    assert validation < main_body.index('run_typed_cohort "$selected_specs_file"')
 
 
 def test_agent_service_reads_worker_token_from_environment_not_process_argv():
@@ -1756,8 +1762,17 @@ def test_omniverse_gpu_skills_installed_only_on_gpu_nodes():
     assert "nvidia-smi -L" in fn  # GPU gate
     assert 'deploy/skills/omniverse-skills.tar.gz' in fn
     assert '"$HOME/.hermes/skills"' in fn
-    # invoked in the agent setup flow (right after the fleet-wide skill install)
-    assert "\ninstall_fleet_skills\ninstall_omniverse_gpu_skills\n" in script
+    # Invoked only by the onboarding/legacy preparation branch. Typed phase 2
+    # retains the exact receipt-proved skills state.
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    legacy = installer.split(
+        'if [ "$NODE_ACTION" = legacy-one-shot ]; then\n  initialize_hermes_home', 1
+    )[1].split("\nelse\n  log \"typed phase 2 retained", 1)[0]
+    assert legacy.index("install_fleet_skills") < legacy.index(
+        "install_omniverse_gpu_skills"
+    )
 
 
 def test_reverse_tunnel_program_keeps_retrying_until_key_authorized():
@@ -1924,8 +1939,8 @@ def test_fleet_deploy_network_provider_contract_is_explicit(tmp_path):
     assert tunnel_spoke_env["MAC_HUB_URL"] == "http://127.0.0.1:18789"
     assert '[ "$WORKER_MODE" = "loop" ] && [ "$AGENT" = "$SHARED_SERVICES_MANAGER_AGENT" ]' in script
     assert "uses_direct_mesh_hub()" in script
-    assert 'uses_direct_mesh_hub "$network_provider_field" "$hub_url_field"' in script
-    assert "skipping reverse tunnel" in script
+    assert 'uses_direct_mesh_hub "$network_provider" "$hub_url"' in script
+    assert "skipping reverse-tunnel wait" in script
     assert "network:" in sample
     assert "provider: none" in sample
     assert "provider: headscale" in sample
@@ -2483,22 +2498,15 @@ def test_remote_deploy_reconciliation_fails_when_zero_exit_left_no_post_manifest
 def test_remote_deploy_reconciliation_validates_latest_manifest_structure(tmp_path):
     deploy_ts = "20260707T182907Z"
     deploy_rev = "a" * 40
-    log_dir = tmp_path / ".mac" / "logs"
-    log_dir.mkdir(parents=True)
-    manifest = {
-        "stage": "post",
-        "agent": "rocky",
-        "deploy": {"timestamp": deploy_ts, "mac_git_rev": deploy_rev},
-    }
-    (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
+    mac_home = _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev)
+    log_dir = mac_home / "logs"
+    manifest = json.loads(
+        (log_dir / f"deploy-manifest-{deploy_ts}-post.json").read_text(
+            encoding="utf-8"
+        )
     )
     (log_dir / "deploy-manifest-latest.json").write_text(
         json.dumps({**manifest, "stage": "pre"}), encoding="utf-8"
-    )
-    (log_dir / f"deploy-{deploy_ts}.log").write_text("deploy complete\n", encoding="utf-8")
-    (tmp_path / ".mac" / "deployed-source-revision").write_text(
-        deploy_rev + "\n", encoding="utf-8"
     )
 
     result = _run_reconcile_remote_deploy(
@@ -2512,25 +2520,11 @@ def test_remote_deploy_reconciliation_validates_latest_manifest_structure(tmp_pa
 def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests(tmp_path):
     deploy_ts = "20260707T182907Z"
     deploy_rev = "b" * 40
-    log_dir = tmp_path / ".mac" / "logs"
-    log_dir.mkdir(parents=True)
-    manifest = {
-        "stage": "post",
-        "agent": "rocky",
-        "deploy": {"timestamp": deploy_ts, "mac_git_rev": deploy_rev},
-    }
-    (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
-    (log_dir / "deploy-manifest-latest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (log_dir / f"deploy-{deploy_ts}.log").write_text("deploy complete\n", encoding="utf-8")
+    mac_home = _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev)
     # Spokes have a mac.env but intentionally do not run a loopback control
     # plane. Reconciliation must rely on the role-aware remote health gate and
     # matching durable manifests instead of probing 127.0.0.1:8789.
-    (tmp_path / ".mac" / "mac.env").write_text("MAC_PORT=9\n", encoding="utf-8")
-    (tmp_path / ".mac" / "deployed-source-revision").write_text(
-        deploy_rev + "\n", encoding="utf-8"
-    )
+    (mac_home / "mac.env").write_text("MAC_PORT=9\n", encoding="utf-8")
 
     result = _run_reconcile_remote_deploy(
         tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev
@@ -2544,10 +2538,51 @@ def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
     mac_home = tmp_path / ".mac"
     log_dir = mac_home / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    generation = f"{deploy_rev}:rocky:{deploy_ts}:reconcile-test-nonce"
+    quiescence = {
+        "schema": "mac.daemon_resource_quiescence_manifest.v1",
+        "status": "proved",
+        "generation": generation,
+        "revision": deploy_rev,
+        "sha256": "1" * 64,
+        "required_phases": ["pre_source"],
+        "proved_phases": ["pre_source"],
+        "container_runtimes": [],
+        "gateway_implementation": "none",
+    }
+    phase1 = {
+        "schema": "mac.phase1_cohort_quiescence_manifest.v1",
+        "status": "proved",
+        "generation": generation,
+        "revision": deploy_rev,
+        "sha256": "2" * 64,
+        "supervisor": {"kind": "systemd"},
+        "daemon_resource_receipt": {
+            "schema": "mac.daemon_resource_quiescence.v1",
+            "proof_phase": "pre_source",
+            "sha256": "3" * 64,
+            "function_block_sha256": "4" * 64,
+        },
+    }
+    gateway = {
+        "schema": "mac.gateway_readiness_manifest.v1",
+        "status": "proved",
+        "generation": generation,
+        "revision": deploy_rev,
+        "sha256": "5" * 64,
+        "stable_observations": 2,
+        "implementation": "none",
+        "supervisor": "systemd",
+        "identities": {},
+        "state": {},
+    }
     manifest = {
         "stage": "post",
         "agent": "rocky",
         "deploy": {"timestamp": deploy_ts, "mac_git_rev": deploy_rev},
+        "daemon_resource_quiescence": quiescence,
+        "phase1_cohort_quiescence": phase1,
+        "gateway_readiness": gateway,
     }
     (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(
         json.dumps(manifest), encoding="utf-8"
@@ -2906,7 +2941,7 @@ def test_darwin_openclaw_launchd_bootstrap_starts_gateway_once():
     )[0]
 
     assert "<key>RunAtLoad</key><true/>" in installer
-    assert 'launchctl bootstrap "gui/$uid" "$plist"' in installer
+    assert 'mac_launchd_bootstrap_job \\\n    "gui/$uid" "$plist" "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"' in installer
     assert 'launchctl kickstart -k "gui/$uid/$OPENCLAW_LAUNCHD_LABEL"' not in installer
 
 
@@ -3159,7 +3194,9 @@ def test_build_mac_env_passes_through_gh_token(tmp_path):
     assert "add_remote_env MAC_DEPLOY_GH_TOKEN" not in script
     assert 'add_remote_secret_env MAC_DEPLOY_GH_TOKEN "${MAC_DEPLOY_GH_TOKEN:-}"' in script
     assert "remote_secret_env" in script
-    assert r'cat > \"\$_mac_secret_file\"' in script
+    assert "mac-node-install-${agent}-${TS}.env" not in script
+    assert "_mac_secret_file" not in script
+    assert ". /dev/stdin" in script
     assert "printf '%s\\n' \"${remote_secret_env[@]}\" > \"$local_secret_payload\"" in script
     assert 'stream_file_after_remote_fence "$local_secret_payload"' in script
 
@@ -3173,10 +3210,16 @@ def test_required_github_credentials_fail_before_worker_drain():
     assert "GH_TOKEN absent on a node that requires" in function
     assert '"$gh_bin" auth status --hostname github.com' in function
 
-    main = script.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
-    auth = main.index("configure_github_https_credentials")
-    assert auth < main.index("drain_mac_agent_before_deploy")
-    assert auth < main.index('log "installing mac source"')
+    pre_mutation = script.split(
+        'if [ "$NODE_ACTION" = arm-phase2 ] || [ "$NODE_ACTION" = apply-phase2 ]; then',
+        1,
+    )[1].split("capture_darwin_launchd_prestate", 1)[0]
+    assert pre_mutation.index("validate_typed_prerequisite_bundle") < pre_mutation.index(
+        "configure_github_https_credentials"
+    )
+    assert "configure_github_https_credentials" not in script.split(
+        'write_deploy_manifest "pre" "$MANIFEST_PRE"', 1
+    )[1]
 
 
 def test_hub_env_includes_all_option_c_env_vars(tmp_path):
@@ -3266,11 +3309,11 @@ def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
 
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL "${MAC_DEPLOY_OPENSHELL:-}"' in script
     assert "reconcile_disabled_optional_openshell" in installer
-    main_after_disable = installer.split(
-        "reload_mac_env\nreconcile_disabled_optional_openshell", 1
-    )[1]
-    assert main_after_disable.index("prepare_work_package_pipeline_storage") < (
-        main_after_disable.index('case "$SUPERVISOR_KIND" in')
+    legacy = installer.split(
+        'reload_mac_env\nif [ "$NODE_ACTION" = legacy-one-shot ]; then', 1
+    )[1].split("\nelse\n  log \"typed phase 2 consumed infrastructure receipts", 1)[0]
+    assert legacy.index("reconcile_disabled_optional_openshell") < legacy.index(
+        "prepare_work_package_pipeline_storage"
     )
     for owned_state in (
         "openshell-gw",
@@ -3798,6 +3841,8 @@ OS_KIND=linux
 PY={shlex.quote(sys.executable)}
 log() {{ :; }}
 die() {{ printf '%s\\n' "$*" >&2; return 1; }}
+run_user_systemctl() {{ systemctl --user "$@"; }}
+run_systemctl() {{ systemctl "$@"; }}
 {helpers}
 reconcile_disabled_optional_openshell
 """

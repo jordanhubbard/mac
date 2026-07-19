@@ -218,15 +218,29 @@ EOF
       || run_supervisorctl start "${FLEET_NAME}-headscale" >/dev/null
     ;;
   launchd)
-    plist="$HOME/Library/LaunchAgents/com.${FLEET_NAME}.headscale.plist"
+    uid="$(id -u)"
+    label="com.${FLEET_NAME}.headscale"
+    target="gui/$uid/$label"
+    script_dir="$(CDPATH= cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    MAC_LAUNCHD_LOG_PREFIX="[headscale]"
+    # shellcheck source=lib/launchd-lifecycle.sh
+    [ -r "$script_dir/lib/launchd-lifecycle.sh" ] || {
+      echo "[headscale] ERROR: shared launchd lifecycle library is missing" >&2
+      exit 1
+    }
+    . "$script_dir/lib/launchd-lifecycle.sh"
+    plist="$HOME/Library/LaunchAgents/${label}.plist"
     mkdir -p "$HOME/Library/LaunchAgents"
-    cat > "$plist" <<EOF
+    mac_launchd_transaction_begin "gui/$uid" "$plist" "$target" "$label"
+    tmp_plist="$(mktemp "$HOME/Library/LaunchAgents/.${label}.XXXXXX")"
+    mac_launchd_transaction_track_temporary "$tmp_plist"
+    cat > "$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.${FLEET_NAME}.headscale</string>
+  <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key>
   <array><string>${HEADSCALE_BIN}</string><string>serve</string></array>
   <key>RunAtLoad</key><true/>
@@ -236,11 +250,23 @@ EOF
 </dict>
 </plist>
 EOF
-    uid="$(id -u)"
-    launchctl bootout "gui/$uid/com.${FLEET_NAME}.headscale" >/dev/null 2>&1 || true
-    launchctl bootstrap "gui/$uid" "$plist"
+    if command -v plutil >/dev/null 2>&1; then
+      plutil -lint "$tmp_plist"
+    fi
+    mac_launchd_transaction_mark_mutating
+    mac_launchd_stop_job_if_present "$target" "$label"
+    mac_launchd_transaction_replace "$tmp_plist" "$plist"
+    mac_launchd_bootstrap_job "gui/$uid" "$plist" "$target" "$label"
     ;;
 esac
+
+run_headscale_lifecycle_command() {
+  if [ "$SUPERVISOR_KIND" = launchd ]; then
+    mac_run_bounded "${MAC_HEADSCALE_COMMAND_TIMEOUT_SECONDS:-15}" "$@"
+  else
+    "$@"
+  fi
+}
 
 # -- Wait for headscale to become ready --
 for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
@@ -262,13 +288,19 @@ fi
 echo "[headscale] headscale ready at ${HEADSCALE_LOCAL_URL}"
 
 # -- Create user and pre-auth key --
-if ! "$HEADSCALE_BIN" users list 2>/dev/null | grep -q "^[[:space:]]*${HEADSCALE_USER}[[:space:]]"; then
+users_output="$(run_headscale_lifecycle_command \
+  "$HEADSCALE_BIN" users list 2>/dev/null)" || {
+  echo "[headscale] ERROR: failed to inspect headscale users" >&2
+  exit 1
+}
+if ! printf '%s\n' "$users_output" \
+  | grep -q "^[[:space:]]*${HEADSCALE_USER}[[:space:]]"; then
   echo "[headscale] Creating user ${HEADSCALE_USER}"
-  "$HEADSCALE_BIN" users create "$HEADSCALE_USER"
+  run_headscale_lifecycle_command "$HEADSCALE_BIN" users create "$HEADSCALE_USER"
 fi
 
 echo "[headscale] Generating reusable pre-auth key for user ${HEADSCALE_USER}"
-preauthkey="$("$HEADSCALE_BIN" preauthkeys create \
+preauthkey="$(run_headscale_lifecycle_command "$HEADSCALE_BIN" preauthkeys create \
   --user "$HEADSCALE_USER" \
   --reusable \
   --expiration "8760h" \
@@ -286,6 +318,10 @@ set_env_key "$ENV_FILE" HEADSCALE_URL "$HEADSCALE_LOCAL_URL"
 set_env_key "$ENV_FILE" HEADSCALE_FLEET_URL "$HEADSCALE_FLEET_URL"
 set_env_key "$ENV_FILE" HEADSCALE_PREAUTHKEY "$preauthkey"
 set_env_key "$ENV_FILE" HEADSCALE_PORT "$HEADSCALE_PORT"
+
+if [ "$SUPERVISOR_KIND" = launchd ]; then
+  mac_launchd_transaction_commit
+fi
 
 echo "[headscale] Wrote credentials to ${ENV_FILE}"
 echo "[headscale] Fleet URL (for workers): ${HEADSCALE_FLEET_URL}"

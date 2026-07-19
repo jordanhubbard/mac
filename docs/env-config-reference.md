@@ -34,6 +34,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_AGENT_MEDIA_ROUTES` | str | consumer-defined | agent | Agent setting: agent media routes. |
 | `MAC_AGENT_NAME` | str | consumer-defined | agent | Agent setting: agent name. |
 | `MAC_AGENT_PLIST_BACKUP` | str | consumer-defined | agent | Agent setting: agent plist backup. |
+| `MAC_AGENT_PLIST_MUTATED` | str | consumer-defined | agent | Agent setting: agent plist mutated. |
 | `MAC_AGENT_QUARANTINE_THRESHOLD` | int | consumer-defined | agent | Agent setting: agent quarantine threshold. |
 | `MAC_AGENT_RECONCILE_RUNTIME_DEPS` | bool | consumer-defined | agent | Agent setting: agent reconcile runtime deps. |
 | `MAC_AGENT_ROLE` | str | consumer-defined | agent | Agent setting: agent role. |
@@ -43,6 +44,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_AGENT_STARTUP_SELF_TEST_REPORT` | str | consumer-defined | agent | Agent setting: agent startup self test report. |
 | `MAC_AGENT_STARTUP_SELF_TEST_TIMEOUT` | int | consumer-defined | agent | Agent setting: agent startup self test timeout. |
 | `MAC_AGENT_UNIT_BACKUP` | str | consumer-defined | agent | Agent setting: agent unit backup. |
+| `MAC_AGENT_UNIT_MUTATED` | str | consumer-defined | agent | Agent setting: agent unit mutated. |
 | `MAC_AGENT_ZOMBIE_STREAM_AGE_SECONDS` | int | consumer-defined | agent | Agent setting: agent zombie stream age seconds. |
 | `MAC_ALLOW_UNSANDBOXED_YOLO` | bool | consumer-defined | core | Core setting: allow unsandboxed yolo. |
 | `MAC_API_ALLOW_OPEN` | bool | consumer-defined | api-auth | Api Auth setting: api allow open. |
@@ -73,6 +75,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CERTIFIER_PHASE_MANIFEST_JSON` | str | consumer-defined | core | Core setting: certifier phase manifest json. |
 | `MAC_CERTIFIER_PLATFORM` | str | consumer-defined | core | Core setting: certifier platform. |
 | `MAC_CERTIFIER_SOURCE_REVISION` | str | consumer-defined | core | Core setting: certifier source revision. |
+| `MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier status command timeout seconds. |
+| `MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier tunnel health timeout seconds. |
 | `MAC_CHAT_GATEWAY_IMPL` | str | consumer-defined | core | Core setting: chat gateway impl. |
 | `MAC_CLIENT_CREDENTIALS_DIR` | str | consumer-defined | core | Core setting: client credentials dir. |
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |
@@ -97,6 +101,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_COMMAND_AUDIT_RETENTION_SECONDS` | int | consumer-defined | core | Core setting: command audit retention seconds. |
 | `MAC_COMMAND_ID` | str | consumer-defined | core | Core setting: command id. |
 | `MAC_CONFIG_FILE` | str | consumer-defined | core | Core setting: config file. |
+| `MAC_CONTRACT_DESCRIPTION` | str | consumer-defined | core | Core setting: contract description. |
+| `MAC_CONTRACT_MARKER` | str | consumer-defined | core | Core setting: contract marker. |
+| `MAC_CONTRACT_SNAPSHOT` | str | consumer-defined | core | Core setting: contract snapshot. |
+| `MAC_CONTRACT_SOURCE` | str | consumer-defined | core | Core setting: contract source. |
 | `MAC_CONTROLLER_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: controller interval seconds. |
 | `MAC_CONTROL_PLANE_ROLE` | str | consumer-defined | core | Core setting: control plane role. |
 | `MAC_CRASH_CORE_MAX_BYTES` | int | consumer-defined | core | Core setting: crash core max bytes. |
@@ -137,13 +145,27 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ARCHIVE` | str | consumer-defined | deployment | Deployment setting: deploy archive. |
 | `MAC_DEPLOY_ATTESTATION_MANIFEST` | str | consumer-defined | deployment | Deployment setting: deploy attestation manifest. |
 | `MAC_DEPLOY_ATTESTATION_PROBE_B64` | str | consumer-defined | deployment | Deployment setting: deploy attestation probe b64. |
+| `MAC_DEPLOY_ATTEST_AGENT` | str | consumer-defined | deployment | Deployment setting: deploy attest agent. |
+| `MAC_DEPLOY_ATTEST_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy attest generation. |
+| `MAC_DEPLOY_ATTEST_REV` | str | consumer-defined | deployment | Deployment setting: deploy attest rev. |
+| `MAC_DEPLOY_ATTEST_TS` | str | consumer-defined | deployment | Deployment setting: deploy attest ts. |
 | `MAC_DEPLOY_BARRIER_FILE` | str | consumer-defined | deployment | Deployment setting: deploy barrier file. |
 | `MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | deployment | Deployment setting: deploy certifier openshell gateway endpoint. |
 | `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |
 | `MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy codegraph init timeout seconds. |
 | `MAC_DEPLOY_CONFIGURED_AGENT_IDS` | str | consumer-defined | deployment | Deployment setting: deploy configured agent ids. |
+| `MAC_DEPLOY_CONTROLLER_NONCE` | str | consumer-defined | deployment | Deployment setting: deploy controller nonce. |
+| `MAC_DEPLOY_CONTROLLER_PID` | str | consumer-defined | deployment | Deployment setting: deploy controller pid. |
 | `MAC_DEPLOY_CONTROL_BIND_HOST` | str | consumer-defined | deployment | Deployment setting: deploy control bind host. |
 | `MAC_DEPLOY_CONTROL_PORT` | int | consumer-defined | deployment | Deployment setting: deploy control port. |
+| `MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy daemon command timeout seconds. |
+| `MAC_DEPLOY_DAEMON_INJECT_RECEIPT_POST_REPLACE_FAILURE` | str | consumer-defined | deployment | Deployment setting: deploy daemon inject receipt post replace failure. |
+| `MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy daemon quiescence poll seconds. |
+| `MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy daemon quiescence timeout seconds. |
+| `MAC_DEPLOY_DAEMON_RUNTIME_PATHS` | str | consumer-defined | deployment | Deployment setting: deploy daemon runtime paths. |
+| `MAC_DEPLOY_DAEMON_RUNTIME_PATHS_CONFIGURED` | str | consumer-defined | deployment | Deployment setting: deploy daemon runtime paths configured. |
+| `MAC_DEPLOY_DAEMON_TEST_MODE` | str | consumer-defined | deployment | Deployment setting: deploy daemon test mode. |
+| `MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy daemon total timeout seconds. |
 | `MAC_DEPLOY_DATABASE_URL` | str | consumer-defined | deployment | Deployment setting: deploy database url. |
 | `MAC_DEPLOY_DEFER_AGENT_RESTART` | str | consumer-defined | deployment | Deployment setting: deploy defer agent restart. |
 | `MAC_DEPLOY_DEFER_CLEAR_DRAIN` | str | consumer-defined | deployment | Deployment setting: deploy defer clear drain. |
@@ -181,6 +203,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_GATE_REQUIRE_REPORT_EXECUTOR` | bool | consumer-defined | deployment | Deployment setting: deploy gate require report executor. |
 | `MAC_DEPLOY_GATE_TIMEOUT` | int | consumer-defined | deployment | Deployment setting: deploy gate timeout. |
 | `MAC_DEPLOY_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy generation. |
+| `MAC_DEPLOY_GENERATION_EXPECTED` | str | consumer-defined | deployment | Deployment setting: deploy generation expected. |
 | `MAC_DEPLOY_GH_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy gh token. |
 | `MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy github credentials required. |
 | `MAC_DEPLOY_GITHUB_REVIEW_KEY_B64` | str | consumer-defined | deployment | Deployment setting: deploy github review key b64. |
@@ -211,6 +234,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_HUB_TUNNEL_PUBKEY` | str | consumer-defined | deployment | Deployment setting: deploy hub tunnel pubkey. |
 | `MAC_DEPLOY_HUB_URL` | str | consumer-defined | deployment | Deployment setting: deploy hub url. |
 | `MAC_DEPLOY_IDE_HANDOFF_FILE` | str | consumer-defined | deployment | Deployment setting: deploy ide handoff file. |
+| `MAC_DEPLOY_LAUNCHD_LIFECYCLE` | str | consumer-defined | deployment | Deployment setting: deploy launchd lifecycle. |
 | `MAC_DEPLOY_LOCK_DIR` | str | consumer-defined | deployment | Deployment setting: deploy lock dir. |
 | `MAC_DEPLOY_LOCK_GUARD_FD` | str | consumer-defined | deployment | Deployment setting: deploy lock guard fd. |
 | `MAC_DEPLOY_LOCK_ID` | str | consumer-defined | deployment | Deployment setting: deploy lock id. |
@@ -231,6 +255,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_NEW_HUB_OS` | str | consumer-defined | deployment | Deployment setting: deploy new hub os. |
 | `MAC_DEPLOY_NEW_HUB_SUPERVISOR` | str | consumer-defined | deployment | Deployment setting: deploy new hub supervisor. |
 | `MAC_DEPLOY_NEW_HUB_URL` | str | consumer-defined | deployment | Deployment setting: deploy new hub url. |
+| `MAC_DEPLOY_NODE_ACTION` | str | consumer-defined | deployment | Deployment setting: deploy node action. |
+| `MAC_DEPLOY_NODE_IDENTITY_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy node identity sha256. |
 | `MAC_DEPLOY_OPENCLAW_LIVE_CANARY` | str | consumer-defined | deployment | Deployment setting: deploy openclaw live canary. |
 | `MAC_DEPLOY_OPENCLAW_PUBLIC_IDENTITY` | str | consumer-defined | deployment | Deployment setting: deploy openclaw public identity. |
 | `MAC_DEPLOY_OPENCLAW_REPRESENTATION_MODE` | str | consumer-defined | deployment | Deployment setting: deploy openclaw representation mode. |
@@ -245,6 +271,11 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime image. |
 | `MAC_DEPLOY_OS` | str | consumer-defined | deployment | Deployment setting: deploy os. |
 | `MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64` | str | consumer-defined | deployment | Deployment setting: deploy preflight agent ids b64. |
+| `MAC_DEPLOY_PREREQUISITE_BUNDLE` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite bundle. |
+| `MAC_DEPLOY_PREREQUISITE_EXPECTATIONS` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite expectations. |
+| `MAC_DEPLOY_PREREQUISITE_HELPER` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite helper. |
+| `MAC_DEPLOY_PREREQUISITE_HELPER_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite helper sha256. |
+| `MAC_DEPLOY_PREREQUISITE_MAX_AGE_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite max age seconds. |
 | `MAC_DEPLOY_QDRANT_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant bind addr. |
 | `MAC_DEPLOY_QDRANT_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant data dir. |
 | `MAC_DEPLOY_QDRANT_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy qdrant image. |
@@ -257,6 +288,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_RELEASE_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy release generation. |
 | `MAC_DEPLOY_RELEASE_PLAN_B64` | str | consumer-defined | deployment | Deployment setting: deploy release plan b64. |
 | `MAC_DEPLOY_RELEASE_TS` | str | consumer-defined | deployment | Deployment setting: deploy release ts. |
+| `MAC_DEPLOY_REMOTE_PHASE_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy remote phase timeout seconds. |
 | `MAC_DEPLOY_REPORT_AGENT_ID` | str | consumer-defined | deployment | Deployment setting: deploy report agent id. |
 | `MAC_DEPLOY_REPORT_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy report required. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_GRACE_DAYS` | str | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler grace days. |
@@ -264,11 +296,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler interval seconds. |
 | `MAC_DEPLOY_REPOSITORY_REF_RECONCILER_MODE` | str | consumer-defined | deployment | Deployment setting: deploy repository ref reconciler mode. |
 | `MAC_DEPLOY_REQUIRE_FIRECRAWL` | bool | consumer-defined | deployment | Deployment setting: deploy require firecrawl. |
+| `MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE` | bool | consumer-defined | deployment | Deployment setting: deploy require phase1 quiescence. |
 | `MAC_DEPLOY_REQUIRE_QDRANT_MEMORY` | bool | consumer-defined | deployment | Deployment setting: deploy require qdrant memory. |
 | `MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED` | bool | consumer-defined | deployment | Deployment setting: deploy require release all selected. |
 | `MAC_DEPLOY_RESTART_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy restart generation. |
 | `MAC_DEPLOY_REV` | str | consumer-defined | deployment | Deployment setting: deploy rev. |
 | `MAC_DEPLOY_REVIEWED_TOOL_ASSETS` | str | consumer-defined | deployment | Deployment setting: deploy reviewed tool assets. |
+| `MAC_DEPLOY_ROLLBACK_SUPERVISOR_HELPER` | str | consumer-defined | deployment | Deployment setting: deploy rollback supervisor helper. |
 | `MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router audio upstream. |
 | `MAC_DEPLOY_ROUTER_BACKEND` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router backend. |
 | `MAC_DEPLOY_ROUTER_DEFAULT_MODEL` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router default model. |
@@ -280,6 +314,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ROUTER_WILDCARD_MODELS` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router wildcard models. |
 | `MAC_DEPLOY_SERVICE_ACTION` | str | consumer-defined | deployment | Deployment setting: deploy service action. |
 | `MAC_DEPLOY_SERVICE_ROLE_OPS` | str | consumer-defined | deployment | Deployment setting: deploy service role ops. |
+| `MAC_DEPLOY_SERVICE_TS` | str | consumer-defined | deployment | Deployment setting: deploy service ts. |
 | `MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT` | str | consumer-defined | deployment | Deployment setting: deploy shared services manager agent. |
 | `MAC_DEPLOY_SSH_PORT` | int | consumer-defined | deployment | Deployment setting: deploy ssh port. |
 | `MAC_DEPLOY_STALE_LOCK_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy stale lock seconds. |
@@ -297,6 +332,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_TAILSCALE_AUTH_KEY_ENV` | str | consumer-defined | deployment | Deployment setting: deploy tailscale auth key env. |
 | `MAC_DEPLOY_TAKEOVER_STALE_LOCK` | str | consumer-defined | deployment | Deployment setting: deploy takeover stale lock. |
 | `MAC_DEPLOY_TARGET` | str | consumer-defined | deployment | Deployment setting: deploy target. |
+| `MAC_DEPLOY_TEST_INJECT_OPENCLAW_SNAPSHOT_FAILURE` | str | consumer-defined | deployment | Deployment setting: deploy test inject openclaw snapshot failure. |
+| `MAC_DEPLOY_TEST_INTERRUPT_AFTER_PHASE2_INTENT` | str | consumer-defined | deployment | Deployment setting: deploy test interrupt after phase2 intent. |
 | `MAC_DEPLOY_TOKENHUB_API_KEY` | str | consumer-defined | deployment | Deployment setting: deploy tokenhub api key. |
 | `MAC_DEPLOY_TOKENHUB_INSTALL` | bool | consumer-defined | deployment | Deployment setting: deploy tokenhub install. |
 | `MAC_DEPLOY_TOKENHUB_PORT` | int | consumer-defined | deployment | Deployment setting: deploy tokenhub port. |
@@ -345,6 +382,13 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_EXECUTOR_AGENT_TIMEOUT` | int | consumer-defined | core | Core setting: executor agent timeout. |
 | `MAC_EXECUTOR_BACKEND` | str | consumer-defined | core | Core setting: executor backend. |
 | `MAC_EXTENSIONS` | str | consumer-defined | core | Core setting: extensions. |
+| `MAC_FINALIZE_AGENT` | str | consumer-defined | core | Core setting: finalize agent. |
+| `MAC_FINALIZE_FLEET` | str | consumer-defined | core | Core setting: finalize fleet. |
+| `MAC_FINALIZE_GENERATION` | str | consumer-defined | core | Core setting: finalize generation. |
+| `MAC_FINALIZE_POST_MANIFEST` | str | consumer-defined | core | Core setting: finalize post manifest. |
+| `MAC_FINALIZE_RECEIPT` | str | consumer-defined | core | Core setting: finalize receipt. |
+| `MAC_FINALIZE_REVISION` | str | consumer-defined | core | Core setting: finalize revision. |
+| `MAC_FINALIZE_ROLLBACK_INTENT` | str | consumer-defined | core | Core setting: finalize rollback intent. |
 | `MAC_FIRECRAWL_CHECK_TIMEOUT_SECONDS` | int | consumer-defined | firecrawl-gateway | Firecrawl Gateway setting: firecrawl check timeout seconds. |
 | `MAC_FIRECRAWL_GATEWAY_ALLOW_PRIVATE_TARGETS` | bool | consumer-defined | firecrawl-gateway | Firecrawl Gateway setting: firecrawl gateway allow private targets. |
 | `MAC_FIRECRAWL_GATEWAY_MAX_BYTES` | int | consumer-defined | firecrawl-gateway | Firecrawl Gateway setting: firecrawl gateway max bytes. |
@@ -353,6 +397,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_FIRECRAWL_GATEWAY_USER_AGENT` | str | consumer-defined | firecrawl-gateway | Firecrawl Gateway setting: firecrawl gateway user agent. |
 | `MAC_FLEET` | str | consumer-defined | core | Core setting: fleet. |
 | `MAC_FLEETS_CONFIG` | str | consumer-defined | core | Core setting: fleets config. |
+| `MAC_FLEET_COHORT_JOURNAL_DIR` | str | consumer-defined | core | Core setting: fleet cohort journal dir. |
 | `MAC_FLEET_NAME` | str | consumer-defined | core | Core setting: fleet name. |
 | `MAC_FLEET_TENANT_ID` | str | consumer-defined | core | Core setting: fleet tenant id. |
 | `MAC_FORCE_ACC_MIGRATION` | str | consumer-defined | core | Core setting: force acc migration. |
@@ -364,6 +409,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_GITHUB_INGEST_INTERVAL_SECONDS` | int | consumer-defined | github-ingest | Github Ingest setting: github ingest interval seconds. |
 | `MAC_GITHUB_INGEST_MAX_ISSUES_PER_REPO` | str | consumer-defined | github-ingest | Github Ingest setting: github ingest max issues per repo. |
 | `MAC_GITHUB_INGEST_MAX_OPEN_TASKS_PER_PROJECT` | str | consumer-defined | github-ingest | Github Ingest setting: github ingest max open tasks per project. |
+| `MAC_HEADSCALE_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: headscale command timeout seconds. |
 | `MAC_HERMES_AGENT_DIR` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes agent dir. |
 | `MAC_HERMES_ALLOW_APPROVAL_PROMPTS` | bool | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes allow approval prompts. |
 | `MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM` | str | consumer-defined | hermes-runtime | Hermes Runtime setting: hermes apply gateway runtime shim. |
@@ -423,7 +469,35 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_JOURNAL_DIR` | str | consumer-defined | core | Core setting: journal dir. |
 | `MAC_JOURNAL_MANIFEST` | str | consumer-defined | core | Core setting: journal manifest. |
 | `MAC_JOURNAL_PATH` | str | consumer-defined | core | Core setting: journal path. |
+| `MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd artifact timeout seconds. |
+| `MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd command timeout seconds. |
 | `MAC_LAUNCHD_LABEL` | str | consumer-defined | core | Core setting: launchd label. |
+| `MAC_LAUNCHD_LOG_PREFIX` | str | consumer-defined | core | Core setting: launchd log prefix. |
+| `MAC_LAUNCHD_MAX_OUTPUT_BYTES` | int | consumer-defined | core | Core setting: launchd max output bytes. |
+| `MAC_LAUNCHD_POLL_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: launchd poll interval seconds. |
+| `MAC_LAUNCHD_PYTHON_BIN` | str | consumer-defined | core | Core setting: launchd python bin. |
+| `MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: launchd transition timeout seconds. |
+| `MAC_LAUNCHD_TX_ACTIVE` | str | consumer-defined | core | Core setting: launchd tx active. |
+| `MAC_LAUNCHD_TX_AFTER_RESTORE_HOOK` | str | consumer-defined | core | Core setting: launchd tx after restore hook. |
+| `MAC_LAUNCHD_TX_BACKUPS` | str | consumer-defined | core | Core setting: launchd tx backups. |
+| `MAC_LAUNCHD_TX_COUNT` | int | consumer-defined | core | Core setting: launchd tx count. |
+| `MAC_LAUNCHD_TX_DIR` | str | consumer-defined | core | Core setting: launchd tx dir. |
+| `MAC_LAUNCHD_TX_DOMAIN` | str | consumer-defined | core | Core setting: launchd tx domain. |
+| `MAC_LAUNCHD_TX_EXISTED` | str | consumer-defined | core | Core setting: launchd tx existed. |
+| `MAC_LAUNCHD_TX_LABEL` | str | consumer-defined | core | Core setting: launchd tx label. |
+| `MAC_LAUNCHD_TX_MODE` | str | consumer-defined | core | Core setting: launchd tx mode. |
+| `MAC_LAUNCHD_TX_MUTATING` | str | consumer-defined | core | Core setting: launchd tx mutating. |
+| `MAC_LAUNCHD_TX_OBSERVED_STATE` | str | consumer-defined | core | Core setting: launchd tx observed state. |
+| `MAC_LAUNCHD_TX_OLD_STATE` | str | consumer-defined | core | Core setting: launchd tx old state. |
+| `MAC_LAUNCHD_TX_PATHS` | str | consumer-defined | core | Core setting: launchd tx paths. |
+| `MAC_LAUNCHD_TX_ROLLBACK_HOOK` | str | consumer-defined | core | Core setting: launchd tx rollback hook. |
+| `MAC_LAUNCHD_TX_SAVED_EXIT_TRAP` | str | consumer-defined | core | Core setting: launchd tx saved exit trap. |
+| `MAC_LAUNCHD_TX_SAVED_HUP_TRAP` | str | consumer-defined | core | Core setting: launchd tx saved hup trap. |
+| `MAC_LAUNCHD_TX_SAVED_INT_TRAP` | str | consumer-defined | core | Core setting: launchd tx saved int trap. |
+| `MAC_LAUNCHD_TX_SAVED_TERM_TRAP` | str | consumer-defined | core | Core setting: launchd tx saved term trap. |
+| `MAC_LAUNCHD_TX_TARGET` | str | consumer-defined | core | Core setting: launchd tx target. |
+| `MAC_LAUNCHD_TX_TEMPORARIES` | str | consumer-defined | core | Core setting: launchd tx temporaries. |
+| `MAC_LAUNCHD_TX_TEMP_COUNT` | int | consumer-defined | core | Core setting: launchd tx temp count. |
 | `MAC_LEASE_EXPIRY_FINALIZER_STALE_SECONDS` | int | consumer-defined | core | Core setting: lease expiry finalizer stale seconds. |
 | `MAC_LEASE_ID` | str | consumer-defined | core | Core setting: lease id. |
 | `MAC_LEDGER_BACKUP_DB` | str | consumer-defined | core | Core setting: ledger backup db. |
@@ -438,6 +512,19 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_LEDGER_SNAPSHOT_SHA256` | str | consumer-defined | core | Core setting: ledger snapshot sha256. |
 | `MAC_LESSON_CURATION_ENABLED` | bool | consumer-defined | core | Core setting: lesson curation enabled. |
 | `MAC_LESSON_CURATION_MODEL` | str | consumer-defined | core | Core setting: lesson curation model. |
+| `MAC_LINUX_MANAGER_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: linux manager command timeout seconds. |
+| `MAC_LINUX_SERVICE_TX_ACTIVE` | str | consumer-defined | core | Core setting: linux service tx active. |
+| `MAC_LINUX_SERVICE_TX_BACKUP` | str | consumer-defined | core | Core setting: linux service tx backup. |
+| `MAC_LINUX_SERVICE_TX_DIR` | str | consumer-defined | core | Core setting: linux service tx dir. |
+| `MAC_LINUX_SERVICE_TX_EXISTED` | str | consumer-defined | core | Core setting: linux service tx existed. |
+| `MAC_LINUX_SERVICE_TX_LABEL` | str | consumer-defined | core | Core setting: linux service tx label. |
+| `MAC_LINUX_SERVICE_TX_MUTATING` | str | consumer-defined | core | Core setting: linux service tx mutating. |
+| `MAC_LINUX_SERVICE_TX_PATH` | str | consumer-defined | core | Core setting: linux service tx path. |
+| `MAC_LINUX_SERVICE_TX_ROLLBACK_HOOK` | str | consumer-defined | core | Core setting: linux service tx rollback hook. |
+| `MAC_LINUX_SERVICE_TX_SAVED_EXIT_TRAP` | str | consumer-defined | core | Core setting: linux service tx saved exit trap. |
+| `MAC_LINUX_SERVICE_TX_SAVED_HUP_TRAP` | str | consumer-defined | core | Core setting: linux service tx saved hup trap. |
+| `MAC_LINUX_SERVICE_TX_SAVED_INT_TRAP` | str | consumer-defined | core | Core setting: linux service tx saved int trap. |
+| `MAC_LINUX_SERVICE_TX_SAVED_TERM_TRAP` | str | consumer-defined | core | Core setting: linux service tx saved term trap. |
 | `MAC_MACHINE_ID` | str | consumer-defined | core | Core setting: machine id. |
 | `MAC_MANAGED_REVERSE_TUNNEL` | str | consumer-defined | core | Core setting: managed reverse tunnel. |
 | `MAC_MAX_CHILD_TASKS_PER_PARENT` | str | consumer-defined | core | Core setting: max child tasks per parent. |
@@ -512,9 +599,11 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_PUBLIC_IDENTITY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw public identity. |
 | `MAC_OPENCLAW_REPRESENTATION_MODE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw representation mode. |
 | `MAC_OPENCLAW_REPRESENTED_BY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw represented by. |
+| `MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw require no host script automation. |
 | `MAC_OPENCLAW_ROUTER_API_KEY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router api key. |
 | `MAC_OPENCLAW_ROUTER_URL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router url. |
 | `MAC_OPENCLAW_SANDBOX` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox. |
+| `MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox delete timeout seconds. |
 | `MAC_OPENCLAW_SANDBOX_NAME` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox name. |
 | `MAC_OPENCLAW_SCRIPT_JOB_OUTPUT_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script job output dir. |
 | `MAC_OPENCLAW_SCRIPT_RUNNER_SRC` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw script runner src. |
@@ -525,6 +614,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_SLACK_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack bot token. |
 | `MAC_OPENCLAW_SLACK_HOME_CHANNELS_FILE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw slack home channels file. |
 | `MAC_OPENCLAW_STARTUP_OK` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw startup ok. |
+| `MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw subprocess timeout seconds. |
 | `MAC_OPENCLAW_SUPERVISOR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw supervisor. |
 | `MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram account id. |
 | `MAC_OPENCLAW_TELEGRAM_BOT_TOKEN` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw telegram bot token. |
@@ -566,7 +656,44 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSH_GATEWAY_OWNER` | str | consumer-defined | core | Core setting: opensh gateway owner. |
 | `MAC_OPENSH_GW` | str | consumer-defined | core | Core setting: opensh gw. |
 | `MAC_PG_POOL_SIZE` | int | consumer-defined | core | Core setting: pg pool size. |
+| `MAC_PHASE1_AGENT` | str | consumer-defined | core | Core setting: phase1 agent. |
+| `MAC_PHASE1_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: phase1 command timeout seconds. |
+| `MAC_PHASE1_DAEMON_FUNCTIONS_FILE` | str | consumer-defined | core | Core setting: phase1 daemon functions file. |
+| `MAC_PHASE1_DAEMON_FUNCTIONS_SHA256` | str | consumer-defined | core | Core setting: phase1 daemon functions sha256. |
+| `MAC_PHASE1_DAEMON_FUNCTIONS_SNAPSHOT` | str | consumer-defined | core | Core setting: phase1 daemon functions snapshot. |
+| `MAC_PHASE1_DAEMON_FUNCTIONS_SOURCE` | str | consumer-defined | core | Core setting: phase1 daemon functions source. |
+| `MAC_PHASE1_DAEMON_RECEIPT_PATH` | str | consumer-defined | core | Core setting: phase1 daemon receipt path. |
+| `MAC_PHASE1_DAEMON_RESTORE_CONTRACT_PATH` | str | consumer-defined | core | Core setting: phase1 daemon restore contract path. |
+| `MAC_PHASE1_DAEMON_RESTORE_RECEIPT_PATH` | str | consumer-defined | core | Core setting: phase1 daemon restore receipt path. |
+| `MAC_PHASE1_EXPECTED_CONTRACT_SHA256` | str | consumer-defined | core | Core setting: phase1 expected contract sha256. |
+| `MAC_PHASE1_EXPECT_AGENT` | str | consumer-defined | core | Core setting: phase1 expect agent. |
+| `MAC_PHASE1_EXPECT_GENERATION` | str | consumer-defined | core | Core setting: phase1 expect generation. |
+| `MAC_PHASE1_EXPECT_RESTORE_SHA256` | str | consumer-defined | core | Core setting: phase1 expect restore sha256. |
+| `MAC_PHASE1_EXPECT_REV` | str | consumer-defined | core | Core setting: phase1 expect rev. |
+| `MAC_PHASE1_FLEET` | str | consumer-defined | core | Core setting: phase1 fleet. |
+| `MAC_PHASE1_FUNCTIONS` | str | consumer-defined | core | Core setting: phase1 functions. |
+| `MAC_PHASE1_GENERATION` | str | consumer-defined | core | Core setting: phase1 generation. |
+| `MAC_PHASE1_HELPER` | str | consumer-defined | core | Core setting: phase1 helper. |
+| `MAC_PHASE1_HELPER_SOURCE` | str | consumer-defined | core | Core setting: phase1 helper source. |
+| `MAC_PHASE1_LOCAL_RESTORE_MANIFEST` | str | consumer-defined | core | Core setting: phase1 local restore manifest. |
+| `MAC_PHASE1_OS` | str | consumer-defined | core | Core setting: phase1 os. |
+| `MAC_PHASE1_POLL_SECONDS` | int | consumer-defined | core | Core setting: phase1 poll seconds. |
+| `MAC_PHASE1_RECEIPT_PATH` | str | consumer-defined | core | Core setting: phase1 receipt path. |
+| `MAC_PHASE1_RESTORE_ARTIFACT_DIR` | str | consumer-defined | core | Core setting: phase1 restore artifact dir. |
+| `MAC_PHASE1_RESTORE_CONTRACT_PATH` | str | consumer-defined | core | Core setting: phase1 restore contract path. |
+| `MAC_PHASE1_RESTORE_CONTRACT_SHA256` | str | consumer-defined | core | Core setting: phase1 restore contract sha256. |
+| `MAC_PHASE1_RESTORE_EXECUTABLE` | str | consumer-defined | core | Core setting: phase1 restore executable. |
+| `MAC_PHASE1_RESTORE_RECEIPT_PATH` | str | consumer-defined | core | Core setting: phase1 restore receipt path. |
+| `MAC_PHASE1_RESTORE_SHA256` | str | consumer-defined | core | Core setting: phase1 restore sha256. |
+| `MAC_PHASE1_RETAINED_DAEMON_FUNCTIONS` | str | consumer-defined | core | Core setting: phase1 retained daemon functions. |
+| `MAC_PHASE1_REV` | str | consumer-defined | core | Core setting: phase1 rev. |
+| `MAC_PHASE1_SUPERVISOR` | str | consumer-defined | core | Core setting: phase1 supervisor. |
+| `MAC_PHASE1_SUPERVISOR_KIND` | str | consumer-defined | core | Core setting: phase1 supervisor kind. |
+| `MAC_PHASE1_SUPERVISOR_PROOF_PATH` | str | consumer-defined | core | Core setting: phase1 supervisor proof path. |
+| `MAC_PHASE1_TEST_MODE` | str | consumer-defined | core | Core setting: phase1 test mode. |
+| `MAC_PHASE1_TOTAL_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: phase1 total timeout seconds. |
 | `MAC_PLIST_BACKUP` | str | consumer-defined | core | Core setting: plist backup. |
+| `MAC_PLIST_MUTATED` | str | consumer-defined | core | Core setting: plist mutated. |
 | `MAC_PLUGIN_DOCKERFILE` | str | consumer-defined | core | Core setting: plugin dockerfile. |
 | `MAC_PLUGIN_IMAGE_NAME` | str | consumer-defined | core | Core setting: plugin image name. |
 | `MAC_PLUGIN_IMAGE_TAG` | str | consumer-defined | core | Core setting: plugin image tag. |
@@ -575,6 +702,22 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PLUGIN_TAG` | str | consumer-defined | core | Core setting: plugin tag. |
 | `MAC_PORT` | int | consumer-defined | core | Core setting: port. |
 | `MAC_PREFER_CODING_AGENT` | bool | consumer-defined | core | Core setting: prefer coding agent. |
+| `MAC_PREREQ_AGENT` | str | consumer-defined | core | Core setting: prereq agent. |
+| `MAC_PREREQ_AGENT_ID` | str | consumer-defined | core | Core setting: prereq agent id. |
+| `MAC_PREREQ_FIRECRAWL_REQUIRED` | bool | consumer-defined | core | Core setting: prereq firecrawl required. |
+| `MAC_PREREQ_FIRECRAWL_URL` | str | consumer-defined | core | Core setting: prereq firecrawl url. |
+| `MAC_PREREQ_HELPER` | str | consumer-defined | core | Core setting: prereq helper. |
+| `MAC_PREREQ_IDENTITY` | str | consumer-defined | core | Core setting: prereq identity. |
+| `MAC_PREREQ_OPENSHELL_REQUIRED` | bool | consumer-defined | core | Core setting: prereq openshell required. |
+| `MAC_PREREQ_OS` | str | consumer-defined | core | Core setting: prereq os. |
+| `MAC_PREREQ_QDRANT_REQUIRED` | bool | consumer-defined | core | Core setting: prereq qdrant required. |
+| `MAC_PREREQ_QDRANT_URL` | str | consumer-defined | core | Core setting: prereq qdrant url. |
+| `MAC_PREREQ_ROOT` | str | consumer-defined | core | Core setting: prereq root. |
+| `MAC_PREREQ_SUPERVISOR` | str | consumer-defined | core | Core setting: prereq supervisor. |
+| `MAC_PREREQ_WEBDAV_ENABLED` | bool | consumer-defined | core | Core setting: prereq webdav enabled. |
+| `MAC_PREREQ_WEBDAV_URL` | str | consumer-defined | core | Core setting: prereq webdav url. |
+| `MAC_PRIOR_ENV_FILE` | str | consumer-defined | core | Core setting: prior env file. |
+| `MAC_PRIOR_REVISION_FILE` | str | consumer-defined | core | Core setting: prior revision file. |
 | `MAC_PROFILE` | str | consumer-defined | core | Core setting: profile. |
 | `MAC_PROJECT_CONTRACT_FILE` | str | consumer-defined | core | Core setting: project contract file. |
 | `MAC_PRUNE_KEEP_LAST` | bool | consumer-defined | core | Core setting: prune keep last. |
@@ -588,6 +731,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_QDRANT_CHECK_TIMEOUT_SECONDS` | int | consumer-defined | qdrant-memory | Qdrant Memory setting: qdrant check timeout seconds. |
 | `MAC_QDRANT_MEMORY` | str | consumer-defined | qdrant-memory | Qdrant Memory setting: qdrant memory. |
 | `MAC_QDRANT_MEMORY_ROLE` | str | consumer-defined | qdrant-memory | Qdrant Memory setting: qdrant memory role. |
+| `MAC_QDRANT_RUNTIME_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | qdrant-memory | Qdrant Memory setting: qdrant runtime command timeout seconds. |
 | `MAC_QDRANT_URL` | str | consumer-defined | qdrant-memory | Qdrant Memory setting: qdrant url. |
 | `MAC_QUIET_LOCAL_BANNER` | str | consumer-defined | core | Core setting: quiet local banner. |
 | `MAC_READ_ONLY_AUTHORITATIVE_VERIFIER` | str | consumer-defined | core | Core setting: read only authoritative verifier. |
@@ -654,6 +798,36 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REVIEW_TICK_ON_HEARTBEAT` | str | consumer-defined | review | Review setting: review tick on heartbeat. |
 | `MAC_REVIEW_VERDICT_WAIT_CAP` | str | consumer-defined | review | Review setting: review verdict wait cap. |
 | `MAC_REVIEW_WORKSPACE_ROOT` | str | consumer-defined | review | Review setting: review workspace root. |
+| `MAC_ROLLBACK_ACTIVE_GATEWAY` | str | consumer-defined | core | Core setting: rollback active gateway. |
+| `MAC_ROLLBACK_AGENT` | str | consumer-defined | core | Core setting: rollback agent. |
+| `MAC_ROLLBACK_AGENT_PRIOR_STATE` | str | consumer-defined | core | Core setting: rollback agent prior state. |
+| `MAC_ROLLBACK_BIN_BACKUP` | str | consumer-defined | core | Core setting: rollback bin backup. |
+| `MAC_ROLLBACK_COMPLETION` | str | consumer-defined | core | Core setting: rollback completion. |
+| `MAC_ROLLBACK_DIRECTORY_SNAPSHOT_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: rollback directory snapshot timeout seconds. |
+| `MAC_ROLLBACK_FLEET` | str | consumer-defined | core | Core setting: rollback fleet. |
+| `MAC_ROLLBACK_GENERATION` | str | consumer-defined | core | Core setting: rollback generation. |
+| `MAC_ROLLBACK_HERMES` | str | consumer-defined | core | Core setting: rollback hermes. |
+| `MAC_ROLLBACK_HERMES_BACKUP` | str | consumer-defined | core | Core setting: rollback hermes backup. |
+| `MAC_ROLLBACK_INTENT` | str | consumer-defined | core | Core setting: rollback intent. |
+| `MAC_ROLLBACK_LIFECYCLE` | str | consumer-defined | core | Core setting: rollback lifecycle. |
+| `MAC_ROLLBACK_LIFECYCLE_SHA256` | str | consumer-defined | core | Core setting: rollback lifecycle sha256. |
+| `MAC_ROLLBACK_NODE_IDENTITY_SHA256` | str | consumer-defined | core | Core setting: rollback node identity sha256. |
+| `MAC_ROLLBACK_OPENCLAW_BACKUP` | str | consumer-defined | core | Core setting: rollback openclaw backup. |
+| `MAC_ROLLBACK_OPENCLAW_EXISTED` | str | consumer-defined | core | Core setting: rollback openclaw existed. |
+| `MAC_ROLLBACK_OS` | str | consumer-defined | core | Core setting: rollback os. |
+| `MAC_ROLLBACK_PREREQUISITE_BUNDLE_SHA256` | str | consumer-defined | core | Core setting: rollback prerequisite bundle sha256. |
+| `MAC_ROLLBACK_PREREQUISITE_EXPECTATIONS_SHA256` | str | consumer-defined | core | Core setting: rollback prerequisite expectations sha256. |
+| `MAC_ROLLBACK_PRIOR_GENERATION` | str | consumer-defined | core | Core setting: rollback prior generation. |
+| `MAC_ROLLBACK_PRIOR_REVISION` | str | consumer-defined | core | Core setting: rollback prior revision. |
+| `MAC_ROLLBACK_REVISION` | str | consumer-defined | core | Core setting: rollback revision. |
+| `MAC_ROLLBACK_SCRIPT` | str | consumer-defined | core | Core setting: rollback script. |
+| `MAC_ROLLBACK_SRC` | str | consumer-defined | core | Core setting: rollback src. |
+| `MAC_ROLLBACK_SRC_BACKUP` | str | consumer-defined | core | Core setting: rollback src backup. |
+| `MAC_ROLLBACK_SUPERVISOR` | str | consumer-defined | core | Core setting: rollback supervisor. |
+| `MAC_ROLLBACK_SUPERVISOR_HELPER` | str | consumer-defined | core | Core setting: rollback supervisor helper. |
+| `MAC_ROLLBACK_SUPERVISOR_HELPER_SHA256` | str | consumer-defined | core | Core setting: rollback supervisor helper sha256. |
+| `MAC_ROLLBACK_VENV` | str | consumer-defined | core | Core setting: rollback venv. |
+| `MAC_ROLLBACK_VENV_BACKUP` | str | consumer-defined | core | Core setting: rollback venv backup. |
 | `MAC_ROUTER_AUDIO_KEY` | str | consumer-defined | router | Router setting: router audio key. |
 | `MAC_ROUTER_AUDIO_TIMEOUT` | int | consumer-defined | router | Router setting: router audio timeout. |
 | `MAC_ROUTER_AUDIO_UPSTREAM` | str | consumer-defined | router | Router setting: router audio upstream. |
@@ -747,6 +921,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SUPERVISORD_CONF_NAME` | str | consumer-defined | core | Core setting: supervisord conf name. |
 | `MAC_SUPERVISORD_PROG` | str | consumer-defined | core | Core setting: supervisord prog. |
 | `MAC_SUPERVISOR_ALERT_WEBHOOK` | str | consumer-defined | core | Core setting: supervisor alert webhook. |
+| `MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: supervisor command timeout seconds. |
 | `MAC_SUPERVISOR_DISABLED` | str | consumer-defined | core | Core setting: supervisor disabled. |
 | `MAC_SUPERVISOR_FAILURE_THRESHOLD` | int | consumer-defined | core | Core setting: supervisor failure threshold. |
 | `MAC_SUPERVISOR_FLAP_WINDOW_SECONDS` | int | consumer-defined | core | Core setting: supervisor flap window seconds. |
@@ -763,6 +938,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_SUPERVISOR_RESTART_COMMAND` | str | consumer-defined | core | Core setting: supervisor restart command. |
 | `MAC_SUPERVISOR_RESTART_GRACE_SECONDS` | int | consumer-defined | core | Core setting: supervisor restart grace seconds. |
 | `MAC_SUPERVISOR_TOKEN` | str | consumer-defined | core | Core setting: supervisor token. |
+| `MAC_SYSTEMD_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: systemd command timeout seconds. |
 | `MAC_TAILSCALE_HOSTNAME` | str | consumer-defined | core | Core setting: tailscale hostname. |
 | `MAC_TAILSCALE_IP` | str | consumer-defined | core | Core setting: tailscale ip. |
 | `MAC_TASK_CANONICAL_REMOTE` | str | consumer-defined | task-execution | Task Execution setting: task canonical remote. |
@@ -804,6 +980,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TOOLCHAIN_BIN` | str | consumer-defined | core | Core setting: toolchain bin. |
 | `MAC_TOOLCHAIN_ROOT` | str | consumer-defined | core | Core setting: toolchain root. |
 | `MAC_UNIT_BACKUP` | str | consumer-defined | core | Core setting: unit backup. |
+| `MAC_UNIT_MUTATED` | str | consumer-defined | core | Core setting: unit mutated. |
 | `MAC_URL` | str | consumer-defined | core | Core setting: url. |
 | `MAC_USER` | str | consumer-defined | core | Core setting: user. |
 | `MAC_VALIDATE_REMOTE_REFS` | bool | consumer-defined | core | Core setting: validate remote refs. |

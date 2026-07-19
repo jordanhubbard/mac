@@ -183,19 +183,202 @@ def test_postgres_successor_hold_epoch_converges_under_concurrent_retry(
     for result in results:
         assert {agent.id for agent in result} == {first.id, second.id}
         assert all(agent.dispatch_hold is True for agent in result)
-        assert {
-            agent.dispatch_hold_reason for agent in result
-        } == {"synchronized successor hold"}
-    assert postgres_store.query_one(
-        "SELECT COUNT(*) AS count FROM agent_lifecycle_events "
-        "WHERE event_type = ?",
-        ("agent.dispatch_hold_epoch_committed",),
-    )["count"] == 1
-    assert postgres_store.query_one(
-        "SELECT COUNT(*) AS count FROM agent_lifecycle_events "
-        "WHERE event_type = ?",
-        ("agent.dispatch_hold_epoch_transitioned",),
-    )["count"] == 2
+        assert {agent.dispatch_hold_reason for agent in result} == {
+            "synchronized successor hold"
+        }
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS count FROM agent_lifecycle_events WHERE event_type = ?",
+            ("agent.dispatch_hold_epoch_committed",),
+        )["count"]
+        == 1
+    )
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS count FROM agent_lifecycle_events WHERE event_type = ?",
+            ("agent.dispatch_hold_epoch_transitioned",),
+        )["count"]
+        == 2
+    )
+
+
+def test_postgres_dispatch_hold_epoch_status_is_exact_and_read_only(
+    postgres_store,
+) -> None:
+    from mac.services import ControlPlane
+
+    control_plane = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    machine = control_plane.register_machine("postgres-epoch-status-host")
+    agent = control_plane.register_agent(
+        machine.id,
+        "postgres-epoch-status-agent",
+        agent_id="agent_postgres_epoch_status",
+    )
+    holds = ((agent.id, "postgres-epoch-status-hold"),)
+    epoch_id = "postgres-epoch-status"
+    control_plane.set_agent_dispatch_hold(agent.id, holds[0][1])
+    control_plane.release_agent_dispatch_holds_batch(holds, epoch_id=epoch_id)
+    identity = control_plane._dispatch_hold_epoch_identity_payload(
+        epoch_id=epoch_id,
+        normalized=holds,
+        requested_expectations=(),
+        successor_reason=None,
+    )
+    digest = control_plane._dispatch_hold_epoch_identity_sha256(identity)
+    event_count = postgres_store.query_one(
+        "SELECT COUNT(*) AS count FROM agent_lifecycle_events"
+    )["count"]
+
+    status = control_plane.agent_dispatch_hold_epoch_status(epoch_id, digest)
+    assert status["status"] == "committed"
+    assert status["agent_ids"] == [agent.id]
+    assert (
+        control_plane.agent_dispatch_hold_epoch_status(epoch_id, "f" * 64)["status"]
+        == "mismatch"
+    )
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS count FROM agent_lifecycle_events"
+        )["count"]
+        == event_count
+    )
+
+
+def test_postgres_fleet_release_open_is_unique_and_transactional(
+    postgres_store,
+) -> None:
+    """Competing opens select one owner; a later cohort failure rolls back all."""
+
+    from mac.models import ValidationError
+    from mac.services import ControlPlane
+    from mac.worker_credentials import WorkerCredentialLifecycle
+
+    first_cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    second_cp = ControlPlane(postgres_store, secret_key=_CONTROL_PLANE_TEST_SECRET)
+    assert (
+        first_cp.fleet_release_epochs.hub_authority_id
+        == second_cp.fleet_release_epochs.hub_authority_id
+    )
+    machine = first_cp.register_machine("postgres-fleet-release-open-host")
+    alpha = first_cp.register_agent(
+        machine.id,
+        "postgres-fleet-release-open-alpha",
+        agent_id="agent_postgres_fleet_release_open_alpha",
+    )
+    beta = first_cp.register_agent(
+        machine.id,
+        "postgres-fleet-release-open-beta",
+        agent_id="agent_postgres_fleet_release_open_beta",
+    )
+
+    def issue(agent_id: str):
+        return WorkerCredentialLifecycle(postgres_store).issue(
+            agent_id,
+            environment="vm",
+        )
+
+    def participant(agent, pending) -> dict:
+        return {
+            "agent_id": agent.id,
+            "expected_dispatch_hold": False,
+            "expected_hold_reason": None,
+            "expected_hold_at": None,
+            "generation": "postgres-open-generation",
+            "baseline_seen": first_cp.get_agent(agent.id).last_seen_at,
+            "principal_id": pending.record["id"],
+            "attestation_candidate": None,
+            "report_executor_action": "preserve",
+            "report_executor_attestation": None,
+        }
+
+    first_pending = issue(alpha.id)
+    second_pending = issue(alpha.id)
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+    result_lock = threading.Lock()
+
+    def open_same_epoch(control_plane) -> None:
+        try:
+            barrier.wait(timeout=10)
+            result = control_plane.fleet_release_epochs.open_epoch(
+                "postgres-open-same-epoch",
+                [participant(alpha, first_pending)],
+            )
+            with result_lock:
+                results.append(result)
+        except Exception as exc:  # pragma: no cover - asserted below.
+            with result_lock:
+                errors.append(exc)
+
+    threads = [
+        threading.Thread(
+            target=open_same_epoch,
+            args=(first_cp,),
+        ),
+        threading.Thread(
+            target=open_same_epoch,
+            args=(second_cp,),
+        ),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+        assert not thread.is_alive()
+    assert not errors
+    assert len(results) == 2
+    assert results[0] == results[1]
+    with pytest.raises(ValidationError, match="reserved"):
+        second_cp.fleet_release_epochs.open_epoch(
+            "postgres-open-competing",
+            [participant(alpha, second_pending)],
+        )
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS count FROM fleet_release_epoch_agents "
+            "WHERE agent_id = ? AND open_state = 1",
+            (alpha.id,),
+        )["count"]
+        == 1
+    )
+    partial_index = postgres_store.query_one(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() "
+        "AND indexname = 'uniq_fleet_release_open_agent'"
+    )
+    assert partial_index is not None
+    assert "open_state = 1" in partial_index["indexdef"]
+
+    winner = results[0]
+    first_cp.fleet_release_epochs.abort(
+        winner["epoch_id"],
+        winner["identity_sha256"],
+        reason="release Postgres concurrency fixture",
+    )
+    alpha_pending = issue(alpha.id)
+    beta_pending = issue(beta.id)
+    first_cp.set_agent_dispatch_hold(beta.id, "unexpected concurrent hold")
+    with pytest.raises(ValidationError, match="lost expected prior hold"):
+        first_cp.fleet_release_epochs.open_epoch(
+            "postgres-open-atomic-failure",
+            [participant(alpha, alpha_pending), participant(beta, beta_pending)],
+        )
+    assert (
+        postgres_store.query_one(
+            "SELECT 1 FROM fleet_release_epochs WHERE epoch_id = ?",
+            ("postgres-open-atomic-failure",),
+        )
+        is None
+    )
+    assert first_cp.get_agent(alpha.id).dispatch_hold is False
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS count FROM fleet_release_epoch_agents "
+            "WHERE agent_id = ? AND open_state = 1",
+            (alpha.id,),
+        )["count"]
+        == 0
+    )
 
 
 def test_postgres_fleet_source_runtime_registration_converges_concurrently(
@@ -231,10 +414,13 @@ def test_postgres_fleet_source_runtime_registration_converges_concurrently(
     assert {result["created"] for result in results} == {True, False}
     assert len({result["runtime_id"] for result in results}) == 1
     assert len({result["runtime_digest"] for result in results}) == 1
-    assert postgres_store.query_one(
-        "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
-        (results[0]["runtime_name"],),
-    )["count"] == 1
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS count FROM runtime_environments WHERE name = ?",
+            (results[0]["runtime_name"],),
+        )["count"]
+        == 1
+    )
 
 
 def test_postgres_delete_agent_serializes_before_credential_revocation(
@@ -399,9 +585,7 @@ def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
         status="idle",
         health_status="healthy",
         resources={
-            "worker_credential": credential_resource_from_env(
-                agent.id, env_values
-            ),
+            "worker_credential": credential_resource_from_env(agent.id, env_values),
             "worker_credential_authenticated": authenticated_credential_resource(
                 agent_id=agent.id,
                 principal_id=issue.record["id"],
@@ -435,7 +619,9 @@ def test_postgres_delete_agent_and_credential_activation_use_agent_first_order(
                     result = self._connection.execute(sql, params)
                     activation_has_agent_lock.set()
                     if not permit_activation_to_commit.wait(timeout=10):
-                        raise AssertionError("test did not release credential activation")
+                        raise AssertionError(
+                            "test did not release credential activation"
+                        )
                     return result
             if thread_name == "agent-deleter" and touches_agent_row:
                 delete_attempted_agent_lock.set()
@@ -531,10 +717,13 @@ def test_postgres_execution_cohort_backfill_marker_and_route_contract(
     # a historical cohort when schema initialization runs again.
     _insert_task(postgres_store, id="post-marker-task")
     postgres_store.initialize()
-    assert postgres_store.query_one(
-        "SELECT 1 FROM execution_cohort_assignments WHERE task_id = ?",
-        ("post-marker-task",),
-    ) is None
+    assert (
+        postgres_store.query_one(
+            "SELECT 1 FROM execution_cohort_assignments WHERE task_id = ?",
+            ("post-marker-task",),
+        )
+        is None
+    )
 
     postgres_store.execute(
         "INSERT INTO execution_cohort_assignments ("
@@ -852,11 +1041,14 @@ def test_postgres_controller_task_identity_is_atomic_rooted_and_idempotent(
     )
     assert package["root_task_id"] == task_id
     assert package["state"] == "admitted"
-    assert postgres_store.query_one(
-        "SELECT task_id FROM work_package_task_links "
-        "WHERE package_id = ? AND node_key = ?",
-        ("wp_fast_postgres_identity", "build"),
-    )["task_id"] == task_id
+    assert (
+        postgres_store.query_one(
+            "SELECT task_id FROM work_package_task_links "
+            "WHERE package_id = ? AND node_key = ?",
+            ("wp_fast_postgres_identity", "build"),
+        )["task_id"]
+        == task_id
+    )
 
 
 def test_postgres_task_create_idempotency_reservation_is_exact_and_portable(
@@ -876,9 +1068,12 @@ def test_postgres_task_create_idempotency_reservation_is_exact_and_portable(
     retry = cp.create_task("Postgres retry-safe task", **request)
 
     assert retry.id == first.id
-    assert postgres_store.query_one(
-        "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,)
-    )["n"] == 1
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS n FROM tasks WHERE id = ?", (first.id,)
+        )["n"]
+        == 1
+    )
     with pytest.raises(ValidationError, match="already bound to a different request"):
         cp.create_task("Changed Postgres request", **request)
 
@@ -1088,9 +1283,7 @@ def test_postgres_work_package_admission_activation_and_claim_are_portable(
         "mutation_capacity",
         "writes",
     }
-    assert {(row["stage"], row["state"]) for row in tokens} == {
-        ("mutation", "held")
-    }
+    assert {(row["stage"], row["state"]) for row in tokens} == {("mutation", "held")}
 
 
 def test_postgres_legacy_direct_sql_package_claim_is_rejected(
@@ -1277,17 +1470,26 @@ def test_postgres_concurrent_work_package_wip_claims_are_fenced(
     assert "mutation WIP is exhausted" in next(
         result[1] for result in results if result[0] == "error"
     )
-    assert postgres_store.query_one(
-        "SELECT COUNT(*) AS n FROM work_package_assignment_audit"
-    )["n"] == 1
-    assert postgres_store.query_one(
-        "SELECT COUNT(*) AS n FROM work_package_wip_tokens "
-        "WHERE token_kind = ? AND state = ?",
-        ("mutation_capacity", "held"),
-    )["n"] == 1
-    assert postgres_store.query_one(
-        "SELECT COUNT(*) AS n FROM leases WHERE status = ?", ("active",)
-    )["n"] == 1
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS n FROM work_package_assignment_audit"
+        )["n"]
+        == 1
+    )
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS n FROM work_package_wip_tokens "
+            "WHERE token_kind = ? AND state = ?",
+            ("mutation_capacity", "held"),
+        )["n"]
+        == 1
+    )
+    assert (
+        postgres_store.query_one(
+            "SELECT COUNT(*) AS n FROM leases WHERE status = ?", ("active",)
+        )["n"]
+        == 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -1346,14 +1548,20 @@ def test_postgres_full_work_package_assembly_line_is_portable(
             receipt_id=str(landed.detail["id"]),
         )
         assert finalized.created is True
-        assert postgres_store.query_one(
-            "SELECT state FROM work_packages WHERE id = ?", (line.package_id,)
-        )["state"] == "completed"
-        assert postgres_store.query_one(
-            "SELECT COUNT(*) AS n FROM work_package_wip_tokens "
-            "WHERE package_id = ? AND state = ?",
-            (line.package_id, "held"),
-        )["n"] == 0
+        assert (
+            postgres_store.query_one(
+                "SELECT state FROM work_packages WHERE id = ?", (line.package_id,)
+            )["state"]
+            == "completed"
+        )
+        assert (
+            postgres_store.query_one(
+                "SELECT COUNT(*) AS n FROM work_package_wip_tokens "
+                "WHERE package_id = ? AND state = ?",
+                (line.package_id, "held"),
+            )["n"]
+            == 0
+        )
         outcome = line.control.work_package_telemetry.comparable_atomic_outcomes(
             package_id=line.package_id
         )
@@ -1378,9 +1586,12 @@ def test_postgres_full_work_package_assembly_line_is_portable(
         assert proof["batch_state"] == "rejected"
         assert proof["package_state"] == "paused"
         assert proof["wip_disposition"] == "quarantined"
-        assert postgres_store.query_one(
-            "SELECT COUNT(*) AS n FROM work_package_landing_intents"
-        )["n"] == 0
+        assert (
+            postgres_store.query_one(
+                "SELECT COUNT(*) AS n FROM work_package_landing_intents"
+            )["n"]
+            == 0
+        )
         outcome = line.control.work_package_telemetry.comparable_atomic_outcomes(
             package_id=line.package_id
         )
@@ -1389,9 +1600,12 @@ def test_postgres_full_work_package_assembly_line_is_portable(
         assert outcome[0]["canonical_publication_failure_class"] == (
             "managed_certification_rejected_final"
         )
-        assert postgres_store.query_one(
-            "SELECT COUNT(*) AS n FROM work_package_landing_receipts"
-        )["n"] == 0
+        assert (
+            postgres_store.query_one(
+                "SELECT COUNT(*) AS n FROM work_package_landing_receipts"
+            )["n"]
+            == 0
+        )
 
 
 def test_placeholder_translation_handles_in_clause(postgres_store) -> None:
