@@ -1478,14 +1478,21 @@ def test_synchronized_node_install_never_creates_unjournaled_media_gen_units() -
     assert gate < gpu_probe < unit_install
 
 
-def test_synchronized_openclaw_prepare_blocks_new_host_automation() -> None:
+def test_synchronized_openclaw_prepare_requires_exact_host_automation_journal() -> None:
     node_source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
         encoding="utf-8"
     )
     prepare = node_source.split("prepare_openclaw_gateway() {", 1)[1].split(
         "\n}\n\nverify_openclaw_gateway() {", 1
     )[0]
-    assert "MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION=1" in prepare
+    validation = node_source.split("phase1_host_automation_journal_sha256() {", 1)[1].split(
+        "\n}\n\n\nprepare_openclaw_gateway() {", 1
+    )[0]
+    assert "phase1-cohort-restore-contract-%s.json" in validation
+    assert "phase1-cohort-quiescence-%s.json" in validation
+    assert 'receipt.get("source_contract_sha256") != digest' in validation
+    assert "MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL=" in prepare
+    assert "MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256=" in prepare
 
     installer = (
         ROOT / "deploy" / "openclaw" / "install-openclaw-gateway.sh"
@@ -1493,14 +1500,14 @@ def test_synchronized_openclaw_prepare_blocks_new_host_automation() -> None:
     scheduling = installer.split("install_host_script_runner() {", 1)[1].split(
         "\n}\n\nprepare() {", 1
     )[0]
-    gate = scheduling.index("MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION")
+    gate = scheduling.index("MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL")
     launchd = scheduling.index("schedule_launchd_script_job")
     systemd = scheduling.index("schedule_systemd_script_job")
     assert gate < launchd and gate < systemd
 
 
 @pytest.mark.parametrize("manager", ["systemd", "launchd"])
-def test_unjournaled_openclaw_host_automation_fails_before_phase1_mutation(
+def test_openclaw_host_automation_is_journaled_quiesced_and_restored(
     tmp_path: Path, manager: str
 ) -> None:
     os_kind = "darwin" if manager == "launchd" else "linux"
@@ -1531,12 +1538,54 @@ def test_unjournaled_openclaw_host_automation_fails_before_phase1_mutation(
         )
     definition.parent.mkdir(parents=True)
     definition.write_text("prior generation\n", encoding="utf-8")
+    definition.chmod(0o600)
+    env["FAKE_HOST_AUTOMATION_LOADED"] = "1"
 
-    result = _run(env)
+    prepared = _run_action(env, "prepare")
 
-    assert result.returncode != 0
-    assert "host automation lacks an exact restore journal" in result.stderr
-    assert Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8") == ""
+    assert prepared.returncode == 0, prepared.stderr
+    contract_path = Path(env["MAC_HOME"]) / (
+        "phase1-cohort-restore-contract-%s.json" % env["DEPLOY_GENERATION"]
+    )
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    automation = contract["host_automation"]
+    assert automation["schema"] == "mac.phase1_host_automation.v1"
+    assert automation["manager"] == manager
+    assert len(automation["definitions"]) == 1
+    prior = automation["definitions"][0]
+    assert prior["sha256"] == hashlib.sha256(b"prior generation\n").hexdigest()
+    assert Path(prior["backup"]).read_bytes() == b"prior generation\n"
+    assert Path(prior["backup"]).stat().st_mode & 0o777 == 0o600
+
+    env["MAC_PHASE1_RESTORE_CONTRACT_SHA256"] = hashlib.sha256(
+        contract_path.read_bytes()
+    ).hexdigest()
+    Path(env["FAKE_PHASE1_EVENTS"]).write_text("", encoding="utf-8")
+    quiesced = _run_action(env, "quiesce")
+    assert quiesced.returncode == 0, quiesced.stderr
+    receipt = _receipt(env)
+    assert receipt["host_automation"]["definitions"][0]["state"] in {
+        "absent",
+        "inactive",
+    }
+
+    definition.write_text("successor generation\n", encoding="utf-8")
+    definition.chmod(0o600)
+    if manager == "systemd":
+        successor = definition.with_name("mac-openclaw-script-successor.timer")
+    else:
+        successor = definition.with_name(
+            "com.mac.openclaw-script-successor.plist"
+        )
+    successor.write_text("successor only\n", encoding="utf-8")
+    successor.chmod(0o600)
+    restored = _run_action(env, "restore")
+
+    assert restored.returncode == 0, restored.stderr
+    assert definition.read_bytes() == b"prior generation\n"
+    assert not successor.exists()
+    restore_receipt = json.loads(restored.stdout)
+    assert restore_receipt["host_automation"] == automation
 
 
 @pytest.mark.parametrize("manager", ["systemd", "launchd"])
@@ -1562,6 +1611,53 @@ def test_loaded_openclaw_host_automation_fails_without_definition_files(
     assert result.returncode != 0
     assert "loaded OpenClaw host automation lacks" in result.stderr
     assert Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8") == ""
+
+
+def test_host_automation_backup_tamper_blocks_restore_before_local_mutation(
+    tmp_path: Path,
+) -> None:
+    env = _base_case(tmp_path, "systemd")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    env["FAKE_SYSTEMD_STATE"] = str(state)
+    env["FAKE_HOST_AUTOMATION_LOADED"] = "1"
+    _install_systemctl(tmp_path / "bin")
+    definition = (
+        Path(env["HOME"])
+        / ".config"
+        / "systemd"
+        / "user"
+        / "mac-openclaw-script-memory-sync.timer"
+    )
+    definition.parent.mkdir(parents=True)
+    definition.write_text("prior generation\n", encoding="utf-8")
+    definition.chmod(0o600)
+    prepared = _run_action(env, "prepare")
+    assert prepared.returncode == 0, prepared.stderr
+    contract_path = Path(env["MAC_HOME"]) / (
+        "phase1-cohort-restore-contract-%s.json" % env["DEPLOY_GENERATION"]
+    )
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    env["MAC_PHASE1_RESTORE_CONTRACT_SHA256"] = hashlib.sha256(
+        contract_path.read_bytes()
+    ).hexdigest()
+    quiesced = _run_action(env, "quiesce")
+    assert quiesced.returncode == 0, quiesced.stderr
+
+    mac_env = Path(env["MAC_HOME"]) / "mac.env"
+    mac_env.write_text("MAC_STARTUP_CLEAR_HOLD=0\n", encoding="utf-8")
+    mac_env.chmod(0o600)
+    backup = Path(contract["host_automation"]["definitions"][0]["backup"])
+    backup.write_text("tampered backup\n", encoding="utf-8")
+    backup.chmod(0o600)
+    events_before = Path(env["FAKE_PHASE1_EVENTS"]).read_bytes()
+
+    restored = _run_action(env, "restore")
+
+    assert restored.returncode != 0
+    assert "host automation backup differs" in restored.stderr
+    assert mac_env.read_text(encoding="utf-8") == "MAC_STARTUP_CLEAR_HOLD=0\n"
+    assert Path(env["FAKE_PHASE1_EVENTS"]).read_bytes() == events_before
 
 
 @pytest.mark.parametrize("manager", ["systemd", "launchd", "supervisord"])

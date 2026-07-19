@@ -351,6 +351,21 @@ def validate_artifact(item, mode, label):
 
 validate_artifact(payload.get("restore_executable"), 0o700, "restore executable")
 validate_artifact(payload.get("daemon_function_block"), 0o600, "daemon function block")
+host_automation = payload.get("host_automation")
+if (
+    not isinstance(host_automation, dict)
+    or host_automation.get("schema") != "mac.phase1_host_automation.v1"
+    or not isinstance(host_automation.get("definitions"), list)
+):
+    raise SystemExit("phase-1 prepare failed: existing host automation journal is malformed")
+for index, item in enumerate(host_automation["definitions"]):
+    if not isinstance(item, dict):
+        raise SystemExit("phase-1 prepare failed: existing host automation journal is malformed")
+    validate_artifact(
+        {"path": item.get("backup"), "sha256": item.get("sha256")},
+        0o600,
+        "host automation backup %d" % index,
+    )
 if payload["restore_executable"].get("argv") != [
     payload["restore_executable"]["path"],
     "restore",
@@ -449,6 +464,28 @@ if hashlib.sha256(private_bytes(current_helper, 0o700, "restore executable")).he
     raise SystemExit("phase-1 restore failed: retained restore executable digest differs")
 if hashlib.sha256(private_bytes(current_daemon, 0o600, "daemon function block")).hexdigest() != daemon["sha256"]:
     raise SystemExit("phase-1 restore failed: retained daemon function block digest differs")
+host_automation = contract.get("host_automation")
+definitions = host_automation.get("definitions") if isinstance(host_automation, dict) else None
+if (
+    not isinstance(host_automation, dict)
+    or host_automation.get("schema") != "mac.phase1_host_automation.v1"
+    or not isinstance(definitions, list)
+):
+    raise SystemExit("phase-1 restore failed: host automation journal is malformed")
+for item in definitions:
+    if (
+        not isinstance(item, dict)
+        or not isinstance(item.get("backup"), str)
+        or not isinstance(item.get("sha256"), str)
+        or not isinstance(item.get("size"), int)
+    ):
+        raise SystemExit("phase-1 restore failed: host automation journal is malformed")
+    backup = private_bytes(item["backup"], 0o600, "host automation backup", 1024 * 1024)
+    if (
+        hashlib.sha256(backup).hexdigest() != item["sha256"]
+        or len(backup) != item["size"]
+    ):
+        raise SystemExit("phase-1 restore failed: host automation backup differs")
 PY
 fi
 
@@ -928,6 +965,7 @@ requested_manager = os.environ["MAC_PHASE1_SUPERVISOR_KIND"]
 proof_path = Path(os.environ["MAC_PHASE1_SUPERVISOR_PROOF_PATH"])
 action = os.environ["ACTION"]
 restore_contract_path = Path(os.environ["MAC_PHASE1_RESTORE_CONTRACT_PATH"])
+restore_artifact_dir = Path(os.environ["MAC_PHASE1_RESTORE_ARTIFACT_DIR"])
 
 safe_identity = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,180}\Z")
 safe_fleet = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -1754,115 +1792,633 @@ def restore_supervisord(expected: dict[str, object]) -> dict[str, object]:
     return restored
 
 
-def reject_unjournaled_openclaw_host_automation(manager: str) -> None:
-    """Fail before service mutation when exact scheduler restore is unavailable."""
-    home = Path.home()
-    escaped_fleet = re.escape(fleet)
+def host_automation_pattern(manager: str) -> re.Pattern[str] | None:
+    escaped = re.escape(fleet)
     if manager == "systemd":
-        locations = [
-            (
-                home / ".config" / "systemd" / "user",
-                re.compile(
-                    r"%s-openclaw-script-[a-z0-9][a-z0-9-]*\.(?:service|timer)\Z"
-                    % escaped_fleet
-                ),
-            ),
-            (
-                home
-                / ".config"
-                / "systemd"
-                / "user"
-                / "timers.target.wants",
-                re.compile(
-                    r"%s-openclaw-script-[a-z0-9][a-z0-9-]*\.timer\Z"
-                    % escaped_fleet
-                ),
-            ),
-        ]
-    elif manager == "launchd":
-        locations = [
-            (
-                home / "Library" / "LaunchAgents",
-                re.compile(
-                    r"com\.%s\.openclaw-script-[a-z0-9][a-z0-9-]*\.plist\Z"
-                    % escaped_fleet
-                ),
-            )
-        ]
-    else:
-        return
-    for directory, pattern in locations:
-        if not directory.exists():
-            continue
-        if not directory.is_dir() or directory.is_symlink():
-            raise QuiescenceFailure("OpenClaw host automation directory is unsafe")
-        for entry in directory.iterdir():
-            if pattern.fullmatch(entry.name):
-                raise QuiescenceFailure(
-                    "prior OpenClaw host automation lacks an exact restore journal"
-                )
-    if manager == "systemd":
-        runtime_raw = ""
-        if os.environ.get("MAC_PHASE1_TEST_MODE") == "1":
-            runtime_raw = os.environ.get("FAKE_USER_RUNTIME_DIR", "")
-        runtime = Path(runtime_raw or ("/run/user/%d" % os.getuid()))
-        if not runtime.exists():
-            return
-        metadata = runtime.lstat()
-        if (
-            not stat.S_ISDIR(metadata.st_mode)
-            or stat.S_ISLNK(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-        ):
-            raise QuiescenceFailure("systemd user-manager runtime is unsafe")
-        user_env = dict(clean_env)
-        user_env["XDG_RUNTIME_DIR"] = str(runtime)
-        systemctl = command_path("systemctl")
-        result = run_bounded(
-            [
-                systemctl,
-                "--user",
-                "list-units",
-                "--all",
-                "--no-legend",
-                "--plain",
-                "%s-openclaw-script-*.service" % fleet,
-                "%s-openclaw-script-*.timer" % fleet,
-            ],
-            user_env,
-        )
-        if result.returncode != 0:
-            raise QuiescenceFailure(
-                "systemd user-manager automation inventory failed"
-            )
-        loaded_pattern = re.compile(
+        return re.compile(
             r"%s-openclaw-script-[a-z0-9][a-z0-9-]*\.(?:service|timer)\Z"
-            % escaped_fleet
+            % escaped
         )
-        for line in (result.stdout or "").splitlines():
-            fields = line.split()
-            if not fields or loaded_pattern.fullmatch(fields[0]) is None:
-                raise QuiescenceFailure(
-                    "systemd user-manager automation inventory was malformed"
-                )
-            raise QuiescenceFailure(
-                "loaded OpenClaw host automation lacks an exact restore journal"
+    if manager == "launchd":
+        return re.compile(
+            r"com\.%s\.openclaw-script-[a-z0-9][a-z0-9-]*\.plist\Z"
+            % escaped
+        )
+    return None
+
+
+def host_automation_definition_directory(manager: str) -> Path | None:
+    if manager == "systemd":
+        return Path.home() / ".config" / "systemd" / "user"
+    if manager == "launchd":
+        return Path.home() / "Library" / "LaunchAgents"
+    return None
+
+
+def safe_definition_directory(directory: Path, *, required: bool = False) -> bool:
+    try:
+        metadata = directory.lstat()
+    except FileNotFoundError:
+        if required:
+            raise QuiescenceFailure("OpenClaw host automation directory is unavailable")
+        return False
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o022
+    ):
+        raise QuiescenceFailure("OpenClaw host automation directory is unsafe")
+    return True
+
+
+def stable_definition_bytes(path: Path, *, backup: bool = False) -> tuple[bytes, int]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+    except OSError:
+        raise QuiescenceFailure("OpenClaw host automation definition is unsafe")
+    try:
+        before = os.fstat(descriptor)
+        mode = stat.S_IMODE(before.st_mode)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or before.st_nlink != 1
+            or (mode != 0o600 if backup else bool(mode & 0o022))
+            or before.st_size <= 0
+            or before.st_size > 1024 * 1024
+        ):
+            raise QuiescenceFailure("OpenClaw host automation definition is unsafe")
+        raw = bytearray()
+        while len(raw) < before.st_size:
+            chunk = os.read(descriptor, min(64 * 1024, before.st_size - len(raw)))
+            if not chunk:
+                raise QuiescenceFailure("OpenClaw host automation definition was truncated")
+            raw.extend(chunk)
+        if os.read(descriptor, 1):
+            raise QuiescenceFailure("OpenClaw host automation definition grew while reading")
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise QuiescenceFailure("OpenClaw host automation definition changed while reading")
+        return bytes(raw), mode
+    finally:
+        os.close(descriptor)
+
+
+def host_automation_definitions(manager: str) -> list[Path]:
+    directory = host_automation_definition_directory(manager)
+    pattern = host_automation_pattern(manager)
+    if directory is None or pattern is None or not safe_definition_directory(directory):
+        return []
+    definitions = sorted(
+        (entry for entry in directory.iterdir() if pattern.fullmatch(entry.name)),
+        key=lambda entry: entry.name,
+    )
+    for entry in definitions:
+        stable_definition_bytes(entry)
+    if manager == "systemd":
+        wants = directory / "timers.target.wants"
+        if safe_definition_directory(wants):
+            timer_pattern = re.compile(
+                r"%s-openclaw-script-[a-z0-9][a-z0-9-]*\.timer\Z"
+                % re.escape(fleet)
             )
+            by_name = {path.name: path for path in definitions}
+            for entry in wants.iterdir():
+                if timer_pattern.fullmatch(entry.name) is None:
+                    continue
+                try:
+                    metadata = entry.lstat()
+                    target = (entry.parent / os.readlink(entry)).resolve(strict=True)
+                except OSError:
+                    raise QuiescenceFailure("OpenClaw host automation enablement link is unsafe")
+                expected = by_name.get(entry.name)
+                if (
+                    not stat.S_ISLNK(metadata.st_mode)
+                    or metadata.st_uid != os.getuid()
+                    or expected is None
+                    or target != expected.resolve(strict=True)
+                ):
+                    raise QuiescenceFailure("OpenClaw host automation enablement link is unsafe")
+    return definitions
+
+
+def systemd_user_runtime() -> Path:
+    runtime_raw = ""
+    if os.environ.get("MAC_PHASE1_TEST_MODE") == "1":
+        runtime_raw = os.environ.get("FAKE_USER_RUNTIME_DIR", "")
+    return Path(runtime_raw or ("/run/user/%d" % os.getuid()))
+
+
+def systemd_user_context() -> tuple[str, dict[str, str]]:
+    runtime = systemd_user_runtime()
+    metadata = runtime.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+    ):
+        raise QuiescenceFailure("systemd user-manager runtime is unsafe")
+    environment = dict(clean_env)
+    environment["XDG_RUNTIME_DIR"] = str(runtime)
+    return command_path("systemctl"), environment
+
+
+def user_systemctl(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    systemctl, environment = systemd_user_context()
+    return run_bounded([systemctl, "--user", *argv], environment)
+
+
+def systemd_user_state(unit: str) -> str:
+    result = user_systemctl(
+        [
+            "show",
+            "--no-pager",
+            "--property=LoadState",
+            "--property=ActiveState",
+            "--property=SubState",
+            "--property=MainPID",
+            unit,
+        ]
+    )
+    if result.returncode != 0:
+        raise QuiescenceFailure("systemd user automation inspection failed")
+    values: dict[str, str] = {}
+    for line in (result.stdout or "").splitlines():
+        if not line or "=" not in line:
+            raise QuiescenceFailure("systemd user automation inspection was malformed")
+        key, value = line.split("=", 1)
+        if key in values:
+            raise QuiescenceFailure("systemd user automation inspection was ambiguous")
+        values[key] = value
+    if set(values) != {"LoadState", "ActiveState", "SubState", "MainPID"}:
+        raise QuiescenceFailure("systemd user automation inspection was incomplete")
+    if values["LoadState"] == "not-found":
+        return "absent"
+    if values["ActiveState"] in {"inactive", "failed"}:
+        if values["MainPID"] != "0":
+            raise QuiescenceFailure("systemd user automation has an unclassified process")
+        return "inactive"
+    if values["LoadState"] not in {"loaded", "masked"}:
+        raise QuiescenceFailure("systemd user automation has an unexpected load state")
+    return "active"
+
+
+def systemd_user_enabled(unit: str) -> str:
+    result = user_systemctl(["is-enabled", unit])
+    value = (result.stdout or "").strip()
+    if value not in {"enabled", "disabled", "masked", "static", "indirect", "not-found"}:
+        raise QuiescenceFailure("systemd user automation enablement is invalid")
+    if result.returncode not in {0, 1, 3, 4}:
+        raise QuiescenceFailure("systemd user automation enablement inspection failed")
+    return value
+
+
+def systemd_loaded_automation() -> set[str]:
+    pattern = host_automation_pattern("systemd")
+    assert pattern is not None
+    result = user_systemctl(
+        [
+            "list-units",
+            "--all",
+            "--no-pager",
+            "--no-legend",
+            "--plain",
+            "%s-openclaw-script-*.service" % fleet,
+            "%s-openclaw-script-*.timer" % fleet,
+        ]
+    )
+    if result.returncode != 0:
+        raise QuiescenceFailure("systemd user-manager automation inventory failed")
+    loaded: set[str] = set()
+    for line in (result.stdout or "").splitlines():
+        fields = line.split()
+        if not fields or pattern.fullmatch(fields[0]) is None or fields[0] in loaded:
+            raise QuiescenceFailure("systemd user-manager automation inventory was malformed")
+        loaded.add(fields[0])
+    return loaded
+
+
+def launchd_loaded_automation() -> set[str]:
+    launchctl = command_path("launchctl")
+    result = run_bounded([launchctl, "print", "gui/%d" % os.getuid()])
+    if result.returncode != 0:
+        raise QuiescenceFailure("launchd automation inventory failed")
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_.-])(com\.%s\.openclaw-script-"
+        r"[a-z0-9][a-z0-9-]*)(?![A-Za-z0-9_.-])" % re.escape(fleet)
+    )
+    return set(pattern.findall((result.stdout or "") + "\n" + (result.stderr or "")))
+
+
+def launchd_dynamic_disabled(labels: set[str]) -> dict[str, bool]:
+    if not labels:
+        return {}
+    launchctl = command_path("launchctl")
+    domain = "gui/%d" % os.getuid()
+    result = run_bounded([launchctl, "print-disabled", domain])
+    if result.returncode != 0:
+        raise QuiescenceFailure("launchd automation disable-override inventory failed")
+    parsed: dict[str, bool] = {}
+    pattern = re.compile(
+        r'^\s*"([A-Za-z0-9._-]+)"\s*=>\s*(enabled|disabled|true|false)\s*$'
+    )
+    text = result.stdout or ""
+    for line in text.splitlines():
+        match = pattern.fullmatch(line)
+        if match is None:
+            continue
+        label, value = match.groups()
+        if label in labels:
+            if label in parsed:
+                raise QuiescenceFailure("launchd automation disable override is ambiguous")
+            parsed[label] = value in {"disabled", "true"}
+    for label in labels:
+        if label in text and label not in parsed:
+            raise QuiescenceFailure("launchd automation disable override is malformed")
+    return {label: parsed.get(label, False) for label in labels}
+
+
+def write_host_automation_backup(path: Path, destination: Path) -> tuple[str, str, int]:
+    raw, mode = stable_definition_bytes(path)
+    descriptor = os.open(str(destination), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        offset = 0
+        while offset < len(raw):
+            written = os.write(descriptor, raw[offset:])
+            if written <= 0:
+                raise QuiescenceFailure("OpenClaw host automation backup was truncated")
+            offset += written
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return hashlib.sha256(raw).hexdigest(), format(mode, "04o"), len(raw)
+
+
+def prepare_host_automation(manager: str) -> dict[str, object]:
+    if manager not in {"systemd", "launchd"}:
+        return {"schema": "mac.phase1_host_automation.v1", "manager": manager, "definitions": []}
+    definitions = host_automation_definitions(manager)
+    names = {path.name for path in definitions}
+    if manager == "systemd":
+        loaded = (
+            systemd_loaded_automation()
+            if definitions or systemd_user_runtime().exists()
+            else set()
+        )
+        if not loaded.issubset(names):
+            raise QuiescenceFailure("loaded OpenClaw host automation lacks its exact definition")
+        disabled: dict[str, bool] = {}
+    else:
+        labels = {path.name.removesuffix(".plist") for path in definitions}
+        loaded = launchd_loaded_automation()
+        if not loaded.issubset(labels):
+            raise QuiescenceFailure("loaded OpenClaw host automation lacks its exact definition")
+        disabled = launchd_dynamic_disabled(labels)
+    backup_root = restore_artifact_dir / "host-automation"
+    if backup_root.exists() or backup_root.is_symlink():
+        raise QuiescenceFailure("OpenClaw host automation backup root appeared concurrently")
+    backup_root.mkdir(mode=0o700)
+    entries: list[dict[str, object]] = []
+    for path in definitions:
+        backup = backup_root / path.name
+        digest, mode, size = write_host_automation_backup(path, backup)
+        if manager == "systemd":
+            prior_state = systemd_user_state(path.name)
+            if path.name.endswith(".service") and prior_state == "active":
+                raise QuiescenceFailure(
+                    "active OpenClaw host automation service is not replay-safe"
+                )
+            entry = {
+                "name": path.name,
+                "path": str(path),
+                "backup": str(backup),
+                "sha256": digest,
+                "size": size,
+                "mode": mode,
+                "prior_state": prior_state,
+                "state": prior_state,
+                "enabled_state": systemd_user_enabled(path.name),
+            }
+        else:
+            label = path.name.removesuffix(".plist")
+            prior_state = "active" if label in loaded else "absent"
+            entry = {
+                "name": label,
+                "path": str(path),
+                "backup": str(backup),
+                "sha256": digest,
+                "size": size,
+                "mode": mode,
+                "prior_state": prior_state,
+                "state": prior_state,
+                "disabled_override": disabled[label],
+            }
+        entries.append(entry)
+    directory = os.open(str(backup_root), os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    return {
+        "schema": "mac.phase1_host_automation.v1",
+        "manager": manager,
+        "definitions": entries,
+    }
+
+
+def expected_host_entries(expected: dict[str, object], manager: str) -> list[dict[str, object]]:
+    if (
+        expected.get("schema") != "mac.phase1_host_automation.v1"
+        or expected.get("manager") != manager
+        or not isinstance(expected.get("definitions"), list)
+    ):
+        raise QuiescenceFailure("restore contract lacks exact host automation")
+    entries = expected["definitions"]
+    assert isinstance(entries, list)
+    result: list[dict[str, object]] = []
+    names: set[str] = set()
+    definition_directory = host_automation_definition_directory(manager)
+    pattern = host_automation_pattern(manager)
+    backup_root = restore_artifact_dir / "host-automation"
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            raise QuiescenceFailure("restore contract has invalid host automation")
+        if entry["name"] in names:
+            raise QuiescenceFailure("restore contract has duplicate host automation")
+        path = Path(str(entry.get("path") or ""))
+        backup = Path(str(entry.get("backup") or ""))
+        expected_filename = (
+            str(entry["name"])
+            if manager == "systemd"
+            else str(entry["name"]) + ".plist"
+        )
+        if (
+            definition_directory is None
+            or pattern is None
+            or path.parent != definition_directory
+            or path.name != expected_filename
+            or pattern.fullmatch(path.name) is None
+            or backup.parent != backup_root
+            or backup.name != path.name
+        ):
+            raise QuiescenceFailure("restore contract has invalid host automation paths")
+        backup_raw, _backup_mode = stable_definition_bytes(backup, backup=True)
+        if (
+            hashlib.sha256(backup_raw).hexdigest() != entry.get("sha256")
+            or len(backup_raw) != entry.get("size")
+        ):
+            raise QuiescenceFailure("OpenClaw host automation backup differs from contract")
+        names.add(str(entry["name"]))
+        result.append(entry)
+    return result
+
+
+def verify_definition_set(expected: dict[str, object], manager: str) -> list[dict[str, object]]:
+    entries = expected_host_entries(expected, manager)
+    paths = host_automation_definitions(manager)
+    expected_paths = {str(item.get("path")): item for item in entries}
+    if {str(path) for path in paths} != set(expected_paths):
+        raise QuiescenceFailure("OpenClaw host automation definitions changed after prepare")
+    for path in paths:
+        raw, mode = stable_definition_bytes(path)
+        item = expected_paths[str(path)]
+        if (
+            hashlib.sha256(raw).hexdigest() != item.get("sha256")
+            or len(raw) != item.get("size")
+            or format(mode, "04o") != item.get("mode")
+        ):
+            raise QuiescenceFailure("OpenClaw host automation definition changed after prepare")
+    return entries
+
+
+def quiesce_host_automation(expected: dict[str, object], manager: str) -> dict[str, object]:
+    entries = verify_definition_set(expected, manager)
+    result = json.loads(json.dumps(expected))
+    result_entries = result["definitions"]
+    assert isinstance(result_entries, list)
+    if manager == "systemd":
+        loaded = (
+            systemd_loaded_automation()
+            if entries or systemd_user_runtime().exists()
+            else set()
+        )
+        if not loaded.issubset({str(item["name"]) for item in entries}):
+            raise QuiescenceFailure("OpenClaw host automation state changed after prepare")
+        for item in result_entries:
+            unit = str(item["name"])
+            current = systemd_user_state(unit)
+            if current != item.get("prior_state"):
+                raise QuiescenceFailure("OpenClaw host automation state changed after prepare")
+            if current == "active":
+                stop_systemd_user_unit(unit)
+            if unit.endswith(".timer"):
+                if user_systemctl(["disable", unit]).returncode != 0:
+                    raise QuiescenceFailure("disabling OpenClaw host automation failed")
+                if systemd_user_enabled(unit) != "disabled":
+                    raise QuiescenceFailure("OpenClaw host automation remained enabled")
+            final = systemd_user_state(unit)
+            if final not in {"inactive", "absent"}:
+                raise QuiescenceFailure("OpenClaw host automation did not quiesce")
+            item["state"] = final
+    elif manager == "launchd":
+        loaded = launchd_loaded_automation()
+        expected_loaded = {
+            str(item["name"])
+            for item in entries
+            if item.get("prior_state") == "active"
+        }
+        if loaded != expected_loaded:
+            raise QuiescenceFailure("OpenClaw host automation state changed after prepare")
+        launchctl = command_path("launchctl")
+        uid = os.getuid()
+        for item in result_entries:
+            label = str(item["name"])
+            target = "gui/%d/%s" % (uid, label)
+            if item.get("prior_state") == "active":
+                if run_bounded([launchctl, "bootout", target]).returncode != 0:
+                    raise QuiescenceFailure("OpenClaw host automation bootout failed")
+            if launchd_state([], launchctl, target) != "absent":
+                raise QuiescenceFailure("OpenClaw host automation did not quiesce")
+            item["state"] = "absent"
+    return result
+
+
+def stop_systemd_user_unit(unit: str) -> None:
+    if user_systemctl(["stop", unit]).returncode != 0:
+        raise QuiescenceFailure("stopping OpenClaw host automation failed")
+    while True:
+        state = systemd_user_state(unit)
+        if state in {"inactive", "absent"}:
+            return
+        pause()
+
+
+def remove_current_host_automation(manager: str) -> None:
+    paths = host_automation_definitions(manager)
+    if manager == "systemd":
+        if not systemd_user_runtime().exists():
+            for path in paths:
+                path.unlink()
+            return
+        names = {path.name for path in paths} | systemd_loaded_automation()
+        for unit in sorted(names):
+            if systemd_user_state(unit) == "active":
+                stop_systemd_user_unit(unit)
+            if unit.endswith(".timer"):
+                if user_systemctl(["disable", unit]).returncode != 0:
+                    raise QuiescenceFailure("disabling successor host automation failed")
+        for path in paths:
+            path.unlink()
+        if user_systemctl(["daemon-reload"]).returncode != 0:
+            raise QuiescenceFailure("reloading systemd user automation failed")
     elif manager == "launchd":
         launchctl = command_path("launchctl")
-        result = run_bounded(
-            [launchctl, "print", "gui/%d" % os.getuid()]
+        uid = os.getuid()
+        labels = {path.name.removesuffix(".plist") for path in paths}
+        labels |= launchd_loaded_automation()
+        for label in sorted(labels):
+            target = "gui/%d/%s" % (uid, label)
+            if launchd_state([], launchctl, target) == "active":
+                if run_bounded([launchctl, "bootout", target]).returncode != 0:
+                    raise QuiescenceFailure("removing successor host automation failed")
+                while launchd_state([], launchctl, target) != "absent":
+                    pause()
+            if run_bounded([launchctl, "enable", target]).returncode != 0:
+                raise QuiescenceFailure("clearing successor host automation override failed")
+        for path in paths:
+            path.unlink()
+
+
+def restore_definition(item: dict[str, object]) -> None:
+    destination = Path(str(item.get("path") or ""))
+    backup = Path(str(item.get("backup") or ""))
+    raw, backup_mode = stable_definition_bytes(backup, backup=True)
+    if (
+        hashlib.sha256(raw).hexdigest() != item.get("sha256")
+        or len(raw) != item.get("size")
+        or backup_mode != 0o600
+        or not isinstance(item.get("mode"), str)
+        or re.fullmatch(r"0[0-7]{3}", str(item["mode"])) is None
+    ):
+        raise QuiescenceFailure("OpenClaw host automation backup differs from contract")
+    safe_definition_directory(destination.parent, required=True)
+    descriptor, temporary_raw = tempfile.mkstemp(
+        prefix="." + destination.name + ".phase1-restore.", dir=str(destination.parent)
+    )
+    temporary = Path(temporary_raw)
+    try:
+        os.fchmod(descriptor, int(str(item["mode"]), 8))
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        directory = os.open(str(destination.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def restore_host_automation(expected: dict[str, object], manager: str) -> dict[str, object]:
+    entries = expected_host_entries(expected, manager)
+    remove_current_host_automation(manager)
+    for item in entries:
+        restore_definition(item)
+    if manager == "systemd":
+        if entries or systemd_user_runtime().exists():
+            if user_systemctl(["daemon-reload"]).returncode != 0:
+                raise QuiescenceFailure("reloading restored systemd user automation failed")
+        for item in entries:
+            unit = str(item["name"])
+            enabled = item.get("enabled_state")
+            if enabled == "enabled":
+                if user_systemctl(["enable", unit]).returncode != 0:
+                    raise QuiescenceFailure("restoring host automation enablement failed")
+            elif enabled == "disabled":
+                if user_systemctl(["disable", unit]).returncode != 0:
+                    raise QuiescenceFailure("restoring host automation disablement failed")
+            elif enabled not in {"static", "indirect", "not-found"}:
+                raise QuiescenceFailure("host automation enablement is not exactly restorable")
+            if item.get("prior_state") == "active":
+                if user_systemctl(["start", unit]).returncode != 0:
+                    raise QuiescenceFailure("restoring host automation runtime failed")
+    elif manager == "launchd":
+        launchctl = command_path("launchctl")
+        uid = os.getuid()
+        domain = "gui/%d" % uid
+        for item in entries:
+            label = str(item["name"])
+            target = "%s/%s" % (domain, label)
+            if item.get("prior_state") == "active":
+                if run_bounded([launchctl, "bootstrap", domain, str(item["path"])]).returncode != 0:
+                    raise QuiescenceFailure("restoring host automation launchd job failed")
+            action_name = "disable" if item.get("disabled_override") is True else "enable"
+            if run_bounded([launchctl, action_name, target]).returncode != 0:
+                raise QuiescenceFailure("restoring host automation launchd override failed")
+    restored = prepare_host_automation_state(manager, entries)
+    expected_initial = json.loads(json.dumps(expected))
+    if restored != expected_initial:
+        raise QuiescenceFailure("restored host automation differs from its contract")
+    return restored
+
+
+def prepare_host_automation_state(
+    manager: str, entries: list[dict[str, object]]
+) -> dict[str, object]:
+    paths = host_automation_definitions(manager)
+    if {str(path) for path in paths} != {str(item.get("path")) for item in entries}:
+        raise QuiescenceFailure("restored host automation definition set differs")
+    result = json.loads(
+        json.dumps(
+            {
+                "schema": "mac.phase1_host_automation.v1",
+                "manager": manager,
+                "definitions": entries,
+            }
         )
-        if result.returncode not in {0, 113}:
-            raise QuiescenceFailure("launchd automation inventory failed")
-        loaded_pattern = re.compile(
-            r"(?<![A-Za-z0-9_.-])com\.%s\.openclaw-script-"
-            r"[a-z0-9][a-z0-9-]*(?![A-Za-z0-9_.-])" % escaped_fleet
-        )
-        if loaded_pattern.search((result.stdout or "") + "\n" + (result.stderr or "")):
-            raise QuiescenceFailure(
-                "loaded OpenClaw host automation lacks an exact restore journal"
-            )
+    )
+    result_entries = result["definitions"]
+    assert isinstance(result_entries, list)
+    if manager == "systemd":
+        if not entries and not systemd_user_runtime().exists():
+            return result
+        for item in result_entries:
+            item["state"] = systemd_user_state(str(item["name"]))
+            if systemd_user_enabled(str(item["name"])) != item.get("enabled_state"):
+                raise QuiescenceFailure("restored host automation enablement differs")
+    elif manager == "launchd":
+        loaded = launchd_loaded_automation()
+        disabled = launchd_dynamic_disabled({str(item["name"]) for item in result_entries})
+        for item in result_entries:
+            item["state"] = "active" if str(item["name"]) in loaded else "absent"
+            if disabled[str(item["name"])] != item.get("disabled_override"):
+                raise QuiescenceFailure("restored host automation override differs")
+    for item in result_entries:
+        raw, mode = stable_definition_bytes(Path(str(item["path"])))
+        if (
+            hashlib.sha256(raw).hexdigest() != item.get("sha256")
+            or len(raw) != item.get("size")
+            or format(mode, "04o") != item.get("mode")
+        ):
+            raise QuiescenceFailure("restored host automation definition differs")
+    return result
 
 
 def private_contract() -> dict[str, object]:
@@ -1969,8 +2525,8 @@ try:
             manager = "supervisord"
         else:
             raise QuiescenceFailure("no supported supervisor was detected")
-    reject_unjournaled_openclaw_host_automation(manager)
     if action == "prepare":
+        host_automation = prepare_host_automation(manager)
         if manager == "systemd":
             supervisor = inspect_systemd()[0]
         elif manager == "launchd":
@@ -1983,10 +2539,16 @@ try:
     else:
         contract = private_contract()
         expected_supervisor = contract["supervisor"]
+        expected_host_automation = contract.get("host_automation")
         assert isinstance(expected_supervisor, dict)
+        if not isinstance(expected_host_automation, dict):
+            raise QuiescenceFailure("prepared contract lacks host automation journal")
         if expected_supervisor.get("manager") != manager:
             raise QuiescenceFailure("prepared supervisor manager differs from requested manager")
         if action == "quiesce":
+            host_automation = quiesce_host_automation(
+                expected_host_automation, manager
+            )
             if manager == "systemd":
                 supervisor = quiesce_systemd()
             elif manager == "launchd":
@@ -1999,6 +2561,9 @@ try:
                 raise QuiescenceFailure("supervisor topology changed after prepare")
             proof_schema = "mac.phase1_supervisor_quiescence.v1"
         elif action == "restore":
+            host_automation = restore_host_automation(
+                expected_host_automation, manager
+            )
             if manager == "systemd":
                 supervisor = restore_systemd(expected_supervisor)
             elif manager == "launchd":
@@ -2021,6 +2586,7 @@ try:
         "generation": generation,
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "supervisor": supervisor,
+        "host_automation": host_automation,
     }
     atomic_private_json(proof_path, proof)
 except QuiescenceFailure as exc:
@@ -2136,6 +2702,14 @@ if local.get("daemon_function_block") != {
 supervisor = supervisor_proof.get("supervisor")
 if not isinstance(supervisor, dict):
     raise SystemExit("phase-1 prepare failed: supervisor topology is missing")
+host_automation = supervisor_proof.get("host_automation")
+if (
+    not isinstance(host_automation, dict)
+    or host_automation.get("schema") != "mac.phase1_host_automation.v1"
+    or host_automation.get("manager") != supervisor.get("manager")
+    or not isinstance(host_automation.get("definitions"), list)
+):
+    raise SystemExit("phase-1 prepare failed: host automation journal is missing")
 manager = supervisor.get("manager")
 openclaw_active = False
 supervisord_restorable = True
@@ -2211,6 +2785,7 @@ payload = {
         "mode": "0600",
     },
     "supervisor": supervisor,
+    "host_automation": host_automation,
     "supervisor_prepare_proof": {
         "path": str(supervisor_path),
         "sha256": hashlib.sha256(supervisor_raw).hexdigest(),
@@ -2317,6 +2892,7 @@ if (
     or any(item.get("generation") != generation for item in (contract, supervisor, daemon))
     or any(item.get("revision") != revision for item in (contract, supervisor, daemon))
     or supervisor.get("supervisor") != contract.get("supervisor")
+    or supervisor.get("host_automation") != contract.get("host_automation")
 ):
     raise SystemExit("phase-1 restore failed: final topology proof differs from contract")
 payload = {
@@ -2336,6 +2912,7 @@ payload = {
         "path": str(daemon_path),
         "sha256": hashlib.sha256(daemon_raw).hexdigest(),
     },
+    "host_automation": supervisor["host_automation"],
     "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
 }
 if output.exists() or output.is_symlink():
@@ -2662,6 +3239,47 @@ def validate_supervisor_payload(payload):
         return
     raise ReceiptFailure("supervisor proof names an unsupported manager")
 
+
+def validate_host_automation_payload(payload, contract_payload):
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "mac.phase1_host_automation.v1"
+        or not isinstance(contract_payload, dict)
+        or contract_payload.get("schema") != "mac.phase1_host_automation.v1"
+        or payload.get("manager") != contract_payload.get("manager")
+        or not isinstance(payload.get("definitions"), list)
+        or not isinstance(contract_payload.get("definitions"), list)
+    ):
+        raise ReceiptFailure("host automation proof is malformed")
+    manager = payload.get("manager")
+    expected = {
+        item.get("name"): item
+        for item in contract_payload["definitions"]
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    if len(expected) != len(contract_payload["definitions"]):
+        raise ReceiptFailure("host automation contract has duplicate resources")
+    observed = set()
+    for item in payload["definitions"]:
+        if not isinstance(item, dict) or item.get("name") not in expected:
+            raise ReceiptFailure("host automation proof has an unexpected resource")
+        name = item["name"]
+        if name in observed:
+            raise ReceiptFailure("host automation proof has duplicate resources")
+        observed.add(name)
+        prior = expected[name]
+        comparable = dict(item)
+        comparable["state"] = comparable.get("prior_state")
+        if comparable != prior:
+            raise ReceiptFailure("host automation proof differs from its contract")
+        final_state = item.get("state")
+        if manager == "launchd" and final_state != "absent":
+            raise ReceiptFailure("launchd host automation is not quiescent")
+        if manager == "systemd" and final_state not in {"absent", "inactive"}:
+            raise ReceiptFailure("systemd host automation is not quiescent")
+    if observed != set(expected):
+        raise ReceiptFailure("host automation proof is incomplete")
+
 try:
     if re.fullmatch(r"[0-9a-f]{64}", expected_contract_sha256) is None:
         raise ReceiptFailure("exact prepared restore contract digest is required")
@@ -2719,6 +3337,9 @@ try:
         if supervisor.get(key) != expected:
             raise ReceiptFailure("supervisor proof belongs to another generation")
     validate_supervisor_payload(supervisor.get("supervisor"))
+    validate_host_automation_payload(
+        supervisor.get("host_automation"), contract.get("host_automation")
+    )
     reject_secret_or_raw_output(supervisor)
 
     if re.fullmatch(r"[0-9a-f]{64}", daemon_functions_sha256) is None:
@@ -2734,6 +3355,7 @@ try:
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source_contract_sha256": expected_contract_sha256,
         "supervisor": supervisor["supervisor"],
+        "host_automation": supervisor["host_automation"],
         "daemon_resource_receipt": {
             "schema": daemon["schema"],
             "path": str(daemon_path),

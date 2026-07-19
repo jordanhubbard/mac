@@ -2603,6 +2603,7 @@ def phase1_cohort_quiescence_summary(mac_home):
     except (TypeError, ValueError) as exc:
         raise SystemExit("phase-1 cohort receipt is malformed") from exc
     daemon = payload.get("daemon_resource_receipt") if isinstance(payload, dict) else None
+    host_automation = payload.get("host_automation") if isinstance(payload, dict) else None
     if (
         not isinstance(payload, dict)
         or payload.get("schema") != "mac.phase1_cohort_quiescence.v1"
@@ -2612,6 +2613,10 @@ def phase1_cohort_quiescence_summary(mac_home):
         or payload.get("revision") != os.environ["DEPLOY_REV"]
         or payload.get("generation") != generation
         or not isinstance(payload.get("supervisor"), dict)
+        or not isinstance(host_automation, dict)
+        or host_automation.get("schema") != "mac.phase1_host_automation.v1"
+        or host_automation.get("manager") != payload["supervisor"].get("manager")
+        or not isinstance(host_automation.get("definitions"), list)
         or not isinstance(daemon, dict)
         or daemon.get("schema") != "mac.daemon_resource_quiescence.v1"
         or daemon.get("proof_phase") != "pre_source"
@@ -2629,6 +2634,7 @@ def phase1_cohort_quiescence_summary(mac_home):
         "generation": generation,
         "revision": os.environ["DEPLOY_REV"],
         "supervisor": payload["supervisor"],
+        "host_automation": host_automation,
         "daemon_resource_receipt": daemon,
     }
 
@@ -9378,9 +9384,124 @@ sync_messaging_config() {
   fi
 }
 
+phase1_host_automation_journal_sha256() {
+  "$PY" - "$MAC_HOME" "$DEPLOY_GENERATION" "$DEPLOY_REV" "$AGENT" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+
+mac_home = Path(sys.argv[1])
+generation, revision, agent = sys.argv[2:]
+
+
+def private_bytes(path: Path) -> bytes:
+    descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > 4 * 1024 * 1024
+        ):
+            raise SystemExit("phase-1 host automation evidence is unsafe")
+        raw = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if len(raw) != before.st_size or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise SystemExit("phase-1 host automation evidence changed while reading")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+contract_path = mac_home / ("phase1-cohort-restore-contract-%s.json" % generation)
+receipt_path = mac_home / ("phase1-cohort-quiescence-%s.json" % generation)
+contract_raw = private_bytes(contract_path)
+receipt_raw = private_bytes(receipt_path)
+try:
+    contract = json.loads(contract_raw)
+    receipt = json.loads(receipt_raw)
+except (TypeError, ValueError) as exc:
+    raise SystemExit("phase-1 host automation evidence is malformed") from exc
+digest = hashlib.sha256(contract_raw).hexdigest()
+contract_automation = contract.get("host_automation") if isinstance(contract, dict) else None
+receipt_automation = receipt.get("host_automation") if isinstance(receipt, dict) else None
+if (
+    contract.get("schema") != "mac.phase1_cohort_restore_contract.v1"
+    or contract.get("status") != "prepared"
+    or contract.get("rollback_capable") is not True
+    or contract.get("agent") != agent
+    or contract.get("generation") != generation
+    or contract.get("revision") != revision
+    or receipt.get("schema") != "mac.phase1_cohort_quiescence.v1"
+    or receipt.get("agent") != agent
+    or receipt.get("generation") != generation
+    or receipt.get("revision") != revision
+    or receipt.get("source_contract_sha256") != digest
+    or not isinstance(contract_automation, dict)
+    or contract_automation.get("schema") != "mac.phase1_host_automation.v1"
+    or not isinstance(receipt_automation, dict)
+    or receipt_automation.get("schema") != "mac.phase1_host_automation.v1"
+    or receipt_automation.get("manager") != contract_automation.get("manager")
+):
+    raise SystemExit("phase-1 host automation journal belongs to another transaction")
+expected = {
+    item.get("name"): item
+    for item in contract_automation.get("definitions", [])
+    if isinstance(item, dict) and isinstance(item.get("name"), str)
+}
+observed = receipt_automation.get("definitions")
+if (
+    len(expected) != len(contract_automation.get("definitions", []))
+    or not isinstance(observed, list)
+    or len(observed) != len(expected)
+):
+    raise SystemExit("phase-1 host automation journal is incomplete")
+manager = contract_automation.get("manager")
+for item in observed:
+    if not isinstance(item, dict) or item.get("name") not in expected:
+        raise SystemExit("phase-1 host automation journal has an unexpected resource")
+    comparable = dict(item)
+    comparable["state"] = comparable.get("prior_state")
+    if comparable != expected[item["name"]]:
+        raise SystemExit("phase-1 host automation journal differs from its contract")
+    if manager == "launchd" and item.get("state") != "absent":
+        raise SystemExit("phase-1 launchd host automation is not quiescent")
+    if manager == "systemd" and item.get("state") not in {"absent", "inactive"}:
+        raise SystemExit("phase-1 systemd host automation is not quiescent")
+print(digest)
+PY
+}
+
+
 prepare_openclaw_gateway() {
   local installer="$SRC_DIR/deploy/openclaw/install-openclaw-gateway.sh"
+  local host_automation_journal_sha256=""
   [ -x "$installer" ] || die "stock OpenClaw installer not found/executable: $installer"
+  if truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
+    host_automation_journal_sha256="$(phase1_host_automation_journal_sha256)" \
+      || die "synchronized OpenClaw prepare lacks an exact host automation journal"
+  fi
   MAC_SRC="$SRC_DIR" \
   MAC_OPENCLAW_AGENT_ID="${MAC_AGENT_ID:-agent_$AGENT}" \
   MAC_OPENCLAW_FLEET_NAME="$FLEET_NAME" \
@@ -9391,7 +9512,8 @@ prepare_openclaw_gateway() {
   MAC_OPENCLAW_REPRESENTATION_MODE="$OPENCLAW_REPRESENTATION_MODE" \
   MAC_OPENCLAW_SLACK_ACCOUNT_ID="$OPENCLAW_SLACK_ACCOUNT_ID" \
   MAC_OPENCLAW_TELEGRAM_ACCOUNT_ID="$OPENCLAW_TELEGRAM_ACCOUNT_ID" \
-  MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION=1 \
+  MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL="${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}" \
+  MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256="$host_automation_journal_sha256" \
     "$installer" prepare
 }
 

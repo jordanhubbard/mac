@@ -6971,6 +6971,18 @@
   },
   {
     "default": null,
+    "description": "Openclaw Runtime setting: openclaw host automation journal sha256.",
+    "family": "openclaw-runtime",
+    "name": "MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "deploy/openclaw/install-openclaw-gateway.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openclaw Runtime setting: openclaw host dir.",
     "family": "openclaw-runtime",
     "name": "MAC_OPENCLAW_HOST_DIR",
@@ -7148,9 +7160,9 @@
   },
   {
     "default": null,
-    "description": "Openclaw Runtime setting: openclaw require no host script automation.",
+    "description": "Openclaw Runtime setting: openclaw require host automation journal.",
     "family": "openclaw-runtime",
-    "name": "MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION",
+    "name": "MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL",
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",

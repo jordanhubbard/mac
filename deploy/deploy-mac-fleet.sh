@@ -4879,6 +4879,8 @@ agent, generation, revision = sys.argv[3:]
 contract = json.loads(raw)
 restore = contract.get("restore_executable")
 functions = contract.get("daemon_function_block")
+supervisor = contract.get("supervisor")
+host_automation = contract.get("host_automation")
 if (
     contract.get("schema") != "mac.phase1_cohort_restore_contract.v1"
     or contract.get("status") != "prepared"
@@ -4895,6 +4897,11 @@ if (
     or functions.get("mode") != "0600"
     or not isinstance(functions.get("sha256"), str)
     or len(functions["sha256"]) != 64
+    or not isinstance(supervisor, dict)
+    or not isinstance(host_automation, dict)
+    or host_automation.get("schema") != "mac.phase1_host_automation.v1"
+    or host_automation.get("manager") != supervisor.get("manager")
+    or not isinstance(host_automation.get("definitions"), list)
 ):
     reason = contract.get("rollback_ineligible_reason")
     raise SystemExit("selected node lacks an exact phase-1 restore contract: %s" % (reason or agent))

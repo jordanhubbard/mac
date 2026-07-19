@@ -2041,9 +2041,18 @@ PY
     return 0
   fi
 
-  if truthy "${MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION:-0}"; then
-    rm -f "$tsv"
-    die "host script automation is blocked until its scheduler topology has an exact rollback journal"
+  if truthy "${MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL:-0}"; then
+    case "${MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256:-}" in
+      *[!0-9a-f]*|'')
+        rm -f "$tsv"
+        die "host script automation requires its exact rollback journal"
+        ;;
+      *) ;;
+    esac
+    if [ "${#MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256}" -ne 64 ]; then
+      rm -f "$tsv"
+      die "host script automation rollback journal digest is malformed"
+    fi
   fi
 
   if truthy "$DRY_RUN"; then

@@ -296,10 +296,17 @@ OpenClaw's script-backed host jobs have one additional manager-owned surface:
 systemd-user `${fleet}-openclaw-script-*.service`/`.timer` definitions or
 launchd `com.${fleet}.openclaw-script-*.plist` definitions and their loaded
 state. The runtime-tree snapshot covers their runner, job specification, and
-output, but not those definitions. Phase 2 must inventory and journal the exact
-prefix, remove successor-only definitions during rollback, restore prior files,
-and re-enable only jobs recorded active. Until that journal exists, a node with
-script-backed OpenClaw host jobs is not exact-rollback eligible.
+output, but not those definitions. Phase 1 now inventories every exact-prefix
+definition into an owner-private, digest-bound host-automation journal, records
+systemd-user enablement or launchd loaded/disabled-override state, and quiesces
+the recorded jobs before phase 2. Synchronized OpenClaw preparation accepts
+host scheduling only when the exact phase-1 contract and quiescence receipt
+authorize it. Rollback unloads and removes successor-only definitions, restores
+the prior bytes and modes, reconstructs enablement/override intent, restarts
+only jobs recorded loaded, and proves the resulting topology before publishing
+its completion receipt. Loaded jobs without a safe exact definition and active
+systemd oneshot services remain ineligible because they cannot be replayed
+without inventing prior state.
 A new node with no complete prior generation remains held and cannot have a
 post manifest accepted as deployable, but requires cleanup or a retry instead
 of pretending it can roll back. Any nonzero exit after phase-2 mutation first

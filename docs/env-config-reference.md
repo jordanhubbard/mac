@@ -584,6 +584,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_GATEWAY_HOST` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw gateway host. |
 | `MAC_OPENCLAW_GATEWAY_PORT` | int | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw gateway port. |
 | `MAC_OPENCLAW_HOME_CHANNEL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw home channel. |
+| `MAC_OPENCLAW_HOST_AUTOMATION_JOURNAL_SHA256` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw host automation journal sha256. |
 | `MAC_OPENCLAW_HOST_DIR` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw host dir. |
 | `MAC_OPENCLAW_IMAGE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image. |
 | `MAC_OPENCLAW_IMAGE_REVISION` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw image revision. |
@@ -599,7 +600,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENCLAW_PUBLIC_IDENTITY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw public identity. |
 | `MAC_OPENCLAW_REPRESENTATION_MODE` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw representation mode. |
 | `MAC_OPENCLAW_REPRESENTED_BY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw represented by. |
-| `MAC_OPENCLAW_REQUIRE_NO_HOST_SCRIPT_AUTOMATION` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw require no host script automation. |
+| `MAC_OPENCLAW_REQUIRE_HOST_AUTOMATION_JOURNAL` | bool | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw require host automation journal. |
 | `MAC_OPENCLAW_ROUTER_API_KEY` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router api key. |
 | `MAC_OPENCLAW_ROUTER_URL` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw router url. |
 | `MAC_OPENCLAW_SANDBOX` | str | consumer-defined | openclaw-runtime | Openclaw Runtime setting: openclaw sandbox. |
