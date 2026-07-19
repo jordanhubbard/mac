@@ -930,6 +930,7 @@ def test_macos_podman_machine_connection_is_explicitly_certified(
         tmp_path,
         sandbox_source="none",
         podman_mode="machine-ssh",
+        extra_env={"OS_KIND": "darwin"},
     )
     receipt = _assert_success_marker(run)
     podman_endpoints = [

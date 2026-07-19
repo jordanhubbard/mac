@@ -54,10 +54,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ "$(uname -s)" = "Darwin" ] || {
-  echo "ERROR: the certifier gateway tunnel installer requires Darwin" >&2
-  exit 2
-}
 [[ "$LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
   echo "ERROR: invalid launchd label" >&2
   exit 2
@@ -71,6 +67,10 @@ for port_name in SSH_PORT LOCAL_PORT REMOTE_PORT; do
       exit 2
     }
 done
+[ "$(uname -s)" = "Darwin" ] || {
+  echo "ERROR: the certifier gateway tunnel installer requires Darwin" >&2
+  exit 2
+}
 
 domain="gui/$(id -u)"
 launch_agents="$HOME/Library/LaunchAgents"

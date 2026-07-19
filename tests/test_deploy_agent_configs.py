@@ -2485,7 +2485,14 @@ reconcile_remote_deploy rocky fake-target {int(clear_repo_update_blocker)}
         "MAC_DEPLOY_RECONCILE_MAX_RETRIES": "1",
         "PATH": os.environ.get("PATH", ""),
     }
-    return subprocess.run(["bash", "-c", snippet], text=True, capture_output=True, env=env)
+    script_path = tmp_path / "reconcile-remote-deploy-test.sh"
+    script_path.write_text(snippet, encoding="utf-8")
+    return subprocess.run(
+        ["bash", str(script_path)],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
 
 
 def test_remote_deploy_reconciliation_fails_when_zero_exit_left_no_post_manifest(tmp_path):

@@ -116,7 +116,7 @@ def _outer_run_bounded_python() -> str:
     source = _between(attestation, "def run_bounded(argv, env):", "\n\ndef read_manifest")
     command_wait = "process.wait(timeout=min(20.0, remaining()))"
     assert source.count(command_wait) == 1
-    return source.replace(command_wait, "process.wait(timeout=0.15)")
+    return source.replace(command_wait, "process.wait(timeout=1.0)")
 
 
 def _write_executable(path: Path, source: str) -> None:
@@ -328,7 +328,12 @@ def _run_probe(
         "AGENT": AGENT,
         "FAKE_GATEWAY_CONFIG": str(config),
         "FAKE_GATEWAY_CHILD_PID": str(tmp_path / "child.pid"),
-        "MAC_TEST_GATEWAY_COMMAND_TIMEOUT": "0.15",
+        # Linux runners add a non-root sudo -> Python exec hop before the fake
+        # manager.  Give process startup a portable budget while retaining a
+        # short, deterministic bound for the deliberate timeout fixtures.
+        "MAC_TEST_GATEWAY_COMMAND_TIMEOUT": (
+            "1.0" if mode in {"timeout", "child-timeout"} else "2.0"
+        ),
     }
     completed = subprocess.run(
         args,
