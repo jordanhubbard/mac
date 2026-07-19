@@ -14,9 +14,15 @@ def _function() -> str:
         + "\n"
         + (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
     )
-    start = script.index("configure_github_https_credentials()")
-    end = script.index("\n# On a brand-new spoke", start)
-    return script[start:end]
+    resolver_start = script.index("onboarded_command_path()")
+    resolver_end = script.index("\ninstall_fleet_registry()", resolver_start)
+    configure_start = script.index("configure_github_https_credentials()")
+    configure_end = script.index("\n# On a brand-new spoke", configure_start)
+    return (
+        script[resolver_start:resolver_end]
+        + "\n"
+        + script[configure_start:configure_end]
+    )
 
 
 def _run(
@@ -34,7 +40,11 @@ def _run(
         encoding="utf-8",
     )
     gh.chmod(0o755)
-    env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"}
+    env = {
+        **os.environ,
+        "ONBOARDED_COMMAND_PATH": f"{bin_dir}:/usr/bin:/bin",
+        "PATH": "/usr/bin:/bin",
+    }
     if token:
         env["GH_TOKEN"] = token
     else:

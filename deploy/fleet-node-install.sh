@@ -274,6 +274,7 @@ OPENSHELL_LOCAL_IMAGE_BUILD="${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
 OPENSHELL_BOOTSTRAPPED=0
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
 MAC_PORT="${MAC_DEPLOY_CONTROL_PORT:-${MAC_PORT:-8789}}"
+ONBOARDED_COMMAND_PATH="$MAC_HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 REVIEWED_TOOL_ASSETS="${MAC_DEPLOY_REVIEWED_TOOL_ASSETS:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh}"
 [ -r "$REVIEWED_TOOL_ASSETS" ] || {
   echo "ERROR: reviewed tool asset contract is unavailable: $REVIEWED_TOOL_ASSETS" >&2
@@ -492,11 +493,18 @@ die() {
 run_without_deploy_credentials() {
   # Reviewed bootstrap tools need ordinary filesystem/network context only.
   # Never project hub, GitHub, provider, or worker secrets into child tools.
-  env -i HOME="$HOME" PATH="$MAC_HOME/bin:${PATH:-/usr/bin:/bin}" \
+  env -i HOME="$HOME" PATH="$ONBOARDED_COMMAND_PATH" \
     TMPDIR="${TMPDIR:-/tmp}" \
     HTTPS_PROXY="${HTTPS_PROXY:-}" HTTP_PROXY="${HTTP_PROXY:-}" \
     NO_PROXY="${NO_PROXY:-}" \
     "$@"
+}
+
+onboarded_command_path() {
+  local name="$1" resolved=""
+  resolved="$(PATH="$ONBOARDED_COMMAND_PATH" command -v "$name" 2>/dev/null || true)"
+  [ -n "$resolved" ] && [ -x "$resolved" ] || return 1
+  printf '%s\n' "$resolved"
 }
 
 install_fleet_registry() {
@@ -1038,7 +1046,7 @@ configure_github_https_credentials() {
     log "GH_TOKEN absent; skipping optional GitHub HTTPS credential setup"
     return 0
   fi
-  gh_bin="$(command -v gh 2>/dev/null || true)"
+  gh_bin="$(onboarded_command_path gh 2>/dev/null || true)"
   if [ -z "$gh_bin" ]; then
     if [ "$GITHUB_CREDENTIALS_REQUIRED" = "1" ]; then
       log "ERROR: gh CLI not found on a node that requires GitHub repository credentials"
@@ -7485,7 +7493,7 @@ clear_mac_agent_drain_after_deploy() {
 
 install_github_cli() {
   local existing=""
-  existing="$(command -v gh 2>/dev/null || true)"
+  existing="$(onboarded_command_path gh 2>/dev/null || true)"
   [ -n "$existing" ] && [ -x "$existing" ] \
     || die "GitHub CLI is missing; complete node onboarding before phase 2"
   "$existing" --version >/dev/null 2>&1 \

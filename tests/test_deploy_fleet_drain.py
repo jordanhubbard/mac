@@ -672,6 +672,34 @@ def test_typed_cohort_orders_receipts_before_mutation_and_commit_before_finalize
     assert "prepare-start" not in main
 
 
+def test_legacy_hub_bootstrap_preflights_onboarding_before_phase1():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    legacy = deploy.split("legacy_hub_bootstrap() {", 1)[1].split(
+        "\n}\n\nhub_epoch_client_read", 1
+    )[0]
+    preflight = deploy.split("preflight_legacy_hub_prerequisites() {", 1)[1].split(
+        "\n}\n\nlegacy_hub_bootstrap", 1
+    )[0]
+
+    assert legacy.index("preflight_legacy_hub_prerequisites") < legacy.index(
+        "prepare_remote_phase1_restore_contract"
+    )
+    assert "mac.fleet_node_identity.v1" in preflight
+    assert '("python", "github_cli", "codegraph")' in preflight
+    assert "read-only legacy onboarding prerequisite receipt passed" in preflight
+
+
+def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    builder = deploy.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(
+        "\n}\n\nprerequisite_bundle_digests", 1
+    )[0]
+
+    assert 'path_check("mac-cli", mac_bin, executable=True)' in builder
+    assert 'path_check("github-cli", github_cli, executable=True)' in builder
+    assert 'path_check("codegraph-cli", codegraph_bin, executable=True)' in builder
+
+
 def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")

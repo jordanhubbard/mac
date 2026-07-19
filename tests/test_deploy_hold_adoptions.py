@@ -565,6 +565,7 @@ def test_remote_ssh_heredocs_keep_stdin_open():
         "REMOTE_RESTORE",
         "REMOTE_HOLD_PREFLIGHT",
         "REMOTE_HUB_GATE",
+        "REMOTE_LEGACY_PREREQUISITES",
         "REMOTE",
         "REMOTE_RELEASE",
         "HUBSCRIPT",

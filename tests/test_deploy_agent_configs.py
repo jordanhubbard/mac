@@ -502,12 +502,28 @@ def test_fleet_deploy_verifies_onboarded_github_cli_before_phase2_mutation():
 
     assert "install_github_cli()" in installer
     assert "GitHub CLI is missing; complete node onboarding before phase 2" in function
+    assert "onboarded_command_path gh" in function
     assert '"$existing" --version' in function
     assert "brew install" not in function
     assert "apt-get" not in function
     assert pre_mutation.index("validate_typed_prerequisite_bundle") < pre_mutation.index(
         "install_github_cli"
     )
+
+
+def test_node_installer_resolves_onboarded_tools_from_one_trusted_path():
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'ONBOARDED_COMMAND_PATH="$MAC_HOME/bin:/opt/homebrew/bin:' in installer
+    resolver = _deploy_function(
+        installer, "onboarded_command_path", "install_fleet_registry"
+    )
+    assert 'PATH="$ONBOARDED_COMMAND_PATH" command -v "$name"' in resolver
+    github = _deploy_function(
+        installer, "configure_github_https_credentials", "wait_for_required_services"
+    )
+    assert "onboarded_command_path gh" in github
 
 
 def test_fleet_deploy_never_forces_an_unverified_github_review_key():

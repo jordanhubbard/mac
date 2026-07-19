@@ -181,6 +181,18 @@ def regular_directory(path: Path) -> bool:
 mac_home = Path(os.environ["MAC_HOME"])
 source = mac_home / "src" / "mac"
 venv = mac_home / "venv"
+trusted_command_path = os.pathsep.join(
+    (
+        str(mac_home / "bin"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        "/Applications/Docker.app/Contents/Resources/bin",
+    )
+)
 generation = None
 env_raw = optional_private(mac_home / "mac.env", 1024 * 1024)
 if env_raw is not None:
@@ -229,7 +241,7 @@ payload = {
     },
     "prerequisites": {
         "python": sys.executable,
-        "github_cli": shutil.which("gh"),
+        "github_cli": shutil.which("gh", path=trusted_command_path),
         "codegraph": str(mac_home / "bin" / "codegraph")
         if os.access(mac_home / "bin" / "codegraph", os.X_OK)
         else None,

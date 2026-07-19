@@ -3761,6 +3761,95 @@ initialize_cohort_transaction() {
   COHORT_JOURNAL_ACTIVE=1
 }
 
+preflight_legacy_hub_prerequisites() {
+  local agent="$1" supervisor="$2" fleet_name="$3" os_kind="$4"
+  local remote_helper="/tmp/mac-legacy-prerequisite-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
+  local receipt="$TMPDIR_LOCAL/legacy-prerequisite-${agent}.json"
+  local ssh_parts=() ssh_args=() ssh_target item last_index
+  pinned_remote_private_upload "$agent" "$PHASE1_QUIESCE_HELPER" "$remote_helper"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" \
+    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$(deployment_id_for_agent "$agent")") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") bash -s" > "$receipt" <<'REMOTE_LEGACY_PREREQUISITES'
+set -euo pipefail
+helper="${MAC_PHASE1_HELPER:?}"
+cleanup() { rm -f "$helper"; }
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trusted_path="$HOME/.mac/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+phase1_python=""
+for candidate in \
+  "$HOME/.mac/venv/bin/python" \
+  /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 \
+  python3.13 python3.12 python3.11 python3; do
+  resolved="$candidate"
+  if [ ! -x "$resolved" ]; then
+    resolved="$(PATH="$trusted_path" command -v "$candidate" 2>/dev/null || true)"
+  fi
+  [ -n "$resolved" ] && [ -x "$resolved" ] || continue
+  if "$resolved" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    phase1_python="$resolved"
+    break
+  fi
+done
+[ -n "$phase1_python" ] || {
+  echo "legacy hub prerequisite verification requires Python 3.11 or newer" >&2
+  exit 1
+}
+PATH="$trusted_path" \
+AGENT="${MAC_PHASE1_AGENT:?}" \
+FLEET_NAME="${MAC_PHASE1_FLEET:?}" \
+OS_KIND="${MAC_PHASE1_OS:?}" \
+DEPLOY_REV="${MAC_PHASE1_REV:?}" \
+DEPLOY_GENERATION="${MAC_PHASE1_GENERATION:?}" \
+SUPERVISOR_KIND="${MAC_PHASE1_SUPERVISOR:?}" \
+MAC_HOME="$HOME/.mac" \
+PY="$phase1_python" \
+  bash "$helper" identify
+REMOTE_LEGACY_PREREQUISITES
+  chmod 0600 "$receipt"
+  "$PYTHON_BIN" - "$receipt" "$agent" "$GIT_REV" <<'PY'
+import json
+import os
+import sys
+
+path, agent, revision = sys.argv[1:]
+with open(path, encoding="utf-8") as stream:
+    value = json.load(stream)
+prerequisites = value.get("prerequisites")
+artifacts = value.get("artifacts")
+if (
+    value.get("schema") != "mac.fleet_node_identity.v1"
+    or value.get("status") != "identified"
+    or value.get("agent") != agent
+    or value.get("requested_revision") != revision
+    or value.get("rollback_capable") is not True
+    or not isinstance(prerequisites, dict)
+    or not isinstance(artifacts, dict)
+):
+    raise SystemExit("legacy hub prerequisite identity is malformed")
+for name in ("python", "github_cli", "codegraph"):
+    candidate = prerequisites.get(name)
+    if (
+        not isinstance(candidate, str)
+        or not os.path.isabs(candidate)
+        or "\x00" in candidate
+        or "\n" in candidate
+    ):
+        raise SystemExit("legacy hub lacks required onboarded prerequisite: %s" % name)
+for name in ("source", "venv"):
+    item = artifacts.get(name)
+    if not isinstance(item, dict) or item.get("regular_directory") is not True:
+        raise SystemExit("legacy hub lacks rollback-capable artifact: %s" % name)
+PY
+  echo "==> ${agent}: read-only legacy onboarding prerequisite receipt passed"
+}
+
 legacy_hub_bootstrap() {
   local selected_specs_file="$1" hub_agent="$2" selected_count="$3"
   local spec fields=() agent supervisor fleet_name os_kind authority_file
@@ -3785,6 +3874,8 @@ legacy_hub_bootstrap() {
   fleet_name="${fields[23]:-mac}"
   os_kind="${fields[2]}"
   echo "==> ${agent}: executing explicit pre-held hub API bootstrap"
+  preflight_legacy_hub_prerequisites \
+    "$agent" "$supervisor" "$fleet_name" "$os_kind"
   prepare_remote_phase1_restore_contract \
     "$agent" "$(deployment_id_for_agent "$agent")" \
     "$supervisor" "$fleet_name" "$os_kind"
@@ -4311,6 +4402,21 @@ home = Path.home()
 mac_home = home / ".mac"
 mac_env = mac_home / "mac.env"
 mac_bin = (home / ".local" / "bin" / "mac").resolve(strict=True)
+github_cli = next(
+    (
+        path.resolve(strict=True)
+        for path in (
+            Path("/opt/homebrew/bin/gh"),
+            Path("/usr/local/bin/gh"),
+            Path("/usr/bin/gh"),
+        )
+        if path.is_file() and os.access(path, os.X_OK)
+    ),
+    None,
+)
+if github_cli is None:
+    raise SystemExit("GitHub CLI onboarding prerequisite is unavailable")
+codegraph_bin = (mac_home / "bin" / "codegraph").resolve(strict=True)
 python_bin = (mac_home / "venv" / "bin" / "python").resolve(strict=True)
 hermes_root = (mac_home / "src" / "mac" / "src" / "mac" / "_hermes").resolve(strict=True)
 requested_supervisor = os.environ["MAC_PREREQ_SUPERVISOR"]
@@ -4341,7 +4447,11 @@ if truthy(os.environ["MAC_PREREQ_OPENSHELL_REQUIRED"]):
     openshell_path = mac_home / "openshell" / "runtime-image-attestation.json"
 
 checks = {
-    "machine-onboarding": [path_check("mac-cli", mac_bin, executable=True)],
+    "machine-onboarding": [
+        path_check("mac-cli", mac_bin, executable=True),
+        path_check("github-cli", github_cli, executable=True),
+        path_check("codegraph-cli", codegraph_bin, executable=True),
+    ],
     "route-tunnel": [path_check("route-config", mac_env)],
     "openshell": [path_check("openshell-contract", openshell_path)],
     "qdrant": [service_check("qdrant", os.environ["MAC_PREREQ_QDRANT_URL"], os.environ["MAC_PREREQ_QDRANT_REQUIRED"], mac_env)],
