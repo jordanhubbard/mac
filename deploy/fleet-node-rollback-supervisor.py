@@ -711,7 +711,12 @@ class SupervisordSupervisor(BaseSupervisor):
 
 
 class LaunchdSupervisor(BaseSupervisor):
-    KNOWN_LOADED_STATES = {"exited", "running", "spawn scheduled", "waiting"}
+    # launchd's printed transition vocabulary is not a stable public API.  The
+    # safety boundary is structural instead: quiesce removes every present job
+    # and proves it absent, while restore accepts only ``running`` with a
+    # positive PID as healthy.  Keep the parser strict about the shape of an
+    # observed state without pretending to enumerate every transient value.
+    STATE_RE = re.compile(r"^[a-z][a-z ]{0,63}$")
 
     def __init__(
         self,
@@ -795,8 +800,8 @@ class LaunchdSupervisor(BaseSupervisor):
             raise ProtocolError("launchd job inspection failed")
         props = self._top_level_properties(result.stdout)
         state = props.get("state", "")
-        if state not in self.KNOWN_LOADED_STATES:
-            raise ProtocolError("launchd returned an unrecognized job state")
+        if self.STATE_RE.fullmatch(state) is None:
+            raise ProtocolError("launchd returned a malformed job state")
         pid = 0
         if "pid" in props:
             try:

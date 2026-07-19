@@ -200,8 +200,10 @@ if manager == "launchctl":
                 print("Could not find service " + target, file=sys.stderr)
             raise SystemExit(113)
         job_state = item.get("state", "running")
-        if state.get("ambiguous_launchd") == target:
+        if state.get("transient_launchd") == target:
             job_state = "mystery"
+        if state.get("malformed_launchd") == target:
+            job_state = "RUNNING"
         print(target + " = {")
         print("    state = " + job_state)
         if state.get("duplicate_launchd_state") == target:
@@ -1002,14 +1004,37 @@ def test_launchd_restore_recreates_openclaw_without_an_agent(tmp_path: Path) -> 
     assert "gui/501/" + LAUNCHD_NAMES["agent"] not in jobs
 
 
-def test_launchd_rejects_ambiguous_job_state(tmp_path: Path) -> None:
+def test_launchd_quiesces_well_formed_transient_job_state(tmp_path: Path) -> None:
     launchctl = _write_manager(tmp_path, "launchctl")
     target = "gui/501/" + LAUNCHD_NAMES["agent"]
     _write_state(
         tmp_path,
         {
             "jobs": {target: {"state": "running", "pid": 5001}},
-            "ambiguous_launchd": target,
+            "transient_launchd": target,
+        },
+    )
+    command, receipt = _launchd_args(tmp_path, "quiesce", _closed_port(), launchctl)
+
+    result = _run(command)
+
+    assert result.returncode == 0, result.stderr
+    _assert_passed_receipt(receipt, "quiesce", "launchd")
+    assert _read_state(tmp_path)["jobs"] == {}
+
+
+@pytest.mark.parametrize("mode", ["malformed_launchd", "duplicate_launchd_state"])
+def test_launchd_rejects_malformed_or_duplicate_job_state(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    launchctl = _write_manager(tmp_path, "launchctl")
+    target = "gui/501/" + LAUNCHD_NAMES["agent"]
+    _write_state(
+        tmp_path,
+        {
+            "jobs": {target: {"state": "running", "pid": 5001}},
+            mode: target,
         },
     )
     command, receipt = _launchd_args(tmp_path, "quiesce", _closed_port(), launchctl)
