@@ -126,7 +126,7 @@ work_package_certification:
           mode: full
           reason: candidate_root_visible_change_requires_supplemental_full
         expected_full_suite_count: 1
-  image_ref: ghcr.io/jordanhubbard/mac-certifier@sha256:2de12e4c5c38fa6052c05d0ac13ea7eb9602a9494e07d5c140d2ac5700551968
+  image_ref: ghcr.io/jordanhubbard/mac-certifier@sha256:844aa370a2299734d02573f35890e70f79d4d5d9f115e87350a32335e0ecb80c
   controller_commands:
     - command_id: contract-tests
       argv:
