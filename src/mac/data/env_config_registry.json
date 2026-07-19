@@ -11594,6 +11594,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: test jobs.",
+    "family": "core",
+    "name": "MAC_TEST_JOBS",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: test portfolio.",
     "family": "core",
     "name": "MAC_TEST_PORTFOLIO",

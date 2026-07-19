@@ -138,10 +138,33 @@ if [ "$#" -eq 0 ]; then
     fi
     "$PY" -m coverage erase
     # `patch = ["subprocess"]` in pyproject.toml makes the parent and every
-    # Python child write parallel coverage data. Preserve pytest's real return
-    # code, but still combine and print diagnostics when a test fails.
+    # Python child (including pytest-xdist workers) write parallel coverage
+    # data, so a single `coverage combine` merges every process's data set —
+    # this is what lets the run below split into two pytest invocations while
+    # still enforcing one coverage total.
+    #
+    # Parallelism: xdist runs the bulk unit/CLI/API/UI slice across cores
+    # (~5x wall-clock here). Tests marked process_e2e/postgres/container run
+    # SERIALLY in a second invocation: they bind real ports and spawn real
+    # processes, so concurrent scheduling would collide. --dist loadscope
+    # keeps a module's tests (and its module-scoped fixtures) on one worker.
+    #
+    # MAC_TEST_JOBS controls worker count: unset/"auto" => one per core;
+    # "0" => disable xdist entirely (serial), the fallback for memory- or
+    # core-constrained hosts. Portfolio mode always runs serial so per-test
+    # timing/coverage attribution stays exact.
+    _MAC_TEST_JOBS="${MAC_TEST_JOBS:-auto}"
+    _SERIAL_MARK="process_e2e or postgres or container_contract or docker_e2e"
     pytest_status=0
-    "$PY" -m coverage run -m pytest || pytest_status=$?
+    if [ "$_MAC_TEST_PORTFOLIO_REQUESTED" != "1" ] && [ "$_MAC_TEST_JOBS" != "0" ]; then
+        "$PY" -m coverage run -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \
+            -m "not ($_SERIAL_MARK)" || pytest_status=$?
+        if [ "$pytest_status" -eq 0 ]; then
+            "$PY" -m coverage run -m pytest -m "$_SERIAL_MARK" || pytest_status=$?
+        fi
+    else
+        "$PY" -m coverage run -m pytest || pytest_status=$?
+    fi
     "$PY" -m coverage combine
     "$PY" -m coverage json -o coverage.json
     report_status=0
