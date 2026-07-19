@@ -2014,14 +2014,40 @@ def systemd_loaded_automation() -> set[str]:
 
 def launchd_loaded_automation() -> set[str]:
     launchctl = command_path("launchctl")
-    result = run_bounded([launchctl, "print", "gui/%d" % os.getuid()])
+    # ``launchctl print gui/<uid>`` serializes the complete launchd domain,
+    # including every job's environment and endpoint state.  A healthy desktop
+    # can easily exceed the supervisor command bound (rocky was 117 KiB with
+    # only three matching automation jobs), and none of that unrelated detail
+    # is needed here.  ``launchctl list`` is the compact loaded-job inventory:
+    # one PID/status/label row per job and no job environment.  Parse only exact
+    # managed labels, while still rejecting a malformed matching row or a
+    # duplicate so an ambiguous inventory cannot authorize rollback.
+    result = run_bounded([launchctl, "list"])
     if result.returncode != 0:
         raise QuiescenceFailure("launchd automation inventory failed")
-    pattern = re.compile(
-        r"(?<![A-Za-z0-9_.-])(com\.%s\.openclaw-script-"
-        r"[a-z0-9][a-z0-9-]*)(?![A-Za-z0-9_.-])" % re.escape(fleet)
+    label_pattern = re.compile(
+        r"com\.%s\.openclaw-script-[a-z0-9][a-z0-9-]*\Z"
+        % re.escape(fleet)
     )
-    return set(pattern.findall((result.stdout or "") + "\n" + (result.stderr or "")))
+    row_pattern = re.compile(
+        r"^\s*(?:-|[0-9]+)\s+-?[0-9]+\s+([A-Za-z0-9._-]+)\s*$"
+    )
+    loaded: set[str] = set()
+    for line in (result.stdout or "").splitlines():
+        if line.strip().split() == ["PID", "Status", "Label"]:
+            continue
+        match = row_pattern.fullmatch(line)
+        if match is None:
+            if "com.%s.openclaw-script-" % fleet in line:
+                raise QuiescenceFailure("launchd automation inventory was malformed")
+            continue
+        label = match.group(1)
+        if label_pattern.fullmatch(label) is None:
+            continue
+        if label in loaded:
+            raise QuiescenceFailure("launchd automation inventory was ambiguous")
+        loaded.add(label)
+    return loaded
 
 
 def launchd_dynamic_disabled(labels: set[str]) -> dict[str, bool]:

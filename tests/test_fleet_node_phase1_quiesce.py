@@ -1035,6 +1035,16 @@ set -eu
 command=${1:?}
 shift
 case "$command" in
+  list)
+    printf 'PID\tStatus\tLabel\n'
+    if [ "${FAKE_HOST_AUTOMATION_LOADED:-0}" = 1 ]; then
+      target="gui/$(id -u)/com.mac.openclaw-script-memory-sync"
+      safe=$(printf '%s' "$target" | tr '/.' '__')
+      if [ ! -f "$FAKE_LAUNCHD_STATE/$safe" ]; then
+        printf -- '-\t1\tcom.mac.openclaw-script-memory-sync\n'
+      fi
+    fi
+    ;;
   print-disabled)
     domain=${1:?}
     if [ "${FAKE_LAUNCHD_MODE:-normal}" = disable-inspect-error ]; then
@@ -1064,8 +1074,10 @@ case "$command" in
     case "$target" in
       gui/*/*) ;;
       gui/*)
-        if [ "${FAKE_HOST_AUTOMATION_LOADED:-0}" = 1 ]; then
-          printf '    com.mac.openclaw-script-memory-sync = { active count = 1 }\n'
+        if [ "${FAKE_LAUNCHD_DOMAIN_OUTPUT_FLOOD:-0}" = 1 ]; then
+          while :; do
+            printf 'unrelated launchd domain state that must not be inventoried\n'
+          done
         fi
         exit 0
         ;;
@@ -1586,6 +1598,40 @@ def test_openclaw_host_automation_is_journaled_quiesced_and_restored(
     assert not successor.exists()
     restore_receipt = json.loads(restored.stdout)
     assert restore_receipt["host_automation"] == automation
+
+
+def test_launchd_host_automation_inventory_does_not_serialize_complete_domain(
+    tmp_path: Path,
+) -> None:
+    env = _base_case(tmp_path, "launchd", os_kind="darwin")
+    state = tmp_path / "launchd-state"
+    state.mkdir()
+    env["FAKE_LAUNCHD_STATE"] = str(state)
+    env["FAKE_HOST_AUTOMATION_LOADED"] = "1"
+    env["FAKE_LAUNCHD_DOMAIN_OUTPUT_FLOOD"] = "1"
+    _install_launchctl(tmp_path / "bin")
+    definition = (
+        Path(env["HOME"])
+        / "Library"
+        / "LaunchAgents"
+        / "com.mac.openclaw-script-memory-sync.plist"
+    )
+    definition.parent.mkdir(parents=True)
+    definition.write_text("prior generation\n", encoding="utf-8")
+    definition.chmod(0o600)
+
+    result = _run_action(env, "prepare")
+
+    assert result.returncode == 0, result.stderr
+    contract = json.loads(
+        (
+            Path(env["MAC_HOME"])
+            / ("phase1-cohort-restore-contract-%s.json" % env["DEPLOY_GENERATION"])
+        ).read_text(encoding="utf-8")
+    )
+    assert [item["name"] for item in contract["host_automation"]["definitions"]] == [
+        "com.mac.openclaw-script-memory-sync"
+    ]
 
 
 @pytest.mark.parametrize("manager", ["systemd", "launchd"])
