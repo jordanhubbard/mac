@@ -6,15 +6,14 @@ Uses a small synthetic graph (4 files in a diamond shape) to verify:
   - blast_radius calculation
   - files not in the index land in .unknown
   - no .codegraph → single unknown layer
-  - CLI round-trip via mac.cli.main (--json)
+
+The CLI round-trip for ``mac plan order`` is covered by the dedicated
+``tests/cli/test_cli_plan.py``; this module tests the ordering primitive.
 """
 
 from __future__ import annotations
 
-import io
-import json
 import sqlite3
-import sys
 from pathlib import Path
 
 import pytest
@@ -335,63 +334,3 @@ def test_order_layers_deduplicates_paths(tmp_path):
     assert all_files.count("leaf_a.py") == 1
 
 
-# ---------------------------------------------------------------------------
-# Tests: CLI round-trip
-# ---------------------------------------------------------------------------
-
-
-def _run_cli(*args):
-    """Run mac CLI and return (rc, json_output)."""
-    from mac.cli import main
-
-    out = io.StringIO()
-    old = sys.stdout
-    sys.stdout = out
-    try:
-        rc = main(["--json", *args])
-    finally:
-        sys.stdout = old
-    raw = out.getvalue().strip()
-    return rc, json.loads(raw) if raw else None
-
-
-def test_cli_plan_order_leaf_first(tmp_path):
-    _make_codegraph_db(tmp_path)
-    rc, result = _run_cli(
-        "plan",
-        "order",
-        "leaf_a.py",
-        "leaf_b.py",
-        "middle.py",
-        "core.py",
-        "--repo",
-        str(tmp_path),
-    )
-    assert rc == 0
-    assert result is not None
-    assert result["schema"] == PLANNING_SCHEMA
-    assert result["mode"] == "leaf-first"
-    layer_map = {layer["layer"]: sorted(layer["files"]) for layer in result["layers"]}
-    assert layer_map[0] == ["leaf_a.py", "leaf_b.py"]
-    assert layer_map[2] == ["core.py"]
-
-
-def test_cli_plan_order_core_first(tmp_path):
-    _make_codegraph_db(tmp_path)
-    rc, result = _run_cli(
-        "plan",
-        "order",
-        "leaf_a.py",
-        "leaf_b.py",
-        "middle.py",
-        "core.py",
-        "--repo",
-        str(tmp_path),
-        "--core-first",
-    )
-    assert rc == 0
-    assert result is not None
-    assert result["mode"] == "core-first"
-    layer_map = {layer["layer"]: sorted(layer["files"]) for layer in result["layers"]}
-    assert layer_map[0] == ["core.py"]
-    assert layer_map[2] == ["leaf_a.py", "leaf_b.py"]

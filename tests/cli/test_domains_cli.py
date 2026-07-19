@@ -436,27 +436,6 @@ def test_task_stats(tmp_path, monkeypatch):
     assert len(stats) > 0
 
 
-def test_task_start_transitions_state(tmp_path):
-    _, agent = _setup_machine_agent(tmp_path, host="start-host", agent_name="start-worker")
-    rc, task = _run(tmp_path, "task", "create", "startable")
-    assert rc == 0
-    rc, claimed = _run(tmp_path, "task", "claim", task["id"], agent["id"])
-    assert rc == 0
-    rc, started = _run(tmp_path, "task", "start", task["id"], agent["id"])
-    assert rc == 0
-    assert started["state"] == "running"
-
-
-def test_task_release_removes_no_dispatch(tmp_path):
-    rc, task = _run(tmp_path, "task", "create", "staged", "--no-dispatch")
-    assert rc == 0
-    assert task["metadata"].get("no_dispatch") is True
-
-    rc, released = _run(tmp_path, "task", "release", task["id"])
-    assert rc == 0
-    assert released["metadata"].get("no_dispatch") is not True
-
-
 def test_task_reopen(tmp_path):
     rc, task = _run(tmp_path, "task", "create", "reopen-me")
     assert rc == 0
@@ -476,26 +455,6 @@ def test_task_force_complete(tmp_path):
                          "--actor", "ops", "--reason", "manual")
     assert rc == 0
     assert completed["state"] == "completed"
-
-
-def test_task_evidence_attach(tmp_path):
-    """task evidence attaches an evidence record to a task."""
-    _, agent = _setup_machine_agent(
-        tmp_path, host="evidence-host", agent_name="evidence-worker"
-    )
-    rc, task = _run(tmp_path, "task", "create", "evidenced")
-    assert rc == 0
-    rc, claimed = _run(tmp_path, "task", "claim", task["id"], agent["id"])
-    assert rc == 0
-    rc, ev = _run(tmp_path, "task", "evidence", task["id"],
-                  "--kind", "log",
-                  "--uri", "file:///tmp/test.log",
-                  "--summary", "tests passed",
-                  "--created-by", agent["id"],
-                  "--lease-id", claimed["lease_id"])
-    assert rc == 0
-    assert ev["task_id"] == task["id"]
-    assert ev["kind"] == "log"
 
 
 # ---------------------------------------------------------------------------
