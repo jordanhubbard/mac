@@ -714,9 +714,12 @@ class LaunchdSupervisor(BaseSupervisor):
     # launchd's printed transition vocabulary is not a stable public API.  The
     # safety boundary is structural instead: quiesce removes every present job
     # and proves it absent, while restore accepts only ``running`` with a
-    # positive PID as healthy.  Keep the parser strict about the shape of an
-    # observed state without pretending to enumerate every transient value.
-    STATE_RE = re.compile(r"^[a-z][a-z ]{0,63}$")
+    # positive PID as healthy.  Require bounded printable text so malformed
+    # manager output still fails closed without pretending to enumerate every
+    # transient value (some macOS releases include punctuation in those values).
+    @staticmethod
+    def _valid_state(value: str) -> bool:
+        return 1 <= len(value) <= 256 and all(32 <= ord(char) <= 126 for char in value)
 
     def __init__(
         self,
@@ -800,7 +803,7 @@ class LaunchdSupervisor(BaseSupervisor):
             raise ProtocolError("launchd job inspection failed")
         props = self._top_level_properties(result.stdout)
         state = props.get("state", "")
-        if self.STATE_RE.fullmatch(state) is None:
+        if not self._valid_state(state):
             raise ProtocolError("launchd returned a malformed job state")
         pid = 0
         if "pid" in props:

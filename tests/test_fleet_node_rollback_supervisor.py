@@ -201,9 +201,9 @@ if manager == "launchctl":
             raise SystemExit(113)
         job_state = item.get("state", "running")
         if state.get("transient_launchd") == target:
-            job_state = "mystery"
+            job_state = "waiting (throttled: 1)"
         if state.get("malformed_launchd") == target:
-            job_state = "RUNNING"
+            job_state = "running\x7funsafe"
         print(target + " = {")
         print("    state = " + job_state)
         if state.get("duplicate_launchd_state") == target:
