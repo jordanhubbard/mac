@@ -80,6 +80,11 @@ INT_SUFFIXES = (
     "_COUNT", "_RETRIES",
 )
 RETIRED = {"MAC_BEADS_BRIDGE_HUB_AGENT"}
+CONSUMER_DEFAULTS = {
+    # The contract runner deliberately bounds its default. Operators may still
+    # request ``auto`` or another explicit worker count for a qualified host.
+    "MAC_TEST_JOBS": "2",
+}
 
 
 def family_for(name: str) -> str:
@@ -151,7 +156,7 @@ def build_records() -> list[dict[str, object]]:
             {
                 "name": name,
                 "type": type_for(name),
-                "default": None,
+                "default": CONSUMER_DEFAULTS.get(name),
                 "family": family,
                 "description": description_for(name, family, retired),
                 "retired": retired,

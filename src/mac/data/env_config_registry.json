@@ -11593,7 +11593,7 @@
     "type": "str"
   },
   {
-    "default": null,
+    "default": "2",
     "description": "Core setting: test jobs.",
     "family": "core",
     "name": "MAC_TEST_JOBS",

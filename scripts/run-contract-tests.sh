@@ -2,6 +2,7 @@
 set -euo pipefail
 
 _MAC_TEST_PORTFOLIO_REQUESTED="${MAC_TEST_PORTFOLIO:-0}"
+_MAC_TEST_JOBS_REQUESTED="${MAC_TEST_JOBS:-2}"
 
 # Fleet executors inherit deployment/task environment. Keep repository tests
 # hermetic so they exercise the checked-out code, not the live agent runtime.
@@ -18,6 +19,11 @@ unset "${!TOKENHUB_@}"
 # failed test_ref_host_token_auth_and_redaction_edges on every fleet host
 # while the same suite passed on tokenless dev machines and hub sandboxes.
 unset GH_TOKEN GITHUB_TOKEN GITEA_TOKEN GIT_TOKEN
+# Pytest configuration belongs to this repository and the explicit arguments
+# passed to this runner.  In particular, an inherited ``-n auto`` must not make
+# the protected process/container phase concurrent after the runner separates
+# it from the xdist-safe bulk phase.
+unset PYTEST_ADDOPTS
 
 # Coding-agent route detection (coding_agent._route_fields) fingerprints each
 # CLI route from provider endpoint/model/credential env vars, several of which
@@ -143,17 +149,31 @@ if [ "$#" -eq 0 ]; then
     # this is what lets the run below split into two pytest invocations while
     # still enforcing one coverage total.
     #
-    # Parallelism: xdist runs the bulk unit/CLI/API/UI slice across cores
-    # (~5x wall-clock here). Tests marked process_e2e/postgres/container run
+    # Parallelism: xdist runs the bulk unit/CLI/API/UI slice with a bounded
+    # default of two workers. Tests marked process_e2e/postgres/container run
     # SERIALLY in a second invocation: they bind real ports and spawn real
     # processes, so concurrent scheduling would collide. --dist loadscope
     # keeps a module's tests (and its module-scoped fixtures) on one worker.
     #
-    # MAC_TEST_JOBS controls worker count: unset/"auto" => one per core;
+    # MAC_TEST_JOBS controls worker count: unset => 2; "auto" => one per core;
     # "0" => disable xdist entirely (serial), the fallback for memory- or
-    # core-constrained hosts. Portfolio mode always runs serial so per-test
+    # core-constrained hosts. The value is captured before the hermetic MAC_*
+    # environment sweep above. Portfolio mode always runs serial so per-test
     # timing/coverage attribution stays exact.
-    _MAC_TEST_JOBS="${MAC_TEST_JOBS:-auto}"
+    _MAC_TEST_JOBS="$_MAC_TEST_JOBS_REQUESTED"
+    case "$_MAC_TEST_JOBS" in
+        0|auto) ;;
+        *[!0-9]*|'')
+            echo "run-contract-tests.sh: MAC_TEST_JOBS must be 0, auto, or a positive integer" >&2
+            exit 2
+            ;;
+        *)
+            if [ "$_MAC_TEST_JOBS" -lt 1 ]; then
+                echo "run-contract-tests.sh: MAC_TEST_JOBS must be 0, auto, or a positive integer" >&2
+                exit 2
+            fi
+            ;;
+    esac
     _SERIAL_MARK="process_e2e or postgres or container_contract or docker_e2e"
     pytest_status=0
     if [ "$_MAC_TEST_PORTFOLIO_REQUESTED" != "1" ] && [ "$_MAC_TEST_JOBS" != "0" ]; then
@@ -165,12 +185,29 @@ if [ "$#" -eq 0 ]; then
     else
         "$PY" -m coverage run -m pytest || pytest_status=$?
     fi
-    "$PY" -m coverage combine
-    "$PY" -m coverage json -o coverage.json
+    # coverage.py can report a corrupt parallel data file as "1 file errored"
+    # while still exiting zero after combining the remaining files.  That is a
+    # partial measurement, not a passing gate.  Preserve the combine output and
+    # promote either its nonzero status or its partial-combine diagnostic to a
+    # hard failure before generating or evaluating coverage.json.
+    combine_log="$(mktemp "${TMPDIR:-/tmp}/mac-coverage-combine.XXXXXX")"
+    combine_status=0
+    "$PY" -m coverage combine 2>&1 | tee "$combine_log" || combine_status=$?
+    if grep -Eiq "couldn't combine data file|[1-9][0-9]* files? errored" "$combine_log"; then
+        combine_status=1
+    fi
+    rm -f "$combine_log"
+
+    json_status=0
     report_status=0
-    "$PY" -m coverage report || report_status=$?
     policy_status=0
-    "$PY" scripts/coverage-policy.py --coverage-json coverage.json || policy_status=$?
+    if [ "$combine_status" -eq 0 ]; then
+        "$PY" -m coverage json -o coverage.json || json_status=$?
+    fi
+    if [ "$combine_status" -eq 0 ] && [ "$json_status" -eq 0 ]; then
+        "$PY" -m coverage report || report_status=$?
+        "$PY" scripts/coverage-policy.py --coverage-json coverage.json || policy_status=$?
+    fi
     portfolio_status=0
     if [ -n "$portfolio_dir" ]; then
         "$PY" scripts/test-portfolio.py --output-dir "$portfolio_dir" --report-only \
@@ -178,6 +215,12 @@ if [ "$#" -eq 0 ]; then
     fi
     if [ "$pytest_status" -ne 0 ]; then
         exit "$pytest_status"
+    fi
+    if [ "$combine_status" -ne 0 ]; then
+        exit "$combine_status"
+    fi
+    if [ "$json_status" -ne 0 ]; then
+        exit "$json_status"
     fi
     if [ "$report_status" -ne 0 ]; then
         exit "$report_status"
