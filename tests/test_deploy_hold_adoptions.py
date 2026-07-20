@@ -219,10 +219,22 @@ def test_deploy_contract_has_explicit_adoption_and_exact_release_mode():
         "\n}\n\nmain()", 1
     )[0]
     preflight = typed.index("preflight_cohort_hold_adoptions")
-    restore_arm = typed.index("prepare_remote_phase1_restore_contract")
-    prerequisite = typed.index("prepare_remote_prerequisite_bundle")
+    restore_arm = typed.index(
+        'run_bounded_node_phase "$selected_specs_file" phase1-prepare'
+    )
+    prerequisite = typed.index(
+        'run_bounded_node_phase "$selected_specs_file" prerequisites'
+    )
     hub_open = typed.index("build_and_open_hub_epoch")
     assert preflight < restore_arm < prerequisite < hub_open
+    phase1_worker = deploy.split("typed_phase1_prepare_worker() {", 1)[1].split(
+        "\n}\n\nstart_control_master_worker", 1
+    )[0]
+    prerequisite_worker = deploy.split("typed_prerequisite_worker() {", 1)[1].split(
+        "\n}\n\ntyped_staging_worker", 1
+    )[0]
+    assert "prepare_remote_phase1_restore_contract" in phase1_worker
+    assert "prepare_remote_prerequisite_bundle" in prerequisite_worker
     assert "run_typed_cohort" in main
     assert '"$hold_adoption_plan"' in main
 

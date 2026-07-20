@@ -661,7 +661,7 @@ def test_typed_cohort_orders_receipts_before_mutation_and_commit_before_finalize
     assert main.index("bind_live_cohort_routes") < main.index("run_typed_cohort")
     order = [
         "cohort_journal_mutate phase1-armed",
-        "prepare_remote_prerequisite_bundle",
+        'run_bounded_node_phase "$selected_specs_file" prerequisites',
         "build_and_open_hub_epoch",
         "cohort_journal_mutate quiesce-start",
         "cohort_journal_mutate phase2-armed",
@@ -889,9 +889,16 @@ def test_typed_restarts_reuse_the_one_journal_bound_generation():
     deploy_host = deploy.split("deploy_host() {", 1)[1].split(
         "\n}\n\nrestart_remote_mac_agent_under_epoch", 1
     )[0]
-    assert typed.index("cohort_journal_mutate phase2-start") < typed.index(
-        'deploy_host "$spec"', typed.index("phase2-start")
+    apply_worker = deploy.split("typed_phase2_apply_worker() {", 1)[1].split(
+        "\n}\n\ntyped_finalize_worker", 1
+    )[0]
+    phase2_start = typed.index("cohort_journal_mutate phase2-start")
+    apply_barrier = typed.index(
+        'run_bounded_node_phase "$selected_specs_file" phase2-apply', phase2_start
     )
+    prepared = typed.index("cohort_journal_mutate prepared", apply_barrier)
+    assert phase2_start < apply_barrier < prepared
+    assert 'deploy_host "$spec"' in apply_worker
     assert 'if [ "$node_action" = apply-phase2 ]' in deploy_host
     assert "restart_remote_mac_agent_under_epoch" in deploy_host
 
@@ -903,9 +910,16 @@ def test_typed_deploy_proves_pending_identity_before_atomic_hub_commit():
         "\n}\n\ncollect_finalize_evidence", 1
     )[0]
 
-    install = typed.index("install_pending_worker_credential")
-    candidate = typed.index("install_and_prove_attestation_candidate", install)
-    prepared = typed.index("cohort_journal_mutate prepared", candidate)
+    apply_worker = deploy.split("typed_phase2_apply_worker() {", 1)[1].split(
+        "\n}\n\ntyped_finalize_worker", 1
+    )[0]
+    install = apply_worker.index("install_pending_worker_credential")
+    candidate = apply_worker.index("install_and_prove_attestation_candidate", install)
+    assert install < candidate
+    apply_barrier = typed.index(
+        'run_bounded_node_phase "$selected_specs_file" phase2-apply'
+    )
+    prepared = typed.index("cohort_journal_mutate prepared", apply_barrier)
     commit = typed.index("prove_and_commit_hub_epoch", prepared)
     finalize = typed.index("cohort_journal_mutate finalize-start", commit)
     assert install < candidate < prepared < commit < finalize
@@ -2804,9 +2818,16 @@ def test_typed_prepare_and_composite_rollback_are_journal_ordered():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     typed = deploy.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
     prepare_intent = typed.index("cohort_journal_mutate phase1-prepare-start")
-    remote_prepare = typed.index("prepare_remote_phase1_restore_contract", prepare_intent)
+    remote_prepare = typed.index(
+        'run_bounded_node_phase "$selected_specs_file" phase1-prepare',
+        prepare_intent,
+    )
     armed = typed.index("cohort_journal_mutate phase1-armed", remote_prepare)
     assert prepare_intent < remote_prepare < armed
+    worker = deploy.split("typed_phase1_prepare_worker() {", 1)[1].split(
+        "\n}\n\nstart_control_master_worker", 1
+    )[0]
+    assert "prepare_remote_phase1_restore_contract" in worker
 
     recovery = deploy.split("recover_cohort_node() {", 1)[1].split(
         "\n}\n\nrecover_active_cohort_transaction", 1

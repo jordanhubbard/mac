@@ -277,11 +277,15 @@ def test_controller_orders_read_only_preflight_before_migration_and_phase1_wal()
         "applying exact reviewed OpenShell CLI prerequisite migrations"
     )
     cohort = text.split("run_typed_cohort() {", 1)[1]
+    phase1_worker = text.split("typed_phase1_prepare_worker() {", 1)[1].split(
+        "\n}\n\nstart_control_master_worker", 1
+    )[0]
     assert cohort.index("classify_reviewed_openshell_cli_prerequisites") < cohort.index(
         "cohort_journal_mutate phase1-prepare-start"
     )
+    assert "prepare_remote_phase1_restore_contract" in phase1_worker
     assert cohort.index("classify_reviewed_openshell_cli_prerequisites") < cohort.index(
-        "prepare_remote_phase1_restore_contract"
+        'run_bounded_node_phase "$selected_specs_file" phase1-prepare'
     )
     assert "prepare_reviewed_openshell_cli_prerequisites" not in cohort.split(
         'echo "==> fleet: arming exact phase-1 restore contracts"', 1

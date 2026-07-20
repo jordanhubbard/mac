@@ -1261,6 +1261,9 @@ def test_runtime_publication_verifier_requires_anonymous_digest_readback():
     assert 'anonymous_env["DOCKER_CONFIG"] = config' in verifier
     assert '"pull", args.image_ref' in verifier
     assert "org.opencontainers.image.revision" in verifier
+    assert "io.mac.frozen-inputs.sha256" in verifier
+    assert "runtime_input_sha256" in verifier
+    assert "build_revision" in verifier
     assert "mac.openshell_runtime.publication_verification.v1" in verifier
 
 

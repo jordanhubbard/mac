@@ -2157,6 +2157,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "scripts/prepublish-fleet-qualification.py",
       "scripts/setup-fleet.py",
       "src/mac/api.py",
       "src/mac/fleet_setup.py",
@@ -3039,6 +3040,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy node parallelism.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_NODE_PARALLELISM",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy openclaw live canary.",
     "family": "deployment",
     "name": "MAC_DEPLOY_OPENCLAW_LIVE_CANARY",
@@ -3184,6 +3196,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy openshell runtime input sha256.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy os.",
     "family": "deployment",
     "name": "MAC_DEPLOY_OS",
@@ -3204,6 +3228,17 @@
       "deploy/deploy-mac-fleet.sh"
     ],
     "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy prerequisite apply guard seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "int"
   },
   {
     "default": null,
@@ -3260,7 +3295,19 @@
     "name": "MAC_DEPLOY_PREREQUISITE_MAX_AGE_SECONDS",
     "retired": false,
     "sources": [
+      "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy prerequisite phase budget seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
     ],
     "type": "int"
   },

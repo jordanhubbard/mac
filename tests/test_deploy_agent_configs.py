@@ -1238,8 +1238,21 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
     # it: exact prerequisite receipts must pass before the hub epoch opens.
     assert 'add_remote_env MAC_DEPLOY_ALLOW_DEGRADED_SERVICES "${allow_degraded_services:-0}"' in script
     typed = script.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
-    assert 'deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0' in typed
-    assert "prepare_remote_prerequisite_bundle" in typed
+    arm_worker = script.split("typed_phase2_arm_worker() {", 1)[1].split(
+        "\n}\n\ntyped_phase2_apply_worker", 1
+    )[0]
+    apply_worker = script.split("typed_phase2_apply_worker() {", 1)[1].split(
+        "\n}\n\ntyped_finalize_worker", 1
+    )[0]
+    assert 'deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0' in arm_worker
+    assert 'deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0' in apply_worker
+    assert 'run_bounded_node_phase "$selected_specs_file" phase2-arm' in typed
+    assert 'run_bounded_node_phase "$selected_specs_file" phase2-apply' in typed
+    assert 'run_bounded_node_phase "$selected_specs_file" prerequisites' in typed
+    prerequisite_worker = script.split("typed_prerequisite_worker() {", 1)[1].split(
+        "\n}\n\ntyped_staging_worker", 1
+    )[0]
+    assert "prepare_remote_prerequisite_bundle" in prerequisite_worker
     assert "MAC_DEPLOY_ALLOW_DEGRADED_SERVICES" not in typed
 
 
@@ -1465,6 +1478,7 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
                 "MAC_DEPLOY_OPENSHELL=0",
                 "MAC_DEPLOY_OPENSHELL_ARGS=from-file",
                 "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=from-file-runtime",
+                "MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256=sha256:from-file-runtime-input",
                 "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD=1",
                 "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0",
                 "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0",
@@ -1485,6 +1499,7 @@ def test_direct_fleet_deploy_cutover_values_override_env_file_without_secret_out
         "MAC_DEPLOY_OPENSHELL": "1",
         "MAC_DEPLOY_OPENSHELL_ARGS": "--enable --fail-closed",
         "MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE": "caller-runtime",
+        "MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256": "sha256:caller-runtime-input",
         "MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD": "0",
         "MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED": "1",
         "MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED": "1",
@@ -3427,6 +3442,8 @@ def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():
         "mac-openshell-firewall.service",
         "MAC_OPENSH_GW",
         '"$openshell_dir/runtime-image-ref"',
+        '"$openshell_dir/runtime-input-sha256"',
+        '"$openshell_dir/runtime-image-build-revision"',
         '"$openshell_dir/image-source-sha"',
     ):
         assert owned_state in installer
@@ -4099,14 +4116,22 @@ def test_fleet_deploy_pins_one_openshell_runtime_digest_across_nodes():
         'add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE '
         '"${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"'
     ) in script
+    assert (
+        'add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 '
+        '"${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}"'
+    ) in script
     assert 'OSH_RUNTIME_IMAGE_REF="$OPENSHELL_RUNTIME_IMAGE"' in script
+    assert 'OSH_RUNTIME_INPUT_SHA256="$OPENSHELL_RUNTIME_INPUT_SHA256"' in script
     assert 'MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS "$effective_openshell_args"' in script
     assert "OSH_RUNTIME_IMAGE_REF=$(shell_quote" not in script
     assert "OSH_RUNTIME_IMAGE_REF" in bootstrap
     assert '"$OSH_DOCKER_BIN" pull "$OSH_RUNTIME_IMAGE_REF"' in bootstrap
     assert 'image_source_sha="$(resolve_deployed_source_revision)" || return 1' in bootstrap
     assert "DEPLOYED_SOURCE_REVISION_FILE" in bootstrap
-    assert "runtime image revision does not match deployed source commit" in bootstrap
+    assert "runtime image frozen-input identity does not match reviewed publication" in bootstrap
+    assert '"io.mac.frozen-inputs.sha256"' in bootstrap
+    assert 'runtime_input_file="$OSH_DIR/runtime-input-sha256"' in bootstrap
+    assert 'runtime_build_file="$OSH_DIR/runtime-image-build-revision"' in bootstrap
     assert '"$OSH_DOCKER_BIN" tag "$OSH_RUNTIME_IMAGE_REF" "$OSH_IMAGE_TAG"' in bootstrap
     assert 'runtime_ref_file="$OSH_DIR/runtime-image-ref"' in bootstrap
     assert 'printf \'%s\\n\' "$OSH_RUNTIME_IMAGE_REF" > "$runtime_ref_tmp"' in bootstrap
@@ -4135,6 +4160,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
         "#!/bin/bash\n"
         "{\n"
         "  printf 'runtime=%s\\n' \"${OSH_RUNTIME_IMAGE_REF:-}\"\n"
+        "  printf 'input=%s\\n' \"${OSH_RUNTIME_INPUT_SHA256:-}\"\n"
         "  printf 'expected=%s\\n' \"${MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX:-}\"\n"
         "  printf 'argc=%s\\n' \"$#\"\n"
         "  for arg in \"$@\"; do printf 'arg=%s\\n' \"$arg\"; done\n"
@@ -4144,6 +4170,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
     )
     bootstrap.chmod(0o755)
     digest = "ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:" + "a" * 64
+    input_sha256 = "sha256:" + "b" * 64
     snippet = (
         "set -euo pipefail\n"
         "truthy() { case \"$(printf '%s' \"${1:-}\" | tr '[:upper:]' '[:lower:]')\" "
@@ -4160,6 +4187,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
         "AGENT": "bullwinkle",
         "OPENSHELL_LOCAL_IMAGE_BUILD": "0",
         "OPENSHELL_RUNTIME_IMAGE": digest,
+        "OPENSHELL_RUNTIME_INPUT_SHA256": input_sha256,
         "MAC_TEST_BOOTSTRAP_CALLS": str(calls),
     }
 
@@ -4181,6 +4209,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
     assert empty.returncode == 0, empty.stderr
     assert calls.read_text(encoding="utf-8").splitlines() == [
         f"runtime={digest}",
+        f"input={input_sha256}",
         "expected=",
         "argc=0",
     ]
@@ -4203,6 +4232,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
     assert required.returncode == 0, required.stderr
     assert calls.read_text(encoding="utf-8").splitlines() == [
         f"runtime={digest}",
+        f"input={input_sha256}",
         "expected=mac-openclaw-bullwinkle",
         "argc=2",
         "arg=--enable",

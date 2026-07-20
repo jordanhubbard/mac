@@ -228,6 +228,9 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
     runs-on: ubuntu-latest
+    concurrency:
+      group: mac-deployment-frozen-image
+      cancel-in-progress: false
     needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]
     permissions:
       contents: read
@@ -237,6 +240,43 @@ jobs:
     steps:
       # actions/checkout v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - id: image-plan
+        name: Freeze MAC image inputs and reusable identity
+        run: |
+          install -d -m 0700 mac-image-publication
+          scripts/image-publication-identity.py plan \
+            --kind mac \
+            --requested-revision "$GITHUB_SHA" \
+            --output mac-image-publication/plan.json \
+            --github-output "$GITHUB_OUTPUT"
+      - id: image-reuse
+        name: Probe anonymous reusable MAC image
+        run: |
+          scripts/image-publication-identity.py probe \
+            --plan mac-image-publication/plan.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Authenticate to repository-owned GHCR namespace
+        # docker/login-action v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image-reuse-eligibility
+        name: Require original GitHub provenance before reusing MAC image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_REUSE: ${{ steps.image-reuse.outputs.reuse }}
+          CANDIDATE_DIGEST: ${{ steps.image-reuse.outputs.digest }}
+          CANDIDATE_BUILD_REVISION: ${{ steps.image-reuse.outputs.build_revision }}
+        run: |
+          scripts/image-publication-identity.py qualify-reuse \
+            --plan mac-image-publication/plan.json \
+            --candidate-reuse "$CANDIDATE_REUSE" \
+            --image-digest "$CANDIDATE_DIGEST" \
+            --build-revision "$CANDIDATE_BUILD_REVISION" \
+            --github-repository "$GITHUB_REPOSITORY" \
+            --github-output "$GITHUB_OUTPUT"
       - name: Set up QEMU for cross-architecture image execution
         # docker/setup-qemu-action v3
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
@@ -246,6 +286,7 @@ jobs:
         # docker/setup-buildx-action v3
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Build container image (smoke build, not pushed)
+        if: steps.image-reuse-eligibility.outputs.reuse != 'true'
         # docker/build-push-action v6
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
@@ -253,6 +294,11 @@ jobs:
           push: false
           tags: mac:ci-${{ github.sha }}
           load: true
+      - name: Load reused MAC image for the local contracts
+        if: steps.image-reuse-eligibility.outputs.reuse == 'true'
+        env:
+          CONTENT_TAG: ${{ steps.image-plan.outputs.content_tag }}
+        run: docker tag "$CONTENT_TAG" "mac:ci-${GITHUB_SHA}"
       - name: Prove the image identity can write mounted database and crash state
         run: |
           state_volume="mac-ci-state-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -290,15 +336,9 @@ jobs:
           python3 scripts/blackbox-hub-smoke.py \
             --url http://127.0.0.1:8000 \
             --token "$MAC_BLACKBOX_TOKEN"
-      - name: Authenticate to repository-owned GHCR namespace
-        # docker/login-action v3
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - id: publish
         name: Publish multi-platform MAC deployment image
+        if: steps.image-reuse-eligibility.outputs.reuse != 'true'
         # docker/build-push-action v6
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
@@ -306,14 +346,40 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/jordanhubbard/mac:git-${{ github.sha }}
+          tags: |
+            ghcr.io/jordanhubbard/mac:git-${{ github.sha }}
+            ${{ steps.image-plan.outputs.content_tag }}
           labels: |
             org.opencontainers.image.source=https://github.com/jordanhubbard/mac
             org.opencontainers.image.revision=${{ github.sha }}
+            io.mac.frozen-inputs.sha256=${{ steps.image-plan.outputs.frozen_inputs_sha256 }}
+            io.mac.image-kind=mac
           provenance: mode=max
           sbom: true
           cache-from: type=gha,scope=mac-deployment-image
           cache-to: type=gha,mode=max,scope=mac-deployment-image
+      - id: image-identity
+        name: Resolve exact MAC image identity
+        env:
+          REUSE: ${{ steps.image-reuse-eligibility.outputs.reuse }}
+          REUSED_DIGEST: ${{ steps.image-reuse-eligibility.outputs.digest }}
+          REUSED_BUILD_REVISION: ${{ steps.image-reuse-eligibility.outputs.build_revision }}
+          PUBLISHED_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          if [ "$REUSE" = true ]; then
+            digest="$REUSED_DIGEST"
+            build_revision="$REUSED_BUILD_REVISION"
+            disposition=reused
+          else
+            digest="$PUBLISHED_DIGEST"
+            build_revision="$GITHUB_SHA"
+            disposition=built
+          fi
+          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          printf '%s' "$build_revision" | grep -Eq '^[0-9a-f]{40}$'
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "build_revision=$build_revision" >> "$GITHUB_OUTPUT"
+          echo "disposition=$disposition" >> "$GITHUB_OUTPUT"
       - name: Require the inherited package visibility to be public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -330,41 +396,67 @@ jobs:
           test "$visibility" = public
       - name: Prove anonymous exact-digest readback and deployment identity
         env:
-          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+          BUILD_REVISION: ${{ steps.image-identity.outputs.build_revision }}
         run: |
-          test -n "$IMAGE_DIGEST"
-          exact_ref="ghcr.io/jordanhubbard/mac@$IMAGE_DIGEST"
-          empty_config="$RUNNER_TEMP/mac-deployment-public-readback-docker-config"
-          rm -rf "$empty_config"
-          install -d -m 0700 "$empty_config"
-          printf '{"auths":{}}\n' > "$empty_config/config.json"
-          for platform in linux/amd64 linux/arm64; do
-            expected_arch="${platform#linux/}"
-            docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
-            DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
-            test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
-            test "$(docker inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$exact_ref")" = "$GITHUB_SHA"
-            DOCKER_CONFIG="$empty_config" docker run --rm --network none \
-              --platform "$platform" --entrypoint /bin/sh "$exact_ref" -ec '
-                test "$(id -u)" = 10001
-                test "$(id -g)" = 10001
-                test -x /usr/local/bin/mac-crash-observer
-                test -x /opt/mac-venv/bin/mac-git-askpass
-                python -c "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml"
-              '
-          done
+          scripts/image-publication-identity.py verify \
+            --plan mac-image-publication/plan.json \
+            --image-digest "$IMAGE_DIGEST" \
+            --build-revision "$BUILD_REVISION" \
+            --output mac-image-publication/anonymous-verification.json
       - name: Sign GitHub build provenance
+        if: steps.image-identity.outputs.disposition == 'built'
         # actions/attest-build-provenance v2
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-name: ghcr.io/jordanhubbard/mac
-          subject-digest: ${{ steps.publish.outputs.digest }}
+          subject-digest: ${{ steps.image-identity.outputs.digest }}
           push-to-registry: true
-      - name: Record immutable MAC image reference
+      - name: Verify GitHub provenance for the exact MAC digest
         env:
-          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+          BUILD_REVISION: ${{ steps.image-identity.outputs.build_revision }}
         run: |
-          test -n "$IMAGE_DIGEST"
+          set -e
+          umask 077
+          output=mac-image-publication/provenance-verification.json
+          temporary="${output}.tmp"
+          verified=false
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if gh attestation verify \
+              "oci://ghcr.io/jordanhubbard/mac@${IMAGE_DIGEST}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" \
+              --source-digest "$BUILD_REVISION" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners \
+              --format json > "$temporary"; then
+              verified=true
+              break
+            fi
+            sleep 5
+          done
+          test "$verified" = true
+          python3 -m json.tool "$temporary" >/dev/null
+          mv -f "$temporary" "$output"
+      - name: Record durable MAC publication identity
+        env:
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+          DISPOSITION: ${{ steps.image-identity.outputs.disposition }}
+        run: |
+          if [ "$DISPOSITION" = built ]; then
+            provenance=github-attested
+          else
+            provenance=github-attestation-verified
+          fi
+          scripts/image-publication-identity.py receipt \
+            --plan mac-image-publication/plan.json \
+            --verification mac-image-publication/anonymous-verification.json \
+            --provenance-verification mac-image-publication/provenance-verification.json \
+            --disposition "$DISPOSITION" \
+            --provenance "$provenance" \
+            --output mac-image-publication/publication-receipt.json
           printf '%s@%s\n' 'ghcr.io/jordanhubbard/mac' "$IMAGE_DIGEST" \
             | tee mac-image-ref.txt
           cat mac-image-ref.txt >> "$GITHUB_STEP_SUMMARY"
@@ -373,7 +465,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: mac-image-publication
-          path: mac-image-ref.txt
+          path: |
+            mac-image-ref.txt
+            mac-image-publication/
           if-no-files-found: error
           retention-days: 30
 
@@ -383,6 +477,9 @@ jobs:
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_images)
     runs-on: ubuntu-latest
+    concurrency:
+      group: mac-openshell-runtime-frozen-image
+      cancel-in-progress: false
     needs: [dead-code, mainline, compatibility, postgres-contract, publication-scope]
     permissions:
       contents: read
@@ -392,7 +489,50 @@ jobs:
     steps:
       # actions/checkout v4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - id: image-plan
+        name: Freeze OpenShell runtime inputs and reusable identity
+        run: |
+          install -d -m 0700 openshell-runtime-publication
+          scripts/image-publication-identity.py plan \
+            --kind openshell-runtime \
+            --requested-revision "$GITHUB_SHA" \
+            --build-arg GH_VERSION=2.95.0 \
+            --build-arg CODEGRAPH_VERSION=v1.1.6 \
+            --build-arg NODE_VERSION=22.23.1 \
+            --build-arg PNPM_VERSION=11.13.1 \
+            --build-arg CODEX_VERSION=0.140.0 \
+            --output openshell-runtime-publication/plan.json \
+            --github-output "$GITHUB_OUTPUT"
+      - id: image-reuse
+        name: Probe anonymous reusable OpenShell runtime
+        run: |
+          scripts/image-publication-identity.py probe \
+            --plan openshell-runtime-publication/plan.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Authenticate to repository-owned GHCR namespace
+        # docker/login-action v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image-reuse-eligibility
+        name: Require original GitHub provenance before reusing runtime
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_REUSE: ${{ steps.image-reuse.outputs.reuse }}
+          CANDIDATE_DIGEST: ${{ steps.image-reuse.outputs.digest }}
+          CANDIDATE_BUILD_REVISION: ${{ steps.image-reuse.outputs.build_revision }}
+        run: |
+          scripts/image-publication-identity.py qualify-reuse \
+            --plan openshell-runtime-publication/plan.json \
+            --candidate-reuse "$CANDIDATE_REUSE" \
+            --image-digest "$CANDIDATE_DIGEST" \
+            --build-revision "$CANDIDATE_BUILD_REVISION" \
+            --github-repository "$GITHUB_REPOSITORY" \
+            --github-output "$GITHUB_OUTPUT"
       - name: Prepare checksum-locked multi-platform runtime assets
+        if: steps.image-reuse-eligibility.outputs.reuse != 'true'
         env:
           GH_VERSION: "2.95.0"
           CODEGRAPH_VERSION: "v1.1.6"
@@ -408,15 +548,9 @@ jobs:
       - name: Set up Docker Buildx
         # docker/setup-buildx-action v3
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - name: Authenticate to repository-owned GHCR namespace
-        # docker/login-action v3
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - id: publish
         name: Publish immutable multi-platform OpenShell runtime
+        if: steps.image-reuse-eligibility.outputs.reuse != 'true'
         # docker/build-push-action v6
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
@@ -424,7 +558,9 @@ jobs:
           file: deploy/openshell/mac-hermes.Containerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/jordanhubbard/mac-openshell-runtime:git-${{ github.sha }}
+          tags: |
+            ghcr.io/jordanhubbard/mac-openshell-runtime:git-${{ github.sha }}
+            ${{ steps.image-plan.outputs.content_tag }}
           build-args: |
             GH_VERSION=2.95.0
             CODEGRAPH_VERSION=v1.1.6
@@ -434,10 +570,34 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/jordanhubbard/mac
             org.opencontainers.image.revision=${{ github.sha }}
+            io.mac.frozen-inputs.sha256=${{ steps.image-plan.outputs.frozen_inputs_sha256 }}
+            io.mac.image-kind=openshell-runtime
           provenance: mode=max
           sbom: true
           cache-from: type=gha,scope=mac-openshell-runtime-image
           cache-to: type=gha,mode=max,scope=mac-openshell-runtime-image
+      - id: image-identity
+        name: Resolve exact OpenShell runtime identity
+        env:
+          REUSE: ${{ steps.image-reuse-eligibility.outputs.reuse }}
+          REUSED_DIGEST: ${{ steps.image-reuse-eligibility.outputs.digest }}
+          REUSED_BUILD_REVISION: ${{ steps.image-reuse-eligibility.outputs.build_revision }}
+          PUBLISHED_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          if [ "$REUSE" = true ]; then
+            digest="$REUSED_DIGEST"
+            build_revision="$REUSED_BUILD_REVISION"
+            disposition=reused
+          else
+            digest="$PUBLISHED_DIGEST"
+            build_revision="$GITHUB_SHA"
+            disposition=built
+          fi
+          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          printf '%s' "$build_revision" | grep -Eq '^[0-9a-f]{40}$'
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "build_revision=$build_revision" >> "$GITHUB_OUTPUT"
+          echo "disposition=$disposition" >> "$GITHUB_OUTPUT"
       - name: Require the inherited package visibility to be public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -454,56 +614,69 @@ jobs:
           test "$visibility" = public
       - name: Prove anonymous exact-digest readback and runtime identity
         env:
-          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+          BUILD_REVISION: ${{ steps.image-identity.outputs.build_revision }}
         run: |
-          test -n "$IMAGE_DIGEST"
-          exact_ref="ghcr.io/jordanhubbard/mac-openshell-runtime@$IMAGE_DIGEST"
-          empty_config="$RUNNER_TEMP/mac-public-readback-docker-config"
-          rm -rf "$empty_config"
-          install -d -m 0700 "$empty_config"
-          printf '{"auths":{}}\n' > "$empty_config/config.json"
-          for platform in linux/amd64 linux/arm64; do
-            expected_arch="${platform#linux/}"
-            docker image rm -f "$exact_ref" >/dev/null 2>&1 || true
-            DOCKER_CONFIG="$empty_config" docker pull --platform "$platform" "$exact_ref"
-            test "$(docker inspect --format='{{ .Architecture }}' "$exact_ref")" = "$expected_arch"
-            test "$(docker inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$exact_ref")" = "$GITHUB_SHA"
-            DOCKER_CONFIG="$empty_config" docker run --rm --platform "$platform" \
-              --entrypoint /bin/bash "$exact_ref" -lc '
-                /usr/local/bin/mac-verify-bash-contract
-                test "$(node --version)" = v22.23.1
-                test "$(pnpm --version)" = 11.13.1
-                gh --version
-                codex --version
-                codegraph --version
-                clang --version
-                clang --print-targets | grep -F riscv64
-                llvm-objcopy --version
-                ld.lld --version
-                qemu-system-riscv64 --version
-                qemu-system-riscv64 -machine help | grep -F virt
-                python3 --version
-                getent passwd sandbox
-                test -x /opt/mac-venv/bin/mac-git-askpass
-              '
-          done
+          scripts/image-publication-identity.py verify \
+            --plan openshell-runtime-publication/plan.json \
+            --image-digest "$IMAGE_DIGEST" \
+            --build-revision "$BUILD_REVISION" \
+            --output openshell-runtime-publication/anonymous-verification.json
       - name: Sign GitHub build provenance
+        if: steps.image-identity.outputs.disposition == 'built'
         # actions/attest-build-provenance v2
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-name: ghcr.io/jordanhubbard/mac-openshell-runtime
-          subject-digest: ${{ steps.publish.outputs.digest }}
+          subject-digest: ${{ steps.image-identity.outputs.digest }}
           push-to-registry: true
-      - name: Record immutable runtime image and build metadata
+      - name: Verify GitHub provenance for the exact runtime digest
         env:
-          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
-          BUILD_METADATA: ${{ steps.publish.outputs.metadata }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+          BUILD_REVISION: ${{ steps.image-identity.outputs.build_revision }}
         run: |
-          test -n "$IMAGE_DIGEST"
+          set -e
+          umask 077
+          output=openshell-runtime-publication/provenance-verification.json
+          temporary="${output}.tmp"
+          verified=false
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if gh attestation verify \
+              "oci://ghcr.io/jordanhubbard/mac-openshell-runtime@${IMAGE_DIGEST}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" \
+              --source-digest "$BUILD_REVISION" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners \
+              --format json > "$temporary"; then
+              verified=true
+              break
+            fi
+            sleep 5
+          done
+          test "$verified" = true
+          python3 -m json.tool "$temporary" >/dev/null
+          mv -f "$temporary" "$output"
+      - name: Record durable runtime publication identity
+        env:
+          IMAGE_DIGEST: ${{ steps.image-identity.outputs.digest }}
+          DISPOSITION: ${{ steps.image-identity.outputs.disposition }}
+        run: |
+          if [ "$DISPOSITION" = built ]; then
+            provenance=github-attested
+          else
+            provenance=github-attestation-verified
+          fi
+          scripts/image-publication-identity.py receipt \
+            --plan openshell-runtime-publication/plan.json \
+            --verification openshell-runtime-publication/anonymous-verification.json \
+            --provenance-verification openshell-runtime-publication/provenance-verification.json \
+            --disposition "$DISPOSITION" \
+            --provenance "$provenance" \
+            --output openshell-runtime-publication/publication-receipt.json
           printf '%s@%s\n' 'ghcr.io/jordanhubbard/mac-openshell-runtime' "$IMAGE_DIGEST" \
             | tee openshell-runtime-image-ref.txt
-          printf '%s\n' "$BUILD_METADATA" > openshell-runtime-build-metadata.json
-          python3 -m json.tool openshell-runtime-build-metadata.json >/dev/null
           cat openshell-runtime-image-ref.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload runtime digest, provenance, and SBOM receipt
         # actions/upload-artifact v4
@@ -512,7 +685,7 @@ jobs:
           name: openshell-runtime-image-publication
           path: |
             openshell-runtime-image-ref.txt
-            openshell-runtime-build-metadata.json
+            openshell-runtime-publication/
           if-no-files-found: error
           retention-days: 30
 

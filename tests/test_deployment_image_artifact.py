@@ -71,17 +71,19 @@ def test_deployment_image_ci_proves_nonroot_state_volume_writes() -> None:
 def test_all_image_publication_smokes_use_valid_docker_label_templates() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     valid_template = (
-        "--format='{{ index .Config.Labels "
-        '"org.opencontainers.image.revision" }}\''
+        "--format='{{ index .Config.Labels \"org.opencontainers.image.revision\" }}'"
     )
     invalid_template = (
         "--format='{{ index .Config.Labels "
-        r'\"org.opencontainers.image.revision\" }}\''
+        r"\"org.opencontainers.image.revision\" }}\'"
     )
 
     assert invalid_template not in workflow
-    for job_name in ("docker", "openshell-runtime-image", "certifier-image"):
-        assert _workflow_job(workflow, job_name).count(valid_template) == 1
+    assert _workflow_job(workflow, "certifier-image").count(valid_template) == 1
+    for job_name in ("docker", "openshell-runtime-image"):
+        job = _workflow_job(workflow, job_name)
+        assert valid_template not in job
+        assert "scripts/image-publication-identity.py verify" in job
 
 
 def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
@@ -110,17 +112,18 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
     assert "org.opencontainers.image.revision=${{ github.sha }}" in job
     assert "provenance: mode=max" in job
     assert "sbom: true" in job
-    assert "subject-digest: ${{ steps.publish.outputs.digest }}" in job
+    assert "subject-digest: ${{ steps.image-identity.outputs.digest }}" in job
     assert "openshell-runtime-image-publication" in job
     assert "/user/packages/container/mac-openshell-runtime/visibility" not in job
     assert "gh api --method PATCH" not in job
     assert "gh api /user/packages/container/mac-openshell-runtime" in job
     assert 'test "$visibility" = public' in job
-    assert "printf '{\"auths\":{}}\\n'" in job
-    assert 'DOCKER_CONFIG="$empty_config" docker pull' in job
-    assert "for platform in linux/amd64 linux/arm64" in job
-    assert 'docker run --rm --platform "$platform"' in job
-    assert "org.opencontainers.image.revision" in job
+    assert "scripts/image-publication-identity.py verify" in job
+    assert "--plan openshell-runtime-publication/plan.json" in job
+    assert '--build-revision "$BUILD_REVISION"' in job
+    verifier = (ROOT / "scripts" / "image-publication-identity.py").read_text(
+        encoding="utf-8"
+    )
     for command in (
         "gh --version",
         "codex --version",
@@ -130,9 +133,9 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
         "ld.lld --version",
         "qemu-system-riscv64 --version",
     ):
-        assert command in job
-    assert "clang --print-targets | grep -F riscv64" in job
-    assert "qemu-system-riscv64 -machine help | grep -F virt" in job
+        assert command in verifier
+    assert "clang --print-targets | grep -F riscv64" in verifier
+    assert "qemu-system-riscv64 -machine help | grep -F virt" in verifier
 
 
 def test_image_publication_is_blocked_on_live_pinned_postgres_contract() -> None:
@@ -188,17 +191,18 @@ def test_main_deployment_publication_is_anonymously_executable_on_both_arches() 
     assert "gh api --method PATCH" not in job
     assert "gh api /user/packages/container/mac" in job
     assert 'test "$visibility" = public' in job
-    assert 'exact_ref="ghcr.io/jordanhubbard/mac@$IMAGE_DIGEST"' in job
-    assert "printf '{\"auths\":{}}\\n'" in job
-    assert "for platform in linux/amd64 linux/arm64" in job
-    assert 'DOCKER_CONFIG="$empty_config" docker pull --platform "$platform"' in job
-    assert "--network none" in job
-    assert '--platform "$platform" --entrypoint /bin/sh' in job
-    assert 'test "$(id -u)" = 10001' in job
-    assert "test -x /opt/mac-venv/bin/mac-git-askpass" in job
+    assert "scripts/image-publication-identity.py verify" in job
+    assert "--plan mac-image-publication/plan.json" in job
+    verifier = (ROOT / "scripts" / "image-publication-identity.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"--network"' in verifier
+    assert '"/bin/sh"' in verifier
+    assert 'test "$(id -u)" = 10001' in verifier
+    assert "test -x /opt/mac-venv/bin/mac-git-askpass" in verifier
     assert (
         "import cryptography, fastapi, kubernetes, mac.api, psycopg, uvicorn, yaml"
-        in job
+        in verifier
     )
 
 

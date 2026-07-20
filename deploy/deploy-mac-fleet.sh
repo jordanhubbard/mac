@@ -36,6 +36,7 @@ load_env_file_with_caller_precedence() {
     MAC_DEPLOY_OPENSHELL
     MAC_DEPLOY_OPENSHELL_ARGS
     MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE
+    MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256
     MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED
     MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED
     MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR
@@ -50,6 +51,9 @@ load_env_file_with_caller_precedence() {
     MAC_DEPLOY_HOLD_ADOPTIONS_FILE
     MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED
     MAC_DEPLOY_SUCCESSOR_HOLD_REASON
+    MAC_DEPLOY_NODE_PARALLELISM
+    MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS
+    MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS
   )
 
   # Also snapshot any fleet-scoped token variables already present.
@@ -177,6 +181,8 @@ NEW_HUB_HEADSCALE_PREAUTH_KEY="${MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY:-}"
 REQUESTED_AGENTS=()
 LEGACY_HUB_BOOTSTRAP=0
 PREPARE_REVIEWED_OPENSHELL_CLI=0
+PREFLIGHT_ONLY=0
+QUALIFICATION_RECEIPT=""
 
 if [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ]; then
   [[ "$MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" =~ ^ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}$ ]] || {
@@ -188,6 +194,13 @@ if [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ]; then
     echo "ERROR: MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE digest must contain 64 lowercase hex characters" >&2
     exit 2
   }
+  [[ "${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "ERROR: MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 must bind the reviewed image inputs" >&2
+    exit 2
+  }
+elif [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}" ]; then
+  echo "ERROR: MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" >&2
+  exit 2
 fi
 
 # Keep fatal errors consistent in both the local launcher and the generated
@@ -226,6 +239,8 @@ Usage:
                             [--successor-hold-reason <reason>] [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap <hub-node>
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-reviewed-openshell-cli [agent ...]
+  deploy/deploy-mac-fleet.sh --hub <hub-node> --preflight-only
+                            --qualification-receipt <owner-only-json> [agent ...]
   deploy/deploy-mac-fleet.sh --new-hub <hub-node> --target user@host[:port] [--ssh-port <port>]
                             [--fleet-name <name>] [--control-port <port>]
                             [--hub-url <url>] [--home-channel <channel>]
@@ -252,6 +267,9 @@ Each host gets:
 
 Production OpenShell deployments require
 MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE=ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:<digest>.
+They also require the corresponding publication receipt identity as
+MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256=sha256:<digest>. The runtime input
+identity is independent of the controller commit and permits safe OCI reuse.
 Only isolated development hosts may opt back into per-host builds with
 MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD=1.
 
@@ -277,6 +295,12 @@ next normal invocation must include that hub in a typed cohort and commit it.
 It performs no cohort transaction: all selected nodes are classified read-only
 first, then only managed legacy nodes receive the exact reviewed CLI asset and
 owner-private receipt. Run the normal typed deployment separately afterward.
+
+--preflight-only performs bounded, read-only qualification against the same
+frozen selection and pinned live endpoints used by deployment. It creates no
+cohort journal, lock, hold, restore contract, or service/source mutation. The
+owner-private qualification receipt is evidence only and never authorizes a
+later deployment.
 USAGE
 }
 
@@ -346,6 +370,22 @@ while [ "$#" -gt 0 ]; do
       ;;
     --prepare-reviewed-openshell-cli)
       PREPARE_REVIEWED_OPENSHELL_CLI=1
+      shift
+      ;;
+    --preflight-only)
+      PREFLIGHT_ONLY=1
+      shift
+      ;;
+    --qualification-receipt)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --qualification-receipt requires a local JSON path" >&2
+        exit 2
+      fi
+      QUALIFICATION_RECEIPT="$2"
+      shift 2
+      ;;
+    --qualification-receipt=*)
+      QUALIFICATION_RECEIPT="${1#--qualification-receipt=}"
       shift
       ;;
     --ssh-port)
@@ -523,6 +563,23 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$PREFLIGHT_ONLY" = 1 ]; then
+  [ -n "$QUALIFICATION_RECEIPT" ] || {
+    echo "ERROR: --preflight-only requires --qualification-receipt <path>" >&2
+    exit 2
+  }
+  [ "$LEGACY_HUB_BOOTSTRAP" = 0 ] \
+    && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 0 ] \
+    && [ -z "$HOLD_ADOPTIONS_SOURCE" ] \
+    && [ "$SUCCESSOR_HOLD_REASON_SUPPLIED" = 0 ] || {
+      echo "ERROR: --preflight-only cannot be combined with deployment or hold authority" >&2
+      exit 2
+    }
+elif [ -n "$QUALIFICATION_RECEIPT" ]; then
+  echo "ERROR: --qualification-receipt is valid only with --preflight-only" >&2
+  exit 2
+fi
+
 case "$(normalize_boolean_token "$REQUIRE_RELEASE_ALL_SELECTED_RAW")" in
   1|true|yes|on) REQUIRE_RELEASE_ALL_SELECTED=1 ;;
   0|false|no|off|'') REQUIRE_RELEASE_ALL_SELECTED=0 ;;
@@ -541,6 +598,18 @@ if ! PYTHON_BIN="$(resolve_python_bin)"; then
   echo "ERROR: Python 3.11+ is required (.venv/bin/python, python3.11, python3, or python)" >&2
   exit 127
 fi
+NODE_PARALLELISM="${MAC_DEPLOY_NODE_PARALLELISM:-4}"
+case "$NODE_PARALLELISM" in
+  ''|*[!0-9]*)
+    echo "ERROR: MAC_DEPLOY_NODE_PARALLELISM must be an integer from 1 through 32" >&2
+    exit 2
+    ;;
+esac
+if [ "$NODE_PARALLELISM" -lt 1 ] || [ "$NODE_PARALLELISM" -gt 32 ]; then
+  echo "ERROR: MAC_DEPLOY_NODE_PARALLELISM must be an integer from 1 through 32" >&2
+  exit 2
+fi
+readonly NODE_PARALLELISM
 if [ "$SUCCESSOR_HOLD_REASON_SUPPLIED" = 1 ]; then
   if ! SUCCESSOR_HOLD_REASON="$("$PYTHON_BIN" - "$SUCCESSOR_HOLD_REASON_RAW" <<'PY'
 import sys
@@ -4393,8 +4462,18 @@ if value.get("schema") != "mac.fleet_release_hub_authority.v1":
     raise SystemExit("hub authority response is invalid")
 print(value["hub_authority_id"])
 PY
-)"
+  )"
   write_live_endpoint_identity "$hub_agent" "$hub_identity" "$authority_id"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"
+    agent_id="$(stable_worker_agent_id "$agent")"
+    generation="$(worker_generation_for_agent "$agent")"
+    node_identity="$TMPDIR_LOCAL/node-route-identity-${agent_id}.json"
+    write_live_endpoint_identity "$agent" "$node_identity"
+  done < "$selected_specs_file"
+  assert_unique_selected_endpoint_identities "$selected_specs_file"
   cohort_journal_mutate hub-route-bound "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-route "$DEPLOY_CONTROLLER_NONCE" \
     --identity-file "$hub_identity" >/dev/null
@@ -4405,12 +4484,48 @@ PY
     agent_id="$(stable_worker_agent_id "$agent")"
     generation="$(worker_generation_for_agent "$agent")"
     node_identity="$TMPDIR_LOCAL/node-route-identity-${agent_id}.json"
-    write_live_endpoint_identity "$agent" "$node_identity"
     cohort_journal_mutate route-bound "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "route-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" \
       --generation "$generation" --identity-file "$node_identity" >/dev/null
   done < "$selected_specs_file"
+}
+
+assert_unique_selected_endpoint_identities() {
+  local selected_specs_file="$1"
+  "$PYTHON_BIN" - "$selected_specs_file" "$TMPDIR_LOCAL" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+specs = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+root = Path(sys.argv[2])
+seen = {}
+for line in specs:
+    if not line.strip():
+        continue
+    name = line.split("|", 1)[0]
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name.lower()).strip("_") or "default"
+    identity = json.loads((root / ("node-route-identity-agent_%s.json" % safe)).read_text(encoding="utf-8"))
+    authority = identity.get("authority") if isinstance(identity, dict) else None
+    if not isinstance(authority, dict):
+        raise SystemExit("selected endpoint identity lacks authority: %s" % name)
+    key = (
+        authority.get("ssh_host_key_sha256"),
+        authority.get("instance_id_kind"),
+        authority.get("instance_id_sha256"),
+    )
+    if not all(isinstance(value, str) and value for value in key):
+        raise SystemExit("selected endpoint identity is incomplete: %s" % name)
+    prior = seen.get(key)
+    if prior is not None and prior != name:
+        raise SystemExit(
+            "selected aliases resolve to one physical endpoint: %s and %s"
+            % (prior, name)
+        )
+    seen[key] = name
+PY
 }
 
 node_route_identity_file() {
@@ -6343,6 +6458,10 @@ validate_openshell_runtime_image_spec() {
     echo "ERROR: ${agent}: production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE before fleet phase 1" >&2
     return 1
   fi
+  if ! [[ "${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: ${agent}: production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 before fleet phase 1" >&2
+    return 1
+  fi
   case " ${MAC_DEPLOY_OPENSHELL_ARGS:-} " in
     *" --skip-image "*)
       echo "ERROR: ${agent}: --skip-image is incompatible with a digest-managed OpenShell deployment" >&2
@@ -6357,6 +6476,8 @@ deploy_host() {
     legacy-one-shot|arm-phase2|apply-phase2|finalize) ;;
     *) echo "ERROR: ${node_action}: unsupported deploy-host node action" >&2; return 2 ;;
   esac
+  local remote_stage_root="" staged_manifest="" staged_manifest_digest=""
+  local staged_verifier="" typed_staged_bundle=0
   IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required <<<"$spec"
   deploy_generation="$(deployment_id_for_agent "$agent")"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
@@ -6388,8 +6509,22 @@ deploy_host() {
     nvidia_api_key="" ; openai_api_key="" ; anthropic_api_key="" ; perplexity_api_key=""
     router_providers="" ; router_default_model="" ; router_wildcard_models=""
   fi
-  remote_archive="/tmp/mac-${agent}-${TS}.tar.gz"
-  remote_registry="/tmp/mac-fleets-${agent}-${TS}.yaml"
+  if [ "$node_action" = arm-phase2 ] || [ "$node_action" = apply-phase2 ]; then
+    typed_staged_bundle=1
+    remote_stage_root="$(staged_bundle_remote_root "$agent")"
+    staged_manifest="$(staged_bundle_manifest_file "$agent")"
+    [ -s "$staged_manifest" ] || {
+      echo "ERROR: ${agent}: typed phase 2 lacks its staged deployment manifest" >&2
+      return 1
+    }
+    staged_manifest_digest="$(sha256_file "$staged_manifest")"
+    staged_verifier="$(staged_bundle_verifier_source)"
+    remote_archive="$remote_stage_root/release.tar.gz"
+    remote_registry="$remote_stage_root/fleets.yaml"
+  else
+    remote_archive="/tmp/mac-${agent}-${TS}.tar.gz"
+    remote_registry="/tmp/mac-fleets-${agent}-${TS}.yaml"
+  fi
   local ssh_parts=() last_index
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
@@ -6463,15 +6598,16 @@ PY
   fi
 
   assert_remote_deployment_lock "$agent" "$deploy_generation"
-  echo "==> ${agent}: copying mac release archive"
-  # Stream every node-target file through a same-session exact fence. A
-  # separate file-transfer multiplex client may silently reconnect when its
-  # ControlMaster disappears;
-  # this path instead uses fail-closed `ssh -O proxy` and holds the remote
-  # fcntl guard while the atomic upload is materialized.
-  fenced_remote_upload "$agent" "$deploy_generation" "$ARCHIVE" "$remote_archive"
-  echo "==> ${agent}: copying fleet registry"
-  fenced_remote_upload "$agent" "$deploy_generation" "$SANITIZED_FLEET_REGISTRY" "$remote_registry"
+  if [ "$typed_staged_bundle" = 0 ]; then
+    echo "==> ${agent}: copying mac release archive"
+    # Legacy one-shot deployment retains its private one-use upload path. Typed
+    # arm/apply use the already verified generation-scoped stage below.
+    fenced_remote_upload "$agent" "$deploy_generation" "$ARCHIVE" "$remote_archive"
+    echo "==> ${agent}: copying fleet registry"
+    fenced_remote_upload "$agent" "$deploy_generation" "$SANITIZED_FLEET_REGISTRY" "$remote_registry"
+  else
+    echo "==> ${agent}: reusing digest-bound staged deployment bundle for ${node_action}"
+  fi
 
   echo "==> ${agent}: running one-time deploy"
   local remote_env=() remote_secret_env=() remote_cmd openshell_enabled=0
@@ -6506,6 +6642,10 @@ PY
       *)
         [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ] || {
           echo "==> ${agent}: ERROR: production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" >&2
+          return 1
+        }
+        [[ "${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+          echo "==> ${agent}: ERROR: production OpenShell deployment requires MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256" >&2
           return 1
         }
         case " $effective_openshell_args " in
@@ -6566,6 +6706,7 @@ PY
   add_remote_env MAC_DEPLOY_OPENSHELL_ENABLED "$openshell_enabled"
   add_remote_env MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS "$effective_openshell_args"
   add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
+  add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 "${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}"
   add_remote_env MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD "${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
   add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED "$github_credentials_required"
   add_remote_env MAC_DEPLOY_SUPERVISOR "$supervisor"
@@ -6611,6 +6752,10 @@ PY
   add_remote_env MAC_DEPLOY_DRAIN_MODE "${MAC_DEPLOY_DRAIN_MODE:-}"
   add_remote_env MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-}"
   add_remote_env MAC_DEPLOY_DRAIN_POLL_SECONDS "${MAC_DEPLOY_DRAIN_POLL_SECONDS:-}"
+  # The remote installer independently rechecks the exact receipt clock at
+  # both arm and apply; the controller additionally reserves a phase budget
+  # before staging and an immediate guard just before apply.
+  add_remote_env MAC_DEPLOY_PREREQUISITE_MAX_AGE_SECONDS 3600
   # Agent restart is deliberately deferred until the post manifest reconciles,
   # so drain release must be deferred too. The outer restart helper proves a
   # fresh heartbeat from the new generation before deployment may succeed.
@@ -6717,14 +6862,24 @@ PY
   reviewed_tool_assets="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reviewed-tool-assets.sh"
   launchd_lifecycle="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/launchd-lifecycle.sh"
   rollback_supervisor="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fleet-node-rollback-supervisor.py"
-  echo "==> ${agent}: copying fleet-node-install.sh"
-  fenced_remote_upload "$agent" "$deploy_generation" "$deploy_script" "$remote_node_script"
-  echo "==> ${agent}: copying reviewed native-tool checksum contract"
-  fenced_remote_upload "$agent" "$deploy_generation" "$reviewed_tool_assets" "$remote_tool_assets"
-  echo "==> ${agent}: copying bounded launchd lifecycle contract"
-  fenced_remote_upload "$agent" "$deploy_generation" "$launchd_lifecycle" "$remote_launchd_lifecycle"
-  echo "==> ${agent}: copying bounded rollback supervisor contract"
-  fenced_remote_upload "$agent" "$deploy_generation" "$rollback_supervisor" "$remote_rollback_supervisor"
+  if [ "$typed_staged_bundle" = 1 ]; then
+    remote_node_script="$remote_stage_root/fleet-node-install.sh"
+    remote_tool_assets="$remote_stage_root/reviewed-tool-assets.sh"
+    remote_launchd_lifecycle="$remote_stage_root/launchd-lifecycle.sh"
+    remote_rollback_supervisor="$remote_stage_root/rollback-supervisor.py"
+    remote_prerequisite_helper="$remote_stage_root/prerequisite-receipts.py"
+    remote_prerequisite_bundle="$remote_stage_root/prerequisite-bundle.json"
+    remote_prerequisite_expectations="$remote_stage_root/prerequisite-expectations.json"
+  else
+    echo "==> ${agent}: copying fleet-node-install.sh"
+    fenced_remote_upload "$agent" "$deploy_generation" "$deploy_script" "$remote_node_script"
+    echo "==> ${agent}: copying reviewed native-tool checksum contract"
+    fenced_remote_upload "$agent" "$deploy_generation" "$reviewed_tool_assets" "$remote_tool_assets"
+    echo "==> ${agent}: copying bounded launchd lifecycle contract"
+    fenced_remote_upload "$agent" "$deploy_generation" "$launchd_lifecycle" "$remote_launchd_lifecycle"
+    echo "==> ${agent}: copying bounded rollback supervisor contract"
+    fenced_remote_upload "$agent" "$deploy_generation" "$rollback_supervisor" "$remote_rollback_supervisor"
+  fi
   remote_env+=("MAC_DEPLOY_REVIEWED_TOOL_ASSETS=$(shell_quote "$remote_tool_assets")")
   remote_env+=("MAC_DEPLOY_LAUNCHD_LIFECYCLE=$(shell_quote "$remote_launchd_lifecycle")")
   remote_env+=("MAC_DEPLOY_ROLLBACK_SUPERVISOR_HELPER=$(shell_quote "$remote_rollback_supervisor")")
@@ -6734,12 +6889,14 @@ PY
         echo "ERROR: ${agent}: typed phase 2 lacks prerequisite material" >&2
         return 1
       }
-    fenced_remote_upload "$agent" "$deploy_generation" \
-      "$PREREQUISITE_RECEIPT_HELPER" "$remote_prerequisite_helper"
-    fenced_remote_upload "$agent" "$deploy_generation" \
-      "$prerequisite_bundle" "$remote_prerequisite_bundle"
-    fenced_remote_upload "$agent" "$deploy_generation" \
-      "$prerequisite_expectations" "$remote_prerequisite_expectations"
+    if [ "$typed_staged_bundle" = 0 ]; then
+      fenced_remote_upload "$agent" "$deploy_generation" \
+        "$PREREQUISITE_RECEIPT_HELPER" "$remote_prerequisite_helper"
+      fenced_remote_upload "$agent" "$deploy_generation" \
+        "$prerequisite_bundle" "$remote_prerequisite_bundle"
+      fenced_remote_upload "$agent" "$deploy_generation" \
+        "$prerequisite_expectations" "$remote_prerequisite_expectations"
+    fi
     remote_env+=("MAC_DEPLOY_PREREQUISITE_HELPER=$(shell_quote "$remote_prerequisite_helper")")
     remote_env+=("MAC_DEPLOY_PREREQUISITE_HELPER_SHA256=$(shell_quote "$(sha256_file "$PREREQUISITE_RECEIPT_HELPER")")")
     remote_env+=("MAC_DEPLOY_PREREQUISITE_BUNDLE=$(shell_quote "$remote_prerequisite_bundle")")
@@ -6750,7 +6907,15 @@ PY
   # Consume the one-use credential stream directly from the fenced SSH stdin.
   # No predictable remote pathname exists for another process to pre-create as
   # a symlink, and the values still never enter the SSH command or process argv.
-  remote_cmd="${remote_env[*]} sh -c 'umask 077; _mac_script=\$1; _mac_tool_assets=\$2; _mac_launchd_lifecycle=\$3; _mac_rollback_supervisor=\$4; _mac_action=\$5; trap \"rm -f \\\"\$_mac_script\\\" \\\"\$_mac_tool_assets\\\" \\\"\$_mac_launchd_lifecycle\\\" \\\"\$_mac_rollback_supervisor\\\"\" EXIT HUP INT TERM; set -a; . /dev/stdin; set +a; bash \"\$_mac_script\" \"\$_mac_action\"' sh $(shell_quote "$remote_node_script") $(shell_quote "$remote_tool_assets") $(shell_quote "$remote_launchd_lifecycle") $(shell_quote "$remote_rollback_supervisor") $(shell_quote "$node_action")"
+  if [ "$typed_staged_bundle" = 1 ]; then
+    # The verifier and installer execute in the same fenced shell. The stable
+    # fcntl deployment guard therefore remains held from the final digest read
+    # through arm/apply, closing the verification-to-use race without another
+    # upload or a weaker pathname-only assertion.
+    remote_cmd="${remote_env[*]} sh -c 'umask 077; _mac_verify=\$1; _mac_root=\$2; _mac_manifest_sha=\$3; _mac_generation=\$4; _mac_revision=\$5; _mac_agent=\$6; _mac_script=\$7; _mac_action=\$8; python3 -c \"\$_mac_verify\" \"\$_mac_root\" \"\$_mac_manifest_sha\" \"\$_mac_generation\" \"\$_mac_revision\" \"\$_mac_agent\" runtime; set -a; . /dev/stdin; set +a; bash \"\$_mac_script\" \"\$_mac_action\"' sh $(shell_quote "$staged_verifier") $(shell_quote "$remote_stage_root") $(shell_quote "$staged_manifest_digest") $(shell_quote "$deploy_generation") $(shell_quote "$GIT_REV") $(shell_quote "$agent") $(shell_quote "$remote_node_script") $(shell_quote "$node_action")"
+  else
+    remote_cmd="${remote_env[*]} sh -c 'umask 077; _mac_script=\$1; _mac_tool_assets=\$2; _mac_launchd_lifecycle=\$3; _mac_rollback_supervisor=\$4; _mac_action=\$5; trap \"rm -f \\\"\$_mac_script\\\" \\\"\$_mac_tool_assets\\\" \\\"\$_mac_launchd_lifecycle\\\" \\\"\$_mac_rollback_supervisor\\\"\" EXIT HUP INT TERM; set -a; . /dev/stdin; set +a; bash \"\$_mac_script\" \"\$_mac_action\"' sh $(shell_quote "$remote_node_script") $(shell_quote "$remote_tool_assets") $(shell_quote "$remote_launchd_lifecycle") $(shell_quote "$remote_rollback_supervisor") $(shell_quote "$node_action")"
+  fi
   assert_remote_deployment_lock "$agent" "$deploy_generation"
   local_secret_payload="$TMPDIR_LOCAL/node-secrets-${agent}.env"
   printf '%s\n' "${remote_secret_env[@]}" > "$local_secret_payload"
@@ -8270,6 +8435,903 @@ print("agent_%s" % safe)
 PY
 }
 
+run_bounded_node_phase() {
+  # Run one independent node operation per frozen spec with a bounded fan-out.
+  # Every child gets a distinct log and the parent waits for every attempted
+  # node. Results are then rendered in frozen selection order so a fast later
+  # failure cannot hide or reorder an earlier node's evidence.
+  local selected_specs_file="$1" phase="$2" worker="$3"
+  shift 3
+  local spec agent agent_id log_path status_path pid index=0 active=0 scan
+  local status failed=0 total reaped_any
+  local aggregate_failures="${BOUNDED_NODE_PHASE_AGGREGATE_FAILURES:-0}"
+  local -a phase_pids=() phase_agents=() phase_logs=() phase_status_files=()
+  local -a phase_statuses=() phase_active=()
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    agent="${spec%%|*}"
+    agent_id="$(stable_worker_agent_id "$agent")"
+    log_path="$TMPDIR_LOCAL/phase-${phase}-${agent_id}.log"
+    status_path="$TMPDIR_LOCAL/phase-${phase}-${agent_id}.status"
+    : > "$log_path"
+    rm -f "$status_path" "${status_path}.tmp"
+    chmod 0600 "$log_path"
+    echo "==> ${agent}: ${phase} queued (fan-out ${NODE_PARALLELISM})"
+    (
+      trap - EXIT HUP INT TERM
+      set +e
+      "$worker" "$spec" "$@" > "$log_path" 2>&1
+      status=$?
+      umask 077
+      printf '%s\n' "$status" > "${status_path}.tmp"
+      mv -f "${status_path}.tmp" "$status_path"
+      exit 0
+    ) &
+    pid=$!
+    phase_pids[index]="$pid"
+    phase_agents[index]="$agent"
+    phase_logs[index]="$log_path"
+    phase_status_files[index]="$status_path"
+    phase_active[index]=1
+    index=$((index + 1))
+    active=$((active + 1))
+    while [ "$active" -ge "$NODE_PARALLELISM" ] \
+        && { [ "$failed" -eq 0 ] || [ "$aggregate_failures" = 1 ]; }; do
+      reaped_any=0
+      scan=0
+      while [ "$scan" -lt "$index" ]; do
+        if [ "${phase_active[scan]:-0}" = 1 ] \
+            && [ -s "${phase_status_files[scan]}" ]; then
+          wait "${phase_pids[scan]}" || true
+          status="$(cat "${phase_status_files[scan]}")"
+          case "$status" in ''|*[!0-9]*) status=125 ;; esac
+          phase_statuses[scan]="$status"
+          phase_active[scan]=0
+          active=$((active - 1))
+          reaped_any=1
+          if [ "$status" -ne 0 ]; then failed=1; fi
+        elif [ "${phase_active[scan]:-0}" = 1 ] \
+            && { ! kill -0 "${phase_pids[scan]}" 2>/dev/null \
+              || ! jobs -pr | awk -v wanted="${phase_pids[scan]}" \
+                '$0 == wanted { found=1 } END { exit(found ? 0 : 1) }'; }; then
+          # The child died before publishing its atomic status (for example,
+          # SIGKILL). Reap it and synthesize a controller failure instead of
+          # polling a receipt that can never appear.
+          wait "${phase_pids[scan]}" 2>/dev/null || true
+          phase_statuses[scan]=125
+          phase_active[scan]=0
+          active=$((active - 1))
+          reaped_any=1
+          failed=1
+        fi
+        scan=$((scan + 1))
+      done
+      [ "$reaped_any" -eq 1 ] || sleep 0.05
+    done
+    if [ "$failed" -ne 0 ] && [ "$aggregate_failures" != 1 ]; then
+      break
+    fi
+  done < "$selected_specs_file"
+  total="$index"
+  # A failed child stops scheduling but never abandons siblings that were
+  # already active. Reap every one before deterministic reporting/recovery.
+  while [ "$active" -gt 0 ]; do
+    reaped_any=0
+    scan=0
+    while [ "$scan" -lt "$total" ]; do
+      if [ "${phase_active[scan]:-0}" = 1 ] \
+          && [ -s "${phase_status_files[scan]}" ]; then
+        wait "${phase_pids[scan]}" || true
+        status="$(cat "${phase_status_files[scan]}")"
+        case "$status" in ''|*[!0-9]*) status=125 ;; esac
+        phase_statuses[scan]="$status"
+        phase_active[scan]=0
+        active=$((active - 1))
+        reaped_any=1
+        if [ "$status" -ne 0 ]; then failed=1; fi
+      elif [ "${phase_active[scan]:-0}" = 1 ] \
+          && { ! kill -0 "${phase_pids[scan]}" 2>/dev/null \
+            || ! jobs -pr | awk -v wanted="${phase_pids[scan]}" \
+              '$0 == wanted { found=1 } END { exit(found ? 0 : 1) }'; }; then
+        wait "${phase_pids[scan]}" 2>/dev/null || true
+        phase_statuses[scan]=125
+        phase_active[scan]=0
+        active=$((active - 1))
+        reaped_any=1
+        failed=1
+      fi
+      scan=$((scan + 1))
+    done
+    [ "$reaped_any" -eq 1 ] || sleep 0.05
+  done
+  index=0
+  while [ "$index" -lt "$total" ]; do
+    agent="${phase_agents[index]}"
+    log_path="${phase_logs[index]}"
+    status="${phase_statuses[index]:-125}"
+    if [ -s "$log_path" ]; then
+      sed "s/^/[${phase}:${agent}] /" "$log_path"
+    fi
+    if [ "$status" -ne 0 ]; then
+      echo "ERROR: ${agent}: ${phase} failed with status ${status}; log=${log_path}" >&2
+      failed=1
+    else
+      echo "==> ${agent}: ${phase} passed; log=${log_path}"
+    fi
+    index=$((index + 1))
+  done
+  [ "$failed" -eq 0 ]
+}
+
+preflight_probe_helper_source() {
+  cat <<'PY'
+import json
+import os
+import platform
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import urllib.parse
+from datetime import datetime, timezone
+from pathlib import Path
+
+(
+    agent, stable_id, generation, revision, expected_os, supervisor, hub_url,
+    codegraph_version, openshell_required, qdrant_url, qdrant_required,
+    firecrawl_url, firecrawl_required, webdav_url, webdav_required,
+) = sys.argv[1:]
+expected_platform = {"darwin": "darwin", "linux": "linux"}.get(expected_os.lower())
+observed_platform = sys.platform.lower()
+home = Path.home()
+home_stat = home.stat()
+mac_home = home / ".mac"
+mac_home_safe = True
+if mac_home.exists() or mac_home.is_symlink():
+    value = os.lstat(mac_home)
+    mac_home_safe = (
+        stat.S_ISDIR(value.st_mode)
+        and not stat.S_ISLNK(value.st_mode)
+        and value.st_uid == os.getuid()
+    )
+required_commands = ["bash", "sh", "git", "curl", "tar"]
+command_paths = {name: shutil.which(name) for name in required_commands}
+mac_bin = home / ".local" / "bin" / "mac"
+github_cli = next(
+    (path for path in (Path("/opt/homebrew/bin/gh"), Path("/usr/local/bin/gh"), Path("/usr/bin/gh")) if path.is_file() and os.access(path, os.X_OK)),
+    None,
+)
+codegraph_link = mac_home / "bin" / "codegraph"
+codegraph_bundle = mac_home / "lib" / "codegraph" / "versions" / codegraph_version
+codegraph_bin = codegraph_bundle / "bin" / "codegraph"
+codegraph_node = codegraph_bundle / "node"
+codegraph_ready = (
+    codegraph_link.is_symlink()
+    and os.readlink(codegraph_link) == str(codegraph_bin)
+    and codegraph_bin.is_file()
+    and not codegraph_bin.is_symlink()
+    and os.access(codegraph_bin, os.X_OK)
+    and codegraph_node.is_file()
+    and not codegraph_node.is_symlink()
+    and os.access(codegraph_node, os.X_OK)
+)
+venv_python = mac_home / "venv" / "bin" / "python"
+hermes_root = mac_home / "src" / "mac" / "src" / "mac" / "_hermes"
+mac_env = mac_home / "mac.env"
+truthy = lambda value: value.strip().lower() in {"1", "true", "yes", "on"}
+openshell_contract = mac_home / "openshell" / "runtime-image-attestation.json"
+
+def service_ready(url, required):
+    if not truthy(required):
+        return True
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=3):
+            return True
+    except OSError:
+        return False
+if supervisor == "systemd":
+    supervisor_commands = {"systemctl": shutil.which("systemctl")}
+elif supervisor == "launchd":
+    supervisor_commands = {"launchctl": shutil.which("launchctl")}
+elif supervisor == "supervisord":
+    supervisor_commands = {"supervisorctl": shutil.which("supervisorctl")}
+else:
+    supervisor_commands = {
+        name: shutil.which(name)
+        for name in ("systemctl", "launchctl", "supervisorctl")
+    }
+supervisor_ready = any(supervisor_commands.values())
+hub_health_required = bool(hub_url.strip())
+hub_health_reachable = True
+if hub_health_required:
+    completed = subprocess.run(
+        [
+            command_paths.get("curl") or "curl",
+            "-fsS",
+            "--connect-timeout",
+            "3",
+            "--max-time",
+            "5",
+            hub_url.rstrip("/") + "/health",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ) if command_paths.get("curl") else None
+    hub_health_reachable = completed is not None and completed.returncode == 0
+checks = {
+    "configured_os_matches": expected_platform == observed_platform,
+    "python_3_11_or_newer": sys.version_info >= (3, 11),
+    "home_owned_by_remote_user": home_stat.st_uid == os.getuid(),
+    "home_writable": os.access(home, os.W_OK),
+    "mac_home_safe_if_present": mac_home_safe,
+    "minimum_free_bytes": shutil.disk_usage(home).free >= 512 * 1024 * 1024,
+    "required_commands": all(command_paths.values()),
+    "mac_cli": mac_bin.is_file() and os.access(mac_bin, os.X_OK),
+    "github_cli": github_cli is not None,
+    "reviewed_codegraph_runtime": codegraph_ready,
+    "installed_python_runtime": venv_python.is_file() and os.access(venv_python, os.X_OK),
+    "installed_hermes_runtime": hermes_root.is_dir() and not hermes_root.is_symlink(),
+    "route_configuration": mac_env.is_file() and not mac_env.is_symlink(),
+    "openshell_contract_if_required": (not truthy(openshell_required)) or (openshell_contract.is_file() and not openshell_contract.is_symlink()),
+    "qdrant_if_required": service_ready(qdrant_url, qdrant_required),
+    "firecrawl_if_required": service_ready(firecrawl_url, firecrawl_required),
+    "webdav_if_required": service_ready(webdav_url, webdav_required),
+    "supervisor_command": supervisor_ready,
+    "hub_health_readable_if_configured": hub_health_reachable,
+}
+payload = {
+    "schema": "mac.fleet_preflight_node_probe.v1",
+    "status": "passed" if all(checks.values()) else "failed",
+    "read_only": True,
+    "agent": agent,
+    "stable_id": stable_id,
+    "generation": generation,
+    "source_revision": revision,
+    "observed_at": datetime.now(timezone.utc).isoformat(),
+    "platform": {
+        "configured": expected_os,
+        "observed": observed_platform,
+        "machine": platform.machine().lower(),
+        "python": platform.python_version(),
+    },
+    "commands": command_paths,
+    "onboarding": {
+        "mac_cli": str(mac_bin),
+        "github_cli": str(github_cli) if github_cli else None,
+        "codegraph_cli": str(codegraph_bin),
+        "codegraph_node": str(codegraph_node),
+        "python_runtime": str(venv_python),
+        "hermes_runtime": str(hermes_root),
+    },
+    "supervisor": {"configured": supervisor, "commands": supervisor_commands},
+    "checks": checks,
+}
+print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+raise SystemExit(0 if payload["status"] == "passed" else 1)
+PY
+}
+
+prepare_qualification_receipt_path() {
+  "$PYTHON_BIN" - "$QUALIFICATION_RECEIPT" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser().absolute()
+path.parent.mkdir(parents=True, exist_ok=True)
+parent = os.lstat(path.parent)
+if not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode) or parent.st_uid != os.getuid():
+    raise SystemExit("qualification receipt parent is unsafe")
+try:
+    current = os.lstat(path)
+except FileNotFoundError:
+    current = None
+if current is not None:
+    if not stat.S_ISREG(current.st_mode) or stat.S_ISLNK(current.st_mode) or current.st_uid != os.getuid():
+        raise SystemExit("existing qualification receipt path is unsafe")
+    path.unlink()
+print(path)
+PY
+}
+
+preflight_node_probe_worker() {
+  local spec="$1" helper_file="$2" fields=() agent agent_id generation
+  local expected_os supervisor hub_url identity_file evidence_file ssh_parts=()
+  local ssh_args=() ssh_target item last_index reviewed_file reviewed_status
+  local openshell_required qdrant_url qdrant_required firecrawl_url firecrawl_required
+  local webdav_url webdav_required
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"
+  agent_id="$(stable_worker_agent_id "$agent")"
+  generation="$(worker_generation_for_agent "$agent")"
+  expected_os="${fields[2]}"
+  supervisor="${fields[14]:-auto}"
+  hub_url="${fields[7]:-}"
+  qdrant_url="${fields[16]:-}"; qdrant_required="${fields[18]:-0}"
+  firecrawl_url="${fields[26]:-}"; firecrawl_required="${fields[28]:-0}"
+  webdav_required="${fields[46]:-0}"; webdav_url="${fields[48]:-}"
+  openshell_required="${fields[53]:-0}"
+  identity_file="$(node_route_identity_file "$agent")"
+  evidence_file="$TMPDIR_LOCAL/preflight-probe-${agent_id}.json"
+  write_live_endpoint_identity "$agent" "$identity_file"
+  reviewed_file="$(reviewed_openshell_cli_status_file "$agent")"
+  run_remote_reviewed_openshell_cli_helper preflight "$agent" "$expected_os" \
+    "$openshell_required" "$reviewed_file"
+  reviewed_status="$(reviewed_openshell_cli_status_value "$agent" status)"
+  [ "$reviewed_status" = ready ] || {
+    echo "ERROR: ${agent}: reviewed OpenShell CLI managed-state classification is ${reviewed_status:-invalid}" >&2
+    return 1
+  }
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
+    "${ssh_args[@]}" "$ssh_target" \
+    "python3 -c $(shell_quote "$(cat "$helper_file")") $(shell_quote "$agent") $(shell_quote "$agent_id") $(shell_quote "$generation") $(shell_quote "$GIT_REV") $(shell_quote "$expected_os") $(shell_quote "$supervisor") $(shell_quote "$hub_url") $(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") $(shell_quote "$openshell_required") $(shell_quote "$qdrant_url") $(shell_quote "$qdrant_required") $(shell_quote "$firecrawl_url") $(shell_quote "$firecrawl_required") $(shell_quote "$webdav_url") $(shell_quote "$webdav_required")" \
+    > "$evidence_file"
+  chmod 0600 "$evidence_file"
+  "$PYTHON_BIN" - "$evidence_file" "$reviewed_file" "$agent" "$agent_id" "$generation" "$GIT_REV" <<'PY'
+import hashlib
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+reviewed_path = Path(sys.argv[2])
+value = json.loads(path.read_text(encoding="utf-8"))
+reviewed = json.loads(reviewed_path.read_text(encoding="utf-8"))
+reviewed_canonical = json.dumps(reviewed, sort_keys=True, separators=(",", ":")).encode("utf-8")
+value["reviewed_openshell_cli"] = reviewed
+value["reviewed_openshell_cli_sha256"] = hashlib.sha256(reviewed_canonical).hexdigest()
+fd, raw = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+temporary = Path(raw)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(value, stream, sort_keys=True, separators=(",", ":")); stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+    os.replace(temporary, path)
+finally:
+    temporary.unlink(missing_ok=True)
+if (
+    value.get("schema") != "mac.fleet_preflight_node_probe.v1"
+    or value.get("status") != "passed"
+    or value.get("read_only") is not True
+    or value.get("agent") != sys.argv[3]
+    or value.get("stable_id") != sys.argv[4]
+    or value.get("generation") != sys.argv[5]
+    or value.get("source_revision") != sys.argv[6]
+    or reviewed.get("status") != "ready"
+):
+    raise SystemExit("node returned an invalid preflight qualification probe")
+PY
+}
+
+write_preflight_qualification_receipt() {
+  local selected_specs_file="$1" hub_agent="$2" fleet_name="$3"
+  local helper_file="$4" hub_identity_file="$5" output="$6"
+  "$PYTHON_BIN" - "$selected_specs_file" "$FLEET_REGISTRY_CONFIG" \
+    "$helper_file" "$hub_identity_file" "$TMPDIR_LOCAL" "$output" \
+    "$GIT_REV" "$fleet_name" "$hub_agent" <<'PY'
+import hashlib
+import json
+import os
+import tempfile
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+specs_path, registry_path, helper_path, hub_identity_path, evidence_root, output_path, revision, fleet_name, hub_agent = sys.argv[1:]
+
+def digest(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+def safe_json(path):
+    target = Path(path)
+    value = os.lstat(target)
+    if not target.is_file() or target.is_symlink() or value.st_uid != os.getuid() or value.st_nlink != 1 or stat_mode(value.st_mode) != 0o600:
+        raise SystemExit("preflight evidence is not owner-private: %s" % target)
+    raw = target.read_bytes()
+    payload = json.loads(raw)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return payload, digest(canonical), digest(raw)
+
+def stat_mode(mode):
+    return mode & 0o777
+
+specs_raw = Path(specs_path).read_bytes()
+registry_raw = Path(registry_path).read_bytes()
+helper_raw = Path(helper_path).read_bytes()
+hub_identity, hub_identity_digest, hub_identity_file_digest = safe_json(hub_identity_path)
+agents = []
+seen = set()
+root = Path(evidence_root)
+for line in specs_raw.decode("utf-8").splitlines():
+    if not line.strip():
+        continue
+    fields = line.split("|")
+    name = fields[0]
+    safe = "".join(character if character.isalnum() or character in "_.-" else "_" for character in name.lower()).strip("_") or "default"
+    stable_id = "agent_" + safe
+    if stable_id in seen:
+        raise SystemExit("preflight selection contains a duplicate stable id")
+    seen.add(stable_id)
+    endpoint, endpoint_digest, endpoint_file_digest = safe_json(root / ("node-route-identity-%s.json" % stable_id))
+    probe, probe_digest, probe_file_digest = safe_json(root / ("preflight-probe-%s.json" % stable_id))
+    if (
+        probe.get("status") != "passed"
+        or probe.get("read_only") is not True
+        or probe.get("agent") != name
+        or probe.get("stable_id") != stable_id
+        or probe.get("source_revision") != revision
+    ):
+        raise SystemExit("preflight probe is not a passing qualification")
+    agents.append({
+        "name": name,
+        "stable_id": stable_id,
+        "generation": probe.get("generation"),
+        "endpoint_identity": endpoint,
+        "endpoint_identity_sha256": endpoint_digest,
+        "endpoint_identity_file_sha256": endpoint_file_digest,
+        "probe_evidence": probe,
+        "probe_evidence_sha256": probe_digest,
+        "probe_evidence_file_sha256": probe_file_digest,
+    })
+if not agents:
+    raise SystemExit("preflight qualification has no selected agents")
+payload = {
+    "schema": "mac.fleet_preflight_qualification.v1",
+    "status": "passed",
+    "read_only": True,
+    "authorizes_deployment": False,
+    "source_revision": revision,
+    "fleet_name": fleet_name,
+    "hub_agent": hub_agent,
+    "fleet_registry_sha256": digest(registry_raw),
+    "selected_specs_sha256": digest(specs_raw),
+    "probe_helper_sha256": digest(helper_raw),
+    "hub_endpoint_identity": hub_identity,
+    "hub_endpoint_identity_sha256": hub_identity_digest,
+    "hub_endpoint_identity_file_sha256": hub_identity_file_digest,
+    "agents": agents,
+    "qualified_at": datetime.now(timezone.utc).isoformat(),
+}
+output = Path(output_path).expanduser().absolute()
+fd, raw = tempfile.mkstemp(prefix=".%s." % output.name, dir=str(output.parent))
+temporary = Path(raw)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, output)
+    output.chmod(0o600)
+    directory_fd = os.open(output.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+finally:
+    temporary.unlink(missing_ok=True)
+print(output)
+PY
+}
+
+run_preflight_qualification() {
+  local selected_specs_file="$1" hub_agent="$2" fleet_name="$3"
+  local output helper_file authority_file hub_identity_file authority_id
+  output="$(prepare_qualification_receipt_path)"
+  helper_file="$TMPDIR_LOCAL/fleet-preflight-probe.py"
+  preflight_probe_helper_source > "$helper_file"
+  chmod 0600 "$helper_file"
+  authority_file="$TMPDIR_LOCAL/preflight-hub-authority.json"
+  hub_identity_file="$TMPDIR_LOCAL/preflight-hub-route-identity.json"
+  hub_epoch_client_read "$hub_agent" "$authority_file" authority
+  authority_id="$("$PYTHON_BIN" - "$authority_file" <<'PY'
+import json
+import sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+if value.get("schema") != "mac.fleet_release_hub_authority.v1":
+    raise SystemExit("hub authority response is invalid")
+print(value["hub_authority_id"])
+PY
+)"
+  write_live_endpoint_identity "$hub_agent" "$hub_identity_file" "$authority_id"
+  echo "==> fleet: running bounded read-only qualification probes"
+  BOUNDED_NODE_PHASE_AGGREGATE_FAILURES=1 \
+    run_bounded_node_phase "$selected_specs_file" preflight \
+    preflight_node_probe_worker "$helper_file"
+  assert_unique_selected_endpoint_identities "$selected_specs_file"
+  write_preflight_qualification_receipt "$selected_specs_file" "$hub_agent" \
+    "$fleet_name" "$helper_file" "$hub_identity_file" "$output"
+  echo "==> fleet: qualification passed; receipt=${output}"
+}
+
+staged_bundle_remote_root_for_deployment() {
+  local deployment_id="$1" digest
+  digest="$(printf '%s' "$deployment_id" | "$PYTHON_BIN" -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+  printf '/tmp/mac-deploy-stage-%s\n' "${digest:0:32}"
+}
+
+staged_bundle_remote_root() {
+  staged_bundle_remote_root_for_deployment "$(deployment_id_for_agent "$1")"
+}
+
+staged_bundle_manifest_file() {
+  printf '%s/staged-bundle-manifest-%s.json\n' \
+    "$TMPDIR_LOCAL" "$(stable_worker_agent_id "$1")"
+}
+
+staged_bundle_receipt_file() {
+  printf '%s/staged-bundle-receipt-%s.json\n' \
+    "$TMPDIR_LOCAL" "$(stable_worker_agent_id "$1")"
+}
+
+staged_bundle_verifier_source() {
+  cat <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+root_raw, expected_manifest_digest, deployment_id, revision, agent, action = sys.argv[1:]
+root = Path(root_raw)
+root_stat = os.lstat(root)
+if (
+    not stat.S_ISDIR(root_stat.st_mode)
+    or stat.S_ISLNK(root_stat.st_mode)
+    or root_stat.st_uid != os.getuid()
+    or stat.S_IMODE(root_stat.st_mode) != 0o700
+):
+    raise SystemExit("staged deployment bundle directory is unsafe")
+
+def stable_read(path, expected_size=None):
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(fd)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_size < 1
+            or (expected_size is not None and before.st_size != expected_size)
+        ):
+            raise SystemExit("staged deployment bundle file is unsafe: %s" % path.name)
+        raw = bytearray()
+        while len(raw) <= before.st_size:
+            chunk = os.read(fd, min(1024 * 1024, before.st_size + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        after = os.fstat(fd)
+        stable = (
+            before.st_dev,
+            before.st_ino,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if len(raw) != before.st_size or not stable:
+            raise SystemExit("staged deployment bundle changed while reading: %s" % path.name)
+        return bytes(raw)
+    finally:
+        os.close(fd)
+
+manifest_raw = stable_read(root / "manifest.json")
+manifest_digest = hashlib.sha256(manifest_raw).hexdigest()
+if manifest_digest != expected_manifest_digest:
+    raise SystemExit("staged deployment manifest differs from the controller digest")
+manifest = json.loads(manifest_raw)
+if (
+    manifest.get("schema") != "mac.fleet_staged_deployment_bundle.v1"
+    or manifest.get("deployment_id") != deployment_id
+    or manifest.get("source_revision") != revision
+    or manifest.get("agent") != agent
+):
+    raise SystemExit("staged deployment manifest identity is invalid")
+items = manifest.get("items")
+expected_names = {
+    "release.tar.gz",
+    "fleets.yaml",
+    "fleet-node-install.sh",
+    "reviewed-tool-assets.sh",
+    "launchd-lifecycle.sh",
+    "rollback-supervisor.py",
+    "prerequisite-receipts.py",
+    "prerequisite-bundle.json",
+    "prerequisite-expectations.json",
+}
+if not isinstance(items, list) or {item.get("name") for item in items if isinstance(item, dict)} != expected_names or len(items) != len(expected_names):
+    raise SystemExit("staged deployment manifest has the wrong immutable participants")
+proved = []
+for item in items:
+    name = item.get("name")
+    expected_digest = item.get("sha256")
+    expected_size = item.get("size")
+    if (
+        not isinstance(name, str)
+        or not isinstance(expected_digest, str)
+        or len(expected_digest) != 64
+        or any(character not in "0123456789abcdef" for character in expected_digest)
+        or not isinstance(expected_size, int)
+        or expected_size < 1
+    ):
+        raise SystemExit("staged deployment manifest item is invalid")
+    raw = stable_read(root / name, expected_size)
+    observed_digest = hashlib.sha256(raw).hexdigest()
+    if observed_digest != expected_digest:
+        raise SystemExit("staged deployment bundle digest mismatch: %s" % name)
+    proved.append({"name": name, "sha256": observed_digest, "size": len(raw)})
+proved.sort(key=lambda item: item["name"])
+bundle_digest = hashlib.sha256(
+    json.dumps(proved, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+if bundle_digest != manifest.get("bundle_sha256"):
+    raise SystemExit("staged deployment aggregate digest is invalid")
+receipt_path = root / "receipt.json"
+if action == "stage":
+    receipt = {
+        "schema": "mac.fleet_staged_deployment_receipt.v1",
+        "status": "verified",
+        "agent": agent,
+        "deployment_id": deployment_id,
+        "source_revision": revision,
+        "manifest_sha256": manifest_digest,
+        "bundle_sha256": bundle_digest,
+        "items": proved,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+    }
+    fd, raw_path = tempfile.mkstemp(prefix=".receipt.json.", dir=str(root))
+    temporary = Path(raw_path)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(receipt, stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, receipt_path)
+        directory_fd = os.open(root, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+    print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
+elif action == "runtime":
+    receipt = json.loads(stable_read(receipt_path))
+    if (
+        receipt.get("schema") != "mac.fleet_staged_deployment_receipt.v1"
+        or receipt.get("status") != "verified"
+        or receipt.get("agent") != agent
+        or receipt.get("deployment_id") != deployment_id
+        or receipt.get("source_revision") != revision
+        or receipt.get("manifest_sha256") != manifest_digest
+        or receipt.get("bundle_sha256") != bundle_digest
+        or receipt.get("items") != proved
+    ):
+        raise SystemExit("staged deployment receipt differs from verified bytes")
+else:
+    raise SystemExit("unsupported staged deployment verification action")
+PY
+}
+
+stage_remote_file_once_exact() {
+  local agent="$1" deployment_id="$2" source="$3" destination="$4"
+  local expected_sha expected_size state command item
+  local ssh_parts=() ssh_args=() ssh_target last_index
+  expected_sha="$(sha256_file "$source")"
+  expected_size="$(stat -f %z "$source" 2>/dev/null || stat -c %s "$source")"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  command="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -c \
+    'import hashlib,os,stat,sys
+p=sys.argv[1]; expected=sys.argv[2]; size=int(sys.argv[3])
+try: fd=os.open(p,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0))
+except FileNotFoundError: print("missing"); raise SystemExit(0)
+try:
+ s=os.fstat(fd)
+ if not stat.S_ISREG(s.st_mode) or s.st_uid!=os.getuid() or s.st_nlink!=1 or stat.S_IMODE(s.st_mode)!=0o600 or s.st_size!=size: raise SystemExit("existing staged item is unsafe")
+ raw=bytearray()
+ while len(raw)<s.st_size:
+  chunk=os.read(fd,min(1024*1024,s.st_size-len(raw)))
+  if not chunk: break
+  raw.extend(chunk)
+ after=os.fstat(fd)
+ if len(raw)!=s.st_size or (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns): raise SystemExit("existing staged item changed while reading")
+ if hashlib.sha256(raw).hexdigest()!=expected: raise SystemExit("existing staged item differs from controller digest")
+ print("exact")
+finally: os.close(fd)' \
+    "$destination" "$expected_sha" "$expected_size")"
+  state="$(ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$command")"
+  case "$state" in
+    exact) return 0 ;;
+    missing) fenced_remote_upload "$agent" "$deployment_id" "$source" "$destination" ;;
+    *) echo "ERROR: ${agent}: invalid staged item state for ${destination}" >&2; return 1 ;;
+  esac
+}
+
+stage_remote_deployment_bundle() {
+  local spec="$1" fields=() agent deployment_id remote_root manifest receipt
+  local prerequisite_bundle prerequisite_expectations node_identity_sha256
+  local deploy_script reviewed_tool_assets launchd_lifecycle rollback_supervisor
+  local verifier verifier_file manifest_digest command item source destination
+  local ssh_parts=() ssh_args=() ssh_target last_index
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"
+  deployment_id="$(deployment_id_for_agent "$agent")"
+  remote_root="$(staged_bundle_remote_root "$agent")"
+  manifest="$(staged_bundle_manifest_file "$agent")"
+  receipt="$(staged_bundle_receipt_file "$agent")"
+  prerequisite_bundle="$(node_prerequisite_bundle_file "$agent")"
+  prerequisite_expectations="$(node_prerequisite_expectations_file "$agent")"
+  node_identity_sha256="$(node_route_identity_sha256 "$agent")"
+  [ -s "$prerequisite_bundle" ] && [ -s "$prerequisite_expectations" ] \
+    && [ -n "$node_identity_sha256" ] || {
+      echo "ERROR: ${agent}: staged deployment lacks prerequisite material" >&2
+      return 1
+    }
+  assert_prerequisite_remaining_budget "$agent" \
+    "${MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS:-2400}"
+  deploy_script="$ROOT/deploy/fleet-node-install.sh"
+  reviewed_tool_assets="$ROOT/deploy/reviewed-tool-assets.sh"
+  launchd_lifecycle="$ROOT/deploy/lib/launchd-lifecycle.sh"
+  rollback_supervisor="$ROOT/deploy/fleet-node-rollback-supervisor.py"
+  "$PYTHON_BIN" - "$manifest" "$agent" "$deployment_id" "$GIT_REV" \
+    "$node_identity_sha256" \
+    "release.tar.gz=$ARCHIVE" \
+    "fleets.yaml=$SANITIZED_FLEET_REGISTRY" \
+    "fleet-node-install.sh=$deploy_script" \
+    "reviewed-tool-assets.sh=$reviewed_tool_assets" \
+    "launchd-lifecycle.sh=$launchd_lifecycle" \
+    "rollback-supervisor.py=$rollback_supervisor" \
+    "prerequisite-receipts.py=$PREREQUISITE_RECEIPT_HELPER" \
+    "prerequisite-bundle.json=$prerequisite_bundle" \
+    "prerequisite-expectations.json=$prerequisite_expectations" <<'PY'
+import hashlib
+import json
+import os
+import tempfile
+import sys
+from pathlib import Path
+
+output, agent, deployment_id, revision, node_identity_sha256, *specs = sys.argv[1:]
+items = []
+for spec in specs:
+    name, raw_path = spec.split("=", 1)
+    path = Path(raw_path)
+    value = os.lstat(path)
+    if not path.is_file() or path.is_symlink() or value.st_uid != os.getuid() or value.st_nlink != 1 or value.st_size < 1:
+        raise SystemExit("unsafe staged deployment source: %s" % name)
+    raw = path.read_bytes()
+    items.append({"name": name, "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)})
+items.sort(key=lambda item: item["name"])
+payload = {
+    "schema": "mac.fleet_staged_deployment_bundle.v1",
+    "agent": agent,
+    "deployment_id": deployment_id,
+    "source_revision": revision,
+    "node_identity_sha256": node_identity_sha256,
+    "items": items,
+    "bundle_sha256": hashlib.sha256(json.dumps(items, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+}
+
+target = Path(output)
+fd, raw_path = tempfile.mkstemp(prefix=target.name + ".", dir=str(target.parent))
+temporary = Path(raw_path)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True, separators=(",", ":")); stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+    os.replace(temporary, target)
+finally:
+    temporary.unlink(missing_ok=True)
+PY
+  manifest_digest="$(sha256_file "$manifest")"
+  verifier_file="$TMPDIR_LOCAL/staged-bundle-verifier-$(stable_worker_agent_id "$agent").py"
+  staged_bundle_verifier_source > "$verifier_file"
+  chmod 0600 "$verifier_file"
+  assert_remote_deployment_lock "$agent" "$deployment_id"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  command="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -c \
+    'import os,stat,sys; p=sys.argv[1]; parent=os.path.dirname(p); parent=="/tmp" or sys.exit("invalid stage parent")
+try: os.mkdir(p,0o700)
+except FileExistsError: pass
+s=os.lstat(p); (stat.S_ISDIR(s.st_mode) and not stat.S_ISLNK(s.st_mode) and s.st_uid==os.getuid() and stat.S_IMODE(s.st_mode)==0o700) or sys.exit("unsafe stage directory")' \
+    "$remote_root")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" "$command"
+  while IFS='=' read -r destination source; do
+    stage_remote_file_once_exact "$agent" "$deployment_id" \
+      "$source" "$remote_root/$destination"
+  done <<EOF
+release.tar.gz=$ARCHIVE
+fleets.yaml=$SANITIZED_FLEET_REGISTRY
+fleet-node-install.sh=$deploy_script
+reviewed-tool-assets.sh=$reviewed_tool_assets
+launchd-lifecycle.sh=$launchd_lifecycle
+rollback-supervisor.py=$rollback_supervisor
+prerequisite-receipts.py=$PREREQUISITE_RECEIPT_HELPER
+prerequisite-bundle.json=$prerequisite_bundle
+prerequisite-expectations.json=$prerequisite_expectations
+EOF
+  stage_remote_file_once_exact "$agent" "$deployment_id" \
+    "$manifest" "$remote_root/manifest.json"
+  verifier="$(cat "$verifier_file")"
+  command="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -c \
+    "$verifier" "$remote_root" "$manifest_digest" "$deployment_id" "$GIT_REV" "$agent" stage)"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" "$command" > "$receipt"
+  chmod 0600 "$receipt"
+  "$PYTHON_BIN" - "$receipt" "$agent" "$deployment_id" "$GIT_REV" "$manifest_digest" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+if value.get("schema")!="mac.fleet_staged_deployment_receipt.v1" or value.get("status")!="verified" or value.get("agent")!=sys.argv[2] or value.get("deployment_id")!=sys.argv[3] or value.get("source_revision")!=sys.argv[4] or value.get("manifest_sha256")!=sys.argv[5]:
+ raise SystemExit("remote staged deployment receipt is invalid")
+PY
+  echo "==> ${agent}: immutable deployment bundle staged and digest-verified once"
+}
+
+assert_prerequisite_remaining_budget() {
+  local agent="$1" required_remaining="$2" bundle
+  bundle="$(node_prerequisite_bundle_file "$agent")"
+  "$PYTHON_BIN" - "$bundle" "$agent" "$required_remaining" <<'PY'
+import json
+import math
+import sys
+import time
+
+path, agent, required_raw = sys.argv[1:]
+try:
+    required = float(required_raw)
+except (TypeError, ValueError) as exc:
+    raise SystemExit("prerequisite remaining-phase budget is invalid") from exc
+if not math.isfinite(required) or required < 1 or required >= 3600:
+    raise SystemExit("prerequisite remaining-phase budget must be from 1 through 3599 seconds")
+value = json.load(open(path, encoding="utf-8"))
+if value.get("schema") != "mac.fleet_prerequisite_bundle.v1" or value.get("agent_id") != agent:
+    raise SystemExit("prerequisite phase-budget check received the wrong bundle")
+try:
+    created = float(value["created_at_epoch"])
+except (KeyError, TypeError, ValueError) as exc:
+    raise SystemExit("prerequisite bundle lacks a valid creation clock") from exc
+age = time.time() - created
+remaining = 3600.0 - age
+if age < -30 or remaining < required:
+    raise SystemExit(
+        "prerequisite bundle has %.0fs remaining, below the %.0fs phase budget"
+        % (remaining, required)
+    )
+PY
+}
+
 reconcile_bound_worker_attestation_key() (
   # A bound worker has secret-free verify authority only. Recovery is owned by
   # this fenced deployment controller: probe the target, ask the hub to rotate
@@ -9271,8 +10333,28 @@ cleanup_committed_hub_relay() {
   done < "$2"
 }
 
+cleanup_remote_staged_deployment_bundle() {
+  local agent="$1" deployment_id="$2"
+  local staged_root="${3:-$(staged_bundle_remote_root_for_deployment "$deployment_id")}" command item
+  local ssh_parts=() ssh_args=() ssh_target last_index
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  command="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -c \
+    'import os,shutil,stat,sys
+p=sys.argv[1]
+if os.path.dirname(p)!="/tmp" or not os.path.basename(p).startswith("mac-deploy-stage-"): raise SystemExit("invalid staged bundle cleanup path")
+try: s=os.lstat(p)
+except FileNotFoundError: raise SystemExit(0)
+if not stat.S_ISDIR(s.st_mode) or stat.S_ISLNK(s.st_mode) or s.st_uid!=os.getuid() or stat.S_IMODE(s.st_mode)!=0o700: raise SystemExit("unsafe staged bundle cleanup root")
+shutil.rmtree(p)' "$staged_root")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$command"
+}
+
 finalize_remote_deployment_release() {
   local agent="$1" deployment_id="$2" ssh_parts=() ssh_args=() ssh_target item last_index fence_exec
+  local staged_root
+  staged_root="$(staged_bundle_remote_root_for_deployment "$deployment_id")"
   assert_remote_deployment_lock "$agent" "$deployment_id"
   fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
@@ -9286,13 +10368,13 @@ import os
 from pathlib import Path
 
 path = Path.home() / '.mac' / 'deploy-dispatch-hold.json'
-if not path.exists():
-    raise SystemExit(0)
-payload = json.loads(path.read_text(encoding='utf-8'))
-if payload.get('deployment_id') != os.environ['MAC_DEPLOY_STATE_ID']:
-    raise SystemExit('refusing to remove another deployment release state')
-path.unlink()
+if path.exists():
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    if payload.get('deployment_id') != os.environ['MAC_DEPLOY_STATE_ID']:
+        raise SystemExit('refusing to remove another deployment release state')
+    path.unlink()
 PY"
+  cleanup_remote_staged_deployment_bundle "$agent" "$deployment_id" "$staged_root"
   release_remote_deployment_lock "$agent" "$deployment_id"
 }
 
@@ -10058,6 +11140,9 @@ PY
   # Make lock retirement part of the retryable node operation. If the process
   # dies after this unlink, the next pass reacquires the same old identity,
   # replays the idempotent restore receipt, and retires it again.
+  if ! cleanup_remote_staged_deployment_bundle "$agent" "$deployment_id"; then
+    return 1
+  fi
   if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
     return 1
   fi
@@ -11386,11 +12471,95 @@ enforce_bound_worker_credentials() {
     "${hub_ssh_args[@]}" "$hub_ssh_target" "$policy_cmd" >/dev/null
 }
 
+typed_phase1_prepare_worker() {
+  local spec="$1" fields=() agent supervisor fleet_name os_kind
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"; supervisor="${fields[14]:-auto}"
+  fleet_name="${fields[23]:-mac}"; os_kind="${fields[2]}"
+  prepare_remote_phase1_restore_contract "$agent" \
+    "$(deployment_id_for_agent "$agent")" "$supervisor" "$fleet_name" "$os_kind"
+}
+
+start_control_master_worker() {
+  start_ssh_control_master "${1%%|*}"
+}
+
+typed_prerequisite_worker() {
+  prepare_remote_prerequisite_bundle "$1"
+}
+
+typed_staging_worker() {
+  stage_remote_deployment_bundle "$1"
+}
+
+typed_quiesce_worker() {
+  local spec="$1" fields=() agent supervisor fleet_name os_kind
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"; supervisor="${fields[14]:-auto}"
+  fleet_name="${fields[23]:-mac}"; os_kind="${fields[2]}"
+  quiesce_remote_agent_for_cohort "$agent" "$(deployment_id_for_agent "$agent")" \
+    "$supervisor" "$fleet_name" "$os_kind"
+}
+
+typed_phase2_arm_worker() {
+  local spec="$1" hub_token="$2" hub_tunnel_pubkey="$3" github_review_key_b64="$4"
+  local fields=() agent
+  IFS='|' read -r -a fields <<<"$spec"; agent="${fields[0]}"
+  install_remote_node_finalizer "$agent"
+  deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0 \
+    "$github_review_key_b64" 0 1 arm-phase2 \
+    "$(node_prerequisite_bundle_file "$agent")" \
+    "$(node_prerequisite_expectations_file "$agent")" \
+    "$(node_route_identity_sha256 "$agent")"
+  collect_phase2_arm_evidence "$agent" >/dev/null
+}
+
+typed_phase2_apply_worker() {
+  local spec="$1" hub_agent="$2" hub_token="$3" hub_tunnel_pubkey="$4"
+  local github_review_key_b64="$5" fields=() agent agent_id supervisor fleet_name
+  local network_provider hub_url direct_mesh_hub=0 evidence
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
+  supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"
+  network_provider="${fields[31]:-none}"; hub_url="${fields[7]:-}"
+  if [ "$agent" != "$hub_agent" ] && uses_direct_mesh_hub "$network_provider" "$hub_url"; then
+    direct_mesh_hub=1
+  fi
+  assert_prerequisite_remaining_budget "$agent" \
+    "${MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS:-120}"
+  deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0 \
+    "$github_review_key_b64" "$direct_mesh_hub" 1 apply-phase2 \
+    "$(node_prerequisite_bundle_file "$agent")" \
+    "$(node_prerequisite_expectations_file "$agent")" \
+    "$(node_route_identity_sha256 "$agent")"
+  install_pending_worker_credential "$agent" "$supervisor" "$fleet_name"
+  install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name"
+  evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
+  [ -s "$evidence" ] || {
+    echo "ERROR: ${agent}: typed apply lacks prepared evidence" >&2
+    return 1
+  }
+}
+
+typed_finalize_worker() {
+  local spec="$1" hub_agent="$2" fields=() agent agent_id generation fleet_name
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
+  generation="$(worker_generation_for_agent "$agent")"; fleet_name="${fields[23]:-mac}"
+  if spec_requires_report_repository_executor "$spec"; then
+    reconcile_report_repository_executor_approval "$agent" "$hub_agent" 1
+  fi
+  run_remote_node_finalizer "$agent" "$fleet_name" "$generation" \
+    "$GIT_REV" "$TS" "$(sha256_file "$NODE_FINALIZER_HELPER")" \
+    "$TMPDIR_LOCAL/finalize-${agent_id}.json"
+  collect_finalize_evidence "$agent"
+  finalize_remote_deployment_release "$agent" "$(deployment_id_for_agent "$agent")"
+}
+
 run_typed_cohort() {
   local selected_specs_file="$1" hub_agent="$2" hub_token="$3"
   local hub_tunnel_pubkey="$4" github_review_key_b64="$5" hold_adoption_plan="$6"
-  local spec fields=() agent agent_id supervisor fleet_name os_kind generation
-  local phase2_digest finalizer_digest direct_mesh_hub network_provider hub_url report_required evidence
+  local spec fields=() agent agent_id generation phase2_digest finalizer_digest evidence
   local -a phase2_arm_values=()
 
   preflight_cohort_hold_adoptions \
@@ -11402,11 +12571,11 @@ run_typed_cohort() {
   classify_reviewed_openshell_cli_prerequisites "$selected_specs_file"
 
   echo "==> fleet: arming exact phase-1 restore contracts"
+  # Parent-owned WAL intents are complete and ordered before any child starts.
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"; os_kind="${fields[2]}"
     generation="$(worker_generation_for_agent "$agent")"
     if ! cohort_journal_mutate phase1-prepare-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "phase1-prepare-start-${agent_id}" \
@@ -11414,10 +12583,15 @@ run_typed_cohort() {
       --stable-id "$agent_id" --generation "$generation" >/dev/null; then
       return 1
     fi
-    if ! prepare_remote_phase1_restore_contract "$agent" \
-      "$(deployment_id_for_agent "$agent")" "$supervisor" "$fleet_name" "$os_kind"; then
-      return 1
-    fi
+  done < "$selected_specs_file"
+  run_bounded_node_phase "$selected_specs_file" phase1-prepare \
+    typed_phase1_prepare_worker || return 1
+  # No completion WAL is published until every child has been reaped.
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
+    generation="$(worker_generation_for_agent "$agent")"
     if ! cohort_journal_mutate phase1-armed "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "phase1-arm-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" \
@@ -11428,25 +12602,33 @@ run_typed_cohort() {
   done < "$selected_specs_file"
 
   echo "==> fleet: proving all read-only node prerequisites before hub or service mutation"
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    prepare_remote_prerequisite_bundle "$spec"
-  done < "$selected_specs_file"
+  run_bounded_node_phase "$selected_specs_file" prerequisites \
+    typed_prerequisite_worker || return 1
+
+  echo "==> fleet: staging one immutable deployment bundle per node"
+  run_bounded_node_phase "$selected_specs_file" stage-bundle \
+    typed_staging_worker || return 1
 
   build_and_open_hub_epoch "$selected_specs_file" "$hub_agent"
 
   echo "==> fleet: quiescing the exact cohort under hub epoch ownership"
+  # Quiesce intent for the full cohort is durable before parallel mutation.
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"; os_kind="${fields[2]}"
     generation="$(worker_generation_for_agent "$agent")"
     cohort_journal_mutate quiesce-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "quiesce-start-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null
-    quiesce_remote_agent_for_cohort "$agent" "$(deployment_id_for_agent "$agent")" \
-      "$supervisor" "$fleet_name" "$os_kind"
+  done < "$selected_specs_file"
+  run_bounded_node_phase "$selected_specs_file" quiesce \
+    typed_quiesce_worker || return 1
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
+    generation="$(worker_generation_for_agent "$agent")"
     cohort_journal_mutate quiesced "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "quiesced-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" \
@@ -11454,18 +12636,22 @@ run_typed_cohort() {
   done < "$selected_specs_file"
 
   echo "==> fleet: installing immutable finalizers and arming phase-2 rollback"
+  run_bounded_node_phase "$selected_specs_file" phase2-arm \
+    typed_phase2_arm_worker "$hub_token" "$hub_tunnel_pubkey" \
+    "$github_review_key_b64" || return 1
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     generation="$(worker_generation_for_agent "$agent")"
-    install_remote_node_finalizer "$agent"
-    deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0 \
-      "$github_review_key_b64" 0 1 arm-phase2 \
-      "$(node_prerequisite_bundle_file "$agent")" \
-      "$(node_prerequisite_expectations_file "$agent")" \
-      "$(node_route_identity_sha256 "$agent")"
-    mapfile -t phase2_arm_values < <(collect_phase2_arm_evidence "$agent")
+    mapfile -t phase2_arm_values < <("$PYTHON_BIN" - \
+      "$TMPDIR_LOCAL/phase2-arm-${agent_id}.json" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+print(value.get("rollback_intent_sha256") or "")
+print(value.get("finalizer_sha256") or "")
+PY
+)
     phase2_digest="${phase2_arm_values[0]:-}"
     finalizer_digest="${phase2_arm_values[1]:-}"
     [ -n "$phase2_digest" ] && [ -n "$finalizer_digest" ] || {
@@ -11481,28 +12667,25 @@ run_typed_cohort() {
   done < "$selected_specs_file"
 
   echo "==> fleet: applying and proving the held cohort"
+  # Apply intent is serialized for the complete cohort before parallel source
+  # replacement. Children own node evidence only; they never mutate the WAL.
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     generation="$(worker_generation_for_agent "$agent")"
-    supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"
-    network_provider="${fields[31]:-none}"; hub_url="${fields[7]:-}"
-    direct_mesh_hub=0
-    if [ "$agent" != "$hub_agent" ] \
-      && uses_direct_mesh_hub "$network_provider" "$hub_url"; then
-      direct_mesh_hub=1
-    fi
     cohort_journal_mutate phase2-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "phase2-start-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null
-    deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0 \
-      "$github_review_key_b64" "$direct_mesh_hub" 1 apply-phase2 \
-      "$(node_prerequisite_bundle_file "$agent")" \
-      "$(node_prerequisite_expectations_file "$agent")" \
-      "$(node_route_identity_sha256 "$agent")"
-    install_pending_worker_credential "$agent" "$supervisor" "$fleet_name"
-    install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name"
+  done < "$selected_specs_file"
+  run_bounded_node_phase "$selected_specs_file" phase2-apply \
+    typed_phase2_apply_worker "$hub_agent" "$hub_token" "$hub_tunnel_pubkey" \
+    "$github_review_key_b64" || return 1
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
+    generation="$(worker_generation_for_agent "$agent")"
     evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
     [ -s "$evidence" ] || {
       echo "ERROR: ${agent}: typed apply lacks prepared evidence" >&2
@@ -11523,20 +12706,17 @@ run_typed_cohort() {
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     generation="$(worker_generation_for_agent "$agent")"
-    supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"
-    report_required=0
-    if spec_requires_report_repository_executor "$spec"; then report_required=1; fi
-    if [ "$report_required" = 1 ]; then
-      reconcile_report_repository_executor_approval "$agent" "$hub_agent" 1
-    fi
     cohort_journal_mutate finalize-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "finalize-start-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null
-    run_remote_node_finalizer "$agent" "$fleet_name" "$generation" \
-      "$GIT_REV" "$TS" "$(sha256_file "$NODE_FINALIZER_HELPER")" \
-      "$TMPDIR_LOCAL/finalize-${agent_id}.json"
-    collect_finalize_evidence "$agent"
-    finalize_remote_deployment_release "$agent" "$(deployment_id_for_agent "$agent")"
+  done < "$selected_specs_file"
+  run_bounded_node_phase "$selected_specs_file" finalize-node \
+    typed_finalize_worker "$hub_agent" || return 1
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
+    generation="$(worker_generation_for_agent "$agent")"
     cohort_journal_mutate finalized-node "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "finalized-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" \
@@ -11549,13 +12729,23 @@ run_typed_cohort() {
 }
 
 main() {
+  if [ "$PREFLIGHT_ONLY" = 1 ]; then
+    # Retire any prior passed receipt before the first qualification gate. A
+    # failed new invocation must never leave stale evidence at the requested
+    # wrapper-visible path.
+    prepare_qualification_receipt_path >/dev/null
+  fi
   # A dead prior controller is reconciled before this invocation is allowed to
   # create a new cohort identity. Recovery uses only journal-bound remote
   # artifacts, so a newer checkout can never reinterpret an older generation.
-  recover_incomplete_cohort_transaction_before_deploy
+  if [ "$PREFLIGHT_ONLY" != 1 ]; then
+    recover_incomplete_cohort_transaction_before_deploy
+  fi
   assert_frozen_deployment_source
-  make_archive
-  prepare_phase1_quiescence_assets
+  if [ "$PREFLIGHT_ONLY" != 1 ]; then
+    make_archive
+    prepare_phase1_quiescence_assets
+  fi
   local spec agent agent_id adoption_reason hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field report_executor_required
   local cohort_fleet_name runtime_generation journal_evidence
   local selected_specs_file="$TMPDIR_LOCAL/selected-specs.txt" selected_count
@@ -11600,7 +12790,8 @@ PY
   # first node or hub mutation. The one-use legacy bootstrap deliberately has
   # no multi-node transaction and retains the pre-existing hub hold.
   if [ "$LEGACY_HUB_BOOTSTRAP" != 1 ] \
-      && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ]; then
+      && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ] \
+      && [ "$PREFLIGHT_ONLY" != 1 ]; then
     initialize_cohort_transaction \
       "$selected_specs_file" "$hub_agent" "$cohort_fleet_name"
   fi
@@ -11616,12 +12807,20 @@ PY
   # before phase 1.  Hub tokens and tunnel keys must come from the same concrete
   # endpoint that receives all subsequent control-plane operations.
   start_ssh_control_master "$hub_agent"
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    IFS='|' read -r -a spec_fields <<<"$spec"
-    start_ssh_control_master "${spec_fields[0]}"
-  done < "$selected_specs_file"
+  run_bounded_node_phase "$selected_specs_file" route-bind \
+    start_control_master_worker
   SSH_CONTROL_REQUIRED=1
+
+  if [ "$PREFLIGHT_ONLY" = 1 ]; then
+    hub_token="$(read_hub_token)"
+    while IFS= read -r spec; do
+      [ -n "$spec" ] || continue
+      validate_router_topology_spec "$spec" "$hub_token"
+    done < "$selected_specs_file"
+    run_preflight_qualification "$selected_specs_file" "$hub_agent" \
+      "$cohort_fleet_name"
+    return 0
+  fi
 
   if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 1 ]; then
     [ "$LEGACY_HUB_BOOTSTRAP" = 0 ] || {

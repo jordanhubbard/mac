@@ -22,6 +22,8 @@
 #   OSH_IMAGE_TAG       default localhost/mac-hermes:net — sandbox image tag
 #   OSH_RUNTIME_IMAGE_REF exact public ghcr.io/...@sha256 digest to pull instead
 #                       of rebuilding the runtime independently on each node
+#   OSH_RUNTIME_INPUT_SHA256 exact sha256:... frozen-input identity proved by CI
+#                       for OSH_RUNTIME_IMAGE_REF; independent of controller HEAD
 #   OSH_GPU             auto|yes|no          — auto: detect nvidia-smi
 #   OSH_HUB_URL         default from mac.env MAC_HUB_URL — the hub the sandbox egresses to
 # Flags: --enable  --fail-closed  --skip-image
@@ -62,6 +64,7 @@ MAC_SRC="${MAC_SRC:-$MAC_HOME/src/mac}"
 OSH_DOCKER_BIN="${OSH_DOCKER_BIN:-docker}"
 OSH_IMAGE_TAG="${OSH_IMAGE_TAG:-localhost/mac-hermes:net}"
 OSH_RUNTIME_IMAGE_REF="${OSH_RUNTIME_IMAGE_REF:-}"
+OSH_RUNTIME_INPUT_SHA256="${OSH_RUNTIME_INPUT_SHA256:-}"
 OSH_GPU="${OSH_GPU:-auto}"
 OPENSHELL_LOCAL_GATEWAY_ENDPOINT="http://127.0.0.1:17670"
 ENVF="$MAC_HOME/mac.env"
@@ -229,10 +232,13 @@ export PATH="$BIN:$PATH" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 
 build_runtime_image() {
   local image_source_sha image_source_sha_file runtime_digest runtime_config
-  local image_revision marker_tmp runtime_ref_file runtime_ref_tmp builder
+  local image_revision image_input_sha runtime_ref_file runtime_ref_tmp builder
+  local runtime_input_file runtime_input_tmp runtime_build_file runtime_build_tmp
   image_source_sha="$(resolve_deployed_source_revision)" || return 1
   image_source_sha_file="$OSH_DIR/image-source-sha"
   runtime_ref_file="$OSH_DIR/runtime-image-ref"
+  runtime_input_file="$OSH_DIR/runtime-input-sha256"
+  runtime_build_file="$OSH_DIR/runtime-image-build-revision"
   if [ -n "$OSH_RUNTIME_IMAGE_REF" ]; then
     [[ "$OSH_RUNTIME_IMAGE_REF" =~ ^ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}$ ]] || {
       echo "invalid immutable OSH_RUNTIME_IMAGE_REF" >&2
@@ -241,6 +247,10 @@ build_runtime_image() {
     runtime_digest="${OSH_RUNTIME_IMAGE_REF##*@sha256:}"
     [ "${#runtime_digest}" -eq 64 ] || {
       echo "invalid immutable OSH_RUNTIME_IMAGE_REF" >&2
+      exit 2
+    }
+    [[ "$OSH_RUNTIME_INPUT_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+      echo "digest-managed runtime requires exact OSH_RUNTIME_INPUT_SHA256" >&2
       exit 2
     }
     runtime_config="$(mktemp -d)"
@@ -254,17 +264,31 @@ build_runtime_image() {
     image_revision="$("$OSH_DOCKER_BIN" image inspect \
       --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
       "$OSH_RUNTIME_IMAGE_REF" 2>/dev/null || true)"
-    if [ -n "$image_source_sha" ] && [ "$image_revision" != "$image_source_sha" ]; then
-      echo "runtime image revision does not match deployed source commit" >&2
+    image_input_sha="$("$OSH_DOCKER_BIN" image inspect \
+      --format '{{ index .Config.Labels "io.mac.frozen-inputs.sha256" }}' \
+      "$OSH_RUNTIME_IMAGE_REF" 2>/dev/null || true)"
+    if ! [[ "$image_revision" =~ ^[0-9a-f]{40}$ ]]; then
+      echo "runtime image build revision label is absent or malformed" >&2
+      return 1
+    fi
+    if [ "$image_input_sha" != "$OSH_RUNTIME_INPUT_SHA256" ]; then
+      echo "runtime image frozen-input identity does not match reviewed publication" >&2
       return 1
     fi
     "$OSH_DOCKER_BIN" tag "$OSH_RUNTIME_IMAGE_REF" "$OSH_IMAGE_TAG"
-    if [ -n "$image_source_sha" ]; then
-      mkdir -p "$(dirname "$image_source_sha_file")"
-      marker_tmp="${image_source_sha_file}.tmp.$$"
-      printf '%s\n' "$image_source_sha" > "$marker_tmp"
-      mv -f "$marker_tmp" "$image_source_sha_file"
-    fi
+    mkdir -p "$(dirname "$runtime_ref_file")"
+    runtime_input_tmp="${runtime_input_file}.tmp.$$"
+    printf '%s\n' "$image_input_sha" > "$runtime_input_tmp"
+    chmod 600 "$runtime_input_tmp"
+    mv -f "$runtime_input_tmp" "$runtime_input_file"
+    runtime_build_tmp="${runtime_build_file}.tmp.$$"
+    printf '%s\n' "$image_revision" > "$runtime_build_tmp"
+    chmod 600 "$runtime_build_tmp"
+    mv -f "$runtime_build_tmp" "$runtime_build_file"
+    # This legacy marker described a locally built image whose build commit was
+    # necessarily the deployed checkout. A reused publication deliberately has
+    # distinct controller and image-build revisions, so retaining it would lie.
+    rm -f "$image_source_sha_file"
     runtime_ref_tmp="${runtime_ref_file}.tmp.$$"
     printf '%s\n' "$OSH_RUNTIME_IMAGE_REF" > "$runtime_ref_tmp"
     chmod 600 "$runtime_ref_tmp"
@@ -281,7 +305,7 @@ build_runtime_image() {
   # A successful explicit development build supersedes a prior digest-managed
   # install. Never leave a stale marker that would make the worker believe the
   # mutable local tag is still protected by the published digest.
-  rm -f "$runtime_ref_file"
+  rm -f "$runtime_ref_file" "$runtime_input_file" "$runtime_build_file"
 }
 
 verify_supervisor_image() {

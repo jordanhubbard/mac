@@ -683,15 +683,16 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     hub_open = script.split("build_and_open_hub_epoch() {", 1)[1].split(
         "\n}\n\nprove_and_commit_hub_epoch", 1
     )[0]
+    apply_worker = script.split("typed_phase2_apply_worker() {", 1)[1].split(
+        "\n}\n\ntyped_finalize_worker", 1
+    )[0]
     assert "provision_bound_worker_credential" not in main_body
     assert "enforce_bound_worker_credentials" not in main_body
     assert "issue_pending_worker_credential" in hub_open
-    assert typed.index("build_and_open_hub_epoch") < typed.index(
-        "install_pending_worker_credential"
-    )
-    assert typed.index("install_pending_worker_credential") < typed.index(
-        "prove_and_commit_hub_epoch"
-    )
+    apply_phase = 'run_bounded_node_phase "$selected_specs_file" phase2-apply'
+    assert "install_pending_worker_credential" in apply_worker
+    assert typed.index("build_and_open_hub_epoch") < typed.index(apply_phase)
+    assert typed.index(apply_phase) < typed.index("prove_and_commit_hub_epoch")
     assert "set-mode enforced --review-live" in script
     assert 'add_remote_secret_env MAC_DEPLOY_HUB_TOKEN "$hub_token"' in script
     assert 'add_remote_env MAC_DEPLOY_HUB_TOKEN "$hub_token"' not in script

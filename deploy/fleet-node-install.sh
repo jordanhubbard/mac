@@ -270,6 +270,7 @@ DEFER_AGENT_RESTART="${MAC_DEPLOY_DEFER_AGENT_RESTART:-0}"
 OPENSHELL_DEPLOY_ENABLED="${MAC_DEPLOY_OPENSHELL_ENABLED:-0}"
 OPENSHELL_EFFECTIVE_ARGS="${MAC_DEPLOY_OPENSHELL_EFFECTIVE_ARGS:-}"
 OPENSHELL_RUNTIME_IMAGE="${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
+OPENSHELL_RUNTIME_INPUT_SHA256="${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}"
 OPENSHELL_LOCAL_IMAGE_BUILD="${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
 OPENSHELL_BOOTSTRAPPED=0
 MAC_HOME="${MAC_HOME:-$HOME/.mac}"
@@ -1255,11 +1256,13 @@ PY
   if [ "${#bootstrap_args[@]}" -gt 0 ]; then
     MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX="$expected_openclaw" \
       OSH_RUNTIME_IMAGE_REF="$OPENSHELL_RUNTIME_IMAGE" \
+      OSH_RUNTIME_INPUT_SHA256="$OPENSHELL_RUNTIME_INPUT_SHA256" \
       "$bootstrap" "${bootstrap_args[@]}"
   else
     # Bash 3.2 with set -u rejects an expansion of an empty declared array.
     MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX="$expected_openclaw" \
       OSH_RUNTIME_IMAGE_REF="$OPENSHELL_RUNTIME_IMAGE" \
+      OSH_RUNTIME_INPUT_SHA256="$OPENSHELL_RUNTIME_INPUT_SHA256" \
       "$bootstrap"
   fi
   OPENSHELL_BOOTSTRAPPED=1
@@ -1562,6 +1565,8 @@ reconcile_disabled_optional_openshell() {
   if [ -e "$openshell_dir/gateway.toml" ] \
       || [ -e "$openshell_dir/run-gateway.sh" ] \
       || [ -e "$openshell_dir/runtime-image-ref" ] \
+      || [ -e "$openshell_dir/runtime-input-sha256" ] \
+      || [ -e "$openshell_dir/runtime-image-build-revision" ] \
       || [ -e "$openshell_dir/image-source-sha" ]; then
     managed_state=1
   fi
@@ -1781,6 +1786,8 @@ raise SystemExit(0 if any(
 
   rm -f \
     "$openshell_dir/runtime-image-ref" \
+    "$openshell_dir/runtime-input-sha256" \
+    "$openshell_dir/runtime-image-build-revision" \
     "$openshell_dir/image-source-sha" \
     "$openshell_dir/gateway.toml" \
     "$openshell_dir/run-gateway.sh"
@@ -2323,6 +2330,9 @@ write_deploy_manifest() {
   ROLLBACK_INTENT_SHA256="$ROLLBACK_INTENT_SHA256" \
   ROLLBACK_COMPLETION_RECEIPT="$ROLLBACK_COMPLETION_RECEIPT" \
   FLEET_NAME="$FLEET_NAME" \
+  MAC_HOME="$MAC_HOME" \
+  OPENSHELL_RUNTIME_IMAGE="$OPENSHELL_RUNTIME_IMAGE" \
+  OPENSHELL_RUNTIME_INPUT_SHA256="$OPENSHELL_RUNTIME_INPUT_SHA256" \
   MAC_SERVICE_NAME="$MAC_SERVICE_NAME" HERMES_SERVICE_NAME="$HERMES_SERVICE_NAME" OPENCLAW_SERVICE_NAME="$OPENCLAW_SERVICE_NAME" NEMOCLAW_SERVICE_NAME="$NEMOCLAW_SERVICE_NAME" MAC_AGENT_SERVICE_NAME="$MAC_AGENT_SERVICE_NAME" \
   MAC_LAUNCHD_LABEL="$MAC_LAUNCHD_LABEL" DARWIN_SYSTEM_SUPERVISOR_LABEL="$DARWIN_SYSTEM_SUPERVISOR_LABEL" HERMES_LAUNCHD_LABEL="$HERMES_LAUNCHD_LABEL" OPENCLAW_LAUNCHD_LABEL="$OPENCLAW_LAUNCHD_LABEL" NEMOCLAW_LAUNCHD_LABEL="$NEMOCLAW_LAUNCHD_LABEL" MAC_AGENT_LAUNCHD_LABEL="$MAC_AGENT_LAUNCHD_LABEL" \
   MAC_SUPERVISORD_PROG="$MAC_SUPERVISORD_PROG" HERMES_SUPERVISORD_PROG="$HERMES_SUPERVISORD_PROG" OPENCLAW_SUPERVISORD_PROG="$OPENCLAW_SUPERVISORD_PROG" NEMOCLAW_SUPERVISORD_PROG="$NEMOCLAW_SUPERVISORD_PROG" AGENT_SUPERVISORD_PROG="$AGENT_SUPERVISORD_PROG" \
@@ -2330,6 +2340,7 @@ write_deploy_manifest() {
 import json
 import hashlib
 import os
+import re
 import shlex
 import stat
 import subprocess
@@ -2394,6 +2405,24 @@ def file_ref(path):
         except OSError:
             ref["exists"] = False
     return ref
+
+
+def private_marker(path, pattern):
+    candidate = Path(path)
+    try:
+        metadata = candidate.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_nlink != 1
+            or metadata.st_size > 256
+        ):
+            return None
+        value = candidate.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    return value if re.fullmatch(pattern, value) else None
 
 
 def rollback_contract_summary(stage):
@@ -3084,6 +3113,18 @@ manifest = {
         "mac_git_rev": os.environ["DEPLOY_REV"],
         "mac_git_url": os.environ.get("DEPLOY_GIT_URL") or None,
         "mac_git_branch": os.environ.get("DEPLOY_GIT_BRANCH") or None,
+        "openshell_runtime": {
+            "image_ref": os.environ.get("OPENSHELL_RUNTIME_IMAGE") or None,
+            "runtime_input_sha256": (
+                os.environ.get("OPENSHELL_RUNTIME_INPUT_SHA256") or None
+            ),
+            "build_revision": private_marker(
+                Path(os.environ["MAC_HOME"])
+                / "openshell"
+                / "runtime-image-build-revision",
+                r"[0-9a-f]{40}",
+            ),
+        },
         "log": os.environ["DEPLOY_LOG"],
         "hermes_slack_home_channel_name": os.environ.get("HERMES_SLACK_HOME_CHANNEL_NAME") or None,
         "hermes_gateway_model": os.environ.get("HERMES_GATEWAY_MODEL") or None,

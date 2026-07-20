@@ -257,6 +257,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_NEW_HUB_URL` | str | consumer-defined | deployment | Deployment setting: deploy new hub url. |
 | `MAC_DEPLOY_NODE_ACTION` | str | consumer-defined | deployment | Deployment setting: deploy node action. |
 | `MAC_DEPLOY_NODE_IDENTITY_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy node identity sha256. |
+| `MAC_DEPLOY_NODE_PARALLELISM` | str | consumer-defined | deployment | Deployment setting: deploy node parallelism. |
 | `MAC_DEPLOY_OPENCLAW_LIVE_CANARY` | str | consumer-defined | deployment | Deployment setting: deploy openclaw live canary. |
 | `MAC_DEPLOY_OPENCLAW_PUBLIC_IDENTITY` | str | consumer-defined | deployment | Deployment setting: deploy openclaw public identity. |
 | `MAC_DEPLOY_OPENCLAW_REPRESENTATION_MODE` | str | consumer-defined | deployment | Deployment setting: deploy openclaw representation mode. |
@@ -269,13 +270,16 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_OPENSHELL_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy openshell enabled. |
 | `MAC_DEPLOY_OPENSHELL_REQUIRED` | bool | consumer-defined | deployment | Deployment setting: deploy openshell required. |
 | `MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime image. |
+| `MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy openshell runtime input sha256. |
 | `MAC_DEPLOY_OS` | str | consumer-defined | deployment | Deployment setting: deploy os. |
 | `MAC_DEPLOY_PREFLIGHT_AGENT_IDS_B64` | str | consumer-defined | deployment | Deployment setting: deploy preflight agent ids b64. |
+| `MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite apply guard seconds. |
 | `MAC_DEPLOY_PREREQUISITE_BUNDLE` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite bundle. |
 | `MAC_DEPLOY_PREREQUISITE_EXPECTATIONS` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite expectations. |
 | `MAC_DEPLOY_PREREQUISITE_HELPER` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite helper. |
 | `MAC_DEPLOY_PREREQUISITE_HELPER_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy prerequisite helper sha256. |
 | `MAC_DEPLOY_PREREQUISITE_MAX_AGE_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite max age seconds. |
+| `MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy prerequisite phase budget seconds. |
 | `MAC_DEPLOY_QDRANT_BIND_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant bind addr. |
 | `MAC_DEPLOY_QDRANT_DATA_DIR` | str | consumer-defined | deployment | Deployment setting: deploy qdrant data dir. |
 | `MAC_DEPLOY_QDRANT_IMAGE` | str | consumer-defined | deployment | Deployment setting: deploy qdrant image. |
