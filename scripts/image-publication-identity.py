@@ -233,7 +233,13 @@ def frozen_entries(root: Path, kind: str) -> list[dict[str, Any]]:
             relative = path.relative_to(root)
             if not _ignored_copied_path(relative):
                 paths.add(path)
-    entries = [_entry(root, path) for path in sorted(paths)]
+    # ``Path`` orders by path components, while the signed plan validates and
+    # hashes POSIX path strings.  Those orderings differ when one sibling name
+    # is a prefix of another (for example ``openai/`` and ``openai-codex/``).
+    # Sort by the exact serialized representation so every plan produced here
+    # is immediately acceptable to the independent plan validator.
+    ordered_paths = sorted(paths, key=lambda path: path.relative_to(root).as_posix())
+    entries = [_entry(root, path) for path in ordered_paths]
     if sum(entry["size"] for entry in entries) > MAX_INPUT_TOTAL_BYTES:
         raise IdentityError("frozen image inputs exceed the reviewed total size bound")
     return entries

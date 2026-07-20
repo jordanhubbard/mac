@@ -175,6 +175,24 @@ def test_plan_digest_changes_only_for_frozen_material(tmp_path: Path) -> None:
     )
 
 
+def test_plan_uses_the_validators_canonical_relative_path_order(tmp_path: Path) -> None:
+    module = _load_module()
+    root = _minimal_root(tmp_path, module, "mac")
+    for relative in (
+        "src/mac/plugins/openai/plugin.yaml",
+        "src/mac/plugins/openai-codex/__init__.py",
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"frozen:{relative}\n", encoding="utf-8")
+
+    plan = module.build_plan(root, "mac", "a" * 40, [])
+    serialized_paths = [entry["path"] for entry in plan["inputs"]]
+
+    assert serialized_paths == sorted(serialized_paths)
+    module._validate_plan(plan)
+
+
 def test_runtime_plan_requires_the_complete_reviewed_arg_set(tmp_path: Path) -> None:
     module = _load_module()
     root = _minimal_root(tmp_path, module, "openshell-runtime")
