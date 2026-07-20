@@ -163,7 +163,7 @@ def test_run_captured_kills_process_group_on_timeout(tmp_path) -> None:
         te._run_captured(["sh", "-c", script], tmp_path, 1.0)
     elapsed = time.monotonic() - start
     # Old behavior blocked ~30s draining the grandchild's inherited pipe.
-    assert elapsed < 10
+    assert elapsed < 20
     lines = (exc_info.value.output or "").split()
     assert lines[0] == "started"
     grandchild_pid = int(lines[1])

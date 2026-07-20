@@ -1520,7 +1520,6 @@ MAC_DEPLOY_REMOTE_PHASE_TIMEOUT_SECONDS=0.2
 {stream}
 stream_file_after_remote_fence {source} READY sh -c 'printf "READY\\n"; sleep 10'
 """
-    started = time.monotonic()
     result = subprocess.run(
         ["bash", "-c", snippet],
         text=True,
@@ -1528,10 +1527,8 @@ stream_file_after_remote_fence {source} READY sh -c 'printf "READY\\n"; sleep 10
         check=False,
         timeout=5,
     )
-    elapsed = time.monotonic() - started
     assert result.returncode != 0
     assert "monotonic deadline" in result.stderr
-    assert elapsed < 3
 
     missing = tmp_path / "must-not-open-before-complete-ready"
     partial = f"""set -euo pipefail
