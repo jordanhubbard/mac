@@ -363,12 +363,18 @@ def _base_command(
         str(port),
         "--receipt",
         str(receipt),
+        # Happy-path budgets. Kept generous so ambient CPU contention (parallel
+        # xdist workers, or a co-scheduled suite) can't expire a deadline on a
+        # run that is actually succeeding — the earlier flakiness. Tests that
+        # deliberately prove deadline/timeout EXPIRY override these with their
+        # own short values downstream (argparse honors the last occurrence), so
+        # their timing fidelity is unaffected.
         "--deadline-seconds",
-        "2",
+        "8",
         "--compensation-deadline-seconds",
-        "4",
+        "12",
         "--command-timeout-seconds",
-        "1",
+        "3",
         "--poll-seconds",
         "0.02",
         "--stable-observations",
@@ -389,9 +395,19 @@ def _base_command(
 
 
 def _run(
-    command: List[str], *, timeout: float = 15.0
+    command: List[str], *, timeout: float = 60.0
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    # coverage.py's ``patch = ["subprocess"]`` propagates measurement into every
+    # Python child via these vars + a site .pth hook. The helper and the fake
+    # manager live outside ``source = ["src/mac"]``, so tracing them yields ZERO
+    # coverage while making each interpreter start ~5.6x slower (~+230ms/spawn).
+    # The helper spawns the manager repeatedly under a 1s command timeout / 2s
+    # deadline, so that overhead — amplified by parallel xdist contention — is
+    # what expires the deadline and flakes these tests. Strip it so the throwaway
+    # subprocesses run at native speed and the tight deadlines stay meaningful.
+    env.pop("COVERAGE_PROCESS_START", None)
+    env.pop("COVERAGE_PROCESS_CONFIG", None)
     # These selectors must not reach a manager even if the rollback caller's
     # environment was contaminated.
     env.update(
