@@ -6037,7 +6037,19 @@ def create_app(
         # the reviewer-independence check (which reads evidence.created_by
         # downstream). Bind it to the principal.
         _assert_task_actor(principal, task_id, body.created_by)
-        evidence = cp.add_evidence(task_id=task_id, sync_beads=False, **_data(body))
+        # Admin operators use this same endpoint to reconcile durable evidence
+        # for work completed out of band (for example, a commit pushed directly
+        # to the canonical branch).  The force-complete endpoint intentionally
+        # still requires canonical integration evidence, so an administrator
+        # must be able to record that proof without manufacturing a worker
+        # lease.  Ordinary writers and worker principals remain lease/review
+        # fenced inside ControlPlane.add_evidence.
+        evidence = cp.add_evidence(
+            task_id=task_id,
+            sync_beads=False,
+            _trusted_internal=principal.is_admin,
+            **_data(body),
+        )
         return evidence.to_dict()
 
     @app.get("/evidence/{evidence_id}/artifacts")

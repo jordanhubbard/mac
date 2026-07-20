@@ -1671,6 +1671,44 @@ def test_evidence_created_by_bound_to_principal():
     assert ok.status_code == 200, ok.text
 
 
+def test_admin_can_record_out_of_band_evidence_without_worker_lease():
+    cp = ControlPlane.in_memory()
+    task = cp.create_task("out-of-band canonical integration")
+    client = TestClient(
+        create_app(
+            control_plane=cp,
+            auth_tokens={
+                "admin-token": ["admin"],
+                "writer-token": ["write"],
+            },
+        )
+    )
+    payload = {
+        "kind": "test",
+        "uri": "git://example.invalid/repo#" + "a" * 40,
+        "summary": "operator verified canonical integration",
+        "created_by": "human",
+        "metadata": {"verification": {"status": "complete"}},
+    }
+
+    blocked = client.post(
+        "/tasks/%s/evidence" % task.id,
+        headers={"Authorization": "Bearer writer-token"},
+        json=payload,
+    )
+    assert blocked.status_code == 403, blocked.text
+    assert "active lease or assigned pending review" in blocked.json()["detail"]
+
+    recorded = client.post(
+        "/tasks/%s/evidence" % task.id,
+        headers={"Authorization": "Bearer admin-token"},
+        json=payload,
+    )
+    assert recorded.status_code == 200, recorded.text
+    assert recorded.json()["created_by"] == "human"
+    assert cp.list_evidence(task.id)[0].id == recorded.json()["id"]
+
+
 def test_attestation_key_rotation_is_admin_only_and_worker_attempts_do_not_mutate():
     cp = ControlPlane.in_memory()
     client = TestClient(
