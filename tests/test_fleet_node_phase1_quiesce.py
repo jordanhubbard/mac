@@ -215,7 +215,7 @@ def _base_case(tmp_path: Path, manager: str, *, os_kind: str = "linux") -> dict[
     block, writer = _install_daemon_block(tmp_path)
     events = tmp_path / "events"
     events.write_text("", encoding="utf-8")
-    return {
+    env = {
         **os.environ,
         "HOME": str(home),
         "PATH": f"{fake_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
@@ -237,6 +237,18 @@ def _base_case(tmp_path: Path, manager: str, *, os_kind: str = "linux") -> dict[
         "FAKE_MANAGER_BIN_DIR": str(fake_bin),
         "FAKE_USER_RUNTIME_DIR": str(user_runtime),
     }
+    # coverage.py's ``patch = ["subprocess"]`` propagates measurement into every
+    # Python child via COVERAGE_PROCESS_{START,CONFIG} + a site .pth hook. This
+    # phase-1 bash script (and its fake managers) spawn ``$PY`` repeatedly under
+    # sub-second command budgets (MAC_PHASE1_COMMAND_TIMEOUT_SECONDS=0.5), yet
+    # none of them import ``mac`` — so tracing them yields ZERO src/mac coverage
+    # while making each interpreter start ~5.6x slower. Under parallel xdist
+    # contention that overhead expires the phase-1 deadlines and flakes these
+    # tests. Strip it so the throwaway children run at native speed; the tight
+    # budgets stay meaningful and coverage totals are unaffected.
+    env.pop("COVERAGE_PROCESS_START", None)
+    env.pop("COVERAGE_PROCESS_CONFIG", None)
+    return env
 
 
 def _run_action(

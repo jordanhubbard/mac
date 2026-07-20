@@ -109,6 +109,31 @@ exec "$@"
     )
     sudo.chmod(0o755)
 
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "FAKE_LAUNCHCTL_STATE": str(state),
+        "FAKE_LAUNCHCTL_COUNT": str(count),
+        "FAKE_LAUNCHCTL_CALLS": str(calls),
+        "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.15",
+        # The contract under test is the 150ms aggregate transition bound,
+        # not whether a freshly scheduled shell plus the Python process-group
+        # wrapper can start inside 50ms on a loaded xdist runner.  Keep the
+        # per-command bound finite but comfortably above scheduler jitter;
+        # mac_launchd_wait_unloaded still clamps each attempt to the smaller
+        # remaining aggregate deadline.
+        "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "1",
+        "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
+    }
+    # mac_run_bounded wraps each poll in a stdlib-only ``python -c`` process-group
+    # guard (never imports ``mac``). coverage.py's ``patch = ["subprocess"]`` would
+    # trace every such child via COVERAGE_PROCESS_{START,CONFIG} + a site .pth,
+    # adding ~5.6x interpreter-start overhead for ZERO src/mac coverage — enough to
+    # blow the 150ms aggregate bound (which needs ~4 bounded polls) once xdist
+    # contention piles on, flaking the "delayed" case. Strip it so the wrapper runs
+    # at native speed; the 150ms contract stays exact and coverage is unaffected.
+    env.pop("COVERAGE_PROCESS_START", None)
+    env.pop("COVERAGE_PROCESS_CONFIG", None)
     return subprocess.run(
         [
             "bash",
@@ -116,22 +141,7 @@ exec "$@"
             "set -euo pipefail\n"
             "log() { printf '%s\\n' \"$*\" >&2; }\n" + functions + "\n" + command,
         ],
-        env={
-            **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "FAKE_LAUNCHCTL_STATE": str(state),
-            "FAKE_LAUNCHCTL_COUNT": str(count),
-            "FAKE_LAUNCHCTL_CALLS": str(calls),
-            "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.15",
-            # The contract under test is the 150ms aggregate transition bound,
-            # not whether a freshly scheduled shell plus the Python process-group
-            # wrapper can start inside 50ms on a loaded xdist runner.  Keep the
-            # per-command bound finite but comfortably above scheduler jitter;
-            # mac_launchd_wait_unloaded still clamps each attempt to the smaller
-            # remaining aggregate deadline.
-            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "1",
-            "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
-        },
+        env=env,
         check=False,
         capture_output=True,
         text=True,

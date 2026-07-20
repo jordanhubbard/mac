@@ -542,6 +542,16 @@ def _run_quiescence(
         "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS": "0.1",
     }
     env.update(extra_env or {})
+    # The quiescence orchestrator runs under ``$PY -I -S`` (isolated, no site) so
+    # it never loads coverage's site .pth, but the short-lived fake runtime CLIs
+    # (docker/podman/openshell inventory) run via PATH and ARE traced by
+    # coverage.py's ``patch = ["subprocess"]`` (COVERAGE_PROCESS_{START,CONFIG}).
+    # They import only stdlib — never ``mac`` — so tracing adds ~5.6x start
+    # overhead for ZERO src/mac coverage, which alone exceeds the 250ms per-command
+    # budget and expires the runtime inventory under xdist load. Strip it so the
+    # fakes start natively; coverage totals are unchanged.
+    env.pop("COVERAGE_PROCESS_START", None)
+    env.pop("COVERAGE_PROCESS_CONFIG", None)
     started = time.monotonic()
     result = subprocess.run(
         ["bash", str(harness)],
