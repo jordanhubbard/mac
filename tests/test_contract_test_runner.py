@@ -13,6 +13,7 @@ def _run_with_fake_python(
     tmp_path: Path,
     *,
     jobs: str | None = None,
+    coverage: str | None = None,
     combine_output: str = "Combined data file .coverage.fake",
     combine_status: int = 0,
     json_status: int = 0,
@@ -24,6 +25,14 @@ def _run_with_fake_python(
     fake_python.write_text(
         """#!/bin/sh
 printf 'PYTEST_ADDOPTS=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "$*" >> "$FAKE_PY_LOG"
+case "$*" in
+    *os.cpu_count*)
+        # The runner computes its headroom-aware default worker count with a
+        # ``python -c`` probe; answer it deterministically for the test.
+        printf '%s\n' "${FAKE_DEFAULT_JOBS:-6}"
+        exit 0
+        ;;
+esac
 if [ "$*" = "-m coverage combine" ]; then
     printf '%s\n' "$FAKE_COMBINE_OUTPUT"
     exit "$FAKE_COMBINE_STATUS"
@@ -43,11 +52,15 @@ exit 0
         "FAKE_COMBINE_OUTPUT": combine_output,
         "FAKE_COMBINE_STATUS": str(combine_status),
         "FAKE_JSON_STATUS": str(json_status),
+        # Deterministic answer to the runner's headroom-default cpu probe.
+        "FAKE_DEFAULT_JOBS": "6",
         # This must never leak into either pytest phase.
         "PYTEST_ADDOPTS": "-n auto",
     }
     if jobs is not None:
         env["MAC_TEST_JOBS"] = jobs
+    if coverage is not None:
+        env["MAC_TEST_COVERAGE"] = coverage
     completed = subprocess.run(
         [str(RUNNER)],
         cwd=tmp_path,
@@ -59,17 +72,49 @@ exit 0
     return completed, log_path.read_text(encoding="utf-8").splitlines()
 
 
-def test_contract_runner_defaults_to_two_workers_and_protects_serial_phase(tmp_path):
+def test_contract_runner_defaults_to_headroom_workers_and_protects_serial_phase(tmp_path):
     completed, calls = _run_with_fake_python(tmp_path)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     pytest_calls = [line for line in calls if "-m coverage run -m pytest" in line]
     assert len(pytest_calls) == 2
-    assert "-n 2 --dist loadscope" in pytest_calls[0]
+    # Unset MAC_TEST_JOBS => the runner computes a headroom-aware default via a
+    # cpu_count probe (faked to 6 here) so the bulk slice runs wide without
+    # saturating every core; the serial phase stays unparallelised.
+    assert "-n 6 --dist loadscope" in pytest_calls[0]
     assert "not (process_e2e or postgres or container_contract or docker_e2e)" in pytest_calls[0]
     assert "-n " not in pytest_calls[1]
     assert "-m process_e2e or postgres or container_contract or docker_e2e" in pytest_calls[1]
     assert all(line.startswith("PYTEST_ADDOPTS=<unset>\t") for line in pytest_calls)
+
+
+def test_contract_runner_fast_mode_skips_coverage_and_policy(tmp_path):
+    """MAC_TEST_COVERAGE=0 keeps the bulk+serial split but drops coverage.
+
+    Rollout verification and dev loops need pass/fail, not the coverage floor
+    gate, so the fast path must run pytest directly (no ``coverage run`` wrapper)
+    and skip combine/json/report/policy entirely.
+    """
+
+    completed, calls = _run_with_fake_python(tmp_path, coverage="0")
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    # Two plain pytest phases, never wrapped in ``coverage run``.
+    assert not any("-m coverage run -m pytest" in line for line in calls)
+    pytest_calls = [
+        line
+        for line in calls
+        if "-m pytest" in line and "coverage" not in line and "--version" not in line
+    ]
+    assert len(pytest_calls) == 2
+    assert "-n 6 --dist loadscope" in pytest_calls[0]
+    assert "not (process_e2e or postgres or container_contract or docker_e2e)" in pytest_calls[0]
+    assert "-n " not in pytest_calls[1]
+    assert "-m process_e2e or postgres or container_contract or docker_e2e" in pytest_calls[1]
+    # No coverage pipeline runs at all.
+    assert not any("-m coverage combine" in line for line in calls)
+    assert not any("-m coverage json" in line for line in calls)
+    assert not any("scripts/coverage-policy.py" in line for line in calls)
 
 
 def test_contract_runner_preserves_explicit_worker_override(tmp_path):
@@ -78,6 +123,16 @@ def test_contract_runner_preserves_explicit_worker_override(tmp_path):
     assert completed.returncode == 0, completed.stdout + completed.stderr
     bulk = next(line for line in calls if "-m coverage run -m pytest -n" in line)
     assert "-n 3 --dist loadscope" in bulk
+
+
+def test_contract_runner_honors_explicit_auto_override(tmp_path):
+    # Power users on hosts without the sub-second timing tests can still opt into
+    # one worker per core.
+    completed, calls = _run_with_fake_python(tmp_path, jobs="auto")
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    bulk = next(line for line in calls if "-m coverage run -m pytest -n" in line)
+    assert "-n auto --dist loadscope" in bulk
 
 
 def test_contract_runner_rejects_partial_combine_even_when_coverage_exits_zero(tmp_path):

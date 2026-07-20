@@ -11751,6 +11751,17 @@
     "type": "str"
   },
   {
+    "default": null,
+    "description": "Core setting: test coverage.",
+    "family": "core",
+    "name": "MAC_TEST_COVERAGE",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
     "default": "2",
     "description": "Core setting: test jobs.",
     "family": "core",

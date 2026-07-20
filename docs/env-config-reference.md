@@ -985,6 +985,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TASK_SUMMARY_BEGIN` | str | consumer-defined | task-execution | Task Execution setting: task summary begin. |
 | `MAC_TASK_TITLE` | str | consumer-defined | task-execution | Task Execution setting: task title. |
 | `MAC_TASK_WORKSPACE` | str | consumer-defined | task-execution | Task Execution setting: task workspace. |
+| `MAC_TEST_COVERAGE` | str | consumer-defined | core | Core setting: test coverage. |
 | `MAC_TEST_JOBS` | str | 2 | core | Core setting: test jobs. |
 | `MAC_TEST_PORTFOLIO` | str | consumer-defined | core | Core setting: test portfolio. |
 | `MAC_TEST_PORTFOLIO_OUTPUT` | str | consumer-defined | core | Core setting: test portfolio output. |

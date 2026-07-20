@@ -2,7 +2,23 @@
 set -euo pipefail
 
 _MAC_TEST_PORTFOLIO_REQUESTED="${MAC_TEST_PORTFOLIO:-0}"
-_MAC_TEST_JOBS_REQUESTED="${MAC_TEST_JOBS:-2}"
+# Worker count for the xdist-safe bulk slice. Empty => a headroom-aware default
+# (~2/3 of cores, min 2) computed once the interpreter is resolved. That is a
+# big jump from the old fixed 2 while deliberately NOT saturating every core:
+# the fleet quiescence/rollback tests assert sub-second timing contracts (e.g. a
+# 150ms launchd transition bound) by spawning real subprocesses, and full-core
+# oversubscription ("-n auto") makes a fresh interpreter lose that CPU race and
+# flakes them. Explicit values still win: MAC_TEST_JOBS=auto (one per core, for
+# hosts without those timing tests), MAC_TEST_JOBS=<N> (pin), MAC_TEST_JOBS=0
+# (serial, for memory- or core-constrained hosts).
+_MAC_TEST_JOBS_REQUESTED="${MAC_TEST_JOBS:-}"
+# Coverage is the repository's merge-gate safety rail (statement/branch floors),
+# but it also dominates full-suite wall-clock. Rollout VERIFICATION and local
+# dev loops only need pass/fail, so MAC_TEST_COVERAGE=0 runs the same suite with
+# the same xdist/serial split but without coverage tracing or the floor policy —
+# much faster and lighter. Coverage stays ON by default so the merge gate is
+# unchanged; do NOT set MAC_TEST_COVERAGE=0 for the pre-push/merge gate.
+_MAC_TEST_COVERAGE_REQUESTED="${MAC_TEST_COVERAGE:-1}"
 
 # Fleet executors inherit deployment/task environment. Keep repository tests
 # hermetic so they exercise the checked-out code, not the live agent runtime.
@@ -142,28 +158,20 @@ if [ "$#" -eq 0 ]; then
         export COVERAGE_FILE="$portfolio_dir/.coverage"
         export MAC_TEST_PORTFOLIO_OUTPUT="$portfolio_dir/timings.json"
     fi
-    "$PY" -m coverage erase
-    # `patch = ["subprocess"]` in pyproject.toml makes the parent and every
-    # Python child (including pytest-xdist workers) write parallel coverage
-    # data, so a single `coverage combine` merges every process's data set —
-    # this is what lets the run below split into two pytest invocations while
-    # still enforcing one coverage total.
-    #
-    # Parallelism: xdist runs the bulk unit/CLI/API/UI slice with a bounded
-    # default of two workers. Tests marked process_e2e/postgres/container run
-    # SERIALLY in a second invocation: they bind real ports and spawn real
-    # processes, so concurrent scheduling would collide. --dist loadscope
-    # keeps a module's tests (and its module-scoped fixtures) on one worker.
-    #
-    # MAC_TEST_JOBS controls worker count: unset => 2; "auto" => one per core;
-    # "0" => disable xdist entirely (serial), the fallback for memory- or
-    # core-constrained hosts. The value is captured before the hermetic MAC_*
-    # environment sweep above. Portfolio mode always runs serial so per-test
-    # timing/coverage attribution stays exact.
+    # MAC_TEST_JOBS controls worker count: unset => auto (one per core); an
+    # explicit integer pins the worker count; "0" => disable xdist entirely
+    # (serial), the fallback for memory- or core-constrained hosts. The value is
+    # captured before the hermetic MAC_* environment sweep above. Portfolio mode
+    # always runs serial so per-test timing/coverage attribution stays exact.
     _MAC_TEST_JOBS="$_MAC_TEST_JOBS_REQUESTED"
     case "$_MAC_TEST_JOBS" in
+        '')
+            # Unset: headroom-aware default (~2/3 of cores, min 2) so the timing
+            # contracts above keep a free CPU instead of racing every worker.
+            _MAC_TEST_JOBS="$("$PY" -c 'import os; print(max(2, (os.cpu_count() or 2) * 2 // 3))')"
+            ;;
         0|auto) ;;
-        *[!0-9]*|'')
+        *[!0-9]*)
             echo "run-contract-tests.sh: MAC_TEST_JOBS must be 0, auto, or a positive integer" >&2
             exit 2
             ;;
@@ -174,7 +182,38 @@ if [ "$#" -eq 0 ]; then
             fi
             ;;
     esac
+    # Tests marked process_e2e/postgres/container bind real ports and spawn real
+    # processes, so concurrent scheduling would collide. They run SERIALLY in a
+    # second invocation; the xdist-safe bulk slice runs first under --dist
+    # loadscope (which keeps a module's tests + module-scoped fixtures on one
+    # worker).
     _SERIAL_MARK="process_e2e or postgres or container_contract or docker_e2e"
+
+    # Fast verification path: identical bulk+serial split, but WITHOUT coverage
+    # tracing or the floor policy. Coverage roughly halves throughput and adds
+    # per-worker memory that a pass/fail rollout/dev check does not need. Never
+    # taken in portfolio mode (which requires coverage) or for the merge gate
+    # (which leaves MAC_TEST_COVERAGE at its default of 1).
+    if [ "$_MAC_TEST_COVERAGE_REQUESTED" = "0" ] && [ "$_MAC_TEST_PORTFOLIO_REQUESTED" != "1" ]; then
+        pytest_status=0
+        if [ "$_MAC_TEST_JOBS" != "0" ]; then
+            "$PY" -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \
+                -m "not ($_SERIAL_MARK)" || pytest_status=$?
+            if [ "$pytest_status" -eq 0 ]; then
+                "$PY" -m pytest -m "$_SERIAL_MARK" || pytest_status=$?
+            fi
+        else
+            "$PY" -m pytest || pytest_status=$?
+        fi
+        exit "$pytest_status"
+    fi
+
+    "$PY" -m coverage erase
+    # `patch = ["subprocess"]` in pyproject.toml makes the parent and every
+    # Python child (including pytest-xdist workers) write parallel coverage
+    # data, so a single `coverage combine` merges every process's data set —
+    # this is what lets the run below split into two pytest invocations while
+    # still enforcing one coverage total.
     pytest_status=0
     if [ "$_MAC_TEST_PORTFOLIO_REQUESTED" != "1" ] && [ "$_MAC_TEST_JOBS" != "0" ]; then
         "$PY" -m coverage run -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \
