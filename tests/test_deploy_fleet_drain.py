@@ -123,7 +123,13 @@ exec "$@"
             "FAKE_LAUNCHCTL_COUNT": str(count),
             "FAKE_LAUNCHCTL_CALLS": str(calls),
             "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "0.15",
-            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "0.05",
+            # The contract under test is the 150ms aggregate transition bound,
+            # not whether a freshly scheduled shell plus the Python process-group
+            # wrapper can start inside 50ms on a loaded xdist runner.  Keep the
+            # per-command bound finite but comfortably above scheduler jitter;
+            # mac_launchd_wait_unloaded still clamps each attempt to the smaller
+            # remaining aggregate deadline.
+            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "1",
             "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
         },
         check=False,
