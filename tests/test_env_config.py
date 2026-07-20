@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from mac.env_config import (
     ENV_VARS,
     EnvVar,
@@ -80,16 +82,26 @@ def test_retired_registry_entry_is_documented_but_never_resolved():
     assert MAC_BEADS_BRIDGE_HUB_AGENT not in environment_catalog(include_retired=False)
 
 
-def test_generated_registry_and_reference_are_current():
+@pytest.fixture(scope="module")
+def registry_check() -> subprocess.CompletedProcess[str]:
+    """Run the (expensive, full-repo-scanning) ``--check`` generator once and
+    share the result across the currency + fleet-scoped drift guards. Both
+    tests invoke the identical command, so a single run exercises the same code
+    paths (coverage-neutral) while halving the scan cost on this module group."""
     root = Path(__file__).resolve().parents[1]
-    completed = subprocess.run(
+    return subprocess.run(
         [sys.executable, "scripts/generate-env-config-registry.py", "--check"],
         cwd=root,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_generated_registry_and_reference_are_current(
+    registry_check: subprocess.CompletedProcess[str],
+):
+    assert registry_check.returncode == 0, registry_check.stdout + registry_check.stderr
 
 
 def _load_env_config_generator():
@@ -136,20 +148,15 @@ def test_render_reference_lists_every_fleet_scoped_base_variable():
         assert base_name in reference, base_name
 
 
-def test_generated_reference_file_documents_fleet_scoped_vars():
+def test_generated_reference_file_documents_fleet_scoped_vars(
+    registry_check: subprocess.CompletedProcess[str],
+):
     """The freshly generated docs must carry the fleet-scoped contract (drift guard)."""
     from mac.fleet_env import FLEET_SCOPED_VARS
 
-    root = Path(__file__).resolve().parents[1]
-    completed = subprocess.run(
-        [sys.executable, "scripts/generate-env-config-registry.py", "--check"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert registry_check.returncode == 0, registry_check.stdout + registry_check.stderr
 
+    root = Path(__file__).resolve().parents[1]
     reference = (root / "docs" / "env-config-reference.md").read_text(encoding="utf-8")
     assert "## Fleet-scoped credential precedence" in reference
     assert "BASE_NAME__<FLEET>" in reference
