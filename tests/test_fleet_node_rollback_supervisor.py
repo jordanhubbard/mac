@@ -1175,10 +1175,19 @@ def test_manager_timeout_terminates_descendant_process_group(tmp_path: Path) -> 
         [
             "--systemctl",
             str(systemctl),
+            # The contract proven here is "a command timeout terminates the whole
+            # descendant process group", NOT the exact timeout value. The
+            # descendant is a separate interpreter that must install its SIGTERM
+            # handler (which writes the marker) before the group kill lands;
+            # otherwise the default SIGTERM action terminates it silently and no
+            # marker appears. Under parallel xdist load a fresh Python start can
+            # exceed a 150ms budget, so keep the command timeout generously above
+            # worst-case interpreter startup — it still fires well before the
+            # deadline, so the "timed out" path and returncode are unchanged.
             "--deadline-seconds",
-            "1.2",
+            "8",
             "--command-timeout-seconds",
-            "0.15",
+            "2",
         ]
     )
 
@@ -1188,7 +1197,7 @@ def test_manager_timeout_terminates_descendant_process_group(tmp_path: Path) -> 
     assert "timed out" in result.stderr
     assert not receipt.exists()
     marker = tmp_path / "descendant-terminated"
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + 5
     while not marker.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
     assert marker.read_text(encoding="utf-8") == "yes"
