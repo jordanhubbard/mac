@@ -1639,6 +1639,101 @@ def test_pinned_route_executes_a_normal_mux_session_and_has_no_network_fallback(
     assert b"pinned SSH control socket is unavailable" in result.stderr
 
 
+def _run_live_ssh_host_key_parser(tmp_path, transcript):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    function = (
+        "live_ssh_host_key_fingerprint() {"
+        + deploy.split("live_ssh_host_key_fingerprint() {", 1)[1].split(
+            "\n}\n\nlive_machine_instance_id() {", 1
+        )[0]
+        + "\n}"
+    )
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    control_path = tmp_path / "control"
+    control_path.with_suffix(".log").write_bytes(transcript)
+    snippet = f"""set -euo pipefail
+ssh_control_path_for_agent() {{ printf '%s\n' {shlex.quote(str(control_path))}; }}
+{function}
+live_ssh_host_key_fingerprint fixture
+"""
+    return subprocess.run(
+        ["bash", "-c", snippet],
+        check=False,
+        capture_output=True,
+    )
+
+
+def test_live_ssh_host_key_parser_selects_exact_crlf_target_and_fails_closed(
+    tmp_path,
+):
+    first = b"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    second = b"SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+    valid = _run_live_ssh_host_key_parser(
+        tmp_path / "valid",
+        b"debug1: Connecting to fixture\r\n"
+        + b"debug1: Server host key: ssh-ed25519 "
+        + first
+        + b"\r\n"
+        + b"debug1: Executing proxy command\r\n"
+        + b"debug1: Server host key: ssh-ed25519 "
+        + second
+        + b"\r\n"
+        + b"debug1: Authentication succeeded\r\n",
+    )
+    assert valid.returncode == 0, valid.stderr.decode()
+    assert valid.stdout == second + b"\n"
+
+    direct_lf = _run_live_ssh_host_key_parser(
+        tmp_path / "direct-lf",
+        b"debug1: Server host key: ssh-ed25519 " + first + b"\n",
+    )
+    assert direct_lf.returncode == 0, direct_lf.stderr.decode()
+    assert direct_lf.stdout == first + b"\n"
+
+    missing = _run_live_ssh_host_key_parser(
+        tmp_path / "missing",
+        b"debug1: Connecting to fixture\r\n",
+    )
+    assert missing.returncode != 0
+    assert missing.stdout == b""
+    assert b"unavailable or malformed" in missing.stderr
+
+    malformed_final = _run_live_ssh_host_key_parser(
+        tmp_path / "malformed-final",
+        b"debug1: Server host key: ssh-ed25519 "
+        + first
+        + b"\r\n"
+        + b"debug1: Server host key: ssh-ed25519 not-a-sha256\r\n",
+    )
+    assert malformed_final.returncode != 0
+    assert malformed_final.stdout == b""
+    assert b"unavailable or malformed" in malformed_final.stderr
+
+    malformed_jump = _run_live_ssh_host_key_parser(
+        tmp_path / "malformed-jump",
+        b"debug1: Server host key: ssh-ed25519 not-a-sha256\r\n"
+        + b"debug1: Server host key: ssh-ed25519 "
+        + second
+        + b"\r\n",
+    )
+    assert malformed_jump.returncode != 0
+    assert malformed_jump.stdout == b""
+    assert b"unavailable or malformed" in malformed_jump.stderr
+
+    embedded_carriage_return = _run_live_ssh_host_key_parser(
+        tmp_path / "embedded-carriage-return",
+        b"debug1: Server host key: ssh-ed25519 "
+        + first
+        + b"\r\n"
+        + b"debug1: Server host key: ssh-ed25519 "
+        + second
+        + b"\r\r\n",
+    )
+    assert embedded_carriage_return.returncode != 0
+    assert embedded_carriage_return.stdout == b""
+    assert b"unavailable or malformed" in embedded_carriage_return.stderr
+
+
 def test_required_openshell_image_is_rejected_before_any_remote_fleet_action():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     normalize = (

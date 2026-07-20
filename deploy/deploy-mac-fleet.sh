@@ -4106,11 +4106,42 @@ live_ssh_host_key_fingerprint() {
     echo "ERROR: ${agent}: SSH control-master transcript is missing" >&2
     return 1
   }
-  line="$(sed -n 's/^debug1: Server host key: [^ ]* \(SHA256:[A-Za-z0-9+\/=]*\)$/\1/p' "$log_path" | tail -1)"
-  [ -n "$line" ] || {
-    echo "ERROR: ${agent}: actual negotiated SSH host-key fingerprint is unavailable" >&2
-    return 1
+  if ! line="$(LC_ALL=C awk '
+BEGIN {
+  carriage_return = sprintf("%c", 13)
+  prefix = "debug1: Server host key: "
+}
+{
+  if (index($0, prefix) != 1) {
+    next
   }
+  # ProxyJump logs its host key before the destination host key.  Validate
+  # every prefixed record, but retain the last one as the negotiated target.
+  # OpenSSH diagnostics may use CRLF, so remove exactly the record-ending CR;
+  # a CR anywhere else keeps the host-key record invalid.
+  if (substr($0, length($0), 1) == carriage_return) {
+    $0 = substr($0, 1, length($0) - 1)
+  }
+  if (index($0, carriage_return) != 0 \
+      || $0 !~ /^debug1: Server host key: [^[:space:]]+ SHA256:[A-Za-z0-9+\/=]+$/) {
+    invalid = 1
+    next
+  }
+  selected = $0
+  matches += 1
+}
+END {
+  if (!invalid && matches >= 1) {
+    sub(/^debug1: Server host key: [^[:space:]]+ /, "", selected)
+    print selected
+    exit 0
+  }
+  exit 1
+}
+' "$log_path")"; then
+    echo "ERROR: ${agent}: actual negotiated SSH host-key fingerprint is unavailable or malformed" >&2
+    return 1
+  fi
   printf '%s\n' "$line"
 }
 
