@@ -532,9 +532,11 @@ def _run_quiescence(
         "FAKE_SANDBOX_NAME": SANDBOX,
         "FAKE_SECRET": SECRET,
         "MAC_DEPLOY_DAEMON_TEST_MODE": "1",
-        # Production defaults remain conservative.  These overrides keep the
-        # same deadline paths deterministic and fast in behavioral tests.
-        "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS": "0.25",
+        # Production defaults remain conservative. Keep this guard much smaller
+        # than production while allowing a cold Python fake CLI to start under
+        # xdist/coverage scheduler load. The three-second aggregate deadline
+        # remains the behavioral bound.
+        "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS": "1",
         # Inventorying two independent runtimes launches several short-lived
         # Python fake CLIs.  Three seconds leaves ample room on a loaded CI
         # host while still making persistent-resource failures fast.
@@ -547,9 +549,9 @@ def _run_quiescence(
     # (docker/podman/openshell inventory) run via PATH and ARE traced by
     # coverage.py's ``patch = ["subprocess"]`` (COVERAGE_PROCESS_{START,CONFIG}).
     # They import only stdlib — never ``mac`` — so tracing adds ~5.6x start
-    # overhead for ZERO src/mac coverage, which alone exceeds the 250ms per-command
-    # budget and expires the runtime inventory under xdist load. Strip it so the
-    # fakes start natively; coverage totals are unchanged.
+    # overhead for ZERO src/mac coverage. Strip it so the fakes start natively;
+    # the finite command and aggregate deadlines still exercise timeout behavior,
+    # and coverage totals are unchanged.
     env.pop("COVERAGE_PROCESS_START", None)
     env.pop("COVERAGE_PROCESS_CONFIG", None)
     started = time.monotonic()
