@@ -5446,6 +5446,7 @@
     "name": "MAC_HUB_TICK_INTERVAL_SECONDS",
     "retired": false,
     "sources": [
+      "scripts/test-docs.py",
       "src/mac/api.py",
       "src/mac/deploy_env.py"
     ],
@@ -6132,6 +6133,7 @@
     "name": "MAC_LEDGER_BACKUP_ENABLED",
     "retired": false,
     "sources": [
+      "scripts/test-docs.py",
       "src/mac/ledger_backup_scheduler.py"
     ],
     "type": "bool"
@@ -10794,6 +10796,7 @@
       "deploy/systemd/mac.service",
       "scripts/prove-c26-inception.py",
       "scripts/setup-fleet.py",
+      "scripts/test-docs.py",
       "src/mac/agent_migrate.py",
       "src/mac/api.py",
       "src/mac/cli.py",

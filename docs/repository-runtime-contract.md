@@ -118,13 +118,13 @@ checkout directly.
 
 mac declares its own contract in `.mac/project.yaml`. Its bootstrap command is:
 
-```bash
+```console
 python3 scripts/bootstrap-project.py
 ```
 
 That script first verifies `python3`, `git`, and `gh`, then creates
 `.venv` and installs the dev extra so a fresh macOS, Linux, or WSL2 agent can run:
 
-```bash
+```console
 PATH=.venv/bin:$PATH .venv/bin/python -m pytest
 ```

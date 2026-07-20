@@ -29,7 +29,7 @@ OpenShell CLI in the hub process, so the stock stateless K8s API image is not an
 activation target. Bootstrap and validate OpenShell in a first deployment while
 the pipeline remains disabled:
 
-```bash
+```console
 MAC_DEPLOY_OPENSHELL=1 \
 MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE='ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:<reviewed-digest>' \
 MAC_DEPLOY_OPENSHELL_ARGS='--enable --fail-closed' \
@@ -49,7 +49,7 @@ an explicit development escape hatch through
 Before deploying, prove the package is anonymously readable with an empty
 Docker configuration. A successful authenticated workflow push is not enough:
 
-```bash
+```console
 tmp="$(mktemp -d)"
 printf '{}' > "$tmp/config.json"
 DOCKER_CONFIG="$tmp" docker pull \
@@ -90,7 +90,7 @@ The verifier uses an empty Docker configuration and a network-disabled image
 self-test. This anonymous readback is required because the remote OpenShell
 gateway receives no GHCR credential.
 
-```bash
+```console
 scripts/verify-certifier-publication.py \
   ghcr.io/jordanhubbard/mac-certifier@sha256:<64-lowercase-hex> \
   --expected-revision <40-character-tested-main-sha>
@@ -101,7 +101,7 @@ non-root user/group, and only `/tmp`, `/dev`, or `/sandbox` as writable roots.
 `src/mac/openshell/default-policy.yaml` is the reviewed lockdown starting point.
 Compute the digest over the exact UTF-8 bytes embedded in `policy_text`:
 
-```bash
+```console
 python3 - <<'PY'
 import hashlib
 from pathlib import Path
@@ -236,7 +236,7 @@ zero or one and must equal the selected profile entry exactly.
 
 Validate the checked-in contract before refreshing registration:
 
-```bash
+```console
 PYTHONPATH=src .venv/bin/python - <<'PY'
 from pathlib import Path
 from mac.services import _load_repository_contract
@@ -252,7 +252,7 @@ PY
 Refresh the hub's repository registration so its durable metadata contains the
 new contract, then inspect it before activation:
 
-```bash
+```console
 mac bridge repository register mac "$PWD" --project=mac
 mac bridge repository repos
 ```
@@ -294,7 +294,7 @@ bundles are mode `0400` and revalidated by digest and exact candidate SHA.
 
 For a system package deployment, prepare the configured location explicitly:
 
-```bash
+```console
 sudo install -d -o mac -g mac -m 0700 /var/lib/mac/work-package-bundles
 ```
 
@@ -306,7 +306,7 @@ still detected because the job stores its exact digest.
 
 Only after the preceding checks pass, enable pipeline and landing together:
 
-```bash
+```console
 MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=1 \
 MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=1 \
 MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR="$HOME/.mac/work-package-bundles" \
@@ -326,7 +326,7 @@ Changing either the seed or allocation percentage requires a new revision.
 Read status with a read-scoped token and trigger one nonblocking pass only with
 an admin-scoped token:
 
-```bash
+```console
 curl -fsS -H "Authorization: Bearer $MAC_API_TOKEN" \
   "$MAC_URL/work-package-pipeline/status"
 curl -fsS -X POST -H "Authorization: Bearer $MAC_API_TOKEN" \
@@ -337,7 +337,7 @@ Before releasing real work, verify that status reports `enabled: true` with no
 configuration error. Use the checked-in canary helper in its default read-only
 mode to review the exact negative and positive plans:
 
-```bash
+```console
 scripts/work-package-canary.py --hub-url "$MAC_URL"
 ```
 

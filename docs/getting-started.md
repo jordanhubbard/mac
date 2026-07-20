@@ -102,7 +102,7 @@ Prerequisites:
 
 From the repository root:
 
-```bash
+```console
 cd ~/Src/mac
 python3 scripts/bootstrap-project.py
 PATH=.venv/bin:$PATH .venv/bin/python -m pytest
@@ -111,13 +111,13 @@ PATH=.venv/bin:$PATH .venv/bin/python -m pytest
 Create a local secret key. MAC uses this to protect secret records. Keep the
 value private.
 
-```bash
+```console
 export MAC_SECRET_KEY="$(openssl rand -base64 32)"
 ```
 
 Create a local database:
 
-```bash
+```console
 uv run mac --db mac.db init
 ```
 
@@ -138,7 +138,7 @@ discarding it. After `mac login`, execute the one-way transfer with
 
 Create a practice project and task:
 
-```bash
+```console
 uv run mac --db mac.db project create demo \
   --description "A safe local project for learning MAC" \
   --active
@@ -158,7 +158,7 @@ task yet. You have created the official work record.
 owner/lease, no per-task dispatch hold, and no project-level dispatch pause. A
 staged task is represented by `metadata.no_dispatch: true`:
 
-```bash
+```console
 uv run mac --db mac.db task create "Stage work for later" \
   --project demo \
   --description "Do not let the fleet auto-claim this yet." \
@@ -176,7 +176,7 @@ subject to dependencies, worker capability match, and project dispatch state.
 MAC agents do not watch arbitrary repositories. They work from dispatchable
 tasks in the hub ledger. The operator flow is:
 
-```bash
+```console
 # Repository-backed project: let MAC clone/analyze the repo and create the
 # onboarding task that authors .mac/project.yaml.
 uv run mac --db mac.db project onboard git@github.com:ORG/REPO.git --project my-project
@@ -214,7 +214,7 @@ uv run mac --db mac.db dispatch tick --limit 10
 Loop-mode agents can now claim matching work from `mac task ready`. To assign a
 specific task to a specific agent manually, use:
 
-```bash
+```console
 uv run mac --db mac.db task claim task_... agent_...
 uv run mac --db mac.db task start task_... agent_...
 ```
@@ -241,7 +241,7 @@ Inspect the records in the local demo database below. For a configured fleet,
 omit `--db mac.db` and use the selected hub profile (for example
 `mac --fleet my-fleet --json memory search ...`):
 
-```bash
+```console
 uv run mac --db mac.db --json memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
@@ -265,7 +265,7 @@ Use `mac login` when a new machine has the MAC CLI plus key-based SSH access to
 the hub. Supply a private identity and a verified known-hosts file (or a pinned
 `SHA256:` host fingerprint for a directly reachable hub):
 
-```bash
+```console
 mac login --ssh mac@hub.internal \
   --identity-file ~/.ssh/mac-my-fleet \
   --known-hosts-file ~/.ssh/mac-my-fleet-known-hosts \
@@ -292,7 +292,7 @@ file modes, and failure semantics.
 For a directly reachable hub, a scoped API token can still be provisioned out
 of band:
 
-```bash
+```console
 export MAC_API_URL=https://mac.example.internal
 export MAC_API_TOKEN=<scoped-client-token>
 
@@ -305,7 +305,7 @@ If the client already has a home-scoped `~/.mac/fleets.yaml` entry with a
 verified SSH route to the hub, it can refresh the fleet-scoped token and use
 the legacy fleet selector:
 
-```bash
+```console
 mac fleet sync-token --fleet my-fleet
 mac --fleet my-fleet diagnostics
 mac --fleet my-fleet task stats
@@ -321,7 +321,7 @@ enrollment and mode-`0600` profile credential above.
 
 Start the API:
 
-```bash
+```console
 MAC_SECRET_KEY="$MAC_SECRET_KEY" MAC_DB="$PWD/mac.db" \
   uv run uvicorn mac.api:app --reload --port 8789
 ```
@@ -334,7 +334,7 @@ http://127.0.0.1:8789/ui
 
 In another terminal, inspect the same state through the hub CLI:
 
-```bash
+```console
 mac --hub-url http://127.0.0.1:8789 project list
 mac --hub-url http://127.0.0.1:8789 task list
 ```
@@ -354,7 +354,7 @@ agent typically emits a `plan_steps` list in its evidence and the executor
 posts the children automatically (auto-decompose); the Hermes adapter exposes
 `mac-hermes add-child-task` for the same. For example, over the API:
 
-```bash
+```console
 curl -sX POST http://127.0.0.1:8789/tasks/task_.../children \
   -H 'Content-Type: application/json' \
   -d '{"children":[{"title":"Write the first draft","description":"Produce the first small deliverable."}]}'
@@ -413,7 +413,7 @@ a `mac.fleet_setup.v1` spec from scratch. The repo ships de-personalized samples
 under `deploy/fleet/samples/` (GKE is the worked example); your real, named fleet
 spec lives outside git in `~/.mac/specs/<fleet>.fleet.yaml`:
 
-```bash
+```console
 scripts/setup-fleet.py --list-samples                  # browse per-CSP samples
 scripts/setup-fleet.py --init-from gke --name my-gke   # -> ~/.mac/specs/my-gke.fleet.yaml
 $EDITOR ~/.mac/specs/my-gke.fleet.yaml                 # fill in the <placeholders>
@@ -431,26 +431,26 @@ sample-config mistakes, and the exact next commands.
 
 For a new hub:
 
-```bash
+```console
 make deploy ARGS="--new-hub horde --target horde@20.115.163.162:2201"
 ```
 
 Use `--ssh-port 2201` instead of an inline `:2201` when the target is an SSH
 alias or otherwise contains a colon:
 
-```bash
+```console
 make deploy ARGS="--new-hub horde --target horde@20.115.163.162 --ssh-port 2201"
 ```
 
 Re-run deployment for an existing hub:
 
-```bash
+```console
 make deploy HUB=horde
 ```
 
 The Make targets pick a Python 3.11+ `.venv/bin/python`, `python3.11`, `python3`, or `python` automatically:
 
-```bash
+```console
 make setup
 make deploy HUB=horde
 ```
@@ -465,7 +465,7 @@ runner that performs Git work. An explicit deploy token may be kept in the
 host-local `~/.mac/.env` (mode `0600`), never in `~/.mac/fleets.yaml` or a
 committed fleet spec:
 
-```bash
+```console
 # ~/.mac/.env -- placeholder only; supply the real value out of band.
 MAC_DEPLOY_GH_TOKEN=<github-token-authorized-for-the-organization>
 ```

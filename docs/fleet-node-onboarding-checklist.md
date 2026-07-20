@@ -45,7 +45,7 @@ Use these authorities in order:
 
 Set role-neutral shell variables while working through a node:
 
-```bash
+```console
 export FLEET=<fleet-name>
 export HUB=<hub-agent-name>
 export AGENT=<agent-name>
@@ -56,7 +56,7 @@ Create one held ledger task for the onboarding or recovery. Release it only
 when automatic dispatch is appropriate; host-only repair uses the separately
 authorized break-glass path.
 
-```bash
+```console
 mac task create "Onboard ${AGENT}" --project=mac --no-dispatch
 ```
 
@@ -75,7 +75,7 @@ task description, evidence, memory, or deploy manifest.
 - [ ] The route resolves portably and does not silently depend on
       `~/.ssh/config` or an interactive agent:
 
-```bash
+```console
 mac --json fleet ssh-spec \
   --fleet "$FLEET" --agent "$AGENT" --portable
 ```
@@ -87,7 +87,7 @@ mac --json fleet ssh-spec \
       the supported SCP transport rather than assuming SFTP is present.
 - [ ] If a setup spec exists, both validation stages pass before any deploy:
 
-```bash
+```console
 mac fleet validate --spec ~/.mac/specs/${FLEET}.fleet.yaml
 mac fleet doctor --spec ~/.mac/specs/${FLEET}.fleet.yaml
 ```
@@ -153,7 +153,7 @@ A credential sync does not repair any of these failures.
 - [ ] Coding credentials are synced from the workstation with the freshest
       interactive login only when the node report says they are needed:
 
-```bash
+```console
 mac --json fleet creds-status
 mac fleet creds-sync --fleet "$FLEET" --agent "$AGENT" --dry-run
 mac fleet creds-sync --fleet "$FLEET" --agent "$AGENT"
@@ -166,7 +166,7 @@ mac fleet creds-sync --fleet "$FLEET" --agent "$AGENT"
       Repair the credential source or authorization and let a real success
       supersede the failure; never fabricate a success record.
 
-```bash
+```console
 mac --json memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
@@ -184,7 +184,7 @@ remote retaining an authenticated URL.
       all fleet holds to repair one node.
 - [ ] Deploy one node, then verify it before continuing:
 
-```bash
+```console
 deploy/deploy-mac-fleet.sh --hub "$HUB" "$AGENT"
 ```
 
@@ -199,7 +199,7 @@ deploy/deploy-mac-fleet.sh --hub "$HUB" "$AGENT"
       supervisor restart from the worker group being killed.
 - [ ] Rollback is exercised or at least inspected before promotion:
 
-```bash
+```console
 ~/.mac/logs/rollback-latest.sh
 ```
 
@@ -224,7 +224,7 @@ the node returns on a different agent identity.
 - [ ] The runtime/build digest is non-null and belongs to the expected release
       bucket:
 
-```bash
+```console
 mac --json fleet snapshot
 mac --json fleet build-distribution
 mac --json agent list
@@ -259,7 +259,7 @@ a failed rollout.
 
 Inspect every non-completing canary before retrying:
 
-```bash
+```console
 mac task show <task-id>
 mac task summary <task-id>
 ```
@@ -336,7 +336,7 @@ fleet nodes.
 - [ ] Before replacing a legacy home, run the supported soul audit and preserve
       only intentional customizations:
 
-```bash
+```console
 mac fleet soul-audit --fleet "$FLEET" --agent "$AGENT"
 ```
 
@@ -389,7 +389,7 @@ the rollout pattern, not proof for its peers.
       are intentionally clear.
 - [ ] Repository refs reconcile cleanly:
 
-```bash
+```console
 mac repo refs status
 mac repo refs audit --repo .
 ```

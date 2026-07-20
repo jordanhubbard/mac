@@ -164,7 +164,7 @@ outcomes, measurement health, the comparable atomic projection, and explicit
 methodological limitations. Route and eligibility filters apply consistently
 to finalization outcomes through the package cohort assignment. For example:
 
-```bash
+```console
 curl -H "Authorization: Bearer $MAC_API_TOKEN" \
   'https://hub.example/work-package-telemetry?treatment_route=managed_synchronized&eligibility=eligible&since=2026-07-17T00:00:00Z'
 ```

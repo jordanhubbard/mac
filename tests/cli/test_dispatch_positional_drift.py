@@ -204,6 +204,67 @@ def test_cmd_review_decision_remote_dispatch_signature() -> None:
 
 
 # ---------------------------------------------------------------------------
+# machine and agent registration — RemoteDispatch accepts keyword-only fields
+# ---------------------------------------------------------------------------
+
+
+class _RegistrationCapture:
+    def __init__(self) -> None:
+        self.machine: dict | None = None
+        self.agent: dict | None = None
+
+    def register_machine(self, **kw):  # type: ignore[override]
+        self.machine = kw
+        return {"id": kw.get("machine_id") or "machine_test"}
+
+    def register_agent(self, **kw):  # type: ignore[override]
+        self.agent = kw
+        return {"id": kw.get("agent_id") or "agent_test"}
+
+
+def test_cmd_registration_uses_keyword_args_only(monkeypatch) -> None:
+    capture = _RegistrationCapture()
+    monkeypatch.setattr(cli, "_plane", lambda _args: capture)
+    monkeypatch.setattr(cli, "_print", lambda _value: None)
+
+    cli.cmd_machine_register(
+        Namespace(
+            hostname="host-test",
+            labels=None,
+            resources=None,
+            untrusted=False,
+            machine_id="machine_test",
+        )
+    )
+    cli.cmd_agent_register(
+        Namespace(
+            machine_id="machine_test",
+            name="writer",
+            capabilities="docs,python",
+            resources=None,
+            agent_id="agent_test",
+            hermes_instance_id=None,
+        )
+    )
+
+    assert capture.machine == {
+        "hostname": "host-test",
+        "labels": {},
+        "resources": {},
+        "trusted": True,
+        "machine_id": "machine_test",
+    }
+    assert capture.agent == {
+        "machine_id": "machine_test",
+        "name": "writer",
+        "capabilities": ["docs", "python"],
+        "resources": {},
+        "agent_id": "agent_test",
+        "hermes_instance_id": None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Local SQLite round-trip: review request smoke test
 # ---------------------------------------------------------------------------
 

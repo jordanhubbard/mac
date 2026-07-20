@@ -11,7 +11,7 @@
 > are below; see [`linear-bridge-spec-review.md`](linear-bridge-spec-review.md)
 > for the codex review notes.
 >
-> See also: [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md)
+> See also: [`docs/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md)
 > and the legacy import/repository registry section in
 > [`docs/production-deployment.md`](production-deployment.md).
 

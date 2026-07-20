@@ -36,7 +36,7 @@ require `--replacement-task`, and every automatically cleanable cancellation
 requires a reason. Audit also verifies that the replacement task has reached
 `completed`; merely naming an open or unavailable task cannot authorize cleanup.
 
-```bash
+```console
 mac task close task_old --cancelled \
   --disposition superseded \
   --replacement-task task_replacement \
@@ -57,7 +57,7 @@ with an active lifecycle record.
 Refresh the canonical base ref, then audit from a checkout that has access to
 the MAC hub and repository remote:
 
-```bash
+```console
 git fetch --prune origin
 mac --json repo refs audit --repo . --remote origin --base-ref origin/main
 ```
@@ -69,7 +69,7 @@ It does not update or delete remote refs. Classifications include `active`,
 
 Prune is also a dry-run unless `--execute` is supplied:
 
-```bash
+```console
 mac --json repo refs prune --repo . --remote origin
 mac --json repo refs prune --repo . --remote origin --execute --actor operator
 ```
@@ -112,7 +112,7 @@ mismatched canonical remote fails closed for that repository.
 
 Inspect the scheduler or request an immediate fleet-wide pass through the hub:
 
-```bash
+```console
 mac --json repo refs status
 mac --json repo refs reconcile --mode audit --actor operator
 mac --json repo refs reconcile --mode prune --actor operator

@@ -44,7 +44,7 @@ An older hub may not expose reason-CAS or batch-release routes. Bootstrap only
 the configured hub, while it is already operator-held, with the work-package
 pipeline disabled:
 
-```bash
+```console
 MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP=1 \
 MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0 \
 MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0 \
@@ -92,7 +92,7 @@ put credentials or authenticated URLs in this file.
 The file must be a regular, non-symlink file owned by the invoking user, be
 owner-readable, have no group/other permission bits, and be at most 1 MiB:
 
-```bash
+```console
 chmod 0600 /path/to/hold-adoptions.json
 ```
 
@@ -107,7 +107,7 @@ Resolve every target again from `~/.mac/fleets.yaml`, then name every selected
 agent explicitly. Supplying `--hold-adoptions` automatically enables
 `--require-release-all-selected`:
 
-```bash
+```console
 MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0 \
 MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=0 \
 MAC_DEPLOY_OPENSHELL=1 \

@@ -68,7 +68,7 @@ The container tests are marked `container_contract` and **skipped automatically*
 `TEST_CONTAINER_CONTRACT=1` is set and `docker compose` is available, so the normal
 contract suite stays hermetic.
 
-```bash
+```console
 # Build the executor image:
 docker build -f Dockerfile.e2e -t mac-executor-e2e:latest .
 

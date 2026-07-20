@@ -76,7 +76,7 @@ manifests already run `replicas: 2` against one Postgres — so hub failover is
 snapshot: WAL checkpoint → SQLite online backup → `integrity_check` → sha256
 manifest, with retention (`--keep-last`, default 14) and a ship hook:
 
-```bash
+```console
 MAC_LEDGER_BACKUP_SYNC_CMD='rsync -a "$MAC_LEDGER_SNAPSHOT_PATH"* standby:~/.mac/backups/ledger/' \
   mac-ledger-backup --db ~/.mac/mac.db --out ~/.mac/backups
 ```

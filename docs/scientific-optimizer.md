@@ -65,7 +65,7 @@ exhausted and are then rejected, never promoted on a tie.
 
 The scheduler is explicit at deployment time:
 
-```bash
+```console
 MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1
 MAC_SCIENTIFIC_OPTIMIZER_INTERVAL_SECONDS=300
 MAC_SCIENTIFIC_OPTIMIZER_INITIAL_DELAY_SECONDS=60
@@ -76,7 +76,7 @@ MAC_SCIENTIFIC_OPTIMIZER_AUTO_IMPROVE=1
 
 Inspect or run one cycle:
 
-```bash
+```console
 mac optimizer status
 mac optimizer tick
 ```
@@ -101,7 +101,7 @@ prevents repeated task generation.
 
 Policies and hypotheses can be registered without bypassing the evidence gate:
 
-```bash
+```console
 mac optimizer policy create baseline nanolang --parameters-file=baseline.json
 mac optimizer policy promote POLICY_ID --reason="registered baseline"
 mac optimizer policy create plan-first nanolang --parameters='{"plan_first":true}'

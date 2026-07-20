@@ -30,7 +30,7 @@ own internal bugs. Conflating all three is how the last two efforts
 
 `deploy/deploy-mac-fleet.sh:3995` runs:
 
-```sh
+```console
 git clone --quiet https://github.com/NousResearch/hermes-agent.git "$HERMES_DIR"
 ```
 

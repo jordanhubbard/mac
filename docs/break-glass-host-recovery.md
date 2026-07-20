@@ -28,14 +28,14 @@ host execution.
 
 Create or identify the recovery task, leaving it staged if desired:
 
-```bash
+```console
 mac task create "Repair the OpenShell worker launcher" --project=mac --no-dispatch
 ```
 
 Verify the target host and its coding route outside the broken sandbox, then
 authorize the exact pair:
 
-```bash
+```console
 mac task break-glass <task_id> <agent_id> \
   --reason="OpenShell launcher must be repaired from its trusted host" \
   --ttl-seconds=900
@@ -44,7 +44,7 @@ mac task break-glass <task_id> <agent_id> \
 The loop worker can claim that task even while the task and agent remain held.
 No broad `mac agent resume` is required. Inspect or revoke before claim with:
 
-```bash
+```console
 mac task break-glass-list <task_id>
 mac task break-glass-revoke <authorization_id> --reason="Recovery no longer required"
 ```

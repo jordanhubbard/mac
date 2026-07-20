@@ -79,7 +79,7 @@ arm in that assignment.
 
 Stage work before assigning it so the dispatcher cannot win the race:
 
-```bash
+```console
 mac task create "Add parser boundary tests" --project=nanolang --no-dispatch
 
 mac review experiment assign TASK_ID review-protocol-2026-07 \
@@ -99,14 +99,14 @@ selected by an external randomized policy whose propensity is known.
 
 Inspect one derived lifecycle:
 
-```bash
+```console
 mac review experiment observe TASK_ID
 ```
 
 Review findings start unresolved. After reproduction or downstream
 observation, append a durable label without altering the signed evidence:
 
-```bash
+```console
 mac review experiment outcome TASK_ID finding_validation confirmed \
   --finding-id=FINDING_ID \
   --severity-weight=2 \
@@ -140,7 +140,7 @@ cannot support a policy promotion.
 
 Derive an experiment report:
 
-```bash
+```console
 mac review experiment report review-protocol-2026-07 --project=nanolang
 ```
 
@@ -148,7 +148,7 @@ The default gate requires five terminal, reviewed tasks and three counted
 outcomes in every arm. Lower thresholds are useful for plumbing validation,
 but are not evidence of scientific superiority:
 
-```bash
+```console
 mac review experiment report review-protocol-2026-07 \
   --project=nanolang \
   --min-tasks-per-arm=2 \

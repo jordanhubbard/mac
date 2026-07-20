@@ -3,7 +3,7 @@
 > Status: draft **v2** 2026-05-28 — addresses codex review (see
 > [`job-per-task-roles-spec-review.md`](job-per-task-roles-spec-review.md)).
 > Supersedes the "Deployment-scaling" approach previously sketched in
-> [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md) Phase 5.
+> [`docs/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md) Phase 5.
 > See also: `src/mac/k8s/runner.py` (the existing
 > `build_job_spec` / `claim_and_launch_one` we're modifying).
 >

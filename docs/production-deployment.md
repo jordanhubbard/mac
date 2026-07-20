@@ -14,8 +14,8 @@ Three supported topologies:
    `MAC_DATABASE_URL`. The cluster itself (CloudNativePG, RDS, Cloud
    SQL, vendor-managed, etc.) is provisioned outside this repo and its
    DSN is supplied via the `mac-api-config` Secret. See
-   [`deploy/k8s/README.md`](../deploy/k8s/README.md) and
-   [`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md).
+   [`deploy/k8s/README.md`](https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md) and
+   [`docs/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md).
 
 `mac` is not designed for horizontal scale-out on SQLite. SQLite WAL handles
 concurrent reads well and serializes writes through filesystem locks — so
@@ -91,7 +91,7 @@ database variable is reintroduced.
 
 Generate a secret key once:
 
-```bash
+```console
 openssl rand -base64 48
 ```
 
@@ -111,7 +111,7 @@ See [env-config-reference.md](env-config-reference.md) for the full variable cat
 
 ## Systemd
 
-```bash
+```console
 # 1. Create the service user and data directory.
 sudo groupadd --system mac
 sudo useradd --system --gid mac --home-dir /var/lib/mac \
@@ -145,7 +145,7 @@ The unit binds to `127.0.0.1:8000`. Put a TLS-terminating reverse proxy
 First-time deployments should use the setup wizard instead of hand-editing
 deployment YAML:
 
-```bash
+```console
 make setup
 ```
 
@@ -159,7 +159,7 @@ hub token. It writes:
 
 To deploy after the wizard:
 
-```bash
+```console
 make deploy HUB=<hub-node>
 ```
 
@@ -175,7 +175,7 @@ example); a real, named fleet spec lives **outside git** in
 `~/.mac/specs/<fleet>.fleet.yaml`, created at install time by copying and
 customizing a sample. Never check a named fleet into the repo.
 
-```bash
+```console
 scripts/setup-fleet.py --list-samples                  # browse per-CSP samples
 scripts/setup-fleet.py --init-from gke --name my-gke   # -> ~/.mac/specs/my-gke.fleet.yaml
 $EDITOR ~/.mac/specs/my-gke.fleet.yaml                 # fill in the <placeholders>
@@ -215,7 +215,7 @@ network:
 
 Recommended LLM flow:
 
-```bash
+```console
 export NVIDIA_API_KEY=...
 
 mac fleet validate --spec fleet-setup.yaml
@@ -226,7 +226,7 @@ make setup ARGS="--spec fleet-setup.yaml --force"
 `make setup ARGS="--spec ..."` writes `~/.mac/fleets.yaml` and `~/.mac/.env`,
 then deploys the generated plan. To configure only:
 
-```bash
+```console
 make setup ARGS="--configure-only --spec fleet-setup.yaml --force"
 ```
 
@@ -250,7 +250,7 @@ How you reach it from a client machine depends on the network topology.
 
 For a directly reachable hub, the interim client setup is:
 
-```bash
+```console
 export MAC_API_URL=https://mac.example.internal
 export MAC_API_TOKEN=<scoped-client-token>
 mac diagnostics
@@ -267,7 +267,7 @@ inspection.
 
 Hub is directly routable — no tunnel needed:
 
-```bash
+```console
 # Confirm health
 curl http://<hub-host>:8789/health
 
@@ -304,7 +304,7 @@ bootstrap substitute.
 
 The normal client path is one command:
 
-```bash
+```console
 mac login --fleet my-fleet --profile my-fleet --client-id my-laptop
 mac login status --profile my-fleet
 mac task stats
@@ -326,7 +326,7 @@ portable.
 The commands below remain the low-level recovery procedure when diagnosing SSH
 or enrollment independently.
 
-```bash
+```console
 # Confirm the route is portable and does not depend on ~/.ssh/config.
 mac fleet ssh-spec --fleet my-fleet --agent hub --portable --json
 
@@ -347,7 +347,7 @@ With that tunnel open, use a second verified SSH session to invoke enrollment
 locally on the hub and stream the one-time token directly into the client
 profile store:
 
-```bash
+```console
 ssh -T -F /dev/null \
   -o BatchMode=yes \
   -o StrictHostKeyChecking=yes \
@@ -370,14 +370,14 @@ works immediately. For normal operation, renewal rotates and validates the
 bearer before replacing the local credential; revoking logout invalidates it
 before deleting local state:
 
-```bash
+```console
 mac login renew --profile my-fleet
 mac logout --profile my-fleet --revoke
 ```
 
 The equivalent low-level recovery commands are:
 
-```bash
+```console
 ssh -T horde@my-hub.cluster.local 'mac --json client renew my-laptop' \
   | mac client profile install - --profile my-fleet
 
@@ -404,7 +404,7 @@ defaults:
       auth_key_env: MAC_DEPLOY_TAILSCALE_AUTH_KEY
 ```
 
-```bash
+```console
 # Hub is reachable at its Tailscale IP, e.g. 100.x.x.x:8789
 curl http://100.x.x.x:8789/health
 make deploy HUB=<hub-node>
@@ -432,7 +432,7 @@ defaults:
       ip_prefix: "100.64.0.0/10"
 ```
 
-```bash
+```console
 # Hub reachable at its headscale-assigned IP or MagicDNS name
 curl http://hub.headscale.example.com:8789/health
 make deploy HUB=<hub-node>
@@ -446,7 +446,7 @@ headscale server on the hub node itself.
 
 For a configured fleet, use the Make deploy target:
 
-```bash
+```console
 make deploy HUB=<hub-node>
 ```
 
@@ -552,7 +552,7 @@ patch capability.
 
 To roll back the most recent deployment on a host:
 
-```bash
+```console
 ~/.mac/logs/rollback-latest.sh
 ```
 
@@ -569,7 +569,7 @@ installs that process as a service in `heartbeat` mode by default so hosts are
 visible in the configured hub registry without claiming imported ACC work
 prematurely:
 
-```bash
+```console
 mac-agent --url http://hub.example.internal:8789 --register \
   --agent-name worker-1 --hostname worker-1.local \
   --capabilities python,ops,review --resources '{"capacity":2}' \
@@ -648,7 +648,7 @@ review verdict must still verify the executor's work.
 
 Inspect the routing inputs and resulting review state:
 
-```bash
+```console
 mac --json memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50
@@ -697,14 +697,14 @@ an invalid `idle` heartbeat while the lease is active.
 For already-migrated or pre-upgrade rows that are stuck in `needs_review`, run
 the backlog tick against the hub:
 
-```bash
+```console
 curl -X POST 'http://hub.example.internal:8789/reviews/default/tick?limit=100&actor=operator'
 ```
 
 Before enabling executor-backed claiming, use `dry-run` mode to record routing
 candidates without creating leases:
 
-```bash
+```console
 MAC_DEPLOY_WORKER_MODE=dry-run
 MAC_DEPLOY_WORKER_REQUIRE_CANARY=1
 MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=mac-canary
@@ -717,7 +717,7 @@ canary work before loop mode is enabled.
 
 To enable executor-backed claiming from deploy config, set:
 
-```bash
+```console
 MAC_DEPLOY_WORKER_MODE=loop
 MAC_DEPLOY_WORKER_CAPABILITIES=ops,python,hermes,review
 MAC_DEPLOY_WORKER_REQUIRE_CANARY=1
@@ -756,7 +756,7 @@ round-trip sync is not part of the normal deployment path, and operators should
 not run `bd` for current MAC task lifecycle. Legacy Beads state is handled as a
 one-time import path:
 
-```bash
+```console
 mac task detect-beads <repo>
 mac task migrate-beads <repo> --project <project>
 ```
@@ -769,7 +769,7 @@ Repository-backed execution uses the project repository registry instead of a
 legacy bridge poller. Register or onboard repositories through the current
 project/repository commands:
 
-```bash
+```console
 mac project onboard <repo-url>                         # creates contract-authoring task
 mac bridge repository register <name> <path> --project <project>  # after .mac/project.yaml exists
 mac bridge repository repos
@@ -831,7 +831,7 @@ as result streams instead of being forced. Result streams use topic
 
 To broadcast a source update from the hub:
 
-```bash
+```console
 mac --db ~/.mac/mac.db agentbus repo-update agent_<hub> --all-agents
 ```
 
@@ -860,7 +860,7 @@ built.
 
 ## Docker Engine / Moby
 
-```bash
+```console
 docker build -t mac:latest .
 
 docker run -d --name mac \
@@ -883,7 +883,7 @@ PVC mounted at `/var/lib/mac`. Use a `ConfigMap` for non-secret env and a
 
 `mac.db` is a SQLite WAL database. Snapshot with SQLite's online backup:
 
-```bash
+```console
 sqlite3 /var/lib/mac/mac.db ".backup '/backups/mac-$(date +%Y%m%dT%H%M%SZ).db'"
 ```
 
@@ -942,7 +942,7 @@ supply the DSN via the `mac-api-config` Secret. Likewise, ArgoCD
 `Application` manifests are not shipped here; point one Application
 per kustomize tree from your platform-config repo if you sync with ArgoCD.
 
-```bash
+```console
 # 1. Create the namespace + operator-supplied Secret carrying the DSN
 #    and bearer tokens (or apply your ExternalSecret).
 kubectl create namespace mac
@@ -960,12 +960,12 @@ kubectl apply -k deploy/k8s/mac-runner
 ```
 
 The full apply order and ExternalSecret wiring are documented in
-[`deploy/k8s/README.md`](../deploy/k8s/README.md). The persistence layer
+[`deploy/k8s/README.md`](https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md). The persistence layer
 is portable across SQLite and Postgres because every `mac-api` SQL
 string is in SQLite dialect; the `PostgresStore` translates placeholders
 and provides a `json_extract` SQL function shim so the ~50 service
 modules need no per-backend branching. See
-[`docs/k8s-native-rewrite-plan.md`](k8s-native-rewrite-plan.md) for the
+[`docs/k8s-native-rewrite-plan.md`](archive/field-notes/k8s-native-rewrite-plan.md) for the
 Phase 3-5 roadmap.
 
 ## Troubleshooting
@@ -1005,7 +1005,7 @@ On pods where `supervisord` runs as root (PID 1) with a root-only control socket
 
 Start with the task and shared learning records:
 
-```bash
+```console
 mac --json task show task_...
 mac --json memory search \
   --record-type fleet_learning:repository_access \

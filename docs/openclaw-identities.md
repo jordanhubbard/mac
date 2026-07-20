@@ -33,7 +33,7 @@ It never falls back to a host Slack or Telegram SDK.
 
 ## Minimal shared-identity setup
 
-```bash
+```console
 mac communication identity configure mac-hive \
   --display-name "MAC Hive" --default
 
@@ -75,7 +75,7 @@ the same provider credentials.
 
 Any represented agent can enqueue a message without owning a provider token:
 
-```bash
+```console
 mac communication send channel:C012345 "Task completed" \
   --origin-agent-id agent_worker_1 \
   --channel slack \
@@ -84,7 +84,7 @@ mac communication send channel:C012345 "Task completed" \
 
 Useful inspection commands are:
 
-```bash
+```console
 mac communication identity list
 mac communication account list
 mac communication representation resolve agent_worker_1

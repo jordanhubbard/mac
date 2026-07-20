@@ -41,13 +41,13 @@ retaining the exact immutable digest as the deployment identity.
 Before publishing a candidate source revision, an operator can run the fleet's
 existing read-only preflight through the local wrapper:
 
-```bash
+```console
 install -d -m 0700 "$HOME/.mac/receipts"
 scripts/prepublish-fleet-qualification.py \
-  --hub rocky \
+  --hub hub \
   --fleets-config "$HOME/.mac/fleets.yaml" \
   --output "$HOME/.mac/receipts/prepublication-$(git rev-parse HEAD).json" \
-  bullwinkle natasha
+  worker-1 worker-2
 ```
 
 The wrapper executes this deployment interface without a mutating phase:

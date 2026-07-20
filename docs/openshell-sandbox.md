@@ -79,7 +79,7 @@ runs `live-confinement-probe.sh` inside a second throwaway sandbox and fails
 closed unless the runtime proves the expected filesystem, egress, privilege,
 seccomp, user-namespace, and raw-socket boundaries.
 
-```bash
+```console
 deploy/openshell/bootstrap-openshell.sh --enable --fail-closed
 docker info             # must be a real Docker Engine/Moby daemon, not Podman
 openshell gateway list  # gateway must be reachable
@@ -92,7 +92,7 @@ command reads the enabled Linux agents from `~/.mac/fleets.yaml` unless
 `--agent` is passed explicitly, defaults to dry-run, and preserves existing
 agent resources while setting only `resources.openshell_required`.
 
-```bash
+```console
 mac openshell reconcile --target-fleet <fleet>
 mac openshell reconcile --target-fleet <fleet> --apply --validated \
   --sandbox-id docker-openshell-smoke-$(date +%Y%m%d) \
@@ -107,7 +107,7 @@ truthful.
 
 ## Enable
 
-```bash
+```console
 cp deploy/openshell/mac-hermes-policy.yaml /etc/mac/openshell-policy.yaml
 $EDITOR /etc/mac/openshell-policy.yaml      # fill in __PLACEHOLDER__ tokens
 
@@ -141,7 +141,7 @@ mac-openshell-supervisor --agent-id agent_hub --policy "$MAC_OPENSHELL_POLICY" -
 3. `~/.mac/openshell/live-confinement-probe.log` ends with
    `CONFINEMENT_PROBE_OK`; bootstrap will not enable enforcement without it.
 4. Inspect orphan cleanup before applying it manually:
-   ```bash
+   ```console
    mac openshell sandbox-gc
    mac openshell sandbox-gc --apply
    ```
@@ -203,7 +203,7 @@ files before finishing. If an otherwise successful executor run is preserved
 with passing contract-test and CodeGraph evidence but is refused only at this
 boundary, inspect it without mutation first:
 
-```bash
+```console
 mac task recover-finalizer /path/to/task-workspace --json
 ```
 
@@ -221,7 +221,7 @@ The interrupted run leaves a partial `mac-evidence.json` (with a
 `finalizer_interrupted` marker) and a `finalizer-progress.json` stuck in a
 non-terminal status. Resume it the same way:
 
-```bash
+```console
 mac task recover-stalled-finalizer /path/to/task-workspace --json
 ```
 

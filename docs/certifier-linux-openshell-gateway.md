@@ -30,7 +30,7 @@ hub credentials, or landing credentials.
 2. Deploy the selected Linux certifier-gateway node with OpenShell enabled and
    fail closed:
 
-   ```bash
+   ```console
    MAC_DEPLOY_OPENSHELL=1 \
    MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE='ghcr.io/jordanhubbard/mac-openshell-runtime@sha256:<reviewed-digest>' \
    MAC_DEPLOY_OPENSHELL_ARGS='--enable --fail-closed' \
@@ -40,7 +40,7 @@ hub credentials, or landing credentials.
 3. On the Darwin hub, install the persistent tunnel using the resolved Linux
    `user@host` target:
 
-   ```bash
+   ```console
    ~/.mac/src/mac/deploy/openshell/install-certifier-gateway-tunnel.sh \
      --target <linux-user@resolved-host> \
      --openshell-bin ~/.mac/bin/openshell
@@ -52,7 +52,7 @@ hub credentials, or landing credentials.
 
 4. Persist the certifier-only endpoint on the hub during deployment:
 
-   ```bash
+   ```console
    MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT=http://127.0.0.1:17671 \
      deploy/deploy-mac-fleet.sh --hub <hub-agent> <hub-agent>
    ```
@@ -78,7 +78,7 @@ The canary helper requires the managed pipeline to be alive, so enable pipeline
 and landing together only after those gateway proofs pass, while the project is
 still paused and every worker remains held:
 
-```bash
+```console
 MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=1 \
 MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED=1 \
   deploy/deploy-mac-fleet.sh --hub <hub-agent> <hub-agent>
@@ -100,7 +100,7 @@ If either canary fails, keep every worker held and the project paused. Raise the
 Andon on any still-active canary package, then redeploy the hub with both
 switches explicitly disabled:
 
-```bash
+```console
 mac work-package pause <package-id> --plan-version 1 --epoch 1 \
   --reason "cut-over canary failed" --actor cutover-canary
 MAC_DEPLOY_WORK_PACKAGE_PIPELINE_ENABLED=0 \
@@ -121,6 +121,6 @@ returning success.
 
 Remove the tunnel only after disabling both pipeline and landing:
 
-```bash
+```console
 ~/.mac/src/mac/deploy/openshell/install-certifier-gateway-tunnel.sh --remove
 ```

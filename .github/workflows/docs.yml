@@ -1,0 +1,174 @@
+name: Documentation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: documentation-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  executable-book:
+    name: Executable book (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Install locked documentation dependencies
+        run: uv sync --extra docs --python 3.11
+      - name: Execute all 18 chapter contracts
+        run: uv run --extra docs python scripts/test-docs.py --receipt docs-execution-receipt.json
+      - name: Upload execution receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: docs-execution-${{ matrix.os }}
+          path: docs-execution-receipt.json
+          if-no-files-found: error
+
+  strict-html:
+    name: Generated reference and strict HTML
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+      DISABLE_MKDOCS_2_WARNING: "true"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Install locked documentation dependencies
+        run: uv sync --extra docs --python 3.11
+      - name: Reject stale generated references
+        run: uv run --extra docs python scripts/generate-docs-reference.py --check
+      - name: Build strict HTML
+        run: uv run --extra docs mkdocs build --strict --site-dir build/docs-site
+      - name: Upload rendered site
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: docs-html
+          path: build/docs-site/
+          if-no-files-found: error
+
+  live-boundaries:
+    name: Nightly live documentation boundaries
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: docker.io/library/postgres@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
+        env:
+          POSTGRES_USER: mac_docs
+          POSTGRES_PASSWORD: mac-docs-postgres-password
+          POSTGRES_DB: mac_docs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mac_docs -d mac_docs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+      MAC_TEST_PG_URL: postgresql://mac_docs:mac-docs-postgres-password@127.0.0.1:5432/mac_docs
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Install test and documentation dependencies
+        run: uv sync --extra dev --extra docs --python 3.11
+      - name: Exercise the PostgreSQL contract used by the deployment chapter
+        run: uv run --extra dev pytest -q -m postgres tests/test_postgres_live.py
+      - name: Validate Kubernetes manifests
+        run: uv run --extra dev pytest -q tests/test_k8s_manifests.py tests/test_k8s_bootstrap.py
+      - name: Create a live kind control plane
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc
+        with:
+          version: v0.31.0
+          cluster_name: mac-docs
+      - name: Server-validate both Kubernetes deployment overlays
+        run: |
+          kubectl create namespace mac
+          kubectl -n mac create secret generic mac-api-config \
+            --from-literal=MAC_DATABASE_URL="$MAC_TEST_PG_URL" \
+            --from-literal=MAC_SECRET_KEY="$MAC_SECRET_KEY" \
+            --from-literal=MAC_WORKER_TOKEN=docs-worker-token \
+            --from-literal=MAC_API_TOKENS='{}'
+          kubectl apply --server-side --dry-run=server -k deploy/k8s/mac-api
+          kubectl apply --server-side --dry-run=server -k deploy/k8s/mac-runner
+      - name: Set up QEMU for the documented ARM64 boundary
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        with:
+          platforms: arm64
+      - name: Execute the immutable main image on ARM64
+        run: >-
+          docker run --rm --platform linux/arm64
+          --entrypoint /opt/mac-venv/bin/mac
+          "ghcr.io/jordanhubbard/mac:git-${GITHUB_SHA}" --help
+
+  publish:
+    name: Publish versioned documentation
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [executable-book, strict-html]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Install locked documentation dependencies
+        run: uv sync --extra docs --python 3.11
+      - name: Configure publication identity
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin gh-pages:gh-pages || true
+      - name: Publish rolling development documentation
+        if: github.ref == 'refs/heads/main'
+        run: |
+          uv run --extra docs mike deploy --push --update-aliases dev
+          uv run --extra docs mike set-default --push dev
+      - name: Publish an immutable SemVer release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_VERSION#v}"
+          configured="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$version" = "$configured"
+          if uv run --extra docs mike list | grep -Eq "^${version}([[:space:]]|$)"; then
+            echo "documentation version already exists: $version" >&2
+            exit 1
+          fi
+          DOCS_CANONICAL_VERSION=latest \
+            uv run --extra docs mike deploy --push --update-aliases "$version" latest
+          uv run --extra docs mike set-default --push latest

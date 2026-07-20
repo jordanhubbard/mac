@@ -56,7 +56,7 @@ reclaimed after a configurable timeout (default 600 s).
 
 ### 1.2 Register the Platform Binding
 
-```bash
+```console
 mac platform-binding create \
   --hermes-instance-id <instance-id> \
   --platform slack \
@@ -70,7 +70,7 @@ is the channel ID.
 
 ### 1.3 Configure the Notifier Channel
 
-```bash
+```console
 mac notifier configure \
   --name ops-slack \
   --channel-type slack \
@@ -113,7 +113,7 @@ Send a message to the group first, then check the JSON response for
 
 ### 2.3 Register the Platform Binding
 
-```bash
+```console
 mac platform-binding create \
   --hermes-instance-id <instance-id> \
   --platform telegram \
@@ -142,7 +142,7 @@ webhook URL delivered through a `hermes` channel type.
 1. In Discord, go to **Server Settings > Integrations > Webhooks** and create a
    new webhook for the target channel. Copy the webhook URL.
 2. Store the URL as a MAC secret:
-   ```bash
+   ```console
    mac secrets set discord-webhook-url "<url>" \
      --scopes '{"agents": ["<hub-agent-id>"]}'
    ```
@@ -266,7 +266,7 @@ specification through the message channel.
 
 ### 7.1 Inspect Notification Status
 
-```bash
+```console
 mac notification list --status failed --limit 20
 mac notification show <notification-id>
 ```
@@ -285,7 +285,7 @@ Status values:
 
 Delivery failures emit a `notifier.delivery_failed` observability event:
 
-```bash
+```console
 mac observability events --name notifier.delivery_failed --limit 10
 ```
 
@@ -294,7 +294,7 @@ Successful deliveries emit `notifier.delivered` with the message IDs.
 ### 7.3 Validate Webhook Credentials
 
 **Slack**: Test with `curl`:
-```bash
+```console
 curl -X POST https://slack.com/api/chat.postMessage \
   -H "Authorization: Bearer xoxb-..." \
   -H "Content-Type: application/json" \
@@ -306,7 +306,7 @@ Check `"ok": true` in the response. Common errors:
 - `channel_not_found` — use the channel ID (starts with `C`), not the name.
 
 **Telegram**: Test with:
-```bash
+```console
 curl "https://api.telegram.org/bot<TOKEN>/sendMessage" \
   -d chat_id=<CHAT_ID> \
   -d text="test"
@@ -335,7 +335,7 @@ default) on the next `deliver_pending()` call. No manual intervention is
 required; however, if you see persistent `delivering` rows older than 10
 minutes, check that the notifier background tick is running:
 
-```bash
+```console
 mac service status notifier
 ```
 
@@ -350,7 +350,7 @@ means either:
 
 Enable verbose logging to trace target resolution:
 
-```bash
+```console
 MAC_LOG_LEVEL=debug mac notifier deliver --once
 ```
 

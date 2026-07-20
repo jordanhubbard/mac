@@ -2393,7 +2393,7 @@ def cmd_task_evidence(args: argparse.Namespace) -> None:
 def cmd_machine_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_machine(
-            args.hostname,
+            hostname=args.hostname,
             labels=_json_arg(args.labels, {}),
             resources=_json_arg(args.resources, {}),
             trusted=not args.untrusted,
@@ -2442,8 +2442,8 @@ def cmd_machine_show(args: argparse.Namespace) -> None:
 def cmd_agent_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_agent(
-            args.machine_id,
-            args.name,
+            machine_id=args.machine_id,
+            name=args.name,
             capabilities=_csv(args.capabilities),
             resources=_json_arg(args.resources, {}),
             agent_id=args.agent_id,

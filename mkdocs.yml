@@ -1,0 +1,138 @@
+site_name: MAC Documentation
+site_description: Production handbook for operating trustworthy fleets of AI agents.
+site_url: https://jordanhubbard.github.io/mac/
+repo_url: https://github.com/jordanhubbard/mac
+repo_name: jordanhubbard/mac
+edit_uri: edit/main/docs/
+copyright: Copyright the MAC contributors. Documentation is versioned with the software.
+strict: true
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Use light mode
+
+plugins:
+  - search
+  - redirects:
+      redirect_maps:
+        assessment-task-1b6783.md: archive/field-notes/assessment-task-1b6783.md
+        assessment-task-7023d6.md: archive/field-notes/assessment-task-7023d6.md
+        assessment-task-83f38e.md: archive/field-notes/assessment-task-83f38e.md
+        assessment-task-8bf378.md: archive/field-notes/assessment-task-8bf378.md
+        assessment-task-97627e.md: archive/field-notes/assessment-task-97627e.md
+        assessment-task-a33145.md: archive/field-notes/assessment-task-a33145.md
+        assessment-task-a608f4.md: archive/field-notes/assessment-task-a608f4.md
+        assessment-task-de3502.md: archive/field-notes/assessment-task-de3502.md
+        assessment-task-f6a813.md: archive/field-notes/assessment-task-f6a813.md
+        assessment-task-f9cd72.md: archive/field-notes/assessment-task-f9cd72.md
+        closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md: archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md
+        closeout-dreamrepair-5404b15-skill.md: archive/field-notes/closeout-dreamrepair-5404b15-skill.md
+        disposition-task-46eb6c-skill-env-prereqs.md: archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md
+        dream-finding-3dc2cf.md: archive/field-notes/dream-finding-3dc2cf.md
+        dream-finding-6d1b5b.md: archive/field-notes/dream-finding-6d1b5b.md
+        dream-finding-805aed7.md: archive/field-notes/dream-finding-805aed7.md
+        findings-crash-591645a3-startup-selftest-timeout.md: archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md
+        fleet-ide-workbench-plan.md: archive/field-notes/fleet-ide-workbench-plan.md
+        forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md: archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md
+        forensics-task-a32a35e90ab0434e8c7766057b268bc6.md: archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md
+        investigation-dream-skill-tool_or_skill_name-actionability.md: archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md
+        investigation-dreamrepair-5404b15-skill.md: archive/field-notes/investigation-dreamrepair-5404b15-skill.md
+        investigation-predispatch-conflict-5a43ad.md: archive/field-notes/investigation-predispatch-conflict-5a43ad.md
+        investigation-task-2284f3-env-prerequisite-false-positive.md: archive/field-notes/investigation-task-2284f3-env-prerequisite-false-positive.md
+        investigation-task-b6ddd8-skill-env-prereqs.md: archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md
+        k8s-native-rewrite-plan.md: archive/field-notes/k8s-native-rewrite-plan.md
+        mac-task-bd-parity-audit.md: archive/field-notes/mac-task-bd-parity-audit.md
+        metadata-sync-assessment.md: archive/field-notes/metadata-sync-assessment.md
+        prereq-task-403ed263.md: archive/field-notes/prereq-task-403ed263.md
+        prereq-task-e94f546c.md: archive/field-notes/prereq-task-e94f546c.md
+        prereq-task-fd2f34.md: archive/field-notes/prereq-task-fd2f34.md
+        quickstart-gap-analysis.md: archive/field-notes/quickstart-gap-analysis.md
+        scaling-plan.md: archive/field-notes/scaling-plan.md
+  - mike:
+      alias_type: redirect
+      canonical_version: !ENV [DOCS_CANONICAL_VERSION, dev]
+      version_selector: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  version:
+    provider: mike
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Book:
+      - "1. MAC as a System": book/01-system.md
+      - "2. Install and Start Locally": book/02-local-start.md
+      - "3. Projects and Tasks": book/03-projects-and-tasks.md
+      - "4. Machines and Agents": book/04-machines-and-agents.md
+      - "5. Evidence, Review, and Completion": book/05-evidence-review-completion.md
+      - "6. Hermes and the Fleet IDE": book/06-hermes-and-ide.md
+      - "7. Repository Contracts": book/07-repository-contracts.md
+      - "8. Plans, DAGs, and the Fast Lane": book/08-plans-and-dags.md
+      - "9. Heterogeneous Fleet Onboarding": book/09-fleet-onboarding.md
+      - "10. Identity, Credentials, and Secrets": book/10-identity-and-secrets.md
+      - "11. Review, Publication, and Ref Hygiene": book/11-publication-and-refs.md
+      - "12. Operating the Fleet": book/12-operations.md
+      - "13. Deployment Topologies": book/13-deployment-topologies.md
+      - "14. Qualified Images and Synchronized Cutover": book/14-images-and-cutover.md
+      - "15. Sandboxed Agent Runtimes": book/15-sandboxed-runtimes.md
+      - "16. APIs, AgentBus, and Integrations": book/16-apis-and-integrations.md
+      - "17. Learning, Evals, and Scaling": book/17-learning-evals-scaling.md
+      - "18. From Request to Production": book/18-capstone.md
+  - Reference:
+      - CLI: reference/cli.md
+      - HTTP API: reference/openapi.md
+      - Environment: env-config-reference.md
+      - Repository contract: repository-runtime-contract.md
+      - Fleet registry: fleet-registry-schema.md
+      - Documentation inventory: reference/documentation-inventory.md
+  - Runbooks:
+      - Production deployment: production-deployment.md
+      - Fleet node onboarding: fleet-node-onboarding-checklist.md
+      - Synchronized cutover: synchronized-fleet-cutover.md
+      - Hub availability: hub-availability.md
+      - Break-glass recovery: break-glass-host-recovery.md
+  - Architecture:
+      - Work-graph control plane: work-graph-control-plane.md
+      - Hermes boundary: hermes-boundary.md
+      - OpenShell sandbox: openshell-sandbox.md
+      - Historical archive: archive/index.md

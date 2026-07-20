@@ -11,7 +11,7 @@ explicitly and retire the local authority with `mac migrate local-ledger`.
 
 The command is read-only unless `--execute` is supplied:
 
-```bash
+```console
 mac --json migrate local-ledger
 ```
 
@@ -24,7 +24,7 @@ not recreated on the hub.
 
 For a non-default source file:
 
-```bash
+```console
 mac --json migrate local-ledger --source-db /path/to/mac.db
 ```
 
@@ -34,7 +34,7 @@ Establish a scoped client profile, then select that remote authority. Do not use
 global `--db`; `--source-db` identifies the source while `--profile`, `--fleet`,
 or `--hub-url` identifies the target.
 
-```bash
+```console
 mac login --fleet default
 mac --profile default --json migrate local-ledger --execute
 ```
@@ -64,7 +64,7 @@ hub copies remain safe for an idempotent retry.
 
 An already inactive legacy authority can be retired without a hub transfer:
 
-```bash
+```console
 mac --json migrate local-ledger --retire-inactive
 ```
 

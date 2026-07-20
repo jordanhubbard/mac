@@ -97,7 +97,7 @@ top bar. The renderer sees token-source labels only; token values loaded from
 
 The optional Electron package lives in `desktop/`:
 
-```bash
+```console
 make desktop-install
 make desktop-package
 ```

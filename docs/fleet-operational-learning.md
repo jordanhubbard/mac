@@ -91,7 +91,7 @@ helps agents apply the same lesson inside their implementation work.
 Read the records through the MAC API/CLI rather than opening the database or
 editing `.oompah/tasks`/task files:
 
-```bash
+```console
 mac --json memory search \
   --record-type fleet_learning:repository_access \
   --order desc --limit 50

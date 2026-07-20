@@ -80,7 +80,7 @@ executor behaves exactly as before (proven by `tests/test_openshell_sandbox.py`)
 > natively (kernel ≥ 5.13 for Landlock).
 
 1. Bootstrap OpenShell and its Docker-backed gateway:
-   ```bash
+   ```console
    deploy/openshell/bootstrap-openshell.sh --enable --fail-closed
    docker info             # must be Docker Engine/Moby, not Podman
    openshell gateway list  # must report the gateway reachable
@@ -89,12 +89,12 @@ executor behaves exactly as before (proven by `tests/test_openshell_sandbox.py`)
    (`__AGENT_USER__`, `__MAC_HUB_HOST__`/`__MAC_HUB_PORT__`, `__MODEL_GATEWAY_HOST__`)
    for your fleet, and make the Hermes runtime reachable inside the sandbox via a
    prebuilt image (`--from`) or upload (see `MAC_OPENSHELL_CREATE_ARGS`):
-   ```bash
+   ```console
    cp deploy/openshell/mac-hermes-policy.yaml /etc/mac/openshell-policy.yaml
    $EDITOR /etc/mac/openshell-policy.yaml
    ```
 3. Set the executor environment (on the worker / in the fleet agent config):
-   ```bash
+   ```console
    export MAC_OPENSHELL_SANDBOX=1
    export MAC_OPENSHELL_POLICY=/etc/mac/openshell-policy.yaml
    # make the runtime + workspace available inside the sandbox, e.g.:
@@ -135,7 +135,7 @@ To verify on a host with the production runtime:
    (`openshell logs <sandbox> --since 5m` shows `action=deny`); evidence is
    written to the workspace.
 4. Enable OCSF JSONL and confirm sandbox events flow into mac observations:
-   ```bash
+   ```console
    openshell settings set --global --key ocsf_json_enabled --value true
    ```
    then feed `/var/log/openshell-ocsf.*.log` through

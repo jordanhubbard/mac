@@ -94,7 +94,7 @@ def test_create_task_rejects_unknown_project_default_role(cp):
 
 Run:
 
-```bash
+```console
 pytest tests/test_control_plane.py::test_create_task_inherits_project_default_role \
        tests/test_control_plane.py::test_create_task_preserves_explicit_required_role \
        tests/test_control_plane.py::test_create_task_rejects_unknown_project_default_role -q
@@ -295,7 +295,7 @@ In `/Users/vikaspogu/Documents/git-repos/home-ops/components/ai/mac/config.yaml`
 
 Run:
 
-```bash
+```console
 pytest tests/test_control_plane.py::test_create_task_inherits_project_default_role \
        tests/test_control_plane.py::test_create_task_preserves_explicit_required_role \
        tests/test_control_plane.py::test_create_task_rejects_unknown_project_default_role \
@@ -310,14 +310,14 @@ Expected: all pass.
 
 In `mac` repo:
 
-```bash
+```console
 git add src/mac/services.py tests/test_control_plane.py
 git commit -m "tasks: inherit routing role from project defaults"
 ```
 
 In `home-ops` repo:
 
-```bash
+```console
 git add components/ai/mac/config.yaml
 git commit -m "mac: add task default roles for coding projects"
 ```
@@ -401,7 +401,7 @@ def test_review_verdict_validator_rejected_accepts_feedback():
 
 Run:
 
-```bash
+```console
 pytest tests/test_control_plane.py::test_verdict_value_unknown_fails_closed \
        tests/test_control_plane.py::test_review_verdict_validator_rejected_requires_feedback \
        tests/test_control_plane.py::test_review_verdict_validator_rejected_accepts_feedback -q
@@ -455,7 +455,7 @@ Expected: pass.
 
 - [ ] **Step 6: Commit**
 
-```bash
+```console
 git add src/mac/services.py src/mac/evidence_validators.py tests/test_control_plane.py
 git commit -m "review: fail closed on unknown verdicts"
 ```
@@ -556,7 +556,7 @@ def test_find_review_verdict_rejected_skips_repo_push_checks(cp):
 
 Run:
 
-```bash
+```console
 pytest tests/test_control_plane.py::test_find_review_verdict_rejected_requires_digest \
        tests/test_control_plane.py::test_find_review_verdict_rejected_skips_repo_push_checks -q
 ```
@@ -604,7 +604,7 @@ Expected: pass.
 
 - [ ] **Step 5: Commit**
 
-```bash
+```console
 git add src/mac/services.py tests/test_control_plane.py
 git commit -m "review: align verdict finder with validator"
 ```
@@ -692,7 +692,7 @@ def test_rejected_review_persists_feedback_and_reopens(cp):
 
 Run:
 
-```bash
+```console
 pytest tests/test_control_plane.py::test_rejected_review_persists_feedback_and_reopens -q
 ```
 
@@ -800,7 +800,7 @@ Expected: pass.
 
 - [ ] **Step 6: Commit**
 
-```bash
+```console
 git add src/mac/review_service.py tests/conftest.py tests/test_control_plane.py
 git commit -m "review: persist rejected feedback for retries"
 ```
@@ -817,13 +817,13 @@ git commit -m "review: persist rejected feedback for retries"
 
 In `deploy/codex-runner/mac-task-executor-opencode-review`, replace:
 
-```bash
+```console
 cp /etc/opencode/opencode.json "${XDG_CONFIG_HOME}/opencode/opencode.json"
 ```
 
 with:
 
-```bash
+```console
 OPENCODE_CONFIG_SRC="${MAC_OPENCODE_CONFIG_PATH:-/etc/opencode/opencode.json}"
 OPENCODE_CONFIG_DST="${XDG_CONFIG_HOME}/opencode/opencode.json"
 if [ -f "${OPENCODE_CONFIG_SRC}" ]; then
@@ -909,7 +909,7 @@ def test_opencode_review_rejected_event_stream(tmp_path: Path) -> None:
 
 Run:
 
-```bash
+```console
 pytest tests/test_opencode_review_executor.py::test_opencode_review_rejected_event_stream -q
 ```
 
@@ -1037,7 +1037,7 @@ Exit `0` after writing a usable signed or unsigned manifest.
 
 Run:
 
-```bash
+```console
 pytest tests/test_opencode_review_executor.py -q
 ```
 
@@ -1045,7 +1045,7 @@ Expected: pass.
 
 - [ ] **Step 6: Commit**
 
-```bash
+```console
 git add deploy/codex-runner/mac-task-executor-opencode-review tests/test_opencode_review_executor.py
 git commit -m "review: emit structured opencode verdicts"
 ```
@@ -1118,7 +1118,7 @@ def test_review_feedback_is_included_in_prompt_with_shell_safety(tmp_path: Path)
 
 Run:
 
-```bash
+```console
 pytest tests/test_opencode_build_executor.py::test_review_feedback_is_included_in_prompt_with_shell_safety -q
 ```
 
@@ -1178,7 +1178,7 @@ Expected: pass.
 
 - [ ] **Step 5: Commit**
 
-```bash
+```console
 git add deploy/codex-runner/mac-task-executor-opencode-build tests/test_opencode_build_executor.py
 git commit -m "executor: include review feedback in retry prompts"
 ```
@@ -1266,7 +1266,7 @@ def test_project_task_review_reject_retry_approve_publish_loop(cp):
 
 Run:
 
-```bash
+```console
 pytest tests/test_control_plane.py::test_project_task_review_reject_retry_approve_publish_loop -q
 ```
 
@@ -1276,7 +1276,7 @@ Expected: pass after previous tasks are complete.
 
 Run:
 
-```bash
+```console
 pytest tests/test_control_plane.py tests/test_opencode_review_executor.py tests/test_opencode_build_executor.py -q
 ```
 
@@ -1284,7 +1284,7 @@ Expected: pass.
 
 - [ ] **Step 4: Commit**
 
-```bash
+```console
 git add tests/test_control_plane.py
 git commit -m "tests: cover autonomous review retry loop"
 ```

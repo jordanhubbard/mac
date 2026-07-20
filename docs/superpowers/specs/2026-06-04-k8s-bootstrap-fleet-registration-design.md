@@ -182,7 +182,7 @@ Existing k8s bootstrap/runner tests must continue to pass
 
 After deploy with a `fleet:` block:
 
-```bash
+```console
 TOKEN=$(kubectl -n ai get secret mac-secret -o jsonpath='{.data.MAC_WORKER_TOKEN}' | base64 -d)
 curl -s -H "Authorization: Bearer $TOKEN" https://mac.<cluster-domain>/fleets | jq
 ```

@@ -43,7 +43,7 @@ operator killed the daemon). `mac` is still up.
 
 1. **Fetch the recovery payload.**
 
-   ```bash
+   ```console
    curl $MAC_URL/hermes-instances/<instance_id>/context
    ```
 

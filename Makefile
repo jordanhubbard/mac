@@ -30,6 +30,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchest
 	clean clean-cli clean-gui distclean run-gui \
 	install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage \
 	test-portfolio fault-replay sanity-test compatibility-test \
+	docs docs-install docs-serve docs-test docs-build docs-check docs-lab docs-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
 	desktop-install desktop-check desktop-package desktop-dist link-cli
 
@@ -241,6 +242,35 @@ test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI cont
 
 cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
 	@$(VENV)/bin/python scripts/cli-coverage.py
+
+# ---------------------------------------------------------------------------
+# Production documentation book.
+# ---------------------------------------------------------------------------
+
+docs: docs-check ## Build and verify the complete production documentation book.
+
+docs-install: require-python require-uv ## Install the locked documentation toolchain.
+	$(UV) sync --extra docs
+
+docs-serve: docs-install ## Preview the documentation site with live reload.
+	$(UV) run --extra docs mkdocs serve --dev-addr 127.0.0.1:8000
+
+docs-test: docs-install ## Execute every published shell example hermetically.
+	@mkdir -p build
+	$(UV) run --extra docs python scripts/test-docs.py --receipt build/docs-example-receipt.json
+
+docs-reference: docs-install ## Regenerate CLI and OpenAPI reference pages.
+	$(UV) run --extra docs python scripts/generate-docs-reference.py --write
+
+docs-build: docs-install ## Build strict production HTML.
+	$(UV) run --extra docs python scripts/generate-docs-reference.py --check
+	$(UV) run --extra docs mkdocs build --strict --site-dir build/docs-site
+
+docs-check: docs-test docs-build ## Run executable examples, reference drift, and strict HTML gates.
+
+docs-lab: docs-install ## Execute one chapter in the isolated docs lab (CHAPTER=1..18).
+	@test -n "$(CHAPTER)" || { echo "usage: make docs-lab CHAPTER=1" >&2; exit 2; }
+	$(UV) run --extra docs python scripts/test-docs.py --chapter "$(CHAPTER)" --verbose
 
 # ---------------------------------------------------------------------------
 # Canonical Fleet IDE compatibility targets.

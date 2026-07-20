@@ -39,7 +39,7 @@ leaving dashboard noise behind.
 
 Operators can inspect the ledger through:
 
-```bash
+```console
 mac --db ~/.mac/mac.db integrations findings
 mac --db ~/.mac/mac.db integrations observations
 ```
@@ -58,7 +58,7 @@ task ledger is the canonical execution store, and operators should use
 `mac task` for task lifecycle. Legacy Beads repositories are handled through
 read-only detection and one-way migration commands:
 
-```bash
+```console
 mac task detect-beads <repo>
 mac task migrate-beads <repo> --project <project>
 ```

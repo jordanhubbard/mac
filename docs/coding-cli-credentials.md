@@ -15,7 +15,7 @@ coding-CLI (claude / codex / cursor) authentication and model choice work.
    provider/protocol/auth/model proof.
 3. **Sync credentials on demand.**
 
-   ```bash
+   ```console
    mac fleet creds-status                # who has what; who NEEDS SYNC
    mac fleet creds-sync --fleet <name>   # push from THIS workstation
    ```
@@ -74,7 +74,7 @@ login from the machine you're actually using.
   (`hermes.gateway_model` in fleets.yaml / `MAC_HERMES_GATEWAY_MODEL`).
 - **Per task** — unobtrusive, one flag:
 
-  ```bash
+  ```console
   mac task create "port the parser" --model azure/anthropic/claude-haiku   # cheap
   mac task create "redesign locking" --model azure/anthropic/claude-opus   # strong
   ```
@@ -90,7 +90,7 @@ login from the machine you're actually using.
   and the agent/task/lease that spent it — so per-task and per-model cost is
   a query, not a guess:
 
-  ```bash
+  ```console
   mac observability list --name llm.route --limit 50
   ```
 
@@ -107,7 +107,7 @@ Declare those at creation and they are satisfied by a substantive
 `operator_result` (a real summary / structured findings / artifacts) — no
 diff, no branch:
 
-```bash
+```console
 mac task create "why is the review loop stalling?" --kind report
 mac task create "triage the failing GKE deploy"    --kind report
 ```

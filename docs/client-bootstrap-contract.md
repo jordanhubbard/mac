@@ -17,7 +17,7 @@ security contracts:
 
 For an explicit hub route:
 
-```bash
+```console
 mac login --ssh mac@hub.internal \
   --identity-file ~/.ssh/mac-production \
   --known-hosts-file ~/.ssh/mac-production-known-hosts \
@@ -26,7 +26,7 @@ mac login --ssh mac@hub.internal \
 
 Or consume the canonical route in `~/.mac/fleets.yaml`:
 
-```bash
+```console
 mac login --fleet production --profile production --client-id my-laptop
 ```
 
@@ -87,7 +87,7 @@ restarted from the pinned profile and its bearer is validated before the
 requested API call proceeds. `mac login status` is read-only and reports a dead,
 unreachable, or rejected session without exposing the token.
 
-```bash
+```console
 mac login status --profile production
 mac login renew --profile production
 mac logout --profile production --revoke
@@ -157,7 +157,7 @@ must never contain a host CA private key.
 
 Inspect the exact route without exposing key material:
 
-```bash
+```console
 mac fleet ssh-spec --fleet production --agent hub --portable --json
 ```
 
@@ -172,7 +172,7 @@ Electron bridge consume this same resolver.
 For a hub whose API listens only on `127.0.0.1:8789`, keep a verified tunnel
 open in one terminal:
 
-```bash
+```console
 ssh -N -L 8789:127.0.0.1:8789 \
   -i ~/.ssh/mac-production \
   -o UserKnownHostsFile=~/.ssh/mac-production-known-hosts \
@@ -184,7 +184,7 @@ ssh -N -L 8789:127.0.0.1:8789 \
 In another terminal, stream the one-time manifest directly into the secure
 profile installer so the token is not left in a temporary file:
 
-```bash
+```console
 ssh -T mac@hub.internal \
   'mac --json client enroll my-laptop \
     --name "My laptop" \
@@ -214,7 +214,7 @@ returns the token.
 
 Renewal rotates the credential rather than extending the old bearer:
 
-```bash
+```console
 ssh -T mac@hub.internal \
   'mac --json client renew my-laptop' \
   | mac client profile install - --profile production
@@ -222,7 +222,7 @@ ssh -T mac@hub.internal \
 
 Revoke on the hub, then remove local state:
 
-```bash
+```console
 ssh -T mac@hub.internal 'mac client revoke my-laptop'
 mac client profile remove production
 ```
@@ -240,7 +240,7 @@ The bounded migration command can import an existing fleet route and token into
 the separated profile layout, but it refuses unless the administrator
 authority is acknowledged:
 
-```bash
+```console
 mac client profile migrate-legacy \
   --fleet production \
   --allow-legacy-admin-token

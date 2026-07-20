@@ -17,8 +17,12 @@ personality and memory, then let that agent create durable work that a broader
 fleet can execute, review, publish, and recover.
 
 If you are new to the project, start with the
-[MAC Quickstart](docs/getting-started.md). It explains the idea, vocabulary, and
-first local commands before fleet deployment.
+[production documentation book](docs/index.md) or read the
+[versioned HTML edition](https://jordanhubbard.github.io/mac/). It begins with
+the system model and local operation, then advances through fleet deployment,
+security, review, publication, and a complete request-to-production exercise.
+Every chapter's shell example is executed by `make docs-check` as part of the
+documentation build.
 
 ## Acknowledgements and Lineage
 

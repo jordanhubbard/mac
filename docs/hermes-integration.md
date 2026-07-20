@@ -59,7 +59,7 @@ existence, sizes, and mtimes; file contents are never returned.
 
 The report is exposed at:
 
-```bash
+```console
 curl $MAC_URL/startup/hermes
 ```
 
@@ -147,7 +147,7 @@ durable task objects, not as local state to copy.
 
 The same contract is available from:
 
-```bash
+```console
 mac hermes work-context <hermes_instance_id>
 mac-hermes work-context <hermes_instance_id>
 mac-hermes tasks --state open
@@ -176,7 +176,7 @@ adapter.register_project_repository(
 adapter.list_project_repositories()
 ```
 
-```bash
+```console
 mac project create nanolang --active
 mac project list
 mac project show nanolang
@@ -200,7 +200,7 @@ adapter.agent_detail(agent_id)
 adapter.agent_identity(agent_id)
 ```
 
-```bash
+```console
 mac-hermes agents
 mac-hermes agent-detail <agent_id>
 mac-hermes agent-identity <agent_id>
@@ -213,7 +213,7 @@ the bridge:
 proof = adapter.runtime_proof(registration["hermes_instance"]["id"])
 ```
 
-```bash
+```console
 mac hermes runtime-proof <hermes_instance_id>
 mac-hermes runtime-proof <hermes_instance_id>
 ```
@@ -300,7 +300,7 @@ adapter.request_review(task_id, reviewer_agent_id)
 adapter.publish_task(task_id, "git://main", reviewer_agent_id, evidence_id=evidence_id)
 ```
 
-```bash
+```console
 mac-hermes tasks --state open
 mac-hermes claim <task_id> <agent_id>
 mac-hermes claim-next <agent_id> --dry-run
