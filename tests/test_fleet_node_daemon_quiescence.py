@@ -8,9 +8,11 @@ production functions without running an entire node deployment.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import stat
 import subprocess
 import sys
@@ -435,6 +437,39 @@ def _run_quiescence(
         (mac_bin / "openshell").symlink_to(fake_bin / "openshell")
     else:
         _write_executable(mac_bin / "openshell", openshell_source)
+    canonical_openshell = mac_bin / "openshell"
+    cli_sha256 = hashlib.sha256(canonical_openshell.read_bytes()).hexdigest()
+    reviewed_dir = mac_home / "openshell"
+    reviewed_dir.mkdir(mode=0o700)
+    reviewed_dir.chmod(0o700)
+    host_arch = {"arm64": "aarch64", "amd64": "x86_64"}.get(
+        platform.machine().lower(), platform.machine().lower()
+    )
+    receipt = reviewed_dir / "reviewed-cli.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema": "mac.reviewed_openshell_cli.v1",
+                "status": "published",
+                "version": "0.0.72",
+                "os": platform.system().lower(),
+                "arch": host_arch,
+                "asset": "openshell-test-fixture",
+                # The behavioral fixture's reviewed asset is the exact fake CLI
+                # installed above, so both evidence digests are truthful.
+                "asset_sha256": cli_sha256,
+                "cli_path": str(canonical_openshell),
+                "cli_sha256": cli_sha256,
+                "recorded_at": "2026-07-20T00:00:00Z",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipt.chmod(0o600)
+    receipt_sha256 = hashlib.sha256(receipt.read_bytes()).hexdigest()
     _write_executable(mac_bin / "openclaw-gateway-stop", _fake_stop_wrapper_source())
     _write_executable(fake_bin / "podman", _fake_runtime_source("podman"))
     if podman_docker_symlink:
@@ -468,6 +503,10 @@ def _run_quiescence(
         "FLEET_NAME=mac\n"
         f"PY={_shell_quote(sys.executable)}\n"
         f"PYTHON_BIN={_shell_quote(sys.executable)}\n"
+        "export MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION=0.0.72\n"
+        f"export MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256={cli_sha256}\n"
+        f"export MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256={cli_sha256}\n"
+        f"export MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256={receipt_sha256}\n"
         f"DOCKER_BIN={_shell_quote(str(fake_bin / 'docker'))}\n"
         f"PODMAN_BIN={_shell_quote(str(fake_bin / 'podman'))}\n"
         "CONTAINER_RUNTIME_PATHS=(\"$DOCKER_BIN\" \"$PODMAN_BIN\")\n"
@@ -688,12 +727,14 @@ def test_private_sandbox_name_wins_and_stop_precedes_exact_delete(tmp_path: Path
     _assert_no_secret(run)
 
 
-def test_production_style_openshell_symlink_to_0755_binary_is_accepted(
+def test_legacy_openshell_symlink_to_0755_binary_is_rejected(
     tmp_path: Path,
 ) -> None:
     run = _run_quiescence(tmp_path, openshell_symlink=True)
-    _assert_success_marker(run)
-    assert f"openshell:sandbox delete {SANDBOX}" in _call_lines(run)
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    assert "reviewed OpenShell CLI canonical path is indirect" in run.result.stderr
+    assert f"openshell:sandbox delete {SANDBOX}" not in _call_lines(run)
 
 
 def test_runtime_env_is_parsed_not_sourced_and_does_not_disclose_secrets(

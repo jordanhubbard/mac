@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+REVIEWED_ASSETS = ROOT / "deploy" / "openshell" / "reviewed-cli-assets.sh"
 COMPAT_REVIEW = ROOT / "docs" / "security" / "openshell-0.0.72-compatibility-review.mdx"
 NEMOCLAW_COMPOSE = ROOT / "deploy" / "nemoclaw" / "docker-compose.yaml"
 NEMOCLAW_RUNBOOK = ROOT / "deploy" / "nemoclaw" / "RUNBOOK.md"
@@ -53,9 +54,12 @@ def test_nemoclaw_compose_enforces_openshell_required():
 
 
 def test_mac_fleet_pin_is_0_0_72():
-    """MAC's bootstrap script pins OpenShell at 0.0.72 (not 0.0.62)."""
-    text = BOOTSTRAP.read_text(encoding="utf-8")
-    assert 'OPENSHELL_VERSION="${OPENSHELL_VERSION:-0.0.72}"' in text
+    """The centralized reviewed-asset registry pins the fleet at 0.0.72."""
+    registry = REVIEWED_ASSETS.read_text(encoding="utf-8")
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    assert 'OPENSHELL_REVIEWED_CLI_VERSION="0.0.72"' in registry
+    assert 'OPENSHELL_VERSION="${OPENSHELL_VERSION:-$OPENSHELL_REVIEWED_CLI_VERSION}"' in bootstrap
+    assert '. "$OPENSHELL_ASSET_REGISTRY"' in bootstrap
 
 
 def test_mac_openshell_reconcile_default_version_is_0_0_72():

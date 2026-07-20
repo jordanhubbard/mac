@@ -301,6 +301,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED` | bool | consumer-defined | deployment | Deployment setting: deploy require release all selected. |
 | `MAC_DEPLOY_RESTART_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy restart generation. |
 | `MAC_DEPLOY_REV` | str | consumer-defined | deployment | Deployment setting: deploy rev. |
+| `MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy reviewed openshell asset sha256. |
+| `MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy reviewed openshell cli sha256. |
+| `MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256` | str | consumer-defined | deployment | Deployment setting: deploy reviewed openshell receipt sha256. |
+| `MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION` | str | consumer-defined | deployment | Deployment setting: deploy reviewed openshell version. |
 | `MAC_DEPLOY_REVIEWED_TOOL_ASSETS` | str | consumer-defined | deployment | Deployment setting: deploy reviewed tool assets. |
 | `MAC_DEPLOY_ROLLBACK_SUPERVISOR_HELPER` | str | consumer-defined | deployment | Deployment setting: deploy rollback supervisor helper. |
 | `MAC_DEPLOY_ROUTER_AUDIO_UPSTREAM` | str | consumer-defined | deploy-router | Deploy Router setting: deploy router audio upstream. |
@@ -680,6 +684,10 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PHASE1_LOCAL_RESTORE_MANIFEST` | str | consumer-defined | core | Core setting: phase1 local restore manifest. |
 | `MAC_PHASE1_MEDIA_READINESS_SECONDS` | int | consumer-defined | core | Core setting: phase1 media readiness seconds. |
 | `MAC_PHASE1_OS` | str | consumer-defined | core | Core setting: phase1 os. |
+| `MAC_PHASE1_OSH_ASSET_SHA` | str | consumer-defined | core | Core setting: phase1 osh asset sha. |
+| `MAC_PHASE1_OSH_CLI_SHA` | str | consumer-defined | core | Core setting: phase1 osh cli sha. |
+| `MAC_PHASE1_OSH_RECEIPT_SHA` | str | consumer-defined | core | Core setting: phase1 osh receipt sha. |
+| `MAC_PHASE1_OSH_VERSION` | str | consumer-defined | core | Core setting: phase1 osh version. |
 | `MAC_PHASE1_POLL_SECONDS` | int | consumer-defined | core | Core setting: phase1 poll seconds. |
 | `MAC_PHASE1_RECEIPT_PATH` | str | consumer-defined | core | Core setting: phase1 receipt path. |
 | `MAC_PHASE1_RESTORE_ARTIFACT_DIR` | str | consumer-defined | core | Core setting: phase1 restore artifact dir. |

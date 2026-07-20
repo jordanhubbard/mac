@@ -2657,6 +2657,149 @@ printf '%s|%s\n' "$result" "$COHORT_JOURNAL_ACTIVE"
     assert events.read_text(encoding="utf-8").splitlines() == ["verify"]
 
 
+def test_recovery_route_accepts_endpoint_helper_comparison_envelope(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    verify = (
+        "verify_cohort_recovery_routes() {"
+        + deploy.split("verify_cohort_recovery_routes() {", 1)[1].split(
+            "\n}\n\nrecover_committed_cohort_node", 1
+        )[0]
+        + "\n}"
+    )
+    digest = "a" * 64
+    identity = {
+        "schema": "mac.fleet_endpoint_identity.v1",
+        "adapter": "ssh-machine",
+        "authority": {
+            "ssh_host_key_sha256": digest,
+            "instance_id_kind": "machine-id",
+            "instance_id_sha256": digest,
+        },
+        "observation": {},
+    }
+    status = tmp_path / "status.json"
+    recovery = tmp_path / "recovery.json"
+    observed = tmp_path / "observed.json"
+    diagnostics = tmp_path / "diagnostics"
+    status.write_text(
+        json.dumps(
+            {
+                "journal": {
+                    "epoch_id": "fixture-epoch",
+                    "source_commit": "b" * 40,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    recovery.write_text(
+        json.dumps(
+            {
+                "direction": "rollback",
+                "hub_recovery": {"action": "none"},
+                "candidates": [
+                    {"agent_name": "natasha", "route_identity": identity}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observed.write_text(json.dumps(identity), encoding="utf-8")
+    observed.chmod(0o600)
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+PYTHON_BIN={shlex.quote(sys.executable)}
+ENDPOINT_IDENTITY_HELPER={shlex.quote(str(ROOT / 'deploy' / 'fleet-endpoint-identity.py'))}
+OBSERVED_IDENTITY={shlex.quote(str(observed))}
+SSH_CONTROL_REQUIRED=0
+start_ssh_control_master() {{ return 0; }}
+write_live_endpoint_identity() {{ cp -f "$OBSERVED_IDENTITY" "$2"; chmod 0600 "$2"; }}
+persist_cohort_recovery_route_mismatch() {{ printf '%s\n' "$*" >> {shlex.quote(str(diagnostics))}; }}
+{verify}
+set +e
+if verify_cohort_recovery_routes {shlex.quote(str(status))} {shlex.quote(str(recovery))}; then result=0; else result=$?; fi
+printf '%s|%s\n' "$result" "$SSH_CONTROL_REQUIRED"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "0|1", result.stderr
+    assert not diagnostics.exists()
+
+
+def test_recovery_route_mismatch_persists_wrapped_helper_comparison(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    persist = (
+        "persist_cohort_recovery_route_mismatch() {"
+        + deploy.split("persist_cohort_recovery_route_mismatch() {", 1)[1].split(
+            "\n}\n\nverify_cohort_recovery_routes", 1
+        )[0]
+        + "\n}"
+    )
+    status = tmp_path / "status.json"
+    comparison = tmp_path / "comparison.json"
+    status.write_text(
+        json.dumps(
+            {
+                "journal": {
+                    "epoch_id": "fixture-epoch",
+                    "source_commit": "b" * 40,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    comparison.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "comparison": {
+                    "schema": "mac.fleet_endpoint_identity_comparison.v1",
+                    "adapter": "ssh-machine",
+                    "same_resource": False,
+                    "same_observation": True,
+                    "recovery_allowed": False,
+                    "generic_route_recovery_allowed": False,
+                    "requires_workload_adapter": False,
+                    "mismatches": ["authority.ssh_host_key_sha256"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    tmp_path.chmod(0o700)
+    snippet = f"""set -u
+PYTHON_BIN={shlex.quote(sys.executable)}
+COHORT_JOURNAL_DIR={shlex.quote(str(tmp_path))}
+{persist}
+persist_cohort_recovery_route_mismatch {shlex.quote(str(status))} {shlex.quote(str(comparison))} node natasha
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    diagnostic = Path(result.stdout.strip())
+    assert diagnostic.parent == tmp_path
+    assert diagnostic.stat().st_mode & 0o777 == 0o600
+    payload = json.loads(diagnostic.read_text(encoding="utf-8"))
+    assert payload == {
+        "schema": "mac.fleet_recovery_route_mismatch.v1",
+        "epoch_id": "fixture-epoch",
+        "source_commit": "b" * 40,
+        "role": "node",
+        "agent": "natasha",
+        "adapter": "ssh-machine",
+        "same_resource": False,
+        "same_observation": True,
+        "recovery_allowed": False,
+        "generic_route_recovery_allowed": False,
+        "requires_workload_adapter": False,
+        "mismatches": ["authority.ssh_host_key_sha256"],
+        "observed_at": payload["observed_at"],
+    }
+
+
 def test_typed_prepare_and_composite_rollback_are_journal_ordered():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     typed = deploy.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]

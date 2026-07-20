@@ -3553,6 +3553,54 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy reviewed openshell asset sha256.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy reviewed openshell cli sha256.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy reviewed openshell receipt sha256.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Deployment setting: deploy reviewed openshell version.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy reviewed tool assets.",
     "family": "deployment",
     "name": "MAC_DEPLOY_REVIEWED_TOOL_ASSETS",
@@ -7205,7 +7253,8 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "deploy/openshell/reviewed-cli.py"
     ],
     "type": "str"
   },
@@ -8125,6 +8174,50 @@
     "description": "Core setting: phase1 os.",
     "family": "core",
     "name": "MAC_PHASE1_OS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 osh asset sha.",
+    "family": "core",
+    "name": "MAC_PHASE1_OSH_ASSET_SHA",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 osh cli sha.",
+    "family": "core",
+    "name": "MAC_PHASE1_OSH_CLI_SHA",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 osh receipt sha.",
+    "family": "core",
+    "name": "MAC_PHASE1_OSH_RECEIPT_SHA",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: phase1 osh version.",
+    "family": "core",
+    "name": "MAC_PHASE1_OSH_VERSION",
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh"

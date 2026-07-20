@@ -3402,7 +3402,8 @@ def test_fleet_deploy_forwards_fail_closed_work_package_activation():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
     )
-    assert 'ln -sf "$cli" "$MAC_HOME/bin/openshell"' in bootstrap
+    assert 'python3 "$helper" install-archive' in bootstrap
+    assert 'ln -sf "$cli" "$MAC_HOME/bin/openshell"' not in bootstrap
 
 
 def test_fleet_deploy_reconciles_explicit_optional_openshell_disable():

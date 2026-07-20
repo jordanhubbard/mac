@@ -125,7 +125,15 @@ HUB_EPOCH_CLIENT="$ROOT/deploy/fleet-release-epoch-client.py"
 HUB_EPOCH_MATERIAL_HELPER="$ROOT/deploy/fleet-release-epoch-material.py"
 PREREQUISITE_RECEIPT_HELPER="$ROOT/deploy/fleet-prerequisite-receipts.py"
 NODE_FINALIZER_HELPER="$ROOT/deploy/fleet-node-finalize.py"
+REVIEWED_OPENSHELL_CLI_HELPER="$ROOT/deploy/openshell/reviewed-cli.py"
+REVIEWED_OPENSHELL_ASSET_REGISTRY="$ROOT/deploy/openshell/reviewed-cli-assets.sh"
 PHASE1_DAEMON_FUNCTIONS="$TMPDIR_LOCAL/daemon-resource-quiescence-functions.sh"
+[ -r "$REVIEWED_OPENSHELL_ASSET_REGISTRY" ] || {
+  echo "ERROR: reviewed OpenShell CLI asset registry is missing" >&2
+  exit 1
+}
+# shellcheck source=deploy/openshell/reviewed-cli-assets.sh
+. "$REVIEWED_OPENSHELL_ASSET_REGISTRY"
 CONFIGURED_AGENT_IDS=""
 GIT_REV="$(git -C "$ROOT" rev-parse HEAD)"
 GIT_URL="$(git -C "$ROOT" config --get remote.origin.url || true)"
@@ -168,6 +176,7 @@ NEW_HUB_HEADSCALE_LOGIN_SERVER="${MAC_DEPLOY_NEW_HUB_HEADSCALE_LOGIN_SERVER:-}"
 NEW_HUB_HEADSCALE_PREAUTH_KEY="${MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY:-}"
 REQUESTED_AGENTS=()
 LEGACY_HUB_BOOTSTRAP=0
+PREPARE_REVIEWED_OPENSHELL_CLI=0
 
 if [ -n "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}" ]; then
   [[ "$MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE" =~ ^ghcr\.io/jordanhubbard/mac-openshell-runtime@sha256:[0-9a-f]{64}$ ]] || {
@@ -216,6 +225,7 @@ Usage:
                             [--require-release-all-selected]
                             [--successor-hold-reason <reason>] [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap <hub-node>
+  deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-reviewed-openshell-cli [agent ...]
   deploy/deploy-mac-fleet.sh --new-hub <hub-node> --target user@host[:port] [--ssh-port <port>]
                             [--fleet-name <name>] [--control-port <port>]
                             [--hub-url <url>] [--home-channel <channel>]
@@ -262,6 +272,11 @@ must advertise the distinct POST /agents/dispatch-hold/transition-batch route.
 --legacy-hub-bootstrap is a one-use, single-node, pre-held upgrade path for a
 hub that does not yet expose the typed epoch API. It leaves the hub held; the
 next normal invocation must include that hub in a typed cohort and commit it.
+
+--prepare-reviewed-openshell-cli is an explicit prerequisite repair operation.
+It performs no cohort transaction: all selected nodes are classified read-only
+first, then only managed legacy nodes receive the exact reviewed CLI asset and
+owner-private receipt. Run the normal typed deployment separately afterward.
 USAGE
 }
 
@@ -327,6 +342,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --legacy-hub-bootstrap)
       LEGACY_HUB_BOOTSTRAP=1
+      shift
+      ;;
+    --prepare-reviewed-openshell-cli)
+      PREPARE_REVIEWED_OPENSHELL_CLI=1
       shift
       ;;
     --ssh-port)
@@ -4403,6 +4422,244 @@ node_route_identity_sha256() {
   sha256_file "$(node_route_identity_file "$1")"
 }
 
+reviewed_openshell_cli_status_file() {
+  printf '%s/reviewed-openshell-cli-%s.json\n' \
+    "$TMPDIR_LOCAL" "$(stable_worker_agent_id "$1")"
+}
+
+run_remote_reviewed_openshell_cli_helper() {
+  local action="$1" agent="$2" os_kind="$3" required="$4" output="$5"
+  local ssh_parts=() ssh_args=() ssh_target item last_index command spec identity_spec
+  local -a helper_args=() identity_specs=()
+  case "$action" in
+    preflight|migrate) ;;
+    *) echo "ERROR: invalid reviewed OpenShell CLI action" >&2; return 2 ;;
+  esac
+  [ -r "$REVIEWED_OPENSHELL_CLI_HELPER" ] || {
+    echo "ERROR: reviewed OpenShell CLI helper is missing" >&2
+    return 1
+  }
+  while IFS= read -r spec; do
+    helper_args+=(--asset-spec "$spec")
+  done < <(reviewed_openshell_cli_specs)
+  while IFS= read -r identity_spec; do
+    identity_specs+=("$identity_spec")
+  done < <(reviewed_openshell_cli_identity_specs)
+  command="python3 - $(shell_quote "$action") --mac-home $(shell_quote '~/.mac') --expected-os $(shell_quote "$os_kind") --version $(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") --base-url $(shell_quote "$OPENSHELL_REVIEWED_CLI_BASE_URL")"
+  for item in "${helper_args[@]}"; do
+    command+=" $(shell_quote "$item")"
+  done
+  case "$(normalize_boolean_token "$required")" in
+    1|true|yes|on) command+=" --required" ;;
+  esac
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+    "${ssh_args[@]}" "$ssh_target" "$command" \
+      < "$REVIEWED_OPENSHELL_CLI_HELPER" > "$output"; then
+    rm -f "$output"
+    echo "ERROR: ${agent}: reviewed OpenShell CLI ${action} failed" >&2
+    return 1
+  fi
+  chmod 0600 "$output"
+  if ! "$PYTHON_BIN" - "$output" "$action" "$os_kind" "$required" \
+      "$OPENSHELL_REVIEWED_CLI_VERSION" "${identity_specs[@]}" <<'PY'
+import json,re,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+allowed={"ready"} if sys.argv[2] == "migrate" else {"ready","migration_required"}
+expected_os=sys.argv[3]
+fleet_required=str(sys.argv[4]).strip().lower() in {"1","true","yes","on"}
+expected_version=sys.argv[5]
+identities={}
+for raw in sys.argv[6:]:
+    parts=raw.split(":",4)
+    if len(parts) != 5:
+        raise SystemExit("controller reviewed OpenShell CLI identity is malformed")
+    os_kind,arch,asset,asset_sha,cli_sha=parts
+    if (
+        (os_kind,arch) in identities
+        or re.fullmatch(r"openshell-[A-Za-z0-9._-]+\.tar\.gz",asset) is None
+        or re.fullmatch(r"[0-9a-f]{64}",asset_sha) is None
+        or re.fullmatch(r"[0-9a-f]{64}",cli_sha) is None
+    ):
+        raise SystemExit("controller reviewed OpenShell CLI identity is invalid")
+    identities[(os_kind,arch)]=(asset,asset_sha,cli_sha)
+if (
+    not isinstance(value,dict)
+    or value.get("schema") != "mac.reviewed_openshell_cli_preflight.v1"
+    or value.get("expected_os") != expected_os
+    or value.get("status") not in allowed
+    or value.get("version") != expected_version
+    or not isinstance(value.get("managed_openclaw"),bool)
+    or not isinstance(value.get("required"),bool)
+):
+    raise SystemExit("reviewed OpenShell CLI helper returned an invalid status")
+if fleet_required and value.get("required") is not True:
+    raise SystemExit("reviewed OpenShell CLI status weakened the fleet requirement")
+identity=identities.get((expected_os,value.get("arch")))
+if identity is None:
+    raise SystemExit("reviewed OpenShell CLI status has no controller-reviewed platform identity")
+asset,asset_sha,cli_sha=identity
+if value.get("asset") != asset or value.get("asset_sha256") != asset_sha:
+    raise SystemExit("reviewed OpenShell CLI status differs from controller-reviewed asset identity")
+status=value.get("status")
+reason=value.get("reason")
+repairable_reasons={
+    "canonical_directory_missing",
+    "canonical_directory_untrusted",
+    "reviewed_cli_receipt_directory_untrusted",
+    "canonical_cli_missing",
+    "canonical_cli_untrusted",
+    "canonical_cli_not_executable",
+    "canonical_cli_digest_mismatch",
+    "reviewed_cli_receipt_missing",
+    "reviewed_cli_receipt_untrusted",
+    "reviewed_cli_receipt_mismatch",
+}
+if status == "migration_required":
+    if reason not in repairable_reasons | {"managed_openclaw_identity_untrusted"}:
+        raise SystemExit("reviewed OpenShell CLI status has an unknown repair classification")
+    if value.get("required") is not True:
+        raise SystemExit("reviewed OpenShell CLI migration was not required")
+elif reason == "openclaw_not_managed":
+    if value.get("required") is not False or value.get("managed_openclaw") is not False:
+        raise SystemExit("reviewed OpenShell CLI optional status is inconsistent")
+elif reason == "reviewed_cli_ready":
+    if value.get("required") is not True or value.get("cli_sha256") != cli_sha:
+        raise SystemExit("reviewed OpenShell CLI status differs from controller-reviewed CLI identity")
+    if re.fullmatch(r"[0-9a-f]{64}",str(value.get("receipt_sha256") or "")) is None:
+        raise SystemExit("reviewed OpenShell CLI status lacks its exact receipt evidence")
+else:
+    raise SystemExit("reviewed OpenShell CLI ready status has an unknown reason")
+PY
+  then
+    rm -f "$output"
+    echo "ERROR: ${agent}: reviewed OpenShell CLI ${action} status was not controller-bound" >&2
+    return 1
+  fi
+}
+
+reviewed_openshell_cli_status_value() {
+  local agent="$1" key="$2"
+  "$PYTHON_BIN" - "$(reviewed_openshell_cli_status_file "$agent")" "$key" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8")).get(sys.argv[2])
+if value is not None: print(value)
+PY
+}
+
+classify_reviewed_openshell_cli_prerequisites() {
+  local selected_specs_file="$1" spec fields=() agent os_kind required status_file status reason failed=0
+  local needs_prepare=0 needs_manual_identity=0
+  echo "==> fleet: classifying reviewed OpenShell CLI prerequisites without remote mutation"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
+    status_file="$(reviewed_openshell_cli_status_file "$agent")"
+    run_remote_reviewed_openshell_cli_helper preflight "$agent" "$os_kind" "$required" "$status_file"
+    status="$(reviewed_openshell_cli_status_value "$agent" status)"
+    if [ "$status" != ready ]; then
+      reason="$(reviewed_openshell_cli_status_value "$agent" reason)"
+      echo "ERROR: ${agent}: reviewed OpenShell CLI prerequisite requires explicit repair (${reason})" >&2
+      failed=1
+      if reviewed_openshell_cli_migration_repairable_reason "$reason"; then
+        needs_prepare=1
+      else
+        needs_manual_identity=1
+      fi
+    fi
+  done < "$selected_specs_file"
+  if [ "$failed" = 1 ]; then
+    if [ "$needs_prepare" = 1 ]; then
+      echo "ERROR: run this separate CLI prerequisite operation before cutover:" >&2
+      echo "  deploy/deploy-mac-fleet.sh --hub $(shell_quote "$HUB_SELECTOR") --prepare-reviewed-openshell-cli [agent ...]" >&2
+    fi
+    if [ "$needs_manual_identity" = 1 ]; then
+      echo "ERROR: repair unreadable managed OpenClaw identity artifacts before any CLI preparation" >&2
+    fi
+    return 1
+  fi
+}
+
+reviewed_openshell_cli_migration_repairable_reason() {
+  case "$1" in
+    canonical_directory_missing|canonical_directory_untrusted|\
+    reviewed_cli_receipt_directory_untrusted|canonical_cli_missing|\
+    canonical_cli_untrusted|canonical_cli_not_executable|\
+    canonical_cli_digest_mismatch|\
+    reviewed_cli_receipt_missing|reviewed_cli_receipt_untrusted|\
+    reviewed_cli_receipt_mismatch)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+prepare_reviewed_openshell_cli_prerequisites() {
+  local selected_specs_file="$1" spec fields=() agent os_kind required status_file status reason blocked=0
+  echo "==> fleet: classifying every reviewed OpenShell CLI prerequisite before repair"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
+    status_file="$(reviewed_openshell_cli_status_file "$agent")"
+    run_remote_reviewed_openshell_cli_helper preflight "$agent" "$os_kind" "$required" "$status_file"
+  done < "$selected_specs_file"
+
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"
+    status="$(reviewed_openshell_cli_status_value "$agent" status)"
+    reason="$(reviewed_openshell_cli_status_value "$agent" reason)"
+    if [ "$status" = ready ]; then
+      continue
+    fi
+    if [ "$status" = migration_required ] \
+        && reviewed_openshell_cli_migration_repairable_reason "$reason"; then
+      continue
+    fi
+    echo "ERROR: ${agent}: reviewed OpenShell CLI preparation cannot repair ${reason:-unknown}" >&2
+    blocked=1
+  done < "$selected_specs_file"
+  if [ "$blocked" = 1 ]; then
+    echo "ERROR: refusing all reviewed OpenShell CLI mutations until manual prerequisites are repaired" >&2
+    return 1
+  fi
+
+  echo "==> fleet: applying exact reviewed OpenShell CLI prerequisite migrations"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
+    status="$(reviewed_openshell_cli_status_value "$agent" status)"
+    [ "$status" = migration_required ] || continue
+    run_remote_reviewed_openshell_cli_helper migrate "$agent" "$os_kind" "$required" \
+      "$(reviewed_openshell_cli_status_file "$agent")"
+    echo "==> ${agent}: owner-private reviewed OpenShell CLI prerequisite migrated"
+  done < "$selected_specs_file"
+
+  echo "==> fleet: re-proving reviewed OpenShell CLI prerequisites"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
+    status_file="$(reviewed_openshell_cli_status_file "$agent")"
+    run_remote_reviewed_openshell_cli_helper preflight "$agent" "$os_kind" "$required" "$status_file"
+    status="$(reviewed_openshell_cli_status_value "$agent" status)"
+    [ "$status" = ready ] || {
+      echo "ERROR: ${agent}: reviewed OpenShell CLI prerequisite did not converge" >&2
+      return 1
+    }
+  done < "$selected_specs_file"
+}
+
 node_prerequisite_bundle_file() {
   printf '%s/prerequisite-bundle-%s.json\n' \
     "$TMPDIR_LOCAL" "$(stable_worker_agent_id "$1")"
@@ -5151,10 +5408,13 @@ prepare_remote_phase1_restore_contract() {
   local remote_helper="/tmp/mac-phase1-prepare-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
   local remote_functions="/tmp/mac-phase1-prepare-functions-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
   local ssh_parts=() ssh_args=() ssh_target item last_index fence_exec
-  local agent_id local_contract contract_raw
+  local agent_id local_contract contract_raw openshell_asset_sha openshell_cli_sha openshell_receipt_sha
   agent_id="$(stable_worker_agent_id "$agent")"
   local_contract="$(phase1_restore_contract_file_for_agent "$agent")"
   contract_raw="$TMPDIR_LOCAL/phase1-restore-contract-raw-${agent_id}.json"
+  openshell_asset_sha="$(reviewed_openshell_cli_status_value "$agent" asset_sha256)"
+  openshell_cli_sha="$(reviewed_openshell_cli_status_value "$agent" cli_sha256)"
+  openshell_receipt_sha="$(reviewed_openshell_cli_status_value "$agent" receipt_sha256)"
   if ! acquire_remote_deployment_lock "$agent" "$deployment_id"; then
     return 1
   fi
@@ -5180,7 +5440,7 @@ prepare_remote_phase1_restore_contract() {
   if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
-    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") $fence_exec" > "$contract_raw" <<'REMOTE_PHASE1_PREPARE'
+    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" > "$contract_raw" <<'REMOTE_PHASE1_PREPARE'
 set -euo pipefail
 helper="${MAC_PHASE1_HELPER:?}"
 functions="${MAC_PHASE1_FUNCTIONS:?}"
@@ -5216,6 +5476,10 @@ MAC_HOME="$HOME/.mac" \
 PY="$phase1_python" \
 MAC_PHASE1_HELPER_SOURCE="$helper" \
 MAC_PHASE1_DAEMON_FUNCTIONS_FILE="$functions" \
+MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION="${MAC_PHASE1_OSH_VERSION:?}" \
+MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256="${MAC_PHASE1_OSH_ASSET_SHA:?}" \
+MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256="${MAC_PHASE1_OSH_CLI_SHA:-}" \
+MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256="${MAC_PHASE1_OSH_RECEIPT_SHA:-}" \
   bash "$helper" prepare >/dev/null
 "$phase1_python" - "$HOME/.mac/phase1-cohort-restore-contract-${MAC_PHASE1_GENERATION:?}.json" <<'PY'
 import os
@@ -5330,10 +5594,13 @@ quiesce_remote_agent_for_cohort() {
   local remote_helper="/tmp/mac-phase1-quiesce-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
   local remote_functions="/tmp/mac-phase1-daemon-functions-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
   local ssh_parts=() ssh_args=() ssh_target item last_index fence_exec proof
-  local agent_id local_proof restore_contract_sha256
+  local agent_id local_proof restore_contract_sha256 openshell_asset_sha openshell_cli_sha openshell_receipt_sha
   agent_id="$(stable_worker_agent_id "$agent")"
   local_proof="$TMPDIR_LOCAL/phase1-ready-${agent_id}.json"
   restore_contract_sha256="$(phase1_restore_contract_digest_for_agent "$agent")"
+  openshell_asset_sha="$(reviewed_openshell_cli_status_value "$agent" asset_sha256)"
+  openshell_cli_sha="$(reviewed_openshell_cli_status_value "$agent" cli_sha256)"
+  openshell_receipt_sha="$(reviewed_openshell_cli_status_value "$agent" receipt_sha256)"
   fenced_remote_upload "$agent" "$deployment_id" "$PHASE1_QUIESCE_HELPER" "$remote_helper"
   fenced_remote_upload "$agent" "$deployment_id" "$PHASE1_DAEMON_FUNCTIONS" "$remote_functions"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
@@ -5344,7 +5611,7 @@ quiesce_remote_agent_for_cohort() {
   ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
-    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_RESTORE_SHA256=$(shell_quote "$restore_contract_sha256") $fence_exec" <<'REMOTE_PHASE1'
+    "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_RESTORE_SHA256=$(shell_quote "$restore_contract_sha256") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" <<'REMOTE_PHASE1'
 set -euo pipefail
 helper="${MAC_PHASE1_HELPER:?}"
 functions="${MAC_PHASE1_FUNCTIONS:?}"
@@ -5384,6 +5651,10 @@ MAC_HOME="$HOME/.mac" \
 PY="$phase1_python" \
 MAC_PHASE1_RESTORE_CONTRACT_SHA256="${MAC_PHASE1_RESTORE_SHA256:?}" \
 MAC_PHASE1_DAEMON_FUNCTIONS_FILE="$functions" \
+MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION="${MAC_PHASE1_OSH_VERSION:?}" \
+MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256="${MAC_PHASE1_OSH_ASSET_SHA:?}" \
+MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256="${MAC_PHASE1_OSH_CLI_SHA:-}" \
+MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256="${MAC_PHASE1_OSH_RECEIPT_SHA:-}" \
   bash "$helper" quiesce
 REMOTE_PHASE1
   fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)"
@@ -9925,12 +10196,20 @@ from pathlib import Path
 
 status_path, comparison_path, role, agent, directory_raw = sys.argv[1:]
 status = json.load(open(status_path, encoding="utf-8"))
-comparison = json.load(open(comparison_path, encoding="utf-8"))
+comparison_document = json.load(open(comparison_path, encoding="utf-8"))
 journal = status.get("journal") if isinstance(status, dict) else None
 if not isinstance(journal, dict):
     raise SystemExit("recovery mismatch diagnostic lacks its journal")
 if role not in {"hub", "node"} or not agent or len(agent.encode("utf-8")) > 128:
     raise SystemExit("recovery mismatch diagnostic has an invalid endpoint label")
+if (
+    not isinstance(comparison_document, dict)
+    or set(comparison_document) != {"ok", "comparison"}
+    or comparison_document.get("ok") is not True
+    or not isinstance(comparison_document.get("comparison"), dict)
+):
+    raise SystemExit("recovery mismatch diagnostic has an invalid comparison envelope")
+comparison = comparison_document["comparison"]
 if comparison.get("schema") != "mac.fleet_endpoint_identity_comparison.v1":
     raise SystemExit("recovery mismatch diagnostic has an invalid comparison")
 mismatches = comparison.get("mismatches")
@@ -10071,7 +10350,17 @@ PY
     fi
     if ! "$PYTHON_BIN" - "$comparison" "$agent" <<'PY'
 import json,sys
-value=json.load(open(sys.argv[1],encoding="utf-8"))
+document=json.load(open(sys.argv[1],encoding="utf-8"))
+if (
+    not isinstance(document,dict)
+    or set(document) != {"ok","comparison"}
+    or document.get("ok") is not True
+    or not isinstance(document.get("comparison"),dict)
+):
+    raise SystemExit("endpoint identity helper returned an invalid comparison envelope")
+value=document["comparison"]
+if value.get("schema") != "mac.fleet_endpoint_identity_comparison.v1":
+    raise SystemExit("endpoint identity helper returned an invalid comparison")
 if value.get("recovery_allowed") is not True or value.get("generic_route_recovery_allowed") is not True:
     raise SystemExit("%s: live endpoint differs from the journal-bound recovery authority"%sys.argv[2])
 PY
@@ -11107,6 +11396,11 @@ run_typed_cohort() {
   preflight_cohort_hold_adoptions \
     "$selected_specs_file" "$hold_adoption_plan" "$hub_agent"
 
+  # Normal typed cutover is read-only here and fails with an explicit separate
+  # prerequisite command.  It never mutates infrastructure that phase-2
+  # rollback does not own.
+  classify_reviewed_openshell_cli_prerequisites "$selected_specs_file"
+
   echo "==> fleet: arming exact phase-1 restore contracts"
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
@@ -11283,10 +11577,12 @@ main() {
   # This pass is deliberately before the first remote read/control-master.
   # One missing immutable OpenShell image rejects the entire frozen cohort
   # with zero remote mutations instead of stranding already-held workers.
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    validate_openshell_runtime_image_spec "$spec"
-  done < "$selected_specs_file"
+  if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ]; then
+    while IFS= read -r spec; do
+      [ -n "$spec" ] || continue
+      validate_openshell_runtime_image_spec "$spec"
+    done < "$selected_specs_file"
+  fi
   cohort_fleet_name="$("$PYTHON_BIN" - "$selected_specs_file" <<'PY'
 from pathlib import Path
 import sys
@@ -11303,7 +11599,8 @@ PY
   # A typed run establishes its owner-private, fsynced journal before the
   # first node or hub mutation. The one-use legacy bootstrap deliberately has
   # no multi-node transaction and retains the pre-existing hub hold.
-  if [ "$LEGACY_HUB_BOOTSTRAP" != 1 ]; then
+  if [ "$LEGACY_HUB_BOOTSTRAP" != 1 ] \
+      && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ]; then
     initialize_cohort_transaction \
       "$selected_specs_file" "$hub_agent" "$cohort_fleet_name"
   fi
@@ -11325,6 +11622,17 @@ PY
     start_ssh_control_master "${spec_fields[0]}"
   done < "$selected_specs_file"
   SSH_CONTROL_REQUIRED=1
+
+  if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 1 ]; then
+    [ "$LEGACY_HUB_BOOTSTRAP" = 0 ] || {
+      echo "ERROR: reviewed OpenShell CLI preparation cannot be combined with legacy hub bootstrap" >&2
+      return 2
+    }
+    prepare_reviewed_openshell_cli_prerequisites "$selected_specs_file"
+    echo "==> reviewed OpenShell CLI prerequisites prepared; no cohort transaction was opened"
+    rm -rf "$TMPDIR_LOCAL"
+    return 0
+  fi
 
   if [ "$LEGACY_HUB_BOOTSTRAP" = 1 ]; then
     legacy_hub_bootstrap "$selected_specs_file" "$hub_agent" "$selected_count"

@@ -27,16 +27,26 @@
 # Flags: --enable  --fail-closed  --skip-image
 set -euo pipefail
 
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-0.0.72}"
+OPENSHELL_ASSET_REGISTRY="$(cd "$(dirname "$0")" && pwd)/reviewed-cli-assets.sh"
+[ -r "$OPENSHELL_ASSET_REGISTRY" ] || {
+  echo "reviewed OpenShell CLI asset registry is missing" >&2
+  exit 2
+}
+# shellcheck source=deploy/openshell/reviewed-cli-assets.sh
+. "$OPENSHELL_ASSET_REGISTRY"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-$OPENSHELL_REVIEWED_CLI_VERSION}"
 # Multi-platform linux/amd64+linux/arm64 supervisor index reviewed with the
 # OpenShell 0.0.72 fleet baseline. Never let a mutable `latest` image change the
 # certifier's isolation runtime between otherwise identical executions.
 OSH_SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d"
 case "$OPENSHELL_VERSION" in
   0.0.72)
-    OSH_CLI_DARWIN_ARM64_SHA256="117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d"
-    OSH_CLI_LINUX_AMD64_SHA256="37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
-    OSH_CLI_LINUX_ARM64_SHA256="a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045"
+    IFS='|' read -r _osh_asset OSH_CLI_DARWIN_ARM64_SHA256 _osh_cli_sha \
+      <<<"$(reviewed_openshell_cli_asset darwin arm64)"
+    IFS='|' read -r _osh_asset OSH_CLI_LINUX_AMD64_SHA256 _osh_cli_sha \
+      <<<"$(reviewed_openshell_cli_asset linux x86_64)"
+    IFS='|' read -r _osh_asset OSH_CLI_LINUX_ARM64_SHA256 _osh_cli_sha \
+      <<<"$(reviewed_openshell_cli_asset linux aarch64)"
     OSH_GATEWAY_LINUX_AMD64_SHA256="03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877"
     OSH_GATEWAY_LINUX_ARM64_SHA256="a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108"
     ;;
@@ -82,10 +92,24 @@ verify_sha256(){
     return 1
   }
 }
-publish_openshell_cli(){
-  local cli="$1"
-  mkdir -p "$MAC_HOME/bin"
-  ln -sf "$cli" "$MAC_HOME/bin/openshell"
+install_reviewed_openshell_archive(){
+  local archive="$1"
+  local helper="$MAC_SRC/deploy/openshell/reviewed-cli.py" spec
+  local -a helper_args=()
+  [ -r "$helper" ] || {
+    echo "ERROR: reviewed OpenShell CLI installer is missing" >&2
+    return 1
+  }
+  while IFS= read -r spec; do
+    helper_args+=(--asset-spec "$spec")
+  done < <(reviewed_openshell_cli_specs)
+  python3 "$helper" install-archive \
+    --mac-home "$MAC_HOME" \
+    --expected-os "$(uname -s | tr '[:upper:]' '[:lower:]')" \
+    --version "$OPENSHELL_REVIEWED_CLI_VERSION" \
+    --base-url "$OPENSHELL_REVIEWED_CLI_BASE_URL" \
+    "${helper_args[@]}" \
+    --archive "$archive" >/dev/null
 }
 
 # Bootstrap validation must never inherit a stale selected gateway.  Bind every
@@ -1209,11 +1233,11 @@ bootstrap_darwin() {
   tmp="$(mktemp -d)"
   download -o "$tmp/openshell.tgz" "$cli_url"
   verify_sha256 "$tmp/openshell.tgz" "$cli_sha"
-  tar -xzf "$tmp/openshell.tgz" -C "$tmp"
-  install -m755 "$(find "$tmp" -name openshell -type f | head -1)" "$BIN/openshell"
+  chmod 0600 "$tmp/openshell.tgz"
+  install_reviewed_openshell_archive "$tmp/openshell.tgz"
+  install -m755 "$MAC_HOME/bin/openshell" "$BIN/openshell"
   rm -rf "$tmp"
   OSH_CLI="$BIN/openshell"
-  publish_openshell_cli "$OSH_CLI"
   log "openshell CLI: $("$OSH_CLI" --version 2>&1 | head -1)"
   # 2. sandbox image (arch-native build against Docker Desktop)
   if [ "$SKIP_IMAGE" = 0 ]; then
@@ -1514,15 +1538,15 @@ install_openshell_cli_static() {
   tmp="$(mktemp -d)"
   download -o "$tmp/openshell.tgz" "$url"
   verify_sha256 "$tmp/openshell.tgz" "$ca_sha"
-  tar -xzf "$tmp/openshell.tgz" -C "$tmp"
+  chmod 0600 "$tmp/openshell.tgz"
+  install_reviewed_openshell_archive "$tmp/openshell.tgz"
   rm -f "$BIN/openshell"
-  install -m755 "$(find "$tmp" -name openshell -type f | head -1)" "$BIN/openshell"
+  install -m755 "$MAC_HOME/bin/openshell" "$BIN/openshell"
   rm -rf "$tmp"
 }
 
 log "installing reviewed openshell CLI $OPENSHELL_VERSION"
 install_openshell_cli_static
-publish_openshell_cli "$BIN/openshell"
 log "openshell CLI: $(openshell --version 2>&1 | head -1)"
 
 # --- 2. openshell-gateway daemon (prebuilt per-arch release asset) ----------

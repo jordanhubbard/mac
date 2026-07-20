@@ -5945,6 +5945,10 @@ daemon_resource_quiescence_gate() {
     MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS \
     MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS \
     MAC_DEPLOY_DAEMON_INJECT_RECEIPT_POST_REPLACE_FAILURE \
+    MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION \
+    MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256 \
+    MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256 \
+    MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256 \
     MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS \
     MAC_OPENCLAW_SANDBOX_DELETE_TIMEOUT_SECONDS; do
     env_value="${!env_name-}"
@@ -5998,6 +6002,8 @@ mac_home = Path(mac_home_raw).resolve()
 managed = mac_home / "openclaw" / "managed"
 openshell = mac_home / "bin" / "openshell"
 stop_wrapper = mac_home / "bin" / "openclaw-gateway-stop"
+reviewed_cli_receipt = mac_home / "openshell" / "reviewed-cli.json"
+reviewed_cli_summary_cache = None
 endpoint = "http://127.0.0.1:17670"
 max_output_bytes = 4 * 1024 * 1024
 
@@ -6142,6 +6148,100 @@ def read_private_text(path):
         raise QuiescenceFailure("managed identity artifact is undecodable")
 
 
+def stable_regular_bytes(path, expected_mode, limit):
+    try:
+        descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        raise QuiescenceFailure("reviewed OpenShell evidence is unreadable")
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != expected_mode
+            or before.st_size <= 0
+            or before.st_size > limit
+        ):
+            raise QuiescenceFailure("reviewed OpenShell evidence is untrusted")
+        raw = bytearray()
+        while len(raw) < before.st_size:
+            chunk = os.read(descriptor, min(1024 * 1024, before.st_size - len(raw)))
+            if not chunk:
+                raise QuiescenceFailure("reviewed OpenShell evidence changed while reading")
+            raw.extend(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise QuiescenceFailure("reviewed OpenShell evidence changed while reading")
+        return bytes(raw)
+    finally:
+        os.close(descriptor)
+
+
+def reviewed_openshell_cli_summary():
+    global reviewed_cli_summary_cache
+    if reviewed_cli_summary_cache is not None:
+        return dict(reviewed_cli_summary_cache)
+    expected_version = os.environ.get("MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION", "")
+    expected_asset = os.environ.get(
+        "MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256", ""
+    )
+    expected_cli = os.environ.get("MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256", "")
+    expected_receipt = os.environ.get(
+        "MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256", ""
+    )
+    for value in (expected_asset, expected_cli, expected_receipt):
+        if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise QuiescenceFailure(
+                "reviewed OpenShell CLI prerequisite is missing or untrusted"
+            )
+    target = resolve_owned_executable(openshell)
+    if target != openshell or openshell.is_symlink():
+        raise QuiescenceFailure("reviewed OpenShell CLI canonical path is indirect")
+    cli_raw = stable_regular_bytes(openshell, 0o700, 128 * 1024 * 1024)
+    cli_digest = __import__("hashlib").sha256(cli_raw).hexdigest()
+    if cli_digest != expected_cli:
+        raise QuiescenceFailure("reviewed OpenShell CLI digest changed after preflight")
+    receipt_raw = stable_regular_bytes(reviewed_cli_receipt, 0o600, 1024 * 1024)
+    receipt_digest = __import__("hashlib").sha256(receipt_raw).hexdigest()
+    if receipt_digest != expected_receipt:
+        raise QuiescenceFailure("reviewed OpenShell CLI receipt changed after preflight")
+    try:
+        receipt = json.loads(receipt_raw.decode("utf-8", errors="strict"))
+    except (UnicodeError, TypeError, ValueError):
+        raise QuiescenceFailure("reviewed OpenShell CLI receipt is malformed")
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema") != "mac.reviewed_openshell_cli.v1"
+        or receipt.get("status") != "published"
+        or receipt.get("version") != expected_version
+        or receipt.get("asset_sha256") != expected_asset
+        or receipt.get("cli_path") != str(openshell)
+        or receipt.get("cli_sha256") != expected_cli
+    ):
+        raise QuiescenceFailure("reviewed OpenShell CLI receipt differs from preflight")
+    reviewed_cli_summary_cache = {
+        "schema": receipt["schema"],
+        "version": expected_version,
+        "asset_sha256": expected_asset,
+        "cli_sha256": expected_cli,
+        "receipt_sha256": expected_receipt,
+    }
+    return dict(reviewed_cli_summary_cache)
+
+
 def resolve_sandbox_name():
     identity_path = managed / "sandbox-name"
     runtime_path = managed / "runtime.env"
@@ -6235,6 +6335,7 @@ def openshell_env():
 
 def sandbox_inventory(expected):
     openshell_target = resolve_owned_executable(openshell)
+    reviewed_openshell_cli_summary()
     offset = 0
     names = set()
     found = False
@@ -6291,6 +6392,7 @@ def quiesce_openclaw_sandbox():
     }
     if name is None:
         return outcome
+    outcome["reviewed_openshell_cli"] = reviewed_openshell_cli_summary()
     present = sandbox_inventory(name)
     outcome["initial_state"] = "present" if present else "absent"
     if not present:
@@ -7297,11 +7399,16 @@ try:
         retained = prove_legacy_nemoclaw_inactive(runtimes)
         name = resolve_sandbox_name()
         if name is None:
-            sandbox = {"sandbox": None, "prior_state": "not_managed"}
+            sandbox = {
+                "sandbox": None,
+                "prior_state": "not_managed",
+                "reviewed_openshell_cli": None,
+            }
         else:
             sandbox = {
                 "sandbox": name,
                 "prior_state": "present" if sandbox_inventory(name) else "absent",
+                "reviewed_openshell_cli": reviewed_openshell_cli_summary(),
             }
         write_daemon_restore_contract(restore_contract, sandbox, runtimes, retained)
     elif mode == "restore-check":
@@ -7318,11 +7425,19 @@ try:
             if current_name is not None:
                 raise QuiescenceFailure("unexpected OpenClaw managed identity appeared")
         elif prior_state == "absent":
+            if reviewed_openshell_cli_summary() != expected.get(
+                "reviewed_openshell_cli"
+            ):
+                raise QuiescenceFailure("reviewed OpenShell CLI changed during restore")
             if current_name != name or not stable_sandbox_absence(
                 name, min(gate_deadline, time.monotonic() + quiescence_timeout), False
             ):
                 raise QuiescenceFailure("OpenClaw sandbox absence was not restored")
         elif prior_state == "present":
+            if reviewed_openshell_cli_summary() != expected.get(
+                "reviewed_openshell_cli"
+            ):
+                raise QuiescenceFailure("reviewed OpenShell CLI changed during restore")
             if current_name != name:
                 raise QuiescenceFailure("OpenClaw sandbox identity changed during restore")
             prove_sandbox_present(name)
