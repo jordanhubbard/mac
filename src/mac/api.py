@@ -1137,6 +1137,10 @@ class CrashReportResolve(BaseModel):
 class AgentReflectRequest(BaseModel):
     recipient_agent_id: Optional[str] = None
     request_id: Optional[str] = None
+    # Seconds to poll for the target agent's live reflect narrative. Production
+    # keeps the 30s default; callers/tests that only need the published
+    # inventory (not the live narrative) pass 0 to skip the blocking wait.
+    reflect_timeout: float = 30.0
 
 
 class LeaseRenewRequest(BaseModel):
@@ -7026,6 +7030,7 @@ def create_app(
             agent_id,
             recipient_agent_id=body.recipient_agent_id,
             request_id=body.request_id,
+            reflect_timeout=body.reflect_timeout,
         )
 
     @app.post("/agents/{agent_id}/claim-next")

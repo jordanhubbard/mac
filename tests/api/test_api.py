@@ -3650,6 +3650,8 @@ def test_fastapi_agent_reflect_publishes_runtime_description():
         json={
             "recipient_agent_id": recipient["id"],
             "request_id": "rid-42",
+            # No live worker responds here; skip the 30s reflect poll.
+            "reflect_timeout": 0,
         },
     ).json()
 

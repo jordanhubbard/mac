@@ -2551,6 +2551,7 @@ def cmd_agent_reflect(args: argparse.Namespace) -> None:
             args.agent_id,
             recipient_agent_id=args.recipient_agent_id,
             request_id=args.request_id,
+            reflect_timeout=args.reflect_timeout,
         )
     )
 
@@ -6153,6 +6154,16 @@ def build_parser() -> argparse.ArgumentParser:
     agent_reflect.add_argument("agent_id")
     agent_reflect.add_argument("--recipient-agent-id")
     agent_reflect.add_argument("--request-id")
+    agent_reflect.add_argument(
+        "--reflect-timeout",
+        type=float,
+        default=30.0,
+        help=(
+            "seconds to poll for the target agent's live reflect narrative "
+            "(default 30; 0 skips the blocking wait and returns the published "
+            "inventory immediately)"
+        ),
+    )
     _set(cmd_agent_reflect, agent_reflect)
 
     agent_hardware = agent.add_parser(

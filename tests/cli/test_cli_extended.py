@@ -438,6 +438,8 @@ def test_agent_reflect_publishes_self_description(tmp_path):
         "agent", "reflect",
         agent["id"],
         "--request-id", "rid-42",
+        # No live worker answers in-process; skip the 30s reflect poll.
+        "--reflect-timeout", "0",
     )
 
     assert rc == 0

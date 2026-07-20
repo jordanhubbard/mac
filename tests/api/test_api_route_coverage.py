@@ -1956,6 +1956,9 @@ edges:
         ("POST", "/agents/{agent_id}/reflect"): {
             "recipient_agent_id": ctx["reviewer_agent_id"],
             "request_id": "route-reflect",
+            # No live worker answers in this e2e harness; skip the 30s poll and
+            # assert on the published inventory only.
+            "reflect_timeout": 0,
         },
         ("POST", "/agents/{agent_id}/claim-next"): {"lease_seconds": 60, "capabilities": ["python"]},
         ("POST", "/agents/{agent_id}/service-claims/sync"): {

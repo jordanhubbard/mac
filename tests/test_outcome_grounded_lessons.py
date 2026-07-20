@@ -140,18 +140,17 @@ def test_publish_agent_reflection_forwards_deep_request():
     # ground-truth check). publish_agent_reflection now ALSO forwards a deep
     # reflect request to the target agent, whose worker answers via its own
     # runtime back to the requester.
-    from mac.agentbus_control import REFLECT_REQUEST_CONTENT_TYPE
     from mac.services import ControlPlane
     from tests.test_control_plane import register_agent
 
     cp = ControlPlane.in_memory()
     target = register_agent(cp, "target", ["python"])
     requester = register_agent(cp, "requester", ["review"])
-    out = cp.publish_agent_reflection(target.id, recipient_agent_id=requester.id)
-    assert out["deep_request_stream"]
+    out = cp.publish_agent_reflection(
+        target.id, recipient_agent_id=requester.id, reflect_timeout=0
+    )
     # Two streams exist: inventory to requester, deep request to target.
-    streams = cp.agentbus.list_streams(agent_id=target.id) if hasattr(cp.agentbus, "list_streams") else None
-    # Fallback assertion via the returned payload shape:
+    assert out["deep_request_stream"]
     assert out["count"] == 1 and out["payload"]["schema"] == "mac.agentbus.agent_reflection.v1"
 
 
