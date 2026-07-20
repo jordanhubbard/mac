@@ -15,6 +15,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "deploy" / "fleet-cohort-transaction.py"
+MATERIAL_SCRIPT = ROOT / "deploy" / "fleet-release-epoch-material.py"
+MATERIAL_SPEC = importlib.util.spec_from_file_location(
+    "mac_fleet_release_epoch_material", MATERIAL_SCRIPT
+)
+assert MATERIAL_SPEC is not None and MATERIAL_SPEC.loader is not None
+EPOCH_MATERIAL = importlib.util.module_from_spec(MATERIAL_SPEC)
+MATERIAL_SPEC.loader.exec_module(EPOCH_MATERIAL)
 SOURCE_COMMIT = "a" * 40
 EPOCH = f"{SOURCE_COMMIT}:20260719:controller"
 RELEASE_EPOCH = f"{EPOCH}:{'b' * 64}"
@@ -158,11 +165,13 @@ class Scenario:
         owner_nonce: str = OWNER_NONCE,
         owner_pid: int | None = None,
         successor_hold: str = "synchronized successor hold",
+        desired_worker_credential_mode: str | None = None,
     ) -> None:
         self.tmp_path = tmp_path
         self.directory = tmp_path / "journal"
         self.nodes = cohort(node_count)
         self.owner_nonce = owner_nonce
+        self.desired_worker_credential_mode = desired_worker_credential_mode
         self.revision = 0
         self.sequence = 0
         self.hub_identity = ssh_identity("hub", hub=True)
@@ -208,34 +217,47 @@ class Scenario:
         )
 
     def hub_open_plan(self) -> Path:
-        return write_json(
-            self.tmp_path / "hub-open.json",
+        plan, _request = EPOCH_MATERIAL.build_open(
             {
-                "schema": "mac.fleet_epoch_open_intent.v1",
+                "schema": "mac.fleet_epoch_open_material.v1",
                 "epoch_id": EPOCH,
                 "source_commit": SOURCE_COMMIT,
                 "require_release_all_selected": True,
                 "successor_hold_reason": "synchronized successor hold",
-                "desired_worker_credential_mode": None,
+                "desired_worker_credential_mode": (
+                    self.desired_worker_credential_mode
+                ),
                 "agents": [
                     {
                         "agent_id": node["stable_id"],
                         "generation": node["generation"],
                         "deployment_id": node["deployment_id"],
-                        "expected_dispatch_hold": False,
-                        "expected_hold_reason": None,
-                        "expected_hold_at": None,
+                        "participant_state": {
+                            "schema": "mac.fleet_release_participant_state.v1",
+                            "agent_id": node["stable_id"],
+                            "baseline_seen": "2026-07-19T05:40:00Z",
+                            "expected_dispatch_hold": False,
+                            "expected_hold_reason": None,
+                            "expected_hold_at": None,
+                        },
+                        "principal_id": f"principal-{index}",
+                        "attestation_candidate_key": None,
+                        "report_executor_action": "preserve",
+                        "report_executor_attestation": None,
                     }
-                    for node in self.nodes
+                    for index, node in enumerate(self.nodes)
                 ],
-            },
+            }
+        )
+        return write_json(
+            self.tmp_path / "hub-open.json",
+            plan,
         )
 
     def hub_prove_plan(self) -> Path:
-        return write_json(
-            self.tmp_path / "hub-prove.json",
+        plan, _request = EPOCH_MATERIAL.build_prove(
             {
-                "schema": "mac.fleet_epoch_prove_intent.v1",
+                "schema": "mac.fleet_epoch_prove_material.v1",
                 "epoch_id": EPOCH,
                 "source_commit": SOURCE_COMMIT,
                 "identity_sha256": HUB_IDENTITY_SHA256,
@@ -247,10 +269,20 @@ class Scenario:
                         "prepared_evidence_sha256": self.journal["cohort"][index][
                             "prepared_evidence"
                         ]["sha256"],
+                        "install_receipt": {
+                            "schema": "mac.worker_credential_install_receipt.v1",
+                            "installed": True,
+                        },
+                        "attestation_proof": None,
+                        "report_executor_startup_timestamp": None,
                     }
                     for index, node in enumerate(self.nodes)
                 ],
-            },
+            }
+        )
+        return write_json(
+            self.tmp_path / "hub-prove.json",
+            plan,
         )
 
     def hub_receipt(self, status: str, *, label: str | None = None) -> Path:
@@ -262,7 +294,7 @@ class Scenario:
             "identity_sha256": HUB_IDENTITY_SHA256,
             "cohort_size": len(self.nodes),
             "successor_hold_reason": "synchronized successor hold",
-            "desired_worker_credential_mode": None,
+            "desired_worker_credential_mode": self.desired_worker_credential_mode,
             "prepared_at": "2026-07-19T05:50:00.000000+00:00",
             "agents": [
                 {
@@ -294,13 +326,13 @@ class Scenario:
             value["abort_reason"] = "coordinator rollback"
         return write_json(self.tmp_path / f"hub-receipt-{label or status}.json", value)
 
-    def release_plan(self) -> Path:
-        return write_json(
-            self.tmp_path / "release-plan.json",
+    def release_plan(self, *, epoch_id: str = RELEASE_EPOCH) -> Path:
+        plan, _request = EPOCH_MATERIAL.build_release(
             {
-                "schema": "mac.fleet_release_epoch.v1",
-                "epoch_id": RELEASE_EPOCH,
+                "schema": "mac.fleet_epoch_release_material.v1",
+                "epoch_id": epoch_id,
                 "source_commit": SOURCE_COMMIT,
+                "identity_sha256": HUB_IDENTITY_SHA256,
                 "require_release_all_selected": True,
                 "successor_hold_reason": "synchronized successor hold",
                 "agents": [
@@ -311,7 +343,11 @@ class Scenario:
                     }
                     for node in self.nodes
                 ],
-            },
+            }
+        )
+        return write_json(
+            self.tmp_path / "release-plan.json",
+            plan,
         )
 
     def commit_not_applied(self) -> Path:
@@ -637,6 +673,132 @@ def test_forward_lifecycle_is_durable_secret_free_and_requires_finalization(
     assert stat.S_IMODE(scenario.directory.stat().st_mode) == 0o700
     assert stat.S_IMODE(journal_file.stat().st_mode) == 0o600
     assert recovery(scenario)["recovery_required"] is False
+
+
+def test_typed_material_plans_accept_exact_journal_epoch_through_finalization(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(
+        tmp_path,
+        node_count=2,
+        desired_worker_credential_mode="compatibility",
+    )
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    scenario.quiesce()
+    scenario.arm_phase2()
+    scenario.deploy()
+    scenario.prove_hub()
+    scenario.call("commit-start", release_plan=scenario.release_plan(epoch_id=EPOCH))
+    scenario.commit_hub()
+    for node in scenario.nodes:
+        scenario.call("finalize-start", node=node)
+        scenario.call(
+            "finalized-node",
+            node=node,
+            evidence_file=scenario.evidence(f"typed-finalized-{node['name']}"),
+        )
+    scenario.call("finalize")
+
+    assert scenario.journal["state"] == "finalized"
+    assert scenario.journal["release_plan"]["epoch_id"] == EPOCH
+
+
+def test_release_epoch_binding_accepts_typed_and_legacy_but_rejects_other_suffix(
+    journal_module: Any,
+) -> None:
+    assert journal_module._release_epoch_matches(EPOCH, EPOCH) is True
+    assert journal_module._release_epoch_matches(EPOCH, RELEASE_EPOCH) is True
+    assert journal_module._release_epoch_matches(EPOCH, f"{EPOCH}:unrelated") is False
+    assert (
+        journal_module._release_epoch_matches(
+            EPOCH,
+            f"{SOURCE_COMMIT}:another-controller:{'b' * 64}",
+        )
+        is False
+    )
+
+
+def test_typed_exact_epoch_commit_start_is_rejected_before_hub_proof(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(tmp_path)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    scenario.quiesce()
+    scenario.arm_phase2()
+    scenario.deploy()
+
+    rejected = scenario.call(
+        "commit-start",
+        release_plan=scenario.release_plan(epoch_id=EPOCH),
+        check=False,
+    )
+
+    assert rejected["error"]["code"] == "invalid_transition"
+    assert scenario.journal["hub_state"] == "open"
+    assert scenario.journal["release_plan"] is None
+
+
+def test_typed_prove_plan_rejects_wrong_prepared_hash_after_preparation(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(tmp_path)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    scenario.quiesce()
+    scenario.arm_phase2()
+    scenario.deploy()
+    prove_plan = json.loads(scenario.hub_prove_plan().read_text(encoding="utf-8"))
+    prove_plan["agents"][0]["prepared_evidence_sha256"] = "0" * 64
+
+    rejected = scenario.call(
+        "hub-prove-start",
+        prove_plan=write_json(tmp_path / "typed-wrong-prepared.json", prove_plan),
+        check=False,
+    )
+
+    assert rejected["error"]["code"] == "release_plan_binding_conflict"
+    assert scenario.journal["hub_state"] == "open"
+    assert scenario.journal["hub_prove_plan"] is None
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("source_commit", "f" * 40),
+        ("successor_hold_reason", "unrelated successor hold"),
+        ("generation", "unrelated-generation"),
+        ("deployment_id", "unrelated-deployment"),
+    ],
+)
+def test_typed_exact_epoch_release_plan_preserves_other_bindings(
+    tmp_path: Path,
+    field: str,
+    replacement: str,
+) -> None:
+    scenario = Scenario(tmp_path)
+    scenario.reach_prepared()
+    plan = json.loads(
+        scenario.release_plan(epoch_id=EPOCH).read_text(encoding="utf-8")
+    )
+    if field in {"generation", "deployment_id"}:
+        plan["agents"][0][field] = replacement
+    else:
+        plan[field] = replacement
+
+    rejected = scenario.call(
+        "commit-start",
+        release_plan=write_json(tmp_path / f"typed-wrong-{field}.json", plan),
+        check=False,
+    )
+
+    assert rejected["error"]["code"] == "release_plan_binding_conflict"
+    assert scenario.journal["hub_state"] == "proved"
+    assert scenario.journal["release_plan"] is None
 
 
 def test_commit_requires_exact_bound_committed_receipt_and_never_bare_flip(

@@ -318,6 +318,8 @@ def _successor_hold(value: Any) -> str | None:
 def _release_epoch_matches(journal_epoch: str, release_epoch: Any) -> bool:
     if not isinstance(release_epoch, str):
         return False
+    if release_epoch == journal_epoch:
+        return True
     prefix = journal_epoch + ":"
     suffix = release_epoch.removeprefix(prefix)
     return release_epoch.startswith(prefix) and bool(HEX_SHA256.fullmatch(suffix))
