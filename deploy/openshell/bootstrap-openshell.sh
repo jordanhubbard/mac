@@ -753,8 +753,120 @@ PY
   done
 }
 
+wait_for_empty_openshell_api_inventory() {
+  local cli="$1" output="$2"
+  local timeout_seconds="${3:-30}"
+  if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] \
+      || [ "$timeout_seconds" -lt 1 ] \
+      || [ "$timeout_seconds" -gt 30 ]; then
+    echo "ERROR: OpenShell retirement timeout must be between 1 and 30 seconds" >&2
+    return 2
+  fi
+  # Python's monotonic clock and process-group teardown provide the same hard
+  # deadline on macOS and Linux without relying on a GNU `timeout` binary.
+  # Each API call gets at most five seconds and the whole convergence loop gets
+  # at most timeout_seconds, including the delay between valid non-empty reads.
+  OPENSHELL_GATEWAY_ENDPOINT="$OPENSHELL_LOCAL_GATEWAY_ENDPOINT" \
+    "$MAC_HOME/venv/bin/python" - "$cli" "$output" "$timeout_seconds" <<'PY'
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+cli = sys.argv[1]
+output = Path(sys.argv[2])
+timeout_seconds = int(sys.argv[3])
+deadline = time.monotonic() + timeout_seconds
+
+
+def stop_process_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=0.25)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=0.25)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def fail_malformed(message):
+    print(f"malformed post-retirement OpenShell inventory: {message}", file=sys.stderr)
+    raise SystemExit(65)
+
+
+while True:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        print(
+            "OpenShell API inventory did not become empty before the "
+            f"{timeout_seconds}-second retirement deadline",
+            file=sys.stderr,
+        )
+        raise SystemExit(124)
+    try:
+        with output.open("wb") as stream:
+            process = subprocess.Popen(
+                [cli, "sandbox", "list", "--limit", "1000", "--output", "json"],
+                stdin=subprocess.DEVNULL,
+                stdout=stream,
+                start_new_session=True,
+            )
+            try:
+                process.wait(timeout=min(5.0, remaining))
+            except subprocess.TimeoutExpired:
+                stop_process_group(process)
+                print(
+                    "OpenShell sandbox inventory call exceeded its bounded wait",
+                    file=sys.stderr,
+                )
+                raise SystemExit(124)
+    except OSError as exc:
+        print(f"could not execute the OpenShell inventory call: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    if process.returncode != 0:
+        print(
+            f"OpenShell sandbox inventory call failed with status {process.returncode}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    try:
+        value = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail_malformed(str(exc))
+    if not isinstance(value, list):
+        fail_malformed("expected a list")
+    for item in value:
+        if not isinstance(item, dict):
+            fail_malformed("expected objects")
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            fail_malformed("missing sandbox name")
+    if not value:
+        raise SystemExit(0)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        continue
+    time.sleep(min(0.25, remaining))
+PY
+}
+
 retire_managed_sandboxes_via_api() {
   local cli="$1" inventory="$2" plan remaining containers sandbox_name action openclaw_count
+  local retirement_poll_status=0
+  local retirement_timeout_seconds="${3:-30}"
   if ! plan="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-upgrade-plan.XXXXXX")" \
       || [ -z "$plan" ]; then
     echo "ERROR: could not allocate the API retirement plan" >&2
@@ -845,7 +957,7 @@ PY
       echo "ERROR: could not retire managed sandbox $sandbox_name before gateway upgrade" >&2
       return 1
     fi
-    log "retired pre-upgrade managed sandbox $sandbox_name"
+    log "requested pre-upgrade retirement of managed sandbox $sandbox_name"
   done < "$plan"
   rm -f "$plan"
 
@@ -854,21 +966,20 @@ PY
     echo "ERROR: could not allocate the post-retirement API inventory" >&2
     return 1
   fi
-  if ! openshell_local_gateway "$cli" sandbox list --limit 1000 --output json > "$remaining" \
-      || ! "$MAC_HOME/venv/bin/python" - "$remaining" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if value != []:
-    raise SystemExit("OpenShell sandboxes remain after pre-upgrade retirement")
-PY
-  then
+  wait_for_empty_openshell_api_inventory \
+    "$cli" "$remaining" "$retirement_timeout_seconds" \
+    || retirement_poll_status=$?
+  if [ "$retirement_poll_status" -ne 0 ]; then
     rm -f "$remaining"
+    case "$retirement_poll_status" in
+      65) echo "ERROR: malformed post-retirement OpenShell API inventory" >&2 ;;
+      124) echo "ERROR: timed out waiting for OpenShell API inventory retirement" >&2 ;;
+      *) echo "ERROR: could not read the post-retirement OpenShell API inventory" >&2 ;;
+    esac
     return 1
   fi
   rm -f "$remaining"
+  log "OpenShell API confirmed the pre-upgrade sandbox inventory is empty"
   if ! containers="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-remaining.XXXXXX")" \
       || [ -z "$containers" ]; then
     echo "ERROR: could not allocate the post-retirement container inventory" >&2

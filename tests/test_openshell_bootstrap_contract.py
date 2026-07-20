@@ -21,6 +21,15 @@ def _api_retirement_planner_source() -> str:
     return function.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
 
 
+def _api_retirement_function_source() -> str:
+    bootstrap = (
+        ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh"
+    ).read_text(encoding="utf-8")
+    start = bootstrap.index("wait_for_empty_openshell_api_inventory() {")
+    end = bootstrap.index("\n\nretire_managed_sandboxes_via_docker()", start)
+    return bootstrap[start:end]
+
+
 def _run_api_retirement_planner(
     tmp_path: Path,
     inventory: list[dict],
@@ -40,6 +49,122 @@ def _run_api_retirement_planner(
         text=True,
         check=False,
     )
+
+
+def _run_api_retirement_function(
+    tmp_path: Path,
+    post_delete_inventories: list[str],
+    *,
+    hang_list: bool = False,
+    retirement_timeout_seconds: int = 1,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    assert post_delete_inventories
+    mac_home = tmp_path / "mac-home"
+    python_bin = mac_home / "venv" / "bin"
+    python_bin.mkdir(parents=True)
+    (python_bin / "python").symlink_to(sys.executable)
+
+    initial_inventory = tmp_path / "initial-inventory.json"
+    initial_inventory.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "mac-task-deadbeef",
+                    "phase": "Ready",
+                    "labels": {
+                        "mac.owner": "mac",
+                        "mac.kind": "task",
+                        "mac.keep": "false",
+                        "mac.pid": "99999999",
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    responses = tmp_path / "responses"
+    responses.mkdir()
+    for index, inventory in enumerate(post_delete_inventories, start=1):
+        (responses / str(index)).write_text(inventory, encoding="utf-8")
+    operations = tmp_path / "operations.log"
+    list_count = tmp_path / "list-count"
+    hang_pid = tmp_path / "hang-pid"
+    fake_cli = tmp_path / "fake-openshell"
+    fake_cli.write_text(
+        """#!/bin/bash
+set -euo pipefail
+[ "${OPENSHELL_GATEWAY_ENDPOINT:-}" = "$EXPECTED_ENDPOINT" ] || exit 97
+case "$1:$2" in
+  sandbox:delete)
+    printf 'delete %s\n' "$3" >> "$OPERATIONS"
+    ;;
+  sandbox:list)
+    count=0
+    if [ -f "$LIST_COUNT" ]; then count=$(/bin/cat "$LIST_COUNT"); fi
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$LIST_COUNT"
+    printf 'list\n' >> "$OPERATIONS"
+    if [ "$HANG_LIST" = 1 ]; then
+      printf '%s\n' "$$" > "$HANG_PID"
+      exec /bin/sleep 60
+    fi
+    response="$RESPONSES/$count"
+    if [ ! -f "$response" ]; then response="$LAST_RESPONSE"; fi
+    /bin/cat "$response"
+    ;;
+  *) exit 98 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+
+    harness = (
+        "set -euo pipefail\n"
+        "openshell_local_gateway() {\n"
+        "  local cli=\"$1\"\n"
+        "  shift\n"
+        "  OPENSHELL_GATEWAY_ENDPOINT=\"$OPENSHELL_LOCAL_GATEWAY_ENDPOINT\" "
+        "\"$cli\" \"$@\"\n"
+        "}\n"
+        "checkpoint_openclaw_with_cli() { return 97; }\n"
+        "write_managed_openshell_container_ids() {\n"
+        "  printf 'containers %s\\n' \"$1\" >> \"$OPERATIONS\"\n"
+        "  : > \"$2\"\n"
+        "}\n"
+        "log() { printf 'log %s\\n' \"$*\" >> \"$OPERATIONS\"; }\n"
+        + _api_retirement_function_source()
+        + "\nretire_managed_sandboxes_via_api \"$FAKE_CLI\" "
+        "\"$INITIAL_INVENTORY\" \"$RETIREMENT_TIMEOUT_SECONDS\"\n"
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-c", harness],
+        env={
+            **os.environ,
+            "EXPECTED_ENDPOINT": "http://127.0.0.1:17670",
+            "FAKE_CLI": str(fake_cli),
+            "HANG_LIST": "1" if hang_list else "0",
+            "HANG_PID": str(hang_pid),
+            "INITIAL_INVENTORY": str(initial_inventory),
+            "LAST_RESPONSE": str(responses / str(len(post_delete_inventories))),
+            "LIST_COUNT": str(list_count),
+            "MAC_HOME": str(mac_home),
+            "OPENSHELL_LOCAL_GATEWAY_ENDPOINT": "http://127.0.0.1:17670",
+            "OPERATIONS": str(operations),
+            "RETIREMENT_TIMEOUT_SECONDS": str(retirement_timeout_seconds),
+            "RESPONSES": str(responses),
+            "TMPDIR": str(tmp_path),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    recorded_operations = (
+        operations.read_text(encoding="utf-8").splitlines()
+        if operations.exists()
+        else []
+    )
+    return result, recorded_operations
 
 
 def _openclaw_promotion_source() -> str:
@@ -742,6 +867,99 @@ def test_api_readable_upgrade_retires_only_ready_owned_dead_pid_sandboxes(
         assert result.returncode != 0
 
 
+def test_api_retirement_waits_for_inventory_to_converge(tmp_path):
+    started = time.monotonic()
+    result, operations = _run_api_retirement_function(
+        tmp_path,
+        [json.dumps([{"name": "mac-task-deadbeef"}]), "[]"],
+        retirement_timeout_seconds=2,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.returncode == 0, result.stderr
+    assert elapsed < 1.5
+    assert operations == [
+        "delete mac-task-deadbeef",
+        "log requested pre-upgrade retirement of managed sandbox mac-task-deadbeef",
+        "list",
+        "list",
+        "log OpenShell API confirmed the pre-upgrade sandbox inventory is empty",
+        "containers all",
+    ]
+
+
+def test_api_retirement_rejects_malformed_post_delete_inventory(tmp_path):
+    for index, inventory in enumerate(
+        ("not-json", '{"unexpected": "object-not-list"}'),
+    ):
+        case_dir = tmp_path / str(index)
+        case_dir.mkdir()
+        result, operations = _run_api_retirement_function(case_dir, [inventory])
+
+        assert result.returncode != 0
+        assert "malformed post-retirement OpenShell inventory" in result.stderr
+        assert (
+            "ERROR: malformed post-retirement OpenShell API inventory"
+            in result.stderr
+        )
+        assert operations == [
+            "delete mac-task-deadbeef",
+            "log requested pre-upgrade retirement of managed sandbox mac-task-deadbeef",
+            "list",
+        ]
+
+
+def test_api_retirement_times_out_while_inventory_remains_nonempty(tmp_path):
+    started = time.monotonic()
+    result, operations = _run_api_retirement_function(
+        tmp_path,
+        [json.dumps([{"name": "mac-task-deadbeef"}])],
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.returncode != 0
+    assert (
+        "OpenShell API inventory did not become empty before the 1-second "
+        "retirement deadline"
+        in result.stderr
+    )
+    assert "ERROR: timed out waiting for OpenShell API inventory retirement" in (
+        result.stderr
+    )
+    assert elapsed < 3
+    assert operations.count("list") >= 2
+    assert "containers all" not in operations
+
+
+def test_api_retirement_kills_a_hung_inventory_call_at_the_deadline(tmp_path):
+    started = time.monotonic()
+    result, operations = _run_api_retirement_function(
+        tmp_path,
+        ["[]"],
+        hang_list=True,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.returncode != 0
+    assert "inventory call exceeded its bounded wait" in result.stderr
+    assert "ERROR: timed out waiting for OpenShell API inventory retirement" in (
+        result.stderr
+    )
+    assert elapsed < 3
+    assert operations == [
+        "delete mac-task-deadbeef",
+        "log requested pre-upgrade retirement of managed sandbox mac-task-deadbeef",
+        "list",
+    ]
+    hung_pid = int((tmp_path / "hang-pid").read_text(encoding="utf-8"))
+    try:
+        os.kill(hung_pid, 0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise AssertionError(f"hung OpenShell inventory process {hung_pid} survived")
+
+
 def test_openclaw_checkpoint_promotion_rolls_back_an_interrupted_pair(tmp_path):
     mac_home = tmp_path / "mac home"
     openclaw = mac_home / "openclaw"
@@ -848,7 +1066,17 @@ def test_schema_fallback_requires_stopped_exact_managed_containers():
     api = bootstrap.split("retire_managed_sandboxes_via_api() {", 1)[1].split(
         "\n}\n\nretire_managed_sandboxes_via_docker", 1
     )[0]
-    assert api.count("sandbox list --limit 1000 --output json") == 1
+    api_wait = bootstrap.split("wait_for_empty_openshell_api_inventory() {", 1)[
+        1
+    ].split("\n}\n\nretire_managed_sandboxes_via_api", 1)[0]
+    assert '[cli, "sandbox", "list", "--limit", "1000", "--output", "json"]' in (
+        api_wait
+    )
+    assert "time.monotonic()" in api_wait
+    assert "start_new_session=True" in api_wait
+    assert "os.killpg(process.pid, signal.SIGTERM)" in api_wait
+    assert "process.wait(timeout=min(5.0, remaining))" in api_wait
+    assert "wait_for_empty_openshell_api_inventory" in api
     assert "str(item.get(\"phase\") or \"\").strip().lower() != \"ready\"" in api
     assert 'labels.get("mac.owner") == "mac"' in api
     assert 'labels.get("mac.keep") or ""' in api

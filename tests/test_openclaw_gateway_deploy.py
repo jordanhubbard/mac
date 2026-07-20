@@ -2449,6 +2449,10 @@ def _run_rollback(
     *,
     action: str = "rollback",
     fleet_transaction: bool = False,
+    sandbox_identity: str | None = "mac-openclaw-rollback-contract",
+    runtime_env: str | None = None,
+    runtime_env_mode: int = 0o600,
+    runtime_env_artifact: str = "file",
 ) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
     home = tmp_path / "home"
     mac_home = home / ".mac"
@@ -2459,9 +2463,24 @@ def _run_rollback(
     managed.mkdir(parents=True)
     bin_dir.mkdir()
     state_dir.mkdir()
-    (managed / "sandbox-name").write_text(
-        "mac-openclaw-rollback-contract\n", encoding="utf-8"
-    )
+    if sandbox_identity is not None:
+        sandbox_identity_path = managed / "sandbox-name"
+        sandbox_identity_path.write_text(sandbox_identity + "\n", encoding="utf-8")
+        sandbox_identity_path.chmod(0o600)
+    if runtime_env is not None:
+        runtime_path = managed / "runtime.env"
+        if runtime_env_artifact == "file":
+            runtime_path.write_text(runtime_env, encoding="utf-8")
+            runtime_path.chmod(runtime_env_mode)
+        elif runtime_env_artifact == "symlink":
+            target = tmp_path / "runtime-target.env"
+            target.write_text(runtime_env, encoding="utf-8")
+            target.chmod(runtime_env_mode)
+            runtime_path.symlink_to(target)
+        elif runtime_env_artifact == "directory":
+            runtime_path.mkdir()
+        else:  # pragma: no cover - harness misuse.
+            raise ValueError(runtime_env_artifact)
     (openclaw_home / "service-advertisement.json").write_text(
         '{"advertised": true}\n', encoding="utf-8"
     )
@@ -2668,6 +2687,7 @@ esac
         "MAC_TEST_CALLS": str(calls),
         "MAC_TEST_SCENARIO": scenario,
         "MAC_TEST_STATE": str(state_dir),
+        "MAC_TEST_RUNTIME_SOURCE_MARKER": str(tmp_path / "runtime-env-was-sourced"),
     }
     if fleet_transaction:
         env["MAC_DEPLOY_GENERATION"] = "release-epoch:agent-test:attempt-1"
@@ -2681,9 +2701,172 @@ esac
     )
     return (
         result,
-        calls.read_text(encoding="utf-8").splitlines(),
+        calls.read_text(encoding="utf-8").splitlines() if calls.exists() else [],
         openclaw_home,
     )
+
+
+def test_rollback_recovers_private_runtime_sandbox_identity_without_sourcing(
+    tmp_path: Path,
+) -> None:
+    secret = "rollback-runtime-secret-must-not-leak"
+    sandbox = "mac-openclaw-runtime-fallback"
+    runtime = (
+        "# Generated host-local OpenClaw runtime environment.\n"
+        f"OPENCLAW_GATEWAY_TOKEN='{secret}'\n"
+        "NOT_MAC_OPENCLAW_SANDBOX='mac-openclaw-wrong'\n"
+        f"MAC_OPENCLAW_SANDBOX='{sandbox}'\n"
+        'MAC_OPENCLAW_HOSTILE=$(touch "$MAC_TEST_RUNTIME_SOURCE_MARKER")\n'
+    )
+
+    result, calls, _ = _run_rollback(
+        tmp_path,
+        "systemd",
+        action="withdraw",
+        sandbox_identity=None,
+        runtime_env=runtime,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert any(f"openshell sandbox delete {sandbox}" in call for call in calls)
+    assert any(f"openshell sandbox get {sandbox}" in call for call in calls)
+    assert all("mac-openclaw-wrong" not in call for call in calls)
+    assert not (tmp_path / "runtime-env-was-sourced").exists()
+    assert secret not in result.stdout
+    assert secret not in result.stderr
+
+
+def test_rollback_prefers_canonical_sandbox_identity_over_runtime_fallback(
+    tmp_path: Path,
+) -> None:
+    canonical = "mac-openclaw-canonical-identity"
+    stale = "mac-openclaw-stale-runtime-identity"
+    result, calls, _ = _run_rollback(
+        tmp_path,
+        "systemd",
+        action="withdraw",
+        sandbox_identity=canonical,
+        runtime_env=f"MAC_OPENCLAW_SANDBOX='{stale}'\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert any(f"openshell sandbox delete {canonical}" in call for call in calls)
+    assert all(stale not in call for call in calls)
+
+
+def test_rollback_does_not_fallback_past_a_corrupt_canonical_identity(
+    tmp_path: Path,
+) -> None:
+    secret = "corrupt-canonical-runtime-secret-must-not-leak"
+    result, calls, _ = _run_rollback(
+        tmp_path,
+        "systemd",
+        action="withdraw",
+        sandbox_identity="mac-openclaw-first\nmac-openclaw-second",
+        runtime_env=(
+            f"OPENCLAW_GATEWAY_TOKEN='{secret}'\n"
+            "MAC_OPENCLAW_SANDBOX='mac-openclaw-runtime-fallback'\n"
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "managed OpenClaw sandbox identity is malformed" in result.stderr
+    assert calls == []
+    assert secret not in result.stdout
+    assert secret not in result.stderr
+
+
+def test_fleet_transaction_rollback_uses_private_runtime_sandbox_fallback(
+    tmp_path: Path,
+) -> None:
+    sandbox = "mac-openclaw-fleet-runtime-fallback"
+    result, calls, _ = _run_rollback(
+        tmp_path,
+        "systemd",
+        fleet_transaction=True,
+        sandbox_identity=None,
+        runtime_env=f"MAC_OPENCLAW_SANDBOX='{sandbox}'\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert any(f"openshell sandbox delete {sandbox}" in call for call in calls)
+    assert not any("mac-hermes-gateway" in call for call in calls)
+    assert "exact prior gateway restoration delegated" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("runtime_env_artifact", "runtime_env_mode"),
+    (("file", 0o644), ("symlink", 0o600), ("directory", 0o700)),
+)
+def test_rollback_rejects_unsafe_runtime_identity_artifacts_without_disclosure(
+    tmp_path: Path,
+    runtime_env_artifact: str,
+    runtime_env_mode: int,
+) -> None:
+    secret = "unsafe-runtime-secret-must-not-leak"
+    result, calls, _ = _run_rollback(
+        tmp_path,
+        "systemd",
+        action="withdraw",
+        sandbox_identity=None,
+        runtime_env=(
+            f"OPENCLAW_GATEWAY_TOKEN='{secret}'\n"
+            "MAC_OPENCLAW_SANDBOX='mac-openclaw-runtime-fallback'\n"
+        ),
+        runtime_env_mode=runtime_env_mode,
+        runtime_env_artifact=runtime_env_artifact,
+    )
+
+    assert result.returncode != 0
+    assert "runtime environment is not an owner-only regular file" in result.stderr
+    assert calls == []
+    assert secret not in result.stdout
+    assert secret not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("sandbox_assignment", "expected_error"),
+    (
+        ("", "runtime sandbox identity is missing"),
+        (
+            "MAC_OPENCLAW_SANDBOX='mac-openclaw-one'\n"
+            "MAC_OPENCLAW_SANDBOX='mac-openclaw-two'\n",
+            "runtime sandbox identity is ambiguous",
+        ),
+        (
+            "MAC_OPENCLAW_SANDBOX='mac-openclaw-unterminated\n",
+            "runtime sandbox identity is malformed",
+        ),
+        (
+            "MAC_OPENCLAW_SANDBOX=mac-openclaw-valid; touch forbidden\n",
+            "runtime sandbox identity is ambiguous",
+        ),
+        (
+            "MAC_OPENCLAW_SANDBOX='../../unmanaged'\n",
+            "sandbox identity is unsafe",
+        ),
+    ),
+)
+def test_rollback_rejects_missing_ambiguous_or_malformed_runtime_identity(
+    tmp_path: Path,
+    sandbox_assignment: str,
+    expected_error: str,
+) -> None:
+    secret = "malformed-runtime-secret-must-not-leak"
+    result, calls, _ = _run_rollback(
+        tmp_path,
+        "systemd",
+        action="withdraw",
+        sandbox_identity=None,
+        runtime_env=f"OPENCLAW_GATEWAY_TOKEN='{secret}'\n{sandbox_assignment}",
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert calls == []
+    assert not (tmp_path / "runtime-env-was-sourced").exists()
+    assert secret not in result.stdout
+    assert secret not in result.stderr
 
 
 @pytest.mark.parametrize("supervisor", ["systemd", "launchd", "supervisord"])

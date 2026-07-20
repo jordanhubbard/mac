@@ -490,26 +490,154 @@ require_service_absent() {
 
 resolve_rollback_sandbox_name() {
   local configured="${MAC_OPENCLAW_SANDBOX_NAME:-}"
-  python3 - "$MANAGED_DIR/sandbox-name" "$configured" <<'PY'
+  python3 - \
+    "$MANAGED_DIR/sandbox-name" \
+    "$MANAGED_DIR/runtime.env" \
+    "$configured" <<'PY'
+import os
 import pathlib
 import re
+import shlex
+import stat
 import sys
 
-path = pathlib.Path(sys.argv[1])
-configured = sys.argv[2]
-if configured:
-    value = configured
-else:
+identity_path = pathlib.Path(sys.argv[1])
+runtime_path = pathlib.Path(sys.argv[2])
+configured = sys.argv[3]
+maximum_bytes = 1024 * 1024
+sandbox_pattern = re.compile(r"mac-openclaw-[a-z0-9][a-z0-9._-]{0,127}\Z")
+assignment_pattern = re.compile(
+    r"^[ \t]*(?:export[ \t]+)?MAC_OPENCLAW_SANDBOX[ \t]*=(.*)$"
+)
+
+
+def fail(message):
+    # runtime.env contains credentials.  Diagnostics must describe only the
+    # violated contract and must never include file content or parsed values.
+    raise SystemExit(message)
+
+
+def read_private_regular(path, *, missing_ok, artifact):
     try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise SystemExit("could not read managed OpenClaw sandbox identity: %s" % exc)
+        before = path.lstat()
+    except FileNotFoundError:
+        if missing_ok:
+            return None
+        fail("managed OpenClaw %s is unavailable" % artifact)
+    except OSError:
+        fail("managed OpenClaw %s is unreadable" % artifact)
+    if (
+        stat.S_ISLNK(before.st_mode)
+        or not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.getuid()
+        or before.st_mode & 0o077
+        or before.st_nlink != 1
+        or not 1 <= before.st_size <= maximum_bytes
+    ):
+        fail("managed OpenClaw %s is not an owner-only regular file" % artifact)
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        fail("managed OpenClaw %s could not be opened safely" % artifact)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.getuid()
+            or opened.st_mode & 0o077
+            or opened.st_nlink != 1
+            or not 1 <= opened.st_size <= maximum_bytes
+        ):
+            fail("managed OpenClaw %s changed during secure open" % artifact)
+        chunks = []
+        remaining = maximum_bytes + 1
+        while remaining:
+            chunk = os.read(descriptor, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(descriptor)
+    except OSError:
+        fail("managed OpenClaw %s could not be read safely" % artifact)
+    finally:
+        os.close(descriptor)
+
+    raw = b"".join(chunks)
+    stable_fields = (
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_uid",
+        "st_nlink",
+        "st_size",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    )
+    if (
+        len(raw) != opened.st_size
+        or len(raw) > maximum_bytes
+        or any(getattr(opened, field) != getattr(after, field) for field in stable_fields)
+    ):
+        fail("managed OpenClaw %s changed while being read" % artifact)
+    try:
+        return raw.decode("utf-8", errors="strict")
+    except UnicodeError:
+        fail("managed OpenClaw %s is not valid UTF-8" % artifact)
+
+
+def validate(value):
+    if not sandbox_pattern.fullmatch(value):
+        fail("managed OpenClaw sandbox identity is unsafe")
+    return value
+
+
+def parse_identity_record(raw):
     lines = raw.splitlines()
     if len(lines) != 1 or raw != lines[0] + "\n":
-        raise SystemExit("managed OpenClaw sandbox identity is malformed")
-    value = lines[0]
-if not re.fullmatch(r"mac-openclaw-[a-z0-9][a-z0-9._-]{0,127}", value):
-    raise SystemExit("managed OpenClaw sandbox identity is unsafe")
+        fail("managed OpenClaw sandbox identity is malformed")
+    return validate(lines[0])
+
+
+def parse_runtime_record(raw):
+    matches = []
+    for line in raw.splitlines():
+        match = assignment_pattern.fullmatch(line)
+        if match is None:
+            continue
+        try:
+            lexer = shlex.shlex(match.group(1), posix=True)
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            values = list(lexer)
+        except ValueError:
+            fail("managed OpenClaw runtime sandbox identity is malformed")
+        if len(values) != 1:
+            fail("managed OpenClaw runtime sandbox identity is ambiguous")
+        matches.append(values[0])
+    if len(matches) != 1:
+        detail = "missing" if not matches else "ambiguous"
+        fail("managed OpenClaw runtime sandbox identity is %s" % detail)
+    return validate(matches[0])
+
+
+if configured:
+    value = validate(configured)
+else:
+    identity = read_private_regular(
+        identity_path, missing_ok=True, artifact="sandbox identity"
+    )
+    if identity is not None:
+        value = parse_identity_record(identity)
+    else:
+        runtime = read_private_regular(
+            runtime_path, missing_ok=False, artifact="runtime environment"
+        )
+        value = parse_runtime_record(runtime)
 print(value)
 PY
 }
