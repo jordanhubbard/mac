@@ -678,6 +678,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PHASE1_HELPER` | str | consumer-defined | core | Core setting: phase1 helper. |
 | `MAC_PHASE1_HELPER_SOURCE` | str | consumer-defined | core | Core setting: phase1 helper source. |
 | `MAC_PHASE1_LOCAL_RESTORE_MANIFEST` | str | consumer-defined | core | Core setting: phase1 local restore manifest. |
+| `MAC_PHASE1_MEDIA_READINESS_SECONDS` | int | consumer-defined | core | Core setting: phase1 media readiness seconds. |
 | `MAC_PHASE1_OS` | str | consumer-defined | core | Core setting: phase1 os. |
 | `MAC_PHASE1_POLL_SECONDS` | int | consumer-defined | core | Core setting: phase1 poll seconds. |
 | `MAC_PHASE1_RECEIPT_PATH` | str | consumer-defined | core | Core setting: phase1 receipt path. |

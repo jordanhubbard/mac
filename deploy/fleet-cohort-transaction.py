@@ -67,6 +67,7 @@ NODE_STATES = frozenset(
     {
         "planned",
         "route_bound",
+        "phase1_prepare_started",
         "phase1_armed",
         "quiesce_started",
         "quiesced",
@@ -81,6 +82,7 @@ NODE_STATES = frozenset(
 )
 ROLLBACK_NODE_STATES = frozenset(
     {
+        "phase1_prepare_started",
         "phase1_armed",
         "quiesce_started",
         "quiesced",
@@ -918,12 +920,13 @@ def _validate_journal(
 _NODE_PROGRESS = {
     "planned": 0,
     "route_bound": 1,
-    "phase1_armed": 2,
-    "quiesce_started": 3,
-    "quiesced": 4,
-    "phase2_armed": 5,
-    "phase2_started": 6,
-    "prepared": 7,
+    "phase1_prepare_started": 2,
+    "phase1_armed": 3,
+    "quiesce_started": 4,
+    "quiesced": 5,
+    "phase2_armed": 6,
+    "phase2_started": 7,
+    "prepared": 8,
 }
 
 
@@ -936,6 +939,7 @@ def _validate_node_consistency(node: dict[str, Any], ordinal: int) -> None:
                 "invalid_schema", f"cohort node {ordinal} has an invalid abort source"
             )
         expected_action = {
+            "phase1_prepare_started": "cleanup_only",
             "phase1_armed": "cleanup_only",
             "quiesce_started": "phase1_restore",
             "quiesced": "phase1_restore",
@@ -973,13 +977,13 @@ def _validate_node_consistency(node: dict[str, Any], ordinal: int) -> None:
     rank = _NODE_PROGRESS[effective]
     staged_fields = (
         (1, "route_identity"),
-        (2, "restore_contract_sha256"),
-        (2, "phase1_arm_evidence"),
-        (4, "quiescence_evidence"),
-        (5, "rollback_intent_sha256"),
-        (5, "finalizer_sha256"),
-        (5, "phase2_arm_evidence"),
-        (7, "prepared_evidence"),
+        (3, "restore_contract_sha256"),
+        (3, "phase1_arm_evidence"),
+        (5, "quiescence_evidence"),
+        (6, "rollback_intent_sha256"),
+        (6, "finalizer_sha256"),
+        (6, "phase2_arm_evidence"),
+        (8, "prepared_evidence"),
     )
     for required_rank, field in staged_fields:
         present = node[field] is not None
@@ -2374,7 +2378,9 @@ def _refresh_phase(journal: dict[str, Any]) -> None:
         journal["phase"] = "quiesced"
     elif any(state in {"quiesce_started", "quiesced"} for state in states):
         journal["phase"] = "quiescing"
-    elif any(state == "phase1_armed" for state in states):
+    elif any(
+        state in {"phase1_prepare_started", "phase1_armed"} for state in states
+    ):
         journal["phase"] = "arming_phase1"
     else:
         journal["phase"] = "routing"
@@ -2390,6 +2396,7 @@ def _rollback_candidates(journal: dict[str, Any]) -> list[dict[str, Any]]:
         action = node["abort_kind"]
         if action is None:
             action = {
+                "phase1_prepare_started": "cleanup_only",
                 "phase1_armed": "cleanup_only",
                 "quiesce_started": "phase1_restore",
                 "quiesced": "phase1_restore",
@@ -2621,6 +2628,39 @@ def command_route_bound(
     )
 
 
+def command_phase1_prepare_started(
+    directory: JournalDirectory, args: argparse.Namespace
+) -> tuple[Any, bool]:
+    def transition(journal: dict[str, Any]) -> bool:
+        _require_forward_direction(journal)
+        node = _node(journal, args)
+        if node["state"] == "phase1_prepare_started":
+            return False
+        if node["state"] != "route_bound":
+            raise JournalError(
+                "invalid_transition", "phase1 prepare requires a bound route"
+            )
+        earlier = journal["cohort"][: node["ordinal"]]
+        later = journal["cohort"][node["ordinal"] + 1 :]
+        if any(item["state"] != "phase1_armed" for item in earlier) or any(
+            item["state"] != "route_bound" for item in later
+        ):
+            raise JournalError(
+                "invalid_transition", "phase1 prepares must follow cohort order"
+            )
+        node["state"] = "phase1_prepare_started"
+        _refresh_phase(journal)
+        return True
+
+    return _mutate(
+        directory,
+        args,
+        "phase1-prepare-start",
+        _node_details(args),
+        transition,
+    )
+
+
 def command_phase1_armed(
     directory: JournalDirectory, args: argparse.Namespace
 ) -> tuple[Any, bool]:
@@ -2639,8 +2679,10 @@ def command_phase1_armed(
                     "evidence_binding_conflict", "phase1 arm binding changed"
                 )
             return False
-        if node["state"] != "route_bound":
-            raise JournalError("invalid_transition", "phase1 arm requires bound route")
+        if node["state"] != "phase1_prepare_started":
+            raise JournalError(
+                "invalid_transition", "phase1 arm requires durable prepare intent"
+            )
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
         if any(item["state"] != "phase1_armed" for item in earlier) or any(
@@ -3525,6 +3567,11 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--identity-file", required=True)
     route.set_defaults(handler=command_route_bound)
 
+    phase1_prepare = commands.add_parser("phase1-prepare-start")
+    _add_operation(phase1_prepare)
+    _add_node(phase1_prepare)
+    phase1_prepare.set_defaults(handler=command_phase1_prepare_started)
+
     phase1 = commands.add_parser("phase1-armed")
     _add_operation(phase1)
     _add_node(phase1, evidence=True)
@@ -3666,6 +3713,7 @@ def main(argv: list[str] | None = None) -> int:
             "init",
             "hub-route-bound",
             "route-bound",
+            "phase1-prepare-start",
             "phase1-armed",
             "hub-open-start",
             "hub-opened",

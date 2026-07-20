@@ -383,6 +383,14 @@ def test_embedded_epoch_commit_atomically_transitions_or_releases(
     baseline = "2026-07-18T00:00:00+00:00"
     deployment_reason = "mac fleet deployment test"
     digest = "a" * 64
+    media_readiness = {
+        "schema": "mac.media_runtime_readiness_manifest.v1",
+        "status": "proved",
+        "manager": "systemd",
+        "resources": [],
+        "sha256": digest,
+        "source_contract_sha256": digest,
+    }
     quiescence = {
         "schema": "mac.daemon_resource_quiescence_attestation.v1",
         "agent": "worker-1",
@@ -391,6 +399,10 @@ def test_embedded_epoch_commit_atomically_transitions_or_releases(
         "phase1_daemon_receipt_sha256": digest,
         "phase1_function_block_sha256": digest,
         "phase1_supervisor": {"manager": "systemd", "resources": []},
+        "media_runtime_readiness": media_readiness,
+        "media_runtime_readiness_sha256": digest,
+        "media_runtime_source_contract_sha256": digest,
+        "media_runtime_stable_observations": 2,
         "generation": deployment_id,
         "revision": "1" * 40,
         "gateway_implementation": "none",

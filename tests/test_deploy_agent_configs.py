@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import json
 import os
 import re
@@ -2566,6 +2567,23 @@ def test_remote_deploy_reconciliation_accepts_matching_post_and_latest_manifests
     assert "remote reconciliation succeeded for rocky" in result.stdout
 
 
+def test_remote_deploy_reconciliation_rejects_media_readiness_divergence(tmp_path):
+    deploy_ts = "20260707T182907Z"
+    deploy_rev = "9" * 40
+    mac_home = _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev)
+    latest_path = mac_home / "logs" / "deploy-manifest-latest.json"
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["media_runtime_readiness"]["resources"].reverse()
+    latest_path.write_text(json.dumps(latest), encoding="utf-8")
+
+    result = _run_reconcile_remote_deploy(
+        tmp_path, deploy_ts=deploy_ts, deploy_rev=deploy_rev
+    )
+
+    assert result.returncode != 0
+    assert "manifest media runtime readiness diverged" in result.stderr
+
+
 def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
     mac_home = tmp_path / ".mac"
     log_dir = mac_home / "logs"
@@ -2582,13 +2600,27 @@ def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
         "container_runtimes": [],
         "gateway_implementation": "none",
     }
+    media_resources = [
+        {
+            "name": name,
+            "prior_state": "active",
+            "state": "active",
+            "enabled_state": "enabled",
+            "stable_observations": 2,
+        }
+        for name in (
+            "mac-gen-server.service",
+            "mac-gen-audio-server.service",
+            "mac-gen-video-server.service",
+        )
+    ]
     phase1 = {
         "schema": "mac.phase1_cohort_quiescence_manifest.v1",
         "status": "proved",
         "generation": generation,
         "revision": deploy_rev,
         "sha256": "2" * 64,
-        "supervisor": {"kind": "systemd"},
+        "supervisor": {"manager": "systemd"},
         "daemon_resource_receipt": {
             "schema": "mac.daemon_resource_quiescence.v1",
             "proof_phase": "pre_source",
@@ -2608,12 +2640,52 @@ def _write_reconciliation_evidence(tmp_path, deploy_ts, deploy_rev):
         "identities": {},
         "state": {},
     }
+    restore_contract = {
+        "schema": "mac.phase1_cohort_restore_contract.v1",
+        "status": "prepared",
+        "agent": "rocky",
+        "generation": generation,
+        "revision": deploy_rev,
+        "supervisor": {"manager": "systemd"},
+    }
+    restore_path = mac_home / f"phase1-cohort-restore-contract-{generation}.json"
+    restore_raw = json.dumps(restore_contract, sort_keys=True).encode()
+    restore_path.write_bytes(restore_raw)
+    restore_path.chmod(0o600)
+    restore_digest = hashlib.sha256(restore_raw).hexdigest()
+    media_receipt = {
+        "schema": "mac.phase1_supervisor_media_resume.v1",
+        "agent": "rocky",
+        "fleet": "mac",
+        "os_kind": "linux",
+        "generation": generation,
+        "revision": deploy_rev,
+        "source_contract_sha256": restore_digest,
+        "supervisor": {
+            "manager": "systemd",
+            "media_resources": media_resources,
+        },
+    }
+    media_path = mac_home / f"phase1-supervisor-resume_media-{generation}.json"
+    media_raw = json.dumps(media_receipt, sort_keys=True).encode()
+    media_path.write_bytes(media_raw)
+    media_path.chmod(0o600)
+    media = {
+        "schema": "mac.media_runtime_readiness_manifest.v1",
+        "status": "proved",
+        "path": str(media_path),
+        "sha256": hashlib.sha256(media_raw).hexdigest(),
+        "source_contract_sha256": restore_digest,
+        "manager": "systemd",
+        "resources": media_resources,
+    }
     manifest = {
         "stage": "post",
         "agent": "rocky",
         "deploy": {"timestamp": deploy_ts, "mac_git_rev": deploy_rev},
         "daemon_resource_quiescence": quiescence,
         "phase1_cohort_quiescence": phase1,
+        "media_runtime_readiness": media,
         "gateway_readiness": gateway,
     }
     (log_dir / f"deploy-manifest-{deploy_ts}-post.json").write_text(

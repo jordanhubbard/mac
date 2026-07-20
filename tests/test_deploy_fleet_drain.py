@@ -2619,3 +2619,104 @@ def test_supervisord_rotates_each_gateway_implementation_log_before_classificati
 
     assert '"$LOG_DIR/hermes-gateway.log" "$LOG_DIR/openclaw-gateway.log"' in function
     assert 'sudo truncate -s 0 "$gateway_log"' in function
+
+
+def test_recovery_route_failure_propagates_from_conditional_context(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery = (
+        "recover_active_cohort_transaction_v2() {"
+        + deploy.split("recover_active_cohort_transaction_v2() {", 1)[1].split(
+            "\n}\n\nrecover_incomplete_cohort_transaction_before_deploy", 1
+        )[0]
+        + "\n}"
+    )
+    events = tmp_path / "events"
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+PYTHON_BIN={shlex.quote(sys.executable)}
+DEPLOY_CONTROLLER_NONCE=controller
+COHORT_JOURNAL_ACTIVE=1
+COHORT_JOURNAL_REVISION=0
+cohort_journal() {{
+  case "$1" in
+    status) printf '%s\n' '{{"journal":{{"revision":1,"fleet":"mac"}}}}' ;;
+    recovery) printf '%s\n' '{{"direction":"rollback"}}' ;;
+  esac
+}}
+verify_cohort_recovery_routes() {{ printf '%s\n' verify >> {shlex.quote(str(events))}; return 42; }}
+{recovery}
+set +e
+if recover_active_cohort_transaction_v2 epoch controller; then result=0; else result=$?; fi
+printf '%s|%s\n' "$result" "$COHORT_JOURNAL_ACTIVE"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "1|1"
+    assert events.read_text(encoding="utf-8").splitlines() == ["verify"]
+
+
+def test_typed_prepare_and_composite_rollback_are_journal_ordered():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    typed = deploy.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain()", 1)[0]
+    prepare_intent = typed.index("cohort_journal_mutate phase1-prepare-start")
+    remote_prepare = typed.index("prepare_remote_phase1_restore_contract", prepare_intent)
+    armed = typed.index("cohort_journal_mutate phase1-armed", remote_prepare)
+    assert prepare_intent < remote_prepare < armed
+
+    recovery = deploy.split("recover_cohort_node() {", 1)[1].split(
+        "\n}\n\nrecover_active_cohort_transaction", 1
+    )[0]
+    phase2 = recovery.index("rollback_remote_phase2_generation")
+    phase1 = recovery.index("restore_remote_phase1_generation", phase2)
+    composite = recovery.index("write_cohort_composite_rollback_evidence", phase1)
+    aborted = recovery.index("cohort_journal_mutate aborted-node", composite)
+    assert phase2 < phase1 < composite < aborted
+
+
+def test_phase1_prepare_upload_failure_releases_exact_lock_in_conditional_context(
+    tmp_path,
+):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    cleanup = (
+        "cleanup_failed_phase1_prepare_lock() {"
+        + deploy.split("cleanup_failed_phase1_prepare_lock() {", 1)[1].split(
+            "\n}\n\nprepare_remote_phase1_restore_contract", 1
+        )[0]
+        + "\n}"
+    )
+    prepare = (
+        "prepare_remote_phase1_restore_contract() {"
+        + deploy.split("prepare_remote_phase1_restore_contract() {", 1)[1].split(
+            "\n}\n\nquiesce_remote_agent_for_cohort", 1
+        )[0]
+        + "\n}"
+    )
+    events = tmp_path / "events"
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+DEPLOY_CONTROLLER_NONCE=controller
+PHASE1_QUIESCE_HELPER=/fixture/helper
+PHASE1_DAEMON_FUNCTIONS=/fixture/functions
+stable_worker_agent_id() {{ printf '%s\n' agent_fixture; }}
+phase1_restore_contract_file_for_agent() {{ printf '%s\n' {shlex.quote(str(tmp_path / 'contract.json'))}; }}
+acquire_remote_deployment_lock() {{ printf '%s\n' "acquire:$1:$2" >> {shlex.quote(str(events))}; }}
+fenced_remote_upload() {{ printf '%s\n' "upload:$3" >> {shlex.quote(str(events))}; return 9; }}
+release_remote_deployment_lock() {{ printf '%s\n' "release:$1:$2" >> {shlex.quote(str(events))}; }}
+{cleanup}
+{prepare}
+set +e
+if prepare_remote_phase1_restore_contract fixture exact-generation systemd mac linux; then result=0; else result=$?; fi
+printf '%s\n' "$result"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "1"
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "acquire:fixture:exact-generation",
+        "upload:/fixture/helper",
+        "release:fixture:exact-generation",
+    ]

@@ -419,6 +419,7 @@ class Scenario:
 
     def arm_phase1(self) -> None:
         for node in self.nodes:
+            self.call("phase1-prepare-start", node=node)
             self.call(
                 "phase1-armed",
                 node=node,
@@ -497,6 +498,9 @@ def advance_one_node_to(scenario: Scenario, checkpoint: str) -> None:
     )
     if checkpoint == "route-bound":
         return
+    scenario.call("phase1-prepare-start", node=node)
+    if checkpoint == "phase1-prepare-start":
+        return
     scenario.call(
         "phase1-armed",
         node=node,
@@ -562,6 +566,7 @@ def advance_one_node_to(scenario: Scenario, checkpoint: str) -> None:
         ("init", "rollback", "none", None, 0, True),
         ("hub-route-bound", "rollback", "none", None, 0, True),
         ("route-bound", "rollback", "none", None, 0, True),
+        ("phase1-prepare-start", "rollback", "none", "cleanup_only", 0, True),
         ("phase1-armed", "rollback", "none", "cleanup_only", 0, True),
         (
             "hub-open-start",
@@ -629,6 +634,7 @@ def test_forward_lifecycle_is_durable_secret_free_and_requires_finalization(
     scenario = Scenario(tmp_path)
     secret = "must-not-appear-in-journal"
     scenario.bind_routes()
+    scenario.call("phase1-prepare-start", node=scenario.nodes[0])
     scenario.call(
         "phase1-armed",
         node=scenario.nodes[0],
@@ -1083,6 +1089,7 @@ def test_route_identity_is_adapter_typed_and_hub_binds_store_authority(
         node=scenario.nodes[0],
         identity_file=scenario.identity_file("node-0", k8s),
     )
+    scenario.call("phase1-prepare-start", node=scenario.nodes[0])
     scenario.call(
         "phase1-armed",
         node=scenario.nodes[0],
@@ -1207,6 +1214,7 @@ def test_process_identity_mismatch_fences_mutation_even_when_pid_is_live(
 def test_evidence_reader_rejects_unsafe_files(tmp_path: Path, attack: str) -> None:
     scenario = Scenario(tmp_path)
     scenario.bind_routes()
+    scenario.call("phase1-prepare-start", node=scenario.nodes[0])
     candidate = scenario.evidence("unsafe")
     if attack == "mode":
         candidate.chmod(0o644)

@@ -5,6 +5,7 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import time
 
@@ -242,7 +243,7 @@ def _run_action(
     env: dict[str, str], action: str, *, timeout: float = 10
 ) -> subprocess.CompletedProcess[str]:
     command = ["/bin/bash", str(SCRIPT), action]
-    if action in {"restore", "restore-phase1"}:
+    if action in {"restore", "restore-phase1", "resume-media"}:
         contract_path = Path(env["MAC_HOME"]) / (
             "phase1-cohort-restore-contract-%s.json" % env["DEPLOY_GENERATION"]
         )
@@ -301,7 +302,11 @@ case "$command" in
     ;;
   show)
     unit=""
-    for value in "$@"; do unit=$value; done
+    want_restarts=0
+    for value in "$@"; do
+      unit=$value
+      [ "$value" != --property=NRestarts ] || want_restarts=1
+    done
     if [ -n "${FAKE_MANAGER_ENV_CAPTURE:-}" ]; then
       /usr/bin/env > "$FAKE_MANAGER_ENV_CAPTURE"
     fi
@@ -329,10 +334,12 @@ case "$command" in
         case "${FAKE_MEDIA_STATE:-absent}" in
           absent)
             printf 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\n'
+            [ "$want_restarts" != 1 ] || printf 'NRestarts=0\n'
             exit 0
             ;;
           inactive)
             printf 'LoadState=loaded\nActiveState=inactive\nSubState=dead\nMainPID=0\n'
+            [ "$want_restarts" != 1 ] || printf 'NRestarts=0\n'
             exit 0
             ;;
           active) ;;
@@ -342,6 +349,7 @@ case "$command" in
     esac
     if [ -f "$state_file.absent" ]; then
       printf 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\n'
+      [ "$want_restarts" != 1 ] || printf 'NRestarts=0\n'
       exit 0
     fi
     state=active
@@ -354,9 +362,18 @@ case "$command" in
     printf 'LoadState=loaded\\nActiveState=%s\\nSubState=%s\\nMainPID=%s\\n' \
       "$state" "$( [ "$state" = active ] && echo running || echo dead )" \
       "$( [ "$state" = active ] && echo 321 || echo 0 )"
+    [ "$want_restarts" != 1 ] || printf 'NRestarts=0\n'
     ;;
   is-enabled)
     unit=${1:?}
+    case "$unit" in
+      mac-gen-server.service|mac-gen-audio-server.service|mac-gen-video-server.service)
+        if [ "${FAKE_MEDIA_STATE:-absent}" = absent ]; then
+          printf 'not-found\n'
+          exit 4
+        fi
+        ;;
+    esac
     if [ -f "$FAKE_SYSTEMD_STATE/$unit.absent" ]; then
       printf 'not-found\n'
       exit 4
@@ -1471,7 +1488,7 @@ def test_active_nemo_gateway_fails_before_any_phase1_mutation(
 
 
 @pytest.mark.parametrize("media_state", ["active", "inactive"])
-def test_present_media_gen_service_is_ineligible_before_phase1_mutation(
+def test_present_media_gen_service_is_journaled_quiesced_and_restored(
     tmp_path: Path, media_state: str
 ) -> None:
     env = _base_case(tmp_path, "systemd")
@@ -1487,22 +1504,146 @@ def test_present_media_gen_service_is_ineligible_before_phase1_mutation(
 
     result = _run(env)
 
-    assert result.returncode != 0
-    assert "media-gen service is ineligible" in result.stderr
-    assert Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8") == ""
+    assert result.returncode == 0, result.stderr
+    media = _receipt(env)["supervisor"]["media_resources"]
+    assert {item["name"] for item in media} == {
+        "mac-gen-server.service",
+        "mac-gen-audio-server.service",
+        "mac-gen-video-server.service",
+    }
+    assert {(item["prior_state"], item["state"]) for item in media} == {
+        (media_state, "inactive")
+    }
+    assert {item["enabled_state"] for item in media} == {"enabled"}
+    events = Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
+    if media_state == "active":
+        assert events.count("systemd:mac-gen-server.service\n") == 1
+        assert events.count("systemd:mac-gen-audio-server.service\n") == 1
+        assert events.count("systemd:mac-gen-video-server.service\n") == 1
+    else:
+        assert "systemd:mac-gen-server.service" not in events
+
+    restored = _run_action(env, "restore-phase1")
+
+    assert restored.returncode == 0, restored.stderr
+    restored_events = Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
+    if media_state == "active":
+        assert "systemd-restore:mac-gen-server.service" in restored_events
+        assert "systemd-restore:mac-gen-audio-server.service" in restored_events
+        assert "systemd-restore:mac-gen-video-server.service" in restored_events
 
 
-def test_synchronized_node_install_never_creates_unjournaled_media_gen_units() -> None:
+def test_resume_media_blocks_when_active_service_health_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    env = _base_case(tmp_path, "systemd")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        unavailable_port = probe.getsockname()[1]
+    env.update(
+        {
+            "FAKE_SYSTEMD_STATE": str(state),
+            "FAKE_MEDIA_STATE": "active",
+            "MAC_PHASE1_MEDIA_READINESS_SECONDS": "0.15",
+            "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS": "1",
+            "MAC_PHASE1_POLL_SECONDS": "0.01",
+        }
+    )
+    mac_env = Path(env["MAC_HOME"]) / "mac.env"
+    mac_env.write_text(
+        "MAC_STARTUP_CLEAR_HOLD=1\n"
+        f"MAC_AGENT_GEN_PORT={unavailable_port}\n"
+        f"MAC_AGENT_GEN_AUDIO_PORT={unavailable_port}\n"
+        f"MAC_AGENT_GEN_VIDEO_PORT={unavailable_port}\n",
+        encoding="utf-8",
+    )
+    mac_env.chmod(0o600)
+    _install_systemctl(tmp_path / "bin")
+
+    quiesced = _run(env)
+    resumed = _run_action(env, "resume-media")
+
+    assert quiesced.returncode == 0, quiesced.stderr
+    assert resumed.returncode != 0
+    assert "did not pass its bounded health check" in resumed.stderr
+    assert not (
+        Path(env["MAC_HOME"])
+        / f"phase1-supervisor-resume_media-{env['DEPLOY_GENERATION']}.json"
+    ).exists()
+
+
+def test_synchronized_node_install_reconciles_journaled_media_before_post_manifest() -> None:
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    main = source.split('write_deploy_manifest "pre" "$MANIFEST_PRE"', 1)[1]
+    resume = main.index("reconcile_typed_media_services")
+    post = main.index('write_deploy_manifest "post" "$MANIFEST_POST"')
+    assert resume < post
+    reconcile = source.split("reconcile_typed_media_services() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert "prepare_typed_media_plan" in reconcile
+    assert "install_gpu_gen_server typed" in reconcile
+    assert "resume_typed_media_services" in reconcile
+    rollback = source.split("write_rollback_script() {", 1)[1].split(
+        "\n}\n\nverify_phase2_rollback_intent() {", 1
+    )[0]
+    for unit in (
+        "MAC_GEN_SERVICE_NAME",
+        "MAC_GEN_AUDIO_SERVICE_NAME",
+        "MAC_GEN_VIDEO_SERVICE_NAME",
+    ):
+        assert f'--auxiliary-service "\\${unit}"' in rollback
+
+
+def test_synchronized_media_resume_fd_pins_and_authenticates_retained_helper() -> None:
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    body = source.split("resume_typed_media_services() {", 1)[1].split(
+        "\n}\n\ninstall_gpu_gen_server() {", 1
+    )[0]
+    assert 'getattr(os, "O_NOFOLLOW", 0)' in body
+    assert 'metadata.st_nlink != 1' in body
+    assert 'stat.S_IMODE(metadata.st_mode) != 0o700' in body
+    assert 'hashlib.sha256(raw).hexdigest() != expected' in body
+    assert '"/dev/fd/%d" % descriptor' in body
+    assert 'pass_fds=(descriptor,)' in body
+
+
+def test_synchronized_media_reconciliation_never_mutates_unjournaled_gen_venv() -> None:
     source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
         encoding="utf-8"
     )
     body = source.split("install_gpu_gen_server() {", 1)[1].split(
-        "\n}\n\ninstall_agent_footprint() {", 1
+        "\n}\n\nreconcile_typed_media_services() {", 1
     )[0]
-    gate = body.index("MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE")
-    gpu_probe = body.index("nvidia-smi")
-    unit_install = body.index("_install_gen_unit")
-    assert gate < gpu_probe < unit_install
+    venv = body.split("# Resolve the gen venv:", 1)[1].split(
+        "# One wrapper + unit per configured modality", 1
+    )[0]
+    typed = venv.split('if [ "$lifecycle_mode" = typed ]; then', 1)[1].split(
+        "\n  else\n", 1
+    )[0]
+    assert "immutable prior gen venv" in typed
+    assert "-m pip" not in typed
+    assert "-m venv" not in typed
+
+
+def test_media_readiness_manifest_uses_stable_private_descriptor_reads() -> None:
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    body = source.split("def media_runtime_readiness_summary", 1)[1].split(
+        "\n\ndef gateway_readiness_summary", 1
+    )[0]
+    assert 'getattr(os, "O_NOFOLLOW", 0)' in body
+    assert "before.st_nlink != 1" in body
+    assert "stat.S_IMODE(before.st_mode) != 0o600" in body
+    assert "before.st_mtime_ns" in body
+    assert "after.st_mtime_ns" in body
 
 
 def test_synchronized_openclaw_prepare_requires_exact_host_automation_journal() -> None:

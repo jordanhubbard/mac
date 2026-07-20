@@ -124,7 +124,9 @@ if manager == "systemctl":
         if item is None:
             raise SystemExit(1)
         if identity not in state.get("fail_open_disable", []):
-            item.update(enabled="disabled", active="inactive", sub="dead", pid=0)
+            item.update(active="inactive", sub="dead", pid=0)
+            if identity not in state.get("preserve_indirect_disable", []):
+                item["enabled"] = "disabled"
             save(state)
         raise SystemExit(0)
     if command == "enable":
@@ -447,6 +449,40 @@ def test_systemd_quiesce_proves_all_services_inactive_and_scrubs_selectors(
         assert item["pid"] == 0
 
 
+def test_systemd_quiesce_stops_explicit_auxiliary_media_before_restore(
+    tmp_path: Path,
+) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    state = _loaded_systemd_state()
+    media = "mac-gen-server.service"
+    state["services"][media] = {
+        "load": "loaded",
+        "active": "active",
+        "sub": "running",
+        "pid": 8189,
+        "restarts": 0,
+        "enabled": "enabled",
+    }
+    _write_state(tmp_path, state)
+    command, receipt = _base_command(
+        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
+    )
+    command.extend(
+        ["--systemctl", str(systemctl), "--auxiliary-service", media]
+    )
+
+    result = _run(command)
+
+    assert result.returncode == 0, result.stderr
+    payload = _assert_passed_receipt(receipt, "quiesce", "systemd")
+    assert payload["services"]["auxiliary_0"] == {
+        "identity": media,
+        "expected": "inactive",
+        "observed": "inactive",
+    }
+    assert _read_state(tmp_path)["services"][media]["active"] == "inactive"
+
+
 def test_systemd_quiesce_rejects_fail_open_stop_without_leaking_output(
     tmp_path: Path,
 ) -> None:
@@ -497,6 +533,39 @@ def test_systemd_restore_proves_exact_healthy_topology(tmp_path: Path) -> None:
     for key in ("openclaw", "nemoclaw"):
         assert state[SYSTEMD_NAMES[key]]["active"] == "inactive"
         assert state[SYSTEMD_NAMES[key]]["enabled"] == "disabled"
+
+
+def test_systemd_restore_keeps_indirect_auxiliary_media_safely_inactive(
+    tmp_path: Path,
+) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    state = _stopped_systemd_state()
+    media = "mac-gen-server.service"
+    state["services"][media] = {
+        "load": "loaded",
+        "active": "inactive",
+        "sub": "dead",
+        "pid": 0,
+        "restarts": 0,
+        "enabled": "indirect",
+    }
+    state["preserve_indirect_disable"] = [media]
+    _write_state(tmp_path, state)
+    with _healthy_server() as port:
+        command, receipt = _base_command(
+            tmp_path, "restore", "systemd", port, SYSTEMD_NAMES
+        )
+        command.extend(
+            ["--systemctl", str(systemctl), "--auxiliary-service", media]
+        )
+        result = _run(command)
+
+    assert result.returncode == 0, result.stderr
+    payload = _assert_passed_receipt(receipt, "restore", "systemd")
+    assert payload["services"]["auxiliary_0"]["observed"] == "inactive"
+    restored = _read_state(tmp_path)["services"][media]
+    assert restored["active"] == "inactive"
+    assert restored["enabled"] == "indirect"
 
 
 def test_systemd_restore_requiesces_a_partial_start_failure(tmp_path: Path) -> None:

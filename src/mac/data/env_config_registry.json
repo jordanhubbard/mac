@@ -179,6 +179,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/fleet-node-phase1-quiesce.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -243,6 +244,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/fleet-node-phase1-quiesce.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -280,6 +282,7 @@
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",
+      "deploy/fleet-node-phase1-quiesce.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
     ],
@@ -8108,6 +8111,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: phase1 media readiness seconds.",
+    "family": "core",
+    "name": "MAC_PHASE1_MEDIA_READINESS_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: phase1 os.",
     "family": "core",
     "name": "MAC_PHASE1_OS",
@@ -8169,6 +8183,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/fleet-node-phase1-quiesce.sh"
     ],
     "type": "str"

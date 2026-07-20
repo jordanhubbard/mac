@@ -2647,6 +2647,116 @@ def phase1_cohort_quiescence_summary(mac_home):
     }
 
 
+def media_runtime_readiness_summary(stage, mac_home):
+    required = os.environ.get("MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE") == "1"
+    if not required:
+        return {"schema": "mac.media_runtime_readiness_manifest.v1", "status": "not_required"}
+    if stage != "post":
+        return {"schema": "mac.media_runtime_readiness_manifest.v1", "status": "pending"}
+    generation = os.environ["MAC_DEPLOY_GENERATION"]
+    path = mac_home / ("phase1-supervisor-resume_media-%s.json" % generation)
+    contract_path = mac_home / ("phase1-cohort-restore-contract-%s.json" % generation)
+
+    def private_stable_bytes(candidate, maximum):
+        descriptor = os.open(
+            candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != os.getuid()
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or not 1 <= before.st_size <= maximum
+            ):
+                raise SystemExit(
+                    "media runtime readiness input is not owner-private and bounded"
+                )
+            raw = bytearray()
+            while len(raw) < before.st_size:
+                chunk = os.read(
+                    descriptor, min(64 * 1024, before.st_size - len(raw))
+                )
+                if not chunk:
+                    raise SystemExit("media runtime readiness input was truncated")
+                raw.extend(chunk)
+            if os.read(descriptor, 1):
+                raise SystemExit("media runtime readiness input grew while reading")
+            after = os.fstat(descriptor)
+            if (
+                before.st_dev,
+                before.st_ino,
+                before.st_nlink,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            ) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_nlink,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            ):
+                raise SystemExit("media runtime readiness input changed while reading")
+            return bytes(raw)
+        finally:
+            os.close(descriptor)
+
+    try:
+        raw = private_stable_bytes(path, 1024 * 1024)
+        contract_raw = private_stable_bytes(contract_path, 4 * 1024 * 1024)
+        payload = json.loads(raw)
+        contract = json.loads(contract_raw)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SystemExit("post manifest lacks media runtime readiness: %s" % type(exc).__name__)
+    if (
+        payload.get("schema") != "mac.phase1_supervisor_media_resume.v1"
+        or payload.get("agent") != os.environ["AGENT"]
+        or payload.get("fleet") != os.environ["FLEET_NAME"]
+        or payload.get("os_kind") != os.environ["OS_KIND"]
+        or payload.get("generation") != generation
+        or payload.get("revision") != os.environ["DEPLOY_REV"]
+        or payload.get("source_contract_sha256") != hashlib.sha256(contract_raw).hexdigest()
+        or contract.get("supervisor", {}).get("manager") != payload.get("supervisor", {}).get("manager")
+    ):
+        raise SystemExit("media runtime readiness belongs to another release")
+    supervisor = payload["supervisor"]
+    resources = supervisor.get("media_resources")
+    manager = supervisor.get("manager")
+    if not isinstance(resources, list):
+        raise SystemExit("media runtime readiness lacks its resources")
+    if manager == "systemd":
+        expected = {
+            "%s-gen-server.service" % os.environ["FLEET_NAME"],
+            "%s-gen-audio-server.service" % os.environ["FLEET_NAME"],
+            "%s-gen-video-server.service" % os.environ["FLEET_NAME"],
+        }
+        if len(resources) != 3 or {item.get("name") for item in resources if isinstance(item, dict)} != expected:
+            raise SystemExit("media runtime readiness has unexpected identities")
+        for item in resources:
+            if (
+                not isinstance(item, dict)
+                or item.get("prior_state") not in {"active", "inactive", "absent"}
+                or item.get("state") != item.get("prior_state")
+                or item.get("enabled_state") not in {"enabled", "disabled", "masked", "static", "indirect", "not-found"}
+                or item.get("stable_observations") != 2
+            ):
+                raise SystemExit("media runtime readiness has invalid lifecycle state")
+    elif resources:
+        raise SystemExit("non-systemd media readiness contains service identities")
+    return {
+        "schema": "mac.media_runtime_readiness_manifest.v1",
+        "status": "proved" if manager == "systemd" else "not_applicable",
+        "path": str(path),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "source_contract_sha256": payload["source_contract_sha256"],
+        "manager": manager,
+        "resources": resources,
+    }
+
+
 def gateway_readiness_summary(stage):
     implementation = os.environ.get("HERMES_GATEWAY_IMPL") or "hermes"
     supervisor = os.environ.get("SUPERVISOR_KIND") or (
@@ -3107,6 +3217,7 @@ manifest = {
     },
     "services": service_summary(),
     "phase1_cohort_quiescence": phase1_cohort_quiescence_summary(mac_home),
+    "media_runtime_readiness": media_runtime_readiness_summary(stage, mac_home),
     "daemon_resource_quiescence": daemon_quiescence_summary(stage, mac_home),
     "gateway_readiness": gateway_readiness_summary(stage),
     "prerequisites": prerequisite_summary(stage),
@@ -3706,6 +3817,9 @@ HERMES_SERVICE_NAME='$HERMES_SERVICE_NAME'
 OPENCLAW_SERVICE_NAME='$OPENCLAW_SERVICE_NAME'
 NEMOCLAW_SERVICE_NAME='$NEMOCLAW_SERVICE_NAME'
 MAC_AGENT_SERVICE_NAME='$MAC_AGENT_SERVICE_NAME'
+MAC_GEN_SERVICE_NAME='$MAC_GEN_SERVICE_NAME'
+MAC_GEN_AUDIO_SERVICE_NAME='$MAC_GEN_AUDIO_SERVICE_NAME'
+MAC_GEN_VIDEO_SERVICE_NAME='$MAC_GEN_VIDEO_SERVICE_NAME'
 MAC_LAUNCHD_LABEL='$MAC_LAUNCHD_LABEL'
 HERMES_LAUNCHD_LABEL='$HERMES_LAUNCHD_LABEL'
 OPENCLAW_LAUNCHD_LABEL='$OPENCLAW_LAUNCHD_LABEL'
@@ -4240,6 +4354,9 @@ case "\$rollback_supervisor" in
       --openclaw-gateway "\$OPENCLAW_SERVICE_NAME"
       --nemoclaw-gateway "\$NEMOCLAW_SERVICE_NAME"
       --agent "\$MAC_AGENT_SERVICE_NAME"
+      --auxiliary-service "\$MAC_GEN_SERVICE_NAME"
+      --auxiliary-service "\$MAC_GEN_AUDIO_SERVICE_NAME"
+      --auxiliary-service "\$MAC_GEN_VIDEO_SERVICE_NAME"
     )
     ;;
   supervisord)
@@ -7978,21 +8095,255 @@ EOF
     || log "WARNING: $svc failed to start (journalctl -u $svc)"
 }
 
+_reconcile_typed_gen_unit() {
+  # Phase 1 owns activity and enablement. Phase 2 refreshes only the unit bytes
+  # for an identity proved present in the prior generation; resume-media then
+  # reconstructs and proves the exact journaled lifecycle.
+  local svc="$1" wrapper_name="$2" desc="$3"
+  local unit="/etc/systemd/system/${svc}"
+  log "reconciling journaled systemd media service $unit ($desc)"
+  sudo tee "$unit" >/dev/null <<EOF
+[Unit]
+Description=mac local media-gen server ($desc)
+After=network-online.target ${MAC_AGENT_SERVICE_NAME}
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$MAC_HOME
+EnvironmentFile=$ENV_FILE
+ExecStart=$MAC_HOME/bin/${wrapper_name}
+Restart=always
+RestartSec=10
+TimeoutStartSec=900
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+TYPED_MEDIA_PLAN="$LOG_DIR/media-runtime-plan-${DEPLOY_GENERATION}.json"
+
+prepare_typed_media_plan() {
+  "$PY" - "$MAC_HOME" "$DEPLOY_GENERATION" "$DEPLOY_REV" "$AGENT" \
+    "$FLEET_NAME" "$TYPED_MEDIA_PLAN" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+mac_home = Path(sys.argv[1])
+generation, revision, agent, fleet, output_raw = sys.argv[2:]
+output = Path(output_raw)
+
+def private(path):
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != 0o600
+                or not 1 <= before.st_size <= 4 * 1024 * 1024):
+            raise SystemExit("typed media lifecycle evidence is unsafe")
+        raw = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if len(raw) != before.st_size or (
+            before.st_dev, before.st_ino, before.st_size,
+            before.st_mtime_ns, before.st_ctime_ns,
+        ) != (
+            after.st_dev, after.st_ino, after.st_size,
+            after.st_mtime_ns, after.st_ctime_ns,
+        ):
+            raise SystemExit("typed media lifecycle evidence changed while reading")
+        return raw
+    finally:
+        os.close(descriptor)
+
+contract_path = mac_home / ("phase1-cohort-restore-contract-%s.json" % generation)
+receipt_path = mac_home / ("phase1-cohort-quiescence-%s.json" % generation)
+contract_raw = private(contract_path)
+receipt_raw = private(receipt_path)
+try:
+    contract = json.loads(contract_raw)
+    receipt = json.loads(receipt_raw)
+except (TypeError, ValueError) as exc:
+    raise SystemExit("typed media lifecycle evidence is malformed") from exc
+digest = hashlib.sha256(contract_raw).hexdigest()
+if (
+    contract.get("schema") != "mac.phase1_cohort_restore_contract.v1"
+    or contract.get("status") != "prepared"
+    or contract.get("rollback_capable") is not True
+    or receipt.get("schema") != "mac.phase1_cohort_quiescence.v1"
+    or any(item.get("agent") != agent for item in (contract, receipt))
+    or any(item.get("fleet") != fleet for item in (contract, receipt))
+    or any(item.get("generation") != generation for item in (contract, receipt))
+    or any(item.get("revision") != revision for item in (contract, receipt))
+    or receipt.get("source_contract_sha256") != digest
+):
+    raise SystemExit("typed media lifecycle evidence belongs to another release")
+expected = contract.get("supervisor")
+observed = receipt.get("supervisor")
+if not isinstance(expected, dict) or not isinstance(observed, dict) or observed.get("manager") != expected.get("manager"):
+    raise SystemExit("typed media supervisor evidence is inconsistent")
+manager = expected.get("manager")
+expected_names = {
+    "%s-gen-server.service" % fleet,
+    "%s-gen-audio-server.service" % fleet,
+    "%s-gen-video-server.service" % fleet,
+}
+expected_media = expected.get("media_resources") or []
+observed_media = observed.get("media_resources") or []
+if manager == "systemd":
+    if len(expected_media) != 3 or len(observed_media) != 3:
+        raise SystemExit("typed media lifecycle journal is incomplete")
+    by_name = {item.get("name"): item for item in expected_media if isinstance(item, dict)}
+    if set(by_name) != expected_names:
+        raise SystemExit("typed media lifecycle journal has unexpected identities")
+    seen = set()
+    for item in observed_media:
+        if not isinstance(item, dict) or item.get("name") not in by_name or item.get("name") in seen:
+            raise SystemExit("typed media quiescence proof has unexpected identities")
+        seen.add(item["name"])
+        comparable = dict(item)
+        comparable["state"] = comparable.get("prior_state")
+        if comparable != by_name[item["name"]] or item.get("state") not in {"absent", "inactive"}:
+            raise SystemExit("typed media quiescence proof differs from its contract")
+        if item.get("prior_state") not in {"absent", "inactive", "active"} or item.get("enabled_state") not in {
+            "enabled", "disabled", "masked", "static", "indirect", "not-found"
+        }:
+            raise SystemExit("typed media lifecycle state is invalid")
+else:
+    if expected_media or observed_media:
+        raise SystemExit("non-systemd media lifecycle journal is not empty")
+restore = contract.get("restore_executable")
+if (not isinstance(restore, dict) or restore.get("argv") != [restore.get("path"), "restore"]
+        or not isinstance(restore.get("path"), str) or not os.path.isabs(restore["path"])
+        or not isinstance(restore.get("sha256"), str) or len(restore["sha256"]) != 64):
+    raise SystemExit("typed media lifecycle lacks its immutable helper")
+payload = {
+    "schema": "mac.typed_media_runtime_plan.v1",
+    "agent": agent,
+    "fleet": fleet,
+    "generation": generation,
+    "revision": revision,
+    "manager": manager,
+    "source_contract_sha256": digest,
+    "restore_executable": restore,
+    "resources": expected_media,
+}
+fd, raw = tempfile.mkstemp(prefix=output.name + ".", dir=str(output.parent))
+tmp = Path(raw)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+        stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+    os.replace(tmp, output)
+finally:
+    tmp.unlink(missing_ok=True)
+PY
+}
+
+typed_media_present() {
+  "$PY" - "$TYPED_MEDIA_PLAN" "$1" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+raise SystemExit(0 if any(item.get("name")==sys.argv[2] and item.get("prior_state")!="absent" for item in value["resources"]) else 1)
+PY
+}
+
+resume_typed_media_services() {
+  local values helper digest helper_sha256
+  values="$("$PY" - "$TYPED_MEDIA_PLAN" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+print(value["restore_executable"]["path"])
+print(value["source_contract_sha256"])
+print(value["restore_executable"]["sha256"])
+PY
+)"
+  helper="${values%%$'\n'*}"
+  values="${values#*$'\n'}"
+  digest="${values%%$'\n'*}"
+  helper_sha256="${values#*$'\n'}"
+  AGENT="$AGENT" FLEET_NAME="$FLEET_NAME" OS_KIND="$OS_KIND" \
+  DEPLOY_REV="$DEPLOY_REV" DEPLOY_GENERATION="$DEPLOY_GENERATION" \
+  SUPERVISOR_KIND="$SUPERVISOR_KIND" MAC_HOME="$MAC_HOME" PY="$PY" \
+  MAC_PHASE1_RESTORE_CONTRACT_SHA256="$digest" \
+    "$PY" - "$helper" "$helper_sha256" <<'PY' >/dev/null
+import hashlib
+import os
+import stat
+import subprocess
+import sys
+
+path, expected = sys.argv[1:]
+descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+try:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or not 1 <= metadata.st_size <= 8 * 1024 * 1024
+    ):
+        raise SystemExit("typed media resume helper is unsafe")
+    raw = bytearray()
+    while len(raw) < metadata.st_size:
+        chunk = os.read(descriptor, min(64 * 1024, metadata.st_size - len(raw)))
+        if not chunk:
+            raise SystemExit("typed media resume helper was truncated")
+        raw.extend(chunk)
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise SystemExit("typed media resume helper digest differs")
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    result = subprocess.run(
+        ["/bin/bash", "/dev/fd/%d" % descriptor, "resume-media"],
+        pass_fds=(descriptor,),
+        stdin=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
+finally:
+    os.close(descriptor)
+PY
+  log "typed media lifecycle resumed and proved from its phase-1 contract"
+}
+
 install_gpu_gen_server() {
   # media-01: durable local media-gen servers for a GPU agent — image (:8189),
   # audio (:8190), video (:8191) — each as a GPU-gated systemd unit serving the
   # routes the agent advertises (#1/B1b). Provisions one shared venv
   # (torch/diffusers/transformers). GPU-gated (like Omniverse skills) +
   # systemd-only. Entirely non-fatal: a GPU-dep hiccup must never block the deploy.
-  if truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
+  local lifecycle_mode="${1:-legacy}" image_required=0 audio_required=0 video_required=0
+  if [ "$lifecycle_mode" = typed ]; then
+    image_required=0; audio_required=0; video_required=0
+    typed_media_present "$MAC_GEN_SERVICE_NAME" && image_required=1
+    typed_media_present "$MAC_GEN_AUDIO_SERVICE_NAME" && audio_required=1
+    typed_media_present "$MAC_GEN_VIDEO_SERVICE_NAME" && video_required=1
+    if [ "$image_required" = 0 ] && [ "$audio_required" = 0 ] && [ "$video_required" = 0 ]; then
+      log "gen server: phase-1 topology contains no present media units"
+      return 0
+    fi
+  elif truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
     log "gen server: synchronized cutover excludes media-gen until its lifecycle joins the rollback journal"
     return 0
   fi
   if [ "$SUPERVISOR_KIND" != "systemd" ]; then
+    [ "$lifecycle_mode" != typed ] || die "journaled media units require systemd"
     log "gen server: supervisor is $SUPERVISOR_KIND (systemd-only for now); skipping"
     return 0
   fi
   if ! { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; }; then
+    [ "$lifecycle_mode" != typed ] || die "journaled media topology requires the prior NVIDIA GPU"
     log "gen server: no NVIDIA GPU on $AGENT; skipping (GPU-only)"
     return 0
   fi
@@ -8001,6 +8352,24 @@ install_gpu_gen_server() {
   gen_model="$(_genenv MAC_AGENT_GEN_MODEL)"
   audio_models="$(_genenv MAC_AGENT_GEN_AUDIO_MODELS)"
   video_models="$(_genenv MAC_AGENT_GEN_VIDEO_MODELS)"
+  if [ "$lifecycle_mode" = typed ]; then
+    [ "$image_required" != 1 ] || [ -n "$gen_model" ] \
+      || die "journaled image service lacks MAC_AGENT_GEN_MODEL"
+    [ "$audio_required" != 1 ] || [ -n "$audio_models" ] \
+      || die "journaled audio service lacks MAC_AGENT_GEN_AUDIO_MODELS"
+    [ "$video_required" != 1 ] || [ -n "$video_models" ] \
+      || die "journaled video service lacks MAC_AGENT_GEN_VIDEO_MODELS"
+    [ "$image_required" != 1 ] || [ -f "$SRC_DIR/deploy/local-gen/openai_image_server.py" ] \
+      || die "journaled image service lacks its current server entrypoint"
+    [ "$audio_required" != 1 ] || [ -f "$SRC_DIR/deploy/local-gen/audio_server.py" ] \
+      || die "journaled audio service lacks its current server entrypoint"
+    [ "$video_required" != 1 ] || [ -f "$SRC_DIR/deploy/local-gen/video_server.py" ] \
+      || die "journaled video service lacks its current server entrypoint"
+  else
+    [ -z "$gen_model" ] || image_required=1
+    [ -z "$audio_models" ] || audio_required=1
+    [ -z "$video_models" ] || video_required=1
+  fi
   if [ -z "$gen_model" ] && [ -z "$audio_models" ] && [ -z "$video_models" ]; then
     log "gen server: no MAC_AGENT_GEN_MODEL/AUDIO_MODELS/VIDEO_MODELS set; skipping"
     return 0
@@ -8018,35 +8387,57 @@ m = get_model(sys.argv[1]); print(m.repo if m else sys.argv[1])' "$gen_model" 2>
   # Resolve the gen venv: reuse an existing ~/gen/venv that already has the stack
   # (e.g. a hand-provisioned GPU box), else build a dedicated $MAC_HOME/gen-venv.
   local gen_venv
-  if [ -x "$HOME/gen/venv/bin/python" ] && "$HOME/gen/venv/bin/python" -c "import torch, diffusers" >/dev/null 2>&1; then
-    gen_venv="$HOME/gen/venv"
-    log "gen server: reusing existing gen venv $gen_venv"
-  else
-    gen_venv="$MAC_HOME/gen-venv"
-    if [ ! -x "$gen_venv/bin/python" ]; then
-      log "gen server: creating gen venv $gen_venv"
-      "$PY" -m venv "$gen_venv" || { log "WARNING: gen venv creation failed; skipping gen server"; return 0; }
-    fi
-    "$gen_venv/bin/python" -m pip install --upgrade pip wheel >/dev/null 2>&1 || true
-    # torch first (CUDA-specific index if configured), then the diffusers stack.
-    local torch_index="${MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL:-}"
-    if ! "$gen_venv/bin/python" -c "import torch" >/dev/null 2>&1; then
-      log "gen server: installing torch${torch_index:+ (index $torch_index)}"
-      if [ -n "$torch_index" ]; then
-        "$gen_venv/bin/python" -m pip install torch torchvision --index-url "$torch_index" >/dev/null 2>&1 \
-          || log "WARNING: torch install failed (check MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL for this GPU's CUDA)"
-      else
-        "$gen_venv/bin/python" -m pip install torch torchvision >/dev/null 2>&1 || log "WARNING: torch install failed"
+  if [ "$lifecycle_mode" = typed ]; then
+    # Synchronized phase 2 may only mutate artifacts covered by its rollback
+    # intent. The historical gen venv is not in that intent, so consume an
+    # already-working environment without upgrading or creating it.
+    gen_venv=""
+    local candidate
+    for candidate in "$HOME/gen/venv" "$MAC_HOME/gen-venv"; do
+      if [ -x "$candidate/bin/python" ] \
+          && "$candidate/bin/python" -c \
+            "import torch,diffusers,transformers,accelerate,safetensors,PIL,huggingface_hub,soundfile,scipy" \
+            >/dev/null 2>&1; then
+        gen_venv="$candidate"
+        break
       fi
-    fi
-    if ! "$gen_venv/bin/python" -c "import diffusers" >/dev/null 2>&1; then
-      log "gen server: installing diffusers/transformers stack (+ audio codecs)"
-      "$gen_venv/bin/python" -m pip install diffusers transformers accelerate safetensors pillow huggingface_hub soundfile scipy >/dev/null 2>&1 \
-        || log "WARNING: diffusers stack install failed"
+    done
+    [ -n "$gen_venv" ] \
+      || die "journaled media topology lacks a complete immutable prior gen venv"
+    log "gen server: typed phase 2 reusing immutable prior gen venv $gen_venv"
+  else
+    if [ -x "$HOME/gen/venv/bin/python" ] && "$HOME/gen/venv/bin/python" -c "import torch, diffusers" >/dev/null 2>&1; then
+      gen_venv="$HOME/gen/venv"
+      log "gen server: reusing existing gen venv $gen_venv"
+    else
+      gen_venv="$MAC_HOME/gen-venv"
+      if [ ! -x "$gen_venv/bin/python" ]; then
+        log "gen server: creating gen venv $gen_venv"
+        "$PY" -m venv "$gen_venv" || { log "WARNING: gen venv creation failed; skipping gen server"; return 0; }
+      fi
+      "$gen_venv/bin/python" -m pip install --upgrade pip wheel >/dev/null 2>&1 || true
+      # torch first (CUDA-specific index if configured), then the diffusers stack.
+      local torch_index="${MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL:-}"
+      if ! "$gen_venv/bin/python" -c "import torch" >/dev/null 2>&1; then
+        log "gen server: installing torch${torch_index:+ (index $torch_index)}"
+        if [ -n "$torch_index" ]; then
+          "$gen_venv/bin/python" -m pip install torch torchvision --index-url "$torch_index" >/dev/null 2>&1 \
+            || log "WARNING: torch install failed (check MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL for this GPU's CUDA)"
+        else
+          "$gen_venv/bin/python" -m pip install torch torchvision >/dev/null 2>&1 || log "WARNING: torch install failed"
+        fi
+      fi
+      if ! "$gen_venv/bin/python" -c "import diffusers" >/dev/null 2>&1; then
+        log "gen server: installing diffusers/transformers stack (+ audio codecs)"
+        "$gen_venv/bin/python" -m pip install diffusers transformers accelerate safetensors pillow huggingface_hub soundfile scipy >/dev/null 2>&1 \
+          || log "WARNING: diffusers stack install failed"
+      fi
     fi
   fi
   "$gen_venv/bin/python" -m pip list --format=json > "$LOG_DIR/gen-server-deps.json" 2>/dev/null || true
   if ! "$gen_venv/bin/python" -c "import torch, diffusers" >/dev/null 2>&1; then
+    [ "$lifecycle_mode" != typed ] \
+      || die "journaled media runtime lacks torch/diffusers after reconciliation"
     log "WARNING: gen venv lacks torch/diffusers; installing the unit anyway (it retries the warm-load on start). Set MAC_DEPLOY_AGENT_GEN_TORCH_INDEX_URL for this GPU."
   fi
 
@@ -8056,7 +8447,7 @@ m = get_model(sys.argv[1]); print(m.repo if m else sys.argv[1])' "$gen_model" 2>
   mkdir -p "$MAC_HOME/bin"
 
   # Image (:8189) — bake the resolved HF repo (the gen venv can't resolve catalog ids).
-  if [ -n "$gen_model" ] && [ -f "$SRC_DIR/deploy/local-gen/openai_image_server.py" ]; then
+  if [ "$image_required" = 1 ] && [ -n "$gen_model" ] && [ -f "$SRC_DIR/deploy/local-gen/openai_image_server.py" ]; then
     cat > "$MAC_HOME/bin/mac-gen-server" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -8071,12 +8462,16 @@ export LOCAL_GEN_HOST="\${MAC_AGENT_GEN_HOST:-0.0.0.0}"
 exec "$gen_venv/bin/python" "$SRC_DIR/deploy/local-gen/openai_image_server.py"
 EOF
     chmod 700 "$MAC_HOME/bin/mac-gen-server"
-    _install_gen_unit "$MAC_GEN_SERVICE_NAME" "mac-gen-server" "image=$gen_model venv=$gen_venv"
+    if [ "$lifecycle_mode" = typed ]; then
+      _reconcile_typed_gen_unit "$MAC_GEN_SERVICE_NAME" "mac-gen-server" "image=$gen_model venv=$gen_venv"
+    else
+      _install_gen_unit "$MAC_GEN_SERVICE_NAME" "mac-gen-server" "image=$gen_model venv=$gen_venv"
+    fi
   fi
 
   # Audio (:8190) — TTS/music/ASR; server defaults are valid HF repos (override
   # via LOCAL_AUDIO_* in mac.env). MAC_AGENT_GEN_AUDIO_MODELS declares served ops.
-  if [ -n "$audio_models" ] && [ -f "$SRC_DIR/deploy/local-gen/audio_server.py" ]; then
+  if [ "$audio_required" = 1 ] && [ -n "$audio_models" ] && [ -f "$SRC_DIR/deploy/local-gen/audio_server.py" ]; then
     cat > "$MAC_HOME/bin/mac-gen-audio-server" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -8090,11 +8485,15 @@ export LOCAL_GEN_HOST="\${MAC_AGENT_GEN_HOST:-0.0.0.0}"
 exec "$gen_venv/bin/python" "$SRC_DIR/deploy/local-gen/audio_server.py"
 EOF
     chmod 700 "$MAC_HOME/bin/mac-gen-audio-server"
-    _install_gen_unit "$MAC_GEN_AUDIO_SERVICE_NAME" "mac-gen-audio-server" "audio=$audio_models venv=$gen_venv"
+    if [ "$lifecycle_mode" = typed ]; then
+      _reconcile_typed_gen_unit "$MAC_GEN_AUDIO_SERVICE_NAME" "mac-gen-audio-server" "audio=$audio_models venv=$gen_venv"
+    else
+      _install_gen_unit "$MAC_GEN_AUDIO_SERVICE_NAME" "mac-gen-audio-server" "audio=$audio_models venv=$gen_venv"
+    fi
   fi
 
   # Video (:8191) — async AnimateDiff/SVD; server defaults are valid HF repos.
-  if [ -n "$video_models" ] && [ -f "$SRC_DIR/deploy/local-gen/video_server.py" ]; then
+  if [ "$video_required" = 1 ] && [ -n "$video_models" ] && [ -f "$SRC_DIR/deploy/local-gen/video_server.py" ]; then
     cat > "$MAC_HOME/bin/mac-gen-video-server" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -8108,8 +8507,19 @@ export LOCAL_GEN_HOST="\${MAC_AGENT_GEN_HOST:-0.0.0.0}"
 exec "$gen_venv/bin/python" "$SRC_DIR/deploy/local-gen/video_server.py"
 EOF
     chmod 700 "$MAC_HOME/bin/mac-gen-video-server"
-    _install_gen_unit "$MAC_GEN_VIDEO_SERVICE_NAME" "mac-gen-video-server" "video=$video_models venv=$gen_venv"
+    if [ "$lifecycle_mode" = typed ]; then
+      _reconcile_typed_gen_unit "$MAC_GEN_VIDEO_SERVICE_NAME" "mac-gen-video-server" "video=$video_models venv=$gen_venv"
+    else
+      _install_gen_unit "$MAC_GEN_VIDEO_SERVICE_NAME" "mac-gen-video-server" "video=$video_models venv=$gen_venv"
+    fi
   fi
+  [ "$lifecycle_mode" != typed ] || run_systemctl daemon-reload
+}
+
+reconcile_typed_media_services() {
+  prepare_typed_media_plan
+  install_gpu_gen_server typed
+  resume_typed_media_services
 }
 
 install_agent_footprint() {
@@ -11987,7 +12397,7 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
   install_gpu_gen_server || true
   install_agent_footprint || true
 else
-  log "typed phase 2 deferred optional capabilities and package-footprint reconciliation"
+  log "typed phase 2 deferred package-footprint reconciliation"
 fi
 
 if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
@@ -12076,6 +12486,10 @@ case "$(printf '%s' "$DEFER_CLEAR_DRAIN" | tr 'A-Z' 'a-z')" in
   1|true|yes|on) log "keeping drain state until post-deploy OpenShell validation completes" ;;
   *) clear_mac_agent_drain_after_deploy ;;
 esac
+
+if [ "$NODE_ACTION" = apply-phase2 ]; then
+  reconcile_typed_media_services
+fi
 
 write_deploy_manifest "post" "$MANIFEST_POST"
 cp -f "$MANIFEST_POST" "$LOG_DIR/deploy-manifest-latest.json"

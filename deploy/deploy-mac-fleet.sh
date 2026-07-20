@@ -1868,6 +1868,7 @@ import sys
 quiescence_summaries = []
 gateway_summaries = []
 phase1_summaries = []
+media_summaries = []
 for label, path in (("post manifest", manifest_path), ("latest manifest", latest_path)):
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
@@ -1940,6 +1941,48 @@ for label, path in (("post manifest", manifest_path), ("latest manifest", latest
             "remote reconciliation failed: %s has invalid phase-1 evidence" % label
         )
     phase1_summaries.append(phase1)
+    media = data.get("media_runtime_readiness")
+    media_resources = media.get("resources") if isinstance(media, dict) else None
+    media_manager = media.get("manager") if isinstance(media, dict) else None
+    if (
+        not isinstance(media, dict)
+        or media.get("schema")
+        != "mac.media_runtime_readiness_manifest.v1"
+        or media.get("status")
+        not in {"proved", "not_applicable"}
+        or media_manager not in {"systemd", "launchd", "supervisord"}
+        or not isinstance(media.get("sha256"), str)
+        or len(media["sha256"]) != 64
+        or not isinstance(media.get("source_contract_sha256"), str)
+        or len(media["source_contract_sha256"]) != 64
+        or not isinstance(media_resources, list)
+        or media_manager != (phase1.get("supervisor") or {}).get("manager")
+        or (
+            media_manager == "systemd"
+            and (
+                media.get("status") != "proved"
+                or len(media_resources) != 3
+                or any(
+                    not isinstance(item, dict)
+                    or item.get("prior_state") not in {"active", "inactive", "absent"}
+                    or item.get("state") != item.get("prior_state")
+                    or item.get("enabled_state")
+                    not in {"enabled", "disabled", "masked", "static", "indirect", "not-found"}
+                    or item.get("stable_observations") != 2
+                    for item in media_resources
+                )
+            )
+        )
+        or (
+            media_manager != "systemd"
+            and (media.get("status") != "not_applicable" or media_resources)
+        )
+    ):
+        raise SystemExit(
+            "remote reconciliation failed: %s has invalid media runtime readiness"
+            % label
+        )
+    media_summaries.append(media)
     gateway = data.get("gateway_readiness")
     if (
         not isinstance(gateway, dict)
@@ -1965,6 +2008,8 @@ if quiescence_summaries[0] != quiescence_summaries[1]:
     raise SystemExit("remote reconciliation failed: manifest quiescence evidence diverged")
 if phase1_summaries[0] != phase1_summaries[1]:
     raise SystemExit("remote reconciliation failed: manifest phase-1 evidence diverged")
+if media_summaries[0] != media_summaries[1]:
+    raise SystemExit("remote reconciliation failed: manifest media runtime readiness diverged")
 if gateway_summaries[0] != gateway_summaries[1]:
     raise SystemExit("remote reconciliation failed: manifest gateway readiness diverged")
 PY
@@ -2140,22 +2185,26 @@ def read_manifest(path, label):
         fail(label + " belongs to another release")
     summary = data.get("daemon_resource_quiescence")
     phase1 = data.get("phase1_cohort_quiescence")
+    media = data.get("media_runtime_readiness")
     gateway = data.get("gateway_readiness")
     if not isinstance(summary, dict):
         fail(label + " lacks daemon evidence")
     if not isinstance(phase1, dict):
         fail(label + " lacks phase-1 evidence")
+    if not isinstance(media, dict):
+        fail(label + " lacks media runtime readiness")
     if not isinstance(gateway, dict):
         fail(label + " lacks gateway evidence")
-    return summary, phase1, gateway
+    return summary, phase1, media, gateway
 
 
-summary, phase1_summary, gateway_summary = read_manifest(
+summary, phase1_summary, media_summary, gateway_summary = read_manifest(
     manifest_path, "post manifest"
 )
 if read_manifest(latest_path, "latest manifest") != (
     summary,
     phase1_summary,
+    media_summary,
     gateway_summary,
 ):
     fail("post and latest manifest evidence diverged")
@@ -2273,6 +2322,120 @@ if (
     or len(phase1_function_digest) != 64
 ):
     fail("phase-1 daemon binding is invalid")
+
+def read_private_media_artifact(path, size_limit):
+    try:
+        descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        fail("media runtime readiness receipt is unreadable")
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_nlink != 1
+            or not 1 <= before.st_size <= size_limit
+        ):
+            fail("media runtime readiness receipt is not owner-private and bounded")
+        raw = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if len(raw) != before.st_size or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            fail("media runtime readiness receipt changed while reading")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+media_path = mac_home / ("phase1-supervisor-resume_media-%s.json" % generation)
+media_contract_path = mac_home / ("phase1-cohort-restore-contract-%s.json" % generation)
+media_manager = media_summary.get("manager")
+media_resources = media_summary.get("resources")
+if (
+    media_summary.get("schema")
+    != "mac.media_runtime_readiness_manifest.v1"
+    or media_summary.get("status") not in {"proved", "not_applicable"}
+    or media_summary.get("path") != str(media_path)
+    or media_manager not in {"systemd", "launchd", "supervisord"}
+    or media_manager != (phase1_summary.get("supervisor") or {}).get("manager")
+    or not isinstance(media_resources, list)
+):
+    fail("manifest media runtime readiness is invalid")
+raw_media = read_private_media_artifact(media_path, 1024 * 1024)
+raw_media_contract = read_private_media_artifact(media_contract_path, 4 * 1024 * 1024)
+media_digest = hashlib.sha256(raw_media).hexdigest()
+media_contract_digest = hashlib.sha256(raw_media_contract).hexdigest()
+if (
+    media_digest != media_summary.get("sha256")
+    or media_contract_digest != media_summary.get("source_contract_sha256")
+    or media_contract_digest != phase1_receipt.get("source_contract_sha256")
+):
+    fail("media runtime readiness receipt changed or is unsafe")
+try:
+    media_receipt = json.loads(raw_media)
+    media_contract = json.loads(raw_media_contract)
+except (TypeError, ValueError):
+    fail("media runtime readiness receipt is malformed")
+media_supervisor = (
+    media_receipt.get("supervisor") if isinstance(media_receipt, dict) else None
+)
+fleet = media_receipt.get("fleet") if isinstance(media_receipt, dict) else None
+if (
+    not isinstance(media_receipt, dict)
+    or media_receipt.get("schema") != "mac.phase1_supervisor_media_resume.v1"
+    or media_receipt.get("agent") != agent
+    or media_receipt.get("generation") != generation
+    or media_receipt.get("revision") != revision
+    or media_receipt.get("source_contract_sha256") != media_contract_digest
+    or not isinstance(fleet, str)
+    or not fleet
+    or not isinstance(media_supervisor, dict)
+    or media_supervisor.get("manager") != media_manager
+    or media_supervisor.get("media_resources") != media_resources
+    or not isinstance(media_contract, dict)
+    or media_contract.get("schema") != "mac.phase1_cohort_restore_contract.v1"
+    or media_contract.get("agent") != agent
+    or media_contract.get("generation") != generation
+    or media_contract.get("revision") != revision
+    or (media_contract.get("supervisor") or {}).get("manager") != media_manager
+):
+    fail("media runtime readiness identity is invalid")
+if media_manager == "systemd":
+    expected_media_names = {
+        "%s-gen-server.service" % fleet,
+        "%s-gen-audio-server.service" % fleet,
+        "%s-gen-video-server.service" % fleet,
+    }
+    if (
+        media_summary.get("status") != "proved"
+        or len(media_resources) != 3
+        or {item.get("name") for item in media_resources if isinstance(item, dict)}
+        != expected_media_names
+        or any(
+            not isinstance(item, dict)
+            or item.get("prior_state") not in {"active", "inactive", "absent"}
+            or item.get("state") != item.get("prior_state")
+            or item.get("enabled_state")
+            not in {"enabled", "disabled", "masked", "static", "indirect", "not-found"}
+            or item.get("stable_observations") != 2
+            for item in media_resources
+        )
+    ):
+        fail("media runtime readiness state is invalid")
+elif media_summary.get("status") != "not_applicable" or media_resources:
+    fail("non-systemd media runtime readiness is invalid")
 
 gateway_path = mac_home / "logs" / "gateway-readiness.json"
 if (
@@ -2742,6 +2905,10 @@ print(
             "phase1_daemon_receipt_sha256": phase1_daemon_digest,
             "phase1_function_block_sha256": phase1_function_digest,
             "phase1_supervisor": phase1_summary.get("supervisor"),
+            "media_runtime_readiness": media_summary,
+            "media_runtime_readiness_sha256": media_digest,
+            "media_runtime_source_contract_sha256": media_contract_digest,
+            "media_runtime_stable_observations": 2,
             "generation": generation,
             "revision": revision,
             "gateway_implementation": gateway_summary.get("implementation"),
@@ -2769,6 +2936,15 @@ import sys
 ready = json.load(open(sys.argv[1], encoding="utf-8"))
 attestation = json.loads(sys.argv[2])
 receipt = ready.get("receipt") if isinstance(ready, dict) else None
+phase1_supervisor = receipt.get("supervisor") if isinstance(receipt, dict) else None
+media = attestation.get("media_runtime_readiness") if isinstance(attestation, dict) else None
+expected_media_resources = []
+if isinstance(phase1_supervisor, dict):
+    for item in phase1_supervisor.get("media_resources") or []:
+        if isinstance(item, dict):
+            expected_media_resources.append(
+                {**item, "state": item.get("prior_state"), "stable_observations": 2}
+            )
 if (
     not isinstance(ready, dict)
     or ready.get("schema") != "mac.phase1_cohort_ready.v1"
@@ -2789,6 +2965,16 @@ if (
         "function_block_sha256"
     )
     or attestation.get("phase1_supervisor") != receipt.get("supervisor")
+    or not isinstance(media, dict)
+    or media.get("schema") != "mac.media_runtime_readiness_manifest.v1"
+    or media.get("manager") != (phase1_supervisor or {}).get("manager")
+    or media.get("resources") != expected_media_resources
+    or media.get("source_contract_sha256")
+    != receipt.get("source_contract_sha256")
+    or attestation.get("media_runtime_readiness_sha256") != media.get("sha256")
+    or attestation.get("media_runtime_source_contract_sha256")
+    != media.get("source_contract_sha256")
+    or attestation.get("media_runtime_stable_observations") != 2
 ):
     raise SystemExit(
         "release attestation does not match the controller's phase-1 receipt"
@@ -4951,6 +5137,15 @@ print(value)
 PY
 }
 
+cleanup_failed_phase1_prepare_lock() {
+  local agent="$1" deployment_id="$2"
+  if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
+    echo "ERROR: ${agent}: failed phase-1 prepare retained its exact deployment lock ${deployment_id}" >&2
+    return 1
+  fi
+  echo "==> ${agent}: failed phase-1 prepare released its exact deployment lock"
+}
+
 prepare_remote_phase1_restore_contract() {
   local agent="$1" deployment_id="$2" supervisor="$3" fleet_name="$4" os_kind="$5"
   local remote_helper="/tmp/mac-phase1-prepare-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
@@ -4960,15 +5155,29 @@ prepare_remote_phase1_restore_contract() {
   agent_id="$(stable_worker_agent_id "$agent")"
   local_contract="$(phase1_restore_contract_file_for_agent "$agent")"
   contract_raw="$TMPDIR_LOCAL/phase1-restore-contract-raw-${agent_id}.json"
-  acquire_remote_deployment_lock "$agent" "$deployment_id"
-  fenced_remote_upload "$agent" "$deployment_id" "$PHASE1_QUIESCE_HELPER" "$remote_helper"
-  fenced_remote_upload "$agent" "$deployment_id" "$PHASE1_DAEMON_FUNCTIONS" "$remote_functions"
+  if ! acquire_remote_deployment_lock "$agent" "$deployment_id"; then
+    return 1
+  fi
+  if ! fenced_remote_upload \
+    "$agent" "$deployment_id" "$PHASE1_QUIESCE_HELPER" "$remote_helper"; then
+    if ! cleanup_failed_phase1_prepare_lock "$agent" "$deployment_id"; then
+      return 1
+    fi
+    return 1
+  fi
+  if ! fenced_remote_upload \
+    "$agent" "$deployment_id" "$PHASE1_DAEMON_FUNCTIONS" "$remote_functions"; then
+    if ! cleanup_failed_phase1_prepare_lock "$agent" "$deployment_id"; then
+      return 1
+    fi
+    return 1
+  fi
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 bash -s)"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
     "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") $fence_exec" > "$contract_raw" <<'REMOTE_PHASE1_PREPARE'
@@ -5032,8 +5241,19 @@ finally:
 sys.stdout.buffer.write(raw)
 PY
 REMOTE_PHASE1_PREPARE
-  chmod 0600 "$contract_raw"
-  "$PYTHON_BIN" - "$local_contract" "$contract_raw" "$agent" "$deployment_id" \
+  then
+    if ! cleanup_failed_phase1_prepare_lock "$agent" "$deployment_id"; then
+      return 1
+    fi
+    return 1
+  fi
+  if ! chmod 0600 "$contract_raw"; then
+    if ! cleanup_failed_phase1_prepare_lock "$agent" "$deployment_id"; then
+      return 1
+    fi
+    return 1
+  fi
+  if ! "$PYTHON_BIN" - "$local_contract" "$contract_raw" "$agent" "$deployment_id" \
     "$GIT_REV" <<'PY'
 import hashlib
 import json
@@ -5096,6 +5316,12 @@ try:
 finally:
     temporary.unlink(missing_ok=True)
 PY
+  then
+    if ! cleanup_failed_phase1_prepare_lock "$agent" "$deployment_id"; then
+      return 1
+    fi
+    return 1
+  fi
   echo "==> ${agent}: exact phase-1 restore contract prepared before cohort mutation"
 }
 
@@ -8829,6 +9055,10 @@ stable_keys = (
     "phase1_daemon_receipt_sha256",
     "phase1_function_block_sha256",
     "phase1_supervisor",
+    "media_runtime_readiness",
+    "media_runtime_readiness_sha256",
+    "media_runtime_source_contract_sha256",
+    "media_runtime_stable_observations",
     "generation",
     "revision",
     "gateway_implementation",
@@ -9376,12 +9606,79 @@ finally:
 PY
 }
 
+write_cohort_composite_rollback_evidence() {
+  local output="$1" phase2_file="$2" phase1_file="$3" agent="$4"
+  local generation="$5" restore_contract_sha256="$6"
+  "$PYTHON_BIN" - "$output" "$phase2_file" "$phase1_file" "$agent" \
+    "$generation" "$restore_contract_sha256" <<'PY'
+import hashlib
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+output, phase2_path, phase1_path = map(Path, sys.argv[1:4])
+agent, generation, restore_contract_sha256 = sys.argv[4:]
+phase2_raw = phase2_path.read_bytes()
+phase1_raw = phase1_path.read_bytes()
+phase2 = json.loads(phase2_raw)
+phase1 = json.loads(phase1_raw)
+if (
+    not isinstance(phase2, dict)
+    or phase2.get("schema") != "mac.fleet_node_rollback.v1"
+    or phase2.get("status") != "restored"
+    or phase2.get("generation") != generation
+):
+    raise SystemExit("phase-2 rollback evidence differs from the recovery candidate")
+if (
+    not isinstance(phase1, dict)
+    or phase1.get("schema") != "mac.phase1_cohort_restore.v1"
+    or phase1.get("status") != "restored"
+    or phase1.get("agent") != agent
+    or phase1.get("generation") != generation
+    or phase1.get("source_contract_sha256") != restore_contract_sha256
+):
+    raise SystemExit("phase-1 restore evidence differs from the recovery candidate")
+payload = {
+    "schema": "mac.fleet_node_composite_rollback.v1",
+    "status": "restored",
+    "agent": agent,
+    "generation": generation,
+    "restore_contract_sha256": restore_contract_sha256,
+    "phase2": {
+        "schema": phase2["schema"],
+        "sha256": hashlib.sha256(phase2_raw).hexdigest(),
+        "size": len(phase2_raw),
+    },
+    "phase1": {
+        "schema": phase1["schema"],
+        "sha256": hashlib.sha256(phase1_raw).hexdigest(),
+        "size": len(phase1_raw),
+    },
+}
+descriptor, temporary_raw = tempfile.mkstemp(prefix=output.name + ".", dir=str(output.parent))
+temporary = Path(temporary_raw)
+try:
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, output)
+finally:
+    temporary.unlink(missing_ok=True)
+PY
+}
+
 recover_cohort_node() {
   local epoch_id="$1" owner_nonce="$2" fleet_name="$3" candidate_b64="$4"
   local values agent stable_id runtime_generation deployment_id deploy_ts source_commit
   local os_kind supervisor requested_action restore_contract_sha256 probe action evidence
+  local phase2_evidence phase1_evidence
   local -a candidate_values=()
-  values="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
+  if ! values="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
 import base64
 import json
 import sys
@@ -9401,7 +9698,9 @@ for key in (
     print(payload.get(key) or "")
 print(payload.get("restore_contract_sha256") or "")
 PY
-)"
+)"; then
+    return 1
+  fi
   mapfile -t candidate_values <<<"$values"
   agent="${candidate_values[0]:-}"
   stable_id="${candidate_values[1]:-}"
@@ -9420,46 +9719,83 @@ PY
     }
   # Never use ambient stale-takeover authority during recovery. A successor
   # deployment lock is proof that this controller no longer owns the node.
-  acquire_remote_deployment_lock "$agent" "$deployment_id" 0
+  if ! acquire_remote_deployment_lock "$agent" "$deployment_id" 0; then
+    return 1
+  fi
   action="$requested_action"
   case "$action" in
     cleanup_only|phase1_restore|phase2_rollback) ;;
     *) echo "ERROR: ${agent}: recovery probe returned an invalid action" >&2; return 1 ;;
   esac
-  cohort_journal_mutate abort-start "$epoch_id" \
+  if ! cohort_journal_mutate abort-start "$epoch_id" \
     "$COHORT_JOURNAL_REVISION" "abort-start-${stable_id}" "$owner_nonce" \
     --agent-name "$agent" --stable-id "$stable_id" \
-    --generation "$runtime_generation" --recovery-action "$action" >/dev/null
+    --generation "$runtime_generation" --recovery-action "$action" >/dev/null; then
+    return 1
+  fi
   evidence="$TMPDIR_LOCAL/cohort-recovery-${stable_id}.json"
   case "$action" in
     phase2_rollback)
-      rollback_remote_phase2_generation \
-        "$agent" "$deployment_id" "$source_commit" "$deploy_ts" > "$evidence"
-      chmod 0600 "$evidence"
+      [ -n "$restore_contract_sha256" ] || {
+        echo "ERROR: ${agent}: phase-2 recovery lacks its journal-bound phase-1 contract digest" >&2
+        return 1
+      }
+      phase2_evidence="$TMPDIR_LOCAL/cohort-recovery-${stable_id}-phase2.json"
+      phase1_evidence="$TMPDIR_LOCAL/cohort-recovery-${stable_id}-phase1.json"
+      if ! rollback_remote_phase2_generation \
+        "$agent" "$deployment_id" "$source_commit" "$deploy_ts" > "$phase2_evidence"; then
+        return 1
+      fi
+      if ! chmod 0600 "$phase2_evidence"; then
+        return 1
+      fi
+      if ! restore_remote_phase1_generation \
+        "$agent" "$deployment_id" "$source_commit" "$fleet_name" \
+        "$os_kind" "$supervisor" "$restore_contract_sha256" > "$phase1_evidence"; then
+        return 1
+      fi
+      if ! chmod 0600 "$phase1_evidence"; then
+        return 1
+      fi
+      if ! write_cohort_composite_rollback_evidence \
+        "$evidence" "$phase2_evidence" "$phase1_evidence" "$agent" \
+        "$runtime_generation" "$restore_contract_sha256"; then
+        return 1
+      fi
       ;;
     phase1_restore)
       [ -n "$restore_contract_sha256" ] || {
         echo "ERROR: ${agent}: phase-1 recovery lacks its journal-bound contract digest" >&2
         return 1
       }
-      restore_remote_phase1_generation \
+      if ! restore_remote_phase1_generation \
         "$agent" "$deployment_id" "$source_commit" "$fleet_name" \
-        "$os_kind" "$supervisor" "$restore_contract_sha256" > "$evidence"
-      chmod 0600 "$evidence"
+        "$os_kind" "$supervisor" "$restore_contract_sha256" > "$evidence"; then
+        return 1
+      fi
+      if ! chmod 0600 "$evidence"; then
+        return 1
+      fi
       ;;
     cleanup_only)
-      write_cohort_recovery_probe_evidence \
-        "$evidence" "$agent" "$runtime_generation" "$action"
+      if ! write_cohort_recovery_probe_evidence \
+        "$evidence" "$agent" "$runtime_generation" "$action"; then
+        return 1
+      fi
       ;;
   esac
   # Make lock retirement part of the retryable node operation. If the process
   # dies after this unlink, the next pass reacquires the same old identity,
   # replays the idempotent restore receipt, and retires it again.
-  release_remote_deployment_lock "$agent" "$deployment_id"
-  cohort_journal_mutate aborted-node "$epoch_id" \
+  if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
+    return 1
+  fi
+  if ! cohort_journal_mutate aborted-node "$epoch_id" \
     "$COHORT_JOURNAL_REVISION" "aborted-${stable_id}" "$owner_nonce" \
     --agent-name "$agent" --stable-id "$stable_id" \
-    --generation "$runtime_generation" --evidence-file "$evidence" >/dev/null
+    --generation "$runtime_generation" --evidence-file "$evidence" >/dev/null; then
+    return 1
+  fi
   echo "==> ${agent}: durable cohort recovery completed with ${action}"
 }
 
@@ -9574,10 +9910,101 @@ for candidate in recovery.get("candidates") or []:
   echo "==> fleet: incomplete cohort transaction was durably rolled back"
 }
 
+persist_cohort_recovery_route_mismatch() {
+  local status_file="$1" comparison_file="$2" role="$3" agent="$4"
+  "$PYTHON_BIN" - "$status_file" "$comparison_file" "$role" "$agent" \
+    "$COHORT_JOURNAL_DIR" <<'PY'
+import datetime as dt
+import hashlib
+import json
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+status_path, comparison_path, role, agent, directory_raw = sys.argv[1:]
+status = json.load(open(status_path, encoding="utf-8"))
+comparison = json.load(open(comparison_path, encoding="utf-8"))
+journal = status.get("journal") if isinstance(status, dict) else None
+if not isinstance(journal, dict):
+    raise SystemExit("recovery mismatch diagnostic lacks its journal")
+if role not in {"hub", "node"} or not agent or len(agent.encode("utf-8")) > 128:
+    raise SystemExit("recovery mismatch diagnostic has an invalid endpoint label")
+if comparison.get("schema") != "mac.fleet_endpoint_identity_comparison.v1":
+    raise SystemExit("recovery mismatch diagnostic has an invalid comparison")
+mismatches = comparison.get("mismatches")
+if (
+    not isinstance(mismatches, list)
+    or not mismatches
+    or any(
+        not isinstance(value, str)
+        or not value
+        or len(value.encode("utf-8")) > 128
+        for value in mismatches
+    )
+):
+    raise SystemExit("recovery mismatch diagnostic lacks bounded mismatch fields")
+payload = {
+    "schema": "mac.fleet_recovery_route_mismatch.v1",
+    "epoch_id": journal.get("epoch_id"),
+    "source_commit": journal.get("source_commit"),
+    "role": role,
+    "agent": agent,
+    "adapter": comparison.get("adapter"),
+    "same_resource": comparison.get("same_resource") is True,
+    "same_observation": comparison.get("same_observation") is True,
+    "recovery_allowed": comparison.get("recovery_allowed") is True,
+    "generic_route_recovery_allowed": (
+        comparison.get("generic_route_recovery_allowed") is True
+    ),
+    "requires_workload_adapter": comparison.get("requires_workload_adapter") is True,
+    "mismatches": mismatches,
+    "observed_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+}
+if not isinstance(payload["epoch_id"], str) or not payload["epoch_id"]:
+    raise SystemExit("recovery mismatch diagnostic lacks its epoch id")
+if not isinstance(payload["source_commit"], str) or not payload["source_commit"]:
+    raise SystemExit("recovery mismatch diagnostic lacks its source commit")
+
+directory = Path(directory_raw)
+metadata = directory.lstat()
+if (
+    not stat.S_ISDIR(metadata.st_mode)
+    or stat.S_ISLNK(metadata.st_mode)
+    or metadata.st_uid != os.getuid()
+    or stat.S_IMODE(metadata.st_mode) & 0o077
+):
+    raise SystemExit("cohort journal directory is unsafe for recovery diagnostics")
+name_digest = hashlib.sha256(
+    (payload["epoch_id"] + "\0" + role + "\0" + agent).encode("utf-8")
+).hexdigest()
+output = directory / ("recovery-route-mismatch-%s.json" % name_digest)
+descriptor, temporary_raw = tempfile.mkstemp(prefix=output.name + ".", dir=str(directory))
+temporary = Path(temporary_raw)
+directory_fd = None
+try:
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, output)
+    directory_fd = os.open(directory, os.O_RDONLY)
+    os.fsync(directory_fd)
+finally:
+    if directory_fd is not None:
+        os.close(directory_fd)
+    temporary.unlink(missing_ok=True)
+print(output)
+PY
+}
+
 verify_cohort_recovery_routes() {
   local status_file="$1" recovery_file="$2" records_file="$TMPDIR_LOCAL/recovery-routes.txt"
   local role agent encoded expected observed comparison authority_file authority_id
-  "$PYTHON_BIN" - "$status_file" "$recovery_file" > "$records_file" <<'PY'
+  if ! "$PYTHON_BIN" - "$status_file" "$recovery_file" > "$records_file" <<'PY'
 import base64,json,sys
 status=json.load(open(sys.argv[1],encoding="utf-8")); recovery=json.load(open(sys.argv[2],encoding="utf-8"))
 journal=status["journal"]; records=[]
@@ -9597,9 +10024,14 @@ for role,agent,identity in records:
     encoded=base64.b64encode(json.dumps(identity,sort_keys=True,separators=(",",":")).encode()).decode()
     print("%s|%s|%s"%(role,agent,encoded))
 PY
+  then
+    return 1
+  fi
   while IFS='|' read -r role agent encoded; do
     [ -n "$agent" ] || continue
-    start_ssh_control_master "$agent"
+    if ! start_ssh_control_master "$agent"; then
+      return 1
+    fi
   done < "$records_file"
   SSH_CONTROL_REQUIRED=1
   while IFS='|' read -r role agent encoded; do
@@ -9607,29 +10039,52 @@ PY
     expected="$TMPDIR_LOCAL/recovery-expected-${role}-${agent}.json"
     observed="$TMPDIR_LOCAL/recovery-observed-${role}-${agent}.json"
     comparison="$TMPDIR_LOCAL/recovery-comparison-${role}-${agent}.json"
-    "$PYTHON_BIN" - "$encoded" "$expected" <<'PY'
+    if ! "$PYTHON_BIN" - "$encoded" "$expected" <<'PY'
 import base64,json,os,sys
 value=json.loads(base64.b64decode(sys.argv[1])); path=sys.argv[2]
 fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
 with os.fdopen(fd,"w",encoding="utf-8") as stream:
     json.dump(value,stream,sort_keys=True,separators=(",",":")); stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
 PY
+    then
+      return 1
+    fi
     if [ "$role" = hub ]; then
       authority_file="$TMPDIR_LOCAL/recovery-hub-authority.json"
-      hub_epoch_client_read "$agent" "$authority_file" authority
-      authority_id="$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["hub_authority_id"])' "$authority_file")"
-      write_live_endpoint_identity "$agent" "$observed" "$authority_id"
+      if ! hub_epoch_client_read "$agent" "$authority_file" authority; then
+        return 1
+      fi
+      if ! authority_id="$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["hub_authority_id"])' "$authority_file")"; then
+        return 1
+      fi
+      if ! write_live_endpoint_identity "$agent" "$observed" "$authority_id"; then
+        return 1
+      fi
     else
-      write_live_endpoint_identity "$agent" "$observed"
+      if ! write_live_endpoint_identity "$agent" "$observed"; then
+        return 1
+      fi
     fi
-    "$PYTHON_BIN" "$ENDPOINT_IDENTITY_HELPER" compare \
-      --expected "$expected" --observed "$observed" > "$comparison"
-    "$PYTHON_BIN" - "$comparison" "$agent" <<'PY'
+    if ! "$PYTHON_BIN" "$ENDPOINT_IDENTITY_HELPER" compare \
+      --expected "$expected" --observed "$observed" > "$comparison"; then
+      return 1
+    fi
+    if ! "$PYTHON_BIN" - "$comparison" "$agent" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 if value.get("recovery_allowed") is not True or value.get("generic_route_recovery_allowed") is not True:
     raise SystemExit("%s: live endpoint differs from the journal-bound recovery authority"%sys.argv[2])
 PY
+    then
+      local diagnostic=""
+      if diagnostic="$(persist_cohort_recovery_route_mismatch \
+        "$status_file" "$comparison" "$role" "$agent")"; then
+        echo "ERROR: ${agent}: recovery route mismatch diagnostic retained at ${diagnostic}" >&2
+      else
+        echo "ERROR: ${agent}: recovery route mismatch diagnostic could not be retained" >&2
+      fi
+      return 1
+    fi
   done < "$records_file"
 }
 
@@ -9637,13 +10092,15 @@ recover_committed_cohort_node() {
   local epoch_id="$1" owner_nonce="$2" hub_agent="$3" candidate_b64="$4"
   local values agent stable_id generation deployment_id deploy_ts source_commit fleet finalizer_sha state report_required evidence
   local -a fields=()
-  values="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
+  if ! values="$("$PYTHON_BIN" - "$candidate_b64" <<'PY'
 import base64,json,sys
 value=json.loads(base64.b64decode(sys.argv[1]))
 for key in ("agent_name","stable_id","generation","deployment_id","deploy_ts","source_commit","fleet","finalizer_sha256","state","report_executor_required"):
     print(value.get(key) or "")
 PY
-)"
+)"; then
+    return 1
+  fi
   mapfile -t fields <<<"$values"
   agent="${fields[0]:-}"; stable_id="${fields[1]:-}"; generation="${fields[2]:-}"
   deployment_id="${fields[3]:-}"; deploy_ts="${fields[4]:-}"; source_commit="${fields[5]:-}"
@@ -9655,86 +10112,176 @@ PY
       echo "ERROR: committed cohort finalization candidate is incomplete" >&2
       return 1
     }
-  acquire_remote_deployment_lock "$agent" "$deployment_id" 0
-  if [ "$report_required" = True ] || [ "$report_required" = true ] || [ "$report_required" = 1 ]; then
-    reconcile_report_repository_executor_approval "$agent" "$hub_agent" 1
+  if ! acquire_remote_deployment_lock "$agent" "$deployment_id" 0; then
+    return 1
   fi
-  cohort_journal_mutate finalize-start "$epoch_id" \
+  if [ "$report_required" = True ] || [ "$report_required" = true ] || [ "$report_required" = 1 ]; then
+    if ! reconcile_report_repository_executor_approval "$agent" "$hub_agent" 1; then
+      return 1
+    fi
+  fi
+  if ! cohort_journal_mutate finalize-start "$epoch_id" \
     "$COHORT_JOURNAL_REVISION" "finalize-start-${stable_id}" "$owner_nonce" \
-    --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" >/dev/null
+    --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" >/dev/null; then
+    return 1
+  fi
   evidence="$TMPDIR_LOCAL/recovered-finalize-${stable_id}.json"
-  run_remote_node_finalizer "$agent" "$fleet" "$generation" "$source_commit" \
-    "$deploy_ts" "$finalizer_sha" "$evidence" "$deployment_id"
-  validate_finalize_evidence "$evidence" "$agent" "$generation"
-  finalize_remote_deployment_release "$agent" "$deployment_id"
-  cohort_journal_mutate finalized-node "$epoch_id" \
+  if ! run_remote_node_finalizer "$agent" "$fleet" "$generation" "$source_commit" \
+    "$deploy_ts" "$finalizer_sha" "$evidence" "$deployment_id"; then
+    return 1
+  fi
+  if ! validate_finalize_evidence "$evidence" "$agent" "$generation"; then
+    return 1
+  fi
+  if ! finalize_remote_deployment_release "$agent" "$deployment_id"; then
+    return 1
+  fi
+  if ! cohort_journal_mutate finalized-node "$epoch_id" \
     "$COHORT_JOURNAL_REVISION" "finalized-${stable_id}" "$owner_nonce" \
     --agent-name "$agent" --stable-id "$stable_id" --generation "$generation" \
-    --evidence-file "$evidence" >/dev/null
+    --evidence-file "$evidence" >/dev/null; then
+    return 1
+  fi
   echo "==> ${agent}: committed generation finalization recovered"
 }
 
 discard_unopened_epoch_pending_credentials() {
   local hub_agent="$1" status_file="$2" epoch_id="$3" agent agent_id remote_manifest command
+  local records_file="$TMPDIR_LOCAL/recovery-pending-credential-agents.txt"
   local ssh_parts=() ssh_args=() ssh_target item last_index
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  if ! "$PYTHON_BIN" - "$status_file" > "$records_file" <<'PY'
+import json,sys
+for node in json.load(open(sys.argv[1],encoding="utf-8"))["journal"]["cohort"]:
+    print("%s|%s"%(node["name"],node["stable_id"]))
+PY
+  then
+    return 1
+  fi
   while IFS='|' read -r agent agent_id; do
     [ -n "$agent" ] && [ -n "$agent_id" ] || continue
     command='set -e; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -m mac.worker_credentials discard-unreserved-pending'
     command+=" --agent-id $(shell_quote "$agent_id")"
     command+=" --created-by $(shell_quote "fleet-release:${epoch_id}")"
-    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-      "${ssh_args[@]}" "$ssh_target" "$command" >/dev/null
+    if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${ssh_args[@]}" "$ssh_target" "$command" >/dev/null; then
+      return 1
+    fi
     remote_manifest="$(pending_worker_remote_manifest_path "$agent" "$epoch_id")"
-    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-      "${ssh_args[@]}" "$ssh_target" "rm -f $(shell_quote "$remote_manifest")" >/dev/null
-  done < <("$PYTHON_BIN" - "$status_file" <<'PY'
+    if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${ssh_args[@]}" "$ssh_target" \
+      "rm -f $(shell_quote "$remote_manifest")" >/dev/null; then
+      return 1
+    fi
+  done < "$records_file"
+}
+
+confirm_cohort_journal_terminal() {
+  local epoch_id="$1" expected_state="${2:-}" status state
+  if ! status="$(cohort_journal status --epoch "$epoch_id")"; then
+    return 1
+  fi
+  if ! state="$(printf '%s' "$status" | "$PYTHON_BIN" -c '
 import json,sys
-for node in json.load(open(sys.argv[1],encoding="utf-8"))["journal"]["cohort"]:
-    print("%s|%s"%(node["name"],node["stable_id"]))
-PY
-)
+state=json.load(sys.stdin)["journal"]["state"]
+if state not in {"aborted","finalized"}:
+    raise SystemExit("cohort journal terminal reread remained nonterminal: %s"%state)
+print(state)
+')"; then
+    return 1
+  fi
+  if [ -n "$expected_state" ] && [ "$state" != "$expected_state" ]; then
+    echo "ERROR: cohort journal terminal reread returned ${state}, expected ${expected_state}" >&2
+    return 1
+  fi
 }
 
 recover_active_cohort_transaction_v2() {
   local epoch_id="$1" owner_nonce="${2:-$DEPLOY_CONTROLLER_NONCE}"
   local status_file="$TMPDIR_LOCAL/recovery-status.json" recovery_file="$TMPDIR_LOCAL/recovery-plan.json"
+  local candidates_file="$TMPDIR_LOCAL/recovery-candidates.txt"
+  local finalization_file="$TMPDIR_LOCAL/recovery-finalization-candidates.txt"
   local status recovery direction hub_action hub_agent identity receipt outcome candidate_b64 fleet_name
   umask 077
-  status="$(cohort_journal status --epoch "$epoch_id")"
-  printf '%s\n' "$status" > "$status_file"; chmod 0600 "$status_file"
-  COHORT_JOURNAL_REVISION="$(printf '%s' "$status" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["journal"]["revision"])')"
-  fleet_name="$(printf '%s' "$status" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["journal"]["fleet"])')"
-  recovery="$(cohort_journal recovery --epoch "$epoch_id")"
-  printf '%s\n' "$recovery" > "$recovery_file"; chmod 0600 "$recovery_file"
-  direction="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("direction") or "none")')"
+  if ! status="$(cohort_journal status --epoch "$epoch_id")"; then
+    return 1
+  fi
+  if ! printf '%s\n' "$status" > "$status_file" || ! chmod 0600 "$status_file"; then
+    return 1
+  fi
+  if ! COHORT_JOURNAL_REVISION="$(printf '%s' "$status" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["journal"]["revision"])')"; then
+    return 1
+  fi
+  if ! fleet_name="$(printf '%s' "$status" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["journal"]["fleet"])')"; then
+    return 1
+  fi
+  if ! recovery="$(cohort_journal recovery --epoch "$epoch_id")"; then
+    return 1
+  fi
+  if ! printf '%s\n' "$recovery" > "$recovery_file" || ! chmod 0600 "$recovery_file"; then
+    return 1
+  fi
+  if ! direction="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("direction") or "none")')"; then
+    return 1
+  fi
   if [ "$direction" = none ]; then
+    if ! confirm_cohort_journal_terminal "$epoch_id"; then
+      return 1
+    fi
     COHORT_JOURNAL_ACTIVE=0
     return 0
   fi
-  verify_cohort_recovery_routes "$status_file" "$recovery_file"
-  hub_action="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c 'import json,sys; print((json.load(sys.stdin).get("hub_recovery") or {}).get("action") or "none")')"
-  hub_agent="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c 'import json,sys; print((json.load(sys.stdin).get("hub_recovery") or {}).get("agent_name") or "")')"
-  identity="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c 'import json,sys; print((json.load(sys.stdin).get("hub_recovery") or {}).get("identity_sha256") or "")')"
+  if ! verify_cohort_recovery_routes "$status_file" "$recovery_file"; then
+    return 1
+  fi
+  if ! hub_action="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c 'import json,sys; print((json.load(sys.stdin).get("hub_recovery") or {}).get("action") or "none")')"; then
+    return 1
+  fi
+  if ! hub_agent="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c 'import json,sys; print((json.load(sys.stdin).get("hub_recovery") or {}).get("agent_name") or "")')"; then
+    return 1
+  fi
+  if ! identity="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c 'import json,sys; print((json.load(sys.stdin).get("hub_recovery") or {}).get("identity_sha256") or "")')"; then
+    return 1
+  fi
 
   if [ "$direction" = resolve_commit ]; then
     [ -n "$identity" ] || { echo "ERROR: commit recovery lacks hub identity" >&2; return 1; }
     receipt="$TMPDIR_LOCAL/recovered-hub-commit.json"
-    read_hub_epoch_status_exact "$hub_agent" "$epoch_id" "$identity" "$receipt"
-    outcome="$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["status"])' "$receipt")"
+    if ! read_hub_epoch_status_exact "$hub_agent" "$epoch_id" "$identity" "$receipt"; then
+      return 1
+    fi
+    if ! outcome="$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["status"])' "$receipt")"; then
+      return 1
+    fi
     case "$outcome" in
       committed) ;;
-      proved) commit_hub_epoch_exact "$hub_agent" "$epoch_id" "$identity" "$receipt" ;;
+      proved)
+        if ! commit_hub_epoch_exact "$hub_agent" "$epoch_id" "$identity" "$receipt"; then
+          return 1
+        fi
+        ;;
       *) echo "ERROR: durable commit intent cannot be resolved from hub status ${outcome}" >&2; return 1 ;;
     esac
-    cohort_journal_mutate commit "$epoch_id" "$COHORT_JOURNAL_REVISION" \
-      commit-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null
-    status="$(cohort_journal status --epoch "$epoch_id")"
-    printf '%s\n' "$status" > "$status_file"
-    recovery="$(cohort_journal recovery --epoch "$epoch_id")"
-    printf '%s\n' "$recovery" > "$recovery_file"
-    verify_cohort_recovery_routes "$status_file" "$recovery_file"
+    if ! cohort_journal_mutate commit "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+      commit-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null; then
+      return 1
+    fi
+    if ! status="$(cohort_journal status --epoch "$epoch_id")"; then
+      return 1
+    fi
+    if ! printf '%s\n' "$status" > "$status_file"; then
+      return 1
+    fi
+    if ! recovery="$(cohort_journal recovery --epoch "$epoch_id")"; then
+      return 1
+    fi
+    if ! printf '%s\n' "$recovery" > "$recovery_file"; then
+      return 1
+    fi
+    if ! verify_cohort_recovery_routes "$status_file" "$recovery_file"; then
+      return 1
+    fi
     direction=finalize
   fi
 
@@ -9742,18 +10289,36 @@ recover_active_cohort_transaction_v2() {
     receipt="$TMPDIR_LOCAL/recovered-hub-transition.json"
     case "$hub_action" in
       resolve_open)
-        replay_hub_epoch_recovery_request "$hub_agent" "$epoch_id" open "$receipt"
-        cohort_journal_mutate hub-opened "$epoch_id" "$COHORT_JOURNAL_REVISION" \
-          hub-opened-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null
-        remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" open
-        identity="$(hub_receipt_identity_sha256 "$receipt")"
+        if ! replay_hub_epoch_recovery_request \
+          "$hub_agent" "$epoch_id" open "$receipt"; then
+          return 1
+        fi
+        if ! cohort_journal_mutate hub-opened "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+          hub-opened-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null; then
+          return 1
+        fi
+        if ! remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" open; then
+          return 1
+        fi
+        if ! identity="$(hub_receipt_identity_sha256 "$receipt")"; then
+          return 1
+        fi
         ;;
       resolve_prove)
-        replay_hub_epoch_recovery_request "$hub_agent" "$epoch_id" prove "$receipt"
-        cohort_journal_mutate hub-proved "$epoch_id" "$COHORT_JOURNAL_REVISION" \
-          hub-proved-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null
-        remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" prove
-        identity="$(hub_receipt_identity_sha256 "$receipt")"
+        if ! replay_hub_epoch_recovery_request \
+          "$hub_agent" "$epoch_id" prove "$receipt"; then
+          return 1
+        fi
+        if ! cohort_journal_mutate hub-proved "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+          hub-proved-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null; then
+          return 1
+        fi
+        if ! remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" prove; then
+          return 1
+        fi
+        if ! identity="$(hub_receipt_identity_sha256 "$receipt")"; then
+          return 1
+        fi
         ;;
       abort_epoch) ;;
       none) ;;
@@ -9761,18 +10326,25 @@ recover_active_cohort_transaction_v2() {
     esac
     if [ "$hub_action" != none ]; then
       [ -n "$identity" ] || { echo "ERROR: hub abort recovery lacks exact identity" >&2; return 1; }
-      abort_hub_epoch_exact "$hub_agent" "$epoch_id" "$identity" "$receipt"
-      cohort_journal_mutate hub-aborted "$epoch_id" "$COHORT_JOURNAL_REVISION" \
-        hub-aborted-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null
+      if ! abort_hub_epoch_exact "$hub_agent" "$epoch_id" "$identity" "$receipt"; then
+        return 1
+      fi
+      if ! cohort_journal_mutate hub-aborted "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+        hub-aborted-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null; then
+        return 1
+      fi
     fi
-    discard_unopened_epoch_pending_credentials \
-      "$hub_agent" "$status_file" "$epoch_id"
-    remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" open
-    remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" prove
-    while IFS= read -r candidate_b64; do
-      [ -n "$candidate_b64" ] || continue
-      recover_cohort_node "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64"
-    done < <("$PYTHON_BIN" - "$status_file" "$recovery_file" <<'PY'
+    if ! discard_unopened_epoch_pending_credentials \
+      "$hub_agent" "$status_file" "$epoch_id"; then
+      return 1
+    fi
+    if ! remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" open; then
+      return 1
+    fi
+    if ! remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" prove; then
+      return 1
+    fi
+    if ! "$PYTHON_BIN" - "$status_file" "$recovery_file" > "$candidates_file" <<'PY'
 import base64,json,sys
 status=json.load(open(sys.argv[1],encoding="utf-8")); recovery=json.load(open(sys.argv[2],encoding="utf-8"))
 by_name={item["name"]:item for item in status["journal"]["cohort"]}
@@ -9781,25 +10353,56 @@ for candidate in recovery.get("candidates") or []:
     value={**candidate,"os":node["os"],"supervisor":node["supervisor"]}
     print(base64.b64encode(json.dumps(value,sort_keys=True).encode()).decode())
 PY
-)
-    cohort_journal_mutate abort "$epoch_id" "$COHORT_JOURNAL_REVISION" \
-      abort-recovered "$owner_nonce" >/dev/null
+    then
+      return 1
+    fi
+    while IFS= read -r candidate_b64; do
+      [ -n "$candidate_b64" ] || continue
+      if ! recover_cohort_node \
+        "$epoch_id" "$owner_nonce" "$fleet_name" "$candidate_b64"; then
+        return 1
+      fi
+    done < "$candidates_file"
+    if ! cohort_journal_mutate abort "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+      abort-recovered "$owner_nonce" >/dev/null; then
+      return 1
+    fi
+    if ! confirm_cohort_journal_terminal "$epoch_id" aborted; then
+      return 1
+    fi
     COHORT_JOURNAL_ACTIVE=0
     echo "==> fleet: incomplete typed cohort was durably rolled back"
     return 0
   fi
 
-  recovery="$(cohort_journal recovery --epoch "$epoch_id")"
+  if ! recovery="$(cohort_journal recovery --epoch "$epoch_id")"; then
+    return 1
+  fi
+  if ! printf '%s\n' "$recovery" > "$recovery_file"; then
+    return 1
+  fi
+  if ! "$PYTHON_BIN" - "$recovery_file" > "$finalization_file" <<'PY'
+import base64,json,sys
+for value in json.load(open(sys.argv[1],encoding="utf-8")).get("finalization_candidates") or []:
+    print(base64.b64encode(json.dumps(value,sort_keys=True).encode()).decode())
+PY
+  then
+    return 1
+  fi
   while IFS= read -r candidate_b64; do
     [ -n "$candidate_b64" ] || continue
-    recover_committed_cohort_node "$epoch_id" "$owner_nonce" "$hub_agent" "$candidate_b64"
-  done < <(printf '%s' "$recovery" | "$PYTHON_BIN" -c '
-import base64,json,sys
-for value in json.load(sys.stdin).get("finalization_candidates") or []:
-    print(base64.b64encode(json.dumps(value,sort_keys=True).encode()).decode())
-')
-  cohort_journal_mutate finalize "$epoch_id" "$COHORT_JOURNAL_REVISION" \
-    finalize-recovered "$owner_nonce" >/dev/null
+    if ! recover_committed_cohort_node \
+      "$epoch_id" "$owner_nonce" "$hub_agent" "$candidate_b64"; then
+      return 1
+    fi
+  done < "$finalization_file"
+  if ! cohort_journal_mutate finalize "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+    finalize-recovered "$owner_nonce" >/dev/null; then
+    return 1
+  fi
+  if ! confirm_cohort_journal_terminal "$epoch_id" finalized; then
+    return 1
+  fi
   COHORT_JOURNAL_ACTIVE=0
   echo "==> fleet: committed typed cohort finalization recovered"
 }
@@ -9807,8 +10410,10 @@ for value in json.load(sys.stdin).get("finalization_candidates") or []:
 recover_incomplete_cohort_transaction_before_deploy() {
   local discovered active_values epoch_id revision previous_nonce previous_pid alive adopted
   local -a active_fields=()
-  discovered="$(cohort_journal discover)"
-  active_values="$(printf '%s' "$discovered" | "$PYTHON_BIN" -c '
+  if ! discovered="$(cohort_journal discover)"; then
+    return 1
+  fi
+  if ! active_values="$(printf '%s' "$discovered" | "$PYTHON_BIN" -c '
 import json,sys
 active=json.load(sys.stdin).get("active")
 if active:
@@ -9817,7 +10422,9 @@ if active:
     print(active["owner"]["nonce"])
     print(active["owner"]["pid"])
     print("1" if active["owner"]["alive"] else "0")
-')"
+')"; then
+    return 1
+  fi
   [ -n "$active_values" ] || return 0
   mapfile -t active_fields <<<"$active_values"
   epoch_id="${active_fields[0]:-}"
@@ -9829,13 +10436,17 @@ if active:
     echo "ERROR: incomplete cohort epoch ${epoch_id} is still owned by live controller pid ${previous_pid}" >&2
     return 1
   fi
-  adopted="$(cohort_journal adopt --epoch "$epoch_id" \
+  if ! adopted="$(cohort_journal adopt --epoch "$epoch_id" \
     --expected-revision "$revision" \
     --operation-id "adopt-${DEPLOY_CONTROLLER_NONCE}" \
     --previous-owner-nonce "$previous_nonce" \
     --new-owner-nonce "$DEPLOY_CONTROLLER_NONCE" \
-    --new-owner-pid "$$")"
-  COHORT_JOURNAL_REVISION="$(printf '%s' "$adopted" | cohort_journal_revision)"
+    --new-owner-pid "$$")"; then
+    return 1
+  fi
+  if ! COHORT_JOURNAL_REVISION="$(printf '%s' "$adopted" | cohort_journal_revision)"; then
+    return 1
+  fi
   COHORT_JOURNAL_ACTIVE=1
   COHORT_RECOVERY_RUNNING=1
   if recover_active_cohort_transaction_v2 "$epoch_id" "$DEPLOY_CONTROLLER_NONCE"; then
@@ -9928,6 +10539,10 @@ stable_quiescence_keys = (
     "phase1_daemon_receipt_sha256",
     "phase1_function_block_sha256",
     "phase1_supervisor",
+    "media_runtime_readiness",
+    "media_runtime_readiness_sha256",
+    "media_runtime_source_contract_sha256",
+    "media_runtime_stable_observations",
     "generation",
     "revision",
     "gateway_implementation",
@@ -9956,12 +10571,27 @@ for item in entries:
         or not isinstance(committed.get("phase1_supervisor"), dict)
     ):
         raise SystemExit("fleet commit daemon evidence is invalid")
+    media = committed.get("media_runtime_readiness")
+    if (
+        not isinstance(media, dict)
+        or media.get("schema") != "mac.media_runtime_readiness_manifest.v1"
+        or media.get("status") not in {"proved", "not_applicable"}
+        or media.get("manager") not in {"systemd", "launchd", "supervisord"}
+        or not isinstance(media.get("resources"), list)
+        or committed.get("media_runtime_readiness_sha256") != media.get("sha256")
+        or committed.get("media_runtime_source_contract_sha256")
+        != media.get("source_contract_sha256")
+        or committed.get("media_runtime_stable_observations") != 2
+    ):
+        raise SystemExit("fleet commit media runtime evidence is invalid")
     for digest_key in (
         "receipt_sha256",
         "phase1_receipt_sha256",
         "phase1_daemon_receipt_sha256",
         "phase1_function_block_sha256",
         "gateway_readiness_sha256",
+        "media_runtime_readiness_sha256",
+        "media_runtime_source_contract_sha256",
     ):
         digest = committed.get(digest_key)
         if (
@@ -10086,6 +10716,10 @@ stable_quiescence_keys = (
     "phase1_daemon_receipt_sha256",
     "phase1_function_block_sha256",
     "phase1_supervisor",
+    "media_runtime_readiness",
+    "media_runtime_readiness_sha256",
+    "media_runtime_source_contract_sha256",
+    "media_runtime_stable_observations",
     "generation",
     "revision",
     "gateway_implementation",
@@ -10114,12 +10748,27 @@ for item in entries:
         or not isinstance(committed.get("phase1_supervisor"), dict)
     ):
         raise SystemExit("fleet release epoch daemon evidence is invalid")
+    media = committed.get("media_runtime_readiness")
+    if (
+        not isinstance(media, dict)
+        or media.get("schema") != "mac.media_runtime_readiness_manifest.v1"
+        or media.get("status") not in {"proved", "not_applicable"}
+        or media.get("manager") not in {"systemd", "launchd", "supervisord"}
+        or not isinstance(media.get("resources"), list)
+        or committed.get("media_runtime_readiness_sha256") != media.get("sha256")
+        or committed.get("media_runtime_source_contract_sha256")
+        != media.get("source_contract_sha256")
+        or committed.get("media_runtime_stable_observations") != 2
+    ):
+        raise SystemExit("fleet release epoch media runtime evidence is invalid")
     for digest_key in (
         "receipt_sha256",
         "phase1_receipt_sha256",
         "phase1_daemon_receipt_sha256",
         "phase1_function_block_sha256",
         "gateway_readiness_sha256",
+        "media_runtime_readiness_sha256",
+        "media_runtime_source_contract_sha256",
     ):
         digest = committed.get(digest_key)
         if (
@@ -10465,13 +11114,23 @@ run_typed_cohort() {
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"; os_kind="${fields[2]}"
     generation="$(worker_generation_for_agent "$agent")"
-    prepare_remote_phase1_restore_contract "$agent" \
-      "$(deployment_id_for_agent "$agent")" "$supervisor" "$fleet_name" "$os_kind"
-    cohort_journal_mutate phase1-armed "$COHORT_EPOCH_ID" \
+    if ! cohort_journal_mutate phase1-prepare-start "$COHORT_EPOCH_ID" \
+      "$COHORT_JOURNAL_REVISION" "phase1-prepare-start-${agent_id}" \
+      "$DEPLOY_CONTROLLER_NONCE" --agent-name "$agent" \
+      --stable-id "$agent_id" --generation "$generation" >/dev/null; then
+      return 1
+    fi
+    if ! prepare_remote_phase1_restore_contract "$agent" \
+      "$(deployment_id_for_agent "$agent")" "$supervisor" "$fleet_name" "$os_kind"; then
+      return 1
+    fi
+    if ! cohort_journal_mutate phase1-armed "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "phase1-arm-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" \
       --restore-contract-sha256 "$(phase1_restore_contract_digest_for_agent "$agent")" \
-      --evidence-file "$(phase1_restore_contract_file_for_agent "$agent")" >/dev/null
+      --evidence-file "$(phase1_restore_contract_file_for_agent "$agent")" >/dev/null; then
+      return 1
+    fi
   done < "$selected_specs_file"
 
   echo "==> fleet: proving all read-only node prerequisites before hub or service mutation"

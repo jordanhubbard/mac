@@ -83,14 +83,19 @@ class ServiceNames:
     openclaw_gateway: str
     nemoclaw_gateway: str
     agent: str
+    auxiliary: Tuple[str, ...] = ()
 
     def items(self) -> Tuple[Tuple[str, str], ...]:
-        return (
+        primary = (
             ("control_plane", self.control_plane),
             ("hermes_gateway", self.hermes_gateway),
             ("openclaw_gateway", self.openclaw_gateway),
             ("nemoclaw_gateway", self.nemoclaw_gateway),
             ("agent", self.agent),
+        )
+        return primary + tuple(
+            (f"auxiliary_{index}", identity)
+            for index, identity in enumerate(self.auxiliary)
         )
 
 
@@ -487,7 +492,14 @@ class SystemdSupervisor(BaseSupervisor):
         if len(lines) != 1:
             raise ProtocolError("systemd returned ambiguous enablement state")
         value = lines[0]
-        if value not in {"enabled", "disabled", "masked", "not-found", "static"}:
+        if value not in {
+            "enabled",
+            "disabled",
+            "masked",
+            "not-found",
+            "static",
+            "indirect",
+        }:
             raise ProtocolError("systemd returned an unrecognized enablement state")
         if value == "enabled" and result.returncode != 0:
             raise ProtocolError("systemd contradicted enabled state")
@@ -513,12 +525,18 @@ class SystemdSupervisor(BaseSupervisor):
                 "waiting for inactive restored service shutdown",
             )
             enabled = self._enabled_state(identity)
-            if enabled not in {"disabled", "masked", "not-found", "static"}:
+            if enabled not in {
+                "disabled",
+                "masked",
+                "not-found",
+                "static",
+                "indirect",
+            }:
                 raise ProtocolError("inactive restored service remained enabled")
             if (
                 result.returncode != 0
                 and state.present
-                and enabled not in {"masked", "static"}
+                and enabled not in {"masked", "static", "indirect"}
             ):
                 raise ProtocolError("could not disable inactive restored service")
         for _logical, identity in active:
@@ -1156,6 +1174,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nemoclaw-gateway", required=True)
     parser.add_argument("--agent", required=True)
     parser.add_argument(
+        "--auxiliary-service",
+        action="append",
+        default=[],
+        help="additional systemd identity to keep quiescent across artifact restore",
+    )
+    parser.add_argument(
         "--active-gateway",
         choices=("hermes", "openclaw", "nemoclaw", "none"),
         help="gateway owner in the prior generation; required for restore",
@@ -1238,12 +1262,21 @@ def validate_args(args: argparse.Namespace) -> ServiceNames:
         receipt.unlink()
     except FileNotFoundError:
         pass
+    if args.auxiliary_service and args.supervisor != "systemd":
+        raise ProtocolError("auxiliary rollback services are systemd-only")
+    if len(args.auxiliary_service) > 16:
+        raise ProtocolError("too many auxiliary rollback services")
+    auxiliary = tuple(
+        validate_identity(value, "auxiliary service")
+        for value in args.auxiliary_service
+    )
     names = ServiceNames(
         validate_identity(args.control_plane, "control-plane"),
         validate_identity(args.hermes_gateway, "Hermes gateway"),
         validate_identity(args.openclaw_gateway, "OpenClaw gateway"),
         validate_identity(args.nemoclaw_gateway, "NemoClaw gateway"),
         validate_identity(args.agent, "agent"),
+        auxiliary,
     )
     identities = [identity for _logical, identity in names.items()]
     if len(set(identities)) != len(identities):

@@ -14,9 +14,10 @@ case "$REQUESTED_ACTION" in
   arm-phase1|prepare) ACTION=prepare ;;
   quiesce) ACTION=quiesce ;;
   restore-phase1|restore) ACTION=restore ;;
+  resume-media) ACTION=resume_media ;;
   *)
     printf '%s\n' \
-      "usage: $0 [identify|arm-phase1|quiesce|restore-phase1]" >&2
+      "usage: $0 [identify|arm-phase1|quiesce|restore-phase1|resume-media]" >&2
     exit 64
     ;;
 esac
@@ -108,7 +109,8 @@ RESTORE_ARTIFACT_DIR="$MAC_HOME/phase1-restore-${DEPLOY_GENERATION}"
 LOCAL_RESTORE_MANIFEST="$RESTORE_ARTIFACT_DIR/local-artifacts.json"
 RESTORE_EXECUTABLE="$RESTORE_ARTIFACT_DIR/phase1-restore"
 RETAINED_DAEMON_FUNCTIONS="$RESTORE_ARTIFACT_DIR/daemon-functions.sh"
-if [ "$ACTION" = prepare ] || [ "$ACTION" = restore ]; then
+if [ "$ACTION" = prepare ] || [ "$ACTION" = restore ] \
+    || [ "$ACTION" = resume_media ]; then
   SUPERVISOR_PROOF="$MAC_HOME/phase1-supervisor-${ACTION}-${DEPLOY_GENERATION}.json"
 else
   SUPERVISOR_PROOF="$MAC_HOME/.phase1-supervisor-${ACTION}-${DEPLOY_GENERATION}.$$.json"
@@ -146,6 +148,7 @@ def optional_private(path: Path, limit: int) -> bytes | None:
         if (
             not stat.S_ISREG(before.st_mode)
             or before.st_uid != os.getuid()
+            or before.st_nlink != 1
             or stat.S_IMODE(before.st_mode) & 0o077
             or before.st_size > limit
         ):
@@ -402,7 +405,7 @@ PY
   exit 0
 fi
 
-if [ "$ACTION" = restore ]; then
+if [ "$ACTION" = restore ] || [ "$ACTION" = resume_media ]; then
   MAC_PHASE1_EXPECTED_CONTRACT_SHA256="${MAC_PHASE1_RESTORE_CONTRACT_SHA256:-}" \
     "$PY" - "$RESTORE_CONTRACT" "$PHASE1_HELPER_SOURCE" \
       "$DAEMON_FUNCTIONS_FILE" "$AGENT" "$DEPLOY_GENERATION" "$DEPLOY_REV" <<'PY'
@@ -954,6 +957,7 @@ fi
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -1006,7 +1010,13 @@ command_timeout = bounded_number(
     "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS", 240.0, 0.05, 600.0
 )
 total_timeout = bounded_number(
-    "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS", 600.0, 0.1, 1800.0
+    "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS",
+    1200.0 if action == "resume_media" else 600.0,
+    0.1,
+    1800.0,
+)
+media_readiness_seconds = bounded_number(
+    "MAC_PHASE1_MEDIA_READINESS_SECONDS", 900.0, 0.1, 1800.0
 )
 poll_seconds = bounded_number(
     "MAC_PHASE1_POLL_SECONDS", 0.5, 0.01, 10.0
@@ -1214,7 +1224,7 @@ def atomic_private_json(path: Path, payload: dict[str, object]) -> None:
             pass
 
 
-def systemd_state(prefix: list[str], systemctl: str, unit: str) -> str:
+def systemd_snapshot(prefix: list[str], systemctl: str, unit: str) -> dict[str, object]:
     result = run_bounded(
         prefix
         + [
@@ -1225,6 +1235,7 @@ def systemd_state(prefix: list[str], systemctl: str, unit: str) -> str:
             "--property=ActiveState",
             "--property=SubState",
             "--property=MainPID",
+            "--property=NRestarts",
             unit,
         ]
     )
@@ -1238,17 +1249,41 @@ def systemd_state(prefix: list[str], systemctl: str, unit: str) -> str:
         if key in values:
             raise QuiescenceFailure("systemd service inspection was ambiguous")
         values[key] = value
-    if set(values) != {"LoadState", "ActiveState", "SubState", "MainPID"}:
+    if set(values) != {
+        "LoadState",
+        "ActiveState",
+        "SubState",
+        "MainPID",
+        "NRestarts",
+    }:
         raise QuiescenceFailure("systemd service inspection was incomplete")
+    try:
+        pid = int(values["MainPID"])
+        restarts = int(values["NRestarts"])
+    except (TypeError, ValueError):
+        raise QuiescenceFailure("systemd service counters were malformed")
+    if pid < 0 or restarts < 0:
+        raise QuiescenceFailure("systemd service counters were invalid")
     if values["LoadState"] == "not-found":
-        return "absent"
+        if values["ActiveState"] != "inactive" or pid != 0:
+            raise QuiescenceFailure("systemd reported a contradictory absent service")
+        return {"state": "absent", "pid": 0, "restarts": 0}
     if values["ActiveState"] in {"inactive", "failed"}:
-        if values["MainPID"] != "0":
+        if pid != 0:
             raise QuiescenceFailure("systemd reported an inactive service with a live process")
-        return "inactive"
-    if values["LoadState"] not in {"loaded", "masked"}:
+        return {"state": "inactive", "pid": 0, "restarts": restarts}
+    if (
+        values["LoadState"] not in {"loaded", "masked"}
+        or values["ActiveState"] != "active"
+        or values["SubState"] != "running"
+        or pid <= 0
+    ):
         raise QuiescenceFailure("systemd service has an unexpected load state")
-    return "active"
+    return {"state": "active", "pid": pid, "restarts": restarts}
+
+
+def systemd_state(prefix: list[str], systemctl: str, unit: str) -> str:
+    return str(systemd_snapshot(prefix, systemctl, unit)["state"])
 
 
 def systemd_enabled_state(prefix: list[str], systemctl: str, unit: str) -> str:
@@ -1272,10 +1307,6 @@ def inspect_systemd() -> tuple[dict[str, object], list[str], str, list[str]]:
         (unit, systemd_state(prefix, systemctl, unit))
         for unit in media_service_names
     ]
-    if any(state != "absent" for _unit, state in media_states):
-        raise QuiescenceFailure(
-            "media-gen service is ineligible until its lifecycle joins the rollback journal"
-        )
     if prior_states[-1][1] == "active":
         raise QuiescenceFailure(
             "active Nemo gateway cannot be restored without a durable runtime checkpoint"
@@ -1294,7 +1325,12 @@ def inspect_systemd() -> tuple[dict[str, object], list[str], str, list[str]]:
             "manager": "systemd",
             "resources": resources,
             "media_resources": [
-                {"name": unit, "prior_state": state, "state": state}
+                {
+                    "name": unit,
+                    "prior_state": state,
+                    "state": state,
+                    "enabled_state": systemd_enabled_state(prefix, systemctl, unit),
+                }
                 for unit, state in media_states
             ],
         },
@@ -1306,32 +1342,38 @@ def inspect_systemd() -> tuple[dict[str, object], list[str], str, list[str]]:
 
 def quiesce_systemd() -> dict[str, object]:
     supervisor, prefix, systemctl, prior_values = inspect_systemd()
-    resources = supervisor["resources"]
-    assert isinstance(resources, list)
-    for resource, prior_state in zip(resources, prior_values):
-        unit = str(resource["name"])
-        state = prior_state
-        if state == "active":
-            # A racing stop may return nonzero after the process is already gone;
-            # only the exact follow-up state is authoritative.
-            run_bounded(prefix + [systemctl, "stop", unit])
-            while True:
-                state = systemd_state(prefix, systemctl, unit)
-                if state in {"absent", "inactive"}:
-                    break
-                pause()
-        resource["state"] = state
+    del prior_values
+    for key in ("resources", "media_resources"):
+        resources = supervisor.get(key)
+        if not isinstance(resources, list):
+            raise QuiescenceFailure("systemd topology lacks a resource group")
+        for resource in resources:
+            if not isinstance(resource, dict):
+                raise QuiescenceFailure("systemd topology has an invalid resource")
+            unit = str(resource["name"])
+            state = str(resource.get("prior_state") or "")
+            if state == "active":
+                # A racing stop may return nonzero after the process is already gone;
+                # only the exact follow-up state is authoritative.
+                run_bounded(prefix + [systemctl, "stop", unit])
+                while True:
+                    state = systemd_state(prefix, systemctl, unit)
+                    if state in {"absent", "inactive"}:
+                        break
+                    pause()
+            resource["state"] = state
     return supervisor
 
 
-def restore_systemd(expected: dict[str, object]) -> dict[str, object]:
-    systemctl = command_path("systemctl")
-    prefix = privileged(systemctl)[:-1]
-    resources = expected.get("resources")
+def restore_systemd_resources(
+    resources: object,
+    prefix: list[str],
+    systemctl: str,
+    *,
+    allow_absent: bool,
+) -> None:
     if not isinstance(resources, list):
         raise QuiescenceFailure("restore contract lacks systemd resources")
-    if run_bounded(prefix + [systemctl, "daemon-reload"]).returncode != 0:
-        raise QuiescenceFailure("systemd definition reload failed during restore")
     for resource in resources:
         if not isinstance(resource, dict):
             raise QuiescenceFailure("restore contract has an invalid systemd resource")
@@ -1349,6 +1391,16 @@ def restore_systemd(expected: dict[str, object]) -> dict[str, object]:
             raise QuiescenceFailure(
                 "restore contract has an invalid systemd enablement state"
             )
+        if prior == "absent":
+            if not allow_absent or enabled != "not-found":
+                raise QuiescenceFailure(
+                    "restore contract has contradictory absent systemd intent"
+                )
+            if systemd_state(prefix, systemctl, unit) != "absent":
+                raise QuiescenceFailure(
+                    "successor created a systemd identity absent from the contract"
+                )
+            continue
         # A successor may have changed the persistent enablement links even
         # when the old process topology was successfully quiesced.  Clear a
         # successor mask before reconstructing activity; reapply the prior
@@ -1358,7 +1410,7 @@ def restore_systemd(expected: dict[str, object]) -> dict[str, object]:
         if prior == "active":
             if run_bounded(prefix + [systemctl, "start", unit]).returncode != 0:
                 raise QuiescenceFailure("restoring active systemd service failed")
-        elif prior in {"inactive", "absent"}:
+        elif prior == "inactive":
             if systemd_state(prefix, systemctl, unit) == "active":
                 if run_bounded(prefix + [systemctl, "stop", unit]).returncode != 0:
                     raise QuiescenceFailure("restoring inactive systemd service failed")
@@ -1376,21 +1428,220 @@ def restore_systemd(expected: dict[str, object]) -> dict[str, object]:
         # static, indirect, and not-found are definition-derived states.  The
         # restored prior source/config plus daemon-reload must reproduce them;
         # the exact post-restore inspection below rejects any drift.
+
+
+def restore_systemd(expected: dict[str, object]) -> dict[str, object]:
+    systemctl = command_path("systemctl")
+    prefix = privileged(systemctl)[:-1]
+    resources = expected.get("resources")
+    media_resources = expected.get("media_resources")
+    if run_bounded(prefix + [systemctl, "daemon-reload"]).returncode != 0:
+        raise QuiescenceFailure("systemd definition reload failed during restore")
+    restore_systemd_resources(resources, prefix, systemctl, allow_absent=True)
+    restore_systemd_resources(media_resources, prefix, systemctl, allow_absent=True)
     restored, _prefix, _systemctl, _states = inspect_systemd()
-    restored_resources = restored.get("resources")
-    assert isinstance(restored_resources, list)
-    expected_by_name = {str(item["name"]): item for item in resources if isinstance(item, dict)}
-    for item in restored_resources:
-        expected_item = expected_by_name.get(str(item["name"]))
-        if expected_item is None:
-            raise QuiescenceFailure("restored systemd topology has an unexpected identity")
-        if (
-            item.get("prior_state") != expected_item.get("prior_state")
-            or item.get("enabled_state") != expected_item.get("enabled_state")
-        ):
-            raise QuiescenceFailure("restored systemd topology differs from its contract")
-        item["state"] = item["prior_state"]
+    for key, expected_group in (
+        ("resources", resources),
+        ("media_resources", media_resources),
+    ):
+        restored_resources = restored.get(key)
+        assert isinstance(restored_resources, list)
+        assert isinstance(expected_group, list)
+        expected_by_name = {
+            str(item["name"]): item
+            for item in expected_group
+            if isinstance(item, dict)
+        }
+        for item in restored_resources:
+            expected_item = expected_by_name.get(str(item["name"]))
+            if expected_item is None:
+                raise QuiescenceFailure(
+                    "restored systemd topology has an unexpected identity"
+                )
+            if (
+                item.get("prior_state") != expected_item.get("prior_state")
+                or item.get("enabled_state") != expected_item.get("enabled_state")
+            ):
+                raise QuiescenceFailure(
+                    "restored systemd topology differs from its contract"
+                )
+            item["state"] = item["prior_state"]
     return restored
+
+
+def media_health_ports() -> dict[str, int]:
+    path = Path(os.environ["MAC_HOME"]) / "mac.env"
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+    except OSError:
+        raise QuiescenceFailure("media readiness environment is unavailable")
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) & 0o077
+            or before.st_size <= 0
+            or before.st_size > 4 * 1024 * 1024
+        ):
+            raise QuiescenceFailure(
+                "media readiness environment is not owner-private and bounded"
+            )
+        raw = os.read(descriptor, before.st_size + 1)
+        after = os.fstat(descriptor)
+        if len(raw) != before.st_size or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise QuiescenceFailure("media readiness environment changed while reading")
+    finally:
+        os.close(descriptor)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise QuiescenceFailure("media readiness environment is malformed")
+    values: dict[str, str] = {}
+    admitted = {
+        "MAC_AGENT_GEN_PORT",
+        "MAC_AGENT_GEN_AUDIO_PORT",
+        "MAC_AGENT_GEN_VIDEO_PORT",
+    }
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key not in admitted:
+            continue
+        if key in values:
+            raise QuiescenceFailure("media readiness environment is ambiguous")
+        values[key] = value.strip().strip("\"'")
+    configured = {
+        "%s-gen-server.service" % fleet: (
+            "MAC_AGENT_GEN_PORT",
+            "8189",
+        ),
+        "%s-gen-audio-server.service" % fleet: (
+            "MAC_AGENT_GEN_AUDIO_PORT",
+            "8190",
+        ),
+        "%s-gen-video-server.service" % fleet: (
+            "MAC_AGENT_GEN_VIDEO_PORT",
+            "8191",
+        ),
+    }
+    ports: dict[str, int] = {}
+    for unit, (key, default) in configured.items():
+        raw_port = values.get(key, default)
+        try:
+            port = int(raw_port)
+        except (TypeError, ValueError):
+            raise QuiescenceFailure("media readiness port is invalid")
+        if not 1 <= port <= 65535:
+            raise QuiescenceFailure("media readiness port is outside its bound")
+        ports[unit] = port
+    return ports
+
+
+def prove_media_health(unit: str, port: int, health_deadline: float) -> None:
+    while True:
+        connection = None
+        try:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                port,
+                timeout=max(0.05, min(command_timeout, health_deadline - time.monotonic())),
+            )
+            connection.request("GET", "/health")
+            response = connection.getresponse()
+            raw = response.read(64 * 1024 + 1)
+            payload = json.loads(raw)
+            if (
+                response.status == 200
+                and len(raw) <= 64 * 1024
+                and isinstance(payload, dict)
+                and payload.get("ok") is True
+            ):
+                return
+        except (OSError, ValueError, json.JSONDecodeError, http.client.HTTPException):
+            pass
+        finally:
+            if connection is not None:
+                connection.close()
+        remaining = min(deadline, health_deadline) - time.monotonic()
+        if remaining <= 0:
+            raise QuiescenceFailure(
+                "resumed media service did not pass its bounded health check"
+            )
+        time.sleep(min(poll_seconds, remaining))
+
+
+def resume_systemd_media(expected: dict[str, object]) -> dict[str, object]:
+    systemctl = command_path("systemctl")
+    prefix = privileged(systemctl)[:-1]
+    resources = expected.get("media_resources")
+    if run_bounded(prefix + [systemctl, "daemon-reload"]).returncode != 0:
+        raise QuiescenceFailure("systemd definition reload failed during media resume")
+    restore_systemd_resources(resources, prefix, systemctl, allow_absent=True)
+    assert isinstance(resources, list)
+    ports = media_health_ports()
+    health_deadline = min(deadline, time.monotonic() + media_readiness_seconds)
+    samples: list[dict[str, dict[str, object]]] = []
+    for observation in range(2):
+        sample: dict[str, dict[str, object]] = {}
+        for item in resources:
+            if not isinstance(item, dict):
+                raise QuiescenceFailure("media restore contract has an invalid resource")
+            unit = str(item.get("name") or "")
+            current = systemd_snapshot(prefix, systemctl, unit)
+            enabled = systemd_enabled_state(prefix, systemctl, unit)
+            if (
+                current.get("state") != item.get("prior_state")
+                or enabled != item.get("enabled_state")
+            ):
+                raise QuiescenceFailure(
+                    "resumed media topology differs from its phase-1 contract"
+                )
+            if item.get("prior_state") == "active":
+                prove_media_health(unit, ports[unit], health_deadline)
+            sample[unit] = current
+        samples.append(sample)
+        if observation == 0:
+            pause()
+    for item in resources:
+        assert isinstance(item, dict)
+        unit = str(item["name"])
+        if item.get("prior_state") == "active" and (
+            samples[0][unit].get("pid"),
+            samples[0][unit].get("restarts"),
+        ) != (
+            samples[1][unit].get("pid"),
+            samples[1][unit].get("restarts"),
+        ):
+            raise QuiescenceFailure("resumed media service was unstable")
+    return {
+        "manager": "systemd",
+        "media_resources": [
+            {
+                **item,
+                "state": item.get("prior_state"),
+                "stable_observations": 2,
+            }
+            for item in resources
+            if isinstance(item, dict)
+        ],
+    }
 
 
 def launchd_state(prefix: list[str], launchctl: str, target: str) -> str:
@@ -2563,6 +2814,9 @@ def initial_topology(supervisor: dict[str, object]) -> dict[str, object]:
         for resource in group.get("resources") or []:
             if isinstance(resource, dict):
                 resource["state"] = resource.get("prior_state")
+        for resource in group.get("media_resources") or []:
+            if isinstance(resource, dict):
+                resource["state"] = resource.get("prior_state")
     return value
 
 
@@ -2627,6 +2881,17 @@ try:
             if initial_topology(supervisor) != expected_supervisor:
                 raise QuiescenceFailure("restored supervisor topology differs from its contract")
             proof_schema = "mac.phase1_supervisor_restore.v1"
+        elif action == "resume_media":
+            host_automation = expected_host_automation
+            if manager == "systemd":
+                supervisor = resume_systemd_media(expected_supervisor)
+            else:
+                if expected_supervisor.get("media_resources") not in {None, []}:
+                    raise QuiescenceFailure(
+                        "non-systemd restore contract contains media services"
+                    )
+                supervisor = {"manager": manager, "media_resources": []}
+            proof_schema = "mac.phase1_supervisor_media_resume.v1"
         else:
             raise QuiescenceFailure("unsupported phase-1 action")
     proof = {
@@ -2640,6 +2905,10 @@ try:
         "supervisor": supervisor,
         "host_automation": host_automation,
     }
+    if action == "resume_media":
+        proof["source_contract_sha256"] = os.environ.get(
+            "MAC_PHASE1_RESTORE_CONTRACT_SHA256", ""
+        )
     atomic_private_json(proof_path, proof)
 except QuiescenceFailure as exc:
     print("phase-1 quiescence failed: %s" % exc, file=os.sys.stderr)
@@ -2651,6 +2920,12 @@ except Exception as exc:
     )
     raise SystemExit(1)
 PY
+
+if [ "$ACTION" = resume_media ]; then
+  printf 'phase-1 media resume complete: agent=%s generation=%s proof=%s\n' \
+    "$AGENT" "$DEPLOY_GENERATION" "$SUPERVISOR_PROOF"
+  exit 0
+fi
 
 # The reviewed production daemon block reports progress through the installer's
 # log function.  This standalone phase intentionally exposes only a fixed-text
@@ -3225,14 +3500,14 @@ def validate_supervisor_payload(payload):
         exact_named_states(
             payload.get("media_resources"),
             expected_media_systemd,
-            {"absent"},
-            {"absent"},
+            {"absent", "inactive"},
+            {"absent", "inactive", "active"},
         )
         if not all(
             isinstance(item, dict)
             and item.get("enabled_state")
             in {"enabled", "disabled", "masked", "static", "indirect", "not-found"}
-            for item in resources
+            for item in [*resources, *payload.get("media_resources")]
         ):
             raise ReceiptFailure("systemd proof lacks exact enablement state")
         return

@@ -940,8 +940,10 @@ def test_outer_contract_binds_manifest_receipts_live_state_and_phase1() -> None:
     )
 
     assert "mac.phase1_cohort_quiescence_manifest.v1" in reconcile
+    assert "mac.media_runtime_readiness_manifest.v1" in reconcile
     assert "mac.gateway_readiness_manifest.v1" in reconcile
     assert "manifest phase-1 evidence diverged" in reconcile
+    assert "manifest media runtime readiness diverged" in reconcile
     assert "manifest gateway readiness diverged" in reconcile
 
     for evidence in (
@@ -949,6 +951,10 @@ def test_outer_contract_binds_manifest_receipts_live_state_and_phase1() -> None:
         "phase1_daemon_receipt_sha256",
         "phase1_function_block_sha256",
         "phase1_supervisor",
+        "media_runtime_readiness",
+        "media_runtime_readiness_sha256",
+        "media_runtime_source_contract_sha256",
+        "media_runtime_stable_observations",
         "gateway_readiness_sha256",
         "gateway_supervisor",
         "gateway_identities",
@@ -961,10 +967,13 @@ def test_outer_contract_binds_manifest_receipts_live_state_and_phase1() -> None:
 
     assert "phase1_path.lstat()" in attest
     assert "gateway_path.lstat()" in attest
+    assert 'os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)' in attest
+    assert "media runtime readiness receipt changed while reading" in attest
     assert "stat.S_IMODE(phase1_metadata.st_mode) != 0o600" in attest
     assert "stat.S_IMODE(gateway_metadata.st_mode) != 0o600" in attest
     assert "phase1_digest != phase1_summary.get(\"sha256\")" in attest
     assert "hashlib.sha256(raw_gateway).hexdigest() != gateway_summary.get(\"sha256\")" in attest
+    assert "media_supervisor.get(\"media_resources\") != media_resources" in attest
     assert "live_gateway_sample()" in attest
     assert "selected gateway restarted during release attestation" in attest
     assert "assert_phase1_attestation_matches_controller" in source
