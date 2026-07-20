@@ -1,0 +1,3627 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/reference/openapi/">
+      
+      
+        <link rel="prev" href="../cli/">
+      
+      
+        <link rel="next" href="../../env-config-reference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>HTTP API - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#http-api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              HTTP API
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/reference/openapi.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="http-api-reference">HTTP API reference<a class="headerlink" href="#http-api-reference" title="Permanent link">&para;</a></h1>
+<p>This route index is generated from the current FastAPI OpenAPI schema.
+Use the schema exposed by a running hub at <code>/openapi.json</code> for complete
+request and response definitions.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Operation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/.well-known/acp</code></td>
+<td>Acp Manifest Route</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/.well-known/agent-card.json</code></td>
+<td>A2A Agent Card Route</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/.well-known/agent.json</code></td>
+<td>A2A Agent Card Route</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/a2a</code></td>
+<td>A2A Rpc Route</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/action-events</code></td>
+<td>List Action Events</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/action-events</code></td>
+<td>Record Action Event</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/action-events/export/otlp</code></td>
+<td>Export Action Events Otlp</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/action-events/stream</code></td>
+<td>Action Events Stream</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agentbus</code></td>
+<td>Publish Agentbus Content</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agentbus/artifact-publish</code></td>
+<td>Publish Agentbus Artifact</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agentbus/human-directive</code></td>
+<td>Publish Human Directive Route</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agentbus/repo-update</code></td>
+<td>Publish Agentbus Repo Update</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agentbus/request</code></td>
+<td>Agentbus Request</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agentbus/streams</code></td>
+<td>List Agentbus Streams</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agentbus/streams</code></td>
+<td>Open Agentbus Stream</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agentbus/streams/{stream_id}/chunks</code></td>
+<td>Read Agentbus Chunks</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agentbus/streams/{stream_id}/chunks</code></td>
+<td>Append Agentbus Chunk</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agentbus/streams/{stream_id}/close</code></td>
+<td>Close Agentbus Stream</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agentbus/streams/{stream_id}/directive-verification</code></td>
+<td>Verify Human Directive Route</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agentbus/streams/{stream_id}/events</code></td>
+<td>Agentbus Stream Events</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents</code></td>
+<td>List Agents</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents</code></td>
+<td>Register Agent</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/bulk</code></td>
+<td>Bulk Update Agents</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/dispatch-hold/authority</code></td>
+<td>Dispatch Hold Authority</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/dispatch-hold/epochs/open</code></td>
+<td>Open Fleet Release Epoch</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/dispatch-hold/epochs/{epoch_id}</code></td>
+<td>Dispatch Hold Epoch Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/dispatch-hold/epochs/{epoch_id}/abort</code></td>
+<td>Abort Fleet Release Epoch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/dispatch-hold/epochs/{epoch_id}/commit</code></td>
+<td>Commit Fleet Release Epoch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/dispatch-hold/epochs/{epoch_id}/prove</code></td>
+<td>Prove Fleet Release Epoch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/dispatch-hold/release-batch</code></td>
+<td>Release Dispatch Holds Batch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/dispatch-hold/transition-batch</code></td>
+<td>Transition Dispatch Holds Batch</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/agents/{agent_id}</code></td>
+<td>Delete Agent</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}</code></td>
+<td>Get Agent</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/agents/{agent_id}</code></td>
+<td>Update Agent</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/attestation-key/recover</code></td>
+<td>Recover Agent Attestation Key</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/attestation-key/rotate</code></td>
+<td>Rotate Agent Attestation Key</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/attestation-key/verify</code></td>
+<td>Verify Agent Attestation Key</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/claim-next</code></td>
+<td>Claim Next For Agent</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/command-audit</code></td>
+<td>List Agent Command Audit</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/command-audit</code></td>
+<td>Record Agent Command Audit</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/crash-reports</code></td>
+<td>Report Agent Crash</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/disable</code></td>
+<td>Disable Agent</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/agents/{agent_id}/dispatch-hold</code></td>
+<td>Clear Dispatch Hold</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/dispatch-hold</code></td>
+<td>Set Dispatch Hold</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/dispatch-hold/acquire</code></td>
+<td>Acquire Dispatch Hold</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/dispatch-hold/release</code></td>
+<td>Release Dispatch Hold</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/heartbeat</code></td>
+<td>Heartbeat Agent</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/identity</code></td>
+<td>Get Agent Identity</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/installed-packages</code></td>
+<td>Update Agent Installed Packages</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/messages/deliver</code></td>
+<td>Deliver Messages</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/agents/{agent_id}/mood</code></td>
+<td>Clear Mood</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/mood</code></td>
+<td>Get Mood</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/mood</code></td>
+<td>Set Mood</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/agents/{agent_id}/mood</code></td>
+<td>Set Mood</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/mood/history</code></td>
+<td>List Mood History</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/nap-consolidate</code></td>
+<td>Consolidate Nap</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/nap-cycle</code></td>
+<td>Run Nap Cycle</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/nap-runs</code></td>
+<td>Begin Nap</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/nap-schedule</code></td>
+<td>Get Nap Schedule</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/nap-schedule</code></td>
+<td>Configure Nap</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/agents/{agent_id}/nap-schedule</code></td>
+<td>Configure Nap</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/nap-schedule/next</code></td>
+<td>Next Nap Window</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/openshell/status</code></td>
+<td>Get Agent Openshell Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/openshell/status</code></td>
+<td>Report Agent Openshell Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/reflect</code></td>
+<td>Reflect Agent</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/report-repository-executor/approve</code></td>
+<td>Approve Agent Report Repository Executor</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/report-repository-executor/revoke</code></td>
+<td>Revoke Agent Report Repository Executor</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/representation</code></td>
+<td>Resolve Agent Representation</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/agents/{agent_id}/role</code></td>
+<td>Unassign Role</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/role</code></td>
+<td>Assign Role</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/agents/{agent_id}/service-claims/sync</code></td>
+<td>Sync Agent Service Claims</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/artifacts</code></td>
+<td>List Artifacts</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/artifacts</code></td>
+<td>Register Artifact</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/artifacts/{artifact_id_or_digest}</code></td>
+<td>Delete Artifact</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/artifacts/{artifact_id_or_digest}</code></td>
+<td>Get Artifact</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/backlog-groom/run</code></td>
+<td>Backlog Groom Run</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/backlog-groom/status</code></td>
+<td>Backlog Groom Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/break-glass-authorizations/{authorization_id}/revoke</code></td>
+<td>Revoke Break Glass</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/bridge/items</code></td>
+<td>List Project Items</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/bridge/items</code></td>
+<td>Import Project Item</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/bridge/repositories</code></td>
+<td>List Project Repositories</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/bridge/repositories</code></td>
+<td>Register Project Repository</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/command-audit</code></td>
+<td>List Command Audit</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/communication/accounts</code></td>
+<td>List Communication Accounts</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/accounts</code></td>
+<td>Configure Communication Account</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/communication/accounts/{account_id}</code></td>
+<td>Delete Communication Account</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/communication/accounts/{account_id}</code></td>
+<td>Get Communication Account</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/communication/deliveries</code></td>
+<td>List Human Messages</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/deliveries</code></td>
+<td>Enqueue Human Message</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/deliveries/claim</code></td>
+<td>Claim Human Messages</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/deliveries/{delivery_id}/ack</code></td>
+<td>Acknowledge Human Message</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/deliveries/{delivery_id}/fail</code></td>
+<td>Fail Human Message</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/communication/gateway-leases</code></td>
+<td>List Gateway Identity Leases</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/gateway-leases/acquire</code></td>
+<td>Acquire Gateway Identity Lease</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/gateway-leases/{lease_id}/release</code></td>
+<td>Release Gateway Identity Lease</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/gateway-leases/{lease_id}/renew</code></td>
+<td>Renew Gateway Identity Lease</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/communication/identities</code></td>
+<td>List Communication Identities</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/identities</code></td>
+<td>Configure Communication Identity</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/communication/identities/{identity_id_or_name}</code></td>
+<td>Delete Communication Identity</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/communication/identities/{identity_id_or_name}</code></td>
+<td>Get Communication Identity</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/communication/representations</code></td>
+<td>List Representation Bindings</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/communication/representations</code></td>
+<td>Configure Representation Binding</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/communication/representations/{binding_id}</code></td>
+<td>Delete Representation Binding</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/conversation-threads</code></td>
+<td>List Conversation Threads</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/conversation-threads</code></td>
+<td>Track Conversation</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/conversation-threads/{thread_id}</code></td>
+<td>Get Conversation Thread</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/crash-reports</code></td>
+<td>List Crash Reports</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/crash-reports/{report_id}</code></td>
+<td>Get Crash Report</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/crash-reports/{report_id}/resolve</code></td>
+<td>Resolve Crash Report</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/curiosity-review/run</code></td>
+<td>Curiosity Review Run</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/curiosity-review/status</code></td>
+<td>Curiosity Review Status</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/agents/{agent_id}</code></td>
+<td>Dashboard Agent</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dashboard/agents/{agent_id}/terminal-sessions</code></td>
+<td>Dashboard Terminal Session Open</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/dispatch/explain</code></td>
+<td>Dashboard Dispatch Explain</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface</code></td>
+<td>Dashboard Hermes Config Surface Update</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dashboard/hermes/fleets/{fleet_id_or_name}/config-surface/apply</code></td>
+<td>Dashboard Hermes Config Surface Apply</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/hermes/{instance_id}/activity</code></td>
+<td>Dashboard Hermes Activity</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/rollouts/{rollout_id}/status</code></td>
+<td>Dashboard Rollout Status</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/state</code></td>
+<td>Dashboard State</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/stream</code></td>
+<td>Dashboard Stream</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/tasks/{task_id}/timeline</code></td>
+<td>Dashboard Task Timeline</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/terminal-sessions</code></td>
+<td>Dashboard Terminal Sessions</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dashboard/terminal-sessions/{session_id}/close</code></td>
+<td>Dashboard Terminal Session Close</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dashboard/terminal-sessions/{session_id}/events</code></td>
+<td>Dashboard Terminal Session Events</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dashboard/terminal-sessions/{session_id}/input</code></td>
+<td>Dashboard Terminal Session Input</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dashboard/terminal-sessions/{session_id}/resize</code></td>
+<td>Dashboard Terminal Session Resize</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dashboard/workflow-plan/accept</code></td>
+<td>Dashboard Workflow Plan Accept</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dashboard/workflow-plan/preview</code></td>
+<td>Dashboard Workflow Plan Preview</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dispatch/assign</code></td>
+<td>Dispatch Once</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dispatch/dead-letters</code></td>
+<td>Dead Letters</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/dispatch/dead-letters/page</code></td>
+<td>Dead Letters Page</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/dispatch/tick</code></td>
+<td>Dispatch Tick</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/environments</code></td>
+<td>List Environments</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/environments</code></td>
+<td>Register Environment</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/environments/{env_id}</code></td>
+<td>Get Environment</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/environments/{env_id}/current</code></td>
+<td>Current Deployment</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/environments/{env_id}/deploy</code></td>
+<td>Deploy Artifact</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/environments/{env_id}/deployments</code></td>
+<td>List Deployments</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/eval-runs</code></td>
+<td>List Eval Runs</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/eval-runs</code></td>
+<td>Record Eval Run</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/eval-sets</code></td>
+<td>List Eval Sets</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/eval-sets</code></td>
+<td>Create Eval Set</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/eval-sets/{eval_set_id}</code></td>
+<td>Get Eval Set</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/eval-sets/{eval_set_id}/baseline</code></td>
+<td>Update Eval Set Baseline</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/eval-sets/{eval_set_id}/events</code></td>
+<td>List Eval Set Events</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/events</code></td>
+<td>List Events</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/evidence/{evidence_id}/artifacts</code></td>
+<td>List Evidence Artifacts</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/evidence/{evidence_id}/artifacts/{artifact_id}</code></td>
+<td>Get Evidence Artifact</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/fleet/build-distribution</code></td>
+<td>Fleet Build Distribution</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/fleet/snapshot</code></td>
+<td>Fleet Snapshot</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/fleets</code></td>
+<td>List Fleets</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleets</code></td>
+<td>Create Fleet</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/fleets/{fleet_id_or_name}</code></td>
+<td>Delete Fleet</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/fleets/{fleet_id_or_name}</code></td>
+<td>Get Fleet</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/fleets/{fleet_id_or_name}</code></td>
+<td>Update Fleet</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/fleets/{fleet_id_or_name}/observed-agents</code></td>
+<td>Observe Fleet Agent</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/github-ingest/run</code></td>
+<td>Github Ingest Run</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/github-ingest/status</code></td>
+<td>Github Ingest Status</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/health</code></td>
+<td>Health</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/hermes-instances</code></td>
+<td>List Hermes Instances</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/hermes-instances</code></td>
+<td>Register Hermes Instance</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/hermes-instances/{instance_id}/context</code></td>
+<td>Hermes Context</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/hermes-instances/{instance_id}/runtime-proof</code></td>
+<td>Hermes Runtime Proof</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/hermes-instances/{instance_id}/runtime-proof</code></td>
+<td>Hermes Runtime Proof With Startup</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/hermes-instances/{instance_id}/tasks</code></td>
+<td>Create Interaction Task</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/hermes-instances/{instance_id}/work-context</code></td>
+<td>Hermes Work Context</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/humans</code></td>
+<td>List Humans</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/humans</code></td>
+<td>Register Human</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/humans/resolve</code></td>
+<td>Resolve Human</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/humans/{human_id}</code></td>
+<td>Delete Human</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/humans/{human_id}</code></td>
+<td>Get Human</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/integrations/findings</code></td>
+<td>List Integration Findings</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/integrations/findings</code></td>
+<td>Record Integration Finding Endpoint</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/integrations/observations</code></td>
+<td>List Integration Observations</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/leases/{lease_id}/delegate</code></td>
+<td>Delegate Lease</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/leases/{lease_id}/renew</code></td>
+<td>Renew Lease</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/machines</code></td>
+<td>List Machines</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/machines</code></td>
+<td>Register Machine</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/machines/{machine_id}</code></td>
+<td>Get Machine</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/memory</code></td>
+<td>Search Memory</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/memory</code></td>
+<td>Add Memory</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/memory/remembered</code></td>
+<td>List Remembered Memory</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/memory/remembered</code></td>
+<td>Remember Memory</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/memory/remembered/{key}</code></td>
+<td>Forget Memory</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/memory/summarize-actions</code></td>
+<td>Memory Summarize Actions</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/messages</code></td>
+<td>List Messages</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/messages</code></td>
+<td>Send Message</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/model-selection/promote</code></td>
+<td>Model Selection Promote</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/model-selection/refresh</code></td>
+<td>Model Selection Refresh</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/model-selection/status</code></td>
+<td>Model Selection Status</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/nap-due</code></td>
+<td>List Due Nap Agents</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/nap-runs</code></td>
+<td>List Nap Runs</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/nap-runs/{run_id}</code></td>
+<td>Get Nap Run</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/nap-runs/{run_id}/complete</code></td>
+<td>Complete Nap</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/nap-runs/{run_id}/fail</code></td>
+<td>Fail Nap</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/nap-schedules</code></td>
+<td>List Nap Schedules</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/nap-tick/run</code></td>
+<td>Nap Tick Run</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/nap-tick/status</code></td>
+<td>Nap Tick Status</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/notifications</code></td>
+<td>List Notifications</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/notifications/{notification_id}/delivered</code></td>
+<td>Mark Notification Delivered</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/notifier/channels</code></td>
+<td>List Notifier Channels</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/notifier/channels</code></td>
+<td>Configure Notifier Channel</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/notifier/channels/{channel_id_or_name}</code></td>
+<td>Delete Notifier Channel</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/notifier/channels/{channel_id_or_name}</code></td>
+<td>Get Notifier Channel</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/notifier/deliver</code></td>
+<td>Deliver Notifications</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/observability</code></td>
+<td>List Observability</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/observability/logs</code></td>
+<td>List Observability Logs</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/observability/logs</code></td>
+<td>Record Observability Log</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/observability/metrics</code></td>
+<td>List Observability Metrics</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/observability/metrics</code></td>
+<td>Record Observability Metric</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/observability/prune</code></td>
+<td>Prune Observability</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/observability/stream</code></td>
+<td>Observability Stream</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/observability/summary</code></td>
+<td>Observability Summary</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/openshell/policies</code></td>
+<td>List Openshell Policies</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/openshell/policies</code></td>
+<td>Create Openshell Policy</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/openshell/policies/{policy_id}</code></td>
+<td>Delete Openshell Policy</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/openshell/policies/{policy_id}</code></td>
+<td>Get Openshell Policy</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/openshell/policies/{policy_id}</code></td>
+<td>Update Openshell Policy</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/openshell/policies/{policy_id}/assignments</code></td>
+<td>List Openshell Policy Assignments</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/openshell/policies/{policy_id}/assignments</code></td>
+<td>Assign Openshell Policy</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/openshell/policies/{policy_id}/render</code></td>
+<td>Render Openshell Policy</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/openshell/policies/{policy_id}/versions</code></td>
+<td>List Openshell Policy Versions</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/optimizer/experiments</code></td>
+<td>List Scientific Experiments</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/experiments</code></td>
+<td>Create Scientific Experiment</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/optimizer/experiments/{experiment_id}</code></td>
+<td>Get Scientific Experiment</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/experiments/{experiment_id}/analyze</code></td>
+<td>Analyze Scientific Experiment</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/optimizer/experiments/{experiment_id}/evidence</code></td>
+<td>Get Scientific Experiment Evidence</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/experiments/{experiment_id}/observe/{task_id}</code></td>
+<td>Observe Scientific Task</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/experiments/{experiment_id}/pause</code></td>
+<td>Pause Scientific Experiment</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/experiments/{experiment_id}/promote</code></td>
+<td>Promote Scientific Experiment</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/experiments/{experiment_id}/start</code></td>
+<td>Start Scientific Experiment</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/optimizer/policies</code></td>
+<td>List Scientific Policies</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/policies</code></td>
+<td>Create Scientific Policy</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/optimizer/policies/{policy_id}</code></td>
+<td>Get Scientific Policy</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/policies/{policy_id}/promote</code></td>
+<td>Promote Scientific Policy</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/projects/{project}/rollback/{policy_id}</code></td>
+<td>Rollback Scientific Policy</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/optimizer/status</code></td>
+<td>Scientific Optimizer Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/optimizer/tick</code></td>
+<td>Scientific Optimizer Tick</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/personas</code></td>
+<td>List Personas</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/personas</code></td>
+<td>Register Persona</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/platform-bindings</code></td>
+<td>List Platform Bindings</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/platform-bindings</code></td>
+<td>Register Platform Binding</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/projects</code></td>
+<td>List Projects</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/projects</code></td>
+<td>Create Project</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/projects/{project}</code></td>
+<td>Delete Project</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/projects/{project}</code></td>
+<td>Get Project</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/projects/{project}</code></td>
+<td>Update Project</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/projects/{project}/dispatch</code></td>
+<td>Set Project Dispatch</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/provisioning/requests</code></td>
+<td>List Provisioning Requests</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/provisioning/requests</code></td>
+<td>Create Provisioning Request</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/provisioning/requests/{request_id}</code></td>
+<td>Get Provisioning Request</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/provisioning/requests/{request_id}/cancel</code></td>
+<td>Cancel Provisioning Request</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/provisioning/requests/{request_id}/fulfill</code></td>
+<td>Fulfill Provisioning Request</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/publications</code></td>
+<td>Publish</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/repositories/onboard</code></td>
+<td>Onboard Repository</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/repository-refs/reconcile</code></td>
+<td>Reconcile Repository Refs</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/repository-refs/reconciler</code></td>
+<td>Repository Ref Reconciler Status</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/review-experiments/{experiment_id}</code></td>
+<td>Review Experiment Report</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/reviews/default/tick</code></td>
+<td>Default Review Tick</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/reviews/{review_id}/claim</code></td>
+<td>Claim Review</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/reviews/{review_id}/decision</code></td>
+<td>Submit Review</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/roles</code></td>
+<td>List Roles</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/roles</code></td>
+<td>Create Role</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/roles/seed</code></td>
+<td>Seed Roles</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/roles/{role_id_or_slug}</code></td>
+<td>Get Role</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/roles/{role_id}</code></td>
+<td>Delete Role</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/roles/{role_id}</code></td>
+<td>Update Role</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/rollouts</code></td>
+<td>List Rollouts</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/rollouts</code></td>
+<td>Create Rollout</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/rollouts/{rollout_id}/advance</code></td>
+<td>Advance Rollout</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/rollouts/{rollout_id}/artifact</code></td>
+<td>Verify Rollout Artifact</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/rollouts/{rollout_id}/health</code></td>
+<td>Evaluate Rollout Health</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/rollouts/{rollout_id}/rescue</code></td>
+<td>Rescue Rollout</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/runtime-deltas</code></td>
+<td>List Runtime Deltas</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/runtime-deltas</code></td>
+<td>Propose Runtime Delta</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/runtime-deltas/{delta_id}</code></td>
+<td>Get Runtime Delta</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/runtime-deltas/{delta_id}/promote</code></td>
+<td>Promote Runtime Delta</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/runtime-deltas/{delta_id}/reject</code></td>
+<td>Reject Runtime Delta</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/runtime-deltas/{delta_id}/validate</code></td>
+<td>Validate Runtime Delta</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/runtime-runs</code></td>
+<td>Create Runtime Run</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/runtime-runs/{run_id}/complete</code></td>
+<td>Complete Runtime Run</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/runtimes</code></td>
+<td>List Runtimes</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/runtimes</code></td>
+<td>Create Runtime</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/secret-audits</code></td>
+<td>List Secret Audits</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/secrets</code></td>
+<td>List Secrets</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/secrets</code></td>
+<td>Create Secret</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/secrets/{name}</code></td>
+<td>Delete Secret</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/secrets/{name}/resolve</code></td>
+<td>Resolve Secret</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/secrets/{name}/rotate</code></td>
+<td>Rotate Secret</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/secrets/{secret_id}/access</code></td>
+<td>Request Secret</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/secrets/{secret_id}/reveal</code></td>
+<td>Reveal Secret</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/self-heal/run</code></td>
+<td>Self Heal Run</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/self-heal/status</code></td>
+<td>Self Heal Status</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/service-claims</code></td>
+<td>List Service Claims</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/service-roles</code></td>
+<td>List Service Roles</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/source-convergence</code></td>
+<td>Source Convergence Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/source-convergence/tick</code></td>
+<td>Tick Source Convergence</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/startup/hermes</code></td>
+<td>Hermes Startup</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks</code></td>
+<td>List Tasks</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks</code></td>
+<td>Create Task</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/audit</code></td>
+<td>Audit Tasks</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/ready</code></td>
+<td>Ready Tasks</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/ready/explain</code></td>
+<td>Ready Task Explanations</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/search</code></td>
+<td>Search Tasks</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/stats</code></td>
+<td>Task Stats</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/tasks/{task_id}</code></td>
+<td>Delete Task</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/{task_id}</code></td>
+<td>Get Task</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/tasks/{task_id}</code></td>
+<td>Update Task</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/activity</code></td>
+<td>Append Task Activity</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/{task_id}/break-glass-authorizations</code></td>
+<td>List Break Glass Authorizations</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/break-glass-authorizations</code></td>
+<td>Authorize Break Glass</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/children</code></td>
+<td>Add Child Tasks</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/claim</code></td>
+<td>Claim Task</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/{task_id}/dispatch-explain</code></td>
+<td>Task Dispatch Explain</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/evidence</code></td>
+<td>Add Evidence</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/force-complete</code></td>
+<td>Force Complete Task</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/{task_id}/publication-route</code></td>
+<td>Task Publication Route</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/release</code></td>
+<td>Release Task</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/reopen</code></td>
+<td>Reopen Task</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/review-experiment</code></td>
+<td>Assign Review Experiment</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/{task_id}/review-observation</code></td>
+<td>Review Observation</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/review-outcomes</code></td>
+<td>Record Review Outcome</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/reviews</code></td>
+<td>Request Review</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/start</code></td>
+<td>Start Task</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/submit-for-review</code></td>
+<td>Submit For Review</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tasks/{task_id}/summary</code></td>
+<td>Task Summary</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tasks/{task_id}/transition</code></td>
+<td>Transition Task</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/tenants</code></td>
+<td>List Tenants</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/tenants</code></td>
+<td>Register Tenant</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/users</code></td>
+<td>List Users</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/users</code></td>
+<td>Register User</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/agents/{agent_id}/agentbus-cursor</code></td>
+<td>Get Agentbus Cursor</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/v1/agents/{agent_id}/agentbus-cursor</code></td>
+<td>Set Agentbus Cursor</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/agents/{agent_id}/config-flags</code></td>
+<td>List Agent Config Flags</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/v1/agents/{agent_id}/config-flags/{flag}</code></td>
+<td>Clear Agent Config Flag</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/v1/agents/{agent_id}/config-flags/{flag}</code></td>
+<td>Set Agent Config Flag</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/agents/{agent_id}/continuity</code></td>
+<td>Get Openclaw Continuity Context</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/v1/agents/{agent_id}/deploy-config</code></td>
+<td>Report Agent Deploy Config</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/agents/{agent_id}/deregister</code></td>
+<td>Deregister Agent Route</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/agents/{agent_id}/effective-config</code></td>
+<td>Get Agent Effective Config</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/agents/{agent_id}/memory</code></td>
+<td>Store Agent Memory</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/v1/agents/{agent_id}/mood</code></td>
+<td>Clear Openclaw Agent Mood</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/agents/{agent_id}/mood</code></td>
+<td>Set Openclaw Agent Mood</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/memory/dreams/recall</code></td>
+<td>Recall Dream Artifacts</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/memory/health</code></td>
+<td>Memory Health</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/memory/recall</code></td>
+<td>Recall Memory</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/vector-refs</code></td>
+<td>List Vector Refs</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/vector-refs</code></td>
+<td>Record Vector Ref</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-package-certification-jobs/{job_id}</code></td>
+<td>Work Package Certification Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-certification-jobs/{job_id}/claim</code></td>
+<td>Claim Work Package Certification Job</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-certification-jobs/{job_id}/ingest</code></td>
+<td>Ingest Work Package Certification Result</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-certification-jobs/{job_id}/run</code></td>
+<td>Run Work Package Certification Job</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-finalizations/{finalization_id}/outcomes</code></td>
+<td>Record Work Package Finalization Outcome</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-package-integration-batches/{batch_id}</code></td>
+<td>Work Package Integration Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-integration-batches/{batch_id}/accept-certification</code></td>
+<td>Accept Work Package Certification</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-integration-batches/{batch_id}/assemble</code></td>
+<td>Assemble Work Package Integration Batch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-integration-batches/{batch_id}/certification-jobs</code></td>
+<td>Prepare Work Package Certification Job</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-integration-batches/{batch_id}/claim</code></td>
+<td>Claim Work Package Integration Batch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-integration-batches/{batch_id}/finalize-publication</code></td>
+<td>Finalize Work Package Publication</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-integration-batches/{batch_id}/land</code></td>
+<td>Land Work Package</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-integration-batches/{batch_id}/reject-failed-certification</code></td>
+<td>Reject Failed Work Package Certification</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-outputs/{evidence_id}/verify</code></td>
+<td>Verify Work Package Output</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-package-pipeline/status</code></td>
+<td>Work Package Pipeline Status</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-package-pipeline/trigger</code></td>
+<td>Trigger Work Package Pipeline</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-package-telemetry</code></td>
+<td>Export Work Package Telemetry</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-package-telemetry/comparable-atomic-outcomes</code></td>
+<td>Comparable Atomic Execution Outcomes</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-packages</code></td>
+<td>List Work Packages</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages</code></td>
+<td>Admit Work Package</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages/candidates/{candidate_id}/accept</code></td>
+<td>Accept Work Package Candidate</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages/candidates/{candidate_id}/reject</code></td>
+<td>Reject Work Package Candidate</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-packages/{package_id}</code></td>
+<td>Describe Work Package</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages/{package_id}/activate</code></td>
+<td>Activate Work Package</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-packages/{package_id}/activation-readiness</code></td>
+<td>Work Package Activation Readiness</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages/{package_id}/assemble</code></td>
+<td>Assemble Work Package</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages/{package_id}/integration-batches</code></td>
+<td>Create Work Package Integration Batch</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages/{package_id}/pause</code></td>
+<td>Pause Work Package</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages/{package_id}/replan</code></td>
+<td>Replan Work Package</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/work-packages/{package_id}/replan-preview</code></td>
+<td>Preview Work Package Replan</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/work-packages/{package_id}/telemetry</code></td>
+<td>Describe Work Package Telemetry</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/workflows</code></td>
+<td>List Workflows</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows</code></td>
+<td>Create Workflow</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/workflows/drafts</code></td>
+<td>List Workflow Drafts</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/drafts</code></td>
+<td>Create Workflow Draft</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/workflows/drafts/{draft_id}</code></td>
+<td>Get Workflow Draft</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/workflows/drafts/{draft_id}</code></td>
+<td>Update Workflow Draft</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/drafts/{draft_id}/approve</code></td>
+<td>Approve Workflow Draft</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/drafts/{draft_id}/preview</code></td>
+<td>Preview Workflow Draft</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/import-yaml</code></td>
+<td>Import Workflow Yaml</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/preview</code></td>
+<td>Preview Workflow Definition</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/workflows/runs</code></td>
+<td>List Workflow Runs</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/runs/tick</code></td>
+<td>Tick Workflow Runs</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/workflows/runs/{run_id}</code></td>
+<td>Get Workflow Run</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/runs/{run_id}/cancel</code></td>
+<td>Cancel Workflow Run</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/workflows/runs/{run_id}/decisions</code></td>
+<td>Workflow Run Decisions</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/seed</code></td>
+<td>Seed Workflows</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/workflows/{workflow_id_or_slug}</code></td>
+<td>Get Workflow</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/workflows/{workflow_id_or_slug}/decisions</code></td>
+<td>Workflow Decisions</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/{workflow_id_or_slug}/preview</code></td>
+<td>Preview Workflow</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/workflows/{workflow_id_or_slug}/start</code></td>
+<td>Start Workflow Run</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/workflows/{workflow_id}</code></td>
+<td>Delete Workflow</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/workflows/{workflow_id}</code></td>
+<td>Update Workflow</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../cli/" class="md-footer__link md-footer__link--prev" aria-label="Previous: CLI">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                CLI
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../env-config-reference/" class="md-footer__link md-footer__link--next" aria-label="Next: Environment">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Environment
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

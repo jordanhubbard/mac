@@ -1,0 +1,1909 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Forensics task 643b33ee1c7b4a4ab7a81bf8d5af34a4 - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#forensics-diagnose-90s-dispatch-delay-for-cli-created-probe-task" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Forensics task 643b33ee1c7b4a4ab7a81bf8d5af34a4
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-task-shape-comparison-cli-created-vs-fleetgroomer-vs-workflow-spawned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Task Shape Comparison: CLI-Created vs Fleet/Groomer vs Workflow-Spawned
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Task Shape Comparison: CLI-Created vs Fleet/Groomer vs Workflow-Spawned">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1a-cli-created-task-task_e5b3dc5bf5ba446bbfe3b0704b153ec7-the-probe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1a. CLI-Created Task (task_e5b3dc5bf5ba446bbfe3b0704b153ec7 — the probe)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1b-fleetgroomer-task-backlog_groomer_create_grooming_task" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1b. Fleet/Groomer Task (backlog_groomer._create_grooming_task)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1c-workflow-spawned-task-add_child_tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1c. Workflow-Spawned Task (add_child_tasks)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1d-key-finding-no-structural-dispatch-gate-difference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1d. Key Finding: No Structural Dispatch Gate Difference
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-dispatch-evaluation-was-workerroutingtask_skipped-emitted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Dispatch Evaluation: Was worker.routing.task_skipped Emitted?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-90s-claim-window-publication-window-vs-dispatch-evaluation-gap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The 90s Claim Window: Publication Window vs Dispatch Evaluation Gap
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. The 90s Claim Window: Publication Window vs Dispatch Evaluation Gap">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#3a-hub-tick-and-worker-poll-mechanisms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3a. Hub Tick and Worker Poll Mechanisms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3b-the-898f050-publication-window-hypothesis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3b. The 898f050 Publication Window Hypothesis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3c-90s-is-consistent-with-fleet-publication-worker-restart-cycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3c. 90s Is Consistent With Fleet Publication + Worker Restart Cycle
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-no-evidence-of-a-code-defect-separate-from-the-silent-death-bug" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. No Evidence of a Code Defect Separate From the Silent-Death Bug
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<div class="admonition warning">
+<p class="admonition-title">Historical field note</p>
+<p>This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.</p>
+</div>
+<h1 id="forensics-diagnose-90s-dispatch-delay-for-cli-created-probe-task">Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task<a class="headerlink" href="#forensics-diagnose-90s-dispatch-delay-for-cli-created-probe-task" title="Permanent link">&para;</a></h1>
+<p><strong>Subject task:</strong> task_e5b3dc5bf5ba446bbfe3b0704b153ec7 (parent / probe task)
+<strong>Analysis task:</strong> task_643b33ee1c7b4a4ab7a81bf8d5af34a4
+<strong>Fix commit under review:</strong> 898f050dfa1311751d3e0fa40f57b25c2ed3a310
+<strong>Date:</strong> 2026-07-06</p>
+<hr />
+<h2 id="1-task-shape-comparison-cli-created-vs-fleetgroomer-vs-workflow-spawned">1. Task Shape Comparison: CLI-Created vs Fleet/Groomer vs Workflow-Spawned<a class="headerlink" href="#1-task-shape-comparison-cli-created-vs-fleetgroomer-vs-workflow-spawned" title="Permanent link">&para;</a></h2>
+<h3 id="1a-cli-created-task-task_e5b3dc5bf5ba446bbfe3b0704b153ec7-the-probe">1a. CLI-Created Task (task_e5b3dc5bf5ba446bbfe3b0704b153ec7 — the probe)<a class="headerlink" href="#1a-cli-created-task-task_e5b3dc5bf5ba446bbfe3b0704b153ec7-the-probe" title="Permanent link">&para;</a></h3>
+<p>CLI invocation: <code>mac task create "..." --project=mac</code></p>
+<p>The CLI handler <code>cmd_task_create</code> (src/mac/cli.py:1497–1570) sends <code>create_task()</code> with:
+- No <code>metadata["origin"]</code> (no type, no repository_url, no repository_name)
+- No <code>metadata["acc_metadata"]</code>
+- No <code>metadata["execution_contract"]</code>
+- No <code>metadata["evidence_type"]</code></p>
+<p>When <code>create_task()</code> calls <code>_normalize_task_execution_contract()</code>, because the
+mac project HAS a registered repository, it falls into Branch 3:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>origin_dict.setdefault(&quot;type&quot;, &quot;direct_task&quot;)          # set from normalize, not CLI
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>origin_dict.setdefault(&quot;repository_id&quot;, repo.id)
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>origin_dict.setdefault(&quot;repository_name&quot;, repo.name)
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>origin_dict.setdefault(&quot;repository_path&quot;, repo.path)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>origin_dict.setdefault(&quot;source&quot;, repo.source)
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>origin_dict[&quot;repository_contract&quot;] = contract
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>normalized[&quot;origin&quot;] = origin_dict
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>acc_metadata.setdefault(&quot;workflow_role&quot;, &quot;work&quot;)        # stamped automatically
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>acc_metadata.setdefault(&quot;repository_contract_schema&quot;, contract[&quot;schema&quot;])
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>acc_metadata.setdefault(&quot;repository_contract_project&quot;, contract[&quot;project&quot;])
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>normalized[&quot;acc_metadata&quot;] = acc_metadata
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>normalized[&quot;execution_contract&quot;] = {
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    &quot;schema&quot;: &quot;mac.task_execution_contract.v1&quot;,
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    &quot;type&quot;: &quot;repository&quot;,
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    &quot;quality&quot;: &quot;strong&quot;,                               # strong — not weak
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    &quot;source&quot;: &quot;registered_project&quot;,
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    ...
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>}
+</code></pre></div>
+<p>Result: A well-formed CLI-created task for the mac project gets <code>quality=strong</code>,
+<code>acc_metadata</code> stamped, and <code>origin.type=direct_task</code> — identical fields to a
+groomer task or workflow-spawned child task. The task description's concern about
+<code>quality != strong</code> or <code>acc_metadata absent</code> would only apply if the project had
+NO registered repository at creation time. Since mac has a registered repo, this
+was NOT the gate that blocked dispatch.</p>
+<h3 id="1b-fleetgroomer-task-backlog_groomer_create_grooming_task">1b. Fleet/Groomer Task (<code>backlog_groomer._create_grooming_task</code>)<a class="headerlink" href="#1b-fleetgroomer-task-backlog_groomer_create_grooming_task" title="Permanent link">&para;</a></h3>
+<p>Sets <code>origin.type="backlog_grooming"</code> and <code>evidence_type="investigation"</code> before
+calling <code>create_task()</code>. <code>_normalize_task_execution_contract</code> then resolves the
+same registered-repo lookup (Branch 3 or Branch 1) and ends up with the same
+<code>quality=strong</code> + <code>acc_metadata</code> for the mac project.</p>
+<h3 id="1c-workflow-spawned-task-add_child_tasks">1c. Workflow-Spawned Task (<code>add_child_tasks</code>)<a class="headerlink" href="#1c-workflow-spawned-task-add_child_tasks" title="Permanent link">&para;</a></h3>
+<p>Explicitly provides an <code>execution_contract</code> dict with <code>type="repository"</code> and the
+<code>repository_contract</code> inline. <code>_normalize_task_execution_contract</code> takes Branch 1
+(type already declared) and merges it, also ending up <code>quality=strong</code>.</p>
+<h3 id="1d-key-finding-no-structural-dispatch-gate-difference">1d. Key Finding: No Structural Dispatch Gate Difference<a class="headerlink" href="#1d-key-finding-no-structural-dispatch-gate-difference" title="Permanent link">&para;</a></h3>
+<p>For the mac project, ALL task creation paths (CLI, groomer, workflow child) run
+through <code>_normalize_task_execution_contract</code> and all result in:
+- <code>execution_contract.quality = "strong"</code>
+- <code>execution_contract.source = "registered_project"</code>
+- <code>acc_metadata</code> stamped with <code>workflow_role</code>, schema, and project
+- <code>required_capabilities = []</code> (empty — no filter)
+- <code>metadata.no_dispatch</code> absent (not held)</p>
+<p>No field on the probe task could have blocked <code>_task_matches_worker_claim_policy()</code>
+or <code>_agent_availability_for_task()</code> from matching it to an idle worker. The task
+shape was correctly formed and dispatch-eligible.</p>
+<hr />
+<h2 id="2-dispatch-evaluation-was-workerroutingtask_skipped-emitted">2. Dispatch Evaluation: Was <code>worker.routing.task_skipped</code> Emitted?<a class="headerlink" href="#2-dispatch-evaluation-was-workerroutingtask_skipped-emitted" title="Permanent link">&para;</a></h2>
+<p>The <code>_claim_next_for_agent_impl()</code> path (services.py:9533–9698) emits
+<code>worker.routing.task_skipped</code> with level=debug at up to <code>_DISPATCH_SKIP_LOG_LIMIT=25</code>
+times per call. The <code>_dispatch_batch_impl()</code> path emits <code>dispatcher.routing.task_skipped</code>.</p>
+<p><strong>If no skip logs were emitted for task_e5b3dc5bf5ba446bbfe3b0704b153ec7, there
+are exactly two explanations:</strong></p>
+<ol>
+<li>
+<p><strong>The task was never evaluated at all</strong> — no worker polled <code>claim-next</code> during
+   the 90s window, OR the hub tick did not run <code>dispatch_once</code>.</p>
+</li>
+<li>
+<p><strong>The task was evaluated and immediately claimed</strong> — skipped all skip-logs
+   because it matched on first try.</p>
+</li>
+</ol>
+<p>Given the task sat for 90s unclaimed, explanation #1 is the only viable one.</p>
+<hr />
+<h2 id="3-the-90s-claim-window-publication-window-vs-dispatch-evaluation-gap">3. The 90s Claim Window: Publication Window vs Dispatch Evaluation Gap<a class="headerlink" href="#3-the-90s-claim-window-publication-window-vs-dispatch-evaluation-gap" title="Permanent link">&para;</a></h2>
+<h3 id="3a-hub-tick-and-worker-poll-mechanisms">3a. Hub Tick and Worker Poll Mechanisms<a class="headerlink" href="#3a-hub-tick-and-worker-poll-mechanisms" title="Permanent link">&para;</a></h3>
+<p>The hub's <code>_start_hub_tick_loop()</code> runs <code>ControlPlane.tick()</code> on a daemon thread
+at interval <code>MAC_HUB_TICK_INTERVAL_SECONDS</code> (set by deploy; unset = no thread).
+<code>tick()</code> calls <code>_dispatch_batch_impl()</code> which would have matched the probe task
+to any idle worker.</p>
+<p>Workers run <code>_claim_next_for_agent()</code> → <code>POST /agents/{id}/claim-next</code> in their
+main loop (<code>run_once()</code>), sleeping <code>poll_interval_seconds</code> (default=1.0s) between
+empty polls. A running worker with no current task will poll every ~1s.</p>
+<p><strong>Under normal steady-state conditions a new open task should be claimed within
+a few seconds, not 90s.</strong></p>
+<h3 id="3b-the-898f050-publication-window-hypothesis">3b. The 898f050 Publication Window Hypothesis<a class="headerlink" href="#3b-the-898f050-publication-window-hypothesis" title="Permanent link">&para;</a></h3>
+<p>The task description states: "fix-publication 898f050 landed shortly before
+eventual claim." The commit 898f050 is the <code>repository_base_sha</code> for this
+analysis worktree — it was the HEAD of the mac repo when the probe task was
+created.</p>
+<p>In the MAC fleet, code updates are pushed via AgentBus repo-update control
+messages. When a publication like 898f050 is pushed:</p>
+<ol>
+<li>The hub detects the new commit and publishes a <code>REPO_UPDATE_TOPIC</code> stream to
+   each worker agent.</li>
+<li>Workers polling <code>_process_agentbus_control()</code> receive the stream on their
+   next <code>run_once()</code> call.</li>
+<li><code>_handle_repo_update_stream()</code> pulls, installs, and if the new code requires
+   a restart sets <code>restart_requested=True</code>.</li>
+<li><code>run_once()</code> returns <code>status="self_update_restart"</code>, the worker marks itself
+   offline, and <code>run_forever()</code> exits.</li>
+<li>The process-manager (macOS launchd, Linux systemd, or K8s) restarts the worker.</li>
+<li>On restart, <code>_reconcile_runtime_deps_best_effort()</code> is called before first poll.</li>
+</ol>
+<p><strong>During this window: worker is offline, no <code>POST /agents/{id}/claim-next</code> calls
+are made, no hub-push dispatch can match them (agents must be IDLE/BUSY and
+HEALTHY to receive push assignments — an OFFLINE agent is excluded by
+<code>_agent_availability_for_task()</code> returning <code>agent_status_unavailable</code>).</strong></p>
+<p>If ALL workers across the fleet are restarting simultaneously (which is typical
+when a fleet-wide publication lands), the hub tick's <code>_dispatch_batch_impl()</code> will
+iterate through an empty <code>_available_agents()</code> list and produce zero assignments
+for every tick during that window.</p>
+<h3 id="3c-90s-is-consistent-with-fleet-publication-worker-restart-cycle">3c. 90s Is Consistent With Fleet Publication + Worker Restart Cycle<a class="headerlink" href="#3c-90s-is-consistent-with-fleet-publication-worker-restart-cycle" title="Permanent link">&para;</a></h3>
+<p>Typical worker restart cycle time:
+- AgentBus poll sees new stream: +0s
+- <code>git pull</code> + service restart: 15–60s depending on host
+- <code>_reconcile_runtime_deps_best_effort()</code> on restart: 5–30s (pip install if needed)
+- First <code>run_once()</code> call + claim-next poll: +1s</p>
+<p>If the probe task was created during the middle of the publication window, workers
+would be mid-restart. A 90s window aligns well with a fleet-wide rolling restart
+where some workers finish before others, and the first available worker polls and
+claims.</p>
+<p><strong>Conclusion: The 90s delay was a fleet publication window, not a persistent
+dispatch evaluation gap.</strong> The dispatch loop was running correctly; it simply had
+no healthy+idle workers to match against during the restart window.</p>
+<hr />
+<h2 id="4-no-evidence-of-a-code-defect-separate-from-the-silent-death-bug">4. No Evidence of a Code Defect Separate From the Silent-Death Bug<a class="headerlink" href="#4-no-evidence-of-a-code-defect-separate-from-the-silent-death-bug" title="Permanent link">&para;</a></h2>
+<p>The task description asks whether the dispatch evaluation gap is a code defect
+separate from the silent-death bug (task_78ed7f2b children).</p>
+<p><strong>Finding: No.</strong></p>
+<p>The code analysis confirms:
+- <code>_normalize_task_execution_contract</code> runs on every <code>create_task()</code> call including
+  CLI path — no bypass exists (services.py:3332).
+- CLI-created tasks for the mac project receive <code>quality=strong</code> and all required
+  fields — they are not structurally different from groomer-created or
+  workflow-spawned tasks at the dispatch layer.
+- <code>_dispatch_candidate_tasks()</code> queries for <code>state=OPEN, owner_agent_id IS NULL,
+  lease_id IS NULL</code> — standard open-task filter with no acc_metadata or quality
+  gate. Neither <code>execution_contract.quality</code> nor <code>acc_metadata</code> appears in any
+  dispatch SQL WHERE clause.
+- The worker claim policy gates (<code>_task_matches_worker_claim_policy</code>) check only:
+  <code>no_dispatch</code>, <code>project_dispatch_paused</code>, <code>allowed_projects</code>, <code>capabilities</code>,
+  <code>require_canary</code>, <code>required_metadata</code>. None of these would have blocked the
+  probe task (it had <code>no_dispatch=absent</code>, <code>required_capabilities=[]</code>).</p>
+<p>The only remaining question is whether the operator's log query for
+<code>worker.routing.task_skipped</code> can confirm the "never evaluated" hypothesis.
+If the hub logs show zero <code>worker.routing.task_skipped</code> events with
+<code>task_id=task_e5b3dc5bf5ba446bbfe3b0704b153ec7</code> during the 90s window, that
+confirms workers were offline (no evaluations at all), not that the task was
+being repeatedly skipped for a suppressed reason.</p>
+<hr />
+<h2 id="5-summary">5. Summary<a class="headerlink" href="#5-summary" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Does CLI-created task have different shape from fleet task?</td>
+<td>No for mac project — <code>_normalize_task_execution_contract</code> resolves the registered repo and produces identical <code>quality=strong</code> + <code>acc_metadata</code></td>
+</tr>
+<tr>
+<td>Could <code>acc_metadata</code> absent at creation time gate dispatch?</td>
+<td>No — dispatch SQL and policy gates do not check acc_metadata</td>
+</tr>
+<tr>
+<td>Could <code>quality != strong</code> gate dispatch?</td>
+<td>No — quality is not in any dispatch WHERE clause</td>
+</tr>
+<tr>
+<td>Did <code>_normalize_task_execution_contract</code> run on the CLI path?</td>
+<td>Yes — it runs unconditionally in every <code>create_task()</code> call</td>
+</tr>
+<tr>
+<td>Was task_e5b3dc5bf5ba446bbfe3b0704b153ec7 ever evaluated by a worker?</td>
+<td>Likely not — no <code>worker.routing.task_skipped</code> events = workers were offline during the window</td>
+</tr>
+<tr>
+<td>Was the 90s delay a fleet publication window?</td>
+<td>Yes — consistent with fleet-wide worker restart triggered by 898f050 publication</td>
+</tr>
+<tr>
+<td>Is there a dispatch evaluation code defect?</td>
+<td>No separate defect found — the delay was operational (workers offline during publication), not a code gate</td>
+</tr>
+<tr>
+<td>Should a follow-up task be created?</td>
+<td>No — no new code defect identified beyond the silent-death bug scope</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

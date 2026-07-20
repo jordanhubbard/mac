@@ -1,0 +1,2204 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/archive/field-notes/k8s-native-rewrite-plan/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>K8s native rewrite plan - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#kubernetes-native-rewrite-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              K8s native rewrite plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#architectural-separation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectural separation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-3-postgres" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — Postgres
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 3 — Postgres">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-extract-store-protocol-zero-behavior-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 — Extract Store protocol (zero behavior change)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-postgresstore-with-dialect-shim" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 — PostgresStore with dialect shim
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-schema-port-57-tables-indexes-triggers-view" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 — Schema port (57 tables, indexes, triggers, view)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-backend-factory-env-wiring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 — Backend factory + env wiring
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-stateless-mac-api-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 — Stateless mac-api Deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#36-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.6 — Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#37-live-sqlite-postgres-data-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.7 — Live SQLite → Postgres data migration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#38-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.8 — Docs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-4-job-per-task-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — Job-per-task execution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 4 — Job-per-task execution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#chosen-approach-new-mac-k8s-runner-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chosen approach: new mac-k8s-runner Deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#41-mac-k8s-runner-deployment-skeleton" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 — mac-k8s-runner Deployment (skeleton)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-in-job-executor-mac-task-run-single-shot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 — In-Job executor: mac task run single-shot
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-token-minting-endpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 — Token minting endpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-manifests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 — Manifests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 — Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#open-questions-for-phase-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open questions for Phase 4
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-5-operatorcontroller-shipped-mvp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 — Operator/controller (shipped MVP)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 5 — Operator/controller (shipped MVP)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 status
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#risk-register-phase-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk register (Phase 3)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/archive/field-notes/k8s-native-rewrite-plan.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<div class="admonition warning">
+<p class="admonition-title">Historical field note</p>
+<p>This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.</p>
+</div>
+<h1 id="kubernetes-native-rewrite-plan">Kubernetes-native rewrite plan<a class="headerlink" href="#kubernetes-native-rewrite-plan" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Set 2026-05-28 via <code>/goal</code>. This is a <strong>separate roadmap</strong> from
+<a href="../scaling-plan/"><code>docs/scaling-plan.md</code></a>. The phase numbers DO NOT match.
+<code>scaling-plan.md</code> Phases 1-7 cover functional scaling (tenancy, dispatch,
+review, rollout, workflows). The K8s-native rewrite Phases 3-5 below cover
+the operational rearchitecture for running <code>mac</code> in Kubernetes.</p>
+</blockquote>
+<h2 id="architectural-separation">Architectural separation<a class="headerlink" href="#architectural-separation" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>What it owns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hermes</td>
+<td>User conversation</td>
+</tr>
+<tr>
+<td><code>mac-api</code></td>
+<td>Durable coordinator (stateless, multi-replica)</td>
+</tr>
+<tr>
+<td><code>mac-agent-worker</code></td>
+<td>Role-specific workers</td>
+</tr>
+<tr>
+<td>Task <code>Job</code>s</td>
+<td>Isolated per-task execution</td>
+</tr>
+<tr>
+<td>Postgres (externally managed)</td>
+<td>Source of truth</td>
+</tr>
+<tr>
+<td>ExternalSecrets</td>
+<td>Credential injection</td>
+</tr>
+<tr>
+<td>ArgoCD (operator-supplied)</td>
+<td>Deployment authority</td>
+</tr>
+</tbody>
+</table>
+<p>"Kubernetes-native" does NOT mean baking everything into the Hermes pod. It
+means each role above runs as its own workload with its own scaling and
+failure boundary.</p>
+<h2 id="phase-3-postgres">Phase 3 — Postgres<a class="headerlink" href="#phase-3-postgres" title="Permanent link">&para;</a></h2>
+<p>Make <code>mac-api</code> survivable as multiple stateless replicas by replacing the
+single-writer SQLite store with an externally-managed Postgres 17 cluster.</p>
+<h3 id="31-extract-store-protocol-zero-behavior-change">3.1 — Extract <code>Store</code> protocol (zero behavior change)<a class="headerlink" href="#31-extract-store-protocol-zero-behavior-change" title="Permanent link">&para;</a></h3>
+<p>Goal: introduce a backend abstraction without altering observable behavior.</p>
+<ul>
+<li>Define <code>Store</code> as a <code>typing.Protocol</code> (structural — no inheritance churn) in
+  <code>src/mac/store.py</code>, covering the 6 public methods:
+  <code>close</code>, <code>transaction</code>, <code>execute</code>, <code>executemany</code>, <code>query_one</code>, <code>query_all</code>,
+  plus the <code>path</code> attribute and an <code>ensure_column(table, column, definition)</code>
+  migration hook.</li>
+<li><code>SQLiteStore</code> stays as-is and naturally satisfies the protocol. <code>_conn</code>
+  stays private (sqlite3-specific).</li>
+<li>Add <code>StoreError</code> exception in the same module; <code>SQLiteStore</code> wraps
+  <code>sqlite3.Error</code> on raise. <code>api.py:1897</code> imports <code>StoreError</code> instead of
+  importing <code>sqlite3</code> directly.</li>
+<li>Type-annotate <code>ControlPlane</code> and downstream services as <code>Store</code>, not
+  <code>SQLiteStore</code>, so a Postgres backend can be substituted.</li>
+</ul>
+<p>Acceptance: all existing tests pass; <code>grep -r "import sqlite3" src/mac/</code>
+returns only <code>store.py</code> and <code>migration.py</code> (ACC migration reader).</p>
+<h3 id="32-postgresstore-with-dialect-shim">3.2 — <code>PostgresStore</code> with dialect shim<a class="headerlink" href="#32-postgresstore-with-dialect-shim" title="Permanent link">&para;</a></h3>
+<p>Goal: a second backend that implements <code>Store</code> over <code>psycopg[binary]</code> (sync,
+matching current call style) without rewriting service-layer SQL.</p>
+<p>Driver: <code>psycopg</code> v3 sync + <code>psycopg_pool.ConnectionPool</code> sized from
+<code>MAC_PG_POOL_SIZE</code> (default 10).</p>
+<p>Translation shim (the central design choice — the alternative of rewriting
+~50+ raw SQL sites was rejected as too risky):</p>
+<ul>
+<li><code>?</code> placeholders are rewritten to <code>%s</code> inside
+  <code>PostgresStore.execute/executemany/query_*</code>. Unit test covers ≥20 SQL
+  fixtures pulled from <code>services.py</code>, including strings containing <code>?</code> inside
+  quoted literals (the regex must respect quotes).</li>
+<li>Result rows are wrapped to support both <code>row['col']</code> and <code>row[0]</code> indexing,
+  matching <code>sqlite3.Row</code>. Use psycopg's <code>dict_row</code> row factory plus a thin
+  wrapper class.</li>
+<li><code>transaction()</code> opens an explicit psycopg transaction; commit on context
+  exit, rollback on exception. Default isolation is acceptable.</li>
+<li><code>psycopg.Error</code> is re-raised as <code>StoreError</code>.</li>
+</ul>
+<p>JSON dialect helpers (<code>json_extract</code>, <code>json_set</code>, <code>json_object</code>, <code>json</code>) are
+NOT solved in PostgresStore — they belong in Phase 3.3 (SQL functions defined
+inside the Postgres schema). PostgresStore just passes those calls through.</p>
+<h3 id="33-schema-port-57-tables-indexes-triggers-view">3.3 — Schema port (57 tables, indexes, triggers, view)<a class="headerlink" href="#33-schema-port-57-tables-indexes-triggers-view" title="Permanent link">&para;</a></h3>
+<p>Goal: a single idempotent <code>db/postgres/schema.sql</code> that creates the same
+logical schema as <code>SQLiteStore._initialize()</code> on a fresh postgres17 database,
+plus additive migrations under <code>db/postgres/migrations/00X_*.sql</code>.</p>
+<p>Type mappings:</p>
+<table>
+<thead>
+<tr>
+<th>SQLite</th>
+<th>Postgres</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TEXT primary keys</td>
+<td>TEXT (unchanged)</td>
+</tr>
+<tr>
+<td>TEXT JSON columns</td>
+<td>JSONB (text input auto-casts)</td>
+</tr>
+<tr>
+<td><code>*_at TEXT</code> (ISO strings)</td>
+<td>TEXT — <strong>do not</strong> change to TIMESTAMPTZ in this phase; would force call-site rewrites</td>
+</tr>
+<tr>
+<td><code>AUTOINCREMENT</code> (observability_events)</td>
+<td><code>GENERATED BY DEFAULT AS IDENTITY</code></td>
+</tr>
+<tr>
+<td>CHECK constraints + triggers on tasks</td>
+<td>Direct port (syntax is close)</td>
+</tr>
+</tbody>
+</table>
+<p>Dialect shim functions defined inside <code>schema.sql</code> so service-layer SQL stays
+untouched:</p>
+<ul>
+<li><code>json_extract(j jsonb, path text) RETURNS text</code> — translates SQLite
+  <code>'$.foo'</code> / <code>'$[0]'</code> paths into Postgres <code>jsonb_path_query_first</code>.</li>
+<li><code>json_set</code>, <code>json_object</code>, <code>json()</code> — wrap <code>jsonb_set</code>,
+  <code>jsonb_build_object</code>, <code>to_jsonb</code>.</li>
+</ul>
+<p>The <code>events</code> view (store.py:996-1107) is the highest-risk piece —
+<code>json_set</code>/<code>json_object</code> inside a UNION ALL across ~10 tables. Plan: rewrite
+it natively using Postgres <code>jsonb_build_object</code>/<code>jsonb_set</code> rather than
+relying on the shims, so the view compiles cleanly.</p>
+<p><code>_ensure_column</code> for additive migrations: <code>PostgresStore.ensure_column</code>
+queries <code>information_schema.columns</code> and emits
+<code>ALTER TABLE … ADD COLUMN IF NOT EXISTS …</code>.</p>
+<h3 id="34-backend-factory-env-wiring">3.4 — Backend factory + env wiring<a class="headerlink" href="#34-backend-factory-env-wiring" title="Permanent link">&para;</a></h3>
+<p><code>src/mac/store.py</code> (or <code>src/mac/stores/factory.py</code>) exposes
+<code>make_store_from_env() -&gt; Store</code>:</p>
+<ul>
+<li><code>MAC_DATABASE_URL=postgresql://…</code> → <code>PostgresStore</code></li>
+<li>otherwise, explicit <code>MAC_DB</code> → <code>SQLiteStore(MAC_DB)</code></li>
+<li>neither configured → startup error; no implicit client-side database</li>
+</ul>
+<p>Update all 4 construction sites identified in
+<code>memory/project_store_surface.md</code> (or equivalent
+session context) to call the factory:</p>
+<ul>
+<li><code>services.ControlPlane.__init__</code> default</li>
+<li><code>services.ControlPlane.in_memory()</code> test factory</li>
+<li><code>cli.py</code> entry</li>
+<li><code>api.py</code> FastAPI startup</li>
+</ul>
+<p><code>production-deployment.md</code>'s env table gets <code>MAC_DATABASE_URL</code> and
+<code>MAC_PG_POOL_SIZE</code>.</p>
+<h3 id="35-stateless-mac-api-deployment">3.5 — Stateless <code>mac-api</code> Deployment<a class="headerlink" href="#35-stateless-mac-api-deployment" title="Permanent link">&para;</a></h3>
+<p><code>deploy/k8s/mac-api/</code> (new directory):</p>
+<ul>
+<li><code>deployment.yaml</code> — multi-replica <code>Deployment</code>, no PVC, env from the
+  operator-supplied <code>mac-api-config</code> Secret which carries
+  <code>MAC_DATABASE_URL</code> (DSN of an externally-managed Postgres 17 cluster),
+  <code>MAC_SECRET_KEY</code>, <code>MAC_WORKER_TOKEN</code>.</li>
+<li><code>service.yaml</code>, <code>namespace.yaml</code>, <code>secret.example.yaml</code> (generic
+  <code>v1/Secret</code> template; operators replace placeholder values and apply
+  out-of-band, or convert into their preferred secret-store object).</li>
+</ul>
+<p>The Postgres cluster itself is <strong>not</strong> managed from this repo. Bring
+your own (CloudNativePG, RDS, Cloud SQL, vendor-managed, etc.); the
+DSN is supplied via Secret. ArgoCD <code>Application</code> manifests are
+operator-supplied for the same reason — sync from your
+platform-config repo, one Application per kustomize tree.</p>
+<h3 id="36-tests">3.6 — Tests<a class="headerlink" href="#36-tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li>All current tests continue to pass against <code>SQLiteStore</code> (default).</li>
+<li>New <code>pytest.mark.postgres</code> marker; tests run against a real Postgres
+  (testcontainers-python or <code>MAC_TEST_PG_URL</code>). Same test bodies — fixtures
+  pick the backend via the factory.</li>
+<li>Placeholder-translation unit test exercises ≥20 representative SQL strings.</li>
+<li><code>events</code> view parity test inserts representative rows into each underlying
+  table and compares projected JSON between SQLite and Postgres.</li>
+</ul>
+<h3 id="37-live-sqlite-postgres-data-migration">3.7 — Live SQLite → Postgres data migration<a class="headerlink" href="#37-live-sqlite-postgres-data-migration" title="Permanent link">&para;</a></h3>
+<p>One-shot <code>mac db migrate-to-postgres</code> CLI: opens a SQLite file, opens a
+<code>MAC_DATABASE_URL</code>, copies row-for-row in dependency order. Idempotent on
+re-run (UPSERT by primary key). For operators upgrading existing deployments.</p>
+<h3 id="38-docs">3.8 — Docs<a class="headerlink" href="#38-docs" title="Permanent link">&para;</a></h3>
+<p>Update <code>docs/production-deployment.md</code>: remove the "single-writer SQLite"
+caveat for the Postgres topology, add a "Kubernetes + Postgres" section, document
+<code>MAC_DATABASE_URL</code>. Update <code>README.md</code> topology summary.</p>
+<h2 id="phase-4-job-per-task-execution">Phase 4 — Job-per-task execution<a class="headerlink" href="#phase-4-job-per-task-execution" title="Permanent link">&para;</a></h2>
+<p>Each claimed lease becomes a Kubernetes <code>Job</code>. The worker process inside
+the Job handles exactly one task and records evidence before exiting.
+Crash recovery is delegated to the Job controller + the existing
+lease-expiry retry path already implemented in <code>mac-api</code>.</p>
+<h3 id="chosen-approach-new-mac-k8s-runner-deployment">Chosen approach: new <code>mac-k8s-runner</code> Deployment<a class="headerlink" href="#chosen-approach-new-mac-k8s-runner-deployment" title="Permanent link">&para;</a></h3>
+<p>Recommended over extending <code>mac-agent</code> because:</p>
+<ul>
+<li><code>mac-agent</code> is designed to run tasks itself (executor + loop in one
+  process). Repurposing it as a Job-launcher is a deeper rewrite than
+  starting fresh.</li>
+<li>K8s-idiomatic: one workload type per responsibility. Runner watches +
+  creates Jobs; Jobs run executors; controllers reconcile failures.</li>
+<li>Permissions surface is smaller: runner needs <code>batch.Job</code> create/list;
+  individual mac-agent images don't need cluster API rights.</li>
+<li>Independent scaling: a single runner Deployment serves many concurrent
+  Jobs; runner replicas only need to grow with API/dispatch throughput.</li>
+</ul>
+<h3 id="41-mac-k8s-runner-deployment-skeleton">4.1 — <code>mac-k8s-runner</code> Deployment (skeleton)<a class="headerlink" href="#41-mac-k8s-runner-deployment-skeleton" title="Permanent link">&para;</a></h3>
+<p>New binary entry point <code>mac-k8s-runner</code> that:</p>
+<ol>
+<li>Polls <code>mac-api /dispatch/candidates</code> for ready tasks the runner is
+   configured to handle (filtered by capability label).</li>
+<li>For each candidate, calls <code>POST /tasks/{id}/claim</code> to atomically
+   acquire the lease (the same call workers use today).</li>
+<li>Creates a <code>batch/v1</code> Job in the configured namespace:</li>
+<li>One container per Job</li>
+<li>Image: <code>mac:&lt;runtime-env-digest&gt;</code> (resolved from
+     <code>runtime_environments.manifest</code> for the task)</li>
+<li>Env: <code>MAC_TASK_ID</code>, <code>MAC_LEASE_ID</code>, <code>MAC_URL</code>, <code>MAC_WORKER_TOKEN</code>
+     (short-lived bearer token minted per-Job via <code>POST /tokens/mint</code>)</li>
+<li><code>backoffLimit: 0</code> — retries are owned by mac-api's lease-expiry +
+     <code>max_attempts</code>, not the Job controller, so Job restart semantics
+     stay simple.</li>
+<li><code>activeDeadlineSeconds</code>: matches the lease TTL so a stuck Job is
+     killed before its lease expires.</li>
+<li>Records the <code>Job</code> UID in <code>task.metadata.k8s_job_uid</code> so reconciliation
+   can correlate.</li>
+</ol>
+<p>Runner is multi-replica. Each replica leases tasks independently; the
+existing <code>uniq_leases_active_per_task</code> partial unique index prevents two
+runners from launching duplicate Jobs.</p>
+<h3 id="42-in-job-executor-mac-task-run-single-shot">4.2 — In-Job executor: <code>mac task run</code> single-shot<a class="headerlink" href="#42-in-job-executor-mac-task-run-single-shot" title="Permanent link">&para;</a></h3>
+<p>Add a CLI subcommand <code>mac task run --lease &lt;id&gt;</code> that:</p>
+<ol>
+<li>Reads <code>MAC_TASK_ID</code>, <code>MAC_LEASE_ID</code>, <code>MAC_WORKER_TOKEN</code> from env.</li>
+<li>Renews the lease while running (every <code>lease_ttl/3</code>).</li>
+<li>Invokes the task executor (existing
+   <code>mac-hermes-task-executor</code> path or a per-role override).</li>
+<li>Submits evidence + transitions the task to <code>needs_review</code> / <code>failed</code>
+   <em>before</em> exiting (the K8s Job controller treats a 0 exit as success;
+   evidence must be persisted before that signal so we never lose work
+   on a clean exit race).</li>
+<li>Exits 0 on successful submission, non-zero on failure to submit
+   (lease-expiry path then reopens the task).</li>
+</ol>
+<p>This is the "single-shot" mode of the existing worker loop. Most of the
+code already exists in <code>src/mac/worker.py</code>; the change is to make the
+loop wrapper optional so a Job can call the inner one-task function
+directly.</p>
+<h3 id="43-token-minting-endpoint">4.3 — Token minting endpoint<a class="headerlink" href="#43-token-minting-endpoint" title="Permanent link">&para;</a></h3>
+<p>New endpoint <code>POST /tokens/mint</code> that issues a short-lived bearer token
+scoped to one task/lease. Used by the runner to give each Job a
+least-privilege credential. Token includes:</p>
+<ul>
+<li><code>task_id</code> and <code>lease_id</code> claims</li>
+<li><code>exp</code> matching the Job's <code>activeDeadlineSeconds</code></li>
+<li><code>agent_id</code> of the runner replica (for command-audit attribution)</li>
+</ul>
+<p>Validated by <code>mac-api</code>'s existing auth middleware with a new scope
+<code>task:execute</code> that allows only evidence/lease/transition writes for
+the named task.</p>
+<h3 id="44-manifests">4.4 — Manifests<a class="headerlink" href="#44-manifests" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>deploy/k8s/mac-runner/deployment.yaml</code> — runner Deployment with the
+  smallest ServiceAccount that has <code>batch.jobs</code> create/get/list/watch
+  in its own namespace.</li>
+<li><code>deploy/k8s/mac-runner/rbac.yaml</code> — Role + RoleBinding.</li>
+<li><code>deploy/k8s/mac-runner/serviceaccount.yaml</code>.</li>
+<li>ArgoCD <code>Application</code> entry — supplied by operators from their
+  platform-config repo, not shipped here.</li>
+</ul>
+<h3 id="45-tests">4.5 — Tests<a class="headerlink" href="#45-tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Unit: runner's "candidate -&gt; claim -&gt; Job spec" pure function tested
+  with a fake K8s client + mocked mac-api.</li>
+<li><code>pytest.mark.k8s</code> integration test using kind/k3d that spins up the
+  full stack (Postgres, mac-api, mac-runner) and runs one canary task.</li>
+</ul>
+<h3 id="open-questions-for-phase-4">Open questions for Phase 4<a class="headerlink" href="#open-questions-for-phase-4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Per-tenant Job namespaces, or one shared namespace with labels?
+  Likely shared namespace + <code>app.kubernetes.io/instance</code> labels —
+  simpler RBAC, and tenant isolation already exists at the mac-api auth
+  layer.</li>
+<li>How are role-specific images selected? Today the
+  <code>runtime_environments</code> table holds a <code>manifest</code> JSON with the image
+  digest; the runner reads that field. Pre-Phase-4 work: ensure every
+  role has a <code>runtime_environment_id</code> pointing at a manifest with a
+  pinned <code>@sha256:...</code> digest.</li>
+</ul>
+<h2 id="phase-5-operatorcontroller-shipped-mvp">Phase 5 — Operator/controller (shipped MVP)<a class="headerlink" href="#phase-5-operatorcontroller-shipped-mvp" title="Permanent link">&para;</a></h2>
+<p>Implemented as <code>mac-k8s-controller</code>: a singleton-replica Deployment in
+the <code>mac</code> namespace running a periodic reconciliation loop. Two
+reconcilers:</p>
+<ul>
+<li>
+<p><strong><code>reconcile_stuck_jobs</code></strong> lists active K8s Jobs labelled
+  <code>app.kubernetes.io/managed-by=mac-k8s-runner</code>. For each Job it asks
+  mac-api for the corresponding task's current lease and state, and
+  deletes the Job when ANY of: the task is in a terminal state
+  (completed/failed/cancelled); the task's active lease id differs from
+  the Job's <code>mac.lease.id</code> label (re-claimed by another runner); the
+  task has no active lease; or the lease's <code>leased_until</code> is in the
+  past. This is the cleanup path for evicted/OOMKilled Jobs whose
+  parent task already moved on.</p>
+</li>
+<li>
+<p><strong><code>reconcile_provisioning_requests</code></strong> lists open
+  <code>agent_provisioning_requests</code> and dispatches each one to an injected
+  <code>WorkerPoolScaler</code>. The reference <code>K8sDeploymentScaler</code> bumps the
+  replica count of a Deployment named <code>mac-worker-&lt;role-slug&gt;</code> by
+  <code>delta_per_request</code> (default 1), capped by <code>max_replicas_per_role</code>.
+  Disabled by default (<code>MAC_CONTROLLER_SCALER_ENABLED=0</code>) so operators
+  opt in once their worker-pool Deployments follow the naming
+  convention.</p>
+</li>
+</ul>
+<p>CRDs are intentionally NOT introduced in the MVP — the goal text says
+"optionally introduce CRDs" and the controller ships against any
+cluster without custom resources. A follow-up can promote
+<code>agent_provisioning_requests</code> and rollouts to first-class CRDs once
+the API surface stabilises.</p>
+<p>RBAC (<code>deploy/k8s/mac-controller/rbac.yaml</code>): scoped Role on the <code>mac</code>
+namespace with <code>batch.jobs</code> delete + <code>apps.deployments/scale</code> patch.
+No cluster-wide rights.</p>
+<h3 id="phase-5-status">Phase 5 status<a class="headerlink" href="#phase-5-status" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Goal item</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Watch provisioning requests</td>
+<td>Done (poll-based)</td>
+</tr>
+<tr>
+<td>Scale worker pools</td>
+<td>Done (reference scaler, opt-in)</td>
+</tr>
+<tr>
+<td>Reconcile stuck Jobs</td>
+<td>Done</td>
+</tr>
+<tr>
+<td>Optionally introduce CRDs</td>
+<td>Deferred (out of scope per "optionally")</td>
+</tr>
+</tbody>
+</table>
+<h2 id="risk-register-phase-3">Risk register (Phase 3)<a class="headerlink" href="#risk-register-phase-3" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>?</code> translation breaks on strings containing <code>?</code> inside literals</td>
+<td>Quote-aware translation + ≥20 fixture unit tests</td>
+</tr>
+<tr>
+<td><code>events</code> view JSON shape drifts between backends</td>
+<td>Parity test that round-trips each underlying row type</td>
+</tr>
+<tr>
+<td>Service code accidentally calls <code>_conn</code> directly</td>
+<td>grep for <code>_conn</code> references; assertion in Phase 3.1 PR</td>
+</tr>
+<tr>
+<td>Test suite slows down with real Postgres</td>
+<td>Marker-gated; SQLite remains default</td>
+</tr>
+<tr>
+<td>Live-data migration corrupts rows on column mismatch</td>
+<td>Migrate-script reads schema from each side, fails loud on shape drift</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

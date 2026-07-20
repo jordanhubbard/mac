@@ -1,0 +1,3231 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/work-graph-control-plane/">
+      
+      
+        <link rel="prev" href="../break-glass-host-recovery/">
+      
+      
+        <link rel="next" href="../hermes-boundary/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Work-graph control plane - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#work-graph-assembly-control-plane" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Work-graph control plane
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-implementation-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current implementation boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-replaces-both-extremes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this replaces both extremes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-neighboring-disciplines-actually-contribute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the neighboring disciplines actually contribute
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authority-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authority model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logical-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logical pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#durable-aggregates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Durable aggregates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Durable aggregates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#work-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Work package
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plan-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plan version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current-flat-mutation-wave-safety-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current flat mutation-wave safety envelope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task links
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assignment-audit-and-fence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assignment audit and fence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execution-capacity-and-product-wip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution capacity and product WIP
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node-progress-and-attempt-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node progress and attempt outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integration-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#certification-and-landing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Certification and landing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deterministic-plan-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deterministic plan compilation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#readiness-and-scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Readiness and scheduling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#replanning-and-rework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replanning and rework
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quality-at-source-and-scoped-andon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality-at-source and scoped Andon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fast-lane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fast lane
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compatibility-and-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatibility and migration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#historical-failures-converted-into-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical failures converted into invariants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observability-and-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability and optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollout
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rollout">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stage-0-safety-and-observation-implemented-in-the-default-off-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 0: safety and observation (implemented in the default-off control plane)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-1-managed-package-pilot-code-complete-deployment-activation-pending" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 1: managed package pilot (code complete; deployment activation pending)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-2-default-for-parallel-mutation-future-rollout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 2: default for parallel mutation (future rollout)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-3-adaptive-scheduling-future-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 3: adaptive scheduling (future optimization)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#completion-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completion criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-implementation-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current implementation boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-replaces-both-extremes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this replaces both extremes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-neighboring-disciplines-actually-contribute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the neighboring disciplines actually contribute
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authority-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authority model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logical-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logical pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#durable-aggregates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Durable aggregates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Durable aggregates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#work-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Work package
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plan-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plan version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#current-flat-mutation-wave-safety-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current flat mutation-wave safety envelope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task links
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assignment-audit-and-fence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assignment audit and fence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execution-capacity-and-product-wip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution capacity and product WIP
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node-progress-and-attempt-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node progress and attempt outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integration-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#certification-and-landing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Certification and landing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deterministic-plan-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deterministic plan compilation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#readiness-and-scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Readiness and scheduling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#replanning-and-rework" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replanning and rework
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quality-at-source-and-scoped-andon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quality-at-source and scoped Andon
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fast-lane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fast lane
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compatibility-and-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatibility and migration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#historical-failures-converted-into-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical failures converted into invariants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observability-and-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability and optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollout
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rollout">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stage-0-safety-and-observation-implemented-in-the-default-off-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 0: safety and observation (implemented in the default-off control plane)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-1-managed-package-pilot-code-complete-deployment-activation-pending" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 1: managed package pilot (code complete; deployment activation pending)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-2-default-for-parallel-mutation-future-rollout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 2: default for parallel mutation (future rollout)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-3-adaptive-scheduling-future-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 3: adaptive scheduling (future optimization)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#completion-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completion criteria
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/work-graph-control-plane.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="work-graph-assembly-control-plane">Work-Graph Assembly Control Plane<a class="headerlink" href="#work-graph-assembly-control-plane" title="Permanent link">&para;</a></h1>
+<p>Status: implemented behind default-off activation gates; live pilot activation
+awaits a reviewed digest-pinned external certifier image and trusted image-owned
+harness</p>
+<p>Ledger: <code>task_173ab1e7</code></p>
+<p>Recovery tags:</p>
+<ul>
+<li><code>checkpoint/pre-workgraph-redesign-local-20260717</code></li>
+<li><code>checkpoint/pre-workgraph-redesign-canonical-20260717</code></li>
+</ul>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>MAC will operate as one logical work system over asynchronous, heterogeneous
+execution cells. It will not attempt to make every machine advance on one wall
+clock, and it will not allow independent workers to manufacture and publish
+uncoordinated repository state.</p>
+<p>The governing rule is:</p>
+<blockquote>
+<p>Plan globally, admit transactionally, release by downstream capacity,
+execute locally, integrate hierarchically, and certify the exact candidate
+before canonical publication.</p>
+</blockquote>
+<p>The architecture combines two proven control patterns:</p>
+<ol>
+<li>A parallel dataflow runtime: immutable/versioned logical graphs, dependency
+   readiness, attempt fencing, private outputs, selective fan-in, and explicit
+   commit.</li>
+<li>A high-mix flexible manufacturing cell: central work release, heterogeneous
+   local execution, limited work in process, quality at source, inspection,
+   and bounded rework.</li>
+</ol>
+<p>The task ledger remains the canonical execution store. A new <code>WorkPackage</code>
+aggregate owns the plan and its relationship to task, lease, evidence, review,
+assembly, and publication records. Task metadata may project this relationship
+for worker context, but metadata is not authoritative for admission or fencing.</p>
+<h2 id="current-implementation-boundary">Current implementation boundary<a class="headerlink" href="#current-implementation-boundary" title="Permanent link">&para;</a></h2>
+<p>The repository now contains the durable package/plan/epoch/node schema, pure
+plan compiler, transactional admission, managed planner/API/IDE surface,
+capacity- and conflict-aware allocation, immutable attempt-output attribution,
+controller verification, integration batches, external certification jobs,
+crash-resumable compare-and-swap landing, publication finalization, and exact
+protected-ref retirement receipts. SQLite and PostgreSQL use the same logical
+contract.</p>
+<p>The controller loop remains deliberately disabled by default. Package
+activation and every worker claim fail closed unless the same registered
+repository row proves an enabled, independently pinned certification contract,
+an exact secret-free canonical landing endpoint, and enabled downstream
+pipeline/landing capacity. Controller replicas use distinct lease-owner
+identities; a process restart or a second replica must reacquire authority
+rather than inheriting another process's name.</p>
+<p>This is deployable control-plane machinery, not yet a claim that the production
+fleet is running the new assembly line. Live activation requires the separately
+reviewed certifier artifact and canary sequence in
+<code>docs/work-package-pipeline-activation.md</code>. Until then, existing non-package
+tasks continue through the legacy path and newly accepted packages remain held.</p>
+<h2 id="why-this-replaces-both-extremes">Why this replaces both extremes<a class="headerlink" href="#why-this-replaces-both-extremes" title="Permanent link">&para;</a></h2>
+<p>A physical single-system image or bulk-synchronous fleet would amplify slow
+nodes, WAN partitions, pod preemption, and machine-specific failures into
+global stalls. Completely independent workers instead amplify overlap, stale
+bases, duplicate work, integration queues, and conflicting publication.</p>
+<p>MAC therefore uses logical rather than physical synchronization:</p>
+<ul>
+<li>every admitted plan has an immutable version and exact base SHA;</li>
+<li>every execution wave belongs to a monotonically increasing epoch;</li>
+<li>every mutation is authorized by an exact lease/fence, not merely an agent ID;</li>
+<li>workers run at their natural speeds;</li>
+<li>barriers exist only at real dependency joins, integration batches,
+  certification, and publication;</li>
+<li>a replan creates a new generation and fences stale work instead of silently
+  editing the active graph.</li>
+</ul>
+<h2 id="what-the-neighboring-disciplines-actually-contribute">What the neighboring disciplines actually contribute<a class="headerlink" href="#what-the-neighboring-disciplines-actually-contribute" title="Permanent link">&para;</a></h2>
+<p>This is a deliberate hybrid, not a metaphor applied after the fact.</p>
+<table>
+<thead>
+<tr>
+<th>Source pattern</th>
+<th>Useful translation into MAC</th>
+<th>Literal behavior MAC rejects</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bulk-synchronous parallel supersteps</td>
+<td>Epochs and explicit fan-in barriers give a coherent logical generation</td>
+<td>A fleet-wide wall-clock barrier would let the slowest WAN node or partition stop unrelated work</td>
+</tr>
+<tr>
+<td>Dataflow/DAG execution</td>
+<td>Versioned vertices, explicit dependencies, immutable edge outputs, retryable attempts, and selective joins</td>
+<td>Treating arbitrary repository mutations as side-effect-free data records</td>
+</tr>
+<tr>
+<td>CONWIP/pull production</td>
+<td>Release new mutations only when bounded downstream product capacity exists</td>
+<td>Keeping every worker busy while candidate and integration queues grow without bound</td>
+</tr>
+<tr>
+<td>Reconfigurable manufacturing cells</td>
+<td>Match a stable operation contract to heterogeneous capability cells and change capacity without changing product identity</td>
+<td>Pretending unlike Macs, Linux hosts, ARM nodes, and pods are interchangeable processors</td>
+</tr>
+<tr>
+<td>Jidoka/Andon</td>
+<td>Detect abnormality at the producing station, preserve evidence, and stop only the affected scope</td>
+<td>Letting a known-bad artifact continue downstream so an end-of-line test can rediscover it</td>
+</tr>
+</tbody>
+</table>
+<p>The parallel-computing precedents are Valiant's
+<a href="https://doi.org/10.1145/79173.79181">BSP bridging model</a>, Microsoft's
+<a href="https://www.microsoft.com/en-us/research/wp-content/uploads/2007/03/eurosys07.pdf">Dryad DAG engine</a>,
+and Google's
+<a href="https://research.google.com/pubs/archive/43864.pdf">Dataflow model</a>.
+The manufacturing precedents are Spearman, Woodruff, and Hopp's
+<a href="https://doi.org/10.1080/00207549008942761">CONWIP pull system</a>, Koren and
+Shpitalni's
+<a href="https://public.websites.umich.edu/~ykoren/uploads/Design_of_Reconfigurable_Manufacturing_Systems.pdf">reconfigurable manufacturing design</a>,
+and Toyota's description of
+<a href="https://global.toyota/en/company/vision-and-philosophy/production-system/">Jidoka and Just-in-Time</a>.</p>
+<p>The result is better than either extreme for MAC's workload: it preserves local
+asynchrony and heterogeneous specialization while giving the fleet one durable
+product identity and a small number of exact synchronization points.  It costs
+more control-plane state and adds latency for tiny changes, which is why the
+single-node fast lane remains.  The first high-value adoptions are therefore
+versioned DAGs, immutable attempt outputs, pull-based WIP limits, station-local
+Andon, exact assembly/certification, and compare-and-swap landing—not a global
+clock or a physical single-system image.</p>
+<h2 id="authority-model">Authority model<a class="headerlink" href="#authority-model" title="Permanent link">&para;</a></h2>
+<p>Intelligent agents propose and interpret. Deterministic controllers admit and
+actuate.</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>May do</th>
+<th>Must not do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Work-plan agent</td>
+<td>Propose nodes, dependencies, scopes, estimates, and acceptance contracts</td>
+<td>Materialize tasks, grant leases, or publish</td>
+</tr>
+<tr>
+<td>Plan compiler</td>
+<td>Normalize and validate a complete plan deterministically</td>
+<td>Invent missing semantic requirements</td>
+</tr>
+<tr>
+<td>Allocation advisor</td>
+<td>Score legal ready waves over current fleet state</td>
+<td>Mutate the ledger directly</td>
+</tr>
+<tr>
+<td>Admission controller</td>
+<td>Atomically reserve capacity and bind an exact task/agent/lease/epoch</td>
+<td>Override hard eligibility or capacity invariants</td>
+</tr>
+<tr>
+<td>Worker cell</td>
+<td>Execute one fenced node and submit immutable evidence/artifacts</td>
+<td>Treat its branch as the assembled product</td>
+</tr>
+<tr>
+<td>Integration agent</td>
+<td>Assemble exact inputs, diagnose semantic conflicts, and propose bounded rework</td>
+<td>Publish an unverified or differently assembled tree</td>
+</tr>
+<tr>
+<td>Certifier</td>
+<td>Run the declared gates against an exact candidate SHA</td>
+<td>Certify a moving branch name</td>
+</tr>
+<tr>
+<td>Landing controller</td>
+<td>Compare-and-swap one certified candidate onto the canonical ref</td>
+<td>Rebuild or modify the certified candidate during landing</td>
+</tr>
+</tbody>
+</table>
+<p>There may be multiple planning or scheduling advisors. Their proposals are
+optimistic reads against a ledger revision. One deterministic transaction
+validates the revision and commits the decision. This preserves specialization
+without creating competing control-plane authorities.</p>
+<h2 id="logical-pipeline">Logical pipeline<a class="headerlink" href="#logical-pipeline" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>objective / product contract
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>          |
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>          v
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  work-plan proposal
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>          |
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>          v
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a> deterministic compilation
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>          |
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>          v
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a> versioned WorkPackage + epoch
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>          |
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>          v
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a> capacity/conflict-aware ready wave
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>          |
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>     +----+----+----------------+
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>     v         v                v
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a> worker A   worker B         worker C
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a> private    private          private
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a> attempt    attempt          attempt
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>     |         |                |
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>     +----+----+----------------+
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>          v
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a> hierarchical integration batches
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>          |
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>          v
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a> exact candidate SHA + certification
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>          |
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>          v
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a> repository landing lease + CAS push
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>          |
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>          v
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a> canonical proof / completion
+</code></pre></div>
+<h2 id="durable-aggregates">Durable aggregates<a class="headerlink" href="#durable-aggregates" title="Permanent link">&para;</a></h2>
+<h3 id="work-package">Work package<a class="headerlink" href="#work-package" title="Permanent link">&para;</a></h3>
+<p>A work package is the stable identity of one product objective. It owns:</p>
+<ul>
+<li>project and repository identity;</li>
+<li>root/integration task;</li>
+<li>current accepted plan version;</li>
+<li>current execution epoch;</li>
+<li>state and scoped hold/Andon condition;</li>
+<li>WIP and rework policy;</li>
+<li>current canonical base ref and SHA;</li>
+<li>created-by provenance and timestamps.</li>
+</ul>
+<p>The package survives replanning. Plan versions and epochs do not.</p>
+<h3 id="plan-version">Plan version<a class="headerlink" href="#plan-version" title="Permanent link">&para;</a></h3>
+<p>An accepted plan version is immutable. It contains:</p>
+<ul>
+<li>a canonical graph document and digest;</li>
+<li>parent version and replan reason;</li>
+<li>exact base ref/SHA used for compilation;</li>
+<li>graph nodes and edges;</li>
+<li>compiler version and policy version;</li>
+<li>acceptance decision and actor.</li>
+</ul>
+<p>Changing any node, dependency, effect, output, acceptance rule, or base creates
+a new version. No in-place mutation is permitted after acceptance.</p>
+<h3 id="node-contract">Node contract<a class="headerlink" href="#node-contract" title="Permanent link">&para;</a></h3>
+<p>Every executable node declares:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">node_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stable-within-plan</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analysis | mutation | integration | certification</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nt">depends_on</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nt">required_capabilities</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nt">inputs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nt">expected_outputs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="nt">effects</span><span class="p">:</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="nt">reads</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="nt">writes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span><span class="nt">exclusive</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span><span class="nt">external</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="nt">verification</span><span class="p">:</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">  </span><span class="nt">profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">repository-default</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">  </span><span class="nt">commands</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="nt">estimates</span><span class="p">:</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">  </span><span class="nt">duration_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">  </span><span class="nt">cost_units</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">  </span><span class="nt">confidence</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">low | medium | high</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="nt">rework</span><span class="p">:</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">  </span><span class="nt">max_cycles</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="nt">metadata</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+</code></pre></div>
+<p>Paths must be repository-relative and normalized. <code>..</code>, absolute paths,
+credential-bearing URLs, and secrets are rejected. External effects require an
+idempotency or exclusivity declaration. Empty scope declarations are allowed
+only with low confidence and conservative scheduling.</p>
+<p>Declarations do not fence an already partitioned worker from completing an
+external action after its lease expires. Retriable external effects therefore
+flow through controller-owned transactional outbox/effectors that use the
+target system's idempotency or fencing primitive. An effect that cannot be
+fenced or made idempotent is single-attempt and routes to manual Andon after an
+ambiguous outcome; MAC must not dispatch a second worker and hope duplication
+did not occur.</p>
+<p>The current managed executor has no such external effector. Admission and the
+claim gate therefore reject every executable node with an <code>external</code> effect.
+<code>external_contract.idempotency_key</code> remains a future effector contract; merely
+declaring it never authorizes a worker to perform the action.</p>
+<h3 id="current-flat-mutation-wave-safety-envelope">Current flat mutation-wave safety envelope<a class="headerlink" href="#current-flat-mutation-wave-safety-envelope" title="Permanent link">&para;</a></h3>
+<p>Every worker mutation attempt is currently pinned to the immutable planning
+base SHA of its package epoch. The controller does not yet have a pre-claim
+composition station that can assemble predecessor commits, publish an exact
+protected base ref, attest its lineage, and bind the downstream assignment to
+that new base in one fenced protocol. The executable graph therefore fails
+closed unless all repository mutations form one flat wave:</p>
+<ul>
+<li>no mutation may have a mutation ancestor, directly or through another node;</li>
+<li>no mutation may have an integration ancestor;</li>
+<li>every mutation in the wave starts from the same epoch planning base;</li>
+<li>accepted mutation candidates flow downstream into explicit integration
+  fan-in;</li>
+<li>the pure compiler can describe nested integration groups, but the current
+  integration runtime release-blocks nested integration inputs until it has an
+  append-only exact provenance receipt for the predecessor batch;</li>
+<li>after repository integration begins, only controller-owned certification
+  work may remain on the currently executable repository lineage.</li>
+</ul>
+<p>Analysis dependencies may precede the wave, but their outputs are planning or
+evidence artifacts, not an implicit Git base. A planner that needs <code>mutation B</code>
+to edit the result of <code>mutation A</code> must currently combine them into one mutation
+node or end the first package/epoch, land it, and plan the next package from the
+new exact canonical SHA. It must not encode <code>A -&gt; B</code> and assume task dependency
+ordering also propagates repository state.</p>
+<p>This is a deliberate pilot restriction, not the target limit of the DAG model.
+True composed mutation stages require a controller-owned base-composition
+receipt containing the exact predecessor candidates and trees, deterministic
+assembly strategy, protected composed-base ref/SHA, lineage digest, monotonic
+fence, and stale-generation checks. Only then may assignment use that receipt's
+SHA instead of the epoch planning SHA. Until that full boundary exists, the
+compiler, activation transaction, claim transaction, integration station, and
+landing controller all reject the unsafe topology, including plans admitted by
+an older controller version.</p>
+<h3 id="task-links">Task links<a class="headerlink" href="#task-links" title="Permanent link">&para;</a></h3>
+<p>Tasks remain the unit of executable lifecycle. A control-plane-owned link maps
+exactly one materialized task to package, plan version, epoch, and node key.
+Worker-visible task metadata mirrors this contract but cannot create or modify
+the authoritative link.</p>
+<p>Dependencies of a linked task are compiler-owned. Generic task updates must
+not mutate them. A replan supersedes nodes through the work-package service.</p>
+<h3 id="assignment-audit-and-fence">Assignment audit and fence<a class="headerlink" href="#assignment-audit-and-fence" title="Permanent link">&para;</a></h3>
+<p>An assignment binds:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>package + plan version + epoch + node + task + lease + agent
+</code></pre></div>
+<p>The lease ID is the minimum write fence. Worker-originated start, evidence,
+review submission, completion, renewal, and release calls must present the
+expected lease ID. Agent identity alone is insufficient because the same agent
+may receive a replacement lease after expiry. Package-linked calls also verify
+the current plan version and epoch.</p>
+<p>Stale attempts may remain readable evidence, but they cannot advance current
+state or enter an integration batch.</p>
+<p>Lease and landing expiry use authoritative control-plane/database time. Worker
+clocks are telemetry only. An assignment whose expiry has passed cannot be
+renewed back to life before the sweeper notices it; it must be re-admitted under
+a new lease and fence.</p>
+<h3 id="execution-capacity-and-product-wip">Execution capacity and product WIP<a class="headerlink" href="#execution-capacity-and-product-wip" title="Permanent link">&para;</a></h3>
+<p>Execution capacity and product inventory are different resources and must not
+share one lifetime.</p>
+<p>Execution capacity is represented by durable slots bound to an active lease:</p>
+<ul>
+<li>per-agent concurrency;</li>
+<li>scarce machine/tool capacity;</li>
+<li>exclusive execution resources.</li>
+</ul>
+<p>A claim transaction reserves the task lease and every required execution slot
+together, or reserves nothing. When the exact lease becomes inactive, its
+execution slots are reclaimable. This makes crash recovery idempotent without
+leaking machine capacity.</p>
+<p>Product WIP is represented by separate durable tokens:</p>
+<ul>
+<li>package mutation inventory;</li>
+<li>repository mutation inventory;</li>
+<li>repository integration inventory;</li>
+<li>certification/landing inventory.</li>
+</ul>
+<p>A mutation acquires its WIP token when work is admitted. Worker completion does
+not release it. The token is atomically transferred to the next downstream
+stage, or returned only when the product is accepted, explicitly scrapped, or
+quarantined according to policy. This distinction prevents a dead worker from
+freeing product capacity and causing unbounded branch inventory.</p>
+<p>The compiler and admission controller must also prove flow liveness. A fan-in
+of width three cannot hold two mutation tokens until all three outputs exist
+when the WIP limit is two. Plans therefore use bounded candidate-output buffers
+and atomic stage-token transfer, or reserve sufficient downstream/fan-in
+capacity before releasing the wave. No accepted capacity policy may make a
+declared graph structurally unable to complete.</p>
+<h3 id="node-progress-and-attempt-outputs">Node progress and attempt outputs<a class="headerlink" href="#node-progress-and-attempt-outputs" title="Permanent link">&para;</a></h3>
+<p>Package-node progress is distinct from ordinary task completion. In particular,
+a repository child may reach <code>candidate_accepted</code> once its fenced output and
+verification evidence are valid for assembly. It does not need to publish or
+become canonically <code>COMPLETED</code> before dependent package nodes can proceed.</p>
+<p>An authoritative attempt-output link binds every selectable evidence/artifact
+to the exact assignment and lease that produced it. Evidence JSON or task
+metadata cannot claim a different attempt. Package-aware readiness consumes
+accepted node outputs; legacy non-package readiness continues to consume
+completed task dependencies.</p>
+<p>The worker may create only the attribution link for its exact assigned attempt:
+task, lease, attempt number, protected attempt ref, immutable planning base, and
+claimed head. At the same atomic append, the hub derives a canonical
+<code>mac.work_package.attempt_artifact_manifest.v1</code> digest from the exact
+ref/base/head, declared-effects digest, protocol declaration, and normalized
+durable-artifact identities (name, type, media type, encoding, size, content
+SHA-256, and truncation state). Artifact order is normalized. Evidence and
+artifact database IDs, timestamps, summaries, arbitrary metadata, bytes, and
+source/content URIs are excluded, so credentials and controller-local
+locations cannot enter the content address. The resulting <code>sha256:</code> value is
+stored in the append-only attribution row on its initial insert; it is never
+backfilled or mutated later.</p>
+<p>The worker cannot mark that link verified or later substitute a mutable branch.
+After independent repository inspection, the controller appends a separate
+immutable verification receipt containing the observed ref/head/tree, artifact
+and effects digests, changed paths, verifier identity, and receipt digest. The
+attribution row is never promoted into authority by mutation. Acceptance and
+assembly join the attribution to that append-only receipt and revalidate the
+full identity. A failed verification leaves the attribution unselectable and
+records an Andon finding instead of trusting worker-supplied metadata.</p>
+<p>Repository output is addressed by an immutable attempt/lease-specific ref or
+content-addressed bundle, not a mutable task branch name. That artifact remains
+protected from ref reconciliation until the package and retention policy make
+it disposable.</p>
+<p>The hub is the only authority that may retire these protected refs. Candidate
+and attempt refs are discovered from controller-owned records, not inferred
+from a namespace scan. Retirement requires a terminal lifecycle, a grace
+period, a known exact SHA, a force-with-lease delete against that SHA, remote
+read-back, and append-only intent/attempt/receipt records. Unknown <code>refs/mac/*</code>
+and recorded refs whose SHA was never independently observed remain untouched
+and surface as audit debt instead of being guessed away.</p>
+<p>At candidate acceptance, the controller computes the actual changed
+files/symbols from the attempt base to the immutable output and compares them
+with the declared write contract. Undeclared expansion is a scoped Andon and
+replan request; it is never silently treated as a successful prediction.</p>
+<h3 id="integration-batch">Integration batch<a class="headerlink" href="#integration-batch" title="Permanent link">&para;</a></h3>
+<p>An integration batch selects immutable inputs:</p>
+<ul>
+<li>exact task, assignment, and lease attempt;</li>
+<li>evidence IDs and artifact digests;</li>
+<li>exact commit SHAs;</li>
+<li>deterministic input order;</li>
+<li>target base SHA;</li>
+<li>component/integration scope.</li>
+</ul>
+<p>Batch membership is immutable after assembly begins. A changed input creates a
+new batch. Integration may reject, split, accept, or route bounded rework; it
+cannot silently substitute a newer branch head.</p>
+<p>Every batch claim carries a monotonically increasing fence token in addition to
+owner and expiry. A process whose lease expired cannot update or land the batch
+after another process reacquires it, even if the owner identifier is reused.</p>
+<h3 id="certification-and-landing">Certification and landing<a class="headerlink" href="#certification-and-landing" title="Permanent link">&para;</a></h3>
+<p>A certification names one exact candidate commit and records:</p>
+<ul>
+<li>candidate ref and SHA;</li>
+<li>base and ordered input SHAs;</li>
+<li>test policy and commands;</li>
+<li>CodeGraph audit when applicable;</li>
+<li>output evidence and checksums;</li>
+<li>certifier identity;</li>
+<li>pass/fail result and validity conditions.</li>
+</ul>
+<p>The repository landing controller serializes candidates by canonical
+repository and branch using a database-backed lease. It then performs a
+compare-and-swap push from the certified base to the certified candidate. If
+the canonical ref moved, that candidate cannot land under its old receipt: the
+same immutable component outputs are reassembled onto the new landing base and
+the resulting candidate is retested. Landing must never create an untested
+merge commit after certification.</p>
+<p>Remote canonical verification is an actual remote-ref read-back, not an
+assumption following a successful local command.</p>
+<p>Git push and the ledger cannot be one atomic transaction. Landing therefore
+uses a crash-resumable protocol: persist landing intent and fence, perform the
+remote compare-and-swap, read back the remote ref, then finalize the durable
+receipt. Recovery classifies <code>remote == candidate</code> as already landed and
+finalizes idempotently; it must not synthesize a different merge after an
+ambiguous response.</p>
+<p>Certification executes untrusted candidate code in an isolated runtime that
+has no canonical-push credential. Its test policy is pinned from the trusted
+base/repository contract, so a candidate cannot replace its gate with a no-op.
+The landing controller has push authority but never executes candidate code.</p>
+<h2 id="deterministic-plan-compilation">Deterministic plan compilation<a class="headerlink" href="#deterministic-plan-compilation" title="Permanent link">&para;</a></h2>
+<p>Compilation is pure and repeatable for the same inputs and compiler version.
+It rejects:</p>
+<ul>
+<li>missing or duplicate node keys;</li>
+<li>cycles;</li>
+<li>dependencies on unknown or later-invalid nodes;</li>
+<li>nodes with no meaningful output or acceptance contract;</li>
+<li>malformed or unsafe effects;</li>
+<li>unbounded fan-out or rework;</li>
+<li>incompatible external effects in one wave;</li>
+<li>missing integration/fan-in for multiple mutation leaves;</li>
+<li>mutation nodes with mutation or integration ancestors while exact composed
+  predecessor bases are unsupported;</li>
+<li>policy limits exceeded by the graph.</li>
+</ul>
+<p>The compiler computes:</p>
+<ul>
+<li>canonical graph digest;</li>
+<li>topological order and levels;</li>
+<li>critical-path rank using declared estimates;</li>
+<li>conflict domains and conservative conflict confidence;</li>
+<li>default integration groups;</li>
+<li>required capacity scopes;</li>
+<li>package-relative materialization keys from which admission allocates unique
+  durable task IDs.</li>
+</ul>
+<p>The pure compiler validates the repository/base reference shape but cannot
+prove that an external repository, ref, or commit currently exists. The
+transactional admission controller resolves the registered repository and
+exact base generation immediately before materialization and rejects any
+compile/admit drift. A compiled graph is a proposal until that admission record
+exists.</p>
+<p>CodeGraph may enrich predicted read/write blast radius. Its result is evidence,
+not an excuse to omit explicit effects. Hidden semantic coupling remains
+possible, so low-confidence scopes schedule conservatively and receive broader
+integration verification.</p>
+<p>Effect comparison uses a repository-derived canonical resource namespace for
+the exact base tree: filesystem case behavior, Unicode normalization, and
+symlink aliases are resolved before conflict decisions. When those semantics
+are unknown, admission uses conservative aliases rather than assuming Linux
+case sensitivity on a mixed macOS/Linux fleet.</p>
+<h2 id="readiness-and-scheduling">Readiness and scheduling<a class="headerlink" href="#readiness-and-scheduling" title="Permanent link">&para;</a></h2>
+<p><code>OPEN</code> is not sufficient proof of readiness. Every claim transaction rechecks:</p>
+<ol>
+<li>task state, owner, and hold state;</li>
+<li>every durable task dependency is completed/accepted as required;</li>
+<li>linked package, plan version, and epoch are current and runnable;</li>
+<li>node predecessors are accepted into the required stage;</li>
+<li>project/repository dispatch is active;</li>
+<li>worker trust, tenant, runtime, command, hardware, role, and capability
+   eligibility;</li>
+<li>worker capacity under a serialized agent-row decision;</li>
+<li>package/repository WIP capacity;</li>
+<li>no hard effect/exclusive conflict with admitted work;</li>
+<li>the task and assignment revision still match the advisor's proposal.</li>
+</ol>
+<p>Downstream pull is part of that authoritative claim transaction, not merely an
+earlier scheduler observation. The transaction revalidates the locked
+registered repository row, certification contract, canonical endpoint, and
+enabled pipeline/landing configuration immediately before reserving the lease
+and WIP. If downstream closes between scheduling and claim, the claim loses the
+race and no attempt is consumed.</p>
+<p>The allocation advisor scores only legal candidates. Initial scoring is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>critical-path rank
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>+ task priority and age
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>+ recent repository-access success
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>+ capability confidence
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>+ repository/cache/data locality
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>- predicted duration and transfer cost
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>- conflict uncertainty
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>- integration-queue pressure
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>- recent classified failure on the same route
+</code></pre></div>
+<p>The first rollout is advisory/observable. Hard serialization initially applies
+only to explicit <code>exclusive</code> and externally mutating effects. Predicted
+file/symbol conflicts rank work into different waves until precision is
+measured.</p>
+<p>Work stealing remains useful only inside a scheduler-authorized,
+conflict-compatible ready set. Workers do not browse the entire ledger and
+independently decide that similarly shaped work is safe.</p>
+<h2 id="replanning-and-rework">Replanning and rework<a class="headerlink" href="#replanning-and-rework" title="Permanent link">&para;</a></h2>
+<p>Replanning is a state transition, not metadata editing:</p>
+<ol>
+<li>record the trigger and affected nodes;</li>
+<li>compile plan version <code>N+1</code> against an explicit base;</li>
+<li>increment the package epoch;</li>
+<li>release/fence assignments that are no longer valid;</li>
+<li>calculate an explicit carry-forward map for completed immutable artifacts
+   whose node contract digest and complete input lineage remain valid;</li>
+<li>supersede unstarted/invalidated tasks;</li>
+<li>materialize only the changed downstream cone;</li>
+<li>resume admission under the new WIP policy.</li>
+</ol>
+<p>Carry-forward is an authoritative record from an old
+<code>(plan_version, epoch, node, assignment, output_digest)</code> to the new node
+generation. A package-wide epoch change fences old mutation authority but does
+not erase provenance. Without a verified carry-forward edge, an old-epoch
+artifact cannot satisfy a new-epoch node or enter its integration batch.</p>
+<p>Three bases are recorded separately:</p>
+<ul>
+<li>the plan/node contract generation;</li>
+<li>the base used by one execution attempt;</li>
+<li>the current assembly/landing base.</li>
+</ul>
+<p>Ordinary canonical movement changes the last of these, not automatically the
+first two. Immutable outputs are reapplied to the current assembly base and are
+invalidated only by a real conflict, changed input/contract digest, or failed
+verification. This prevents concurrent packages from repeatedly invalidating
+each other without semantic cause.</p>
+<p>Every node and package has a bounded rework budget. Exhaustion produces a
+durable quarantine or human-review condition, not recursively generated repair
+families.</p>
+<h2 id="quality-at-source-and-scoped-andon">Quality-at-source and scoped Andon<a class="headerlink" href="#quality-at-source-and-scoped-andon" title="Permanent link">&para;</a></h2>
+<p>An Andon condition has a typed scope and owner:</p>
+<ul>
+<li>assignment: stale source, missing toolchain, invalid credential route;</li>
+<li>node: failed invariant or exhausted rework;</li>
+<li>package: invalid plan or systemic interaction failure;</li>
+<li>repository: integration backlog, landing race, canonical divergence;</li>
+<li>fleet route: repeated classified authentication/runtime failure.</li>
+</ul>
+<p>The affected scope stops accepting new work while unrelated packages and
+repositories continue. Evidence is preserved before the stop. Recovery is an
+explicit superseding event, not repeated blind retry.</p>
+<h2 id="fast-lane">Fast lane<a class="headerlink" href="#fast-lane" title="Permanent link">&para;</a></h2>
+<p>The target architecture keeps a managed single-node fast lane because planner
+and assembly overhead is wasteful for a genuinely atomic change. It is legal
+when all are true:</p>
+<ul>
+<li>one coherent executor node;</li>
+<li>no external side effect other than its fenced repository branch;</li>
+<li>no declared shared exclusive resource;</li>
+<li>repository WIP capacity is available;</li>
+<li>ordinary review/certification/landing still applies.</li>
+</ul>
+<p>That managed fast lane omits multi-node planning and component-integration
+overhead. It still uses leases, exact-candidate certification, compare-and-swap
+landing, and completion proof.</p>
+<p>New atomic repository tasks use single-node package admission as their ordinary
+route after the managed controller and package-worker fleet have crossed a
+durable rollout boundary. An atomic task is a dependency-free,
+non-workflow code task with a strong registered-repository
+contract and <code>metadata.no_decompose=true</code>. That flag is the operator's assertion
+that one coherent mutation node is sufficient; the controller never guesses
+atomicity or file-level effects from prose. It conservatively declares
+repository-wide exclusivity, bypasses the planner, pins the canonical base, and
+atomically materializes the fixed mutation -&gt; integration -&gt; certification
+line. Staged tasks are admitted in the same way and remain held; <code>mac task
+release &lt;task-id&gt;</code> performs the package-aware activation rather than mutating
+only the task row. The mutation preserves the task id already allocated by <code>POST /tasks</code> or
+<code>mac task create</code>; the two station tasks are controller-owned. Activation then
+rechecks exact worker identity/source/runtime/capability readiness plus the
+repository certification and landing gates before releasing the mutation.</p>
+<p>The rollout boundary is shared database authority, not a process-local feature
+test. Before cutover, the controller requires a valid enabled pipeline, a
+valid reviewed credential-inventory digest, and at least one live
+<code>work_package_v1</code> runtime whose id is present in that review's <code>ready_agent_ids</code>
+under an <code>enforced</code> worker-credential policy. It locks and revalidates that
+membership and package credential inside the crossing transaction, then
+inserts the singleton <code>managed_task_publication_rollout</code> row exactly once. The
+row is monotonic: it has no disable/update path. After it exists, replica
+configuration drift, worker re-registration, capability withdrawal, or a
+credential-policy rollback can make activation unready and hold managed work,
+but cannot restore automatic legacy publication.</p>
+<p><code>POST /tasks</code> and <code>mac task create --idempotency-key KEY</code> also bind a retry key
+to one exact request and canonical task id before admission. The binding is
+scoped by the stable server principal id (<code>agent_id</code> or <code>client_id</code>) plus API
+surface, with a server-derived bearer-credential fingerprint only for legacy
+static tokens that have no stable id. It is durable on SQLite and PostgreSQL
+and stores only hashes of the scope and caller key. Token renewal for one
+stable principal preserves its retry namespace, while two anonymous static
+tokens with identical role scopes remain distinct. An exact retry returns the same task/package even
+after a lost HTTP response or a moved canonical branch; reusing the key for a
+different request fails closed. A reservation deliberately survives a later
+validation or transport failure so the key can never be rebound to new intent.</p>
+<p><code>publication_lane_policy</code> controls migration behavior:</p>
+<ul>
+<li><code>auto</code> (default) selects managed publication for an eligible atomic task once
+  the one-way fleet rollout row exists. Before that boundary is crossed, a
+  disabled controller, a fleet with no package-capable runtime, or a worker
+  credential policy that is not yet enforced remains on the explicitly
+  labelled legacy-compatibility path;</li>
+<li>after that rollout boundary, transient worker health, credential,
+  certification, landing, or repository readiness loss admits a managed
+  package and leaves it held. It never permanently downgrades the task to the
+  legacy publisher;</li>
+<li><code>managed</code> requires the managed rollout and atomic shape (<code>mac task create
+  --publication-lane managed</code> also asserts <code>no_decompose</code>). Activation may
+  remain held until its live readiness gates pass;</li>
+<li><code>legacy</code> deliberately retains the compatibility publisher and is an
+  admin-only downgrade through the hub API. Ordinary write principals may
+  create tasks that the controller hardens into managed packages, but may not
+  opt eligible work out of certification and CAS landing.</li>
+</ul>
+<p>Existing unlinked tasks remain compatible and are never retroactively relabelled
+as managed. They retain executor pre-push tests, CodeGraph audit, review, and
+publication rules, but do not acquire the external exact-candidate certifier or
+work-package landing receipt. The legacy pre-push tests are <strong>not</strong> the external
+work-package certifier: they run in the executor's own worktree before
+publication, whereas the managed certifier is an independently pinned,
+credential-free exact-candidate station.</p>
+<p>Every surface classifies a change through <code>mac.publication_lane</code> and the
+authoritative <code>work_package_task_links</code> row. Lane is a property of the task
+route, not of a worker: a linked task remains <code>managed</code> when its worker is
+unready and is blocked rather than downgraded. Worker readiness separately
+reports <code>managed_lane_eligible</code> and <code>external_certifier_capable</code>. The task API,
+CLI task detail, and Fleet IDE render the server-derived
+<code>mac.task_publication_route.v1</code> projection, including the exact package state
+(<code>managed_held</code>, <code>managed_active</code>, <code>managed_paused</code>, <code>managed_completed</code>, and so
+on) and any landing/finalization receipt ids. List/dashboard projections are
+compact and internally chunked; task detail retains the full description.
+Mixed-version clients render absent route fields as <code>unknown</code>/<code>unreported</code>, not
+as legacy. <code>describe_lane</code> remains the required-guarantee
+vocabulary, so no projection calls legacy pre-push tests the external certifier:</p>
+<ul>
+<li>managed route required guarantees: exact lease-specific attempt ref, controller
+  verification, independently pinned certification, compare-and-swap landing,
+  remote read-back receipt, and finalization proof;</li>
+<li>legacy route required guarantees: executor pre-push tests, CodeGraph audit, review, and
+  publication rules -- and explicitly <strong>no</strong> external certifier or landing
+  receipt.</li>
+</ul>
+<p>The worker readiness inventory (<code>mac.worker_credential_readiness.v1</code>) carries
+<code>managed_lane_eligible</code> and <code>external_certifier_capable</code> per worker. Package
+claim authority still performs the exact transactional readiness check; these
+inventory fields are visibility, not permission and not a task-lane label.</p>
+<h2 id="compatibility-and-migration">Compatibility and migration<a class="headerlink" href="#compatibility-and-migration" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Existing tasks without a package link continue through the legacy
+   compatibility path described above.</li>
+<li>Existing cooperative families can be adopted into a package by recording an
+   immutable inferred version; inference never trusts worker-authored metadata
+   without verifying the task relationships.</li>
+<li>Fleet IDE managed workflow-plan acceptance creates a held work package and
+   materializes its task graph instead of creating unrelated tasks. The frozen
+   legacy dashboard remains unchanged.</li>
+<li><code>add_child_tasks</code> becomes an atomic work-package admission path. Existing
+   callers retain their response shape.</li>
+<li>Sequential <code>WorkflowRuntime</code> remains for conditional role workflows. It is
+   not repurposed as the parallel graph runtime because its definitions permit
+   cycles and its run has one current node/task.</li>
+<li>Existing evidence, reviews, publications, and task history remain canonical;
+   work-package records link to them rather than introducing parallel artifact
+   stores.</li>
+<li>Generic task dependency mutation is refused after package linkage.</li>
+<li>Package-linked tasks require an explicit <code>work_package_v1</code> runtime
+   capability and package-aware dispatcher. Admission remains disabled during
+   a rolling upgrade until legacy hubs/workers are drained or source-converged;
+   an old dispatcher must not be able to claim a new package node as an ordinary
+   <code>OPEN</code> task.</li>
+</ol>
+<h2 id="historical-failures-converted-into-invariants">Historical failures converted into invariants<a class="headerlink" href="#historical-failures-converted-into-invariants" title="Permanent link">&para;</a></h2>
+<p>The redesign exists to eliminate observed failure classes, not just to add a
+new abstraction:</p>
+<table>
+<thead>
+<tr>
+<th>Observed failure</th>
+<th>New invariant</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Concurrent work diverges from moving <code>main</code></td>
+<td>Version and epoch name an exact base SHA; stale work is fenced</td>
+</tr>
+<tr>
+<td>Publisher validates one tree and pushes another</td>
+<td>Certification names the exact pushed candidate SHA</td>
+</tr>
+<tr>
+<td>Concurrent publishers race after identical checks</td>
+<td>Repository landing lease plus compare-and-swap push</td>
+</tr>
+<tr>
+<td>Workers duplicate/overlap changes</td>
+<td>Declared effects, conflict-compatible waves, and repository WIP</td>
+</tr>
+<tr>
+<td>Task/repair explosions</td>
+<td>Admission limits, integration-capacity pull, bounded rework</td>
+</tr>
+<tr>
+<td>Same agent reacquires a task after expiry</td>
+<td>Every worker write presents the exact lease fence</td>
+</tr>
+<tr>
+<td>Capacity-one worker receives two tasks</td>
+<td>Capacity is rechecked and reserved in the claim transaction</td>
+</tr>
+<tr>
+<td><code>OPEN</code> task with unfinished dependencies is claimed</td>
+<td>Claim transaction rechecks durable dependencies</td>
+</tr>
+<tr>
+<td>Cooperative children land separately before parent assembly</td>
+<td>Child output is an immutable candidate input; package completion occurs after assembled certification</td>
+</tr>
+<tr>
+<td>Moving branch is hub-tested without exact SHA assertion</td>
+<td>Clone/check-out and test require <code>HEAD == candidate_sha</code></td>
+</tr>
+<tr>
+<td>Authentication failures are blindly retried</td>
+<td>Typed scoped Andon plus fleet operational learning</td>
+</tr>
+<tr>
+<td>Integration becomes one end-of-line bottleneck</td>
+<td>Hierarchical batches and downstream capacity tokens</td>
+</tr>
+</tbody>
+</table>
+<h2 id="observability-and-optimization">Observability and optimization<a class="headerlink" href="#observability-and-optimization" title="Permanent link">&para;</a></h2>
+<p>Record processing time and queue time separately for:</p>
+<ul>
+<li>planning;</li>
+<li>admission;</li>
+<li>ready but capacity-held;</li>
+<li>execution;</li>
+<li>component integration;</li>
+<li>certification;</li>
+<li>landing;</li>
+<li>rework/quarantine.</li>
+</ul>
+<p>Primary outcome metrics are:</p>
+<ul>
+<li>time from objective to canonical commit;</li>
+<li>critical-path time and parallel efficiency;</li>
+<li>canonical throughput;</li>
+<li>aggregate worker/model cost;</li>
+<li>stale/discarded work;</li>
+<li>conflict prediction precision and recall;</li>
+<li>integration failures and candidate invalidations;</li>
+<li>rework cycles;</li>
+<li>delayed defects after publication.</li>
+</ul>
+<p>The scientific optimizer may experiment with scheduling weights, WIP limits,
+batch size, planner strength, and review policy. It may not auto-relax safety,
+fencing, certification, or canonical-landing invariants.</p>
+<h2 id="rollout">Rollout<a class="headerlink" href="#rollout" title="Permanent link">&para;</a></h2>
+<h3 id="stage-0-safety-and-observation-implemented-in-the-default-off-control-plane">Stage 0: safety and observation (implemented in the default-off control plane)<a class="headerlink" href="#stage-0-safety-and-observation-implemented-in-the-default-off-control-plane" title="Permanent link">&para;</a></h3>
+<ul>
+<li>close dependency, worker-capacity, and lease ABA races;</li>
+<li>add durable package schema and pure compiler;</li>
+<li>record inferred effects and conflict predictions without blocking;</li>
+<li>instrument stage queues and canonical lead time.</li>
+</ul>
+<h3 id="stage-1-managed-package-pilot-code-complete-deployment-activation-pending">Stage 1: managed package pilot (code complete; deployment activation pending)<a class="headerlink" href="#stage-1-managed-package-pilot-code-complete-deployment-activation-pending" title="Permanent link">&para;</a></h3>
+<ul>
+<li>one <code>mac</code> package at a time;</li>
+<li>three to five coherent mutation nodes;</li>
+<li>package mutation WIP of two;</li>
+<li>one repository integration slot;</li>
+<li>existing cooperative child execution;</li>
+<li>exact-candidate certification and serialized landing;</li>
+<li>manual comparison with the current fast lane.</li>
+</ul>
+<p>The remaining entry condition is external rather than a hidden feature flag:
+publish and review the digest-pinned certifier image plus its image-owned test
+harness, update the repository contract atomically, deploy to a durable hub,
+and pass both successful and failing-certification canaries before releasing
+real package work.</p>
+<h3 id="stage-2-default-for-parallel-mutation-future-rollout">Stage 2: default for parallel mutation (future rollout)<a class="headerlink" href="#stage-2-default-for-parallel-mutation-future-rollout" title="Permanent link">&para;</a></h3>
+<ul>
+<li>dashboard and executor planning materialize packages;</li>
+<li>conflict-compatible ready-wave allocation;</li>
+<li>plan epochs and controlled replanning;</li>
+<li>hierarchical integration batches;</li>
+<li>per-project WIP configuration.</li>
+</ul>
+<h3 id="stage-3-adaptive-scheduling-future-optimization">Stage 3: adaptive scheduling (future optimization)<a class="headerlink" href="#stage-3-adaptive-scheduling-future-optimization" title="Permanent link">&para;</a></h3>
+<ul>
+<li>learned duration/cost estimates;</li>
+<li>measured conflict-confidence thresholds;</li>
+<li>optimizer experiments over flow parameters;</li>
+<li>regional/cell locality and transfer-aware placement;</li>
+<li>speculative duplication only for side-effect-free analysis/test nodes.</li>
+</ul>
+<h2 id="completion-criteria">Completion criteria<a class="headerlink" href="#completion-criteria" title="Permanent link">&para;</a></h2>
+<p>The redesign is complete only when current-state evidence proves:</p>
+<ol>
+<li>managed plans, versions, epochs, nodes, and task links are durable on SQLite
+   and Postgres;</li>
+<li>plan plus task materialization is atomic or crash-resumably transactional
+   with deterministic reconciliation;</li>
+<li>every claim rechecks dependencies, worker capacity, package epoch, effects,
+   and WIP in the authoritative transaction;</li>
+<li>stale leases and stale epochs cannot mutate current work;</li>
+<li>execution capacity and product WIP have distinct, crash-safe lifetimes and
+   every accepted graph/capacity policy has a demonstrated progress path;</li>
+<li>actual attempt scope is checked against declared effects and expansion
+   cannot silently enter assembly;</li>
+<li>component outputs use immutable attempt artifacts and remain private
+   candidates until assembly;</li>
+<li>certification tests the exact candidate that landing attempts to publish,
+   under an independently pinned policy and without landing credentials;</li>
+<li>landing is serialized across hub replicas, uses compare-and-swap, and
+   recovers idempotently from a crash after remote push;</li>
+<li>canonical remote read-back matches the recorded receipt;</li>
+<li>replanning invalidates only the affected cone and preserves valid immutable
+   work;</li>
+<li>bounded rework and scoped Andon prevent recursive failure storms;</li>
+<li>mixed-version rollout cannot let a legacy hub/worker claim package work;</li>
+<li>existing single-task workflows retain a functional fast lane;</li>
+<li>APIs, CLI, IDE projections, operator documentation, migrations, and
+    observability expose the new truth;</li>
+<li>CodeGraph audit and the full repository contract suite pass against the
+    final tree;</li>
+<li>the implementation is pushed and the canonical task ledger is reconciled.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../break-glass-host-recovery/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Break-glass recovery">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Break-glass recovery
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../hermes-boundary/" class="md-footer__link md-footer__link--next" aria-label="Next: Hermes boundary">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Hermes boundary
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

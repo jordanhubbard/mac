@@ -1,0 +1,2519 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/openshell-sandbox/">
+      
+      
+        <link rel="prev" href="../hermes-boundary/">
+      
+      
+        <link rel="next" href="../archive/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>OpenShell sandbox - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#running-hermes-under-the-openshell-sandbox" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              OpenShell sandbox
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-adds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this adds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enable
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enable">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#environment-knobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment knobs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-requires-docker-enginemoby-openshell-installed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verify (requires Docker Engine/Moby + OpenShell installed)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coding-agent-clis-in-the-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coding-agent CLIs in the sandbox
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Coding-agent CLIs in the sandbox">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#environment-knobs_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment knobs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nemoclaw-single-host-pilot-observations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NemoClaw single-host pilot observations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NemoClaw single-host pilot observations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#slack-multi-account-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slack multi-account behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openshell-policy-friction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenShell policy friction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openshell-0072-compatibility-validated-2026-07-04" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenShell 0.0.72 compatibility — validated 2026-07-04
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallback-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fallback decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operational-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operational gaps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Follow-up
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-adds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this adds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enable
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enable">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#environment-knobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment knobs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-requires-docker-enginemoby-openshell-installed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verify (requires Docker Engine/Moby + OpenShell installed)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coding-agent-clis-in-the-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coding-agent CLIs in the sandbox
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Coding-agent CLIs in the sandbox">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#environment-knobs_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment knobs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#nemoclaw-single-host-pilot-observations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NemoClaw single-host pilot observations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="NemoClaw single-host pilot observations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#slack-multi-account-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slack multi-account behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openshell-policy-friction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenShell policy friction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openshell-0072-compatibility-validated-2026-07-04" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenShell 0.0.72 compatibility — validated 2026-07-04
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallback-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fallback decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operational-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operational gaps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Follow-up
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/openshell-sandbox.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="running-hermes-under-the-openshell-sandbox">Running Hermes under the OpenShell sandbox<a class="headerlink" href="#running-hermes-under-the-openshell-sandbox" title="Permanent link">&para;</a></h1>
+<p>This describes MAC's OpenShell runtime path: one per-agent OpenShell supervisor
+launches Hermes gateway/session work and autonomous executor children as
+confined descendants of an <a href="https://github.com/NVIDIA/OpenShell">OpenShell</a>
+sandbox. OpenShell is the <strong>sole guardrail authority</strong>, letting the agent run
+full <code>--yolo</code> safely.</p>
+<h2 id="why">Why<a class="headerlink" href="#why" title="Permanent link">&para;</a></h2>
+<p>The executor already launches Hermes with <code>--yolo</code> (Hermes' own approval prompts
+bypassed — see <code>_hermes_argv</code> in <code>src/mac/task_executor.py</code>). On its own that is
+<strong>unguarded</strong>. Wrapping the process in OpenShell makes YOLO <em>safe</em> by enforcing
+every guardrail from a declarative policy:</p>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Enforced by</th>
+<th>How</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Filesystem</td>
+<td>OpenShell Landlock</td>
+<td>allow-list of read-only / read-write paths</td>
+</tr>
+<tr>
+<td>Syscalls / privilege</td>
+<td>OpenShell seccomp</td>
+<td>syscall filter; never runs as root</td>
+</tr>
+<tr>
+<td>Network egress</td>
+<td>OpenShell L7 proxy</td>
+<td><strong>deny-by-default</strong>; per-host/per-binary rules</td>
+</tr>
+</tbody>
+</table>
+<p>One guardrail system (the OpenShell policy YAML), not two.</p>
+<h2 id="what-this-adds">What this adds<a class="headerlink" href="#what-this-adds" title="Permanent link">&para;</a></h2>
+<p>The production path is <code>mac-openshell-supervisor</code>. It starts a named sandbox
+for the agent, passes the MAC-assigned policy, disables unsandboxed YOLO, and
+runs <code>mac-hermes-gateway</code> or the configured child process inside the sandbox.
+The legacy <code>_maybe_wrap_openshell()</code> task-executor seam and
+<code>MAC_OPENSHELL_GATEWAY</code> gateway re-exec path remain as compatibility knobs.</p>
+<p><strong>A policy is always passed — enabling can never silently fall back to
+OpenShell's image-default profile.</strong> <code>_resolve_openshell_policy()</code> resolves <code>&lt;P&gt;</code>
+in this order, and raises if none is found (fail closed). A MAC-managed policy
+assigned to the agent should be materialized to <code>MAC_OPENSHELL_POLICY</code> by
+deployment; that wins over file fallback.</p>
+<ol>
+<li><code>MAC_OPENSHELL_POLICY</code> (explicit) — must exist, else error.</li>
+<li><code>~/.mac/openshell-policy.yaml</code> — the operator-filled fleet policy.</li>
+<li>the bundled fail-closed default <code>src/mac/openshell/default-policy.yaml</code>.</li>
+</ol>
+<p>The <strong>bundled default is a lockdown</strong>: filesystem-confined, never root,
+<code>landlock: hard_requirement</code>, and <strong>all network egress denied</strong> (empty
+<code>network_policies</code>). Under it the agent can't reach the hub/gateway, so an
+unconfigured deployment fails closed rather than running under an unknown
+profile. For real use, copy the <strong>operator template</strong>
+<code>deploy/openshell/mac-hermes-policy.yaml</code> (which allows the hub, model gateway,
+and GitHub, and also defaults to <code>landlock: hard_requirement</code>), fill in the
+<code>__PLACEHOLDER__</code> hosts, and install it at <code>~/.mac/openshell-policy.yaml</code> or
+point <code>MAC_OPENSHELL_POLICY</code> at it.</p>
+<p>OpenShell OCSF/event output is normalized by <code>mac-openshell-collector</code> into
+<code>mac.action_event.v1</code> records and posted to <code>/action-events</code>. The legacy
+<code>/events</code>, <code>/command-audit</code>, and <code>/observability</code> surfaces remain readable;
+the action ledger is the canonical normalized stream and can export an
+OTLP-compatible shape through <code>/action-events/export/otlp</code>.</p>
+<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
+<p>MAC/OpenShell uses one container runtime: <strong>Docker Engine/Moby through
+OpenShell's Docker driver</strong>. This is the production contract for bare metal,
+VMs, and containerized environments that support nested Docker/DinD. Do not use
+Docker Desktop, Podman, or <code>podman-docker</code> for fleet nodes; those create
+different image stores, gateway configs, GPU behavior, and failure modes.</p>
+<p>On Linux hosts, OpenShell's kernel primitives run natively (kernel ≥ 5.13 for
+Landlock). On non-Linux developer machines, run a Linux VM/container with OSS
+Docker Engine/Moby and validate there; the production architecture does not
+depend on Docker Desktop licensing or behavior.</p>
+<p>OpenShell 0.0.62 had a runtime-driver mismatch on some Linux hosts: the gateway
+could be configured with only <code>[openshell.drivers.docker]</code> while still logging
+<code>openshell_driver_podman</code> and reading the sandbox image from the user's Podman
+image store. This mismatch is resolved in OpenShell 0.0.72 (the current fleet
+pin). <code>bootstrap-openshell.sh</code> retains the <code>mirror_image_for_openshell_runtime</code>
+step as belt-and-suspenders, and still runs an <code>openshell sandbox create</code> smoke
+test that verifies <code>gh</code>, <code>codex</code>, and <code>codegraph</code> are visible. Bootstrap then
+runs <code>live-confinement-probe.sh</code> inside a second throwaway sandbox and fails
+closed unless the runtime proves the expected filesystem, egress, privilege,
+seccomp, user-namespace, and raw-socket boundaries.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">deploy/openshell/bootstrap-openshell.sh --enable --fail-closed</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">docker info             # must be a real Docker Engine/Moby daemon, not Podman</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">openshell gateway list  # gateway must be reachable</span>
+</code></pre></div>
+<p>After host validation, reconcile the hub's OpenShell ledger. Bootstrap success
+does not by itself prove the hub knows the agent is required, which policy is
+assigned, or whether the runtime is currently deployed. The reconciliation
+command reads the enabled Linux agents from <code>~/.mac/fleets.yaml</code> unless
+<code>--agent</code> is passed explicitly, defaults to dry-run, and preserves existing
+agent resources while setting only <code>resources.openshell_required</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac openshell reconcile --target-fleet &lt;fleet&gt;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac openshell reconcile --target-fleet &lt;fleet&gt; --apply --validated \</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">  --sandbox-id docker-openshell-smoke-$(date +%Y%m%d) \</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="go">  --validation-summary &quot;Docker image smoke and OpenShell sandbox smoke passed&quot;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="go">mac openshell status --agent agent_hub</span>
+</code></pre></div>
+<p><code>--validated</code> is required when applying <code>status=active</code>; failed or degraded
+hosts should still be reconciled as required, but reported with
+<code>--status failed</code> or <code>--status degraded</code> so <code>effective.fail_closed</code> remains
+truthful.</p>
+<h2 id="enable">Enable<a class="headerlink" href="#enable" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">cp deploy/openshell/mac-hermes-policy.yaml /etc/mac/openshell-policy.yaml</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="gp">$</span>EDITOR<span class="w"> </span>/etc/mac/openshell-policy.yaml<span class="w">      </span><span class="c1"># fill in __PLACEHOLDER__ tokens</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="go">export MAC_OPENSHELL_POLICY=/etc/mac/openshell-policy.yaml</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">export MAC_ALLOW_UNSANDBOXED_YOLO=0</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="go">mac-openshell-supervisor --agent-id agent_hub --policy &quot;$MAC_OPENSHELL_POLICY&quot; -- mac-hermes-gateway</span>
+</code></pre></div>
+<h3 id="environment-knobs">Environment knobs<a class="headerlink" href="#environment-knobs" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAC_OPENSHELL_REQUIRED</code></td>
+<td>derived from <code>agent.resources.openshell_required</code></td>
+<td>fail closed when OpenShell/policy is unavailable</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_BIN</code></td>
+<td><code>openshell</code></td>
+<td>path to the <code>openshell</code> binary</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_POLICY</code></td>
+<td><em>(resolved)</em></td>
+<td>explicit policy path; MAC-managed materialized policy should be set here</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_EVENTS_FILE</code></td>
+<td><em>(none)</em></td>
+<td>JSONL/OCSF event stream for <code>mac-openshell-collector</code></td>
+</tr>
+<tr>
+<td><code>MAC_ALLOW_UNSANDBOXED_YOLO</code></td>
+<td><code>0</code> on required agents</td>
+<td>explicit hatch for non-required hosts</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_SANDBOX</code></td>
+<td><em>(off)</em></td>
+<td>deprecated compatibility: one-shot task executor wrapping</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_SANDBOX_NAME</code></td>
+<td><em>(ephemeral)</em></td>
+<td>fixed sandbox name (debug only)</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_KEEP</code></td>
+<td><em>(off)</em></td>
+<td>truthy → <code>--keep</code> (don't tear down; debug)</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_GC</code></td>
+<td>set to <code>1</code> by bootstrap</td>
+<td>reconcile old orphaned MAC-owned sandboxes before new executor or hub-verification work</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_STALE_AFTER_SECONDS</code></td>
+<td><code>86400</code></td>
+<td>minimum age for automatic sandbox garbage collection</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_CREATE_ARGS</code></td>
+<td><em>(none)</em></td>
+<td>extra <code>sandbox create</code> args (shell-split), e.g. <code>--from img</code>, <code>--upload /src:/src</code></td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_ENV_PASSTHROUGH</code></td>
+<td>hub+gateway vars</td>
+<td>comma list of env names forwarded through the private sandbox environment file</td>
+</tr>
+</tbody>
+</table>
+<h2 id="verify-requires-docker-enginemoby-openshell-installed">Verify (requires Docker Engine/Moby + OpenShell installed)<a class="headerlink" href="#verify-requires-docker-enginemoby-openshell-installed" title="Permanent link">&para;</a></h2>
+<ol>
+<li><code>docker info</code> succeeds and <code>docker --version</code> is not a Podman compatibility
+   shim.</li>
+<li><code>openshell gateway list</code> shows the selected gateway.</li>
+<li><code>~/.mac/openshell/live-confinement-probe.log</code> ends with
+   <code>CONFINEMENT_PROBE_OK</code>; bootstrap will not enable enforcement without it.</li>
+<li>Inspect orphan cleanup before applying it manually:
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac openshell sandbox-gc</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac openshell sandbox-gc --apply</span>
+</code></pre></div>
+   The default 24-hour grace period protects recent work. New sandboxes are
+   labeled with their MAC owner, lifecycle kind, creator PID, and debug-keep
+   status; a live creator or <code>mac.keep=true</code> is never collected. Exact legacy
+   <code>mac-task-*</code> and <code>mac-hubverify-*</code> names remain eligible after the grace
+   period so pre-label leaks can be retired.</li>
+<li>Dry-run the wrap without spawning:
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span><span class="p">;</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;MAC_OPENSHELL_SANDBOX&quot;</span><span class="p">]</span><span class="o">=</span><span class="s2">&quot;1&quot;</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;MAC_OPENSHELL_POLICY&quot;</span><span class="p">]</span><span class="o">=</span><span class="s2">&quot;/etc/mac/openshell-policy.yaml&quot;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mac</span><span class="w"> </span><span class="kn">import</span> <span class="n">task_executor</span> <span class="k">as</span> <span class="n">te</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">te</span><span class="o">.</span><span class="n">_maybe_wrap_openshell</span><span class="p">(</span><span class="n">te</span><span class="o">.</span><span class="n">_hermes_argv</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">)))</span>
+</code></pre></div>
+   Confirm it begins with <code>openshell sandbox create … --policy … --</code> and ends
+   with the Hermes argv.</li>
+<li>Start <code>mac-openshell-supervisor</code> on hub, worker-1, and worker-2. Confirm
+   the gateway, task executor, finalizers, and Hermes sessions inherit the same
+   sandbox id.</li>
+<li>Trigger an off-policy filesystem or network attempt. Confirm the denial
+   appears in OpenShell logs, <code>/action-events</code>, the dashboard Observability
+   action feed, memory summary eligibility, and OTLP export.</li>
+</ol>
+<h2 id="coding-agent-clis-in-the-sandbox">Coding-agent CLIs in the sandbox<a class="headerlink" href="#coding-agent-clis-in-the-sandbox" title="Permanent link">&para;</a></h2>
+<p>The executor prefers an installed, authenticated coding-agent CLI (Claude Code,
+Codex, Cursor) over a direct LLM-gateway run, because those CLIs authenticate
+against a subscription/seat instead of a metered API token (see
+<code>src/mac/coding_agent.py</code>). A coding-agent run is launched exactly like the
+Hermes run — inside the same OpenShell sandbox, under the same policy — so the
+guardrails are unchanged.</p>
+<p><strong>Working outside the sandbox is not sufficient to enable a coding CLI.</strong> When
+OpenShell confinement is in effect (the per-task wrap <em>or</em> the supervisor — i.e.
+<code>MAC_OPENSHELL_REQUIRED</code> truthy / the agent is required), coding-agent
+enablement is <strong>gated on a real in-sandbox preflight</strong>: a throwaway sandbox runs
+the CLI under the live policy + forwarded env and must echo a sentinel back,
+proving end-to-end that the <strong>binary exists, credentials resolve, and egress to
+the provider is permitted</strong> in the sandbox.</p>
+<p>The worker runs this probe before dispatch and publishes a secret-free
+<code>mac.coding_clis.v2</code> heartbeat record containing the CLI, provider, wire
+protocol, endpoint, authentication kind/source, model, route fingerprint, and
+the matching <code>mac.coding_agent.verification.v1</code> result. Repository dispatch to
+an OpenShell agent requires a fresh successful proof. A task-pinned model also
+requires proof for that exact model. Presence of a binary, credential variable,
+or credential directory is only <code>configured</code>; it is never <code>verified</code>.</p>
+<p>The executor repeats the same fail-closed check after claim. If the selected
+CLI fails and the progress observer proves that the sandbox is clean and has no
+evidence manifest, repository bootstrap/tests/CodeGraph/publication are skipped;
+harvest and teardown still run. This makes an unavailable route terminate
+promptly without disguising it as a long finalizer stall.</p>
+<p>The unattended finalizer auto-commits modified tracked files but deliberately
+refuses untracked or staged-new files. A coding agent must commit its own new
+files before finishing. If an otherwise successful executor run is preserved
+with passing contract-test and CodeGraph evidence but is refused only at this
+boundary, inspect it without mutation first:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac task recover-finalizer /path/to/task-workspace --json</span>
+</code></pre></div>
+<p>Recovery is explicit and allow-listed. Repeat <code>--approve-new-file PATH</code> for
+every intended new path, provide the original executor <code>--evidence-id</code>, and add
+<code>--execute</code>. MAC validates the preserved HEAD and evidence, commits with
+provenance, rebases, reruns both gates, and uses the shared guarded push. It
+never invokes the executor/model again and does not weaken ordinary unattended
+finalization.</p>
+<p>A separate failure mode is a finalizer that harvested verified work but was
+itself interrupted — a timeout, cancellation, or crash after the contract-test
+and CodeGraph gates passed but before the guarded push confirmed a remote ref.
+The interrupted run leaves a partial <code>mac-evidence.json</code> (with a
+<code>finalizer_interrupted</code> marker) and a <code>finalizer-progress.json</code> stuck in a
+non-terminal status. Resume it the same way:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mac task recover-stalled-finalizer /path/to/task-workspace --json</span>
+</code></pre></div>
+<p>Add <code>--approve-new-file PATH</code> only for any new files the stalled finalizer left
+uncommitted, provide the original <code>--evidence-id</code>, and add <code>--execute</code>. MAC
+revalidates the preserved HEAD, commits any pending work with stalled-finalizer
+provenance, rebases, reruns both gates, and performs the shared guarded push.</p>
+<p>For a coding agent to pass the preflight, the deployment must ensure, <strong>inside
+the sandbox</strong>:</p>
+<ol>
+<li><strong>Binary present</strong> — <code>claude</code> / <code>codex</code> / <code>cursor-agent</code> is in the sandbox
+   image (or uploaded via <code>MAC_OPENSHELL_CREATE_ARGS</code>). The standard MAC image
+   installs <code>codex</code>.</li>
+<li><strong>Credentials reachable and durable</strong> — supported environment routes
+   (<code>ANTHROPIC_API_KEY</code>, <code>ANTHROPIC_AUTH_TOKEN</code>, <code>CLAUDE_CODE_OAUTH_TOKEN</code>,
+   <code>CURSOR_API_KEY</code>, <code>MAC_CODEX_TOKEN</code>, <code>CODEX_API_KEY</code>, <code>OPENAI_API_KEY</code>) are
+   forwarded automatically. File-based Codex OAuth state
+   (<code>~/.codex/auth.json</code>) is not uploaded by default because OpenShell upload is
+   copy-only: a throwaway sandbox can consume and rotate the refresh token while
+   the replacement is lost with the sandbox. <code>bootstrap-openshell.sh</code> only
+   uploads Codex file auth when <code>MAC_OPENSHELL_UPLOAD_CODEX_AUTH=1</code>, and the
+   executor only retains and probes that upload when
+   <code>MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH=1</code> is also still set. A stale rendered
+   upload is removed at execution time, and <code>OPENAI_API_KEY</code> always suppresses
+   the file copy because environment auth wins.</li>
+<li><strong>Baseline repo tools present</strong> — the MAC OpenShell image installs <code>git</code>,
+   <code>gh</code>, and <code>codegraph</code>; custom images must provide the same baseline if they
+   are used for repository work.</li>
+<li><strong>Egress allowed</strong> — the OpenShell policy's <code>network_policies</code> must permit the
+   hub/gateway, provider host (e.g. <code>api.anthropic.com</code>), git host, and Python
+   package index hosts used by repository bootstrap (<code>pypi.org</code> and
+   <code>files.pythonhosted.org</code> in the standard policy). The bundled fail-closed
+   default denies all egress, so the preflight fails closed there by design.</li>
+</ol>
+<h3 id="environment-knobs_1">Environment knobs<a class="headerlink" href="#environment-knobs_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAC_PREFER_CODING_AGENT</code></td>
+<td><code>1</code></td>
+<td>master switch; <code>0</code> always uses the Hermes → gateway path</td>
+</tr>
+<tr>
+<td><code>MAC_CODING_AGENT</code></td>
+<td><em>(auto)</em></td>
+<td>pin to <code>claude</code>/<code>codex</code>/<code>cursor</code>, or <code>off</code> to disable</td>
+</tr>
+<tr>
+<td><code>MAC_CODING_AGENT_SANDBOX</code></td>
+<td><code>verify</code></td>
+<td><code>verify</code> = gate on the in-sandbox preflight; <code>trust</code> = assume the image is provisioned (skip the probe); <code>off</code> = never use a coding agent when confined</td>
+</tr>
+<tr>
+<td><code>MAC_CODING_AGENT_PREFLIGHT_TIMEOUT</code></td>
+<td><code>180</code></td>
+<td>seconds for the in-sandbox preflight</td>
+</tr>
+<tr>
+<td><code>MAC_CODING_AGENT_PREFLIGHT_TTL_SECONDS</code></td>
+<td><code>900</code></td>
+<td>successful route-proof lifetime in the executor/worker process</td>
+</tr>
+<tr>
+<td><code>MAC_CODING_AGENT_PREFLIGHT_FAILURE_TTL_SECONDS</code></td>
+<td><code>60</code></td>
+<td>retry interval for a failed route proof</td>
+</tr>
+<tr>
+<td><code>MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS</code></td>
+<td>success <code>900</code>, failure <code>60</code></td>
+<td>worker heartbeat probe cadence</td>
+</tr>
+<tr>
+<td><code>MAC_CODING_ROUTE_MAX_AGE_SECONDS</code></td>
+<td><code>1200</code></td>
+<td>maximum proof age accepted by dispatch</td>
+</tr>
+<tr>
+<td><code>MAC_CODING_AGENT_&lt;AGENT&gt;_CMD</code></td>
+<td><em>(built-in)</em></td>
+<td>override a CLI's invocation (shlex-split); prompt appended as the trailing arg</td>
+</tr>
+<tr>
+<td><code>MAC_CODING_AGENT_MESSAGING_MCP</code></td>
+<td><code>1</code></td>
+<td>register the messaging MCP server (unconfined path only, Claude)</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT</code></td>
+<td><code>1</code> in fleet deploy</td>
+<td>executor strict mode: repository tasks fail closed unless a coding CLI is verified in-sandbox</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_UPLOAD_CODEX_AUTH</code></td>
+<td><code>0</code></td>
+<td>bootstrap opt-in to upload <code>~/.codex/auth.json</code> / <code>config.toml</code> into sandboxes</td>
+</tr>
+<tr>
+<td><code>MAC_OPENSHELL_ALLOW_CODEX_FILE_AUTH</code></td>
+<td><code>0</code></td>
+<td>executor opt-in to probe/use uploaded Codex file auth despite refresh-token rotation risk</td>
+</tr>
+<tr>
+<td><code>MAC_CODEX_BASE_URL</code></td>
+<td><code>OPENAI_BASE_URL</code></td>
+<td>explicit Codex provider endpoint; use a Responses-compatible endpoint</td>
+</tr>
+<tr>
+<td><code>MAC_CODEX_TOKEN</code></td>
+<td><em>(unset)</em></td>
+<td>bearer read by Codex through <code>env_key</code>; the value never appears in argv or telemetry</td>
+</tr>
+<tr>
+<td><code>MAC_CODEX_PROVIDER</code></td>
+<td>inferred</td>
+<td>secret-free custom provider id (<code>openai</code> for the built-in endpoint, otherwise <code>mac-router</code>)</td>
+</tr>
+<tr>
+<td><code>MAC_CODEX_WIRE_API</code></td>
+<td><code>responses</code></td>
+<td>Codex wire protocol recorded and rendered into per-run custom-provider config</td>
+</tr>
+<tr>
+<td><code>MAC_CODEX_MODEL</code></td>
+<td>fleet/task default</td>
+<td>model included in the route fingerprint and dispatch proof</td>
+</tr>
+</tbody>
+</table>
+<p>Set <code>MAC_CODING_AGENT_SANDBOX=trust</code> only after validating the image+policy out
+of band; it skips the per-task proof. <code>python -m mac.coding_agent</code> prints the
+(secret-free) host-side routing decision for the current environment.</p>
+<h2 id="nemoclaw-single-host-pilot-observations">NemoClaw single-host pilot observations<a class="headerlink" href="#nemoclaw-single-host-pilot-observations" title="Permanent link">&para;</a></h2>
+<p>Status: pilot observations recorded 2026-07-04. These notes are intentionally
+fleet-generic: use role names, placeholder workspace/channel identifiers, and
+redacted credential sources in downstream runbooks; do not record real
+usernames, hostnames, tokens, Slack team names, or local fleet identities.</p>
+<h3 id="slack-multi-account-behavior">Slack multi-account behavior<a class="headerlink" href="#slack-multi-account-behavior" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Treat each Slack Socket Mode app token as single-owner for the pilot. Running
+  Hermes and NemoClaw against the same app token can create competing event
+  consumers, duplicate replies, or ambiguous thread ownership.</li>
+<li>A single Hermes gateway can use the existing multi-account file shape for
+  multiple workspaces; that does not coordinate an additional external
+  NemoClaw gateway. If both gateways must be live, give each gateway its own
+  Slack app credentials and make the intended workspace/channel binding
+  explicit.</li>
+<li>Home-channel fan-out remains per connected workspace. Pilot notes should name
+  routes with placeholders such as <code>&lt;workspace-id&gt;/&lt;channel-id&gt;</code> and should
+  avoid storing raw tokens or workspace-local display names.</li>
+</ul>
+<h3 id="openshell-policy-friction">OpenShell policy friction<a class="headerlink" href="#openshell-policy-friction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>MAC's default OpenShell posture is deny-by-default egress plus explicit
+  filesystem allow-lists. NemoClaw adds non-MAC traffic patterns, including
+  Slack Web API calls, Socket Mode WebSocket egress, provider endpoints, and any
+  package or model download endpoints used at startup. Those must be policy
+  entries, not interactive approvals.</li>
+<li>The policy iteration loop is the main operational cost: every denied
+  endpoint or missing writable path should become a small, reviewed policy
+  change followed by an off-policy-denial smoke test. Do not loosen the policy
+  to broad internet or broad home-directory access just to make the pilot pass.</li>
+<li>Keep MAC-owned evidence, task worktrees, and finalization outside NemoClaw's
+  writable state. The sandboxed gateway may write its runtime cache/log paths,
+  but repository publication remains the deterministic MAC finalizer's job.</li>
+</ul>
+<h3 id="openshell-0072-compatibility-validated-2026-07-04">OpenShell 0.0.72 compatibility — validated 2026-07-04<a class="headerlink" href="#openshell-0072-compatibility-validated-2026-07-04" title="Permanent link">&para;</a></h3>
+<p>OpenShell 0.0.72 has been validated against all three MAC sandbox surfaces
+(executor sandbox create, hub-verify tar-upload verify, gateway confinement).
+The fleet pin was advanced from 0.0.62 to 0.0.72 in bootstrap-openshell.sh,
+openshell_reconcile.py, and cli.py. The existing mac-hermes-policy.yaml
+template is fully forward-compatible; no policy adjustments are needed.</p>
+<p>Key behavior changes in 0.0.72 relative to 0.0.62:
+- Native messaging credential rewrite (opt-in via <code>credential_rewrite</code> policy
+  key; MAC policy has no such key — behavior unchanged).
+- WebSocket text-frame and REST body L7 enforcement (tightens <code>access: read-only</code>
+  endpoints to also block upload POST bodies; MAC's python_packages and
+  node_packages blocks now enforce this correctly).
+- MCP/JSON-RPC enforcement (opt-in per endpoint; MAC policy uses <code>protocol: rest</code>
+  throughout — no change).
+- <code>policy get --base</code> CLI subcommand (informational; MAC uses per-sandbox
+  <code>--policy</code> injection, not base-policy inheritance — no change).</p>
+<p>See docs/security/openshell-0.0.72-compatibility-review.mdx for the full
+pass/fail surface results, behavior-change table, and recommendation narrative.</p>
+<p>The 0.0.62 podman-driver mismatch workaround (<code>mirror_image_for_openshell_runtime</code>)
+is retained in bootstrap-openshell.sh as belt-and-suspenders; the upstream
+mismatch is resolved in 0.0.72 but the mirror step is harmless when Podman
+is absent.</p>
+<h3 id="fallback-decision">Fallback decision<a class="headerlink" href="#fallback-decision" title="Permanent link">&para;</a></h3>
+<p>If NemoClaw's OpenShell pin is disruptive, fall back to raw <code>openclaw</code> confined
+by a MAC-authored OpenShell policy on the last validated MAC/OpenShell pin
+(currently 0.0.72; roll back to 0.0.62 only if a 0.0.72-specific failure is
+confirmed):</p>
+<ol>
+<li>Build or upload a sandbox image containing raw <code>openclaw</code>, the required MAC
+   baseline tools (<code>git</code>, <code>gh</code>, <code>codegraph</code>), and only the runtime dependencies
+   needed by the pilot.</li>
+<li>Start from <code>deploy/openshell/mac-hermes-policy.yaml</code>, then add explicit
+   Slack, model-provider, hub/gateway, Git host, and package-index egress rules
+   required by raw <code>openclaw</code>. Keep filesystem writes scoped to the task
+   workspace and gateway runtime cache/log directories.</li>
+<li>Use separate Slack app credentials from any Hermes gateway that remains
+   online. Route pilot traffic through placeholder-documented
+   <code>&lt;workspace-id&gt;/&lt;channel-id&gt;</code> bindings.</li>
+<li>Verify with <code>openshell gateway list</code>, an <code>openshell sandbox create</code> smoke
+   test, one Slack receive/send loop, one intentional off-policy denial, and a
+   normal MAC repository task whose evidence is finalized by MAC.</li>
+<li>Treat this as a temporary compatibility bridge. Promote NemoClaw only after
+   its OpenShell version, policy shape, and event stream pass the same MAC
+   smoke tests.</li>
+</ol>
+<h3 id="operational-gaps">Operational gaps<a class="headerlink" href="#operational-gaps" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Add a version matrix covering NemoClaw, raw <code>openclaw</code>, OpenShell, Docker
+  Engine/Moby, the sandbox image digest, and the active MAC policy revision.</li>
+<li>Define ownership for Slack app isolation, policy review, event-log retention,
+  and rollback. The rollback condition should be simple: loss of sandbox
+  enforcement, ambiguous Slack routing, missing evidence, or unreviewed broad
+  egress returns the host to the last validated MAC/OpenShell 0.0.72 path.</li>
+<li>Add a short pilot checklist that records only secret-free facts: credential
+  source names, placeholder route identifiers, policy revision, image digest,
+  smoke-test outcome, and finalizer evidence status.</li>
+</ul>
+<h2 id="follow-up">Follow-up<a class="headerlink" href="#follow-up" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Tune the operator policy against the real model-gateway/hub hosts (both the
+  bundled default and the operator template already use
+  <code>landlock: hard_requirement</code>).</li>
+<li>Replace any remaining production use of <code>MAC_OPENSHELL_SANDBOX</code> /
+  <code>MAC_OPENSHELL_GATEWAY</code> with the supervisor unit.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../hermes-boundary/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Hermes boundary">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Hermes boundary
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../archive/" class="md-footer__link md-footer__link--next" aria-label="Next: Historical archive">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Historical archive
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

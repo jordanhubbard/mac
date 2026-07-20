@@ -1,0 +1,13 @@
+:root {
+  --md-text-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --md-code-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.md-typeset code {
+  overflow-wrap: anywhere;
+}
+
+.md-typeset .historical-banner {
+  border-inline-start: 0.3rem solid var(--md-default-fg-color--lighter);
+  padding: 0.6rem 0.8rem;
+}

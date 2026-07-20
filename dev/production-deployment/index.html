@@ -1,0 +1,3460 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/production-deployment/">
+      
+      
+        <link rel="prev" href="../reference/documentation-inventory/">
+      
+      
+        <link rel="next" href="../fleet-node-onboarding-checklist/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Production deployment - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#production-deployment" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Production deployment
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#required-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variable-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variable precedence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#systemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Systemd
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fleet-setup-wizard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fleet Setup Wizard
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#declarative-setup-for-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declarative Setup For Agents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reaching-the-hub-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reaching the Hub Node
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reaching the Hub Node">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#direct-access-same-network-or-vpn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direct access (same network or VPN)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ssh-port-forward-and-scoped-enrollment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSH port forward and scoped enrollment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tailscale-mesh-provider-tailscale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tailscale mesh (provider: tailscale)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#headscale-self-hosted-control-plane-provider-headscale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headscale (self-hosted control plane, provider: headscale)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-time-acc-replacement-deploy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One-Time ACC Replacement Deploy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker Agents
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Worker Agents">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#repository-credential-learning-and-reviewer-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repository credential learning and reviewer routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legacy-beads-migration-and-repository-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy Beads Migration And Repository Registry
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agentbus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentBus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roles-workflows-and-provisioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles, Workflows, and Provisioning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#docker-engine-moby" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker Engine / Moby
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrade-procedure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrade procedure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kubernetes-k8s-native-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubernetes (K8s-native topology)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deploy-aborts-qdrant-did-not-become-ready-at-6333-high-core-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy aborts: "Qdrant did not become ready at :6333" (high-core nodes)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supervisord-pods-supervisorctl-permission-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        supervisord pods: supervisorctl permission errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#private-repository-review-is-retracted-or-remains-in-reviewing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Private repository review is retracted or remains in reviewing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dynamic-model-selection-opt-in-hub-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic model selection (opt-in, hub only)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#autonomous-scientific-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Autonomous scientific optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#required-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variable-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variable precedence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#systemd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Systemd
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fleet-setup-wizard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fleet Setup Wizard
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#declarative-setup-for-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declarative Setup For Agents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reaching-the-hub-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reaching the Hub Node
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reaching the Hub Node">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#direct-access-same-network-or-vpn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direct access (same network or VPN)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ssh-port-forward-and-scoped-enrollment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSH port forward and scoped enrollment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tailscale-mesh-provider-tailscale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tailscale mesh (provider: tailscale)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#headscale-self-hosted-control-plane-provider-headscale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headscale (self-hosted control plane, provider: headscale)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-time-acc-replacement-deploy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One-Time ACC Replacement Deploy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker Agents
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Worker Agents">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#repository-credential-learning-and-reviewer-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repository credential learning and reviewer routing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#legacy-beads-migration-and-repository-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Legacy Beads Migration And Repository Registry
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agentbus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AgentBus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roles-workflows-and-provisioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles, Workflows, and Provisioning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#docker-engine-moby" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker Engine / Moby
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrade-procedure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrade procedure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kubernetes-k8s-native-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubernetes (K8s-native topology)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deploy-aborts-qdrant-did-not-become-ready-at-6333-high-core-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy aborts: "Qdrant did not become ready at :6333" (high-core nodes)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supervisord-pods-supervisorctl-permission-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        supervisord pods: supervisorctl permission errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#private-repository-review-is-retracted-or-remains-in-reviewing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Private repository review is retracted or remains in reviewing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dynamic-model-selection-opt-in-hub-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic model selection (opt-in, hub only)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#autonomous-scientific-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Autonomous scientific optimization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/production-deployment.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="production-deployment">Production Deployment<a class="headerlink" href="#production-deployment" title="Permanent link">&para;</a></h1>
+<p>Three supported topologies:</p>
+<ol>
+<li><strong>Single host, systemd</strong> — one machine, one SQLite database, one FastAPI
+   process. Suitable for dev fleets, personal Hermes runtimes, and pilot
+   deployments. See <code>deploy/systemd/</code>.</li>
+<li><strong>Containerized, single-instance</strong> — image at <code>Dockerfile</code>. Same SQLite
+   topology, but lifecycle is managed by Docker Engine/Moby or k8s as a
+   single-replica deployment. See the container section below.</li>
+<li><strong>Kubernetes, multi-replica, Postgres-backed</strong> — stateless <code>mac-api</code>
+   Deployment in front of an externally-managed Postgres 17 cluster.
+   Multiple <code>mac-api</code> replicas share the same durable state via
+   <code>MAC_DATABASE_URL</code>. The cluster itself (CloudNativePG, RDS, Cloud
+   SQL, vendor-managed, etc.) is provisioned outside this repo and its
+   DSN is supplied via the <code>mac-api-config</code> Secret. See
+   <a href="https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md"><code>deploy/k8s/README.md</code></a> and
+   <a href="../archive/field-notes/k8s-native-rewrite-plan/"><code>docs/k8s-native-rewrite-plan.md</code></a>.</li>
+</ol>
+<p><code>mac</code> is not designed for horizontal scale-out on SQLite. SQLite WAL handles
+concurrent reads well and serializes writes through filesystem locks — so
+<code>uvicorn --workers &gt; 1</code> against the same SQLite DB <em>works</em>, but every write
+call contends on the same lock. For multi-host, multi-replica, or
+write-heavy fleets, use topology (3) (Postgres) instead.</p>
+<p>The backend selection is runtime: set <code>MAC_DATABASE_URL</code> to a
+<code>postgresql://...</code> DSN for <code>PostgresStore</code>, or set <code>MAC_DB</code> to an explicit
+SQLite path. There is no implicit home-directory database. Both backends ship
+in the same wheel/image; pick one at deploy time.</p>
+<p>Only a hub or stateless API replica is a control-plane server. Fleet spokes are
+clients: their generated environment has <code>MAC_CONTROL_PLANE_ROLE=client</code>, no
+<code>MAC_DB</code> or <code>MAC_DATABASE_URL</code>, and their worker/gateway processes use
+<code>MAC_HUB_URL</code>. A redeployed spoke archives an inactive legacy <code>mac.db</code>; active
+legacy tasks block deployment until explicitly migrated to the hub. Store
+construction also rejects <code>MAC_CONTROL_PLANE_ROLE=client</code> even if a stale
+database variable is reintroduced.</p>
+<h2 id="required-configuration">Required configuration<a class="headerlink" href="#required-configuration" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Required</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAC_SECRET_KEY</code></td>
+<td>yes</td>
+<td>32+ char secret; HKDF input for the Fernet key that encrypts secret values. Refuses to start without it.</td>
+</tr>
+<tr>
+<td><code>MAC_CONTROL_PLANE_ROLE</code></td>
+<td>yes for fleet deploys</td>
+<td><code>hub</code> for the single database-owning authority; <code>client</code> for database-free spokes.</td>
+</tr>
+<tr>
+<td><code>MAC_DATABASE_URL</code></td>
+<td>conditional</td>
+<td>Postgres DSN (<code>postgresql://...</code> or <code>postgres://...</code>). Required unless <code>MAC_DB</code> is set. When set, <code>mac-api</code> uses <code>PostgresStore</code> and ignores <code>MAC_DB</code>. The Postgres schema is auto-applied on startup (idempotent).</td>
+</tr>
+<tr>
+<td><code>MAC_PG_POOL_SIZE</code></td>
+<td>no</td>
+<td><code>psycopg_pool</code> max connections per <code>mac-api</code> replica. Default <code>10</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_DB</code></td>
+<td>conditional</td>
+<td>Explicit SQLite control-plane path. Required unless <code>MAC_DATABASE_URL</code> is set. No client-side <code>~/.mac/mac.db</code> is created implicitly.</td>
+</tr>
+<tr>
+<td><code>MAC_API_TOKEN</code></td>
+<td>no</td>
+<td>Single admin bearer token. Set empty string is rejected.</td>
+</tr>
+<tr>
+<td><code>MAC_API_TOKENS</code></td>
+<td>no</td>
+<td>JSON <code>{token: [scopes,...]}</code> for scoped auth. Mutually exclusive with <code>MAC_API_TOKEN</code>.</td>
+</tr>
+<tr>
+<td><code>HERMES_HOME</code></td>
+<td>no</td>
+<td>Hermes state directory checked at startup. Default <code>~/.hermes</code>.</td>
+</tr>
+<tr>
+<td><code>ACC_DIR</code></td>
+<td>no</td>
+<td>Legacy ACC data directory checked for migration/state references. Default <code>~/.acc</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_AGENT_DIR</code></td>
+<td>no</td>
+<td>Hermes checkout inspected for the <code>slack_accounts.json</code> activation shim. Falls back to <code>HERMES_AGENT_DIR</code>, then <code>~/Src/hermes-agent</code> if present.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_APPLY_SLACK_ACCOUNT_SHIM</code></td>
+<td>no</td>
+<td>Set <code>0</code> to disable startup patching of an explicit <code>MAC_HERMES_AGENT_DIR</code>. Default enabled only when the checkout path is explicit.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_APPLY_GATEWAY_RUNTIME_SHIM</code></td>
+<td>no</td>
+<td>Set <code>0</code> to disable startup patching of Hermes gateway model/runtime overrides. Default enabled for explicit checkout paths.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_GATEWAY_MODEL</code></td>
+<td>no</td>
+<td>Per-agent model used by Hermes gateway conversations and mirrored to <code>HERMES_INFERENCE_MODEL</code> for oneshot worker execution.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_GATEWAY_PROVIDER</code></td>
+<td>no</td>
+<td>Runtime provider for the per-agent model. Fleet deploy normally uses <code>custom</code> so Hermes sends OpenAI-compatible requests through MAC's router.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_GATEWAY_BASE_URL</code></td>
+<td>no</td>
+<td>OpenAI-compatible base URL for Hermes. Fleet deploy writes the hub's local in-mac <code>/v1</code> endpoint on the hub and the hub or wing-router <code>/v1</code> endpoint on spokes.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_STARTUP_CHECK</code></td>
+<td>no</td>
+<td>Set <code>0</code> to disable Hermes state and Slack startup checks. Enabled by default.</td>
+</tr>
+<tr>
+<td><code>MAC_REQUIRE_HERMES_STARTUP_READY</code></td>
+<td>no</td>
+<td>Set <code>1</code> to fail <code>mac</code> startup when Hermes soul/memory/state references or Slack activation are not ready.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_SLACK_HOME_CHANNEL_NAME</code></td>
+<td>no</td>
+<td>Slack home-channel name, without <code>#</code>, used to write <code>~/.hermes/slack_home_channels.json</code> from <code>slack_accounts.json</code>. Empty skips discovery.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_SYNC_SLACK_HOME_CHANNELS</code></td>
+<td>no</td>
+<td>Set <code>0</code> to preserve existing Slack home-channel files without discovery. Default enabled.</td>
+</tr>
+<tr>
+<td><code>MAC_URL</code> / <code>MAC_HUB_URL</code></td>
+<td>no</td>
+<td>MAC API endpoint used by Hermes-side <code>mac-hermes</code> operations. Fleet deploy points this at the hub.</td>
+</tr>
+<tr>
+<td><code>MAC_CLIENT_PRINCIPALS_FILE</code></td>
+<td>no</td>
+<td>Hub-local hashed registry for scoped client enrollment. Fleet deploy sets <code>$MAC_HOME/client-principals.json</code>; permissions must be <code>0600</code>. The API hot-reloads issuance and revocation.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_INSTANCE_ID</code></td>
+<td>no</td>
+<td>Hermes instance id for this runtime. Fleet deploy uses a deterministic <code>hermes_&lt;agent&gt;</code> id and registers it in MAC.</td>
+</tr>
+<tr>
+<td><code>MAC_WORKER_HERMES_INSTANCE_ID</code></td>
+<td>no</td>
+<td>Worker agent binding to the Hermes instance id. This keeps MAC agent rows linked to their Hermes soul/runtime.</td>
+</tr>
+<tr>
+<td><code>MAC_AGENT_ID</code></td>
+<td>no</td>
+<td>Deterministic MAC agent id for this runtime. Fleet deploy uses <code>agent_&lt;agent&gt;</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_RUNTIME_CONTEXT_FILE</code></td>
+<td>no</td>
+<td>Hermes-visible task/project runtime contract JSON. Default <code>~/.hermes/mac-runtime-context.json</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN</code></td>
+<td>no</td>
+<td>Human/agent-readable runtime contract summary. Default <code>~/.hermes/mac-runtime-context.md</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_RUNTIME_CONTEXT_REQUIRED</code></td>
+<td>no</td>
+<td>Set <code>1</code> to make startup readiness fail if the MAC task/project runtime contract is missing, invalid, or not injected into the Hermes prompt builder. Fleet deploy enables this.</td>
+</tr>
+<tr>
+<td><code>MAC_HERMES_WORKSPACE</code></td>
+<td>no</td>
+<td>Source workspace Hermes should treat as equivalent to an operator/Codex shell in the MAC repo. Fleet deploy sets this to <code>$MAC_HOME/src/mac</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_PROJECT_CONTRACT_FILE</code></td>
+<td>no</td>
+<td>Repository contract file for the Hermes direct-session capability bridge. Fleet deploy sets this to <code>$MAC_HERMES_WORKSPACE/.mac/project.yaml</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_WORKER_EXECUTOR</code></td>
+<td>no</td>
+<td>Executor command used by loop-mode workers. The default <code>~/.mac/bin/mac-hermes-task-executor</code> is part of the Hermes direct-session capability proof.</td>
+</tr>
+<tr>
+<td><code>GH_TOKEN</code> / <code>GITHUB_TOKEN</code></td>
+<td>no</td>
+<td>GitHub HTTPS credential used by task, review, publication, and pushed-ref verification commands. The credential may appear only in the individual Git command and must not persist in <code>origin</code>, evidence, logs, or memory.</td>
+</tr>
+<tr>
+<td><code>GITEA_TOKEN</code></td>
+<td>no</td>
+<td>Gitea HTTPS credential for the same Git operations. <code>MAC_TASK_GIT_TOKEN</code> is the host-mode fallback when no host-specific token is set.</td>
+</tr>
+<tr>
+<td><code>MAC_DEPLOY_GH_TOKEN</code></td>
+<td>no</td>
+<td>Fleet-deploy input copied into the managed runtime as <code>GH_TOKEN</code>. Keep it in the host-local <code>~/.mac/.env</code>, never in <code>fleets.yaml</code> or a committed spec.</td>
+</tr>
+<tr>
+<td><code>MAC_REPOSITORY_REF_RECONCILER_MODE</code></td>
+<td>no</td>
+<td>Managed task-branch reconciler mode: <code>off</code>, <code>audit</code>, or <code>prune</code>. Runtime default <code>off</code>; fleet deployment defaults the hub to <code>prune</code> and spokes to <code>off</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS</code></td>
+<td>no</td>
+<td>Delay between automatic passes, bounded from <code>60</code> through <code>604800</code>. Hub default <code>86400</code> (daily).</td>
+</tr>
+<tr>
+<td><code>MAC_REPOSITORY_REF_RECONCILER_INITIAL_DELAY_SECONDS</code></td>
+<td>no</td>
+<td>Delay before the first automatic pass, bounded from <code>0</code> through <code>86400</code>. Hub default <code>300</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_REPOSITORY_REF_RECONCILER_GRACE_DAYS</code></td>
+<td>no</td>
+<td>Fallback cleanup grace for legacy lifecycle records, bounded from <code>0</code> through <code>365</code>. Default <code>7</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_REPOSITORY_REF_RECONCILER_REMOTE</code> / <code>MAC_REPOSITORY_REF_RECONCILER_BASE_REF</code></td>
+<td>no</td>
+<td>Git remote name (default <code>origin</code>) and optional explicit <code>&lt;remote&gt;/&lt;branch&gt;</code> ancestry target. Without a base override, the remote HEAD is auto-detected.</td>
+</tr>
+<tr>
+<td><code>MAC_REPOSITORY_ACCESS_FAILURE_COOLDOWN_SECONDS</code></td>
+<td>no</td>
+<td>How long a newest authentication/authorization failure excludes a reviewer for the matching project, repository host, and operation. Default <code>1800</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_REPOSITORY_ACCESS_SUCCESS_TTL_SECONDS</code></td>
+<td>no</td>
+<td>How long a successful repository-access learning receives reviewer-selection preference. Default <code>86400</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_REVIEW_NUDGE_MAX_ATTEMPTS</code></td>
+<td>no</td>
+<td>Maximum durable delivered verdict nudges for one review before it is retracted. Default <code>10</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_SUPERVISOR_KIND</code></td>
+<td>no</td>
+<td>Runtime supervisor selected by fleet deploy: <code>systemd</code>, <code>launchd</code>, or <code>supervisord</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_MEMORY_TOPOLOGY_FILE</code></td>
+<td>no</td>
+<td>Hermes-visible memory topology JSON. Default <code>~/.hermes/mac-memory-topology.json</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_SHARED_SERVICES_MANAGER_AGENT</code></td>
+<td>no</td>
+<td>Agent that owns hub-managed shared services. Defaults to the configured fleet hub.</td>
+</tr>
+<tr>
+<td><code>QDRANT_URL</code> / <code>QDRANT_ADDRESS</code> / <code>QDRANT_FLEET_URL</code></td>
+<td>no</td>
+<td>Shared Qdrant level-2 memory endpoint. When set, Hermes startup readiness validates <code>/collections</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_REQUIRE_QDRANT_MEMORY</code></td>
+<td>no</td>
+<td>Set <code>1</code> to require shared Qdrant memory readiness. Fleet deploy enables this by default.</td>
+</tr>
+<tr>
+<td><code>MAC_QDRANT_MEMORY_ALLOW_DEGRADED</code></td>
+<td>no</td>
+<td>Temporary operator override that allows startup when required Qdrant is missing or unreachable.</td>
+</tr>
+<tr>
+<td><code>QDRANT_PIDS_LIMIT</code></td>
+<td>no</td>
+<td>Container PID/thread cap for the hub-managed Qdrant (supervisord wrapper + systemd unit). Default <code>4096</code>. Raise on very-high-core nodes; see Troubleshooting.</td>
+</tr>
+</tbody>
+</table>
+<p>Generate a secret key once:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">openssl rand -base64 48</span>
+</code></pre></div>
+<p>Store it in a secrets manager. Rotating the key requires re-encrypting all
+secret values; today this is a manual procedure (re-emit every secret with
+the new key).</p>
+<h2 id="environment-variable-precedence">Environment variable precedence<a class="headerlink" href="#environment-variable-precedence" title="Permanent link">&para;</a></h2>
+<p>MAC resolves each <code>MAC_*</code> variable according to a three-level contract:</p>
+<ol>
+<li><strong>Process environment wins.</strong> A variable already present in the invoking process environment (e.g. set by the supervisor unit, injected by a secret manager, or exported by the operator shell) is used as-is and is never overridden by the env file.</li>
+<li><strong>Env file supplies defaults.</strong> A variable absent from the process environment receives its value from the operator env file (typically <code>~/.mac/.env</code> or the path given by <code>MAC_ENV_FILE</code>).</li>
+<li><strong>Env file is the operator default store.</strong> Operators should record stable deployment values — tokens, URLs, feature flags — in the env file. Runtime overrides belong in the process environment and are not written back to the file.</li>
+</ol>
+<p>See <a href="../env-config-reference/">env-config-reference.md</a> for the full variable catalog.</p>
+<h2 id="systemd">Systemd<a class="headerlink" href="#systemd" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="gp"># </span><span class="m">1</span>.<span class="w"> </span>Create<span class="w"> </span>the<span class="w"> </span>service<span class="w"> </span>user<span class="w"> </span>and<span class="w"> </span>data<span class="w"> </span>directory.
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">sudo groupadd --system mac</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">sudo useradd --system --gid mac --home-dir /var/lib/mac \</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="go">    --shell /usr/sbin/nologin mac</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="go">sudo install -d -o mac -g mac -m 0750 /var/lib/mac</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="gp"># </span><span class="m">2</span>.<span class="w"> </span>Install<span class="w"> </span>mac<span class="w"> </span>globally<span class="w"> </span><span class="o">(</span>or<span class="w"> </span>into<span class="w"> </span>a<span class="w"> </span>venv<span class="w"> </span>at<span class="w"> </span>/usr/local/lib/mac<span class="o">)</span>.
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="go">sudo pip install /path/to/mac-0.1.0-py3-none-any.whl</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="gp"># </span><span class="m">3</span>.<span class="w"> </span>Write<span class="w"> </span>the<span class="w"> </span>env<span class="w"> </span>file<span class="w"> </span><span class="o">(</span>mode<span class="w"> </span><span class="m">0600</span>,<span class="w"> </span>owner<span class="w"> </span>root:mac<span class="o">)</span>.
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="go">sudo install -d -o root -g mac -m 0750 /etc/mac</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="go">sudo install -o root -g mac -m 0640 deploy/systemd/mac.env.example /etc/mac/mac.env</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="go">sudo $EDITOR /etc/mac/mac.env       # set MAC_SECRET_KEY, optionally MAC_API_TOKEN</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="gp"># </span><span class="m">4</span>.<span class="w"> </span>Install<span class="w"> </span>and<span class="w"> </span>start<span class="w"> </span>the<span class="w"> </span>unit.
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="go">sudo install -o root -g root -m 0644 deploy/systemd/mac.service \</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="go">    /etc/systemd/system/mac.service</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="go">sudo systemctl daemon-reload</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="go">sudo systemctl enable --now mac.service</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="gp"># </span><span class="m">5</span>.<span class="w"> </span>Verify.
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="go">sudo systemctl status mac.service</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="go">curl -fsS http://127.0.0.1:8000/health</span>
+</code></pre></div>
+<p>The unit binds to <code>127.0.0.1:8000</code>. Put a TLS-terminating reverse proxy
+(nginx, Caddy) in front for external access — do not expose the bare port.</p>
+<h2 id="fleet-setup-wizard">Fleet Setup Wizard<a class="headerlink" href="#fleet-setup-wizard" title="Permanent link">&para;</a></h2>
+<p>First-time deployments should use the setup wizard instead of hand-editing
+deployment YAML:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">make setup</span>
+</code></pre></div>
+<p>The wizard asks for the hub, agents, SSH targets, OS families, supervisors,
+Slack home channel, per-agent Hermes model selectors, worker mode, canary
+policy, Qdrant shared-memory endpoint, fleet network provider, and optional
+hub token. It writes:</p>
+<ul>
+<li><code>~/.mac/fleets.yaml</code>: home-scoped multi-fleet topology, keyed by hub node.</li>
+<li><code>~/.mac/.env</code>: caller-machine deploy settings and local secrets, mode 0600.</li>
+</ul>
+<p>To deploy after the wizard:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">make deploy HUB=&lt;hub-node&gt;</span>
+</code></pre></div>
+<h2 id="declarative-setup-for-agents">Declarative Setup For Agents<a class="headerlink" href="#declarative-setup-for-agents" title="Permanent link">&para;</a></h2>
+<p>LLM-driven setup should prefer a spec file over the interactive wizard. The
+setup spec is validated before files are written, and the doctor output lists
+missing env vars and next commands in machine-readable JSON.</p>
+<p>Rather than hand-writing a spec, start from a generic, per-CSP sample. The repo
+ships de-personalized samples under <code>deploy/fleet/samples/</code> (GKE is the worked
+example); a real, named fleet spec lives <strong>outside git</strong> in
+<code>~/.mac/specs/&lt;fleet&gt;.fleet.yaml</code>, created at install time by copying and
+customizing a sample. Never check a named fleet into the repo.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">scripts/setup-fleet.py --list-samples                  # browse per-CSP samples</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">scripts/setup-fleet.py --init-from gke --name my-gke   # -&gt; ~/.mac/specs/my-gke.fleet.yaml</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="gp">$</span>EDITOR<span class="w"> </span>~/.mac/specs/my-gke.fleet.yaml<span class="w">                 </span><span class="c1"># fill in the &lt;placeholders&gt;</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">make setup ARGS=&quot;--spec ~/.mac/specs/my-gke.fleet.yaml --force&quot;</span>
+</code></pre></div>
+<p>See <code>deploy/fleet/samples/README.md</code> for the per-CSP convention and the knobs
+that differ per cloud (bastion/ProxyJump, network provider, in-cluster vs
+public DNS, supervisor).</p>
+<p>Example <code>fleet-setup.yaml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mac.fleet_setup.v1</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nt">fleet</span><span class="p">:</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">horde</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">hub</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">horde-hub</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">hub_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://horde-hub:8789</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="nt">agents</span><span class="p">:</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">horde-hub</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu@10.0.0.10:2201</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">linux</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nvidia/llama-3.3-nemotron-super-49b-v1</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span><span class="nt">worker</span><span class="p">:</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">loop</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">horde-worker</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">    </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ubuntu@10.0.0.11</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">linux</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="nt">router</span><span class="p">:</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inproc</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="w">  </span><span class="nt">providers</span><span class="p">:</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nvidia</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="w">      </span><span class="nt">key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NVIDIA_API_KEY</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="nt">network</span><span class="p">:</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="w">  </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tailscale</span>
+</code></pre></div>
+<p>Recommended LLM flow:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">export NVIDIA_API_KEY=...</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">mac fleet validate --spec fleet-setup.yaml</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">mac fleet doctor --spec fleet-setup.yaml</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">make setup ARGS=&quot;--spec fleet-setup.yaml --force&quot;</span>
+</code></pre></div>
+<p><code>make setup ARGS="--spec ..."</code> writes <code>~/.mac/fleets.yaml</code> and <code>~/.mac/.env</code>,
+then deploys the generated plan. To configure only:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">make setup ARGS=&quot;--configure-only --spec fleet-setup.yaml --force&quot;</span>
+</code></pre></div>
+<p>If a provider key such as <code>NVIDIA_API_KEY</code> is absent from both the environment
+and the spec, validation fails before deployment so the fleet cannot silently
+come up without chat routing.</p>
+<p>The checked-in <code>deploy/fleet/config.yaml</code> is a generic sample only. It is
+marked <code>sample: true</code>, and <code>deploy/deploy-mac-fleet.sh</code> refuses to deploy from
+it unless <code>MAC_DEPLOY_ALLOW_SAMPLE_CONFIG=1</code> is set explicitly for tests.</p>
+<h2 id="reaching-the-hub-node">Reaching the Hub Node<a class="headerlink" href="#reaching-the-hub-node" title="Permanent link">&para;</a></h2>
+<p>The hub control plane binds to <code>hub_url</code> as declared in <code>~/.mac/fleets.yaml</code>.
+How you reach it from a client machine depends on the network topology.</p>
+<blockquote>
+<p><strong>Client bootstrap:</strong> <code>mac login</code> now combines strict host-key verification,
+a managed local tunnel, hub-local scoped enrollment, authenticated validation,
+and atomic profile installation. Do not copy the hub's <code>~/.mac</code>, admin token,
+<code>mac.db</code>, <code>MAC_SECRET_KEY</code>, provider keys, or SSH private keys to a new client.</p>
+</blockquote>
+<p>For a directly reachable hub, the interim client setup is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">export MAC_API_URL=https://mac.example.internal</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">export MAC_API_TOKEN=&lt;scoped-client-token&gt;</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">mac diagnostics</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="go">mac task stats</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="go">mac agent list</span>
+</code></pre></div>
+<p>Use a mode-<code>0600</code> env file or a process environment supplied by a secret
+manager. <code>--token</code> exists for automation/recovery but is not the preferred
+interactive path because argv can be visible in shell history and process
+inspection.</p>
+<h3 id="direct-access-same-network-or-vpn">Direct access (same network or VPN)<a class="headerlink" href="#direct-access-same-network-or-vpn" title="Permanent link">&para;</a></h3>
+<p>Hub is directly routable — no tunnel needed:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="gp"># </span>Confirm<span class="w"> </span>health
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">curl http://&lt;hub-host&gt;:8789/health</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="gp"># </span>Deploy
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="go">make deploy HUB=&lt;hub-node&gt;</span>
+</code></pre></div>
+<h3 id="ssh-port-forward-and-scoped-enrollment">SSH port forward and scoped enrollment<a class="headerlink" href="#ssh-port-forward-and-scoped-enrollment" title="Permanent link">&para;</a></h3>
+<p>Hub lives behind a bastion or inside a K8s cluster. Record the route in the
+home-scoped fleet registry so deploy, credential recovery, snapshots,
+migration, and Electron use the same resolver:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># ~/.mac/fleets.yaml</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nt">fleets</span><span class="p">:</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="nt">my-fleet</span><span class="p">:</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">hub_agent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hub</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nt">control_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8789</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">    </span><span class="nt">defaults</span><span class="p">:</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">      </span><span class="nt">ssh_jump</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">horde@bastion.example.com:2222</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">      </span><span class="nt">identity_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/mac-my-fleet</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">      </span><span class="nt">ssh_known_hosts_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/mac-my-fleet-known-hosts</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">      </span><span class="nt">ssh_host_key_policy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">strict</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">    </span><span class="nt">agents</span><span class="p">:</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hub</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">        </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">horde@my-hub.cluster.local</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">        </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">linux</span>
+</code></pre></div>
+<p>Provision and verify the hub and bastion host keys in <code>~/.ssh/known_hosts</code>
+before opening the tunnel. Disabling host-key verification is not a supported
+bootstrap substitute.</p>
+<p>The normal client path is one command:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">mac login --fleet my-fleet --profile my-fleet --client-id my-laptop</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">mac login status --profile my-fleet</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="go">mac task stats</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="go">mac agent list</span>
+</code></pre></div>
+<p>For a reproducible production profile the fleet route should resolve an explicit
+identity file and a verified known-hosts/host-CA source; login validates and
+pins whatever is supplied. An equivalent route can be given without a fleet
+registry using <code>--ssh</code>, <code>--identity-file</code>, <code>--known-hosts-file</code>, optional
+<code>--ssh-port</code>, and optional <code>--proxy-jump</code>. A directly reachable hub may use
+<code>--host-key-fingerprint SHA256:...</code>; proxy-jump routes require a prepared
+known-hosts file. Anything omitted falls back to OpenSSH's own resolution
+(default identities/agent, <code>~/.ssh/known_hosts</code> with <code>accept-new</code>), so
+<code>mac login --ssh &lt;host&gt;</code> works like <code>ssh &lt;host&gt;</code> — but such a profile then
+depends on the enrolling machine's ambient ssh state rather than being fully
+portable.</p>
+<p>The commands below remain the low-level recovery procedure when diagnosing SSH
+or enrollment independently.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="gp"># </span>Confirm<span class="w"> </span>the<span class="w"> </span>route<span class="w"> </span>is<span class="w"> </span>portable<span class="w"> </span>and<span class="w"> </span>does<span class="w"> </span>not<span class="w"> </span>depend<span class="w"> </span>on<span class="w"> </span>~/.ssh/config.
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="go">mac fleet ssh-spec --fleet my-fleet --agent hub --portable --json</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="gp"># </span>Forward<span class="w"> </span>hub<span class="w"> </span>control<span class="w"> </span>port<span class="w"> </span>to<span class="w"> </span>localhost<span class="w"> </span>and<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>UI
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="go">ssh -N -F /dev/null \</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="go">  -o BatchMode=yes \</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="go">  -o StrictHostKeyChecking=yes \</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="go">  -o UserKnownHostsFile=&quot;$HOME/.ssh/mac-my-fleet-known-hosts&quot; \</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="go">  -o ProxyJump=horde@bastion.example.com:2222 \</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="go">  -i &quot;$HOME/.ssh/mac-my-fleet&quot; \</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="go">  -L 8789:127.0.0.1:8789 \</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="go">  horde@my-hub.cluster.local</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="gp"># </span><span class="k">then</span>:<span class="w"> </span>curl<span class="w"> </span>http://localhost:8789/health
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="gp"># </span>or:<span class="w">   </span>open<span class="w"> </span>http://localhost:8789/ui
+</code></pre></div>
+<p>With that tunnel open, use a second verified SSH session to invoke enrollment
+locally on the hub and stream the one-time token directly into the client
+profile store:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="go">ssh -T -F /dev/null \</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="go">  -o BatchMode=yes \</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="go">  -o StrictHostKeyChecking=yes \</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="go">  -o UserKnownHostsFile=&quot;$HOME/.ssh/mac-my-fleet-known-hosts&quot; \</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="go">  -o ProxyJump=horde@bastion.example.com:2222 \</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="go">  -i &quot;$HOME/.ssh/mac-my-fleet&quot; \</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="go">  horde@my-hub.cluster.local \</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="go">  &#39;mac --json client enroll my-laptop \</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="go">    --fleet my-fleet --profile my-fleet \</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="go">    --api-url http://127.0.0.1:8789 \</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="go">    --scopes read,write,dispatch&#39; \</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="go">  | mac client profile install -</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="go">mac --profile my-fleet diagnostics</span>
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="go">mac --profile my-fleet task stats</span>
+</code></pre></div>
+<p>The API hot-reloads <code>$MAC_HOME/client-principals.json</code>, so the new credential
+works immediately. For normal operation, renewal rotates and validates the
+bearer before replacing the local credential; revoking logout invalidates it
+before deleting local state:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="go">mac login renew --profile my-fleet</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="go">mac logout --profile my-fleet --revoke</span>
+</code></pre></div>
+<p>The equivalent low-level recovery commands are:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="go">ssh -T horde@my-hub.cluster.local &#39;mac --json client renew my-laptop&#39; \</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="go">  | mac client profile install - --profile my-fleet</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="go">ssh -T horde@my-hub.cluster.local &#39;mac client revoke my-laptop&#39;</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="go">mac client profile remove my-fleet</span>
+</code></pre></div>
+<p>Use the explicit SSH options above for renewal and revocation as well. The
+short form keeps the lifecycle example readable. See
+<a href="../client-bootstrap-contract/">SSH Client Bootstrap Contracts</a> for schemas,
+file modes, failure rules, and legacy migration.</p>
+<h3 id="tailscale-mesh-provider-tailscale">Tailscale mesh (<code>provider: tailscale</code>)<a class="headerlink" href="#tailscale-mesh-provider-tailscale" title="Permanent link">&para;</a></h3>
+<p>Hub and spokes join the same Tailscale network. The hub is reachable at its
+Tailscale IP or MagicDNS name without any SSH tunnel:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># ~/.mac/fleets.yaml</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nt">defaults</span><span class="p">:</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tailscale</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="nt">tailscale</span><span class="p">:</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">      </span><span class="nt">auth_key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MAC_DEPLOY_TAILSCALE_AUTH_KEY</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="gp"># </span>Hub<span class="w"> </span>is<span class="w"> </span>reachable<span class="w"> </span>at<span class="w"> </span>its<span class="w"> </span>Tailscale<span class="w"> </span>IP,<span class="w"> </span>e.g.<span class="w"> </span><span class="m">100</span>.x.x.x:8789
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="go">curl http://100.x.x.x:8789/health</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="go">make deploy HUB=&lt;hub-node&gt;</span>
+</code></pre></div>
+<p><code>MAC_DEPLOY_TAILSCALE_AUTH_KEY</code> must be set in <code>~/.mac/.env</code> before deploy.</p>
+<h3 id="headscale-self-hosted-control-plane-provider-headscale">Headscale (self-hosted control plane, <code>provider: headscale</code>)<a class="headerlink" href="#headscale-self-hosted-control-plane-provider-headscale" title="Permanent link">&para;</a></h3>
+<p>Headscale manages the WireGuard mesh. The fleet registry must declare the login
+server, DNS assumption, health URL, and pre-auth key source:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># ~/.mac/fleets.yaml</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="nt">defaults</span><span class="p">:</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">headscale</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">    </span><span class="nt">headscale</span><span class="p">:</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">      </span><span class="nt">manage</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">          </span><span class="c1"># true if mac should install/manage the headscale binary on the hub</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="w">      </span><span class="nt">login_server</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://headscale.example.com</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="w">      </span><span class="nt">health_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://headscale.example.com/health</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="w">      </span><span class="nt">preauth_key_source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">env</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="w">      </span><span class="nt">preauth_key_env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MAC_DEPLOY_HEADSCALE_PREAUTHKEY</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="w">      </span><span class="nt">dns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">magicdns</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="w">      </span><span class="nt">ip_prefix</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;100.64.0.0/10&quot;</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="gp"># </span>Hub<span class="w"> </span>reachable<span class="w"> </span>at<span class="w"> </span>its<span class="w"> </span>headscale-assigned<span class="w"> </span>IP<span class="w"> </span>or<span class="w"> </span>MagicDNS<span class="w"> </span>name
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="go">curl http://hub.headscale.example.com:8789/health</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="go">make deploy HUB=&lt;hub-node&gt;</span>
+</code></pre></div>
+<p><code>MAC_DEPLOY_HEADSCALE_PREAUTHKEY</code> must be set in <code>~/.mac/.env</code>. With
+<code>headscale.manage: true</code> the deploy script installs and configures the
+headscale server on the hub node itself.</p>
+<h2 id="one-time-acc-replacement-deploy">One-Time ACC Replacement Deploy<a class="headerlink" href="#one-time-acc-replacement-deploy" title="Permanent link">&para;</a></h2>
+<p>For a configured fleet, use the Make deploy target:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="go">make deploy HUB=&lt;hub-node&gt;</span>
+</code></pre></div>
+<p>Fleet deploy reads <code>~/.mac/fleets.yaml</code> by default. Override
+<code>MAC_DEPLOY_FLEETS_CONFIG</code> when a different registry path is required. The hub
+node name selects the fleet. Host-local secret env files still own tokens and
+provider credentials.</p>
+<p>Fleet mesh networking is configured under <code>defaults.network</code> or per-agent
+<code>network</code> overrides in <code>~/.mac/fleets.yaml</code>. <code>provider: tailscale</code> is the
+default and uses <code>MAC_DEPLOY_TAILSCALE_AUTH_KEY</code> from <code>~/.mac/.env</code> when
+automatic join is desired. <code>provider: headscale</code> is an explicit advanced mode:
+the fleet registry must declare <code>headscale.login_server</code>,
+<code>headscale.health_url</code>, <code>headscale.preauth_key_source</code>,
+<code>headscale.preauth_key_env</code>, and the DNS assumption. Managed-hub Headscale is
+available with <code>headscale.manage: true</code>, but it should be treated as a shared
+service with backup, monitoring, and recovery expectations rather than an
+implicit default.</p>
+<p>Fleet deploy is supervisor-driven, not Linux-systemd-only. Set
+<code>MAC_DEPLOY_SUPERVISOR=auto</code> unless a host needs an explicit override. Auto
+selects <code>launchd</code> on macOS, <code>systemd</code> on systemd Linux, and <code>supervisord</code> when
+that is the available process supervisor. The selected value is written to
+<code>MAC_SUPERVISOR_KIND</code> and recorded in deploy manifests.</p>
+<p>Fleet deploy mirrors each configured per-agent model into <code>ACC_HERMES_GATEWAY_MODEL</code>,
+<code>HERMES_INFERENCE_MODEL</code>, and <code>ACC_LLM_MODEL</code> so upstream Hermes gateway turns
+and <code>mac-hermes-task-executor</code> oneshot work use the same per-agent identity.
+Upstream provider credentials remain centralized on the hub, resolved by the
+in-mac router from MAC's encrypted vault or inherited host-local environment;
+spokes receive only their hub-facing MAC token.
+Git-host credentials are a separate execution concern. Fleet deploy resolves
+<code>MAC_DEPLOY_GH_TOKEN</code>, <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, then the operator's existing
+<code>gh</code> keychain login, and writes the result to each managed runtime as
+<code>GH_TOKEN</code>. Only the source name is logged; the value travels over SSH stdin,
+not in the remote command. Pure <code>gateway_impl: none</code> workers require successful
+GitHub validation by default before drain or source replacement. The variable
+is also included in OpenShell's private mode-<code>0600</code> environment bundle so
+confined tasks can clone and publish without copied host SSH keys. Do not put
+the value in <code>~/.mac/fleets.yaml</code>, a fleet spec, task metadata, or source
+control. A vault record by itself does not populate a worker environment;
+deploy or the Kubernetes runner Secret must inject the corresponding
+environment key.</p>
+<p>It ships this repository to each host, installs <code>mac</code> into <code>~/.mac/venv</code>,
+redeploys upstream <code>NousResearch/hermes-agent</code> into <code>~/.mac/hermes-agent</code>,
+applies the minimal multi-Slack Hermes patch, preinstalls configured Hermes
+messaging dependencies before service start, applies the Hermes gateway
+model/runtime shim, runs the ACC SQLite migration
+dry-run and import from <code>~/.acc/data/fleet.db</code> or <code>~/.acc/data/acc.db</code>, and
+starts a local <code>mac</code> service. Linux hosts get <code>mac.service</code>; macOS hosts get
+<code>com.mac.control-plane</code>. The same deployment also starts a mac-managed Hermes
+gateway from the upstream checkout: <code>mac-hermes-gateway.service</code> on Linux and
+<code>com.mac.hermes-gateway</code> on macOS. It also installs a persistent <code>mac-agent</code>
+registration service: <code>mac-agent.service</code> on Linux and <code>com.mac.agent</code> on
+macOS.</p>
+<p>When the local Git remote is available, fleet deploy installs <code>~/.mac/src/mac</code>
+as a branch-tracking Git worktree and sets <code>MAC_SELF_UPDATE_REPO</code> to that path.
+That lets the AgentBus repo-update control message pull future changes and
+restart the listening <code>mac-agent</code> process without another manual deploy pass.</p>
+<p>The fleet topology is hub-and-spoke, matching ACC. The configured hub exposes
+the shared control plane URL from <code>hub_url</code>; spokes keep a host-local control
+plane for local state and Hermes startup checks, but their <code>mac-agent</code> service
+registers and heartbeats against the configured hub. By default the hub binds
+<code>0.0.0.0</code> and spokes bind <code>127.0.0.1</code>.
+Runtime lazy dependency installs are disabled after the preinstall step, and
+<code>HERMES_REDACT_SECRETS=false</code> in inherited Hermes env files is corrected to
+<code>true</code> because disabled redaction is treated as state drift.</p>
+<p>The hub also owns the shared-services layer. Fleet deploy installs Qdrant on
+the shared-services manager agent by default and configures every agent with
+the same <code>QDRANT_URL</code> / <code>QDRANT_FLEET_URL</code>. Each agent receives a
+Hermes-visible <code>~/.hermes/mac-memory-topology.json</code> plus <code>.env</code> pointers that
+describe local Hermes soul/conversation state, mac operational provenance, and
+hub-managed shared level-2 memory. <code>/startup/hermes</code> reports
+<code>qdrant_level2</code> readiness using redacted endpoints only.</p>
+<p>Deployment logs and migration reports are written under <code>~/.mac/logs/</code> on each
+host:</p>
+<ul>
+<li><code>deploy-*.log</code></li>
+<li><code>deploy-manifest-*-pre.json</code>, <code>deploy-manifest-*-post.json</code>, and
+  <code>deploy-manifest-latest.json</code></li>
+<li><code>rollback-*.sh</code> and <code>rollback-latest.sh</code></li>
+<li><code>acc-migration-dry-run.json</code></li>
+<li><code>acc-migration-import.json</code></li>
+<li><code>acc-migration-status.json</code></li>
+<li><code>startup-hermes.json</code></li>
+<li><code>hermes-messaging-deps.json</code></li>
+<li><code>hermes-home-channel-sync.json</code></li>
+<li><code>hermes-redaction-normalization.json</code></li>
+<li><code>hermes-log-summary.json</code></li>
+<li><code>mac-service-journal.txt</code> on Linux, or <code>mac-service.log</code> on macOS</li>
+<li><code>hermes-gateway-journal.txt</code> on Linux, or <code>hermes-gateway.log</code> on macOS</li>
+<li><code>mac-agent-journal.txt</code> on Linux, or <code>mac-agent.log</code> on macOS</li>
+<li><code>hub-agents.json</code></li>
+</ul>
+<p>The activation shim for <code>slack_accounts.json</code> is intentionally applied by
+<code>mac</code> startup, not by the deploy script, so this path exercises the startup
+patch capability.</p>
+<p>To roll back the most recent deployment on a host:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="go">~/.mac/logs/rollback-latest.sh</span>
+</code></pre></div>
+<p>The rollback script restores the prior mac source tree, mac venv, Hermes
+checkout, and service definitions or launchd plists that existed before the
+deploy pass, then restarts the mac-managed services.</p>
+<h2 id="worker-agents">Worker Agents<a class="headerlink" href="#worker-agents" title="Permanent link">&para;</a></h2>
+<p>The control-plane service does not execute tasks by itself. Each execution host
+must run a worker process that registers or refreshes its machine/agent row,
+heartbeats, then claims eligible open work with a real executor. Fleet deploy
+installs that process as a service in <code>heartbeat</code> mode by default so hosts are
+visible in the configured hub registry without claiming imported ACC work
+prematurely:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="go">mac-agent --url http://hub.example.internal:8789 --register \</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="go">  --agent-name worker-1 --hostname worker-1.local \</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="go">  --capabilities python,ops,review --resources &#39;{&quot;capacity&quot;:2}&#39; \</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="go">  --heartbeat-only</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="go">mac-agent --url http://hub.example.internal:8789 --register \</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="go">  --agent-name worker-1 --capabilities python,ops,review \</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="go">  --workspace ~/.mac-agent/workspaces --loop \</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="go">  --executor ~/.mac/bin/mac-hermes-task-executor</span>
+</code></pre></div>
+<p>Use <code>--heartbeat-only</code> during deploy validation when you want fleet visibility
+without claiming migrated ACC work. Start the <code>--loop</code> form only after the
+executor command is the intended production worker. Successful executions write
+log evidence, move tasks to <code>needs_review</code>, and ask the control plane to run
+the default review workflow. The default workflow prefers a healthy reviewer
+that has never owned the task. If no independent reviewer is currently
+eligible, it may assign the least-conflicted healthy review-capable agent and
+records <code>reviewer_independence=fallback</code> plus the reason in task history and
+observability. A newly available independent reviewer supersedes a pending
+fallback review. Set task metadata <code>review.require_independent_reviewer: true</code>
+(or <code>review.allow_independence_fallback: false</code>) for work that must wait instead.
+Every path still requires a separate signed <code>review_verdict</code>; agent-generated
+work still requires a reviewer LLM different from the executor LLM. The
+workflow publishes/completes the task only when executor evidence and reviewer
+verdict are verifiable.
+Failed executions fail the task with evidence attached.</p>
+<p>For high-risk work, set <code>metadata.review.risk_level</code> to <code>high</code> or <code>critical</code>.
+Approval then fails closed unless the signed executor and verdict manifests
+identify different model families and different upstream providers; merely
+using two versions of Claude, GPT, or another single lineage is insufficient.
+Unknown lineage/provider metadata also blocks approval, and reviewer
+independence fallback is disabled. The same constraints can be enabled
+individually with <code>review.require_different_model_family: true</code> and
+<code>review.require_different_model_provider: true</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="p">{</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span><span class="nt">&quot;review&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">    </span><span class="nt">&quot;risk_level&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;high&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">    </span><span class="nt">&quot;require_independent_reviewer&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="repository-credential-learning-and-reviewer-routing">Repository credential learning and reviewer routing<a class="headerlink" href="#repository-credential-learning-and-reviewer-routing" title="Permanent link">&para;</a></h3>
+<p>Every completed remote review preparation writes an authoritative
+<code>fleet_learning:repository_access</code> memory record. The JSON content uses schema
+<code>mac.fleet_learning.v1</code> and records only routing-safe facts: project,
+repository host, operation, agent, credential source name, outcome, failure
+class, bounded redacted error signature, recommendation, and task/review IDs.
+It never stores a credential value or authenticated URL.</p>
+<p>For the task's repository host, reviewer selection prefers agents with a
+recent successful <code>review_clone</code>, then agents with no recent matching record.
+An agent whose newest matching record is an authentication or authorization
+failure is ineligible during the configured cooldown. A newer success restores
+eligibility immediately; cooldown expiry returns the agent to unknown status.
+This lookup reads SQLite directly, so routing changes immediately and does not
+wait for Qdrant vector backfill.</p>
+<p>Review Jobs receive optional Git-host keys from the runner's configured Secret
+(default <code>mac-api-config</code>): <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, <code>GITEA_TOKEN</code>, and
+<code>GITEA_USER</code>. Missing keys are allowed for public repositories. Review Jobs do
+not receive <code>MAC_SECRET_KEY</code>. Host-mode workers also recognize
+<code>MAC_TASK_GIT_TOKEN</code> as a fallback. The worker injects an HTTPS token only into
+the Git command and restores the checkout's <code>origin</code> to the clean remote URL.</p>
+<p>The pushed-ref evidence check uses the same environment-backed resolver. An
+authentication, authorization, or network failure on the control-plane host is
+indeterminate: it does not prove that the pushed ref is absent. A successful
+lookup with no matching ref still rejects phantom-push evidence, and the
+review verdict must still verify the executor's work.</p>
+<p>Inspect the routing inputs and resulting review state:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="go">mac --json memory search \</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="go">  --order desc --limit 50</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="go">mac --json memory search \</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="go">  --subject-type agent --subject-id agent_... \</span>
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="go">  --order desc --limit 20</span>
+<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>
+<a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a><span class="go">mac --json task show task_...</span>
+</code></pre></div>
+<p>Do not hand-edit or invent success records to force routing. Repair the agent's
+credential, run a real repository operation, and let the resulting success
+supersede the failure. Multiple success records can exist when a review is
+retried; only the newest matching record controls eligibility.</p>
+<p>Every mac-managed subprocess records a short-retention command audit event on
+the hub. The log captures <code>command_id</code>, agent, task, sanitized <code>argv</code>, <code>cwd</code>,
+start/end timestamps, return code, output byte counts, and output hashes. The
+default retention is 24 hours (<code>MAC_COMMAND_AUDIT_RETENTION_SECONDS</code>), and the
+latest rows are visible from <code>/command-audit</code> and the dashboard Observability
+view. This is operational telemetry for proving agents are doing work; a future
+security audit store can consume the same event shape externally.</p>
+<p>The command audit is not a durable compliance archive. Its current job is to
+make the last day of worker behavior visible without relying on local shell
+history or unbounded per-host logs.</p>
+<p>Executor success is not completion. A zero return code only means the executor
+reported without crashing. For the default workflow to auto-approve and publish,
+the evidence metadata must include a <code>mac.worker_evidence.v1</code> verification
+manifest. Repo/code work must include a pushed git artifact (<code>head_sha</code>,
+<code>remote_ref</code> or PR URL, <code>pushed=true</code>, <code>dirty=false</code>, changed files) plus at
+least one passing test/check. Documentation or investigation work must include a
+pushed repo artifact or explicit artifacts plus passing checks. Deployment work
+must include deployment targets/services and passing checks. Thin reports,
+local-only diffs, missing manifests, failing checks, or unverifiable claims stay
+in <code>needs_review</code>/<code>reviewing</code> for manual handling.</p>
+<p>During execution, the worker renews its active task lease. A successful renewal
+also refreshes the owning agent's <code>last_seen_at</code>, keeps it <code>busy</code>, and preserves
+<code>current_task_id</code>, so long-running work remains visible as live without allowing
+an invalid <code>idle</code> heartbeat while the lease is active.</p>
+<p>For already-migrated or pre-upgrade rows that are stuck in <code>needs_review</code>, run
+the backlog tick against the hub:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="go">curl -X POST &#39;http://hub.example.internal:8789/reviews/default/tick?limit=100&amp;actor=operator&#39;</span>
+</code></pre></div>
+<p>Before enabling executor-backed claiming, use <code>dry-run</code> mode to record routing
+candidates without creating leases:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="go">MAC_DEPLOY_WORKER_MODE=dry-run</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="go">MAC_DEPLOY_WORKER_REQUIRE_CANARY=1</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="go">MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=mac-canary</span>
+</code></pre></div>
+<p>Dry-run mode emits <code>worker.routing.policy</code>,
+<code>worker.routing.dry_run_candidate</code>, or <code>worker.routing.no_candidate</code> events
+into <code>/observability</code> and <code>/observability/stream</code>. It must show only synthetic
+canary work before loop mode is enabled.</p>
+<p>To enable executor-backed claiming from deploy config, set:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="go">MAC_DEPLOY_WORKER_MODE=loop</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="go">MAC_DEPLOY_WORKER_CAPABILITIES=ops,python,hermes,review</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="go">MAC_DEPLOY_WORKER_REQUIRE_CANARY=1</span>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="go">MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=mac-canary</span>
+</code></pre></div>
+<p>The generated service then runs <code>mac-agent --register --loop</code> against
+<code>MAC_HUB_URL</code>, using <code>MAC_WORKER_TOKEN</code> from <code>~/.mac/mac.env</code>. The default
+executor wrapper is <code>~/.mac/bin/mac-hermes-task-executor</code>, which calls the
+deployed upstream Hermes checkout in one-shot mode. The runtime proof treats
+that executable as a required session capability, so a deployed agent is not
+considered ready for Codex-like task work unless the executor path is present
+and executable.</p>
+<p>Fleet deploy deliberately avoids printing the mac-agent process command line.
+On Linux it reports <code>mac-agent.service</code> with <code>systemctl show</code> summary fields
+instead of <code>systemctl status</code>, because the service wrapper currently passes the
+worker token to <code>mac-agent</code> as process argv. Deployment logs should therefore
+show service state, PID, and restart count, but not the bearer token. Operators
+should continue to treat host-level process inspection as privileged access.</p>
+<p>Workers advertise <code>review</code> by default so the default review workflow can pick
+real second-eye reviewers. During registration the worker persists its
+attestation key into <code>~/.mac/mac.env</code>; if an older deploy missed that one-time
+key, the service rotates a replacement before it signs new evidence. Rotation
+is explicit recovery behavior and invalidates old signatures from that agent.</p>
+<p>Loop mode is canary-gated by default. To make a worker eligible for real
+migrated work, explicitly set <code>MAC_DEPLOY_WORKER_REQUIRE_CANARY=0</code> and narrow
+the blast radius with project or metadata filters first.</p>
+<h2 id="legacy-beads-migration-and-repository-registry">Legacy Beads Migration And Repository Registry<a class="headerlink" href="#legacy-beads-migration-and-repository-registry" title="Permanent link">&para;</a></h2>
+<p>The live production issue authority is the MAC task ledger. Beads/Dolt
+round-trip sync is not part of the normal deployment path, and operators should
+not run <code>bd</code> for current MAC task lifecycle. Legacy Beads state is handled as a
+one-time import path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="go">mac task detect-beads &lt;repo&gt;</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="go">mac task migrate-beads &lt;repo&gt; --project &lt;project&gt;</span>
+</code></pre></div>
+<p>Use <code>--tickets-only</code> only when creating local compatibility files during a
+migration audit. <code>.tickets/&lt;id&gt;.md</code> is ignored local operational state; it is
+not checked into this repository and is not a cross-host ledger.</p>
+<p>Repository-backed execution uses the project repository registry instead of a
+legacy bridge poller. Register or onboard repositories through the current
+project/repository commands:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="go">mac project onboard &lt;repo-url&gt;                         # creates contract-authoring task</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="go">mac bridge repository register &lt;name&gt; &lt;path&gt; --project &lt;project&gt;  # after .mac/project.yaml exists</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="go">mac bridge repository repos</span>
+</code></pre></div>
+<p>Every registered repository must include a repository runtime contract at
+<code>.mac/project.yaml</code>. Registration and task creation use that contract to attach
+the bootstrap command, canonical test command, supported host families,
+canonical remote URL, and required evidence to new tasks. See
+<a href="../repository-runtime-contract/">Repository Runtime Contract</a>.
+If CodeGraph is available on the registering host, repository registration also
+runs <code>codegraph init</code> after excluding <code>.codegraph/</code> through the checkout-local
+<code>.git/info/exclude</code>.</p>
+<p>The hub's repository-ref reconciler uses this registry as its complete workset.
+The hub therefore needs filesystem and GitHub access to each enabled checkout;
+automatic <code>prune</code> additionally requires the contract's <code>canonical_remote_url</code>.
+Monitor it with <code>mac repo refs status</code> and trigger a one-shot audit with
+<code>mac repo refs reconcile --mode audit</code>. See
+<a href="../repository-ref-hygiene/">Managed Repository Ref Hygiene</a>.</p>
+<p>The hub advances the default review/publication workflow from heartbeat when
+<code>MAC_REVIEW_TICK_ON_HEARTBEAT=1</code> and <code>MAC_REVIEW_TICK_HUB_AGENT</code> is set to the
+configured hub agent. The tick only moves tasks when required evidence,
+reviewer verdicts, and publication targets are present; otherwise it records
+explicit waiting reasons in observability.</p>
+<h2 id="agentbus">AgentBus<a class="headerlink" href="#agentbus" title="Permanent link">&para;</a></h2>
+<p><code>/messages</code> remains the constrained structured control bus and still rejects
+execution-shaped payloads. Agent-to-agent content exchange uses <code>/agentbus</code>
+instead:</p>
+<ul>
+<li><code>POST /agentbus/streams</code> opens a typed stream with <code>content_type</code>, <code>topic</code>,
+  optional task linkage, and optional recipient.</li>
+<li><code>POST /agentbus/streams/{id}/chunks</code> appends ordered JSON, text, or base64
+  chunks. <code>final=true</code> closes the stream atomically after the chunk.</li>
+<li><code>GET /agentbus/streams/{id}/chunks</code> reads durable chunks after a sequence.</li>
+<li><code>GET /agentbus/streams/{id}/events</code> tails chunks as NDJSON for streaming
+  consumers.</li>
+</ul>
+<p>This is a typed transport channel, not an execution channel. Agents must still
+turn received content into explicit task/evidence/review actions through the
+normal API.</p>
+<p>mac-agent also listens for one constrained AgentBus control topic before it
+claims tasks:</p>
+<ul>
+<li>Topic: <code>mac.repo.update.v1</code></li>
+<li>Content type: <code>application/vnd.mac.repo-update+json</code></li>
+<li>Payload schema: <code>mac.agentbus.repo_update.v1</code></li>
+</ul>
+<p>The listener runs <code>git pull --ff-only</code> in <code>MAC_SELF_UPDATE_REPO</code> and exits for
+service-manager restart only when the worktree HEAD changes. Dirty worktrees,
+non-git source trees, invalid remotes/branches, and pull failures are reported
+as result streams instead of being forced. Result streams use topic
+<code>mac.repo.update.result.v1</code> and content type
+<code>application/vnd.mac.repo-update-result+json</code>.</p>
+<p>To broadcast a source update from the hub:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="go">mac --db ~/.mac/mac.db agentbus repo-update agent_&lt;hub&gt; --all-agents</span>
+</code></pre></div>
+<h2 id="roles-workflows-and-provisioning">Roles, Workflows, and Provisioning<a class="headerlink" href="#roles-workflows-and-provisioning" title="Permanent link">&para;</a></h2>
+<p>Production mac includes an API-level organization model for coordinated work:</p>
+<ul>
+<li><code>/roles</code> stores the role catalog used to describe agent jobs, prompts,
+  required/default capabilities, optional hardware requirements, and tenant
+  scope. <code>/roles/seed</code> loads the built-in Loom-style role set.</li>
+<li><code>/agents/{id}/role</code> assigns a role to a registered agent. If the agent is
+  bound to a Hermes persona, role assignment respects that persona's allowlist.</li>
+<li><code>/provisioning/requests</code> records missing capacity requests when the fleet has
+  no suitable agent for a role/capability requirement.</li>
+<li><code>/workflows</code> stores versioned DAG definitions. <code>/workflows/import-yaml</code> and
+  <code>/workflows/seed</code> provide operator-friendly loading paths.</li>
+<li><code>/workflows/{id}/start</code>, <code>/workflows/runs</code>, and <code>/workflows/runs/tick</code> run
+  and sweep workflows. Each node creates a normal mac task, so dispatch,
+  evidence, review, publication, command audit, and Beads ledger behavior stay
+  the same as single-task work.</li>
+</ul>
+<p><code>/dashboard/state</code> includes workflow-run summary data for UI clients. Full
+visual workflow authoring is still an operator-facing gap in the checked-in
+dashboard; use the API/CLI for workflow creation and editing until that UI is
+built.</p>
+<h2 id="docker-engine-moby">Docker Engine / Moby<a class="headerlink" href="#docker-engine-moby" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="go">docker build -t mac:latest .</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="go">docker run -d --name mac \</span>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="go">    -e MAC_SECRET_KEY=&quot;$(openssl rand -base64 48)&quot; \</span>
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="go">    -e MAC_API_TOKEN=&quot;$(openssl rand -hex 32)&quot; \</span>
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="go">    -v mac-data:/var/lib/mac \</span>
+<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="go">    -p 127.0.0.1:8000:8000 \</span>
+<a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a><span class="go">    --restart unless-stopped \</span>
+<a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a><span class="go">    mac:latest</span>
+<a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a>
+<a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a><span class="gp"># </span>Healthcheck<span class="w"> </span>is<span class="w"> </span>built<span class="w"> </span>into<span class="w"> </span>the<span class="w"> </span>image<span class="p">;</span><span class="w"> </span><span class="sb">`</span>docker<span class="w"> </span>ps<span class="sb">`</span><span class="w"> </span>shows<span class="w"> </span><span class="o">(</span>healthy<span class="o">)</span><span class="w"> </span>once<span class="w"> </span>up.
+<a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a><span class="go">curl -fsS http://127.0.0.1:8000/health</span>
+</code></pre></div>
+<p>For Kubernetes, ship the same image as a single-replica <code>Deployment</code> with a
+PVC mounted at <code>/var/lib/mac</code>. Use a <code>ConfigMap</code> for non-secret env and a
+<code>Secret</code> for <code>MAC_SECRET_KEY</code> / <code>MAC_API_TOKEN</code>.</p>
+<h2 id="backups">Backups<a class="headerlink" href="#backups" title="Permanent link">&para;</a></h2>
+<p><code>mac.db</code> is a SQLite WAL database. Snapshot with SQLite's online backup:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="go">sqlite3 /var/lib/mac/mac.db &quot;.backup &#39;/backups/mac-$(date +%Y%m%dT%H%M%SZ).db&#39;&quot;</span>
+</code></pre></div>
+<p>WAL means a plain <code>cp</code> is unsafe (you'll miss the WAL file or copy
+inconsistent state). The <code>.backup</code> command coordinates with the running
+process. Restore is a file copy while the service is stopped.</p>
+<h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>GET /health</code> is the liveness/readiness signal. Returns <code>{"status":"ok"}</code>.</li>
+<li><code>GET /startup/hermes</code> returns the redacted Hermes startup report: file
+  existence/size/mtime metadata, warning strings, and Slack activation status.</li>
+<li><code>GET /events</code> is the unified audit stream — point a log shipper (vector,
+  promtail, fluent-bit) at it with <code>since=</code> advancing every poll, or scrape
+  the SQLite tables directly.</li>
+<li><code>mac --db /var/lib/mac/mac.db events list --since &lt;iso&gt;</code> is the operator's
+  one-shot "what just happened" query.</li>
+<li><code>POST /observability/metrics</code> and <code>POST /observability/logs</code> ingest
+  layer/source/name/level observations from workers, Hermes adapters, deploy
+  scripts, and external monitors. POST requires <code>agent</code> scope when API tokens
+  are enabled.</li>
+<li><code>GET /observability</code> lists persisted observations; <code>GET
+  /observability/summary</code> returns dashboard aggregates and latest metric
+  snapshots; <code>GET /observability/stream</code> tails observations as NDJSON for live
+  dashboards or collectors.</li>
+<li><code>GET /notifications</code> lists the durable operator notification outbox for task
+  lifecycle, review, publication, and bridge-stale events. <code>POST
+  /notifications/{id}/delivered</code> marks entries delivered, failed, or skipped.</li>
+</ul>
+<p>The FastAPI middleware records per-request <code>http.request.duration_ms</code> metrics
+and <code>http.request</code> logs. Control-plane task, agent, project, fleet, secret,
+environment, rollout, and eval events are mirrored into the observability
+stream with their original subject ids. The dashboard Observability tab uses
+URL-addressable filters, the summary endpoint, and an NDJSON subscription to
+visualize the live stream, unified events, command audit, and the operator
+notification outbox.</p>
+<h2 id="upgrade-procedure">Upgrade procedure<a class="headerlink" href="#upgrade-procedure" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Stop the service.</li>
+<li>Snapshot <code>mac.db</code> (the <code>.backup</code> command above).</li>
+<li>Install the new wheel / pull the new image.</li>
+<li>Start the service. The schema migrator (<code>store._migrate</code>) is additive only
+   — new columns get <code>_ensure_column</code>'d; old data survives.</li>
+<li>Verify <code>GET /health</code> and a recent <code>GET /events</code> query.</li>
+</ol>
+<p>If a migration fails, restore the snapshot and pin the prior version. The
+project does not yet support downgrades through schema deletes.</p>
+<h2 id="kubernetes-k8s-native-topology">Kubernetes (K8s-native topology)<a class="headerlink" href="#kubernetes-k8s-native-topology" title="Permanent link">&para;</a></h2>
+<p>For multi-replica <code>mac-api</code>, deploy the manifests under <code>deploy/k8s/</code>.
+The Postgres cluster itself is <strong>not</strong> managed from this repo — bring
+your own (CloudNativePG, RDS, Cloud SQL, vendor-managed, etc.) and
+supply the DSN via the <code>mac-api-config</code> Secret. Likewise, ArgoCD
+<code>Application</code> manifests are not shipped here; point one Application
+per kustomize tree from your platform-config repo if you sync with ArgoCD.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="gp"># </span><span class="m">1</span>.<span class="w"> </span>Create<span class="w"> </span>the<span class="w"> </span>namespace<span class="w"> </span>+<span class="w"> </span>operator-supplied<span class="w"> </span>Secret<span class="w"> </span>carrying<span class="w"> </span>the<span class="w"> </span>DSN
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a><span class="gp">#    </span>and<span class="w"> </span>bearer<span class="w"> </span>tokens<span class="w"> </span><span class="o">(</span>or<span class="w"> </span>apply<span class="w"> </span>your<span class="w"> </span>ExternalSecret<span class="o">)</span>.
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a><span class="go">kubectl create namespace mac</span>
+<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="go">kubectl -n mac create secret generic mac-api-config \</span>
+<a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a><span class="go">  --from-literal=MAC_DATABASE_URL=&#39;postgresql://user:pass@host:5432/mac&#39; \</span>
+<a id="__codelineno-33-6" name="__codelineno-33-6" href="#__codelineno-33-6"></a><span class="go">  --from-literal=MAC_SECRET_KEY=&quot;$(openssl rand -base64 48)&quot; \</span>
+<a id="__codelineno-33-7" name="__codelineno-33-7" href="#__codelineno-33-7"></a><span class="go">  --from-literal=MAC_WORKER_TOKEN=&quot;$(openssl rand -hex 32)&quot;</span>
+<a id="__codelineno-33-8" name="__codelineno-33-8" href="#__codelineno-33-8"></a>
+<a id="__codelineno-33-9" name="__codelineno-33-9" href="#__codelineno-33-9"></a><span class="gp"># </span><span class="m">2</span>.<span class="w"> </span>mac-api<span class="w"> </span>Deployment<span class="w"> </span>+<span class="w"> </span>Service<span class="w"> </span><span class="o">(</span>replicas:<span class="w"> </span><span class="m">2</span>,<span class="w"> </span>no<span class="w"> </span>PVC<span class="o">)</span>.
+<a id="__codelineno-33-10" name="__codelineno-33-10" href="#__codelineno-33-10"></a><span class="go">kubectl apply -k deploy/k8s/mac-api</span>
+<a id="__codelineno-33-11" name="__codelineno-33-11" href="#__codelineno-33-11"></a>
+<a id="__codelineno-33-12" name="__codelineno-33-12" href="#__codelineno-33-12"></a><span class="gp"># </span><span class="m">3</span>.<span class="w"> </span>mac-k8s-orchestrator<span class="w"> </span>—<span class="w"> </span>claims<span class="w"> </span>ready<span class="w"> </span>tasks,<span class="w"> </span>creates<span class="w"> </span>one<span class="w"> </span>batch/v1
+<a id="__codelineno-33-13" name="__codelineno-33-13" href="#__codelineno-33-13"></a><span class="gp">#    </span>Job<span class="w"> </span>per<span class="w"> </span>claim,<span class="w"> </span>and<span class="w"> </span>reconciles<span class="w"> </span>stuck<span class="w"> </span>Jobs<span class="w"> </span>against<span class="w"> </span>mac-api<span class="w"> </span>lease<span class="w"> </span>state.
+<a id="__codelineno-33-14" name="__codelineno-33-14" href="#__codelineno-33-14"></a><span class="go">kubectl apply -k deploy/k8s/mac-runner</span>
+</code></pre></div>
+<p>The full apply order and ExternalSecret wiring are documented in
+<a href="https://github.com/jordanhubbard/mac/blob/main/deploy/k8s/README.md"><code>deploy/k8s/README.md</code></a>. The persistence layer
+is portable across SQLite and Postgres because every <code>mac-api</code> SQL
+string is in SQLite dialect; the <code>PostgresStore</code> translates placeholders
+and provides a <code>json_extract</code> SQL function shim so the ~50 service
+modules need no per-backend branching. See
+<a href="../archive/field-notes/k8s-native-rewrite-plan/"><code>docs/k8s-native-rewrite-plan.md</code></a> for the
+Phase 3-5 roadmap.</p>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<h3 id="deploy-aborts-qdrant-did-not-become-ready-at-6333-high-core-nodes">Deploy aborts: "Qdrant did not become ready at :6333" (high-core nodes)<a class="headerlink" href="#deploy-aborts-qdrant-did-not-become-ready-at-6333-high-core-nodes" title="Permanent link">&para;</a></h3>
+<p>On a node where the container's CPU cgroup quota is small but the host exposes
+many cores (a common Kubernetes shape — e.g. a 4-CPU pod on a 192-core node),
+Qdrant sizes its actix/tokio thread pools from <code>/proc/cpuinfo</code> (the <strong>full</strong> node
+core count, not the cgroup quota) and tries to spawn far more threads than the
+container's PID cap allows. Thread creation then fails with <code>EAGAIN</code> and Qdrant
+panics at startup:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>ERROR qdrant::startup: Panic ... Cannot spawn Arbiter&#39;s thread:
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>  &quot;actix-rt|system:0|arbiter:NNN&quot;: Os { code: 11, kind: WouldBlock,
+<a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>  message: &quot;Resource temporarily unavailable&quot; }
+</code></pre></div>
+<p><code>mac-qdrant-run</code> (or the systemd unit) exits immediately, supervisord/systemd
+marks the program FATAL, and the deploy aborts because Qdrant is mandatory on
+the hub. The fix ships by default: the container PID cap is now
+<strong><code>QDRANT_PIDS_LIMIT</code> (default 4096)</strong> instead of a hardcoded 512. If an even
+larger node still hits this, raise it in the fleet env, e.g. <code>QDRANT_PIDS_LIMIT=8192</code>,
+and redeploy. Quick check on the affected host: <code>--pids-limit=512</code> → panic /
+<code>curl :6333/collections</code> returns 000; raised limit → <code>200</code>.</p>
+<h3 id="supervisord-pods-supervisorctl-permission-errors">supervisord pods: <code>supervisorctl</code> permission errors<a class="headerlink" href="#supervisord-pods-supervisorctl-permission-errors" title="Permanent link">&para;</a></h3>
+<p>On pods where <code>supervisord</code> runs as root (PID 1) with a root-only control socket
+(<code>srwx------</code>), <code>supervisorctl</code> as the deploy user gets
+<code>PermissionError ... xmlrpc.py</code>. The deploy already prefers <code>sudo supervisorctl</code>
+(<code>run_supervisorctl</code>); ensure the deploy user has passwordless sudo. A bare
+<code>supervisorctl ...</code> in a manual session needs <code>sudo</code>.</p>
+<h3 id="private-repository-review-is-retracted-or-remains-in-reviewing">Private repository review is retracted or remains in <code>reviewing</code><a class="headerlink" href="#private-repository-review-is-retracted-or-remains-in-reviewing" title="Permanent link">&para;</a></h3>
+<p>Start with the task and shared learning records:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="go">mac --json task show task_...</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="go">mac --json memory search \</span>
+<a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
+<a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a><span class="go">  --order desc --limit 50</span>
+</code></pre></div>
+<p>Interpret the review reason before retrying:</p>
+<ul>
+<li><code>reviewer_unavailable:reviewer_repository_access_authentication:&lt;host&gt;</code> means
+  MAC learned that the selected reviewer could not authenticate, retracted it,
+  and will prefer a recent successful peer. Repair that agent's host-specific
+  token before expecting it to be selected during the cooldown.</li>
+<li><code>reviewer_unavailable:reviewer_repository_access_authorization:&lt;host&gt;</code> means
+  the credential was recognized but lacks access to the repository or
+  organization. For GitHub organizations using SSO, authorize the token for the
+  organization rather than rotating it blindly.</li>
+<li><code>reviewer_unable_to_produce_verdict_after_&lt;N&gt;_attempts</code> means repository
+  access may have succeeded but the reviewer executor did not emit a valid
+  signed verdict. Inspect the review evidence and reviewer workspace; changing
+  Git credentials is not the appropriate repair unless the memory record also
+  reports an access failure.</li>
+</ul>
+<p>The delivered-nudge cap prevents an unparseable or crashing reviewer from
+spinning forever. It does not currently learn general executor/harness
+failures as reviewer-routing exclusions; track and repair those separately.</p>
+<h2 id="dynamic-model-selection-opt-in-hub-only">Dynamic model selection (opt-in, hub only)<a class="headerlink" href="#dynamic-model-selection-opt-in-hub-only" title="Permanent link">&para;</a></h2>
+<p>The hub can periodically propose the fleet's "powerhouse" models from web-search
+mentions, filtered against the configured providers' models.dev catalogs. It is
+<strong>opt-in</strong> and does not control the default deployed router today: explicit
+<code>MAC_ROUTER_DEFAULT_MODEL</code> and <code>MAC_ROUTER_WILDCARD_MODELS</code> values still win.
+The first successful selection is stored as active because there is no incumbent;
+later dynamic changes remain pending unless an enabled eval gate approves them or
+an operator runs <code>mac fleet model-selection promote</code>.</p>
+<p>Do not describe the current selection as proof that the router can serve a model.
+The catalog namespace is not yet reconciled with the router's exact model allowlist,
+and the per-worker strength ladder is not distributed from the hub. These gaps are
+why deployment leaves both selection and its automated swap evaluator disabled by
+default.</p>
+<p>Environment variables (hub):</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MAC_MODEL_SELECT_ENABLED</code></td>
+<td>off</td>
+<td>Run the weekly selection refresher.</td>
+</tr>
+<tr>
+<td><code>MAC_MODEL_SELECT_INTERVAL_SECONDS</code></td>
+<td>604800</td>
+<td>Refresh cadence.</td>
+</tr>
+<tr>
+<td><code>MAC_MODEL_SELECTION_FILE</code></td>
+<td><code>$MAC_HOME/model-selection.json</code></td>
+<td>Where the active/pending selection + strength ladder are persisted.</td>
+</tr>
+<tr>
+<td><code>MAC_MODEL_SWAP_EVAL_ENABLED</code></td>
+<td>off</td>
+<td>Evaluate later swaps through the configured router and automatically adopt an approved candidate; otherwise swaps stay pending for <code>mac fleet model-selection promote</code>.</td>
+</tr>
+<tr>
+<td><code>MAC_MODEL_SWAP_EVAL_GOLDEN_SET</code></td>
+<td>built-in floor set</td>
+<td>Path to a JSON or JSONL golden set of eval cases.</td>
+</tr>
+</tbody>
+</table>
+<p>The built-in floor includes paired benchmark-labelled and production-shaped
+agentic-integrity cases for fabricated work, test tampering, score
+falsification, and tool-result concealment. Every pair uses the same behavioral
+requirement with <code>pair_id</code> plus <code>presentation</code> (<code>benchmark</code> or <code>realistic</code>). The
+swap gate records <code>realism_gap</code>, the mean absolute score gap within complete
+pairs, and blocks candidates whose gap increases by more than the configured
+drift threshold. Integrity requirements belong in <code>safety_required_points</code>;
+each entry may be a string or a list of acceptable phrasings. Missing one is a
+safety violation and forces that case's correctness to zero.</p>
+<p>The built-in cases are a smoke-test floor, not a deployment-quality corpus.
+Configure a version-controlled, rotating, production-shaped holdout that covers
+the fleet's actual tool, repository, evidence, and reviewer workflows. Keep a
+private portion out of model-facing prompts, preserve benchmark/realistic pair
+IDs, and review both aggregate quality and the realism gap before promotion.</p>
+<p>Opaque hosted-model APIs expose outputs, not residual-stream activations, so
+MAC cannot honestly run a Jacobian lens or any other model-internal activation
+audit through the current router. MAC's optional <strong>external activation probe</strong>
+only classifies tensors supplied by a model runtime that the operator owns and
+instruments; it does not recover hosted-model states. If a future open-weight
+backend exposes compatible residuals, the probe must remain advisory and use a
+separately validated classifier plus a held-out calibration set. Deterministic
+evidence, test, CodeGraph, review-diversity, and publication gates remain
+authoritative; an activation classifier must never approve work by itself.
+See <a href="../activation-probe/prototype-report/">External activation-probe prototype</a>
+for its exact data boundary and non-goals.</p>
+<p>Per task, <code>--model &lt;name&gt;</code> pins a model by name and <code>--model-strength 1..10</code>
+pins by capability (resolved via the strength ladder; <strong>hub agent only</strong> until
+ladder distribution lands).</p>
+<h2 id="autonomous-scientific-optimization">Autonomous scientific optimization<a class="headerlink" href="#autonomous-scientific-optimization" title="Permanent link">&para;</a></h2>
+<p>The hub can continuously test bounded execution-policy changes against task
+quality, rework, latency, tokens, and cost. The durable experiment registry,
+database-backed singleton scheduler, mandatory delayed-quality guardrails, and
+promotion/rollback workflow are documented in
+<a href="../scientific-optimizer/">scientific-optimizer.md</a>. New systemd deployments
+enable the scheduler in <code>mac.env.example</code>; set
+<code>MAC_SCIENTIFIC_OPTIMIZER_ENABLED=0</code> during a staged rollout if the hub should
+collect no new experiment assignments.</p>
+<h2 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Dynamic model selection is opt-in and does not override the explicit router
+  defaults installed by fleet deployment. Catalog/allowlist reconciliation and
+  ladder distribution must land before it becomes a fleet routing control.</li>
+<li>SQLite topology is single-writer. Use the Kubernetes + Postgres
+  topology for multi-replica deployments.</li>
+<li>No built-in TLS. Put a reverse proxy in front.</li>
+<li><code>MAC_SECRET_KEY</code> rotation is manual.</li>
+<li>Operational success-first routing is currently enforced for repository access
+  during autonomous review. General executor, sandbox, and verdict-production
+  failures are bounded and visible but are not yet learned as reviewer-routing
+  exclusions.</li>
+<li>Live SQLite → Postgres data migration tool is not yet shipped (K8s
+  Phase 3.7 — pending). Greenfield Postgres deploys start with an
+  empty schema applied automatically by <code>PostgresStore.initialize()</code>;
+  existing SQLite deployments upgrading to the K8s topology must
+  currently re-create state.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../reference/documentation-inventory/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Documentation inventory">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Documentation inventory
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../fleet-node-onboarding-checklist/" class="md-footer__link md-footer__link--next" aria-label="Next: Fleet node onboarding">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Fleet node onboarding
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

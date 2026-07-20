@@ -1,0 +1,2586 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/fleet-node-onboarding-checklist/">
+      
+      
+        <link rel="prev" href="../production-deployment/">
+      
+      
+        <link rel="next" href="../synchronized-fleet-cutover/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Fleet node onboarding - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#fleet-node-onboarding-checklist" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Fleet node onboarding
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#completion-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completion rule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authorities-and-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authorities and variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-1-registry-and-route-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: registry and route preflight
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-2-host-and-filesystem-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: host and filesystem preflight
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-3-secrets-and-credential-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: secrets and credential projection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-4-deploy-one-node-transactionally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: deploy one node transactionally
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-5-source-and-registration-convergence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: source and registration convergence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-6-attestation-and-publication-trust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6: attestation and publication trust
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-7-coding-route-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 7: coding-route acceptance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#role-specific-checklists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Role-specific checklists
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Role-specific checklists">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hub-plus-chat-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hub plus chat gateway
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#linux-edge-chat-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linux edge chat gateway
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pure-gpu-worker-in-an-init-less-pod" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pure GPU worker in an init-less pod
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fleet-promotion-and-closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fleet promotion and closeout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-derived-stop-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure-derived stop matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#historical-evidence-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical evidence index
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#completion-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Completion rule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authorities-and-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authorities and variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-1-registry-and-route-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: registry and route preflight
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-2-host-and-filesystem-preflight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: host and filesystem preflight
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-3-secrets-and-credential-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: secrets and credential projection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-4-deploy-one-node-transactionally" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: deploy one node transactionally
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-5-source-and-registration-convergence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: source and registration convergence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-6-attestation-and-publication-trust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6: attestation and publication trust
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-7-coding-route-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 7: coding-route acceptance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#role-specific-checklists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Role-specific checklists
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Role-specific checklists">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hub-plus-chat-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hub plus chat gateway
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#linux-edge-chat-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linux edge chat gateway
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pure-gpu-worker-in-an-init-less-pod" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pure GPU worker in an init-less pod
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fleet-promotion-and-closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fleet promotion and closeout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-derived-stop-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure-derived stop matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#historical-evidence-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Historical evidence index
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/fleet-node-onboarding-checklist.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="fleet-node-onboarding-checklist">Fleet node onboarding checklist<a class="headerlink" href="#fleet-node-onboarding-checklist" title="Permanent link">&para;</a></h1>
+<p>This is the completion contract for adding or rebuilding any long-lived MAC
+fleet node. It consolidates the deployment paths, live acceptance checks, and
+failure lessons recorded in the task ledger and repository history.</p>
+<p>The checklist deliberately uses role names and placeholders. Real agent names,
+targets, jump hosts, and credentials belong only in <code>~/.mac/fleets.yaml</code>, a
+home-scoped fleet spec, the encrypted hub vault, or a mode-<code>0600</code> env file.</p>
+<h2 id="completion-rule">Completion rule<a class="headerlink" href="#completion-rule" title="Permanent link">&para;</a></h2>
+<p>A node is onboarded only when all four proofs are current and agree:</p>
+<ol>
+<li><strong>Reachability:</strong> the definitive SSH route works non-interactively with
+   strict host-key checking, and the node reaches the hub and required shared
+   services.</li>
+<li><strong>Runtime identity:</strong> one stable agent row heartbeats with the intended
+   role, supervisor, capabilities, hardware, source revision, and no dispatch
+   hold.</li>
+<li><strong>Execution trust:</strong> startup self-test, OpenShell policy, attestation,
+   repository access, tests, push, and independent review all pass through a
+   real canary.</li>
+<li><strong>Usable model route:</strong> at least one coding CLI is not merely installed or
+   configured, but has a fresh matching end-to-end sandbox verification.</li>
+</ol>
+<p>Do not promote a node because it appears in <code>mac fleet snapshot</code>. A heartbeat
+proves liveness, not source convergence, disk headroom, valid signing state, or
+successful sandbox execution.</p>
+<h2 id="authorities-and-variables">Authorities and variables<a class="headerlink" href="#authorities-and-variables" title="Permanent link">&para;</a></h2>
+<p>Use these authorities in order:</p>
+<ol>
+<li><code>~/.mac/fleets.yaml</code> for the current target, jump route, OS, supervisor,
+   hub URL, and role. Never reconstruct a target from an agent name, SSH alias,
+   <code>known_hosts</code>, old deploy log, task history, or prior conversation.</li>
+<li><code>~/.mac/specs/&lt;fleet&gt;.fleet.yaml</code> for declarative desired state, when the
+   fleet was created from a setup spec.</li>
+<li>The hub task ledger and live agent resources for lifecycle and actual-state
+   evidence.</li>
+<li><code>~/.mac/logs/deploy-manifest-latest.json</code> and the matching deploy logs for
+   what was installed.</li>
+<li>Git history for the release implementation, never for live target mapping.</li>
+</ol>
+<p>Set role-neutral shell variables while working through a node:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">export FLEET=&lt;fleet-name&gt;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">export HUB=&lt;hub-agent-name&gt;</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">export AGENT=&lt;agent-name&gt;</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">export EXPECTED_SHA=&lt;approved-release-sha&gt;</span>
+</code></pre></div>
+<p>Create one held ledger task for the onboarding or recovery. Release it only
+when automatic dispatch is appropriate; host-only repair uses the separately
+authorized break-glass path.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac task create &quot;Onboard ${AGENT}&quot; --project=mac --no-dispatch</span>
+</code></pre></div>
+<p>Never put credentials, authenticated URLs, or raw secret-bearing output in the
+task description, evidence, memory, or deploy manifest.</p>
+<h2 id="phase-1-registry-and-route-preflight">Phase 1: registry and route preflight<a class="headerlink" href="#phase-1-registry-and-route-preflight" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] The node appears exactly once as <code>enabled: true</code> in
+      <code>~/.mac/fleets.yaml</code>.</li>
+<li>[ ] Its <code>target</code>, <code>ssh_jump</code>, <code>identity_file</code>, known-hosts source, OS, and
+      supervisor describe the current host rather than a retired predecessor.</li>
+<li>[ ] The hub URL is reachable from the node's network namespace. A host-local
+      URL is rewritten to the OpenShell host bridge only when the sandbox policy
+      also permits that exact host and port.</li>
+<li>[ ] The route resolves portably and does not silently depend on
+      <code>~/.ssh/config</code> or an interactive agent:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac --json fleet ssh-spec \</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">  --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot; --portable</span>
+</code></pre></div>
+<ul>
+<li>[ ] A non-interactive SSH probe uses <code>BatchMode=yes</code>, strict host checking,
+      the resolved identity, known-hosts file, and jump host. Never weaken host
+      verification to get through onboarding.</li>
+<li>[ ] Long deploy SSH sessions have keepalives. Minimal SSH servers must use
+      the supported SCP transport rather than assuming SFTP is present.</li>
+<li>[ ] If a setup spec exists, both validation stages pass before any deploy:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac fleet validate --spec ~/.mac/specs/${FLEET}.fleet.yaml</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac fleet doctor --spec ~/.mac/specs/${FLEET}.fleet.yaml</span>
+</code></pre></div>
+<p><strong>Stop conditions:</strong> unknown host key, non-portable route, ambiguous target,
+unreachable hub, or a registry/live-host identity mismatch. Fix the registry or
+network first; do not deploy to a guessed host.</p>
+<h2 id="phase-2-host-and-filesystem-preflight">Phase 2: host and filesystem preflight<a class="headerlink" href="#phase-2-host-and-filesystem-preflight" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] Architecture and OS match the registry.</li>
+<li>[ ] The selected supervisor is real: <code>launchd</code> on the macOS hub, <code>systemd</code>
+      on ordinary Linux hosts, or <code>supervisord</code> in init-less pods.</li>
+<li>[ ] The deploy user can control that supervisor non-interactively. A root-only
+      supervisord socket requires passwordless <code>sudo supervisorctl</code>.</li>
+<li>[ ] Free bytes and inodes are checked for the home directory, MAC state, and
+      container/OpenShell storage. Keep at least the configured worker GC high
+      watermark; the default minimum is 10 GiB.</li>
+<li>[ ] <code>~/.mac/agent-workspaces</code> is bounded. The active worktree and recent keep
+      set are protected, while completed workspaces age out.</li>
+<li>[ ] <code>MAC_WORKER_WORKSPACE_GC_ENABLED</code> is not disabled accidentally, and a
+      <code>worker.workspace_gc.disk_low</code> warning is treated as a dispatch blocker.</li>
+<li>[ ] A pinned Python meeting the repository requirement is available. Fresh
+      hosts use the deployer's checksum-reviewed <code>uv 0.8.22</code> native asset to
+      provision exact Python <code>3.12.11</code> instead of inheriting an old base-image
+      Python. The reviewed asset matrix covers Linux amd64/arm64 and Darwin
+      x86_64/arm64; an unknown OS/architecture or SHA-256 mismatch stops deploy.</li>
+<li>[ ] <code>git</code>, <code>gh</code>, <code>codegraph</code>, the selected coding CLIs, container runtime, and
+      OpenShell prerequisites are present in the worker's service PATH, not only
+      an interactive login shell.</li>
+<li>[ ] CodeGraph <code>v1.1.6</code> is installed from its versioned native release archive
+      after SHA-256 verification. No fleet credential-bearing process executes
+      a downloaded installer script. Verified archives are cached under
+      <code>~/.mac/cache/reviewed-assets</code>; checksum verification is repeated before
+      reuse. Index initialization is asynchronous and bounded; it must not block
+      heartbeats indefinitely.</li>
+<li>[ ] The crash observer is installed outside the MAC virtualenv and the native
+      supervisor has restart enabled.</li>
+</ul>
+<p><strong>Stop conditions:</strong> low disk/inodes, failed workspace GC, unsupported Python,
+unsupported tool OS/architecture, reviewed-asset download or checksum failure,
+missing supervisor control, or a required tool visible only in an interactive
+shell. Do not bypass a checksum failure with an ambient <code>curl | sh</code> installer.
+A credential sync does not repair any of these failures.</p>
+<h2 id="phase-3-secrets-and-credential-projection">Phase 3: secrets and credential projection<a class="headerlink" href="#phase-3-secrets-and-credential-projection" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] Secrets come from the encrypted vault or a mode-<code>0600</code> host/operator env
+      file. Caller environment has documented precedence over env files.</li>
+<li>[ ] Only secret source names are logged. Secret values move over the resolved
+      SSH route on stdin, never argv, task metadata, stdout, or the fleet YAML.</li>
+<li>[ ] The node receives an agent-scoped hub token, not the hub's admin token,
+      database, secret-encryption key, or provider vault.</li>
+<li>[ ] Git-host credentials are projected into the actual worker or runner
+      environment. A vault record by itself does not populate <code>GH_TOKEN</code>.</li>
+<li>[ ] Fleet deploy reuses an explicit deploy token, standard GitHub token env,
+      or the operator's authenticated <code>gh</code> keychain in that precedence order.
+      Pure workers fail before drain/source replacement when GitHub rejects the
+      projected credential.</li>
+<li>[ ] <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, and Gitea equivalents enter OpenShell only
+      through the private mode-<code>0600</code> sandbox environment bundle, never through
+      <code>sandbox create --env</code>, the SSH command line, or copied host SSH keys.</li>
+<li>[ ] Coding credentials are synced from the workstation with the freshest
+      interactive login only when the node report says they are needed:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac --json fleet creds-status</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">mac fleet creds-sync --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot; --dry-run</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">mac fleet creds-sync --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot;</span>
+</code></pre></div>
+<ul>
+<li>[ ] Environment-backed Codex auth wins over stale rotating file auth inside
+      OpenShell. Do not upload a stale <code>~/.codex/auth.json</code> over a working
+      <code>OPENAI_API_KEY</code> route.</li>
+<li>[ ] Repository-access learnings are inspected before retrying a failed clone.
+      Repair the credential source or authorization and let a real success
+      supersede the failure; never fabricate a success record.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac --json memory search \</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">  --order desc --limit 50</span>
+</code></pre></div>
+<p><strong>Stop conditions:</strong> secret in argv/logs, raw hub/admin material copied to a
+spoke, auth failure repeatedly retried with the same pattern, or a repository
+remote retaining an authenticated URL.</p>
+<h2 id="phase-4-deploy-one-node-transactionally">Phase 4: deploy one node transactionally<a class="headerlink" href="#phase-4-deploy-one-node-transactionally" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] The intended revision has passed its repository contract and CodeGraph
+      audit and is pushed to the canonical remote.</li>
+<li>[ ] The node is idle or intentionally held before replacement. Do not clear
+      all fleet holds to repair one node.</li>
+<li>[ ] Deploy one node, then verify it before continuing:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">deploy/deploy-mac-fleet.sh --hub &quot;$HUB&quot; &quot;$AGENT&quot;</span>
+</code></pre></div>
+<ul>
+<li>[ ] The deploy selects the registry supervisor, installs the pinned source and
+      venv, writes pre/post manifests, installs the crash observer, and creates
+      <code>rollback-latest.sh</code>.</li>
+<li>[ ] The post manifest records the source revision, supervisor, role, gateway
+      mode, model configuration, and success. Logs and handoff artifacts have
+      restrictive permissions and contain no bearer token.</li>
+<li>[ ] A service restart is initiated by the deployer/supervisor or a detached
+      process outside the worker's process group. Never issue a synchronous
+      supervisor restart from the worker group being killed.</li>
+<li>[ ] Rollback is exercised or at least inspected before promotion:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">~/.mac/logs/rollback-latest.sh</span>
+</code></pre></div>
+<p>Run the rollback only on the resolved target and only when rollback is actually
+required; the command mutates the live host.</p>
+<p><strong>Stop conditions:</strong> deploy manifest missing, source install incomplete,
+supervisor restart kills the only recovery process, startup self-test fails, or
+the node returns on a different agent identity.</p>
+<h2 id="phase-5-source-and-registration-convergence">Phase 5: source and registration convergence<a class="headerlink" href="#phase-5-source-and-registration-convergence" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] Exactly one stable agent row exists for the node. Re-registration updates
+      that row rather than creating a duplicate identity.</li>
+<li>[ ] Heartbeats are fresh, health is <code>healthy</code>, and there is no unexplained
+      dispatch hold or quarantine.</li>
+<li>[ ] Reported OS, architecture, hardware, capabilities, role, and OpenShell
+      requirement match desired state.</li>
+<li>[ ] <code>resources.source_state.dirty</code> is false.</li>
+<li>[ ] <code>resources.source_state.commit_sha</code> equals <code>$EXPECTED_SHA</code>; a clean old
+      checkout is still drift.</li>
+<li>[ ] The runtime/build digest is non-null and belongs to the expected release
+      bucket:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">mac --json fleet snapshot</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">mac --json fleet build-distribution</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">mac --json agent list</span>
+</code></pre></div>
+<ul>
+<li>[ ] Startup source import, checkout SHA, and active installed runtime agree.
+      A Git pull without venv/artifact/supervisor reconciliation is not an
+      upgrade.</li>
+<li>[ ] Source-refresh and repo-update evidence is fresh. If it lags, redeploy or
+      repair convergence rather than accepting a heartbeat from an old binary.</li>
+</ul>
+<p><strong>Stop conditions:</strong> null digest, dirty source, source/runtime SHA mismatch,
+duplicate agent row, stale repo-update trail, or a hold that was inherited from
+a failed rollout.</p>
+<h2 id="phase-6-attestation-and-publication-trust">Phase 6: attestation and publication trust<a class="headerlink" href="#phase-6-attestation-and-publication-trust" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] The worker has an attestation key in its service environment and the hub
+      verifies it.</li>
+<li>[ ] Missing or invalid keys may rotate during bootstrap. A valid key is not
+      rotated merely because another check failed.</li>
+<li>[ ] A worker process that was alive during key rotation adopts and persists
+      the new key, re-signs once, and retries submission once.</li>
+<li>[ ] A verdict signed before one rotation remains verifiable through the
+      retained previous key. After two rotations, re-review is required rather
+      than weakening signature verification.</li>
+<li>[ ] A code canary produces signed executor evidence, passes the detected test
+      command and CodeGraph audit, pushes a branch, receives a distinct signed
+      review verdict, publishes, and reaches <code>completed</code>.</li>
+<li>[ ] A report canary uses a substantive <code>operator_result</code>; it is not used to
+      bypass a repository change contract.</li>
+</ul>
+<p>Inspect every non-completing canary before retrying:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">mac task show &lt;task-id&gt;</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">mac task summary &lt;task-id&gt;</span>
+</code></pre></div>
+<p><strong>Stop conditions:</strong> signature rejection loop, repeated key rotation,
+publication hot loop, phantom push evidence, stale branch conflict, missing new
+files, dirty worktree, or a review signed by an untrusted/indistinct route.</p>
+<h2 id="phase-7-coding-route-acceptance">Phase 7: coding-route acceptance<a class="headerlink" href="#phase-7-coding-route-acceptance" title="Permanent link">&para;</a></h2>
+<p>For every installed CLI, keep these states distinct:</p>
+<ul>
+<li><code>on_path</code>: the service can find the binary;</li>
+<li><code>configured</code>: a supported credential source exists;</li>
+<li><code>verified</code>: the exact provider/protocol/auth/endpoint/model fingerprint ran
+  successfully inside the production OpenShell sandbox.</li>
+</ul>
+<p>Checklist:</p>
+<ul>
+<li>[ ] At least one route is freshly <code>verified=true</code>.</li>
+<li>[ ] The verification fingerprint exactly matches the advertised route.</li>
+<li>[ ] Provider, wire protocol, endpoint, auth kind, and model are the intended
+      values and contain no secret.</li>
+<li>[ ] Configured candidates are probed in priority order until one verifies. A
+      broken preferred CLI is recorded as failed and must not shadow a working
+      fallback.</li>
+<li>[ ] An explicit <code>MAC_CODING_AGENT=&lt;cli&gt;</code> pin remains strict. If that pinned
+      route fails, the node fails closed rather than silently changing provider.</li>
+<li>[ ] A sandboxed canary reports the same selected route that the heartbeat
+      advertised.</li>
+<li>[ ] <code>coding_agent_route_unverified</code> means route proof failed; it is not treated
+      automatically as missing credentials. Inspect each per-route failure
+      before running <code>creds-sync</code>.</li>
+</ul>
+<p><strong>Stop conditions:</strong> configured-but-unverified only, stale fingerprint,
+endpoint reachable only from the host, preferred-route failure hiding a working
+fallback, or dispatcher acceptance of a route the executor will not select.</p>
+<h2 id="role-specific-checklists">Role-specific checklists<a class="headerlink" href="#role-specific-checklists" title="Permanent link">&para;</a></h2>
+<p>Apply one of these to every enabled entry in <code>~/.mac/fleets.yaml</code>. Virtual
+operator/reviewer identities that are not deployable registry entries are not
+fleet nodes.</p>
+<h3 id="hub-plus-chat-gateway">Hub plus chat gateway<a class="headerlink" href="#hub-plus-chat-gateway" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Deploy the hub last, after every spoke has passed its canary.</li>
+<li>[ ] Control-plane health and authenticated ledger operations pass.</li>
+<li>[ ] The router is reachable locally and from every spoke/sandbox.</li>
+<li>[ ] Shared Qdrant and Firecrawl endpoints are bound to the intended mesh
+      address, required, healthy, and reported by startup self-test.</li>
+<li>[ ] SQLite uses online backup rather than copying a live WAL database, or the
+      configured Postgres HA contract is healthy.</li>
+<li>[ ] macOS uses launchd for the control plane, worker, gateway, and any required
+      reverse tunnel. A GUI login session is not required.</li>
+<li>[ ] OpenClaw runs inside a Ready OpenShell sandbox, owns chat exclusively,
+      and legacy gateway services are inactive.</li>
+<li>[ ] Channel, public identity, memory continuity, watchdog, crash observer, and
+      startup self-test all pass live.</li>
+<li>[ ] OpenShell policy permits the host bridge alias for hub-local services.</li>
+</ul>
+<h3 id="linux-edge-chat-gateway">Linux edge chat gateway<a class="headerlink" href="#linux-edge-chat-gateway" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] The strict ProxyJump route through the hub is portable and current.</li>
+<li>[ ] systemd controls the worker, crash observer, and OpenClaw gateway.</li>
+<li>[ ] The hub router, Qdrant, Firecrawl, artifact service, and AgentBus are
+      reachable over the mesh; loopback is not copied from the hub config.</li>
+<li>[ ] OpenClaw is the exclusive channel owner inside OpenShell; legacy gateway
+      services are inactive.</li>
+<li>[ ] Public identity, channel accounts, memory continuity, resource watchdog,
+      and startup self-test pass.</li>
+<li>[ ] Reported CUDA architecture and memory match the host. Architecture-specific
+      packages work on both x86_64 and arm64 where those edge types exist.</li>
+<li>[ ] Before replacing a legacy home, run the supported soul audit and preserve
+      only intentional customizations:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac fleet soul-audit --fleet &quot;$FLEET&quot; --agent &quot;$AGENT&quot;</span>
+</code></pre></div>
+<h3 id="pure-gpu-worker-in-an-init-less-pod">Pure GPU worker in an init-less pod<a class="headerlink" href="#pure-gpu-worker-in-an-init-less-pod" title="Permanent link">&para;</a></h3>
+<ul>
+<li>[ ] Registry sets <code>supervisor: supervisord</code>, <code>worker.mode: loop</code>, and
+      <code>hermes.gateway_impl: none</code>.</li>
+<li>[ ] <code>worker.openshell_required</code> is explicitly true or the pure-worker default
+      is visible in the generated deploy spec. Deploy automatically runs the
+      OpenShell bootstrap with <code>--enable --fail-closed</code>; it does not assume a
+      binary under ephemeral <code>~/.local</code> survived a pod replacement.</li>
+<li>[ ] <code>worker.github_credentials_required</code> is explicitly true or the
+      pure-worker default is visible in the generated deploy spec. A fresh pod
+      passes <code>gh auth status</code>, clone/fetch, and a temporary push/delete probe
+      from both the service environment and a normal OpenShell sandbox.</li>
+<li>[ ] The route uses the declared bastion, strict known hosts, explicit identity,
+      and in-cluster target. Never infer pod DNS from the agent name.</li>
+<li>[ ] Direct mesh reachability to the hub does not wait for an unnecessary
+      reverse tunnel.</li>
+<li>[ ] <code>gateway_impl=none</code> skips all OpenClaw, Hermes, persona, Slack secret,
+      home-channel, and gateway wrapper work. A pure worker touches no chat
+      machinery during install or startup self-test.</li>
+<li>[ ] supervisord control works through the supported privilege path and
+      <code>autorestart=true</code> is effective.</li>
+<li>[ ] The base image's Python version is irrelevant because deploy provisions a
+      pinned interpreter with <code>uv</code> when necessary.</li>
+<li>[ ] OpenShell executor configuration, sandbox route, GPU inventory, CodeGraph,
+      workspace GC, crash observer, lease renewal, and hub connectivity pass.</li>
+<li>[ ] Qdrant is not accidentally started as a per-worker mandatory hub service.
+      On a high-core constrained container, any required Qdrant instance uses a
+      sufficient <code>QDRANT_PIDS_LIMIT</code>.</li>
+<li>[ ] A transient hub timeout is wrapped and retried; it cannot kill lease
+      renewal or another background thread silently.</li>
+<li>[ ] The worker can complete one report canary and one pushed/reviewed code
+      canary without chat-gateway dependencies.</li>
+</ul>
+<p>Repeat this complete pure-worker checklist independently for worker-1,
+worker-2, and every additional worker entry. Success on one pod is evidence for
+the rollout pattern, not proof for its peers.</p>
+<h2 id="fleet-promotion-and-closeout">Fleet promotion and closeout<a class="headerlink" href="#fleet-promotion-and-closeout" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] Roll out in this order: one canary worker, remaining workers one at a time,
+      edge gateways one at a time, hub last.</li>
+<li>[ ] Between nodes, verify snapshot, startup self-test, source SHA/digest,
+      route verification, disk headroom, crash reports, and canary completion.</li>
+<li>[ ] <code>mac task ready</code> shows the expected eligible agent count; use
+      <code>mac task why-unclaimed &lt;task-id&gt;</code> when it does not.</li>
+<li>[ ] <code>mac dispatch tick --limit 10</code> assigns only after all holds and route gates
+      are intentionally clear.</li>
+<li>[ ] Repository refs reconcile cleanly:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">mac repo refs status</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">mac repo refs audit --repo .</span>
+</code></pre></div>
+<ul>
+<li>[ ] The onboarding task is closed with the evidence summary, and the canonical
+      branch is pushed and up to date.</li>
+<li>[ ] Any unresolved failure becomes a new ledger task with the node, failure
+      class, secret-free evidence pointers, and a concrete acceptance test.</li>
+</ul>
+<h2 id="failure-derived-stop-matrix">Failure-derived stop matrix<a class="headerlink" href="#failure-derived-stop-matrix" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely class</th>
+<th>Required response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SSH reaches an old host or wrong pod</td>
+<td>stale fleet mapping</td>
+<td>Stop; correct <code>~/.mac/fleets.yaml</code>, then resolve the route again.</td>
+</tr>
+<tr>
+<td>Worker dies during its own restart</td>
+<td>restart inside worker process group</td>
+<td>Recover through the supervisor from outside the dead group; use detached/deferred restart.</td>
+</tr>
+<tr>
+<td>Healthy heartbeat but old commit or null digest</td>
+<td>source/runtime drift</td>
+<td>Redeploy or transactionally reconcile venv, artifacts, supervisor, and runtime; heartbeat alone is insufficient.</td>
+</tr>
+<tr>
+<td>Idle worker, <code>coding_agent_route_unverified</code></td>
+<td>route probe failure or disk exhaustion</td>
+<td>Inspect per-route verification and disk/GC warnings; sync credentials only for a true missing-auth report.</td>
+</tr>
+<tr>
+<td>Preferred CLI fails while another is configured</td>
+<td>priority shadowing</td>
+<td>Probe the next configured CLI; publish every attempted route and select the first verified route.</td>
+</tr>
+<tr>
+<td>Workspaces consume the disk</td>
+<td>missing/unwired lifecycle GC</td>
+<td>Protect active/recent worktrees, prune completed workspaces, restore the free-space watermark, then re-probe routes.</td>
+</tr>
+<tr>
+<td>Repeated signature rejection after deploy</td>
+<td>in-memory attestation key drift</td>
+<td>Let bounded self-heal adopt/persist the current key or restart once; do not rotate repeatedly.</td>
+</tr>
+<tr>
+<td>Reviews stop publishing after rotation</td>
+<td>verdict signed under previous key</td>
+<td>Verify against the one retained previous key; after a second rotation, re-review.</td>
+</tr>
+<tr>
+<td>Lease renewal silently stops after hub timeout</td>
+<td>unwrapped transport error</td>
+<td>Treat transient OSError/timeout as recoverable and guard every background loop.</td>
+</tr>
+<tr>
+<td>Pure worker deploy asks for Slack/persona/gateway</td>
+<td>role coupling</td>
+<td>Set and honor <code>gateway_impl=none</code>; skip all chat setup and checks.</td>
+</tr>
+<tr>
+<td>Fresh pure worker reports every coding route failed and <code>openshell</code> is absent</td>
+<td>ephemeral runtime prerequisite missing</td>
+<td>Treat <code>gateway_impl=none</code> as OpenShell-required, bootstrap it during deploy, keep the worker drained on failure, then repeat the sandbox sentinel.</td>
+</tr>
+<tr>
+<td>Fresh pod rejects Python requirement</td>
+<td>base-image Python bleed-through</td>
+<td>Use the deployer's pinned <code>uv</code> interpreter.</td>
+</tr>
+<tr>
+<td>Native uv or CodeGraph bootstrap reports a SHA-256 mismatch</td>
+<td>corrupt cache, incomplete download, or upstream asset drift</td>
+<td>Keep the node drained, remove only the named file under <code>~/.mac/cache/reviewed-assets</code>, retry once, and investigate if the reviewed digest still differs. Never run the upstream installer script.</td>
+</tr>
+<tr>
+<td>Native tool bootstrap rejects the OS or CPU</td>
+<td>unsupported onboarding target</td>
+<td>Add and review the exact versioned asset plus SHA-256 in <code>deploy/reviewed-tool-assets.sh</code>, with executable coverage, before onboarding that platform.</td>
+</tr>
+<tr>
+<td><code>supervisorctl</code> returns permission errors</td>
+<td>root-only supervisord socket</td>
+<td>Use the supported passwordless <code>sudo supervisorctl</code> path.</td>
+</tr>
+<tr>
+<td>Qdrant panics spawning threads</td>
+<td>PID cap too low on high-core host</td>
+<td>Raise <code>QDRANT_PIDS_LIMIT</code>, redeploy, and require HTTP 200 readiness.</td>
+</tr>
+<tr>
+<td>Hub-local sandbox request is cancelled</td>
+<td>missing host-bridge egress</td>
+<td>Allow the exact <code>host.openshell.internal:&lt;port&gt;</code> route for the required binaries.</td>
+</tr>
+<tr>
+<td>Private clone/review auth repeats</td>
+<td>stale or unauthorized Git credential</td>
+<td>Inspect fleet learning, repair the named source/SSO scope, and prove with a real superseding success.</td>
+</tr>
+<tr>
+<td>Deploy aborts on optional persona/gateway step</td>
+<td>optional step treated as fatal</td>
+<td>Make the step role-aware and non-fatal; mandatory worker installation must still complete.</td>
+</tr>
+<tr>
+<td>Code work claims completion without push</td>
+<td>evidence/finalizer failure</td>
+<td>Run the contract and CodeGraph gates, add every new file, commit, push, review, and publish.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="historical-evidence-index">Historical evidence index<a class="headerlink" href="#historical-evidence-index" title="Permanent link">&para;</a></h2>
+<p>The following durable records motivated the gates above. Repeated repair-child
+tasks with the same root failure are intentionally represented by their root
+incident or durable fix rather than copied one by one.</p>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Ledger evidence</th>
+<th>Durable implementation evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Definitive target mapping and stopped-node recovery</td>
+<td><code>task_010fdac981b540ddbed31cf618def51f</code>, <code>task_06937c0d1f5343d09372097ed8955428</code></td>
+<td>fleet registry resolver and break-glass runbook</td>
+</tr>
+<tr>
+<td>Host recovery and sandbox proof</td>
+<td><code>task_f930082d7bcd41cc8a37c77437faa817</code>, <code>task_33dd4ba320af4d29904fce96033cec5e</code></td>
+<td>scoped break-glass authorization</td>
+</tr>
+<tr>
+<td>Workspace disk exhaustion</td>
+<td><code>task_1c57ae62113943cfbfb0f05f3601d3d6</code>, <code>task_02ebb6c460bf46aeada0fcbe8b9cf957</code></td>
+<td><code>3a523c2</code></td>
+</tr>
+<tr>
+<td>Attestation churn and publication wedge</td>
+<td>task history from the completion-stall incident</td>
+<td><code>62021be</code>, <code>f0715ee</code></td>
+</tr>
+<tr>
+<td>Transient hub failures killing workers</td>
+<td>completion-stall incident history</td>
+<td><code>2f4cb20</code></td>
+</tr>
+<tr>
+<td>Pure-worker/chat-gateway coupling</td>
+<td>fresh-worker provisioning failures</td>
+<td><code>86ab73d</code>, <code>a99d121</code></td>
+</tr>
+<tr>
+<td>Fresh pure-worker OpenShell missing after pod replacement</td>
+<td>second canary-worker route-verification failure during the 2026-07-16 rollout</td>
+<td>role-derived OpenShell bootstrap in fleet deploy</td>
+</tr>
+<tr>
+<td>Old host Python and fatal optional persona</td>
+<td>fresh-worker provisioning failures</td>
+<td><code>37ac857</code></td>
+</tr>
+<tr>
+<td>Vault projection and macOS reverse tunnel</td>
+<td>new-worker deploy failures</td>
+<td><code>412f8a1</code></td>
+</tr>
+<tr>
+<td>OpenShell hub-local egress</td>
+<td>continuity/peer-bridge failure</td>
+<td><code>c914e3e</code></td>
+</tr>
+<tr>
+<td>Long deploy and minimal SSH compatibility</td>
+<td>deploy retry history</td>
+<td><code>64345b5</code>, <code>ec1ac04</code>, <code>c1c46eb</code></td>
+</tr>
+<tr>
+<td>Secret-safe deploy output and env precedence</td>
+<td>fleet deploy hardening tasks</td>
+<td><code>20b26b6</code>, <code>46b2271</code></td>
+</tr>
+<tr>
+<td>Repository-access learning</td>
+<td><code>task_f16df80ee0b4404091fa9f86fcba64da</code></td>
+<td><code>7cf4e3d</code>, <code>7503ba0</code></td>
+</tr>
+<tr>
+<td>Source refresh without runtime convergence</td>
+<td><code>task_980bad699b5d49a9b968ba646a8304a0</code></td>
+<td>source-state heartbeat and deploy manifest gates</td>
+</tr>
+<tr>
+<td>OpenClaw staged rollout</td>
+<td><code>task_7ef13eeb54dc4b93b584e3eca39a7f13</code>, <code>task_aa3d4fb914a84b1e851336cdf7da6c51</code>, <code>task_0bcf59e661824d18aba7925bc65e014f</code>, <code>task_672d8e050ad04a3781faac8789a9eb63</code></td>
+<td>spoke-first, hub-last conformance contract</td>
+</tr>
+</tbody>
+</table>
+<p>Related operator references:</p>
+<ul>
+<li><a href="../production-deployment/">Production deployment</a></li>
+<li><a href="../coding-cli-credentials/">Coding-CLI credentials and model selection</a></li>
+<li><a href="../fleet-operational-learning/">Fleet operational learning</a></li>
+<li><a href="../break-glass-host-recovery/">Break-glass host recovery</a></li>
+<li><a href="../crash-diagnosis-and-repair/">Crash diagnosis and autonomous repair</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../production-deployment/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Production deployment">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Production deployment
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../synchronized-fleet-cutover/" class="md-footer__link md-footer__link--next" aria-label="Next: Synchronized cutover">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Synchronized cutover
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

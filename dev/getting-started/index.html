@@ -1,0 +1,2107 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/getting-started/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>MAC Quickstart - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#mac-quickstart" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MAC Quickstart
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-mac-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What MAC Is
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-short-story" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Short Story
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-mental-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Mental Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#words-you-will-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Words You Will See
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#try-mac-on-one-computer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Try MAC On One Computer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tell-agents-to-work-on-a-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tell Agents To Work On A Project
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-reviewers-learn-repository-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Reviewers Learn Repository Access
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-a-new-client-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect A New Client Today
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-the-api-and-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run The API And Dashboard
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#split-a-large-task" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Split A Large Task
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-real-agent-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What A Real Agent Does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-hermes-fits-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Hermes Fits In
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-a-real-fleet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy A Real Fleet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-to-go-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where To Go Next
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/getting-started.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="mac-quickstart">MAC Quickstart<a class="headerlink" href="#mac-quickstart" title="Permanent link">&para;</a></h1>
+<p>This guide assumes no prior context about MAC, Hermes, AI agents, distributed
+systems, or this repository.</p>
+<h2 id="what-mac-is">What MAC Is<a class="headerlink" href="#what-mac-is" title="Permanent link">&para;</a></h2>
+<p>MAC is a control plane for a group of AI agents.</p>
+<p>An AI agent is a program that can talk to people, read instructions, use tools,
+and perform work. A fleet is a group of agents. A control plane is the part of a
+system that keeps track of what exists, what should happen next, who is doing
+what, what finished, what failed, and what evidence proves it.</p>
+<p>MAC is trying to make agent work durable and auditable. Instead of asking one
+chat session to remember everything, MAC records tasks, projects, claims,
+reviews, evidence, deployments, events, and operational state in one place.
+Agents can restart, move between machines, or fail without losing the official
+record of the work.</p>
+<h2 id="the-short-story">The Short Story<a class="headerlink" href="#the-short-story" title="Permanent link">&para;</a></h2>
+<p>The human talks to Hermes. Hermes has the personality, conversation memory,
+skills, and Slack or Telegram connection.</p>
+<p>Hermes creates or inspects work in MAC. MAC owns the operational truth: projects,
+tasks, agents, leases, reviews, publications, rollouts, secrets, and audit
+history.</p>
+<p>Agents work through MAC. They claim tasks, start them, produce evidence, request
+review, publish or merge the result, and report status back through configured
+notification channels.</p>
+<h2 id="the-mental-model">The Mental Model<a class="headerlink" href="#the-mental-model" title="Permanent link">&para;</a></h2>
+<p>Think of MAC as a project office for AI workers:</p>
+<ul>
+<li>A project is an area of work, usually backed by a repository.</li>
+<li>A task is a specific piece of work.</li>
+<li>A child task is a smaller task that blocks its parent until it is done.</li>
+<li>An agent is a worker that can claim and execute tasks.</li>
+<li>A hub is the central node that runs the MAC API and shared services.</li>
+<li>A fleet is the hub plus the agents connected to it.</li>
+<li>Evidence is proof that work happened, such as test results, review notes, or a
+  pushed git commit.</li>
+<li>Review and publication are the gates that keep unfinished branch work from
+  being mistaken for completed work.</li>
+</ul>
+<h2 id="words-you-will-see">Words You Will See<a class="headerlink" href="#words-you-will-see" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Human: the person using the system.</li>
+<li>Tenant: an isolated organization or personal deployment.</li>
+<li>User: a human identity inside a tenant.</li>
+<li>Persona: a Hermes personality and memory scope.</li>
+<li>Hermes instance: a running named Hermes identity, such as <code>worker-1</code>.</li>
+<li>Platform binding: a Slack channel, Telegram chat, Discord channel, or similar
+  place where Hermes talks to humans.</li>
+<li>Fleet: a set of MAC machines and agents managed together.</li>
+<li>Hub: the machine that runs the MAC API and shared services for a fleet.</li>
+<li>Machine: a physical or virtual computer in the fleet.</li>
+<li>Agent: a worker process registered with MAC.</li>
+<li>Project: a named area of work.</li>
+<li>Repository: a source checkout an agent can work in.</li>
+<li>Legacy Beads repository: a repository with old <code>bd</code> issues that can be
+  inspected or one-time migrated into MAC. Beads is not the normal issue
+  authority for new work.</li>
+<li>Project item: imported external work.</li>
+<li>Task: a durable unit of work in MAC.</li>
+<li>Epic or story: human-scale task groupings; in MAC they are represented by tasks
+  and task relationships.</li>
+<li>Dependency: one task must wait for another task.</li>
+<li>Claim or lease: an agent's temporary right to work on a task.</li>
+<li>Evidence: structured proof attached to a task.</li>
+<li>Review: an independent check before work is accepted.</li>
+<li>Publication: the record that accepted work was merged, deployed, or otherwise
+  delivered.</li>
+<li>Runtime: the code and configuration an agent is running.</li>
+<li>Artifact: a build output, package, image, or other deliverable.</li>
+<li>Environment: a place where an artifact is deployed, such as staging or
+  production.</li>
+<li>Rollout: the controlled movement of a version through environments.</li>
+<li>Eval: a measured check used to prevent regressions.</li>
+<li>Secret: a credential or token, resolved through the in-mac LLM router in fleet deployments (the standalone TokenHub is retired).</li>
+<li>Qdrant: shared vector memory service for recall across agents.</li>
+<li>Firecrawl: web research service used by agents for search, scrape, and crawl.</li>
+<li>AgentBus: typed agent-to-agent content streams.</li>
+<li>Notifier: Slack, Telegram, or another channel that receives task progress
+  events.</li>
+<li>Observability event: a durable event, metric, or log record used to understand
+  what the system did.</li>
+</ul>
+<h2 id="try-mac-on-one-computer">Try MAC On One Computer<a class="headerlink" href="#try-mac-on-one-computer" title="Permanent link">&para;</a></h2>
+<p>Start here before deploying a real fleet.</p>
+<p>Prerequisites:</p>
+<ul>
+<li>A terminal: a text window where you run commands.</li>
+<li>Python 3.11 or newer for setup orchestration.</li>
+<li>This repository checked out locally.</li>
+<li><code>uv</code> installed, or a Python environment that can install the dependencies.</li>
+</ul>
+<p>From the repository root:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">cd ~/Src/mac</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">python3 scripts/bootstrap-project.py</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">PATH=.venv/bin:$PATH .venv/bin/python -m pytest</span>
+</code></pre></div>
+<p>Create a local secret key. MAC uses this to protect secret records. Keep the
+value private.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">export MAC_SECRET_KEY=&quot;$(openssl rand -base64 32)&quot;</span>
+</code></pre></div>
+<p>Create a local database:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">uv run mac --db mac.db init</span>
+</code></pre></div>
+<p>This creates a standalone control-plane authority, not an offline replica of a
+fleet hub. Tasks written here can be dispatched only by an API, dispatcher, and
+workers configured to use this same file. They are never synchronized with a
+remote hub. Relative or temporary database paths are appropriate for this
+tutorial. <code>MAC_DB</code> configures a server and is not an implicit CLI selector;
+continue passing <code>--db mac.db</code> for this standalone tutorial. Direct access to
+<code>~/.mac/mac.db</code> or a deployed hub's configured database requires
+<code>--local-authority</code>, and a deployed hub must be stopped first.</p>
+<p>If this machine is becoming a client of a remote fleet and the default local
+database already contains work, run <code>mac --json migrate local-ledger</code> before
+discarding it. After <code>mac login</code>, execute the one-way transfer with
+<code>mac --profile &lt;name&gt; --json migrate local-ledger --execute</code>. See
+<a href="../local-ledger-migration/">Local Ledger Authority Transfer</a>.</p>
+<p>Create a practice project and task:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">uv run mac --db mac.db project create demo \</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">  --description &quot;A safe local project for learning MAC&quot; \</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">  --active</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">uv run mac --db mac.db task create &quot;Write a hello-world note&quot; \</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="go">  --project demo \</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="go">  --description &quot;Create a tiny file and record what was done.&quot; \</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="go">  --required-capabilities docs</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="go">uv run mac --db mac.db task list</span>
+</code></pre></div>
+<p>At this point MAC has durable state: a project and a task. No agent has done the
+task yet. You have created the official work record.</p>
+<p><code>mac task ready</code> shows open tasks that have no unfinished dependencies, no
+owner/lease, no per-task dispatch hold, and no project-level dispatch pause. A
+staged task is represented by <code>metadata.no_dispatch: true</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">uv run mac --db mac.db task create &quot;Stage work for later&quot; \</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">  --project demo \</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">  --description &quot;Do not let the fleet auto-claim this yet.&quot; \</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">  --no-dispatch</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="go">uv run mac --db mac.db task release task_...</span>
+</code></pre></div>
+<p><code>task release</code> clears the <code>no_dispatch</code> metadata key; it does not store
+<code>no_dispatch: false</code>. Once the key is absent, the task is dispatchable again,
+subject to dependencies, worker capability match, and project dispatch state.</p>
+<h2 id="tell-agents-to-work-on-a-project">Tell Agents To Work On A Project<a class="headerlink" href="#tell-agents-to-work-on-a-project" title="Permanent link">&para;</a></h2>
+<p>MAC agents do not watch arbitrary repositories. They work from dispatchable
+tasks in the hub ledger. The operator flow is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gp"># </span>Repository-backed<span class="w"> </span>project:<span class="w"> </span><span class="nb">let</span><span class="w"> </span>MAC<span class="w"> </span>clone/analyze<span class="w"> </span>the<span class="w"> </span>repo<span class="w"> </span>and<span class="w"> </span>create<span class="w"> </span>the
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="gp"># </span>onboarding<span class="w"> </span>task<span class="w"> </span>that<span class="w"> </span>authors<span class="w"> </span>.mac/project.yaml.
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">uv run mac --db mac.db project onboard git@github.com:ORG/REPO.git --project my-project</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="gp"># </span>After<span class="w"> </span>onboarding,<span class="w"> </span>register<span class="w"> </span>the<span class="w"> </span>hub-visible<span class="w"> </span>checkout<span class="w"> </span>that<span class="w"> </span>contains<span class="w"> </span>the<span class="w"> </span>contract.
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">uv run mac --db mac.db bridge repository register my-project /srv/repos/my-project --project my-project</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="go">Registration validates `.mac/project.yaml` and, when CodeGraph is installed on</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="go">the registering host, initializes a local CodeGraph index for the checkout.</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="go">The generated `.codegraph/` directory is excluded through `.git/info/exclude`</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="go">and is not part of the repository contract or task deliverables.</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="go">Deployed fleet agents may rely on CodeGraph as a baseline analysis aid for</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="go">understanding APIs, code behavior, call relationships, and code-aware skills,</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="go">while still verifying findings against source files and tests.</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="gp"># </span>Or<span class="w"> </span>create<span class="w"> </span>a<span class="w"> </span>manual<span class="w"> </span>project.<span class="w"> </span>New<span class="w"> </span>projects<span class="w"> </span>default<span class="w"> </span>to<span class="w"> </span>paused,<span class="w"> </span>so<span class="w"> </span>pass<span class="w"> </span>--active
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="gp"># </span>when<span class="w"> </span>the<span class="w"> </span>fleet<span class="w"> </span>should<span class="w"> </span>be<span class="w"> </span>allowed<span class="w"> </span>to<span class="w"> </span>claim<span class="w"> </span>its<span class="w"> </span>tasks<span class="w"> </span>immediately.
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="go">uv run mac --db mac.db project create my-project --active</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="go">uv run mac --db mac.db task create &quot;Fix failing tests&quot; \</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="go">  --project my-project \</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="go">  --description-file desc.txt \</span>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="go">  --required-capabilities python</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a><span class="gp"># </span>If<span class="w"> </span>the<span class="w"> </span>project<span class="w"> </span>was<span class="w"> </span>staged<span class="w"> </span>earlier,<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>project-level<span class="w"> </span>gate.
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="go">uv run mac --db mac.db project activate my-project</span>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a><span class="gp"># </span>If<span class="w"> </span>an<span class="w"> </span>individual<span class="w"> </span>task<span class="w"> </span>was<span class="w"> </span>staged<span class="w"> </span>with<span class="w"> </span>--no-dispatch,<span class="w"> </span>open<span class="w"> </span>the<span class="w"> </span>task-level<span class="w"> </span>gate.
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="go">uv run mac --db mac.db task release task_...</span>
+<a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>
+<a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a><span class="gp"># </span>Ask<span class="w"> </span>the<span class="w"> </span>dispatcher<span class="w"> </span>to<span class="w"> </span>assign<span class="w"> </span>ready<span class="w"> </span>work<span class="w"> </span>immediately.
+<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="go">uv run mac --db mac.db dispatch tick --limit 10</span>
+</code></pre></div>
+<p>Loop-mode agents can now claim matching work from <code>mac task ready</code>. To assign a
+specific task to a specific agent manually, use:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">uv run mac --db mac.db task claim task_... agent_...</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">uv run mac --db mac.db task start task_... agent_...</span>
+</code></pre></div>
+<h2 id="how-reviewers-learn-repository-access">How Reviewers Learn Repository Access<a class="headerlink" href="#how-reviewers-learn-repository-access" title="Permanent link">&para;</a></h2>
+<p>For a repository-backed task, MAC does not pick every healthy reviewer as if
+its Git credentials were interchangeable. A review clone writes a shared,
+secret-free <code>fleet_learning:repository_access</code> record containing the project,
+repository host, operation, agent, credential source <em>name</em>, outcome, and a
+redacted failure class. Credential values and authenticated URLs are never
+stored in memory or task evidence.</p>
+<p>Reviewer routing uses the newest matching record:</p>
+<ul>
+<li>a recent successful <code>review_clone</code> is preferred;</li>
+<li>a newer authentication or authorization failure temporarily excludes that
+  agent for the same project and repository host;</li>
+<li>a later success immediately supersedes the failure;</li>
+<li>an expired failure cooldown returns the agent to unknown/eligible rather
+  than banning it permanently.</li>
+</ul>
+<p>Inspect the records in the local demo database below. For a configured fleet,
+omit <code>--db mac.db</code> and use the selected hub profile (for example
+<code>mac --fleet my-fleet --json memory search ...</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">uv run mac --db mac.db --json memory search \</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">  --order desc --limit 50</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="go">uv run mac --db mac.db --json memory search \</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="go">  --subject-type agent --subject-id agent_... \</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="go">  --record-type fleet_learning:repository_access \</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="go">  --order desc --limit 20</span>
+</code></pre></div>
+<p>Repository access and review verdict production are separate stages. A
+successful clone proves only that the reviewer can read that repository. If
+the review executor later fails to create signed <code>review_verdict</code> evidence,
+the review is retracted after the delivered-nudge cap and the task remains
+visible for repair; MAC does not reinterpret that executor failure as a Git
+credential failure.</p>
+<h2 id="connect-a-new-client-today">Connect A New Client Today<a class="headerlink" href="#connect-a-new-client-today" title="Permanent link">&para;</a></h2>
+<p>Use <code>mac login</code> when a new machine has the MAC CLI plus key-based SSH access to
+the hub. Supply a private identity and a verified known-hosts file (or a pinned
+<code>SHA256:</code> host fingerprint for a directly reachable hub):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">mac login --ssh mac@hub.internal \</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="go">  --identity-file ~/.ssh/mac-my-fleet \</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="go">  --known-hosts-file ~/.ssh/mac-my-fleet-known-hosts \</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="go">  --fleet my-fleet --profile my-fleet --client-id my-laptop</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="go">mac login status --profile my-fleet</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="go">mac diagnostics</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="go">mac task stats</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="go">mac agent list</span>
+</code></pre></div>
+<p>The active profile is selected automatically. If the managed SSH process exits,
+the next profile-backed command starts a fresh verified tunnel and validates the
+stored credential before dispatch. Inspect without restarting it using <code>mac
+login status</code>; rotate with <code>mac login renew</code>; revoke remotely before removing
+local state with <code>mac logout --revoke</code>.</p>
+<p>For a bastion route, put the hub and jump-host keys in the supplied known-hosts
+file and add <code>--proxy-jump user@bastion</code>. Fingerprint discovery deliberately
+does not traverse a proxy jump. See <a href="../client-bootstrap-contract/">SSH Client Bootstrap
+Contracts</a> for the lower-level recovery workflow,
+file modes, and failure semantics.</p>
+<p>For a directly reachable hub, a scoped API token can still be provisioned out
+of band:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">export MAC_API_URL=https://mac.example.internal</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">export MAC_API_TOKEN=&lt;scoped-client-token&gt;</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="go">mac diagnostics</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="go">mac task stats</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="go">mac agent list</span>
+</code></pre></div>
+<p>If the client already has a home-scoped <code>~/.mac/fleets.yaml</code> entry with a
+verified SSH route to the hub, it can refresh the fleet-scoped token and use
+the legacy fleet selector:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">mac fleet sync-token --fleet my-fleet</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">mac --fleet my-fleet diagnostics</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="go">mac --fleet my-fleet task stats</span>
+</code></pre></div>
+<p><code>mac fleet sync-token</code> copies the historical shared administrator token. Treat
+it as existing-operator recovery, not new-client enrollment. Do not copy
+<code>mac.db</code>, <code>MAC_SECRET_KEY</code>, provider keys, hub/spoke private keys, or a different
+operator's complete <code>~/.mac</code> directory. New clients should use the scoped SSH
+enrollment and mode-<code>0600</code> profile credential above.</p>
+<h2 id="run-the-api-and-dashboard">Run The API And Dashboard<a class="headerlink" href="#run-the-api-and-dashboard" title="Permanent link">&para;</a></h2>
+<p>Start the API:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">MAC_SECRET_KEY=&quot;$MAC_SECRET_KEY&quot; MAC_DB=&quot;$PWD/mac.db&quot; \</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">  uv run uvicorn mac.api:app --reload --port 8789</span>
+</code></pre></div>
+<p>Open the dashboard:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>http://127.0.0.1:8789/ui
+</code></pre></div>
+<p>In another terminal, inspect the same state through the hub CLI:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="go">mac --hub-url http://127.0.0.1:8789 project list</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="go">mac --hub-url http://127.0.0.1:8789 task list</span>
+</code></pre></div>
+<p>If you configured <code>MAC_API_TOKEN</code>, pass it with <code>--token</code>. With no API token
+configured, the local development API is open on localhost. (The legacy <code>hgmac</code>
+binary is gone — all of its functionality lives under <code>mac</code> now.)</p>
+<h2 id="split-a-large-task">Split A Large Task<a class="headerlink" href="#split-a-large-task" title="Permanent link">&para;</a></h2>
+<p>If an agent claims a task and decides it is too large, it should add child tasks
+instead of trying to finish everything in one step. The parent task becomes
+blocked until the children complete.</p>
+<p>Child tasks are added via the API (<code>POST /tasks/{id}/children</code>) — an executing
+agent typically emits a <code>plan_steps</code> list in its evidence and the executor
+posts the children automatically (auto-decompose); the Hermes adapter exposes
+<code>mac-hermes add-child-task</code> for the same. For example, over the API:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="go">curl -sX POST http://127.0.0.1:8789/tasks/task_.../children \</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="go">  -H &#39;Content-Type: application/json&#39; \</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="go">  -d &#39;{&quot;children&quot;:[{&quot;title&quot;:&quot;Write the first draft&quot;,&quot;description&quot;:&quot;Produce the first small deliverable.&quot;}]}&#39;</span>
+</code></pre></div>
+<p>This is the same idea used in systems such as Jira: large work is represented by
+relationships between tasks, not by one vague task with hidden subtasks in a
+chat transcript.</p>
+<h2 id="what-a-real-agent-does">What A Real Agent Does<a class="headerlink" href="#what-a-real-agent-does" title="Permanent link">&para;</a></h2>
+<p>In normal operation an agent follows this loop:</p>
+<ol>
+<li>Register with MAC.</li>
+<li>Heartbeat so the hub knows it is alive.</li>
+<li>Ask MAC for a task it is allowed to claim.</li>
+<li>Start the task, which sets <code>started_at</code>.</li>
+<li>Work in a task-owned checkout or workspace.</li>
+<li>Record command audit, evidence, and status updates.</li>
+<li>Ask for review.</li>
+<li>Publish or merge only after the review gate passes.</li>
+<li>Complete the task, which sets <code>completed_at</code>.</li>
+</ol>
+<p>MAC also keeps <code>last_updated_at</code> so humans can see whether a task is moving or
+stale.</p>
+<h2 id="how-hermes-fits-in">How Hermes Fits In<a class="headerlink" href="#how-hermes-fits-in" title="Permanent link">&para;</a></h2>
+<p>Hermes is the human-facing agent runtime. It owns:</p>
+<ul>
+<li>Conversation.</li>
+<li>Personality.</li>
+<li>Skills.</li>
+<li>Slack, Telegram, Discord, CLI, and similar gateways.</li>
+<li>Personal memory and soul files.</li>
+</ul>
+<p>MAC owns:</p>
+<ul>
+<li>Durable projects and tasks.</li>
+<li>Agent identity and leases.</li>
+<li>Reviews, evidence, publications, and audit trails.</li>
+<li>Fleet topology and runtime state.</li>
+<li>Operational memory, not private personality memory.</li>
+</ul>
+<p>The bridge between them is <code>mac-hermes</code>. Hermes can use it to create tasks,
+list projects, claim work, add child tasks, record evidence, run web research,
+and write completed operational context back to MAC.</p>
+<h2 id="deploy-a-real-fleet">Deploy A Real Fleet<a class="headerlink" href="#deploy-a-real-fleet" title="Permanent link">&para;</a></h2>
+<p>After the local quickstart makes sense, deploy a hub. The fleet registry is
+home-scoped at <code>~/.mac/fleets.yaml</code>; it is not checked into the repository.</p>
+<p>For an LLM-driven setup, start from a generic, per-CSP sample instead of writing
+a <code>mac.fleet_setup.v1</code> spec from scratch. The repo ships de-personalized samples
+under <code>deploy/fleet/samples/</code> (GKE is the worked example); your real, named fleet
+spec lives outside git in <code>~/.mac/specs/&lt;fleet&gt;.fleet.yaml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="go">scripts/setup-fleet.py --list-samples                  # browse per-CSP samples</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="go">scripts/setup-fleet.py --init-from gke --name my-gke   # -&gt; ~/.mac/specs/my-gke.fleet.yaml</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="gp">$</span>EDITOR<span class="w"> </span>~/.mac/specs/my-gke.fleet.yaml<span class="w">                 </span><span class="c1"># fill in the &lt;placeholders&gt;</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="go">mac fleet validate --spec ~/.mac/specs/my-gke.fleet.yaml</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="go">mac fleet doctor --spec ~/.mac/specs/my-gke.fleet.yaml</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="go">make setup ARGS=&quot;--spec ~/.mac/specs/my-gke.fleet.yaml --force&quot;</span>
+</code></pre></div>
+<p>See <code>deploy/fleet/samples/README.md</code> for the per-CSP convention. Never check a
+named fleet into the repo.</p>
+<p>The doctor report is JSON and calls out missing provider env vars, bad targets,
+sample-config mistakes, and the exact next commands.</p>
+<p>For a new hub:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="go">make deploy ARGS=&quot;--new-hub horde --target horde@20.115.163.162:2201&quot;</span>
+</code></pre></div>
+<p>Use <code>--ssh-port 2201</code> instead of an inline <code>:2201</code> when the target is an SSH
+alias or otherwise contains a colon:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="go">make deploy ARGS=&quot;--new-hub horde --target horde@20.115.163.162 --ssh-port 2201&quot;</span>
+</code></pre></div>
+<p>Re-run deployment for an existing hub:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="go">make deploy HUB=horde</span>
+</code></pre></div>
+<p>The Make targets pick a Python 3.11+ <code>.venv/bin/python</code>, <code>python3.11</code>, <code>python3</code>, or <code>python</code> automatically:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="go">make setup</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="go">make deploy HUB=horde</span>
+</code></pre></div>
+<p>MAC state lives under <code>~/.mac</code>. Hermes state lives under <code>~/.hermes</code>. The
+in-mac LLM router, Qdrant, Firecrawl, the MAC API, worker services, and Hermes
+bridge files are bootstrapped as part of the fleet service picture. Standalone
+TokenHub is retired from the default fleet topology.</p>
+<p>Private GitHub HTTPS repositories require a credential on every host or task
+runner that performs Git work. An explicit deploy token may be kept in the
+host-local <code>~/.mac/.env</code> (mode <code>0600</code>), never in <code>~/.mac/fleets.yaml</code> or a
+committed fleet spec:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="gp"># </span>~/.mac/.env<span class="w"> </span>--<span class="w"> </span>placeholder<span class="w"> </span>only<span class="p">;</span><span class="w"> </span>supply<span class="w"> </span>the<span class="w"> </span>real<span class="w"> </span>value<span class="w"> </span>out<span class="w"> </span>of<span class="w"> </span>band.
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="go">MAC_DEPLOY_GH_TOKEN=&lt;github-token-authorized-for-the-organization&gt;</span>
+</code></pre></div>
+<p>Fleet deploy resolves <code>MAC_DEPLOY_GH_TOKEN</code>, <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, then an
+existing <code>gh</code> keychain login. It reports only the source name, streams the value
+over SSH stdin, and writes it to the owner-only managed runtime as <code>GH_TOKEN</code>.
+Pure <code>gateway_impl: none</code> workers verify the credential before drain or source
+replacement and forward it to OpenShell through a private mode-<code>0600</code> file.
+Kubernetes task and review Jobs instead read optional <code>GH_TOKEN</code>,
+<code>GITHUB_TOKEN</code>, and <code>GITEA_TOKEN</code> keys from the runner's configured Kubernetes
+Secret. Review Jobs do not receive <code>MAC_SECRET_KEY</code>.</p>
+<h2 id="where-to-go-next">Where To Go Next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../hermes-integration/">Hermes Integration</a>: how Hermes learns and uses the
+  MAC vocabulary.</li>
+<li><a href="../hermes-boundary/">Hermes Boundary</a>: what belongs to Hermes versus MAC.</li>
+<li><a href="../production-deployment/">Production Deployment</a>: full deployment and
+  operations detail.</li>
+<li><a href="../repository-runtime-contract/">Repository Runtime Contract</a>: how registered
+  project checkouts declare bootstrap and test commands.</li>
+<li><a href="../fleet-operational-learning/">Fleet Operational Learning</a>: how repository
+  access outcomes influence reviewer routing without storing credentials.</li>
+<li><a href="../soul-preservation-runbook/">Soul Preservation Runbook</a>: how to restart
+  agents without losing their Hermes identity and memory.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

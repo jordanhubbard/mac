@@ -1,0 +1,2533 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/archive/field-notes/quickstart-gap-analysis/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Quickstart gap analysis - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#quickstart-gap-analysis" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Quickstart gap analysis
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-1-one-node-loop-mode-topology-and-availability-aware-review-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 1 — One-node loop-mode topology and availability-aware review fallback
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 1 — One-node loop-mode topology and availability-aware review fallback">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-2-setup-entry-point-scriptssetup-fleetpy-not-executable-no-one-node-makecli-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 2 — Setup entry point: scripts/setup-fleet.py not executable, no one-node Make/CLI target
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 2 — Setup entry point: scripts/setup-fleet.py not executable, no one-node Make/CLI target">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-3-mac_router_providers-credential-collection-and-validation-step-absent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 3 — MAC_ROUTER_PROVIDERS credential collection and validation step absent
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 3 — MAC_ROUTER_PROVIDERS credential collection and validation step absent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-4-repository-onboarding-still-references-manual-srv-path-without-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 4 — Repository onboarding still references manual /srv path without automation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 4 — Repository onboarding still references manual /srv path without automation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-5-no-end-to-end-first-coding-task-walkthrough-with-evidence-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 5 — No end-to-end first coding task walkthrough with evidence commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 5 — No end-to-end first coding task walkthrough with evidence commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-6-no-explicit-readiness-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 6 — No explicit readiness checks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 6 — No explicit readiness checks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-7-no-separate-path-for-adding-more-agents-and-an-independent-reviewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 7 — No separate path for adding more agents and an independent reviewer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 7 — No separate path for adding more agents and an independent reviewer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-8-no-automated-documentation-or-cli-smoke-coverage-for-quickstart-command-shapes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 8 — No automated documentation or CLI smoke coverage for quickstart command shapes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 8 — No automated documentation or CLI smoke coverage for quickstart command shapes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirement-9-no-verified-evidence-of-reaching-a-completed-first-code-task" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirement 9 — No verified evidence of reaching a completed first code task
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requirement 9 — No verified evidence of reaching a completed first code task">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-the-doc-says_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the doc says
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gaps-identified_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gaps identified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-additions_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended additions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#summary-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Summary Table
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/archive/field-notes/quickstart-gap-analysis.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<div class="admonition warning">
+<p class="admonition-title">Historical field note</p>
+<p>This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.</p>
+</div>
+<h1 id="quickstart-gap-analysis">Quickstart Gap Analysis<a class="headerlink" href="#quickstart-gap-analysis" title="Permanent link">&para;</a></h1>
+<p><strong>Document:</strong> <code>docs/quickstart-gap-analysis.md</code>
+<strong>Baseline doc reviewed:</strong> <code>docs/getting-started.md</code> (read-only; not modified)
+<strong>Audited against:</strong> Nine requirements from parent task
+<code>task_dda240df39784e738195329301d5cc98</code>
+("Deliver a verified zero-to-first-coding quickstart for one-node and fleet MAC")
+<strong>Baseline test run:</strong> 5254 passed, 21 skipped (scripts/run-contract-tests.sh)
+<strong>Date:</strong> 2026-07-06</p>
+<hr />
+<h2 id="requirement-1-one-node-loop-mode-topology-and-availability-aware-review-fallback">Requirement 1 — One-node loop-mode topology and availability-aware review fallback<a class="headerlink" href="#requirement-1-one-node-loop-mode-topology-and-availability-aware-review-fallback" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says">What the doc says<a class="headerlink" href="#what-the-doc-says" title="Permanent link">&para;</a></h3>
+<p><code>docs/getting-started.md</code> covers:</p>
+<ul>
+<li>"Try MAC On One Computer" (standalone <code>mac.db</code> mode, no API server running as
+  an agent target)</li>
+<li>"What A Real Agent Does" (loop description, 9 steps, prose only)</li>
+<li>"How Reviewers Learn Repository Access" (fleet_learning memory, reviewer
+  routing rules)</li>
+</ul>
+<h3 id="gaps-identified">Gaps identified<a class="headerlink" href="#gaps-identified" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>No explicit one-node loop topology.</strong> The doc never shows a single machine
+   running both the MAC API server and a local worker agent in loop mode
+   simultaneously.  There is no command sequence of the form:
+   start API -&gt; register agent -&gt; start worker loop -&gt; dispatch task -&gt; observe
+   claim.  The reader cannot follow a concrete single-machine walkthrough.</p>
+</li>
+<li>
+<p><strong>No <code>mac agent register</code> / <code>mac agent start</code> commands.</strong> The quickstart
+   shows task creation and manual claim (<code>mac task claim</code>, <code>mac task start</code>)
+   but does not show how an autonomous loop-mode worker is registered or
+   launched.</p>
+</li>
+<li>
+<p><strong>Review fallback path not demonstrated.</strong> The "How Reviewers Learn
+   Repository Access" section describes the <code>fleet_learning:repository_access</code>
+   memory records and cooldown rules in prose, but does not show:</p>
+</li>
+<li>How to check a reviewer's current eligibility before assigning review.</li>
+<li>What command or API call triggers the fallback when the preferred reviewer
+     is on cooldown.</li>
+<li>
+<p>How the operator verifies which agent will be chosen for a review.</p>
+</li>
+<li>
+<p><strong>Availability-aware review routing is implicit.</strong> The doc says routing
+   "uses the newest matching record" but gives no <code>mac</code> command to inspect
+   current reviewer eligibility or simulate routing for a given repository
+   host.</p>
+</li>
+</ol>
+<h3 id="recommended-additions">Recommended additions<a class="headerlink" href="#recommended-additions" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A "One-node loop-mode" sub-section showing the complete start-API +
+  register-agent + start-worker-loop + dispatch sequence on one machine.</li>
+<li>A concrete review-eligibility inspection example using
+  <code>mac --json memory search --record-type fleet_learning:repository_access</code>.</li>
+<li>A note on what happens when zero eligible reviewers exist (task stays in
+  <code>needs_review</code>; operator must add an eligible reviewer or repair credentials).</li>
+</ul>
+<hr />
+<h2 id="requirement-2-setup-entry-point-scriptssetup-fleetpy-not-executable-no-one-node-makecli-target">Requirement 2 — Setup entry point: scripts/setup-fleet.py not executable, no one-node Make/CLI target<a class="headerlink" href="#requirement-2-setup-entry-point-scriptssetup-fleetpy-not-executable-no-one-node-makecli-target" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says_1">What the doc says<a class="headerlink" href="#what-the-doc-says_1" title="Permanent link">&para;</a></h3>
+<p><code>docs/getting-started.md</code> references <code>scripts/setup-fleet.py</code> in the "Deploy A
+Real Fleet" section:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>scripts/setup-fleet.py --list-samples
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>scripts/setup-fleet.py --init-from gke --name my-gke
+</code></pre></div>
+<p>The Makefile <code>setup</code> target delegates to <code>setup.py</code> (not <code>setup-fleet.py</code>).</p>
+<h3 id="gaps-identified_1">Gaps identified<a class="headerlink" href="#gaps-identified_1" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong><code>scripts/setup-fleet.py</code> is not executable.</strong> The file has mode
+   <code>-rw-r--r--</code> (644), so running <code>scripts/setup-fleet.py --list-samples</code>
+   directly fails with "Permission denied".  The user must prefix with
+   <code>python3</code> or <code>uv run</code> — which the doc does not say.</p>
+</li>
+<li>
+<p><strong>No Make target for one-node quickstart.</strong> <code>make setup</code> runs fleet
+   deployment (<code>setup.py</code>), not local quickstart initialization.  There is no
+   <code>make quickstart</code> or equivalent that bootstraps a single-machine demo
+   (API + worker) in one command.</p>
+</li>
+<li>
+<p><strong>No <code>mac</code> CLI <code>setup</code> subcommand for one-node mode.</strong> The CLI has
+   <code>mac fleet validate</code> and <code>mac fleet doctor</code> for spec validation, but no
+   <code>mac setup</code> or <code>mac quickstart</code> command that guides a user through the
+   local first-run sequence (init DB, create secret key, start API, register
+   agent).</p>
+</li>
+<li>
+<p><strong>The doc's quickstart command sequence requires manual shell assembly.</strong>
+   Steps to reach a running local system span multiple sections (<code>mac --db
+   mac.db init</code>, <code>export MAC_SECRET_KEY</code>, <code>uvicorn ...</code>, manual task creation)
+   without a single entry-point command or script.</p>
+</li>
+</ol>
+<h3 id="recommended-additions_1">Recommended additions<a class="headerlink" href="#recommended-additions_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>chmod +x scripts/setup-fleet.py</code> (one-line fix; file already exists).</li>
+<li>A <code>make quickstart</code> target that runs the full local demo sequence.</li>
+<li>Or document the <code>python3 scripts/setup-fleet.py</code> invocation form explicitly
+  in the getting-started guide.</li>
+<li>A note clarifying that <code>make setup</code> is for fleet deployment, not local demo
+  setup.</li>
+</ul>
+<hr />
+<h2 id="requirement-3-mac_router_providers-credential-collection-and-validation-step-absent">Requirement 3 — MAC_ROUTER_PROVIDERS credential collection and validation step absent<a class="headerlink" href="#requirement-3-mac_router_providers-credential-collection-and-validation-step-absent" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says_2">What the doc says<a class="headerlink" href="#what-the-doc-says_2" title="Permanent link">&para;</a></h3>
+<p><code>docs/getting-started.md</code> mentions <code>MAC_SECRET_KEY</code> (required for DB init) and
+<code>MAC_DEPLOY_GH_TOKEN</code> (for GitHub HTTPS repos), but does not mention
+<code>MAC_ROUTER_PROVIDERS</code>.</p>
+<p>The "Run The API And Dashboard" section shows:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">MAC_SECRET_KEY=&quot;$MAC_SECRET_KEY&quot; MAC_DB=&quot;$PWD/mac.db&quot; \</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">  uv run uvicorn mac.api:app --reload --port 8789</span>
+</code></pre></div>
+<p>No LLM provider credential is set.</p>
+<h3 id="gaps-identified_2">Gaps identified<a class="headerlink" href="#gaps-identified_2" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong><code>MAC_ROUTER_PROVIDERS</code> not mentioned in getting-started.</strong> The in-MAC LLM
+   router is required for workflow planning
+   (<code>mac.api</code> raises <code>ValidationError: workflow planner requires configured
+   MAC_ROUTER_PROVIDERS</code>) and for agent-driven task work.  A fresh user who
+   follows the quickstart will have an API that cannot serve LLM-driven tasks.</p>
+</li>
+<li>
+<p><strong>No credential collection step.</strong> The doc does not explain:</p>
+</li>
+<li>What provider API keys are needed (OpenAI, NVIDIA NIM, Anthropic, etc.).</li>
+<li>The <code>name=url,priority,key=secret:keyname</code> format for <code>MAC_ROUTER_PROVIDERS</code>.</li>
+<li>
+<p>Where to store provider keys (e.g., <code>~/.mac/.env</code>, host-local env).</p>
+</li>
+<li>
+<p><strong>No validation step.</strong> After setting <code>MAC_ROUTER_PROVIDERS</code>, the user has
+   no guidance on how to verify the router is operational (e.g.,
+   <code>mac diagnostics</code>, <code>curl /health</code>, or a router-status CLI command).</p>
+</li>
+<li>
+<p><strong>Secret storage path not shown for local dev.</strong> For fleet deployments the
+   doc mentions <code>~/.mac/.env</code> for <code>MAC_DEPLOY_GH_TOKEN</code>; the same pattern
+   applies to provider keys for local dev, but is not documented for that
+   context.</p>
+</li>
+</ol>
+<h3 id="recommended-additions_2">Recommended additions<a class="headerlink" href="#recommended-additions_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A "Configure LLM Providers" sub-section before "Run The API" that shows how
+  to set <code>MAC_ROUTER_PROVIDERS</code> for at least one provider.</li>
+<li>A <code>mac router status</code> or equivalent health-check command (or note to use
+  <code>mac diagnostics</code>).</li>
+<li>Example format: <code>export MAC_ROUTER_PROVIDERS="openai=https://api.openai.com/v1,1,key=MY_OPENAI_KEY"</code>.</li>
+<li>A note that without a configured router, agent-driven tasks will fail at the
+  workflow-planning step.</li>
+</ul>
+<hr />
+<h2 id="requirement-4-repository-onboarding-still-references-manual-srv-path-without-automation">Requirement 4 — Repository onboarding still references manual /srv path without automation<a class="headerlink" href="#requirement-4-repository-onboarding-still-references-manual-srv-path-without-automation" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says_3">What the doc says<a class="headerlink" href="#what-the-doc-says_3" title="Permanent link">&para;</a></h3>
+<p>The "Tell Agents To Work On A Project" section shows:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">uv run mac --db mac.db bridge repository register my-project \</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">  /srv/repos/my-project --project my-project</span>
+</code></pre></div>
+<h3 id="gaps-identified_3">Gaps identified<a class="headerlink" href="#gaps-identified_3" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong><code>/srv/repos/</code> is a bare path assumption.</strong> The path <code>/srv/repos/my-project</code>
+   is not created by any MAC command shown in the quickstart.  The user must
+   manually clone the repository to that exact path before running <code>register</code>.
+   No git clone or <code>project onboard</code> command is shown as the prerequisite.</p>
+</li>
+<li>
+<p><strong><code>project onboard</code> and <code>bridge repository register</code> relationship is
+   unclear.</strong> The doc shows both <code>project onboard</code> (which creates a
+   contract-authoring task) and <code>bridge repository register</code> (which reads
+   <code>.mac/project.yaml</code>) but does not explain the sequencing: onboard first,
+   wait for task completion, then register the checkout.</p>
+</li>
+<li>
+<p><strong>No automation for the checkout path.</strong> There is no <code>mac bridge repository
+   clone</code> or helper that creates the <code>/srv/repos/</code> tree and clones into it.
+   The operator must know to do this manually and choose the path themselves.</p>
+</li>
+<li>
+<p><strong>Path convention is unexplained.</strong> <code>/srv/repos/</code> is a Linux FHS convention
+   but is arbitrary; the doc does not say what constraints apply to the path
+   (absolute, accessible by the MAC process user, etc.).</p>
+</li>
+</ol>
+<h3 id="recommended-additions_3">Recommended additions<a class="headerlink" href="#recommended-additions_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Replace the <code>/srv/repos/my-project</code> example with a user-relative path (e.g.,
+  <code>~/repos/my-project</code>) or add a <code>git clone</code> step before <code>register</code>.</li>
+<li>Clarify the onboard -&gt; task completion -&gt; register sequence.</li>
+<li>Note that the path must be readable by the process running the MAC API.</li>
+<li>Consider a helper: <code>mac bridge repository clone &lt;url&gt; &lt;local-path&gt;</code> that
+  clones and registers in one step.</li>
+</ul>
+<hr />
+<h2 id="requirement-5-no-end-to-end-first-coding-task-walkthrough-with-evidence-commands">Requirement 5 — No end-to-end first coding task walkthrough with evidence commands<a class="headerlink" href="#requirement-5-no-end-to-end-first-coding-task-walkthrough-with-evidence-commands" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says_4">What the doc says<a class="headerlink" href="#what-the-doc-says_4" title="Permanent link">&para;</a></h3>
+<p>The doc covers:
+- Creating a practice project and task.
+- Manually claiming and starting a task.
+- "What A Real Agent Does" (prose list of 9 steps).
+- Splitting large tasks.</p>
+<h3 id="gaps-identified_4">Gaps identified<a class="headerlink" href="#gaps-identified_4" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>No create -&gt; dispatch -&gt; observe -&gt; review -&gt; publish -&gt; close sequence.</strong>
+   The quickstart never shows a complete task lifecycle with real evidence.
+   Steps 6-9 of the "What A Real Agent Does" loop (record evidence, ask for
+   review, publish, complete) are described in prose but never demonstrated
+   with commands.</p>
+</li>
+<li>
+<p><strong>No evidence submission example.</strong> The doc does not show how to attach
+   evidence to a task (e.g., <code>mac task evidence</code> or the API <code>POST
+   /tasks/{id}/evidence</code>).</p>
+</li>
+<li>
+<p><strong>No review request example.</strong> There is no command shown for transitioning a
+   task to <code>needs_review</code> state or for a reviewer to submit a verdict.</p>
+</li>
+<li>
+<p><strong>No publication step example.</strong> The doc does not show <code>mac task publish</code> or
+   equivalent to mark work as accepted and merged.</p>
+</li>
+<li>
+<p><strong>No task close example.</strong> The doc does not show <code>mac task close</code> with a
+   reason, even though the AGENTS.md quick reference lists it.</p>
+</li>
+<li>
+<p><strong>No observe step.</strong> There is no <code>mac task show</code> or <code>mac task history</code>
+   command shown to watch a task's lifecycle as it progresses.</p>
+</li>
+</ol>
+<h3 id="recommended-additions_4">Recommended additions<a class="headerlink" href="#recommended-additions_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A "First Coding Task End-to-End" section with concrete commands for each
+  lifecycle phase: create, dispatch (<code>mac dispatch tick</code>), observe
+  (<code>mac task show</code>, <code>mac task history</code>), submit evidence, request review,
+  approve review, publish, close.</li>
+<li>Example evidence payload for a simple docs task.</li>
+<li>Expected output at each step so the reader knows what success looks like.</li>
+</ul>
+<hr />
+<h2 id="requirement-6-no-explicit-readiness-checks">Requirement 6 — No explicit readiness checks<a class="headerlink" href="#requirement-6-no-explicit-readiness-checks" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says_5">What the doc says<a class="headerlink" href="#what-the-doc-says_5" title="Permanent link">&para;</a></h3>
+<p>The "Connect A New Client Today" section shows <code>mac diagnostics</code>, <code>mac task
+stats</code>, and <code>mac agent list</code> as post-login verification.  The "Run The API"
+section shows how to start the API but gives no health check.</p>
+<h3 id="gaps-identified_5">Gaps identified<a class="headerlink" href="#gaps-identified_5" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>No API health check.</strong> There is no <code>GET /health</code> or <code>mac diagnostics</code>
+   example shown immediately after starting the API to confirm it is up.</p>
+</li>
+<li>
+<p><strong>No worker registration verification.</strong> The doc does not show how to confirm
+   a worker agent is registered and its heartbeat is current
+   (e.g., <code>mac agent show agent_...</code> or <code>mac agent list --healthy</code>).</p>
+</li>
+<li>
+<p><strong>No dispatch eligibility check.</strong> There is no command shown to verify that
+   an open task will actually be picked up by the dispatcher on the next tick
+   (e.g., <code>mac task ready --agent agent_...</code>).</p>
+</li>
+<li>
+<p><strong>No repository access check.</strong> Before assigning a review, no command is
+   shown to verify that the reviewer agent can clone the repository
+   (distinct from the <code>fleet_learning</code> memory check described elsewhere).</p>
+</li>
+<li>
+<p><strong>No sandbox/tool contract check.</strong> The doc does not mention how to confirm
+   that the agent's sandbox has the required toolchain commands available
+   (python3, git, gh) before dispatching repository-backed tasks.</p>
+</li>
+<li>
+<p><strong>No model route check.</strong> There is no step shown to verify that
+   <code>MAC_ROUTER_PROVIDERS</code> is correctly resolving a model route before
+   dispatching LLM-driven tasks.</p>
+</li>
+<li>
+<p><strong>No review eligibility/fallback check.</strong> The doc does not show a command
+   to list agents currently eligible to review a specific project/repo, or
+   to confirm fallback coverage exists.</p>
+</li>
+</ol>
+<h3 id="recommended-additions_5">Recommended additions<a class="headerlink" href="#recommended-additions_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A "Readiness Checklist" section covering: API health, worker heartbeat,
+  dispatch eligibility for a test task, repo access, sandbox toolchain,
+  model route, and review eligibility.</li>
+<li>Concrete commands or <code>mac diagnostics</code> output annotation for each check.</li>
+<li>A note that all seven checks should pass before sending a real coding task
+  to the fleet.</li>
+</ul>
+<hr />
+<h2 id="requirement-7-no-separate-path-for-adding-more-agents-and-an-independent-reviewer">Requirement 7 — No separate path for adding more agents and an independent reviewer<a class="headerlink" href="#requirement-7-no-separate-path-for-adding-more-agents-and-an-independent-reviewer" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says_6">What the doc says<a class="headerlink" href="#what-the-doc-says_6" title="Permanent link">&para;</a></h3>
+<p>The doc mentions loop-mode agents claiming from <code>mac task ready</code> and
+<code>mac task claim</code>/<code>mac task start</code> for manual assignment.  The "How Reviewers
+Learn Repository Access" section explains reviewer routing.</p>
+<h3 id="gaps-identified_6">Gaps identified<a class="headerlink" href="#gaps-identified_6" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>No "add a second agent" walkthrough.</strong> After the single-machine demo, there
+   is no section showing how to add a second agent (on the same or a different
+   machine) and register it with the hub.</p>
+</li>
+<li>
+<p><strong>No independent reviewer setup.</strong> The review routing section assumes
+   reviewers already exist; it does not show how to provision a new agent
+   specifically as a reviewer, or how <code>require_distinct_agent=true</code> is
+   satisfied when the fleet has only one or two agents.</p>
+</li>
+<li>
+<p><strong>No <code>mac agent register</code> or equivalent shown.</strong> The onboarding path for a
+   new worker agent (register, configure capabilities, verify heartbeat) is
+   absent from the quickstart.</p>
+</li>
+<li>
+<p><strong>No capability assignment shown.</strong> The doc does not show how to assign
+   capabilities (e.g., <code>python</code>, <code>docs</code>, <code>review</code>) to an agent so it matches
+   <code>required_capabilities</code> filters on tasks.</p>
+</li>
+<li>
+<p><strong>Reviewer vs. worker agent distinction not explained.</strong> The doc describes
+   reviewer routing as if all agents are interchangeable; it does not explain
+   how the <code>require_distinct_agent</code> coordination constraint works in practice
+   or how to ensure a separate reviewer is available.</p>
+</li>
+</ol>
+<h3 id="recommended-additions_6">Recommended additions<a class="headerlink" href="#recommended-additions_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A "Scale Up: Adding a Second Agent" sub-section covering agent registration,
+  capability assignment, heartbeat verification, and dispatcher tick to assign
+  work.</li>
+<li>A "Reviewer Setup" sub-section showing how to designate a reviewer-capable
+  agent and verify <code>require_distinct_agent</code> satisfaction.</li>
+<li>Example <code>mac agent list --capabilities</code> or equivalent command.</li>
+</ul>
+<hr />
+<h2 id="requirement-8-no-automated-documentation-or-cli-smoke-coverage-for-quickstart-command-shapes">Requirement 8 — No automated documentation or CLI smoke coverage for quickstart command shapes<a class="headerlink" href="#requirement-8-no-automated-documentation-or-cli-smoke-coverage-for-quickstart-command-shapes" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says_7">What the doc says<a class="headerlink" href="#what-the-doc-says_7" title="Permanent link">&para;</a></h3>
+<p>The Makefile has a <code>cli-coverage</code> target (<code>scripts/cli-coverage.py</code>) and a
+<code>test-cli</code> target.  The doc does not reference these.</p>
+<h3 id="gaps-identified_7">Gaps identified<a class="headerlink" href="#gaps-identified_7" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>No quickstart smoke test.</strong> There is no test or script that runs the
+   command shapes shown in <code>docs/getting-started.md</code> and verifies they exit
+   successfully (with a test DB).</p>
+</li>
+<li>
+<p><strong><code>scripts/cli-coverage.py</code> not documented.</strong> The CLI coverage script
+   exists but is not referenced in getting-started or in a testing guide.</p>
+</li>
+<li>
+<p><strong>Documentation is not contract-tested.</strong> Commands in <code>docs/getting-started.md</code>
+   can drift from the CLI implementation without any automated detection.
+   For example, if a subcommand is renamed, the doc would silently become
+   wrong.</p>
+</li>
+<li>
+<p><strong>No <code>--help</code> output verification.</strong> There is no test asserting that every
+   command shape shown in the quickstart is present in <code>mac --help</code> output.</p>
+</li>
+<li>
+<p><strong><code>make cli-coverage</code> output not shown to users.</strong> The CI/developer
+   workflow does not include a step that prints CLI coverage gaps to the
+   operator so they know which commands are exercised by tests.</p>
+</li>
+</ol>
+<h3 id="recommended-additions_7">Recommended additions<a class="headerlink" href="#recommended-additions_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A <code>tests/test_quickstart_commands.py</code> or equivalent that runs each command
+  shape from the getting-started guide against a temp DB and asserts exit
+  code 0.</li>
+<li>A CI step or <code>make</code> target that runs <code>scripts/cli-coverage.py</code> and fails if
+  any command shown in getting-started.md is absent from the CLI.</li>
+<li>A note in <code>docs/getting-started.md</code> pointing to <code>make cli-coverage</code> for
+  operators who want to verify CLI shape.</li>
+</ul>
+<hr />
+<h2 id="requirement-9-no-verified-evidence-of-reaching-a-completed-first-code-task">Requirement 9 — No verified evidence of reaching a completed first code task<a class="headerlink" href="#requirement-9-no-verified-evidence-of-reaching-a-completed-first-code-task" title="Permanent link">&para;</a></h2>
+<h3 id="what-the-doc-says_8">What the doc says<a class="headerlink" href="#what-the-doc-says_8" title="Permanent link">&para;</a></h3>
+<p>The "What A Real Agent Does" section lists the 9-step loop in prose.  The
+"Split A Large Task" section shows how to add child tasks via the API.</p>
+<h3 id="gaps-identified_8">Gaps identified<a class="headerlink" href="#gaps-identified_8" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>No worked example with real output.</strong> The quickstart contains no
+   transcript, screenshot reference, or evidence payload showing a task that
+   was actually completed by an agent with passing tests, a review verdict,
+   and a publication record.</p>
+</li>
+<li>
+<p><strong>No <code>mac task show</code> output example.</strong> The doc does not show what a
+   completed task looks like in <code>mac task show</code> output (state, evidence,
+   completed_at, review verdict, publication ref).</p>
+</li>
+<li>
+<p><strong>No evidence format shown.</strong> The doc does not show what a
+   <code>mac.worker_evidence.v1</code> or <code>repo_change</code> evidence payload looks like
+   so operators can verify an agent produced correct evidence.</p>
+</li>
+<li>
+<p><strong>No review verdict example.</strong> There is no sample <code>review_verdict</code> evidence
+   shown to indicate what a passing or failing review looks like.</p>
+</li>
+<li>
+<p><strong>Completion state not demonstrated.</strong> The doc does not show <code>mac task close</code>
+   or the transition from <code>needs_review</code> -&gt; <code>review_passed</code> -&gt;
+   <code>published</code> -&gt; <code>closed</code> with real command output.</p>
+</li>
+<li>
+<p><strong>No "this is what done looks like" anchor.</strong> Without a worked example, a
+   new operator cannot distinguish a correctly completed task from a stalled
+   or incorrectly closed one.</p>
+</li>
+</ol>
+<h3 id="recommended-additions_8">Recommended additions<a class="headerlink" href="#recommended-additions_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A "Verified Completion" section or appendix with annotated <code>mac task show</code>
+  output for a completed repository-backed task, including:</li>
+<li>Worker evidence (tests passed, files changed, pushed ref).</li>
+<li>Review verdict (reviewer agent, outcome, timestamp).</li>
+<li>Publication record (merged ref or operator confirmation).</li>
+<li>Final task state (<code>closed</code>, <code>completed_at</code>).</li>
+<li>A reference to <code>mac task stats</code> output that shows one completed task as
+  the "success signal" for the quickstart.</li>
+</ul>
+<hr />
+<h2 id="summary-table">Summary Table<a class="headerlink" href="#summary-table" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Requirement</th>
+<th>Current State</th>
+<th>Primary Gap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>One-node loop-mode + review fallback</td>
+<td>Prose only</td>
+<td>No runnable loop-mode sequence; no eligibility commands</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Setup entry point</td>
+<td><code>setup-fleet.py</code> not +x; no quickstart Make/CLI target</td>
+<td>Permission denied on direct invocation; no single entry point</td>
+</tr>
+<tr>
+<td>3</td>
+<td>MAC_ROUTER_PROVIDERS credential collection</td>
+<td>Not mentioned</td>
+<td>No provider setup step; API starts without LLM routes</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Repository onboarding / /srv assumption</td>
+<td>Manual /srv path shown</td>
+<td>No automation; sequencing of onboard-&gt;register unclear</td>
+</tr>
+<tr>
+<td>5</td>
+<td>End-to-end first coding task</td>
+<td>Manual claim only</td>
+<td>No evidence, review, publish, or close commands shown</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Readiness checks</td>
+<td>Partial (diagnostics post-login)</td>
+<td>No pre-dispatch checklist for 7 readiness dimensions</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Adding more agents + independent reviewer</td>
+<td>Routing rules described</td>
+<td>No agent registration, capability, or reviewer setup walkthrough</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Automated doc/CLI smoke coverage</td>
+<td>cli-coverage.py exists but undocumented</td>
+<td>No quickstart command shape tests; docs can drift silently</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Verified evidence of completed first task</td>
+<td>Prose loop description only</td>
+<td>No worked example with real output, evidence, or completion state</td>
+</tr>
+</tbody>
+</table>
+<p>All nine requirements have identified gaps. None are blocking bugs in the
+existing code; all are documentation and workflow coverage deficits that
+prevent a new operator from confidently reaching a completed first coding task
+on a one-node or small fleet deployment.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

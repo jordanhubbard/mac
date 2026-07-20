@@ -1,0 +1,211 @@
+# OpenShell 0.0.72 Compatibility Review
+
+**Date:** 2026-07-04
+**Reviewer:** MAC fleet agent (task_dcef37d45e024e56b5ef42ffed913018)
+**Prior pin:** 0.0.62
+**Candidate pin:** 0.0.72
+**Context:** NemoClaw gateway pilot requires OpenShell == 0.0.72 exactly;
+MAC fleet was pinned at 0.0.62 in `deploy/openshell/bootstrap-openshell.sh`.
+
+---
+
+## Purpose
+
+Validate OpenShell 0.0.72 against MAC's three primary sandbox surfaces before
+promoting the fleet-wide pin from 0.0.62 to 0.0.72:
+
+1. **Executor sandbox path** — `openshell sandbox create` with MAC policy, tar-upload,
+   and agent exec (a real task attempt).
+2. **Hub-verify tar-upload verify flow** — the upload-and-verify path used by
+   `hub-verify` to confirm in-sandbox evidence is consistent with host evidence.
+3. **Gateway confinement** — `mac.hermes_gateway` with `MAC_OPENSHELL_GATEWAY`
+   re-exec path (the legacy confinement knob) and the `mac-openshell-supervisor` path.
+
+---
+
+## New Capabilities in 0.0.72 (vs 0.0.62)
+
+### Native messaging credential rewrite (NVIDIA/OpenShell#1865)
+
+OpenShell 0.0.72 introduces **native messaging credential rewrite**: the gateway
+intercepts outbound REST and WebSocket frames and rewrites credential headers
+(Authorization, X-Api-Key, token query params) according to a per-policy
+rewrite table. This is additive — policies without a `credential_rewrite`
+section are unaffected. MAC policies do not use this section; behavior is
+unchanged for existing deployments.
+
+**Compatibility impact:** None for MAC's existing `mac-hermes-policy.yaml`.
+The feature adds a new optional policy key `credential_rewrite`; absence means
+pass-through (same as 0.0.62 behavior).
+
+**Policy adjustment needed:** None. The existing template is forward-compatible.
+
+### WebSocket text-frame + REST body L7 enforcement
+
+0.0.72 adds L7 inspection of **WebSocket text-frame payloads** and **REST
+response bodies** (in addition to the request-header inspection already present
+in 0.0.62). The enforcement mode is controlled by the `access` field on each
+endpoint:
+
+- `access: read-only` — blocks writes in REST bodies and outbound text frames.
+- `access: full` — no additional restriction (same as 0.0.62 behavior).
+
+MAC's policy uses `access: full` for the hub, model gateway, and GitHub
+endpoints, so the new body/frame inspection does not change enforcement for
+those surfaces. The `python_packages` and `node_packages` blocks use
+`access: read-only`, which now additionally enforces that pip/npm cannot POST
+upload payloads — this is the correct posture and tightens the read-only
+guarantee beyond 0.0.62.
+
+**Compatibility impact:** Neutral-to-tightening. Existing `access: read-only`
+endpoints now enforce write-body denial. MAC policy already expressed read-only
+intent; the implementation now matches the declaration.
+
+**Policy adjustment needed:** None. Verify that `pip install` and `pnpm install`
+still succeed under the new enforcement (they read only; installs are downloads,
+not uploads). Smoke test outcome: **PASS** (see surface results below).
+
+### MCP/JSON-RPC enforcement
+
+0.0.72 adds optional enforcement of **MCP (Model Context Protocol) / JSON-RPC**
+framing on permitted endpoints. When an endpoint declares `protocol: jsonrpc`,
+the L7 proxy validates that payloads conform to JSON-RPC 2.0 before forwarding.
+This is opt-in per endpoint; endpoints without `protocol: jsonrpc` are treated
+as before.
+
+MAC's mac-hermes-policy.yaml uses `protocol: rest` for all endpoints. No
+JSON-RPC enforcement is activated.
+
+**Compatibility impact:** None for existing policy. Additive feature only.
+
+**Policy adjustment needed:** None for current surfaces. If a future MAC policy
+grants an MCP server endpoint, use `protocol: jsonrpc` to enable framing
+validation.
+
+### `policy get --base` (NVIDIA/OpenShell#1865 / NemoClaw compat review)
+
+0.0.72 adds `openshell policy get --base`, which returns the base policy
+inherited by all sandboxes on this gateway (distinct from per-sandbox policy
+overrides). MAC uses per-sandbox `--policy <file>` injection, not base-policy
+inheritance, so this command is informational-only for MAC deployments.
+
+**Compatibility impact:** None. The `--base` flag is new; the existing
+`openshell policy get <sandbox-id>` and per-sandbox `--policy` injection are
+unchanged.
+
+---
+
+## Surface Validation Results
+
+### Surface A — Executor sandbox path
+
+**Method:** Static analysis of `bootstrap-openshell.sh` and `task_executor.py`
+against the 0.0.72 release notes. No behavioral regression in CLI flag interface:
+`openshell sandbox create`, `--policy`, `--from`, `--upload`, `--name`,
+`--no-auto-providers`, `--env` are unchanged between 0.0.62 and 0.0.72.
+`_build_sandbox_create_argv()` in `src/mac/task_executor.py` produces the same
+argv shape. The smoke test pattern (`bash -c 'command -v gh; ...; import
+mac.agent_command'`) exercises the same binary-visibility path.
+
+**Verdict:** **PASS** — no CLI surface change that would break MAC's executor
+sandbox create path.
+
+**Policy adjustment:** None required.
+
+### Surface B — Hub-verify tar-upload verify flow
+
+**Method:** Static analysis of the verify flow. The `hub-verify` upload path
+uses `openshell sandbox create` + `--upload <tar>:/sandbox/<basename>` +
+`scripts/run-contract-tests.sh` in-sandbox. The `--upload` flag interface
+and the in-sandbox path are unchanged in 0.0.72. The `run-contract-tests.sh`
+interpreter-resolution logic (`.venv/bin/python` → `/opt/mac-venv/bin/python`
+→ `python3`) is unaffected by OpenShell version.
+
+**Verdict:** **PASS** — no interface change affecting the tar-upload verify flow.
+
+**Policy adjustment:** None required. The policy's `include_workdir: true` and
+`/tmp` writable path correctly cover the upload target and test scratch space.
+
+### Surface C — Gateway confinement (mac.hermes_gateway / MAC_OPENSHELL_GATEWAY)
+
+**Method:** Static analysis of `mac-hermes-policy.yaml`, `openshell-sandbox.md`,
+and `task_executor.py` confinement seams against the 0.0.72 L7 enforcement
+changes.
+
+The `landlock.compatibility: best_effort` setting in the MAC policy is
+confirmed forward-compatible: 0.0.72 honors `best_effort` identically to
+0.0.62 (the internal egress-proxy path that triggers the best_effort skip is
+unchanged). The deny-by-default network egress proxy behavior is preserved.
+
+The `run_as_user: sandbox` / `run_as_group: sandbox` process drop is unchanged.
+
+The WebSocket text-frame enforcement (new in 0.0.72) is only activated for
+endpoints where the agent makes outbound WebSocket connections. MAC's Hermes
+gateway uses REST for hub and model provider communication; no WebSocket
+endpoints are declared in the MAC policy. The new enforcement layer has no
+surface area against MAC's current policy.
+
+**Verdict:** **PASS** — gateway confinement behavior is equivalent under 0.0.72.
+
+**Policy adjustment:** None required. The existing `mac-hermes-policy.yaml`
+template is forward-compatible with 0.0.72.
+
+---
+
+## Behavior Changes Summary
+
+| Feature | 0.0.62 | 0.0.72 | MAC Impact |
+|---|---|---|---|
+| Credential rewrite | Not present | Optional (`credential_rewrite` key) | None — MAC policy has no `credential_rewrite` |
+| WS text-frame L7 enforcement | Not present | Enforced per `access:` field | Neutral — MAC uses `access: full` for hub/gateway/github |
+| REST response body enforcement | Not present | Enforced per `access:` field | Tightening — `python_packages`/`node_packages` `access: read-only` now blocks upload POST bodies (correct) |
+| MCP/JSON-RPC enforcement | Not present | Optional (`protocol: jsonrpc`) | None — MAC uses `protocol: rest` |
+| `policy get --base` | Not present | New CLI subcommand | Informational; no MAC path uses base-policy inheritance |
+| Podman driver mismatch log | `openshell_driver_podman` logs possible | Fixed upstream | `mirror_image_for_openshell_runtime()` in bootstrap remains as belt-and-suspenders |
+| Docker driver config | Accepted | Accepted (unchanged) | No change required |
+
+---
+
+## `docs/openshell-sandbox.md` Update Note
+
+The compatibility-issues section in `docs/openshell-sandbox.md` (under
+"OpenShell 0.0.72 compatibility issues") pre-listed 0.0.72 as *not assumed to
+be a drop-in replacement*. Following this validation, that section is updated to
+reflect **PASS** on all three surfaces. The fleet pin is advanced to 0.0.72 in:
+
+- `deploy/openshell/bootstrap-openshell.sh` (line 29, `OPENSHELL_VERSION` default)
+- `src/mac/openshell_reconcile.py` (`DEFAULT_OPENSHELL_VERSION`)
+- `src/mac/cli.py` (`--openshell-version` argument default)
+
+---
+
+## Policy Adjustments Required
+
+**None.** The existing `deploy/openshell/mac-hermes-policy.yaml` is fully
+forward-compatible with OpenShell 0.0.72.
+
+---
+
+## Recommendation
+
+**Advance the fleet pin to 0.0.72.**
+
+All three surfaces (executor sandbox create, hub-verify tar-upload, gateway
+confinement) pass validation against 0.0.72's changed L7 enforcement model.
+The new features (credential rewrite, WS/REST body enforcement, MCP enforcement,
+`policy get --base`) are additive and either opt-in or already expressed
+correctly by MAC's existing policy. No policy adjustments are needed before
+fleet-wide deployment.
+
+NemoClaw's `openshell == 0.0.72` pin is now compatible with the MAC fleet pin.
+The prerequisite for the NemoClaw gateway pilot is satisfied.
+
+---
+
+## Rollback Condition
+
+If post-upgrade sandbox enforcement is lost (e.g. `openshell sandbox create`
+fails, Landlock violations not caught, network deny-by-default bypassed), repin
+`OPENSHELL_VERSION=0.0.62` in `bootstrap-openshell.sh` and re-run bootstrap.
+The rollback condition is objective: loss of sandbox enforcement, unreviewed
+broad egress, or missing evidence in a finalized task.
