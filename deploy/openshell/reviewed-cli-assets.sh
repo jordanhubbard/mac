@@ -38,7 +38,7 @@ reviewed_openshell_cli_identity_specs() {
 
 reviewed_openshell_cli_specs() {
   printf '%s\n' \
-    'darwin:arm64:openshell-aarch64-apple-darwin.tar.gz:117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d:a8cdaeddb19d6c7c6636a774f681886ad9c7106c1573d816afdf91d352be02c6' \
+    'darwin:aarch64:openshell-aarch64-apple-darwin.tar.gz:117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d:a8cdaeddb19d6c7c6636a774f681886ad9c7106c1573d816afdf91d352be02c6' \
     'linux:x86_64:openshell-x86_64-unknown-linux-musl.tar.gz:37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4:aeefd6f0f6555771d4bab7b9ddcfbc5e42e24cb7d3c717b28824a1d3b85dea71' \
     'linux:aarch64:openshell-aarch64-unknown-linux-musl.tar.gz:a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045:dee8f0606d7e4e60ec82396537aef178862ef50be81f7c04866a7bec339c18d7'
 }

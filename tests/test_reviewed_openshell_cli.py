@@ -181,6 +181,11 @@ def test_registry_carries_exact_archive_and_extracted_cli_identities() -> None:
 
     assert len(specs) == 3
     assert all(len(spec) == 5 for spec in specs)
+    assert {(spec[0], spec[1]) for spec in specs} == {
+        ("darwin", "aarch64"),
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+    }
     assert all(re.fullmatch(r"[0-9a-f]{64}", spec[3]) for spec in specs)
     assert all(re.fullmatch(r"[0-9a-f]{64}", spec[4]) for spec in specs)
 
