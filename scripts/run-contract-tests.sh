@@ -19,6 +19,19 @@ _MAC_TEST_JOBS_REQUESTED="${MAC_TEST_JOBS:-}"
 # much faster and lighter. Coverage stays ON by default so the merge gate is
 # unchanged; do NOT set MAC_TEST_COVERAGE=0 for the pre-push/merge gate.
 _MAC_TEST_COVERAGE_REQUESTED="${MAC_TEST_COVERAGE:-1}"
+# Namespaces (pytest markers) an operator can switch OFF with one flag, e.g.
+# MAC_TEST_DISABLE_GROUPS=fleet,heavy_e2e. The conftest hook deselects the
+# matching tests so they cost zero wall-clock — handy to smoke-verify a rollout
+# without the slow real-subprocess clusters. Deselecting a namespace removes ITS
+# coverage, so it is honored ONLY on the non-gating fast path; the guard below
+# hard-refuses it whenever coverage is on (the merge gate must run every
+# contract). Captured before the hermetic MAC_* sweep, re-exported for pytest.
+_MAC_TEST_DISABLE_GROUPS_REQUESTED="${MAC_TEST_DISABLE_GROUPS:-}"
+if [ -n "$_MAC_TEST_DISABLE_GROUPS_REQUESTED" ] \
+    && { [ "$_MAC_TEST_COVERAGE_REQUESTED" != "0" ] || [ "$_MAC_TEST_PORTFOLIO_REQUESTED" = "1" ]; }; then
+    echo "run-contract-tests.sh: MAC_TEST_DISABLE_GROUPS is only honored in fast mode (set MAC_TEST_COVERAGE=0, non-portfolio); the merge gate must run every contract" >&2
+    exit 2
+fi
 
 # Fleet executors inherit deployment/task environment. Keep repository tests
 # hermetic so they exercise the checked-out code, not the live agent runtime.
@@ -195,6 +208,12 @@ if [ "$#" -eq 0 ]; then
     # taken in portfolio mode (which requires coverage) or for the merge gate
     # (which leaves MAC_TEST_COVERAGE at its default of 1).
     if [ "$_MAC_TEST_COVERAGE_REQUESTED" = "0" ] && [ "$_MAC_TEST_PORTFOLIO_REQUESTED" != "1" ]; then
+        # Re-export the namespace switch stripped by the hermetic MAC_* sweep so
+        # the conftest deselection hook sees it in the pytest child. Only reached
+        # in fast mode; the guard above blocks it whenever coverage is on.
+        if [ -n "$_MAC_TEST_DISABLE_GROUPS_REQUESTED" ]; then
+            export MAC_TEST_DISABLE_GROUPS="$_MAC_TEST_DISABLE_GROUPS_REQUESTED"
+        fi
         pytest_status=0
         if [ "$_MAC_TEST_JOBS" != "0" ]; then
             "$PY" -m pytest -n "$_MAC_TEST_JOBS" --dist loadscope \

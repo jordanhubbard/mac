@@ -11774,6 +11774,17 @@
     "type": "str"
   },
   {
+    "default": null,
+    "description": "Core setting: test disable groups.",
+    "family": "core",
+    "name": "MAC_TEST_DISABLE_GROUPS",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
     "default": "2",
     "description": "Core setting: test jobs.",
     "family": "core",

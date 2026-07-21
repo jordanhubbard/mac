@@ -14,6 +14,7 @@ def _run_with_fake_python(
     *,
     jobs: str | None = None,
     coverage: str | None = None,
+    disable_groups: str | None = None,
     combine_output: str = "Combined data file .coverage.fake",
     combine_status: int = 0,
     json_status: int = 0,
@@ -24,7 +25,7 @@ def _run_with_fake_python(
     fake_python = bin_dir / "python3"
     fake_python.write_text(
         """#!/bin/sh
-printf 'PYTEST_ADDOPTS=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "$*" >> "$FAKE_PY_LOG"
+printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "$*" >> "$FAKE_PY_LOG"
 case "$*" in
     *os.cpu_count*)
         # The runner computes its headroom-aware default worker count with a
@@ -61,6 +62,8 @@ exit 0
         env["MAC_TEST_JOBS"] = jobs
     if coverage is not None:
         env["MAC_TEST_COVERAGE"] = coverage
+    if disable_groups is not None:
+        env["MAC_TEST_DISABLE_GROUPS"] = disable_groups
     completed = subprocess.run(
         [str(RUNNER)],
         cwd=tmp_path,
@@ -69,7 +72,10 @@ exit 0
         text=True,
         check=False,
     )
-    return completed, log_path.read_text(encoding="utf-8").splitlines()
+    # The merge-gate guard can exit before any python is invoked, so the log may
+    # not exist; treat that as "no pytest phases ran".
+    calls = log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []
+    return completed, calls
 
 
 def test_contract_runner_defaults_to_headroom_workers_and_protects_serial_phase(tmp_path):
@@ -115,6 +121,34 @@ def test_contract_runner_fast_mode_skips_coverage_and_policy(tmp_path):
     assert not any("-m coverage combine" in line for line in calls)
     assert not any("-m coverage json" in line for line in calls)
     assert not any("scripts/coverage-policy.py" in line for line in calls)
+
+
+def test_contract_runner_refuses_disable_groups_under_coverage(tmp_path):
+    """Disabling a namespace drops ITS coverage, so honoring it with coverage on
+    would let a green gate skip contracts. The runner must hard-refuse (exit 2)
+    before running anything — the merge gate stays exhaustive."""
+    completed, calls = _run_with_fake_python(tmp_path, disable_groups="fleet")
+
+    assert completed.returncode == 2, completed.stdout + completed.stderr
+    assert "MAC_TEST_DISABLE_GROUPS is only honored in fast mode" in completed.stderr
+    assert not any("-m pytest" in line for line in calls)
+
+
+def test_contract_runner_honors_disable_groups_in_fast_mode(tmp_path):
+    """On the non-gating fast path (MAC_TEST_COVERAGE=0) the switch is allowed and
+    re-exported past the hermetic MAC_* sweep into the pytest child."""
+    completed, calls = _run_with_fake_python(
+        tmp_path, coverage="0", disable_groups="fleet,heavy_e2e"
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    pytest_calls = [
+        line
+        for line in calls
+        if "-m pytest" in line and "coverage" not in line and "--version" not in line
+    ]
+    assert pytest_calls, "expected fast-mode pytest phases"
+    assert all("DISABLE=fleet,heavy_e2e" in line for line in pytest_calls)
 
 
 def test_contract_runner_preserves_explicit_worker_override(tmp_path):

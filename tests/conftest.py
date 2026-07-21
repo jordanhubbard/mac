@@ -11,8 +11,37 @@ from mac.codegraph_audit import CODEGRAPH_AUDIT_SCHEMA, codegraph_relevant_files
 from mac.services import ControlPlane
 
 
-def pytest_collection_modifyitems(items: list) -> None:
-    """Auto-apply category markers based on test subdirectory."""
+# Namespaces addressable by MAC_TEST_DISABLE_GROUPS. Each maps a group name to a
+# predicate over the test's file path. Markers ARE the namespaces (the api/cli/ui
+# dir markers below and the serial marks in pyproject already work this way); these
+# entries just auto-tag the big filename clusters so an operator can switch a whole
+# cluster off with one flag. Registered under [tool.pytest.ini_options].markers so
+# they stay first-class and lintable.
+_PATH_NAMESPACES = {
+    "fleet": lambda p: "/tests/test_fleet_" in p or "/tests/test_deploy_fleet" in p,
+    "work_package": lambda p: "/tests/test_work_package" in p,
+    "worker": lambda p: "/tests/test_worker" in p,
+    "heavy_e2e": lambda p: p.endswith("_e2e.py") or "/tests/test_documentation_book.py" in p,
+}
+
+
+def _disabled_groups() -> set[str]:
+    """Namespaces the operator asked to switch off via MAC_TEST_DISABLE_GROUPS
+    (comma-separated). Empty/unset => nothing disabled (default behaviour)."""
+    raw = os.environ.get("MAC_TEST_DISABLE_GROUPS", "")
+    return {g.strip() for g in raw.split(",") if g.strip()}
+
+
+def pytest_collection_modifyitems(config, items: list) -> None:
+    """Auto-apply category markers, then deselect any namespace the operator
+    switched off via MAC_TEST_DISABLE_GROUPS.
+
+    Disabling a namespace removes ITS coverage, so this is only safe on the
+    non-gating fast-verify/rollout path — ``run-contract-tests.sh`` hard-refuses
+    the flag unless MAC_TEST_COVERAGE=0, keeping the merge gate exhaustive.
+    Disabled tests are *deselected* (not collected into the run) so they cost
+    zero wall-clock, rather than reported as skipped.
+    """
     for item in items:
         path = str(item.fspath)
         if "/tests/api/" in path:
@@ -21,6 +50,23 @@ def pytest_collection_modifyitems(items: list) -> None:
             item.add_marker(pytest.mark.cli)
         elif "/tests/ui/" in path:
             item.add_marker(pytest.mark.ui)
+        for namespace, matches in _PATH_NAMESPACES.items():
+            if matches(path):
+                item.add_marker(getattr(pytest.mark, namespace))
+
+    disabled = _disabled_groups()
+    if not disabled:
+        return
+
+    kept: list = []
+    dropped: list = []
+    for item in items:
+        markers = {mark.name for mark in item.iter_markers()}
+        (dropped if markers & disabled else kept).append(item)
+
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
 
 
 @pytest.fixture(autouse=True)
