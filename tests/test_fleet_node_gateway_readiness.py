@@ -9,7 +9,6 @@ chain so a future deployment change cannot silently drop one of the bindings.
 
 from __future__ import annotations
 
-import calendar
 import hashlib
 import json
 import os
@@ -105,6 +104,18 @@ def _gateway_summary_python() -> str:
         "def gateway_readiness_summary(stage):",
         "\n\ndef service_summary():",
     )
+
+
+def _manifest_imports_python() -> str:
+    function = _between(
+        _node_text(),
+        "write_deploy_manifest() {",
+        "\n}\n\nwrite_rollback_script() {",
+    )
+    marker = "<<'PY'\n"
+    assert marker in function
+    body = function.split(marker, 1)[1]
+    return body.split("\n\ndef run(cmd):", 1)[0]
 
 
 def _outer_run_bounded_python() -> str:
@@ -791,16 +802,9 @@ def _call_gateway_summary(
     }
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
-    namespace = {
-        "Path": Path,
-        "calendar": calendar,
-        "hashlib": hashlib,
-        "json": json,
-        "os": os,
-        "stat": stat,
-        "time": time,
-    }
-    exec(compile(_gateway_summary_python(), str(NODE_INSTALL), "exec"), namespace)
+    namespace: dict[str, Any] = {}
+    summary_source = _manifest_imports_python() + "\n" + _gateway_summary_python()
+    exec(compile(summary_source, str(NODE_INSTALL), "exec"), namespace)
     return namespace["gateway_readiness_summary"]("post")
 
 
