@@ -217,3 +217,117 @@ def test_main_invalid_coverage_json_exit_two(policy_mod, tmp_path, capsys):
     )
     assert code == 2
     assert "invalid input" in capsys.readouterr().err
+
+
+# --- Diff-coverage mode (impact-based subset gate) ---
+
+
+def _diff_policy_doc(statement_floor=90.0):
+    return {
+        "coverage": {
+            "statement_safety_floor": 90.0,
+            "branch_safety_floor": 80.0,
+            "require_branch_measurement": True,
+            "diff": {"statement_safety_floor": statement_floor, "branch_safety_floor": 80.0},
+        }
+    }
+
+
+def _diff_coverage_doc(files):
+    return {"files": files}
+
+
+def test_diff_pass_when_changed_lines_covered(policy_mod):
+    doc = _diff_coverage_doc(
+        {"src/mac/foo.py": {"executed_lines": [10, 11], "missing_lines": [50]}}
+    )
+    result = policy_mod.evaluate_diff(doc, _diff_policy_doc(), {"src/mac/foo.py": {10, 11}})
+    assert result["schema"] == policy_mod.DIFF_SCHEMA
+    assert result["status"] == "pass"
+    assert result["statements"]["covered"] == 2
+    assert result["statements"]["relevant"] == 2
+    assert result["statements"]["percent"] == 100.0
+
+
+def test_diff_fail_when_changed_line_uncovered(policy_mod):
+    doc = _diff_coverage_doc(
+        {"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [12]}}
+    )
+    result = policy_mod.evaluate_diff(doc, _diff_policy_doc(), {"src/mac/foo.py": {10, 12}})
+    assert result["status"] == "fail"
+    assert result["statements"]["percent"] == 50.0
+    assert any("diff statement coverage" in msg for msg in result["failures"])
+
+
+def test_diff_unmeasured_source_file_fails(policy_mod):
+    # A changed source file with no coverage entry: all changed lines uncovered.
+    result = policy_mod.evaluate_diff(
+        _diff_coverage_doc({}), _diff_policy_doc(), {"src/mac/new.py": {1, 2, 3}}
+    )
+    assert result["status"] == "fail"
+    assert result["statements"]["relevant"] == 3
+    assert result["statements"]["covered"] == 0
+
+
+def test_diff_no_changed_lines_passes(policy_mod):
+    result = policy_mod.evaluate_diff(_diff_coverage_doc({}), _diff_policy_doc(), {})
+    assert result["status"] == "pass"
+    assert result["statements"]["percent"] == 100.0
+
+
+def test_diff_ignores_non_statement_changed_lines(policy_mod):
+    # A changed line that is neither executed nor missing (blank/comment) is not
+    # counted as relevant.
+    doc = _diff_coverage_doc(
+        {"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [11]}}
+    )
+    result = policy_mod.evaluate_diff(doc, _diff_policy_doc(), {"src/mac/foo.py": {10, 99}})
+    assert result["statements"]["relevant"] == 1
+    assert result["status"] == "pass"
+
+
+def test_diff_reports_uncovered_branches_without_enforcing(policy_mod):
+    doc = _diff_coverage_doc(
+        {
+            "src/mac/foo.py": {
+                "executed_lines": [10],
+                "missing_lines": [],
+                "missing_branches": [[10, 12], [99, 100]],
+            }
+        }
+    )
+    result = policy_mod.evaluate_diff(doc, _diff_policy_doc(), {"src/mac/foo.py": {10}})
+    assert result["branches"]["uncovered_on_changed_lines"] == 1
+    assert result["branches"]["enforced"] is False
+    assert result["status"] == "pass"
+
+
+def test_main_diff_mode_with_changed_lines_file(policy_mod, tmp_path, capsys):
+    coverage_path = tmp_path / "coverage.json"
+    coverage_path.write_text(
+        json.dumps(
+            _diff_coverage_doc(
+                {"src/mac/foo.py": {"executed_lines": [10], "missing_lines": [11]}}
+            )
+        ),
+        encoding="utf-8",
+    )
+    policy_path = tmp_path / "test-policy.toml"
+    policy_path.write_text(
+        "[coverage]\nstatement_safety_floor = 90.0\nbranch_safety_floor = 80.0\n"
+        "require_branch_measurement = true\n\n"
+        "[coverage.diff]\nstatement_safety_floor = 90.0\nbranch_safety_floor = 80.0\n",
+        encoding="utf-8",
+    )
+    changed_path = tmp_path / "changed.json"
+    changed_path.write_text(json.dumps({"src/mac/foo.py": [10, 11]}), encoding="utf-8")
+    code = policy_mod.main(
+        [
+            "--coverage-json", str(coverage_path),
+            "--policy", str(policy_path),
+            "--mode", "diff",
+            "--changed-lines", str(changed_path),
+        ]
+    )
+    assert code == 1  # line 11 uncovered -> 50% < 90%
+    assert "diff statement coverage" in capsys.readouterr().err

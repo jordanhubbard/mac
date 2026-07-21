@@ -7,7 +7,53 @@ statement_safety_floor = 90.0
 branch_safety_floor = 80.0
 require_branch_measurement = true
 
+[coverage.diff]
+# When the gate runs a resolver-selected SUBSET (impact-based selection), the
+# whole-repo floors above are not measurable. Diff-coverage enforces the same
+# safety intent over ONLY the lines the change touched, so an untested changed
+# line fails the gate even though the whole-repo total is unmeasured. The
+# scheduled full run re-enforces the whole-repo [coverage] floors and rebuilds
+# the impact map, so this is a complement, never a replacement.
+statement_safety_floor = 90.0
+branch_safety_floor = 80.0
+
 [portfolio]
 protect_historical_fault_probes = true
 candidate_requires_zero_unique_lines = true
 candidate_requires_zero_unique_arcs = true
+
+[selection]
+# Impact-based test selection (scripts/resolve-impacted-tests.py). A test is
+# selected only when the code it actually exercises changed. The engine is
+# hybrid + union + fail-closed: dynamic per-test coverage map first, CodeGraph
+# static reachability second, full-suite fallback whenever a changed file
+# cannot be safely mapped.
+#
+# Committed map produced post-merge on main by scripts/build-test-impact-map.py.
+# A missing or stale map is always SAFE: every source file then falls through
+# to CodeGraph and finally to a full run, which is the pre-selection behavior.
+impact_map = "src/mac/data/test_impact_map.json"
+
+# Files that invalidate the whole map or test collection when they change, so a
+# change to any of them forces a full run regardless of the map. Kept minimal
+# on purpose: the old selector escalated on every scripts/ and pyproject edit,
+# which is exactly the over-escalation impact selection removes.
+global_full_paths = [
+    "conftest.py",
+    "tests/conftest.py",
+    "test-policy.toml",
+    "uv.lock",
+    "poetry.lock",
+]
+
+# Cross-cutting guards that can never be safely deselected by the dynamic layer
+# (their real coverage is unattributed subprocess/session work, or they are
+# public-contract canaries). The builder also seeds unattributed test files into
+# the map's own always_run list; these are additive belt-and-braces.
+always_run = [
+    "tests/test_control_plane_public_contract.py",
+    "tests/api/test_task_read_endpoints.py",
+    "tests/cli/test_cli_coverage_gate.py",
+    "tests/ui/test_fleet_ide_api_contracts.py",
+    "tests/test_worker_process_e2e.py",
+]

@@ -31,6 +31,13 @@ MANAGED_FILES = (
     "scripts/coverage-policy.py",
     "scripts/test-portfolio.py",
 )
+# Trusted-if-present artifacts: pinned exactly when the image ships them, but
+# their absence is not an error (the impact map is produced by a post-merge
+# scheduled job, so early images legitimately lack it). Once present, verify()
+# still enforces exact inventory + digest, so a candidate cannot inject one.
+OPTIONAL_MANAGED_FILES = (
+    "src/mac/data/test_impact_map.json",
+)
 FORBIDDEN_ROOT_CONTROLS = (
     ".coveragerc",
     "conftest.py",
@@ -94,6 +101,17 @@ def _inventory(root: Path) -> tuple[PurePosixPath, ...]:
         relative = PurePosixPath(name)
         _regular_file(root, relative)
         values.add(relative)
+    for name in OPTIONAL_MANAGED_FILES:
+        relative = PurePosixPath(name)
+        candidate = root.joinpath(*relative.parts)
+        try:
+            metadata = candidate.lstat()
+        except OSError:
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            raise HarnessError(f"trusted harness contains a symlink: {relative}")
+        if stat.S_ISREG(metadata.st_mode):
+            values.add(relative)
     return tuple(sorted(values, key=str))
 
 

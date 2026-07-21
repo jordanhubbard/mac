@@ -32,6 +32,18 @@ if [ -n "$_MAC_TEST_DISABLE_GROUPS_REQUESTED" ] \
     echo "run-contract-tests.sh: MAC_TEST_DISABLE_GROUPS is only honored in fast mode (set MAC_TEST_COVERAGE=0, non-portfolio); the merge gate must run every contract" >&2
     exit 2
 fi
+# Impact-based gate: with MAC_TEST_SELECT_BASE=<ref> the runner asks
+# scripts/resolve-impacted-tests.py for the tests whose code actually changed
+# vs <ref>. A 'full' resolution (or any resolver error) falls through to the
+# whole-repo gate — fail-closed. A 'focused' resolution runs only those tests
+# and, when coverage is on, enforces the CHANGED-LINE floor (diff-coverage)
+# because whole-repo totals are not measurable from a subset. This is the
+# days->hours rollout win; the whole-repo floors are re-enforced by the
+# scheduled full run. Unset => the default full gate below is byte-identical.
+_MAC_TEST_SELECT_BASE_REQUESTED="${MAC_TEST_SELECT_BASE:-}"
+# Scheduled full run: after a passing portfolio gate, rebuild the committed
+# test-impact map from the fresh per-test coverage so selection stays fresh.
+_MAC_TEST_REBUILD_MAP_REQUESTED="${MAC_TEST_REBUILD_MAP:-0}"
 
 # Fleet executors inherit deployment/task environment. Keep repository tests
 # hermetic so they exercise the checked-out code, not the live agent runtime.
@@ -202,6 +214,57 @@ if [ "$#" -eq 0 ]; then
     # worker).
     _SERIAL_MARK="process_e2e or postgres or container_contract or docker_e2e"
 
+    # Impact-based subset gate. Placed before the coverage machinery so a focused
+    # resolution runs the small selected set SERIALLY (subsets are small by
+    # design; serial avoids the real-port/subprocess collisions the marker split
+    # exists to prevent) and enforces diff-coverage. 'full'/error falls through.
+    if [ -n "$_MAC_TEST_SELECT_BASE_REQUESTED" ]; then
+        selection_json="$(mktemp "${TMPDIR:-/tmp}/mac-impact-select.XXXXXX")"
+        resolve_status=0
+        "$PY" scripts/resolve-impacted-tests.py \
+            --base "$_MAC_TEST_SELECT_BASE_REQUESTED" >"$selection_json" 2>/dev/null \
+            || resolve_status=$?
+        sel_mode=""
+        if [ "$resolve_status" -eq 0 ]; then
+            sel_mode="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["mode"])' "$selection_json" 2>/dev/null || echo "")"
+        fi
+        if [ "$sel_mode" = "focused" ]; then
+            "$PY" -c 'import json,sys; d=json.load(open(sys.argv[1])); print("impact selection: %s (%s), %d tests" % (d["mode"], d["reason"], len(d.get("tests", []))))' "$selection_json"
+            set --
+            while IFS= read -r _t; do
+                [ -n "$_t" ] && set -- "$@" "$_t"
+            done < <("$PY" -c 'import json,sys; [print(x) for x in json.load(open(sys.argv[1])).get("tests", [])]' "$selection_json")
+            rm -f "$selection_json"
+            if [ "$#" -eq 0 ]; then
+                echo "impact selection: no tests exercise the changed code (non-code change)"
+                exit 0
+            fi
+            if [ "$_MAC_TEST_COVERAGE_REQUESTED" = "0" ]; then
+                exec "$PY" -m pytest "$@"
+            fi
+            "$PY" -m coverage erase
+            sel_status=0
+            "$PY" -m coverage run -m pytest "$@" || sel_status=$?
+            "$PY" -m coverage combine >/dev/null 2>&1 || true
+            diff_status=0
+            if [ "$sel_status" -eq 0 ]; then
+                "$PY" -m coverage json -o coverage.json || diff_status=$?
+                if [ "$diff_status" -eq 0 ]; then
+                    "$PY" scripts/coverage-policy.py --coverage-json coverage.json \
+                        --mode diff --base "$_MAC_TEST_SELECT_BASE_REQUESTED" \
+                        --repo-root "$(pwd)" || diff_status=$?
+                fi
+            fi
+            if [ "$sel_status" -ne 0 ]; then
+                exit "$sel_status"
+            fi
+            exit "$diff_status"
+        fi
+        # 'full' or resolver error: fall through to the whole-repo gate below.
+        rm -f "$selection_json"
+        echo "impact selection: full run required (resolver mode=${sel_mode:-error}); running whole-repo gate"
+    fi
+
     # Fast verification path: identical bulk+serial split, but WITHOUT coverage
     # tracing or the floor policy. Coverage roughly halves throughput and adds
     # per-worker memory that a pass/fail rollout/dev check does not need. Never
@@ -285,6 +348,19 @@ if [ "$#" -eq 0 ]; then
     fi
     if [ "$portfolio_status" -ne 0 ]; then
         exit "$portfolio_status"
+    fi
+    # Scheduled full run: rebuild the committed impact map from this run's fresh
+    # per-test coverage. Only on a green portfolio gate (policy passed) with the
+    # portfolio artifacts present; committing the refreshed map is the caller's
+    # (CI) job, keeping this script side-effect-free on the working tree apart
+    # from the tracked artifact it is explicitly asked to regenerate.
+    if [ "$_MAC_TEST_REBUILD_MAP_REQUESTED" = "1" ] && [ -n "$portfolio_dir" ] \
+        && [ "$policy_status" -eq 0 ]; then
+        "$PY" scripts/build-test-impact-map.py \
+            --coverage-file "$portfolio_dir/.coverage" \
+            --timings "$portfolio_dir/timings.json" \
+            --output "src/mac/data/test_impact_map.json" \
+            || echo "run-contract-tests.sh: impact-map rebuild failed (gate result unaffected)" >&2
     fi
     exit "$policy_status"
 fi

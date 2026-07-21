@@ -11802,6 +11802,7 @@
     "name": "MAC_TEST_PORTFOLIO",
     "retired": false,
     "sources": [
+      "scripts/build-test-impact-map.py",
       "scripts/run-contract-tests.sh"
     ],
     "type": "str"
@@ -11815,6 +11816,28 @@
     "sources": [
       "scripts/run-contract-tests.sh",
       "scripts/test-portfolio.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test rebuild map.",
+    "family": "core",
+    "name": "MAC_TEST_REBUILD_MAP",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: test select base.",
+    "family": "core",
+    "name": "MAC_TEST_SELECT_BASE",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
     ],
     "type": "str"
   },

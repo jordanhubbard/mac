@@ -24,6 +24,8 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 MAX_CHANGED_FILES = 4096
 MAX_PATH_BYTES = 1024
 FULL_TARGETS = ("tests", "plugin/test_tools.py")
+IMPACT_MAP_RELATIVE = "src/mac/data/test_impact_map.json"
+IMPACT_MAP_SCHEMA = "mac.test_impact_map.v1"
 INVARIANT_TESTS = (
     "tests/test_publication_lane.py",
     "tests/test_repository_contract_certification.py",
@@ -110,6 +112,59 @@ def _module_tests(path: str, trusted_root: Path) -> tuple[str, ...]:
     return tuple(sorted(candidates))
 
 
+def _sha256_of(root: Path, relative: str) -> str | None:
+    path = root.joinpath(*PurePosixPath(relative).parts)
+    try:
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _load_impact_map(path: Path) -> dict | None:
+    """Read the image-owned test-impact map. Any defect returns None so the
+    selector falls back to its existing (fail-closed) name-convention path."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != IMPACT_MAP_SCHEMA:
+        return None
+    return payload
+
+
+def _impact_map_is_fresh(impact_map: Mapping | None, assembly_base_sha: str) -> bool:
+    return bool(impact_map and impact_map.get("base_sha") == assembly_base_sha)
+
+
+def _impact_map_tests(
+    source_path: str,
+    impact_map: Mapping | None,
+    trusted_root: Path,
+    assembly_base_sha: str,
+) -> tuple[str, ...]:
+    """Frozen test files the map attributes to a source file, or () when the map
+    cannot be trusted for it (missing, stale base, unmapped, or a content hash
+    that disagrees with the trusted image copy)."""
+    if not _impact_map_is_fresh(impact_map, assembly_base_sha):
+        return ()
+    assert impact_map is not None
+    indices = (impact_map.get("file_tests") or {}).get(source_path)
+    if not indices:
+        return ()
+    expected = (impact_map.get("file_hashes") or {}).get(source_path)
+    if not expected or _sha256_of(trusted_root, source_path) != expected:
+        return ()
+    nodeids = impact_map.get("nodeids") or []
+    tests: set[str] = set()
+    for index in indices:
+        if not isinstance(index, int) or not 0 <= index < len(nodeids):
+            return ()
+        test_file = str(nodeids[index]).split("::", 1)[0]
+        if _regular_file(trusted_root, test_file):
+            tests.add(test_file)
+    return tuple(sorted(tests))
+
+
 def _phase(mode: str, reason: str, tests: Iterable[str] = ()) -> dict[str, object]:
     return {"mode": mode, "reason": reason, "tests": sorted(set(tests))}
 
@@ -121,8 +176,16 @@ def plan_selection(
     assembly_base_sha: str,
     candidate_sha: str,
     trusted_source_revision: str,
+    impact_map: Mapping | None = None,
 ) -> dict[str, object]:
-    """Return one deterministic plan with at most one full-suite phase."""
+    """Return one deterministic plan with at most one full-suite phase.
+
+    The optional ``impact_map`` is the image-owned per-test coverage map. It can
+    only REDUCE a full run to a focused one by attributing an otherwise-unmapped
+    source file to the frozen tests that exercised it, and only when the map is
+    fresh (base SHA matches) and the trusted image copy of the file still hashes
+    to the value recorded in the map. Any doubt leaves the file unmapped, so the
+    plan degrades to exactly the pre-map fail-closed behavior."""
 
     if not SHA_RE.fullmatch(assembly_base_sha):
         raise SelectionError("assembly base must be an exact lowercase Git SHA")
@@ -175,8 +238,19 @@ def plan_selection(
         candidates = _module_tests(source_path, trusted_root)
         if candidates:
             mapped.update(candidates)
+            continue
+        refined = _impact_map_tests(
+            source_path, impact_map, trusted_root, assembly_base_sha
+        )
+        if refined:
+            mapped.update(refined)
         else:
             unmapped_source.append(source_path)
+    if source_changes and _impact_map_is_fresh(impact_map, assembly_base_sha):
+        assert impact_map is not None
+        for always in impact_map.get("always_run", []):
+            if isinstance(always, str) and _regular_file(trusted_root, always):
+                mapped.add(always)
 
     focused = set(INVARIANT_TESTS)
     focused.update(mapped)
@@ -335,6 +409,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--modes-output", type=Path, required=True)
     parser.add_argument("--authoritative-tests-output", type=Path, required=True)
+    parser.add_argument(
+        "--impact-map",
+        type=Path,
+        default=None,
+        help="image-owned test-impact map; defaults to the trusted root copy if present",
+    )
     return parser
 
 
@@ -342,12 +422,19 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         candidate_sha, changed = inspect_candidate(args.candidate_root, args.base_sha)
+        trusted_root = args.trusted_root.resolve(strict=True)
+        # The map is read ONLY from the trusted image root, never the candidate,
+        # so no candidate code or data influences the plan. Absent/defective ->
+        # None -> unchanged fail-closed behavior.
+        map_path = args.impact_map or (trusted_root / IMPACT_MAP_RELATIVE)
+        impact_map = _load_impact_map(map_path) if map_path.is_file() else None
         plan = plan_selection(
             changed,
-            trusted_root=args.trusted_root.resolve(strict=True),
+            trusted_root=trusted_root,
             assembly_base_sha=args.base_sha,
             candidate_sha=candidate_sha,
             trusted_source_revision=_load_trusted_revision(args.trusted_manifest),
+            impact_map=impact_map,
         )
         _write(
             args.output,

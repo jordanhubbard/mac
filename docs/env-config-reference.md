@@ -991,6 +991,8 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_TEST_JOBS` | str | 2 | core | Core setting: test jobs. |
 | `MAC_TEST_PORTFOLIO` | str | consumer-defined | core | Core setting: test portfolio. |
 | `MAC_TEST_PORTFOLIO_OUTPUT` | str | consumer-defined | core | Core setting: test portfolio output. |
+| `MAC_TEST_REBUILD_MAP` | bool | consumer-defined | core | Core setting: test rebuild map. |
+| `MAC_TEST_SELECT_BASE` | str | consumer-defined | core | Core setting: test select base. |
 | `MAC_TEST_STALL_TIMEOUT` | int | consumer-defined | core | Core setting: test stall timeout. |
 | `MAC_TOKEN` | str | consumer-defined | core | Core setting: token. |
 | `MAC_TOKENHUB_ALLOW_DEGRADED` | bool | consumer-defined | tokenhub-legacy | Tokenhub Legacy setting: tokenhub allow degraded. |

@@ -15,6 +15,7 @@ def _run_with_fake_python(
     jobs: str | None = None,
     coverage: str | None = None,
     disable_groups: str | None = None,
+    select_base: str | None = None,
     combine_output: str = "Combined data file .coverage.fake",
     combine_status: int = 0,
     json_status: int = 0,
@@ -64,6 +65,8 @@ exit 0
         env["MAC_TEST_COVERAGE"] = coverage
     if disable_groups is not None:
         env["MAC_TEST_DISABLE_GROUPS"] = disable_groups
+    if select_base is not None:
+        env["MAC_TEST_SELECT_BASE"] = select_base
     completed = subprocess.run(
         [str(RUNNER)],
         cwd=tmp_path,
@@ -186,3 +189,21 @@ def test_contract_runner_propagates_coverage_json_failure(tmp_path):
     assert completed.returncode == 17
     assert any("-m coverage json" in line for line in calls)
     assert not any("scripts/coverage-policy.py" in line for line in calls)
+
+
+def test_contract_runner_select_base_falls_through_to_full_gate_when_unresolved(tmp_path):
+    """MAC_TEST_SELECT_BASE asks the resolver for an impact subset, but a resolver
+    that yields no ``focused`` document (here the fake python cannot emit one) must
+    fail closed: the runner runs the whole-repo two-phase coverage gate exactly as
+    if selection were never requested. This is the fail-closed guarantee — a
+    broken/absent resolver can never silently shrink the merge gate."""
+    completed, calls = _run_with_fake_python(tmp_path, select_base="origin/main")
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    # The resolver was consulted...
+    assert any("scripts/resolve-impacted-tests.py --base origin/main" in line for line in calls)
+    # ...and, unresolved, the full whole-repo gate still ran both coverage phases.
+    assert "full run required" in completed.stdout
+    pytest_calls = [line for line in calls if "-m coverage run -m pytest" in line]
+    assert len(pytest_calls) == 2
+    assert "not (process_e2e or postgres or container_contract or docker_e2e)" in pytest_calls[0]
