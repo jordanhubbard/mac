@@ -1006,6 +1006,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../repository-runtime-contract/" class="md-nav__link">
         
   
@@ -1528,6 +1556,45 @@ or build.</p>
 execution time, review latency, rework, certification, and publication success.
 Faster internal task transitions do not compensate for a lower rate of useful
 work reaching the canonical branch.</p>
+<p>Fleet directives turn an operator rule into versioned control-plane data. They
+are deliberately narrower than agent prompts: conditions use a small typed
+language, substitutions are marked, conflicts are checked before approval, and
+an activation does not become effective until its live worker cohort has
+acknowledged the exact digest. Workflow macros create held DAGs; an operator
+must still inspect and activate those packages.</p>
+<p>This executable example activates an unconditional boolean rule on a local
+authority with no workers. A production cohort would leave the activation in
+<code>distributing</code> until every live worker acknowledged it.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">MAC_DIRECTIVES_ENABLED</span><span class="o">=</span><span class="m">1</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>init
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>cat<span class="w"> </span>&gt;<span class="s2">&quot;</span><span class="nv">$TMPDIR</span><span class="s2">/review-policy.yaml&quot;</span><span class="w"> </span><span class="s">&lt;&lt;&#39;YAML&#39;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="s">schema: mac.directive.v1</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="s">name: review.require-independent</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="s">description: Require independent review for every newly created task.</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="s">scope: fleet</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="s">set:</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="s">  review.independent_required: true</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="s">YAML</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="nv">directive_json</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>--json<span class="w"> </span>directive<span class="w"> </span>propose<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span>--document-file<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$TMPDIR</span><span class="s2">/review-policy.yaml&quot;</span><span class="w"> </span>--actor<span class="w"> </span>docs<span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="nv">directive_id</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$directive_json</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">  </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import json,sys; print(json.load(sys.stdin)[&quot;id&quot;])&#39;</span><span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="nv">digest</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$directive_json</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">  </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import json,sys; print(json.load(sys.stdin)[&quot;versions&quot;][0][&quot;digest&quot;])&#39;</span><span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="nv">check_json</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>--json<span class="w"> </span>directive<span class="w"> </span>check<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">  </span><span class="s2">&quot;</span><span class="nv">$directive_id</span><span class="s2">&quot;</span><span class="w"> </span>--version<span class="w"> </span><span class="m">1</span><span class="w"> </span>--actor<span class="w"> </span>docs<span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="nv">check_id</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$check_json</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">  </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import json,sys; data=json.load(sys.stdin); assert data[&quot;status&quot;] == &quot;pass&quot;; print(data[&quot;id&quot;])&#39;</span><span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>directive<span class="w"> </span>approve<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$directive_id</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">  </span>--version<span class="w"> </span><span class="m">1</span><span class="w"> </span>--digest<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$digest</span><span class="s2">&quot;</span><span class="w"> </span>--check-id<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$check_id</span><span class="s2">&quot;</span><span class="w"> </span>--actor<span class="w"> </span>docs<span class="w"> </span>&gt;/dev/null
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>directive<span class="w"> </span>activate<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$directive_id</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">  </span>--version<span class="w"> </span><span class="m">1</span><span class="w"> </span>--digest<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$digest</span><span class="s2">&quot;</span><span class="w"> </span>--actor<span class="w"> </span>docs<span class="w"> </span>&gt;/dev/null
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>--json<span class="w"> </span>directive<span class="w"> </span>effective<span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">  </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;import json,sys; assert json.load(sys.stdin)[&quot;set&quot;][&quot;review.independent_required&quot;] is True&#39;</span>
+</code></pre></div>
+<p>The complete directive schema, binding precedence, conflict rules, waiver
+boundary, and Make-to-Bazel workflow example are in the
+<a href="../../fleet-directives/">fleet directive reference</a>.</p>
 
 
 

@@ -10,9 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/scientific-optimizer/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/fleet-directives/">
       
       
+        <link rel="prev" href="../env-config-reference/">
+      
+      
+        <link rel="next" href="../repository-runtime-contract/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>Autonomous scientific optimizer - MAC Documentation</title>
+        <title>Fleet directives - MAC Documentation</title>
       
     
     
@@ -76,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#autonomous-scientific-optimizer" class="md-skip">
+        <a href="#fleet-directives" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Autonomous scientific optimizer
+              Fleet directives
             
           </span>
         </div>
@@ -851,8 +855,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -863,11 +869,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
@@ -888,7 +894,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -987,10 +993,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../fleet-directives/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1006,6 +1039,92 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conditions-and-facts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conditions and facts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bindings-and-substitution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bindings and substitution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waivers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waivers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HTTP API
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1499,10 +1618,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#durable-control-loop" class="md-nav__link">
+  <a href="#the-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Durable control loop
+        The contract
       
     </span>
   </a>
@@ -1510,10 +1629,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#kpis-and-inference" class="md-nav__link">
+  <a href="#conditions-and-facts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        KPIs and inference
+        Conditions and facts
       
     </span>
   </a>
@@ -1521,10 +1640,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#enable-and-inspect" class="md-nav__link">
+  <a href="#bindings-and-substitution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Enable and inspect
+        Bindings and substitution
       
     </span>
   </a>
@@ -1532,10 +1651,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#manual-pre-registration" class="md-nav__link">
+  <a href="#lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Manual pre-registration
+        Lifecycle
       
     </span>
   </a>
@@ -1543,10 +1662,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#interpretation-limits" class="md-nav__link">
+  <a href="#waivers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Interpretation limits
+        Waivers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HTTP API
       
     </span>
   </a>
@@ -1570,7 +1700,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/scientific-optimizer.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/fleet-directives.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1578,119 +1708,145 @@
   
 
 
-<h1 id="autonomous-scientific-optimizer">Autonomous scientific optimizer<a class="headerlink" href="#autonomous-scientific-optimizer" title="Permanent link">&para;</a></h1>
-<p>MAC's scientific optimizer turns execution-policy choices into falsifiable,
-replayable experiments. It continuously derives task KPIs from the task ledger,
-router observations, reviews, publications, and delayed outcome labels; proposes
-one bounded treatment at a time per project; randomizes eligible repository
-tasks; and promotes a treatment only when it is statistically superior and all
-quality endpoints are non-inferior.</p>
-<p>It optimizes policy, not safety. The only mutable task fields are <code>model</code>,
-<code>review_model</code>, <code>model_strength</code>, <code>review_model_strength</code>, <code>max_iterations</code>,
-<code>review_max_iterations</code>, <code>plan_first</code>, and <code>review_mode</code>. Sandbox policy,
-required tests, CodeGraph, review eligibility, signatures, publication,
-authorization, and deployment gates are not policy parameters and are rejected
-by validation.</p>
-<h2 id="durable-control-loop">Durable control loop<a class="headerlink" href="#durable-control-loop" title="Permanent link">&para;</a></h2>
-<p>The hub persists five replayable records:</p>
+<h1 id="fleet-directives">Fleet directives<a class="headerlink" href="#fleet-directives" title="Permanent link">&para;</a></h1>
+<p>Fleet directives are MAC's durable channel for standing rules that apply to
+every worker. Use them when a rule must survive restarts, be checked against
+other global rules, and become part of the policy snapshot attached to new
+work. Do not use <code>mac agent tell</code>: that is a one-time message to one agent, not
+a fleet policy.</p>
+<p>The feature is gated by <code>MAC_DIRECTIVES_ENABLED=1</code>. Disabled hubs expose an
+empty, explicitly disabled snapshot and perform no dispatch gating. This makes
+it possible to ship the implementation before enabling a production cohort.</p>
+<h2 id="the-contract">The contract<a class="headerlink" href="#the-contract" title="Permanent link">&para;</a></h2>
+<p>Each proposal is a <code>mac.directive.v1</code> YAML or JSON document. The hub creates an
+immutable version and SHA-256 digest. The only scope in version 1 is <code>fleet</code>;
+projects and repositories may supply variable bindings or receive audited
+waivers, but they cannot override a global policy value.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mac.directive.v1</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">build.bazel-first</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Convert Make repositories to Bazel through a reviewed workflow.</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">scope</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fleet</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nt">when</span><span class="p">:</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">eq</span><span class="p">:</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">fact</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">repository.metadata.build_system</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">literal</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">make</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="nt">variables</span><span class="p">:</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nt">primary_target</span><span class="p">:</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">string</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="nt">binding</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">build.primary_target</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="nt">required</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="nt">set</span><span class="p">:</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">  </span><span class="nt">build.bazel.required</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="nt">macro</span><span class="p">:</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">  </span><span class="nt">workflow</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">build-system.make-to-bazel</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">  </span><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">  </span><span class="nt">inputs</span><span class="p">:</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">    </span><span class="nt">repository_id</span><span class="p">:</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">      </span><span class="nt">fact</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">repository.id</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">    </span><span class="nt">primary_target</span><span class="p">:</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">      </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${primary_target}&quot;</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">  </span><span class="nt">effects</span><span class="p">:</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">    </span><span class="nt">exclusive</span><span class="p">:</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;repository:${repository.id}:build-system&quot;</span>
+</code></pre></div>
+<p>The policy above does not execute a conversion itself. When it matches, MAC
+loads the enabled, exact-version <code>build-system.make-to-bazel</code> workflow and
+admits a managed mutation, assembly, and certification DAG. The package and
+all tasks remain held. An operator reviews the generated graph and activates
+it through the normal work-package lifecycle.</p>
+<h2 id="conditions-and-facts">Conditions and facts<a class="headerlink" href="#conditions-and-facts" title="Permanent link">&para;</a></h2>
+<p>The condition language has only these operators:</p>
+<ul>
+<li><code>all</code>, <code>any</code>, and <code>not</code> combine conditions.</li>
+<li><code>eq</code>, <code>ne</code>, <code>in</code>, <code>contains</code>, <code>starts_with</code>, and <code>ends_with</code> compare two
+  explicitly marked operands.</li>
+<li><code>exists</code> checks one fact operand.</li>
+</ul>
+<p>Operands are <code>{fact: path}</code> or <code>{literal: value}</code>. Supported fact roots are
+<code>fleet</code>, <code>project</code>, <code>repository</code>, and <code>agent</code>. Repository facts come from the
+hub's registered <code>project_repositories</code> row and its metadata; a repository
+cannot provide an executable policy file. There is no <code>eval</code>, shell, Python,
+CEL, regex engine, network lookup, or dynamically named condition operator.</p>
+<p>Evaluation is bounded to 16 levels and 256 nodes. A missing fact does not
+silently invent a value. It makes the relevant comparison false; a required
+variable that remains unresolved after a condition matches blocks the check.</p>
+<h2 id="bindings-and-substitution">Bindings and substitution<a class="headerlink" href="#bindings-and-substitution" title="Permanent link">&para;</a></h2>
+<p>Variable bindings resolve in this order:</p>
 <ol>
-<li>A versioned policy contains only allowlisted parameters. One policy is active
-   per project; every promotion or rollback is an audited event.</li>
-<li>A pre-registered experiment names its hypothesis, control and treatment,
-   primary KPI, expected direction, minimum effect, sample budget, exploration
-   rate, outcome horizon, and guardrails.</li>
-<li>A task assignment records the arm, exact policy, phase, assignment propensity,
-   and task stratum before execution. Deterministic hashing makes assignment
-   reproducible without making it predictable from the policy itself.</li>
-<li>An observation projects terminal ledger evidence into canonical KPIs. It can
-   be regenerated after delayed labels arrive.</li>
-<li>A decision stores sample counts, estimates, confidence bounds, every
-   guardrail result, and the action taken.</li>
+<li>repository;</li>
+<li>project;</li>
+<li>fleet;</li>
+<li>the variable's declared default.</li>
 </ol>
-<p>The scheduler uses a database lease, so one replica owns a cycle even when the
-API is deployed with multiple Postgres-backed hub replicas. A project also has a
-single durable experiment slot. An experiment begins with balanced 50/50 A/B
-assignment inside its exploration sample. A winner enters monitoring with 90%
-treatment and 10% control traffic. A monitoring guardrail regression rolls the
-project back to the registered control policy.</p>
-<h2 id="kpis-and-inference">KPIs and inference<a class="headerlink" href="#kpis-and-inference" title="Permanent link">&para;</a></h2>
-<p>The canonical projection includes accepted and delayed-quality success,
-executor/reviewer attempts, rework cycles, lead time, model latency, input and
-output tokens, estimated USD cost, escaped-defect severity, and publication
-count. Cost is taken from explicit route telemetry when available or derived
-from the native models.dev catalog. Unpriced calls are missing cost data; they
-are never counted as zero-cost samples.</p>
-<p>Only terminal tasks whose quality outcome is validated enter an analysis. A
-completed task becomes delayed-quality-valid after its configured observation
-horizon or an explicit <code>clean_window</code>/<code>escaped_defect</code> outcome. Failed and
-cancelled tasks are immediately quality-valid failures. Record stronger delayed
-labels with <code>mac review experiment outcome</code>.</p>
-<p>MAC uses a deterministic two-sample bootstrap for treatment-minus-control
-means. Because the scheduler can inspect an experiment after each sample, the
-confidence level is Bonferroni-corrected over every planned interim look and
-every tested endpoint. Accepted success, delayed-quality success, and escaped
-defect severity are mandatory guardrails; a caller can tighten them but cannot
-remove them. Small or inconclusive runs continue until their sample budget is
-exhausted and are then rejected, never promoted on a tie.</p>
-<h2 id="enable-and-inspect">Enable and inspect<a class="headerlink" href="#enable-and-inspect" title="Permanent link">&para;</a></h2>
-<p>The scheduler is explicit at deployment time:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_INTERVAL_SECONDS=300</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_INITIAL_DELAY_SECONDS=60</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROPOSE=1</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROMOTE=1</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_AUTO_IMPROVE=1</span>
+<p>Use JSON values so type validation is unambiguous:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac directive binding set repository repo_c26 build.primary_target \</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">  --value &#39;&quot;//kernel:all&quot;&#39; --actor operator</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">mac directive binding set fleet fleet build.primary_target \</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="go">  --value &#39;&quot;//:all&quot;&#39; --actor operator</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="go">mac directive binding list --target-type repository --target-id repo_c26</span>
 </code></pre></div>
-<p>Inspect or run one cycle:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac optimizer status</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac optimizer tick</span>
+<p>Only <code>{fact: ...}</code>, <code>{var: ...}</code>, and <code>{template: ...}</code> values inside macro
+inputs or effects are substituted. Ordinary strings, policy keys, fact paths,
+workflow names, versions, and scope are never interpolated. Every <code>${name}</code> in
+a marked template must resolve. Credential-like keys and values, authenticated
+URLs, bearer tokens, and private keys are rejected before persistence.</p>
+<h2 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
+<p>The safe path is propose, check, approve, then activate:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac directive propose --document-file bazel-first.yaml --actor operator</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac directive check build.bazel-first --version 1 --actor operator</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac directive approve build.bazel-first --version 1 \</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="go">  --digest SHA256 --check-id directive_check_ID --actor operator</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">mac directive activate build.bazel-first --version 1 \</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="go">  --digest SHA256 --actor operator</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="go">mac directive impact build.bazel-first</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="go">mac directive effective --repository-id repo_c26</span>
 </code></pre></div>
-<p>Automatic hypothesis generation currently makes conservative, one-variable
-changes: lower a named strength rung when cost is measurable, reduce an
-explicitly oversized reviewer turn budget, or enable plan-first execution when
-baseline rework is high. It waits for at least
-<code>MAC_SCIENTIFIC_OPTIMIZER_MIN_BASELINE_TASKS</code> terminal tasks and never creates a
-second active experiment for the same project.</p>
-<p>When measured rework remains high after the safe parameter treatments are
-exhausted, <code>AUTO_IMPROVE</code> creates a normal, dispatchable repository task with
-the baseline task IDs and KPI means. That task must identify a causal mechanism,
-add missing instrumentation if needed, and pre-register a bounded treatment.
-It runs through the ordinary executor, test, CodeGraph, independent review, and
-publication path; optimizer-origin work is excluded from its own baseline. An
-open-task check plus <code>MAC_SCIENTIFIC_OPTIMIZER_IMPROVEMENT_COOLDOWN_SECONDS</code>
-prevents repeated task generation.</p>
-<h2 id="manual-pre-registration">Manual pre-registration<a class="headerlink" href="#manual-pre-registration" title="Permanent link">&para;</a></h2>
-<p>Policies and hypotheses can be registered without bypassing the evidence gate:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac optimizer policy create baseline nanolang --parameters-file=baseline.json</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac optimizer policy promote POLICY_ID --reason=&quot;registered baseline&quot;</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">mac optimizer policy create plan-first nanolang --parameters=&#39;{&quot;plan_first&quot;:true}&#39;</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">mac optimizer experiment create reduce-rework nanolang CONTROL_ID TREATMENT_ID \</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="go">  --hypothesis-file=hypothesis.txt \</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="go">  --primary-metric=cycles_to_accept \</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="go">  --min-effect=0.25 \</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="go">  --min-samples-per-arm=8 \</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="go">  --max-samples-per-arm=40 \</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="go">  --exploration-fraction=0.2</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="go">mac optimizer experiment start EXPERIMENT_ID</span>
+<p><code>check</code> evaluates every enabled registered repository, resolves bindings,
+verifies the named workflow version, and compares policy keys and macro effect
+sets with active or distributing directives. Different values for the same
+policy key are safe only when the hub can prove the conditions disjoint.
+Unknown overlap blocks instead of guessing. Identical values deduplicate.
+Writes, exclusivity, and external effects use the same conflict rules as work
+packages.</p>
+<p>Approval binds the directive version, directive digest, context digest, policy
+digest, and passing check ID. Activation reruns the check. Any repository,
+binding, waiver, active policy, or macro-impact change invalidates approval and
+requires a new check and approval.</p>
+<p>Activation creates a monotonic epoch in <code>distributing</code>. The hub sends each live
+worker a small AgentBus notice, but workers fetch the durable effective state
+from the HTTP API and acknowledge the exact digest. Until the full cohort has
+acknowledged it, no member of that cohort is eligible for a new claim. Workers
+registered after activation must acknowledge the active epoch before their
+first claim. Existing running tasks retain their original snapshot and are not
+interrupted. Deactivation stops the directive from entering newly created
+work; it does not rewrite tasks already running.</p>
+<h2 id="waivers">Waivers<a class="headerlink" href="#waivers" title="Permanent link">&para;</a></h2>
+<p>Waivers are exceptions, not overrides. They bind one immutable directive
+version to one registered project or repository, require a reason, may expire,
+and can be revoked. A waiver for version 1 never applies to version 2.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac directive waiver create build.bazel-first --version 1 \</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">  --target-type repository --target-id repo_archived \</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">  --reason &quot;Frozen pending archival&quot; --expires-at 2026-08-01T00:00:00Z</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="go">mac directive waiver list --directive build.bazel-first</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">mac directive waiver revoke waiver_ID --reason &quot;Repository is active again&quot;</span>
 </code></pre></div>
-<p>Use <code>mac optimizer experiment analyze EXPERIMENT_ID</code> to refresh all observations.
-Use <code>mac optimizer experiment evidence EXPERIMENT_ID</code> to export the durable
-assignments, KPI projections, statistical decisions, and audit events.
-When <code>--no-auto-promote</code> was registered, <code>mac optimizer experiment promote
-EXPERIMENT_ID</code> promotes only an already evidence-backed candidate; it is not a
-force override. <code>pause</code> stops assignment, and <code>policy rollback</code> restores a prior
-policy with an audit reason.</p>
-<p>The same surface is available under <code>/optimizer</code>: policies and experiments have
-create/list/get/action routes, with explicit observe/analyze/tick endpoints.
-Reads require <code>read</code>; every mutation requires <code>admin</code>.</p>
-<h2 id="interpretation-limits">Interpretation limits<a class="headerlink" href="#interpretation-limits" title="Permanent link">&para;</a></h2>
-<p>Randomization supports causal comparisons only for tasks eligible for the same
-experiment. Repository, size, quality-contract, and time-period shifts can
-still limit external validity. Delayed defects must be labeled; no telemetry
-system can infer incidents it never receives. Model catalog prices can also lag
-provider billing. Keep policy versions, outcome horizons, and task strata in
-reports when comparing results across projects or calendar periods.</p>
+<p>The reserved <code>system.executor-safety</code> directive cannot be edited, waived, or
+deactivated. It represents the executor's existing hard constraints: no host
+package installation, tests required, CodeGraph required for code changes,
+independent review, no secret exposure, and hub-owned canonical publication.</p>
+<h2 id="http-api">HTTP API<a class="headerlink" href="#http-api" title="Permanent link">&para;</a></h2>
+<p>Operators use the global-fleet-authorized endpoints under <code>/directives</code>,
+<code>/directive-bindings</code>, and <code>/directive-waivers</code>. Workers use only their
+self-bound paths:</p>
+<ul>
+<li><code>GET /agents/{agent_id}/directives/effective</code></li>
+<li><code>POST /agents/{agent_id}/directive-activations/{activation_id}/ack</code></li>
+</ul>
+<p>The effective response is <code>mac.directive.snapshot.v1</code> and includes the merged
+policy set, applied immutable versions, snapshot digest, epoch, and pending
+activations. Task creation pins that snapshot in <code>metadata.directive_snapshot</code>
+when the feature is enabled. Secrets and credential values are never part of a
+directive, snapshot, acknowledgement, notification, or operational memory.</p>
 
 
 
@@ -1721,6 +1877,44 @@ reports when comparing results across projects or calendar periods.</p>
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../env-config-reference/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Environment">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Environment
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../repository-runtime-contract/" class="md-footer__link md-footer__link--next" aria-label="Next: Repository contract">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Repository contract
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">

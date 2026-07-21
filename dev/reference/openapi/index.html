@@ -1006,6 +1006,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../repository-runtime-contract/" class="md-nav__link">
         
   
@@ -1723,6 +1751,16 @@ request and response definitions.</p>
 </tr>
 <tr>
 <td><code>POST</code></td>
+<td><code>/agents/{agent_id}/directive-activations/{activation_id}/ack</code></td>
+<td>Acknowledge Directive Activation</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/agents/{agent_id}/directives/effective</code></td>
+<td>Effective Directives For Agent</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
 <td><code>/agents/{agent_id}/disable</code></td>
 <td>Disable Agent</td>
 </tr>
@@ -2155,6 +2193,81 @@ request and response definitions.</p>
 <td><code>POST</code></td>
 <td><code>/dashboard/workflow-plan/preview</code></td>
 <td>Dashboard Workflow Plan Preview</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/directive-bindings</code></td>
+<td>List Directive Bindings</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/directive-bindings</code></td>
+<td>Set Directive Binding</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/directive-waivers</code></td>
+<td>List Directive Waivers</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/directive-waivers/{waiver_id}/revoke</code></td>
+<td>Revoke Directive Waiver</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/directives</code></td>
+<td>List Directives</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/directives</code></td>
+<td>Propose Directive</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/directives/effective</code></td>
+<td>Effective Directives</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/directives/{directive_id}</code></td>
+<td>Get Directive</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/directives/{directive_id}/activate</code></td>
+<td>Activate Directive</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/directives/{directive_id}/approve</code></td>
+<td>Approve Directive</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/directives/{directive_id}/check</code></td>
+<td>Check Directive</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/directives/{directive_id}/deactivate</code></td>
+<td>Deactivate Directive</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/directives/{directive_id}/impact</code></td>
+<td>Directive Impact</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/directives/{directive_id}/versions</code></td>
+<td>List Directive Versions</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/directives/{directive_id}/waivers</code></td>
+<td>Create Directive Waiver</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
