@@ -5044,39 +5044,72 @@ expected_contracts = {
     },
 }
 rollback = intent.get("rollback") if isinstance(intent, dict) else None
-if (
-    not isinstance(intent, dict)
-    or intent.get("schema") != "mac.fleet_node_rollback_intent.v1"
-    or intent.get("status") != "armed"
-    or intent.get("agent") != os.environ["MAC_ROLLBACK_AGENT"]
-    or intent.get("fleet") != os.environ["MAC_ROLLBACK_FLEET"]
-    or intent.get("os_kind") != os.environ["MAC_ROLLBACK_OS"]
-    or intent.get("generation") != os.environ["MAC_ROLLBACK_GENERATION"]
-    or intent.get("revision") != os.environ["MAC_ROLLBACK_REVISION"]
-    or intent.get("prior_generation") != (os.environ["MAC_ROLLBACK_PRIOR_GENERATION"] or None)
-    or intent.get("prior_revision") != (os.environ["MAC_ROLLBACK_PRIOR_REVISION"] or None)
-    or intent.get("rollback_capable") is not True
-    or intent.get("prior_topology") != {
-        "supervisor": os.environ["MAC_ROLLBACK_SUPERVISOR"],
-        "active_gateway": os.environ["MAC_ROLLBACK_ACTIVE_GATEWAY"],
-        "agent_prior_state": os.environ["MAC_ROLLBACK_AGENT_PRIOR_STATE"],
-    }
-    or intent.get("prerequisites") != {
-        "schema": "mac.fleet_prerequisite_rollback_binding.v1",
-        "node_identity_sha256": os.environ["MAC_ROLLBACK_NODE_IDENTITY_SHA256"],
-        "bundle_sha256": os.environ["MAC_ROLLBACK_PREREQUISITE_BUNDLE_SHA256"],
-        "expectations_sha256": os.environ[
-            "MAC_ROLLBACK_PREREQUISITE_EXPECTATIONS_SHA256"
-        ],
-    }
-    or intent.get("artifacts") != expected_artifacts
-    or intent.get("contracts") != expected_contracts
-    or not isinstance(rollback, dict)
-    or rollback.get("path") != os.environ["MAC_ROLLBACK_SCRIPT"]
-    or rollback.get("sha256") != hashlib.sha256(script_raw).hexdigest()
-    or rollback.get("completion_receipt") != os.environ["MAC_ROLLBACK_COMPLETION"]
-):
-    raise SystemExit("phase-2 rollback intent belongs to another node generation")
+if not isinstance(intent, dict):
+    raise SystemExit("phase-2 rollback intent differs at: document_type")
+
+expected_topology = {
+    "supervisor": os.environ["MAC_ROLLBACK_SUPERVISOR"],
+    "active_gateway": os.environ["MAC_ROLLBACK_ACTIVE_GATEWAY"],
+    "agent_prior_state": os.environ["MAC_ROLLBACK_AGENT_PRIOR_STATE"],
+}
+expected_prerequisites = {
+    "schema": "mac.fleet_prerequisite_rollback_binding.v1",
+    "node_identity_sha256": os.environ["MAC_ROLLBACK_NODE_IDENTITY_SHA256"],
+    "bundle_sha256": os.environ["MAC_ROLLBACK_PREREQUISITE_BUNDLE_SHA256"],
+    "expectations_sha256": os.environ[
+        "MAC_ROLLBACK_PREREQUISITE_EXPECTATIONS_SHA256"
+    ],
+}
+checks = (
+    ("schema", intent.get("schema") == "mac.fleet_node_rollback_intent.v1"),
+    ("status", intent.get("status") == "armed"),
+    ("agent", intent.get("agent") == os.environ["MAC_ROLLBACK_AGENT"]),
+    ("fleet", intent.get("fleet") == os.environ["MAC_ROLLBACK_FLEET"]),
+    ("os_kind", intent.get("os_kind") == os.environ["MAC_ROLLBACK_OS"]),
+    (
+        "generation",
+        intent.get("generation") == os.environ["MAC_ROLLBACK_GENERATION"],
+    ),
+    ("revision", intent.get("revision") == os.environ["MAC_ROLLBACK_REVISION"]),
+    (
+        "prior_generation",
+        intent.get("prior_generation")
+        == (os.environ["MAC_ROLLBACK_PRIOR_GENERATION"] or None),
+    ),
+    (
+        "prior_revision",
+        intent.get("prior_revision")
+        == (os.environ["MAC_ROLLBACK_PRIOR_REVISION"] or None),
+    ),
+    ("rollback_capable", intent.get("rollback_capable") is True),
+    ("prior_topology", intent.get("prior_topology") == expected_topology),
+    (
+        "prerequisites",
+        intent.get("prerequisites") == expected_prerequisites,
+    ),
+    ("artifacts", intent.get("artifacts") == expected_artifacts),
+    ("contracts", intent.get("contracts") == expected_contracts),
+    ("rollback_object", isinstance(rollback, dict)),
+    (
+        "rollback_path",
+        isinstance(rollback, dict)
+        and rollback.get("path") == os.environ["MAC_ROLLBACK_SCRIPT"],
+    ),
+    (
+        "rollback_sha256",
+        isinstance(rollback, dict)
+        and rollback.get("sha256") == hashlib.sha256(script_raw).hexdigest(),
+    ),
+    (
+        "rollback_completion",
+        isinstance(rollback, dict)
+        and rollback.get("completion_receipt")
+        == os.environ["MAC_ROLLBACK_COMPLETION"],
+    ),
+)
+mismatches = [name for name, matched in checks if not matched]
+if mismatches:
+    raise SystemExit("phase-2 rollback intent differs at: " + ",".join(mismatches))
 print(hashlib.sha256(intent_raw).hexdigest())
 PY
 }
