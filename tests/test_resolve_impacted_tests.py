@@ -158,6 +158,45 @@ def test_selector_has_a_reviewed_self_contract(repo, policy, impact_map):
     assert "tests/test_resolve_impacted_tests.py" in result["tests"]
 
 
+def test_unmappable_source_entry_point_resolves_by_contract_without_codegraph(
+    repo, policy, impact_map
+):
+    """A source entry point runs only out-of-process, so the coverage map never
+    attributes it. Its reviewed path contract must resolve it to its dedicated
+    test even when CodeGraph is unavailable — never a full-suite escalation. The
+    fixture map does not map ``git_askpass.py``, so without the contract this
+    would fail closed to full at the unresolved-source guard."""
+    (repo / "tests/test_git_askpass.py").write_text(
+        "def test_x():\n    assert True\n", encoding="utf-8"
+    )
+    result = _resolve(
+        repo,
+        policy,
+        impact_map,
+        ["src/mac/git_askpass.py"],
+        cg=(),
+        cg_problem="codegraph_unavailable",
+    )
+    assert result["mode"] == "focused"
+    assert result["reason"] == "impact_hybrid_scope"
+    assert "tests/test_git_askpass.py" in result["tests"]
+    # Cross-cutting guards still ride along with the real source change.
+    assert "tests/test_always.py" in result["tests"]
+    assert "tests/test_canary.py" in result["tests"]
+
+
+def test_missing_source_entry_point_contract_test_fails_closed(repo, policy, impact_map):
+    """The existence guard applies to source contracts too: if the reviewed test
+    is gone, the resolver must fail closed rather than silently drop coverage."""
+    # tests/test_git_askpass.py is intentionally absent from this tmp repo.
+    result = _resolve(repo, policy, impact_map, ["src/mac/git_askpass.py"])
+    assert result["mode"] == "full"
+    assert result["reason"] == "path_test_contract_missing"
+    assert result["missing_contract_tests"] == {
+        "src/mac/git_askpass.py": ["tests/test_git_askpass.py"]
+    }
+
+
 def test_documentation_only_selects_no_tests(repo, policy, impact_map):
     result = _resolve(repo, policy, impact_map, ["docs/guide.md", "README rename.md"])
     assert result["mode"] == "focused"

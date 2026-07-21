@@ -67,6 +67,12 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     "scripts/run-contract-tests.sh": ("tests/test_contract_test_runner.py",),
     "scripts/select-sanity-tests.py": ("tests/test_resolve_impacted_tests.py",),
     "src/mac/data/env_config_registry.json": ("tests/test_env_config.py",),
+    # Source entry points the coverage map cannot attribute because they run
+    # only out-of-process — a git-invoked askpass helper, or an installed
+    # console-script copy whose path is outside the src/ prefix the map indexes.
+    # Resolved by their reviewed contract rather than fail-closed (see resolve()).
+    "src/mac/git_askpass.py": ("tests/test_git_askpass.py",),
+    "src/mac/investigation_artifacts.py": ("tests/test_per_run_artifact_gitignore.py",),
 }
 
 
@@ -201,6 +207,12 @@ def resolve(
                 # test that executed the file at the base revision.
                 for idx in file_tests[path]:
                     selected.add(nodeids[idx])
+        elif path in PATH_TEST_CONTRACTS:
+            # A source entry point the map cannot attribute (runs only
+            # out-of-process): its reviewed contract tests, unioned above, are
+            # authoritative, so it must not fail closed. CodeGraph still unions
+            # below as an extra net.
+            continue
         else:
             unresolved_source.append(path)
 
