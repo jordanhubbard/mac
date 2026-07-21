@@ -251,8 +251,11 @@ def _validate_path_check(value: dict[str, Any]) -> dict[str, Any]:
     if check["file_type"] not in {"file", "directory", "executable"}:
         raise PrerequisiteError("path check file_type is invalid")
     mode = check["expected_mode"]
+    maximum_mode = 0o7777 if check["file_type"] == "directory" else 0o777
     if mode is not None and (
-        isinstance(mode, bool) or not isinstance(mode, int) or not 0 <= mode <= 0o777
+        isinstance(mode, bool)
+        or not isinstance(mode, int)
+        or not 0 <= mode <= maximum_mode
     ):
         raise PrerequisiteError("path check expected_mode is invalid")
     digest = check["sha256"]

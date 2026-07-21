@@ -128,6 +128,46 @@ def test_path_verifier_rejects_drift_and_indirection(
         receipts.verify_contract(contract, now=1000.0)
 
 
+def test_path_verifier_preserves_setgid_directory_mode(tmp_path: Path) -> None:
+    shared = tmp_path / "shared-runtime"
+    shared.mkdir()
+    shared.chmod(0o2755)
+    contract = {
+        "schema": receipts.CONTRACT_SCHEMA,
+        "participant": "hermes",
+        "agent_id": AGENT,
+        "node_identity_sha256": IDENTITY,
+        "checks": [
+            {
+                "name": "shared-runtime",
+                "kind": "path",
+                "path": str(shared),
+                "file_type": "directory",
+                "expected_mode": 0o2755,
+                "sha256": None,
+            }
+        ],
+    }
+
+    receipt = receipts.verify_contract(contract, now=1000.0)
+
+    assert receipt["status"] == "ready"
+
+
+@pytest.mark.parametrize("file_type", ["file", "executable"])
+def test_path_verifier_rejects_privileged_regular_file_mode(
+    tmp_path: Path, file_type: str
+) -> None:
+    tool = tmp_path / "tool"
+    tool.write_text("content", encoding="utf-8")
+    contract = path_contract(tool)
+    contract["checks"][0]["file_type"] = file_type
+    contract["checks"][0]["expected_mode"] = 0o4755
+
+    with pytest.raises(receipts.PrerequisiteError, match="expected_mode"):
+        receipts._validate_contract(contract)
+
+
 def test_contract_rejects_commands_and_secret_bearing_or_remote_urls() -> None:
     base = {
         "schema": receipts.CONTRACT_SCHEMA,
