@@ -783,6 +783,9 @@ def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
 def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    credential = deploy.split("install_pending_worker_credential() (", 1)[1].split(
+        "\n)\n\ninstall_and_prove_attestation_candidate", 1
+    )[0]
     candidate = deploy.split("install_and_prove_attestation_candidate() (", 1)[
         1
     ].split("\n)\n\nhub_receipt_identity_sha256", 1)[0]
@@ -800,10 +803,24 @@ def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     assert "--rotate-invalid-attestation-key" not in node
     assert "mac.deployment_attestation install" in candidate
     assert "mac.deployment_attestation prove-candidate" in candidate
-    assert candidate.index(" install ") < candidate.index("set_remote_mac_agent_service")
-    assert candidate.index("set_remote_mac_agent_service") < candidate.index(
+    assert candidate.index(" install ") < candidate.index(
+        "restart_remote_mac_agent_under_epoch"
+    )
+    assert candidate.index("restart_remote_mac_agent_under_epoch") < candidate.index(
         " prove-candidate "
     )
+    assert "set_remote_mac_agent_service" not in candidate
+    assert "set_remote_mac_agent_service" not in credential
+    epoch_restart = (
+        'restart_remote_mac_agent_under_epoch "$agent" "$supervisor" '
+        '"$fleet_name" restart'
+    )
+    assert epoch_restart in candidate
+    assert epoch_restart in credential
+    assert 'remote_directory="/tmp/mac-attestation-' in candidate
+    assert "mkdir -m 0700" in candidate
+    assert "trap cleanup_remote_attestation_directory EXIT" in candidate
+    assert 'rm -rf -- "$remote_directory"' in candidate
     assert prove.index("cohort_journal_mutate hub-prove-start") < prove.index(
         "cohort_journal_mutate hub-proved"
     )
@@ -974,10 +991,11 @@ def test_typed_restarts_reuse_the_one_journal_bound_generation():
     assert 'phase1_resolved_supervisor_for_agent "$agent"' in restart
     assert 'supervisor="$resolved_supervisor"' in restart
     assert "configured supervisor differs from phase-1 proof" in restart
-    assert "systemctl start" in restart
-    assert "then systemctl restart" not in restart
-    assert "supervisorctl start" in restart
-    assert "then supervisorctl restart" not in restart
+    assert 'local activation_mode="${4:-activate}"' in restart
+    assert "activate) manager_action=start" in restart
+    assert "restart) manager_action=restart" in restart
+    assert 'systemctl $(shell_quote "$manager_action")' in restart
+    assert 'supervisorctl $(shell_quote "$manager_action")' in restart
     assert 'domain=\\"gui/\\$(id -u)\\"' in restart
     assert "mac_launchd_stop_job_if_present" in restart
     assert "mac_launchd_bootstrap_job" in restart

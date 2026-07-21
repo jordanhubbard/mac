@@ -7396,9 +7396,15 @@ restart_remote_mac_agent_under_epoch() {
   # Typed epoch ownership lives entirely at the hub. Restart only the exact
   # selected supervisor unit under the deployment lock; never call the legacy
   # per-node hold/release gate from inside an open hub transaction.
-  local agent="$1" supervisor="$2" fleet_name="$3" deployment_id command
-  local resolved_supervisor
+  local agent="$1" supervisor="$2" fleet_name="$3"
+  local activation_mode="${4:-activate}" deployment_id command
+  local resolved_supervisor manager_action
   local ssh_parts=() ssh_args=() ssh_target item last_index
+  case "$activation_mode" in
+    activate) manager_action=start ;;
+    restart) manager_action=restart ;;
+    *) echo "ERROR: ${agent}: unsupported epoch activation mode ${activation_mode}" >&2; return 1 ;;
+  esac
   deployment_id="$(deployment_id_for_agent "$agent")"
   assert_remote_deployment_lock "$agent" "$deployment_id"
   resolved_supervisor="$(phase1_resolved_supervisor_for_agent "$agent")" \
@@ -7412,9 +7418,7 @@ restart_remote_mac_agent_under_epoch() {
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
   case "$supervisor" in
     systemd)
-      # Phase 1 proved this exact unit stopped. Start the replacement instead
-      # of asking the manager to restart a service that is intentionally down.
-      command="if [ \"\$(id -u)\" -eq 0 ]; then systemctl start $(shell_quote "${fleet_name}-agent.service"); else sudo -n systemctl start $(shell_quote "${fleet_name}-agent.service"); fi"
+      command="if [ \"\$(id -u)\" -eq 0 ]; then systemctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent.service"); else sudo -n systemctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent.service"); fi"
       ;;
     launchd)
       # The installer writes a per-user LaunchAgent and defers registration
@@ -7424,9 +7428,7 @@ restart_remote_mac_agent_under_epoch() {
       command="lifecycle=\"\$HOME/.mac/logs/launchd-lifecycle-${TS}.sh\"; label=$(shell_quote "com.${fleet_name}.agent"); domain=\"gui/\$(id -u)\"; plist=\"\$HOME/Library/LaunchAgents/\${label}.plist\"; [ -f \"\$lifecycle\" ] && [ ! -L \"\$lifecycle\" ] || { echo \"bounded launchd lifecycle contract is unavailable: \$lifecycle\" >&2; exit 1; }; [ -f \"\$plist\" ] && [ ! -L \"\$plist\" ] || { echo \"launchd agent plist missing or unsafe: \$plist\" >&2; exit 1; }; . \"\$lifecycle\"; mac_launchd_stop_job_if_present \"\$domain/\$label\" \"\$label\" user; mac_launchd_bootstrap_job \"\$domain\" \"\$plist\" \"\$domain/\$label\" \"\$label\" user"
       ;;
     supervisord)
-      # supervisorctl restart rejects an intentionally STOPPED program on
-      # some versions; phase 1 already performed and proved the stop.
-      command="if [ \"\$(id -u)\" -eq 0 ]; then supervisorctl start $(shell_quote "${fleet_name}-agent"); else sudo -n supervisorctl start $(shell_quote "${fleet_name}-agent"); fi"
+      command="if [ \"\$(id -u)\" -eq 0 ]; then supervisorctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent"); else sudo -n supervisorctl $(shell_quote "$manager_action") $(shell_quote "${fleet_name}-agent"); fi"
       ;;
     *) echo "ERROR: ${agent}: unsupported typed supervisor ${supervisor}" >&2; return 1 ;;
   esac
@@ -10606,7 +10608,7 @@ install_pending_worker_credential() (
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command" > "$receipt"
   chmod 0600 "$receipt"
-  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart keep
+  restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name" restart
   echo "==> ${agent}: pending worker credential installed; promotion remains deferred"
 )
 
@@ -10615,7 +10617,7 @@ install_and_prove_attestation_candidate() (
   umask 077
   local agent="$1" supervisor="$2" fleet_name="$3"
   local deployment_id agent_id candidate manifest challenge proof principal generation
-  local remote_manifest remote_receipt remote_challenge remote_proof command
+  local remote_directory remote_manifest remote_receipt remote_challenge remote_proof command
   local ssh_parts=() ssh_args=() ssh_target item last_index
   deployment_id="$(deployment_id_for_agent "$agent")"
   agent_id="$(stable_worker_agent_id "$agent")"
@@ -10650,21 +10652,34 @@ for output,value in values:
         os.replace(tmp,output)
     finally: tmp.unlink(missing_ok=True)
 PY
-  remote_manifest="/tmp/mac-attestation-install-${agent_id}-${DEPLOY_CONTROLLER_NONCE}.json"
-  remote_receipt="/tmp/mac-attestation-install-receipt-${agent_id}-${DEPLOY_CONTROLLER_NONCE}.json"
-  remote_challenge="/tmp/mac-attestation-challenge-${agent_id}-${DEPLOY_CONTROLLER_NONCE}.json"
-  remote_proof="/tmp/mac-attestation-proof-${agent_id}-${DEPLOY_CONTROLLER_NONCE}.json"
-  fenced_remote_upload "$agent" "$deployment_id" "$manifest" "$remote_manifest"
-  fenced_remote_upload "$agent" "$deployment_id" "$challenge" "$remote_challenge"
+  remote_directory="/tmp/mac-attestation-${agent_id}-${DEPLOY_CONTROLLER_NONCE}"
+  remote_manifest="$remote_directory/install.json"
+  remote_receipt="$remote_directory/install-receipt.json"
+  remote_challenge="$remote_directory/challenge.json"
+  remote_proof="$remote_directory/proof.json"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
+    "set -e; umask 077; [ ! -e $(shell_quote "$remote_directory") ]; mkdir -m 0700 $(shell_quote "$remote_directory")")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$command"
+  cleanup_remote_attestation_directory() {
+    local cleanup_command
+    cleanup_command="$(remote_deployment_fenced_exec "$deployment_id" 0 \
+      rm -rf -- "$remote_directory")"
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${ssh_args[@]}" "$ssh_target" "$cleanup_command" >/dev/null 2>&1 || true
+  }
+  trap cleanup_remote_attestation_directory EXIT
+  fenced_remote_upload "$agent" "$deployment_id" "$challenge" "$remote_challenge"
+  fenced_remote_upload "$agent" "$deployment_id" "$manifest" "$remote_manifest"
+  command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
     "set -e; umask 077; \"\$HOME/.mac/venv/bin/python\" -m mac.deployment_attestation install --manifest $(shell_quote "$remote_manifest") --env-file \"\$HOME/.mac/mac.env\" --agent-id $(shell_quote "$agent_id") --deployment-id $(shell_quote "$deployment_id") --receipt-out $(shell_quote "$remote_receipt") >/dev/null")"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" "$command"
-  set_remote_mac_agent_service "$agent" "$supervisor" "$fleet_name" restart keep
+  restart_remote_mac_agent_under_epoch "$agent" "$supervisor" "$fleet_name" restart
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
-    "set -e; umask 077; \"\$HOME/.mac/venv/bin/python\" -m mac.deployment_attestation prove-candidate --challenge $(shell_quote "$remote_challenge") --env-file \"\$HOME/.mac/mac.env\" --output $(shell_quote "$remote_proof") >/dev/null; cat $(shell_quote "$remote_proof"); rm -f $(shell_quote "$remote_challenge") $(shell_quote "$remote_proof") $(shell_quote "$remote_receipt")")"
+    "set -e; umask 077; \"\$HOME/.mac/venv/bin/python\" -m mac.deployment_attestation prove-candidate --challenge $(shell_quote "$remote_challenge") --env-file \"\$HOME/.mac/mac.env\" --output $(shell_quote "$remote_proof") >/dev/null; cat $(shell_quote "$remote_proof")")"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command" > "$proof"
   chmod 0600 "$proof"
