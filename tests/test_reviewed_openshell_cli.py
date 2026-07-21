@@ -290,6 +290,15 @@ def test_controller_orders_read_only_preflight_before_migration_and_phase1_wal()
     assert "prepare_reviewed_openshell_cli_prerequisites" not in cohort.split(
         'echo "==> fleet: arming exact phase-1 restore contracts"', 1
     )[0]
+    legacy = text.split("legacy_hub_bootstrap() {", 1)[1].split(
+        "\n}\n\nhub_epoch_client_read", 1
+    )[0]
+    assert legacy.index("classify_reviewed_openshell_cli_prerequisites") < legacy.index(
+        "preflight_legacy_hub_prerequisites"
+    )
+    assert legacy.index("classify_reviewed_openshell_cli_prerequisites") < legacy.index(
+        "prepare_remote_phase1_restore_contract"
+    )
 
 
 def test_bootstrap_uses_exact_archive_installer() -> None:

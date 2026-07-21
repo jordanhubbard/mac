@@ -4167,6 +4167,7 @@ legacy_hub_bootstrap() {
   fleet_name="${fields[23]:-mac}"
   os_kind="${fields[2]}"
   echo "==> ${agent}: executing explicit pre-held hub API bootstrap"
+  classify_reviewed_openshell_cli_prerequisites "$selected_specs_file"
   preflight_legacy_hub_prerequisites \
     "$agent" "$supervisor" "$fleet_name" "$os_kind"
   prepare_remote_phase1_restore_contract \
