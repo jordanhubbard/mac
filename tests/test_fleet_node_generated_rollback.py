@@ -875,6 +875,9 @@ def test_installer_arms_rollback_only_after_mutable_snapshots_and_durable_regene
         < intent_publish
         < rollback_arm
     )
+    sealed_load = arm_body.index("load_existing_phase2_rollback_state")
+    existing_verify = arm_body.index("verify_phase2_rollback_intent", sealed_load)
+    assert sealed_load < existing_verify
 
     main_arm = source.index("\narm_phase2_rollback\n")
     pre_manifest = source.index('\nwrite_deploy_manifest "pre" "$MANIFEST_PRE"\n')

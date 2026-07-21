@@ -217,6 +217,98 @@ snapshot_rollback_file "$1" "$2" user
         assert "differs from the current source" in result.stderr
 
 
+def test_apply_phase_loads_prior_state_from_the_sealed_rollback_intent(
+    tmp_path: Path,
+) -> None:
+    mac_home = tmp_path / "mac-home"
+    logs = mac_home / "logs"
+    logs.mkdir(parents=True)
+    deploy_ts = "20260721T195306Z"
+    agent = "rocky"
+    src = mac_home / "src" / "mac"
+    venv = mac_home / "venv"
+    hermes = mac_home / "src" / "hermes-agent"
+    src_backup = mac_home / "backups" / f"mac-src.{agent}.{deploy_ts}"
+    venv_backup = mac_home / "backups" / f"venv.{agent}.{deploy_ts}"
+    hermes_backup = mac_home / "backups" / f"hermes-agent.{agent}.{deploy_ts}"
+    bin_backup = mac_home / "backups" / f"bin.{agent}.{deploy_ts}"
+    openclaw_backup = mac_home / "backups" / f"openclaw.{agent}.{deploy_ts}"
+    intent_path = logs / f"rollback-{deploy_ts}-intent.json"
+    intent = {
+        "schema": "mac.fleet_node_rollback_intent.v1",
+        "status": "armed",
+        "agent": agent,
+        "fleet": "mac",
+        "os_kind": "darwin",
+        "generation": GENERATION,
+        "revision": REVISION,
+        "prior_generation": "sealed-prior-generation",
+        "prior_revision": "b" * 40,
+        "rollback_capable": True,
+        "prior_topology": {
+            "supervisor": "launchd",
+            "active_gateway": "hermes",
+            "agent_prior_state": "active",
+        },
+        "artifacts": {
+            "source": {"path": str(src), "backup": str(src_backup)},
+            "venv": {"path": str(venv), "backup": str(venv_backup)},
+            "hermes": {"path": str(hermes), "backup": str(hermes_backup)},
+            "bin_backup": str(bin_backup),
+            "openclaw_backup": str(openclaw_backup),
+            "openclaw_existed": True,
+        },
+    }
+    intent_path.write_text(json.dumps(intent) + "\n", encoding="utf-8")
+    intent_path.chmod(0o600)
+    loader = _function(
+        "load_existing_phase2_rollback_state", "arm_phase2_rollback"
+    )
+    command = f"""set -euo pipefail
+PY=${{TEST_PY:?}}
+MAC_HOME=${{TEST_MAC_HOME:?}}
+ROLLBACK_INTENT=${{TEST_INTENT:?}}
+AGENT={agent}
+FLEET_NAME=mac
+OS_KIND=darwin
+DEPLOY_GENERATION={GENERATION}
+DEPLOY_REV={REVISION}
+SUPERVISOR_KIND=launchd
+DEPLOY_TS={deploy_ts}
+SRC_DIR={src}
+SRC_BACKUP={src_backup}
+VENV={venv}
+VENV_BACKUP={venv_backup}
+HERMES_DIR={hermes}
+BIN_BACKUP={bin_backup}
+{loader}
+load_existing_phase2_rollback_state
+"""
+    result = subprocess.run(
+        ["/bin/bash", "-c", command],
+        env={
+            **os.environ,
+            "TEST_PY": sys.executable,
+            "TEST_MAC_HOME": str(mac_home),
+            "TEST_INTENT": str(intent_path),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.rstrip("\n").split("\t") == [
+        "sealed-prior-generation",
+        "b" * 40,
+        "hermes",
+        "active",
+        str(hermes_backup),
+        str(openclaw_backup),
+        "1",
+    ]
+
+
 @pytest.mark.parametrize(
     "mutation",
     ["missing-prior-state", "malformed-prior-state", "nonquiescent-final-state"],
