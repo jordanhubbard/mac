@@ -4375,7 +4375,7 @@ hub_epoch_client_read() {
   output_tmp="$(mktemp "$TMPDIR_LOCAL/hub-read.XXXXXX")"; chmod 0600 "$output_tmp"
   ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" \
-    "set -e; umask 077; _mac_token=\$(mktemp); _mac_output=\$(mktemp); trap 'rm -f \"\$_mac_token\" \"\$_mac_output\"' EXIT HUP INT TERM; set -a; . \"\$HOME/.mac/mac.env\"; set +a; [ -n \"\${MAC_API_TOKEN:-}\" ]; printf '%s' \"\$MAC_API_TOKEN\" > \"\$_mac_token\"; python3 - --token-file \"\$_mac_token\"${remote_args} --output \"\$_mac_output\" >/dev/null; cat \"\$_mac_output\"" \
+    "set -e; umask 077; _mac_tmp=\$(mktemp -d \"\$HOME/.mac/.fleet-epoch-client.XXXXXX\"); chmod 700 \"\$_mac_tmp\"; _mac_token=\"\$_mac_tmp/token\"; _mac_output=\"\$_mac_tmp/output.json\"; trap 'rm -rf \"\$_mac_tmp\"' EXIT HUP INT TERM; : > \"\$_mac_token\"; chmod 600 \"\$_mac_token\"; set -a; . \"\$HOME/.mac/mac.env\"; set +a; [ -n \"\${MAC_API_TOKEN:-}\" ]; printf '%s' \"\$MAC_API_TOKEN\" > \"\$_mac_token\"; python3 - --token-file \"\$_mac_token\"${remote_args} --output \"\$_mac_output\" >/dev/null; cat \"\$_mac_output\"" \
     < "$HUB_EPOCH_CLIENT" > "$output_tmp"
   mv -f "$output_tmp" "$output"
   chmod 0600 "$output"
@@ -4399,7 +4399,7 @@ hub_epoch_client_request() {
   for arg in "$@"; do
     remote_args+=" $(shell_quote "$arg")"
   done
-  command="set -e; umask 077; _mac_token=\$(mktemp); trap 'rm -f \"\$_mac_token\" $(shell_quote "$remote_client") $(shell_quote "$remote_request") $(shell_quote "$remote_output")' EXIT HUP INT TERM; set -a; . \"\$HOME/.mac/mac.env\"; set +a; [ -n \"\${MAC_API_TOKEN:-}\" ]; printf '%s' \"\$MAC_API_TOKEN\" > \"\$_mac_token\"; python3 $(shell_quote "$remote_client") --token-file \"\$_mac_token\"${remote_args} --request-file $(shell_quote "$remote_request") --output $(shell_quote "$remote_output") >/dev/null; cat $(shell_quote "$remote_output")"
+  command="set -e; umask 077; _mac_tmp=\$(mktemp -d \"\$HOME/.mac/.fleet-epoch-client.XXXXXX\"); chmod 700 \"\$_mac_tmp\"; _mac_token=\"\$_mac_tmp/token\"; _mac_output=\"\$_mac_tmp/output.json\"; trap 'rm -rf \"\$_mac_tmp\"; rm -f $(shell_quote "$remote_client") $(shell_quote "$remote_request")' EXIT HUP INT TERM; : > \"\$_mac_token\"; chmod 600 \"\$_mac_token\"; set -a; . \"\$HOME/.mac/mac.env\"; set +a; [ -n \"\${MAC_API_TOKEN:-}\" ]; printf '%s' \"\$MAC_API_TOKEN\" > \"\$_mac_token\"; python3 $(shell_quote "$remote_client") --token-file \"\$_mac_token\"${remote_args} --request-file $(shell_quote "$remote_request") --output \"\$_mac_output\" >/dev/null; cat \"\$_mac_output\""
   output_tmp="$(mktemp "$TMPDIR_LOCAL/hub-request.XXXXXX")"; chmod 0600 "$output_tmp"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command" > "$output_tmp"
@@ -9571,7 +9571,7 @@ stage_remote_deployment_bundle() {
       return 1
     }
   assert_prerequisite_remaining_budget "$agent" \
-    "${MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS:-2400}"
+    "${MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS:-2400}" || return 1
   deploy_script="$ROOT/deploy/fleet-node-install.sh"
   reviewed_tool_assets="$ROOT/deploy/reviewed-tool-assets.sh"
   launchd_lifecycle="$ROOT/deploy/lib/launchd-lifecycle.sh"
@@ -9586,7 +9586,7 @@ stage_remote_deployment_bundle() {
     "rollback-supervisor.py=$rollback_supervisor" \
     "prerequisite-receipts.py=$PREREQUISITE_RECEIPT_HELPER" \
     "prerequisite-bundle.json=$prerequisite_bundle" \
-    "prerequisite-expectations.json=$prerequisite_expectations" <<'PY'
+    "prerequisite-expectations.json=$prerequisite_expectations" <<'PY' || return 1
 import hashlib
 import json
 import os
@@ -9626,23 +9626,32 @@ try:
 finally:
     temporary.unlink(missing_ok=True)
 PY
-  manifest_digest="$(sha256_file "$manifest")"
+  manifest_digest="$(sha256_file "$manifest")" || return 1
   verifier_file="$TMPDIR_LOCAL/staged-bundle-verifier-$(stable_worker_agent_id "$agent").py"
-  staged_bundle_verifier_source > "$verifier_file"
-  chmod 0600 "$verifier_file"
-  assert_remote_deployment_lock "$agent" "$deployment_id"
+  staged_bundle_verifier_source > "$verifier_file" || return 1
+  chmod 0600 "$verifier_file" || return 1
+  assert_remote_deployment_lock "$agent" "$deployment_id" || return 1
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -c \
     'import os,stat,sys; p=sys.argv[1]; parent=os.path.dirname(p); parent=="/tmp" or sys.exit("invalid stage parent")
 try: os.mkdir(p,0o700)
 except FileExistsError: pass
-s=os.lstat(p); (stat.S_ISDIR(s.st_mode) and not stat.S_ISLNK(s.st_mode) and s.st_uid==os.getuid() and stat.S_IMODE(s.st_mode)==0o700) or sys.exit("unsafe stage directory")' \
+flags=os.O_RDONLY|getattr(os,"O_DIRECTORY",0)|getattr(os,"O_NOFOLLOW",0)
+directory_fd=os.open(p,flags)
+try:
+ s=os.fstat(directory_fd)
+ (stat.S_ISDIR(s.st_mode) and s.st_uid==os.getuid()) or sys.exit("unsafe stage directory")
+ os.fchmod(directory_fd,0o700)
+ s=os.fstat(directory_fd)
+ stat.S_IMODE(s.st_mode)==0o700 or sys.exit("could not normalize stage directory mode")
+finally: os.close(directory_fd)' \
     "$remote_root")"
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" "$command"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$command" || return 1
   while IFS='=' read -r destination source; do
     stage_remote_file_once_exact "$agent" "$deployment_id" \
-      "$source" "$remote_root/$destination"
+      "$source" "$remote_root/$destination" || return 1
   done <<EOF
 release.tar.gz=$ARCHIVE
 fleets.yaml=$SANITIZED_FLEET_REGISTRY
@@ -9655,13 +9664,14 @@ prerequisite-bundle.json=$prerequisite_bundle
 prerequisite-expectations.json=$prerequisite_expectations
 EOF
   stage_remote_file_once_exact "$agent" "$deployment_id" \
-    "$manifest" "$remote_root/manifest.json"
+    "$manifest" "$remote_root/manifest.json" || return 1
   verifier="$(cat "$verifier_file")"
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -c \
     "$verifier" "$remote_root" "$manifest_digest" "$deployment_id" "$GIT_REV" "$agent" stage)"
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 "${ssh_args[@]}" "$ssh_target" "$command" > "$receipt"
-  chmod 0600 "$receipt"
-  "$PYTHON_BIN" - "$receipt" "$agent" "$deployment_id" "$GIT_REV" "$manifest_digest" <<'PY'
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$command" > "$receipt" || return 1
+  chmod 0600 "$receipt" || return 1
+  "$PYTHON_BIN" - "$receipt" "$agent" "$deployment_id" "$GIT_REV" "$manifest_digest" <<'PY' || return 1
 import json,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 if value.get("schema")!="mac.fleet_staged_deployment_receipt.v1" or value.get("status")!="verified" or value.get("agent")!=sys.argv[2] or value.get("deployment_id")!=sys.argv[3] or value.get("source_revision")!=sys.argv[4] or value.get("manifest_sha256")!=sys.argv[5]:

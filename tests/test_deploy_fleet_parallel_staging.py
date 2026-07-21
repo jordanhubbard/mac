@@ -282,6 +282,14 @@ def test_typed_arm_and_apply_reuse_one_digest_verified_stage() -> None:
         assert name in verifier
     assert "stage_remote_file_once_exact" in stage
     assert "except FileExistsError: pass" in stage
+    assert "os.fchmod(directory_fd,0o700)" in stage
+    assert "could not normalize stage directory mode" in stage
+    assert '"$ssh_target" "$command" || return 1' in stage
+    assert '"$source" "$remote_root/$destination" || return 1' in stage
+    assert '"$manifest" "$remote_root/manifest.json" || return 1' in stage
+    assert '"$ssh_target" "$command" > "$receipt" || return 1' in stage
+    assert "remote staged deployment receipt is invalid" in stage
+    assert "<<'PY' || return 1" in stage
     assert "existing staged item differs from controller digest" in source
     assert 'if [ "$typed_staged_bundle" = 0 ]' in deploy_host
     assert "reusing digest-bound staged deployment bundle" in deploy_host

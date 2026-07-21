@@ -826,6 +826,23 @@ def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     assert "reconcile_report_repository_executor_approval" in recovery
 
 
+def test_hub_epoch_client_writes_receipts_in_owner_private_remote_directory():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    read = deploy.split("hub_epoch_client_read() {", 1)[1].split(
+        "\n}\n\nhub_epoch_client_request", 1
+    )[0]
+    request = deploy.split("hub_epoch_client_request() {", 1)[1].split(
+        "\n}\n\nhub_epoch_recovery_request_name", 1
+    )[0]
+
+    for function in (read, request):
+        assert r'mktemp -d \"\$HOME/.mac/.fleet-epoch-client.XXXXXX\"' in function
+        assert r'chmod 700 \"\$_mac_tmp\"' in function
+        assert r'_mac_output=\"\$_mac_tmp/output.json\"' in function
+        assert r'rm -rf \"\$_mac_tmp\"' in function
+        assert r"_mac_output=\$(mktemp)" not in function
+
+
 def test_same_host_attestation_recovery_keeps_distinct_hub_and_worker_copies():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     recovery = deploy.split("reconcile_bound_worker_attestation_key() (", 1)[1].split(
