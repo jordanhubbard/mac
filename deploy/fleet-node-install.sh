@@ -3473,8 +3473,82 @@ os.write(1, private_bytes(output, 0o600, 1024 * 1024, "finalize receipt"))
 PY
 }
 
+verify_armed_rollback_file_snapshot() {
+  local source="$1" backup="$2" mode="${3:-user}"
+  mac_launchd_run_python_bounded \
+    "$mode" "${MAC_LAUNCHD_ARTIFACT_TIMEOUT_SECONDS:-10}" '
+import hashlib
+import os
+import stat
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+backup = Path(sys.argv[2])
+expected_uid = int(sys.argv[3])
+
+
+def stable_private_bytes(path, *, private):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(str(path), flags)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise SystemExit("armed rollback snapshot input is not a regular file")
+        if private and (
+            before.st_uid != expected_uid
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_nlink != 1
+        ):
+            raise SystemExit("armed rollback snapshot is not owner-private")
+        digest = hashlib.sha256()
+        size = 0
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            size += len(chunk)
+        after = os.fstat(descriptor)
+        current = path.lstat()
+        identity = lambda value: (
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+        )
+        if (
+            identity(before) != identity(after)
+            or identity(before) != identity(current)
+            or stat.S_ISLNK(current.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or size != before.st_size
+        ):
+            raise SystemExit("armed rollback snapshot input changed while reading")
+        return digest.digest()
+    finally:
+        os.close(descriptor)
+
+
+if stable_private_bytes(source, private=False) != stable_private_bytes(
+    backup, private=True
+):
+    raise SystemExit("armed rollback snapshot differs from the current source")
+' "$source" "$backup" "$(id -u)"
+}
+
 snapshot_rollback_file() {
   local source="$1" backup="$2" mode="${3:-user}" existed="" snapshot_rc=0
+  if [ -e "$backup" ] || [ -L "$backup" ]; then
+    if [ -f "$ROLLBACK_INTENT" ] && [ ! -L "$ROLLBACK_INTENT" ]; then
+      verify_armed_rollback_file_snapshot "$source" "$backup" "$mode" \
+        || die "armed rollback snapshot failed exact replay validation: $backup"
+      log "reusing exact rollback snapshot already bound by phase-2 intent: $backup"
+      return 0
+    fi
+    die "rollback snapshot destination already exists before phase-2 intent: $backup"
+  fi
   existed="$(mac_launchd_snapshot_file "$source" "$backup" "$mode")" \
     || snapshot_rc=$?
   [ "$snapshot_rc" -eq 0 ] \
@@ -5236,7 +5310,15 @@ backup_existing_artifacts() {
   fi
   mac_launchd_fsync_directory "$MAC_HOME/backups" user
   mac_launchd_fsync_directory "$MAC_HOME" user
-  write_rollback_script
+  # The rollback program was published and digest-bound by the pre-mutation
+  # intent during arm_phase2_rollback.  Preserve that exact executable across
+  # the separate apply-phase2 process; regenerating it here would lose the
+  # arm process's auxiliary snapshot arrays and violate the intent binding.
+  local preserved_intent_sha256
+  preserved_intent_sha256="$(verify_phase2_rollback_intent)" \
+    || die "phase-2 rollback intent failed validation after artifact backup"
+  [ "$preserved_intent_sha256" = "$ROLLBACK_INTENT_SHA256" ] \
+    || die "phase-2 rollback intent changed during artifact backup"
 }
 
 capture_darwin_launchd_prestate() {
@@ -5429,8 +5511,12 @@ PY
   fi
 
   # This first rollback version restores the original service topology.  It is
-  # rewritten with source/venv backup paths before artifact replacement.
-  write_rollback_script
+  # rewritten with source/venv backup paths before artifact replacement.  An
+  # apply-phase2 replay must preserve the exact program already bound by the
+  # immutable intent; arm_phase2_rollback validates it immediately afterward.
+  if [ ! -e "$ROLLBACK_INTENT" ] && [ ! -L "$ROLLBACK_INTENT" ]; then
+    write_rollback_script
+  fi
 }
 
 capture_phase1_prior_worker_topology() {

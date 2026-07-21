@@ -29,6 +29,17 @@ def _capture_function() -> str:
     return source[start:end]
 
 
+def _function(name: str, next_name: str) -> str:
+    source = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    return (
+        f"{name}() {{"
+        + source.split(f"{name}() {{", 1)[1].split(
+            f"\n}}\n\n{next_name}() {{", 1
+        )[0]
+        + "\n}"
+    )
+
+
 def _valid_receipt() -> dict[str, object]:
     uid = os.getuid()
     resources = []
@@ -88,6 +99,7 @@ FLEET_NAME=mac
 DEPLOY_REV={REVISION}
 DEPLOY_GENERATION={GENERATION}
 DEPLOY_TS=20260719T000000Z
+ROLLBACK_INTENT="$MAC_HOME/logs/rollback-intent.json"
 MAC_LAUNCHD_LABEL=com.mac.control-plane
 DARWIN_SYSTEM_SUPERVISOR_LABEL=com.mac.supervisor
 HERMES_LAUNCHD_LABEL={LABELS[0]}
@@ -145,6 +157,64 @@ def test_launchd_prestate_consumer_recovers_exact_prior_activity(tmp_path: Path)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "states=1,0,0,1\n"
+
+
+@pytest.mark.parametrize("same_content", [True, False])
+def test_armed_phase2_reuses_only_an_exact_private_rollback_snapshot(
+    tmp_path: Path, same_content: bool
+) -> None:
+    source = tmp_path / "service.plist"
+    backup = tmp_path / "service.backup.plist"
+    intent = tmp_path / "rollback-intent.json"
+    source.write_text("prior service\n", encoding="utf-8")
+    backup.write_text(
+        "prior service\n" if same_content else "different service\n",
+        encoding="utf-8",
+    )
+    backup.chmod(0o600)
+    intent.write_text("{}\n", encoding="utf-8")
+    intent.chmod(0o600)
+    verify = _function(
+        "verify_armed_rollback_file_snapshot", "snapshot_rollback_file"
+    )
+    snapshot = _function("snapshot_rollback_file", "track_auxiliary_rollback_artifact")
+    command = f"""set -euo pipefail
+PY=${{TEST_PY:?}}
+ROLLBACK_INTENT=${{TEST_INTENT:?}}
+mac_launchd_run_python_bounded() {{
+  local mode="$1" timeout="$2" program="$3"
+  shift 3
+  : "$mode" "$timeout"
+  "$PY" -c "$program" "$@"
+}}
+mac_launchd_snapshot_file() {{
+  echo "unexpected fresh snapshot" >&2
+  return 91
+}}
+die() {{ echo "$*" >&2; return 1; }}
+log() {{ printf '%s\n' "$*" >&2; }}
+{verify}
+{snapshot}
+snapshot_rollback_file "$1" "$2" user
+"""
+    result = subprocess.run(
+        ["/bin/bash", "-c", command, "fixture", str(source), str(backup)],
+        env={
+            **os.environ,
+            "TEST_PY": sys.executable,
+            "TEST_INTENT": str(intent),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    if same_content:
+        assert result.returncode == 0, result.stderr
+        assert "reusing exact rollback snapshot" in result.stderr
+    else:
+        assert result.returncode != 0
+        assert "differs from the current source" in result.stderr
 
 
 @pytest.mark.parametrize(

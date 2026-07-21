@@ -886,8 +886,9 @@ def test_installer_arms_rollback_only_after_mutable_snapshots_and_durable_regene
         "\n}\n\ncapture_darwin_launchd_prestate() {", 1
     )[0]
     assert backup_body.index('mac_launchd_fsync_directory "$MAC_HOME/backups" user') < (
-        backup_body.index("write_rollback_script")
+        backup_body.index("verify_phase2_rollback_intent")
     )
+    assert "write_rollback_script" not in backup_body
     rollback_body = source.split("write_rollback_script() {", 1)[1].split(
         "\n}\n\nverify_phase2_rollback_intent() {", 1
     )[0]
