@@ -364,6 +364,12 @@ case "$command" in
       [ "$want_restarts" != 1 ] || printf 'NRestarts=0\n'
       exit 0
     fi
+    if [ "$unit" = "${FAKE_SYSTEMD_RESTARTING_UNIT:-}" ] \
+        && [ ! -f "$state_file" ]; then
+      printf 'LoadState=loaded\nActiveState=activating\nSubState=auto-restart\nMainPID=0\n'
+      [ "$want_restarts" != 1 ] || printf 'NRestarts=17\n'
+      exit 0
+    fi
     state=active
     if { [ "$unit" = mac-nemoclaw-gateway.service ] \
           && [ "${FAKE_NEMO_ACTIVE:-0}" != 1 ]; } \
@@ -958,6 +964,38 @@ def test_systemd_records_exact_prior_state_and_final_quiescence(
         "mac-openclaw-gateway.service": ("active", "inactive"),
         "mac-nemoclaw-gateway.service": ("absent", "absent"),
     }
+
+
+def test_systemd_auto_restart_service_is_quiesced_and_restored(
+    tmp_path: Path,
+) -> None:
+    env = _base_case(tmp_path, "systemd")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    env.update(
+        {
+            "FAKE_SYSTEMD_STATE": str(state),
+            "FAKE_SYSTEMD_RESTARTING_UNIT": "mac-openclaw-gateway.service",
+        }
+    )
+    _install_systemctl(tmp_path / "bin")
+
+    result = _run(env)
+
+    assert result.returncode == 0, result.stderr
+    resources = {
+        item["name"]: (item["prior_state"], item["state"])
+        for item in _receipt(env)["supervisor"]["resources"]
+    }
+    assert resources["mac-openclaw-gateway.service"] == ("active", "inactive")
+    events = Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
+    assert "systemd:mac-openclaw-gateway.service\n" in events
+
+    restored = _run_action(env, "restore-phase1")
+
+    assert restored.returncode == 0, restored.stderr
+    restored_events = Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
+    assert "systemd-restore:mac-openclaw-gateway.service\n" in restored_events
 
 
 def test_systemd_inspection_error_fails_closed_without_raw_output(

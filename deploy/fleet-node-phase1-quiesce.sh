@@ -1272,6 +1272,18 @@ def systemd_snapshot(prefix: list[str], systemctl: str, unit: str) -> dict[str, 
         if pid != 0:
             raise QuiescenceFailure("systemd reported an inactive service with a live process")
         return {"state": "inactive", "pid": 0, "restarts": restarts}
+    # A service between failed attempts is still operationally active: systemd
+    # reports ``activating/auto-restart`` with no MainPID while its restart
+    # timer is pending.  Treat it as active so phase 1 stops the restart loop
+    # and journals that it must be started again on rollback.  Requiring a
+    # positive PID here made a real crash-looping gateway impossible to drain.
+    if (
+        values["LoadState"] == "loaded"
+        and values["ActiveState"] == "activating"
+        and values["SubState"] == "auto-restart"
+        and pid == 0
+    ):
+        return {"state": "active", "pid": 0, "restarts": restarts}
     if (
         values["LoadState"] not in {"loaded", "masked"}
         or values["ActiveState"] != "active"
