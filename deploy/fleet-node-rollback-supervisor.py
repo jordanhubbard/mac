@@ -892,7 +892,7 @@ class LaunchdSupervisor(BaseSupervisor):
         )
         self._require_ok(
             domain,
-            ["kickstart", "-k", domain + "/" + identity],
+            ["kickstart", domain + "/" + identity],
             "starting restored launchd job",
         )
 

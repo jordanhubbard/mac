@@ -6535,8 +6535,19 @@ deploy_host() {
   esac
   local remote_stage_root="" staged_manifest="" staged_manifest_digest=""
   local staged_verifier="" typed_staged_bundle=0
+  local reviewed_openshell_version reviewed_openshell_asset_sha
+  local reviewed_openshell_cli_sha reviewed_openshell_receipt_sha
   IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required <<<"$spec"
   deploy_generation="$(deployment_id_for_agent "$agent")"
+  # The read-only cohort classifier is the authority for the exact reviewed
+  # OpenShell CLI and receipt used by both phase 1 and the one-time installer's
+  # repeated quiescence proof. Carry the same identity through phase 2; merely
+  # validating it in the controller leaves the remote proof unable to
+  # distinguish a missing value from an unreviewed tool.
+  reviewed_openshell_version="$OPENSHELL_REVIEWED_CLI_VERSION"
+  reviewed_openshell_asset_sha="$(reviewed_openshell_cli_status_value "$agent" asset_sha256)"
+  reviewed_openshell_cli_sha="$(reviewed_openshell_cli_status_value "$agent" cli_sha256)"
+  reviewed_openshell_receipt_sha="$(reviewed_openshell_cli_status_value "$agent" receipt_sha256)"
   nvidia_api_key="$(fleet_scoped_env NVIDIA_API_KEY "$agent")"
   nvidia_api_base="$(fleet_scoped_env NVIDIA_API_BASE "$agent")"
   nvidia_base_url="$(fleet_scoped_env NVIDIA_BASE_URL "$agent")"
@@ -6765,6 +6776,10 @@ PY
   add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE "${MAC_DEPLOY_OPENSHELL_RUNTIME_IMAGE:-}"
   add_remote_env MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256 "${MAC_DEPLOY_OPENSHELL_RUNTIME_INPUT_SHA256:-}"
   add_remote_env MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD "${MAC_DEPLOY_ALLOW_LOCAL_OPENSHELL_IMAGE_BUILD:-0}"
+  add_remote_env MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION "$reviewed_openshell_version"
+  add_remote_env MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256 "$reviewed_openshell_asset_sha"
+  add_remote_env MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256 "$reviewed_openshell_cli_sha"
+  add_remote_env MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256 "$reviewed_openshell_receipt_sha"
   add_remote_env MAC_DEPLOY_GITHUB_CREDENTIALS_REQUIRED "$github_credentials_required"
   add_remote_env MAC_DEPLOY_SUPERVISOR "$supervisor"
   add_remote_env MAC_DEPLOY_SHARED_SERVICES_MANAGER_AGENT "$shared_services_manager"

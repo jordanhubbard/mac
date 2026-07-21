@@ -51,8 +51,15 @@ _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
 # cannot silently bypass its drift test.
 PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     ".github/workflows/ci.yml": ("tests/test_deployment_image_artifact.py",),
+    "deploy/deploy-mac-fleet.sh": (
+        "tests/test_deploy_fleet_drain.py",
+        "tests/test_reviewed_openshell_cli.py",
+    ),
     "deploy/fleet-node-phase1-quiesce.sh": (
         "tests/test_fleet_node_phase1_quiesce.py",
+    ),
+    "deploy/fleet-node-rollback-supervisor.py": (
+        "tests/test_fleet_node_rollback_supervisor.py",
     ),
     "docs/env-config-reference.md": ("tests/test_env_config.py",),
     "scripts/generate-env-config-registry.py": ("tests/test_env_config.py",),

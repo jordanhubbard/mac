@@ -60,6 +60,8 @@ def save(state):
     os.replace(tmp, state_path)
 
 state = load()
+state.setdefault("calls", []).append(sys.argv[1:])
+save(state)
 for selector in (
     "DBUS_SESSION_BUS_ADDRESS",
     "LAUNCHD_SOCKET",
@@ -995,6 +997,9 @@ def test_launchd_restore_supports_explicit_gui_and_system_topologies(
     assert "gui/501/" + LAUNCHD_NAMES["hermes"] in jobs
     assert "gui/501/" + LAUNCHD_NAMES["agent"] in jobs
     assert ("system/" + SYSTEM_SUPERVISOR in jobs) is system
+    kickstarts = [call for call in _read_state(tmp_path)["calls"] if call[0] == "kickstart"]
+    assert kickstarts
+    assert all("-k" not in call for call in kickstarts)
 
 
 def test_launchd_restore_rejects_duplicate_control_plane(tmp_path: Path) -> None:

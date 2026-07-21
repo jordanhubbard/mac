@@ -5,7 +5,6 @@ import hashlib
 import importlib.util
 import io
 import json
-import os
 import platform
 import re
 import subprocess
@@ -321,6 +320,22 @@ def test_phase1_binds_exact_reviewed_cli_and_receipt_digests() -> None:
     controller = CONTROLLER.read_text(encoding="utf-8")
     assert "MAC_PHASE1_OSH_CLI_SHA" in controller
     assert "MAC_PHASE1_OSH_RECEIPT_SHA" in controller
+
+
+def test_phase2_installer_receives_the_same_reviewed_cli_identity() -> None:
+    controller = CONTROLLER.read_text(encoding="utf-8")
+    deploy_host = controller.split("deploy_host() {", 1)[1].split(
+        "\n}\n\nvalidate_remote_supervisor_state", 1
+    )[0]
+
+    for key, status_key in (
+        ("MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256", "asset_sha256"),
+        ("MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256", "cli_sha256"),
+        ("MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256", "receipt_sha256"),
+    ):
+        assert f'reviewed_openshell_cli_status_value "$agent" {status_key}' in deploy_host
+        assert f"add_remote_env {key}" in deploy_host
+    assert "add_remote_env MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION" in deploy_host
 
 
 def _controller_status_validator() -> str:
