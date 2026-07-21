@@ -9159,7 +9159,18 @@ if (
     or value.get("source_revision") != sys.argv[6]
     or reviewed.get("status") != "ready"
 ):
-    raise SystemExit("node returned an invalid preflight qualification probe")
+    failed_checks = sorted(
+        name
+        for name, passed in (value.get("checks") or {}).items()
+        if passed is not True
+    )
+    details = []
+    if failed_checks:
+        details.append("failed checks=" + ",".join(failed_checks))
+    if reviewed.get("status") != "ready":
+        details.append("reviewed OpenShell CLI=" + str(reviewed.get("status") or "invalid"))
+    suffix = "; " + "; ".join(details) if details else ""
+    raise SystemExit("node returned an invalid preflight qualification probe" + suffix)
 PY
 }
 
