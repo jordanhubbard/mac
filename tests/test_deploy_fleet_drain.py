@@ -2891,14 +2891,15 @@ write_live_endpoint_identity() {{ cp -f "$OBSERVED_IDENTITY" "$2"; chmod 0600 "$
 persist_cohort_recovery_route_mismatch() {{ printf '%s\n' "$*" >> {shlex.quote(str(diagnostics))}; }}
 {verify}
 set +e
-if verify_cohort_recovery_routes {shlex.quote(str(status))} {shlex.quote(str(recovery))}; then result=0; else result=$?; fi
-printf '%s|%s\n' "$result" "$SSH_CONTROL_REQUIRED"
+if verify_cohort_recovery_routes {shlex.quote(str(status))} {shlex.quote(str(recovery))}; then first=0; else first=$?; fi
+if verify_cohort_recovery_routes {shlex.quote(str(status))} {shlex.quote(str(recovery))}; then second=0; else second=$?; fi
+printf '%s|%s|%s\n' "$first" "$second" "$SSH_CONTROL_REQUIRED"
 """
     result = subprocess.run(
         ["bash", "-c", snippet], text=True, capture_output=True, check=False
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "0|1", result.stderr
+    assert result.stdout.strip() == "0|0|1", result.stderr
     assert not diagnostics.exists()
 
 

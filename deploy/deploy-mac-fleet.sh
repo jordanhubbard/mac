@@ -11883,8 +11883,15 @@ PY
 }
 
 verify_cohort_recovery_routes() {
-  local status_file="$1" recovery_file="$2" records_file="$TMPDIR_LOCAL/recovery-routes.txt"
+  local status_file="$1" recovery_file="$2" route_dir records_file
   local role agent encoded expected observed comparison authority_file authority_id
+  if ! route_dir="$(mktemp -d "$TMPDIR_LOCAL/recovery-routes.XXXXXX")"; then
+    return 1
+  fi
+  if ! chmod 0700 "$route_dir"; then
+    return 1
+  fi
+  records_file="$route_dir/records.txt"
   if ! "$PYTHON_BIN" - "$status_file" "$recovery_file" > "$records_file" <<'PY'
 import base64,json,sys
 status=json.load(open(sys.argv[1],encoding="utf-8")); recovery=json.load(open(sys.argv[2],encoding="utf-8"))
@@ -11917,9 +11924,9 @@ PY
   SSH_CONTROL_REQUIRED=1
   while IFS='|' read -r role agent encoded; do
     [ -n "$agent" ] || continue
-    expected="$TMPDIR_LOCAL/recovery-expected-${role}-${agent}.json"
-    observed="$TMPDIR_LOCAL/recovery-observed-${role}-${agent}.json"
-    comparison="$TMPDIR_LOCAL/recovery-comparison-${role}-${agent}.json"
+    expected="$route_dir/expected-${role}-${agent}.json"
+    observed="$route_dir/observed-${role}-${agent}.json"
+    comparison="$route_dir/comparison-${role}-${agent}.json"
     if ! "$PYTHON_BIN" - "$encoded" "$expected" <<'PY'
 import base64,json,os,sys
 value=json.loads(base64.b64decode(sys.argv[1])); path=sys.argv[2]
@@ -11931,7 +11938,7 @@ PY
       return 1
     fi
     if [ "$role" = hub ]; then
-      authority_file="$TMPDIR_LOCAL/recovery-hub-authority.json"
+      authority_file="$route_dir/hub-authority.json"
       if ! hub_epoch_client_read "$agent" "$authority_file" authority; then
         return 1
       fi
@@ -13129,27 +13136,31 @@ run_typed_cohort() {
   build_and_open_hub_epoch "$selected_specs_file" "$hub_agent"
 
   echo "==> fleet: quiescing the exact cohort under hub epoch ownership"
-  # Quiesce intent for the full cohort is durable before parallel mutation.
+  # The journal deliberately makes quiescence a cohort-ordered handoff: each
+  # node's durable intent, remote proof, and completion must be published before
+  # the next node may start. Read-only preparation and later immutable apply
+  # phases remain parallel barriers; this service-stop transition is serialized.
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     generation="$(worker_generation_for_agent "$agent")"
-    cohort_journal_mutate quiesce-start "$COHORT_EPOCH_ID" \
+    if ! cohort_journal_mutate quiesce-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "quiesce-start-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
-      --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null
-  done < "$selected_specs_file"
-  run_bounded_node_phase "$selected_specs_file" quiesce \
-    typed_quiesce_worker || return 1
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    IFS='|' read -r -a fields <<<"$spec"
-    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    generation="$(worker_generation_for_agent "$agent")"
-    cohort_journal_mutate quiesced "$COHORT_EPOCH_ID" \
+      --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null; then
+      return 1
+    fi
+    echo "==> ${agent}: quiesce started (cohort order)"
+    if ! typed_quiesce_worker "$spec"; then
+      return 1
+    fi
+    if ! cohort_journal_mutate quiesced "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "quiesced-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" \
-      --evidence-file "$TMPDIR_LOCAL/phase1-ready-${agent_id}.json" >/dev/null
+      --evidence-file "$TMPDIR_LOCAL/phase1-ready-${agent_id}.json" >/dev/null; then
+      return 1
+    fi
+    echo "==> ${agent}: quiesce proved (cohort order)"
   done < "$selected_specs_file"
 
   echo "==> fleet: installing immutable finalizers and arming phase-2 rollback"

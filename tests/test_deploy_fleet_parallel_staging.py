@@ -33,7 +33,7 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
         'run_bounded_node_phase "$selected_specs_file" stage-bundle',
         "build_and_open_hub_epoch",
         "cohort_journal_mutate quiesce-start",
-        'run_bounded_node_phase "$selected_specs_file" quiesce',
+        'typed_quiesce_worker "$spec"',
         "cohort_journal_mutate quiesced",
         'run_bounded_node_phase "$selected_specs_file" phase2-arm',
         "cohort_journal_mutate phase2-armed",
@@ -47,6 +47,14 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
     )
     positions = [typed.index(value) for value in ordered]
     assert positions == sorted(positions)
+    quiescence = typed.split(
+        'echo "==> fleet: quiescing the exact cohort under hub epoch ownership"', 1
+    )[1].split(
+        'echo "==> fleet: installing immutable finalizers and arming phase-2 rollback"',
+        1,
+    )[0]
+    assert quiescence.count("while IFS= read -r spec; do") == 1
+    assert 'run_bounded_node_phase "$selected_specs_file" quiesce' not in quiescence
 
     workers = source.split("typed_phase1_prepare_worker() {", 1)[1].split(
         "\nrun_typed_cohort() {", 1
