@@ -2691,6 +2691,24 @@ def test_darwin_deploy_preserves_an_active_system_control_plane_domain():
         'mac_launchd_transaction_replace \\\n      "$system_plist_staging" "$system_plist"',
         transaction,
     )
+    supervisor_active = install.index(
+        'if [ "$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE" = 1 ]; then',
+        transaction,
+    )
+    supervisor_stop = install.index(
+        "mac_launchd_stop_job_if_present", supervisor_active
+    )
+    supervisor_stop_target = install.index(
+        '"system/$DARWIN_SYSTEM_SUPERVISOR_LABEL"', supervisor_stop
+    )
+    supervisor_disable = install.index("darwin_disable_job", supervisor_stop_target)
+    supervisor_disable_target = install.index(
+        '"system/$DARWIN_SYSTEM_SUPERVISOR_LABEL"', supervisor_disable
+    )
+    control_stop = install.index(
+        "mac_launchd_stop_job_if_present", supervisor_disable_target
+    )
+    control_stop_target = install.index('"system/$MAC_LAUNCHD_LABEL"', control_stop)
     control_bootstrap = install.index(
         'mac_launchd_bootstrap_job \\\n      system "$system_plist"', atomic_replace
     )
@@ -2703,6 +2721,10 @@ def test_darwin_deploy_preserves_an_active_system_control_plane_domain():
         "wait_for_local_control_plane_health", supervisor_bootstrap
     )
     committed = install.index("mac_launchd_transaction_commit", health_recheck)
+    assert supervisor_active < supervisor_stop < supervisor_stop_target
+    assert supervisor_stop_target < supervisor_disable < supervisor_disable_target
+    assert supervisor_disable_target < control_stop < control_stop_target
+    assert control_stop_target < atomic_replace
     assert atomic_replace < control_bootstrap < healthy < supervisor_bootstrap
     assert supervisor_bootstrap < health_recheck < committed
     assert "com.${FLEET_NAME}.supervisor" not in install

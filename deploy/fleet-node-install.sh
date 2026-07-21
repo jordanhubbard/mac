@@ -11893,6 +11893,20 @@ EOF
       plutil -lint "$system_plist_staging"
     fi
     mac_launchd_transaction_mark_mutating
+    # The legacy system supervisor owns the prior control-plane generation.
+    # Stop and disable it before booting the replacement job; otherwise its
+    # KeepAlive loop can reload com.mac.control-plane between our bootout and
+    # bootstrap.  The auxiliary transaction hook above restores this exact
+    # supervisor if any later operation fails, and the success path reenables
+    # it only after the replacement control plane is healthy.
+    if [ "$DARWIN_SYSTEM_SUPERVISOR_LAUNCHD_ACTIVE" = 1 ]; then
+      mac_launchd_stop_job_if_present \
+        "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL" \
+        "$DARWIN_SYSTEM_SUPERVISOR_LABEL" system
+      darwin_disable_job \
+        "system/$DARWIN_SYSTEM_SUPERVISOR_LABEL" \
+        "$DARWIN_SYSTEM_SUPERVISOR_LABEL" system
+    fi
     mac_launchd_stop_job_if_present \
       "system/$MAC_LAUNCHD_LABEL" "$MAC_LAUNCHD_LABEL" system
     mac_launchd_stop_job_if_present \
