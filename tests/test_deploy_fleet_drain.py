@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -704,6 +705,59 @@ def test_legacy_hub_bootstrap_preflights_onboarding_before_phase1():
     assert '("python", "github_cli", "codegraph")' in preflight
     assert "MAC_PHASE1_CODEGRAPH_VERSION=" in preflight
     assert "read-only legacy onboarding prerequisite receipt passed" in preflight
+
+
+def test_legacy_hub_bootstrap_restores_phase1_after_deploy_failure(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    legacy = (
+        "legacy_hub_bootstrap() {"
+        + deploy.split("legacy_hub_bootstrap() {", 1)[1].split(
+            "\n}\n\nhub_epoch_client_read", 1
+        )[0]
+        + "\n}"
+    )
+    selected = tmp_path / "selected"
+    fields = [""] * 24
+    fields[0] = "rocky"
+    fields[2] = "darwin"
+    fields[14] = "launchd"
+    fields[23] = "mac"
+    selected.write_text("|".join(fields) + "\n", encoding="utf-8")
+    events = tmp_path / "events"
+    snippet = f"""set -u
+REQUIRE_RELEASE_ALL_SELECTED=0
+HOLD_ADOPTIONS_FILE=
+SUCCESSOR_HOLD_REASON=
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+deployment_id_for_agent() {{ printf '%s\n' exact-generation; }}
+classify_reviewed_openshell_cli_prerequisites() {{ :; }}
+preflight_legacy_hub_prerequisites() {{ :; }}
+prepare_remote_phase1_restore_contract() {{ printf '%s\n' prepare-contract >> {shlex.quote(str(events))}; }}
+prepare_remote_mac_agent_deployment() {{ printf '%s\n' prepare-agent >> {shlex.quote(str(events))}; }}
+read_hub_token() {{ printf '%s\n' token; }}
+read_hub_tunnel_pubkey() {{ :; }}
+ensure_local_github_review_key() {{ printf '%s\n' review-key; }}
+deploy_host() {{ printf '%s\n' deploy >> {shlex.quote(str(events))}; return 9; }}
+recover_legacy_hub_bootstrap_failure() {{ printf '%s\n' "recover:$1:$2:$3:$4:$5" >> {shlex.quote(str(events))}; }}
+{legacy}
+set +e
+legacy_hub_bootstrap {shlex.quote(str(selected))} rocky 1
+result=$?
+set -e
+printf '%s\n' "$result"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "1"
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "prepare-contract",
+        "prepare-agent",
+        "deploy",
+        "recover:rocky:exact-generation:mac:darwin:launchd",
+    ]
 
 
 def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
@@ -1506,7 +1560,76 @@ def test_fenced_upload_uses_random_exclusive_atomic_materialization():
     assert "os.fsync(output.fileno())" in upload
     assert "os.replace(tmp,target)" in upload
     assert "os.fsync(directory_fd)" in upload
-    assert 'python3 -c "$upload_code" "$destination"' in upload
+    assert 'python3 -c "$upload_code" "$destination" "$expected_size" "$expected_sha256"' in upload
+    assert "remote upload payload was truncated" in upload
+    assert "remote upload payload exceeded its declared size" in upload
+    assert "remote upload payload digest differs" in upload
+
+
+def test_fenced_upload_rejects_a_truncated_transport_before_publication(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    shell_quote = (
+        "shell_quote() {"
+        + deploy.split("shell_quote() {", 1)[1].split(
+            "\n}\n\n# Resolve every operator-side", 1
+        )[0]
+        + "\n}"
+    )
+    helpers = (
+        "remote_deployment_fenced_exec() {"
+        + deploy.split("remote_deployment_fenced_exec() {", 1)[1].split(
+            "\n}\n\nenv_value_or_empty() {", 1
+        )[0]
+        + "\n}"
+    )
+    mac_home = tmp_path / ".mac"
+    lock = mac_home / "deploy-controller.lock"
+    lock.mkdir(parents=True)
+    (lock / "owner.json").write_text(
+        json.dumps({"deployment_id": "expected-controller"}), encoding="utf-8"
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_ssh = fake_bin / "ssh"
+    fake_ssh.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+remote=
+for value in "$@"; do remote="$value"; done
+if [ "${FAKE_SSH_TRUNCATE:-0}" = 1 ]; then
+  dd bs=1 count=3 2>/dev/null | /bin/bash -c "$remote"
+else
+  /bin/bash -c "$remote"
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_ssh.chmod(0o700)
+    source = tmp_path / "payload"
+    source.write_bytes(b"content-bound-upload\n" * 32)
+    complete = tmp_path / "complete"
+    truncated = tmp_path / "truncated"
+    snippet = f"""set -euo pipefail
+PYTHON_BIN={sys.executable!s}
+PATH={shlex.quote(str(fake_bin))}:/usr/bin:/bin
+ssh_target_args() {{ printf '%s\\0' fake-target; }}
+{shell_quote}
+{helpers}
+fenced_remote_upload fixture expected-controller {shlex.quote(str(source))} {shlex.quote(str(complete))}
+FAKE_SSH_TRUNCATE=1 fenced_remote_upload fixture expected-controller {shlex.quote(str(source))} {shlex.quote(str(truncated))}
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        env={**os.environ, "HOME": str(tmp_path)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert complete.read_bytes() == source.read_bytes()
+    assert not truncated.exists()
+    assert not list(tmp_path.glob(".truncated.upload.*"))
 
 
 def test_fenced_stream_deadline_covers_ready_upload_output_and_child_reap(tmp_path):
@@ -2850,6 +2973,124 @@ def test_typed_prepare_and_composite_rollback_are_journal_ordered():
     composite = recovery.index("write_cohort_composite_rollback_evidence", phase1)
     aborted = recovery.index("cohort_journal_mutate aborted-node", composite)
     assert phase2 < phase1 < composite < aborted
+
+
+def test_phase1_recovery_replays_retained_helper_and_reviewed_cli_identity(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    restore_function = (
+        "restore_remote_phase1_generation() {"
+        + deploy.split("restore_remote_phase1_generation() {", 1)[1].split(
+            "\n}\n\nrollback_remote_phase2_generation", 1
+        )[0]
+        + "\n}"
+    )
+    mac_home = tmp_path / ".mac"
+    retained_dir = mac_home / "retained"
+    retained_dir.mkdir(parents=True)
+    generation = "generation-1"
+    revision = "a" * 40
+    receipt = mac_home / f"phase1-cohort-restore-{generation}.json"
+    marker = tmp_path / "restore-env.json"
+    retained = retained_dir / "phase1-restore"
+    retained.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+"$PY" - <<'PY'
+import json
+import os
+from pathlib import Path
+required = {
+    "helper": os.environ["MAC_PHASE1_HELPER_SOURCE"],
+    "version": os.environ["MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION"],
+    "asset": os.environ["MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256"],
+    "cli": os.environ["MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256"],
+    "receipt": os.environ["MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256"],
+}
+Path(os.environ["EXPECTED_MARKER"]).write_text(json.dumps(required), encoding="utf-8")
+payload = {
+    "schema": "mac.phase1_cohort_restore.v1",
+    "status": "restored",
+    "agent": os.environ["AGENT"],
+    "generation": os.environ["DEPLOY_GENERATION"],
+    "revision": os.environ["DEPLOY_REV"],
+    "source_contract_sha256": os.environ["MAC_PHASE1_RESTORE_CONTRACT_SHA256"],
+}
+path = Path(os.environ["EXPECTED_RECEIPT"])
+path.write_text(json.dumps(payload), encoding="utf-8")
+path.chmod(0o600)
+PY
+""",
+        encoding="utf-8",
+    )
+    retained.chmod(0o700)
+    reviewed = {
+        "schema": "mac.reviewed_openshell_cli.v1",
+        "version": "0.0.test",
+        "asset_sha256": "1" * 64,
+        "cli_sha256": "2" * 64,
+        "receipt_sha256": "3" * 64,
+    }
+    daemon_contract = {
+        "schema": "mac.daemon_resource_restore_contract.v1",
+        "generation": generation,
+        "revision": revision,
+        "openclaw": {"reviewed_openshell_cli": reviewed},
+    }
+    daemon_path = mac_home / f"daemon-resource-restore-contract-{generation}.json"
+    daemon_raw = json.dumps(daemon_contract, sort_keys=True).encode()
+    daemon_path.write_bytes(daemon_raw)
+    daemon_path.chmod(0o600)
+    contract = {
+        "schema": "mac.phase1_cohort_restore_contract.v1",
+        "agent": "rocky",
+        "generation": generation,
+        "revision": revision,
+        "rollback_capable": True,
+        "restore_receipt": str(receipt),
+        "restore_executable": {
+            "path": str(retained),
+            "sha256": hashlib.sha256(retained.read_bytes()).hexdigest(),
+            "argv": [str(retained), "restore"],
+        },
+        "daemon_restore_contract": {
+            "path": str(daemon_path),
+            "sha256": hashlib.sha256(daemon_raw).hexdigest(),
+        },
+    }
+    contract_path = mac_home / f"phase1-cohort-restore-contract-{generation}.json"
+    contract_raw = json.dumps(contract, sort_keys=True).encode()
+    contract_path.write_bytes(contract_raw)
+    contract_path.chmod(0o600)
+    snippet = f"""set -euo pipefail
+PYTHON_BIN={sys.executable!s}
+TEST_HOME={shlex.quote(str(tmp_path))}
+EXPECTED_MARKER={shlex.quote(str(marker))}
+EXPECTED_RECEIPT={shlex.quote(str(receipt))}
+export TEST_HOME EXPECTED_MARKER EXPECTED_RECEIPT
+run_fenced_remote_python() {{
+  shift 2
+  code="$1"
+  shift
+  HOME="$TEST_HOME" "$PYTHON_BIN" -c "$code" "$@"
+}}
+{restore_function}
+restore_remote_phase1_generation rocky {shlex.quote(generation)} {revision} mac darwin launchd {hashlib.sha256(contract_raw).hexdigest()}
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    restored = json.loads(result.stdout)
+    assert restored["status"] == "restored"
+    observed = json.loads(marker.read_text(encoding="utf-8"))
+    assert observed == {
+        "helper": str(retained),
+        "version": reviewed["version"],
+        "asset": reviewed["asset_sha256"],
+        "cli": reviewed["cli_sha256"],
+        "receipt": reviewed["receipt_sha256"],
+    }
 
 
 def test_phase1_prepare_upload_failure_releases_exact_lock_in_conditional_context(

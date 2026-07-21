@@ -1655,12 +1655,72 @@ finally:
 fenced_remote_upload() {
   local agent="$1" deployment_id="$2" source_file="$3" destination="$4"
   local ssh_parts=() ssh_args=() ssh_target item last_index remote_cmd upload_code
+  local source_identity expected_size expected_sha256
+  source_identity="$("$PYTHON_BIN" - "$source_file" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+try:
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode) or before.st_size < 0:
+        raise SystemExit("local upload source is not a regular file")
+    digest = hashlib.sha256()
+    observed = 0
+    while observed < before.st_size:
+        chunk = os.read(descriptor, min(1024 * 1024, before.st_size - observed))
+        if not chunk:
+            raise SystemExit("local upload source was truncated")
+        digest.update(chunk)
+        observed += len(chunk)
+    if os.read(descriptor, 1):
+        raise SystemExit("local upload source grew while reading")
+    after = os.fstat(descriptor)
+    if (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ):
+        raise SystemExit("local upload source changed while reading")
+finally:
+    os.close(descriptor)
+print("%d %s" % (before.st_size, digest.hexdigest()))
+PY
+)"
+  read -r expected_size expected_sha256 <<<"$source_identity"
+  case "$expected_size" in
+    ''|*[!0-9]*) echo "invalid local upload size" >&2; return 1 ;;
+  esac
+  [[ "$expected_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "invalid local upload digest" >&2
+    return 1
+  }
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  upload_code='import os,sys,tempfile
+  upload_code='import hashlib,os,re,sys,tempfile
 target=os.path.abspath(sys.argv[1])
+try:
+    expected_size=int(sys.argv[2])
+except (TypeError,ValueError) as exc:
+    raise SystemExit("remote upload size is invalid") from exc
+expected_sha256=sys.argv[3]
+if expected_size < 0 or expected_size > 16*1024*1024*1024:
+    raise SystemExit("remote upload size is outside its safe bound")
+if re.fullmatch(r"[0-9a-f]{64}",expected_sha256) is None:
+    raise SystemExit("remote upload digest is invalid")
 directory=os.path.dirname(target)
 if not directory or not os.path.isdir(directory):
     raise SystemExit("remote upload target directory is unavailable")
@@ -1669,11 +1729,19 @@ published=False
 try:
     os.fchmod(fd,0o600)
     with os.fdopen(fd,"wb") as output:
-        while True:
-            chunk=sys.stdin.buffer.read(65536)
+        digest=hashlib.sha256()
+        remaining=expected_size
+        while remaining:
+            chunk=sys.stdin.buffer.read(min(65536,remaining))
             if not chunk:
-                break
+                raise SystemExit("remote upload payload was truncated")
             output.write(chunk)
+            digest.update(chunk)
+            remaining-=len(chunk)
+        if sys.stdin.buffer.read(1):
+            raise SystemExit("remote upload payload exceeded its declared size")
+        if digest.hexdigest()!=expected_sha256:
+            raise SystemExit("remote upload payload digest differs")
         output.flush()
         os.fsync(output.fileno())
     os.replace(tmp,target)
@@ -1690,7 +1758,7 @@ finally:
         except FileNotFoundError:
             pass'
   remote_cmd="$(remote_deployment_fenced_exec "$deployment_id" 1 \
-    python3 -c "$upload_code" "$destination")"
+    python3 -c "$upload_code" "$destination" "$expected_size" "$expected_sha256")"
   stream_file_after_remote_fence "$source_file" \
     "MAC_DEPLOY_FENCE_READY:${deployment_id}" \
     ssh -o BatchMode=yes -o ConnectTimeout=10 \
@@ -4143,9 +4211,84 @@ PY
   echo "==> ${agent}: read-only legacy onboarding prerequisite receipt passed"
 }
 
+cleanup_remote_legacy_bootstrap_files() {
+  local agent="$1" deployment_id="$2" code
+  code="$(command cat <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+for value in sys.argv[1:]:
+    path = Path(value)
+    if path.parent != Path("/tmp") or not path.name.startswith("mac-"):
+        raise SystemExit("legacy bootstrap cleanup path is invalid")
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        continue
+    if stat.S_ISDIR(metadata.st_mode):
+        raise SystemExit("legacy bootstrap cleanup path is unexpectedly a directory")
+    path.unlink()
+PY
+)"
+  run_fenced_remote_python "$agent" "$deployment_id" "$code" \
+    "/tmp/mac-${agent}-${TS}.tar.gz" \
+    "/tmp/mac-fleets-${agent}-${TS}.yaml" \
+    "/tmp/mac-node-install-${agent}-${TS}.sh" \
+    "/tmp/mac-reviewed-tool-assets-${agent}-${TS}.sh" \
+    "/tmp/mac-launchd-lifecycle-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh" \
+    "/tmp/mac-rollback-supervisor-${agent}-${DEPLOY_CONTROLLER_NONCE}.py"
+}
+
+recover_legacy_hub_bootstrap_failure() {
+  local agent="$1" deployment_id="$2" fleet_name="$3" os_kind="$4"
+  local supervisor="$5" recovery action restore_contract_sha256
+  local phase1_evidence="$TMPDIR_LOCAL/legacy-recovery-phase1.json"
+  local phase2_evidence="$TMPDIR_LOCAL/legacy-recovery-phase2.json"
+  restore_contract_sha256="$(phase1_restore_contract_digest_for_agent "$agent")"
+  if ! recovery="$(probe_remote_cohort_recovery_action \
+    "$agent" "$deployment_id" "$GIT_REV" "$TS" \
+    "$restore_contract_sha256")"; then
+    echo "ERROR: ${agent}: could not classify failed legacy bootstrap recovery" >&2
+    return 1
+  fi
+  if ! action="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c \
+    'import json,sys; print(json.load(sys.stdin).get("action") or "")')"; then
+    return 1
+  fi
+  case "$action" in
+    rollback)
+      if ! rollback_remote_phase2_generation \
+        "$agent" "$deployment_id" "$GIT_REV" "$TS" > "$phase2_evidence"; then
+        return 1
+      fi
+      chmod 0600 "$phase2_evidence"
+      ;;
+    phase1_restore|probe) ;;
+    *)
+      echo "ERROR: ${agent}: failed legacy bootstrap returned invalid recovery action ${action}" >&2
+      return 1
+      ;;
+  esac
+  if ! restore_remote_phase1_generation \
+    "$agent" "$deployment_id" "$GIT_REV" "$fleet_name" \
+    "$os_kind" "$supervisor" "$restore_contract_sha256" > "$phase1_evidence"; then
+    return 1
+  fi
+  chmod 0600 "$phase1_evidence"
+  if ! cleanup_remote_legacy_bootstrap_files "$agent" "$deployment_id"; then
+    return 1
+  fi
+  if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
+    return 1
+  fi
+  echo "==> ${agent}: failed legacy bootstrap restored its exact phase-1 topology"
+}
+
 legacy_hub_bootstrap() {
   local selected_specs_file="$1" hub_agent="$2" selected_count="$3"
-  local spec fields=() agent supervisor fleet_name os_kind authority_file
+  local spec fields=() agent supervisor fleet_name os_kind authority_file deployment_id
   [ "$selected_count" -eq 1 ] || {
     echo "ERROR: legacy hub bootstrap requires exactly one selected node" >&2
     return 1
@@ -4166,30 +4309,52 @@ legacy_hub_bootstrap() {
   supervisor="${fields[14]:-auto}"
   fleet_name="${fields[23]:-mac}"
   os_kind="${fields[2]}"
+  deployment_id="$(deployment_id_for_agent "$agent")"
   echo "==> ${agent}: executing explicit pre-held hub API bootstrap"
   classify_reviewed_openshell_cli_prerequisites "$selected_specs_file"
   preflight_legacy_hub_prerequisites \
     "$agent" "$supervisor" "$fleet_name" "$os_kind"
   prepare_remote_phase1_restore_contract \
-    "$agent" "$(deployment_id_for_agent "$agent")" \
+    "$agent" "$deployment_id" \
     "$supervisor" "$fleet_name" "$os_kind"
-  MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP=1 \
+  if ! MAC_DEPLOY_ALLOW_LEGACY_CAS_BOOTSTRAP=1 \
     prepare_remote_mac_agent_deployment \
-      "$agent" "$(deployment_id_for_agent "$agent")" \
-      "$supervisor" "$fleet_name" "" 0 "$os_kind"
-  deploy_host "$spec" "$(read_hub_token)" \
+      "$agent" "$deployment_id" \
+      "$supervisor" "$fleet_name" "" 0 "$os_kind"; then
+    recover_legacy_hub_bootstrap_failure \
+      "$agent" "$deployment_id" "$fleet_name" "$os_kind" "$supervisor" || \
+      echo "ERROR: ${agent}: legacy bootstrap recovery remains incomplete; exact lock retained" >&2
+    return 1
+  fi
+  if ! deploy_host "$spec" "$(read_hub_token)" \
     "$(read_hub_tunnel_pubkey 2>/dev/null || true)" 0 \
-    "$(ensure_local_github_review_key)" 0 1
+    "$(ensure_local_github_review_key)" 0 1; then
+    recover_legacy_hub_bootstrap_failure \
+      "$agent" "$deployment_id" "$fleet_name" "$os_kind" "$supervisor" || \
+      echo "ERROR: ${agent}: legacy bootstrap recovery remains incomplete; exact lock retained" >&2
+    return 1
+  fi
   authority_file="$TMPDIR_LOCAL/bootstrap-hub-authority.json"
-  hub_epoch_client_read "$hub_agent" "$authority_file" authority
-  "$PYTHON_BIN" - "$authority_file" <<'PY'
+  if ! hub_epoch_client_read "$hub_agent" "$authority_file" authority; then
+    recover_legacy_hub_bootstrap_failure \
+      "$agent" "$deployment_id" "$fleet_name" "$os_kind" "$supervisor" || \
+      echo "ERROR: ${agent}: legacy bootstrap recovery remains incomplete; exact lock retained" >&2
+    return 1
+  fi
+  if ! "$PYTHON_BIN" - "$authority_file" <<'PY'
 import json,sys,uuid
 value=json.load(open(sys.argv[1], encoding="utf-8"))
 if value.get("schema") != "mac.fleet_release_hub_authority.v1":
     raise SystemExit("typed hub authority endpoint was not installed")
 uuid.UUID(str(value.get("hub_authority_id")))
 PY
-  finalize_remote_deployment_release "$agent" "$(deployment_id_for_agent "$agent")"
+  then
+    recover_legacy_hub_bootstrap_failure \
+      "$agent" "$deployment_id" "$fleet_name" "$os_kind" "$supervisor" || \
+      echo "ERROR: ${agent}: legacy bootstrap recovery remains incomplete; exact lock retained" >&2
+    return 1
+  fi
+  finalize_remote_deployment_release "$agent" "$deployment_id"
   echo "==> ${agent}: typed hub epoch API installed; dispatch hold intentionally retained"
 }
 
@@ -10793,6 +10958,7 @@ restore_remote_phase1_generation() {
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -10845,6 +11011,9 @@ try:
 except (TypeError, ValueError):
     raise SystemExit("phase-1 restore contract is malformed")
 restore = contract.get("restore_executable") if isinstance(contract, dict) else None
+daemon_reference = (
+    contract.get("daemon_restore_contract") if isinstance(contract, dict) else None
+)
 if (
     contract.get("schema") != "mac.phase1_cohort_restore_contract.v1"
     or contract.get("agent") != agent
@@ -10853,8 +11022,42 @@ if (
     or contract.get("rollback_capable") is not True
     or not isinstance(restore, dict)
     or restore.get("argv") != [restore.get("path"), "restore"]
+    or not isinstance(daemon_reference, dict)
+    or not isinstance(daemon_reference.get("path"), str)
+    or not isinstance(daemon_reference.get("sha256"), str)
 ):
     raise SystemExit("phase-1 restore contract belongs to another generation")
+daemon_fd, daemon_raw = open_private(
+    Path(daemon_reference["path"]), 0o600, 4 * 1024 * 1024
+)
+os.close(daemon_fd)
+if hashlib.sha256(daemon_raw).hexdigest() != daemon_reference["sha256"]:
+    raise SystemExit("phase-1 daemon restore contract digest differs")
+try:
+    daemon_contract = json.loads(daemon_raw)
+except (TypeError, ValueError):
+    raise SystemExit("phase-1 daemon restore contract is malformed")
+if (
+    daemon_contract.get("schema") != "mac.daemon_resource_restore_contract.v1"
+    or daemon_contract.get("generation") != generation
+    or daemon_contract.get("revision") != revision
+    or not isinstance(daemon_contract.get("openclaw"), dict)
+):
+    raise SystemExit("phase-1 daemon restore contract belongs to another generation")
+reviewed_cli = daemon_contract["openclaw"].get("reviewed_openshell_cli")
+if reviewed_cli is not None:
+    if (
+        not isinstance(reviewed_cli, dict)
+        or reviewed_cli.get("schema") != "mac.reviewed_openshell_cli.v1"
+        or not isinstance(reviewed_cli.get("version"), str)
+        or not reviewed_cli["version"]
+        or any(
+            re.fullmatch(r"[0-9a-f]{64}", str(reviewed_cli.get(key) or ""))
+            is None
+            for key in ("asset_sha256", "cli_sha256", "receipt_sha256")
+        )
+    ):
+        raise SystemExit("phase-1 daemon restore contract has invalid reviewed CLI identity")
 restore_fd, restore_raw = open_private(Path(restore["path"]), 0o700, 8 * 1024 * 1024)
 if hashlib.sha256(restore_raw).hexdigest() != restore.get("sha256"):
     os.close(restore_fd)
@@ -10871,8 +11074,24 @@ environment.update(
         "MAC_HOME": str(mac_home),
         "PY": sys.executable,
         "MAC_PHASE1_RESTORE_CONTRACT_SHA256": expected_sha256,
+        # Execute through the already-open descriptor, but tell the retained
+        # helper which canonical owner-private pathname it must re-verify.
+        "MAC_PHASE1_HELPER_SOURCE": str(restore["path"]),
     }
 )
+if reviewed_cli is not None:
+    environment.update(
+        {
+            "MAC_DEPLOY_REVIEWED_OPENSHELL_VERSION": reviewed_cli["version"],
+            "MAC_DEPLOY_REVIEWED_OPENSHELL_ASSET_SHA256": reviewed_cli[
+                "asset_sha256"
+            ],
+            "MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256": reviewed_cli["cli_sha256"],
+            "MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256": reviewed_cli[
+                "receipt_sha256"
+            ],
+        }
+    )
 result = subprocess.run(
     ["/bin/bash", "/dev/fd/%d" % restore_fd, "restore"],
     env=environment,
