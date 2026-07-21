@@ -4,6 +4,7 @@ import json
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -318,6 +319,39 @@ def test_stage_cleanup_is_terminal_for_finalize_and_abort_recovery() -> None:
     )
     typed = source.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain() {", 1)[0]
     assert "cleanup_remote_staged_deployment_bundle" not in typed
+
+
+def test_stage_cleanup_normalizes_only_owner_private_inherited_setgid() -> None:
+    source = DEPLOY.read_text(encoding="utf-8")
+    cleanup = source.split("staged_bundle_cleanup_source() {", 1)[1].split(
+        "\n}\n\ncleanup_remote_staged_deployment_bundle", 1
+    )[0]
+    cleanup = cleanup.split("cat <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+    legacy = Path(tempfile.mkdtemp(prefix="mac-deploy-stage-legacy-", dir="/tmp"))
+    legacy.chmod(0o2700)
+    (legacy / "payload").write_text("staged", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-c", cleanup, str(legacy)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not legacy.exists()
+
+    unsafe = Path(tempfile.mkdtemp(prefix="mac-deploy-stage-unsafe-", dir="/tmp"))
+    unsafe.chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, "-c", cleanup, str(unsafe)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "unsafe staged bundle cleanup root" in result.stderr
+    assert unsafe.exists()
+    unsafe.rmdir()
 
 
 def test_prerequisite_budget_rejects_insufficient_remaining_lifetime(tmp_path: Path) -> None:

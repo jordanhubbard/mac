@@ -10714,20 +10714,69 @@ cleanup_committed_hub_relay() {
   done < "$2"
 }
 
+staged_bundle_cleanup_source() {
+  cat <<'PY'
+import os
+import shutil
+import stat
+import sys
+
+path = sys.argv[1]
+parent, name = os.path.split(path)
+if parent != "/tmp" or not name.startswith("mac-deploy-stage-"):
+    raise SystemExit("invalid staged bundle cleanup path")
+
+parent_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+directory_fd = None
+try:
+    try:
+        directory_fd = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+    except FileNotFoundError:
+        raise SystemExit(0)
+    observed = os.fstat(directory_fd)
+    mode = stat.S_IMODE(observed.st_mode)
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_uid != os.getuid()
+        or mode not in (0o700, 0o2700)
+    ):
+        raise SystemExit("unsafe staged bundle cleanup root")
+    if mode == 0o2700:
+        # Kubernetes commonly mounts /tmp as 03777, so an older controller may
+        # have left an owner-private stage directory with inherited setgid.
+        # Normalize that one exact legacy mode before deletion; no group access
+        # is accepted and every other mode remains fail-closed.
+        os.fchmod(directory_fd, 0o700)
+        normalized = os.fstat(directory_fd)
+        if (
+            (normalized.st_dev, normalized.st_ino)
+            != (observed.st_dev, observed.st_ino)
+            or stat.S_IMODE(normalized.st_mode) != 0o700
+        ):
+            raise SystemExit("could not normalize staged bundle cleanup root")
+    shutil.rmtree(name, dir_fd=parent_fd)
+finally:
+    if directory_fd is not None:
+        os.close(directory_fd)
+    os.close(parent_fd)
+PY
+}
+
 cleanup_remote_staged_deployment_bundle() {
   local agent="$1" deployment_id="$2"
-  local staged_root="${3:-$(staged_bundle_remote_root_for_deployment "$deployment_id")}" command item
+  local staged_root="${3:-$(staged_bundle_remote_root_for_deployment "$deployment_id")}" command item cleanup_source
   local ssh_parts=() ssh_args=() ssh_target last_index
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  cleanup_source="$(staged_bundle_cleanup_source)"
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -c \
-    'import os,shutil,stat,sys
-p=sys.argv[1]
-if os.path.dirname(p)!="/tmp" or not os.path.basename(p).startswith("mac-deploy-stage-"): raise SystemExit("invalid staged bundle cleanup path")
-try: s=os.lstat(p)
-except FileNotFoundError: raise SystemExit(0)
-if not stat.S_ISDIR(s.st_mode) or stat.S_ISLNK(s.st_mode) or s.st_uid!=os.getuid() or stat.S_IMODE(s.st_mode)!=0o700: raise SystemExit("unsafe staged bundle cleanup root")
-shutil.rmtree(p)' "$staged_root")"
+    "$cleanup_source" "$staged_root")"
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command"
 }
