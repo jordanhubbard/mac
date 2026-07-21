@@ -1240,6 +1240,33 @@ def test_launchd_quiesces_gui_jobs_and_proves_system_domain_absence(
     assert {item["state"] for item in resources} == {"absent"}
 
 
+def test_launchd_media_resume_accepts_the_journaled_empty_media_topology(
+    tmp_path: Path,
+) -> None:
+    env = _base_case(tmp_path, "launchd", os_kind="darwin")
+    state = tmp_path / "launchd-state"
+    state.mkdir()
+    env["FAKE_LAUNCHD_STATE"] = str(state)
+    _install_launchctl(tmp_path / "bin")
+
+    quiesced = _run(env)
+    resumed = _run_action(env, "resume-media")
+
+    assert quiesced.returncode == 0, quiesced.stderr
+    assert resumed.returncode == 0, resumed.stderr
+    receipt = json.loads(
+        (
+            Path(env["MAC_HOME"])
+            / f"phase1-supervisor-resume_media-{env['DEPLOY_GENERATION']}.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipt["schema"] == "mac.phase1_supervisor_media_resume.v1"
+    assert receipt["supervisor"] == {
+        "manager": "launchd",
+        "media_resources": [],
+    }
+
+
 def test_launchd_records_exact_prior_state_and_final_quiescence(
     tmp_path: Path,
 ) -> None:

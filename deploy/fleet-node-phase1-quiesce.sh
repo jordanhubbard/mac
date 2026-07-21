@@ -2922,7 +2922,7 @@ try:
             if manager == "systemd":
                 supervisor = resume_systemd_media(expected_supervisor)
             else:
-                if expected_supervisor.get("media_resources") not in {None, []}:
+                if expected_supervisor.get("media_resources") not in (None, []):
                     raise QuiescenceFailure(
                         "non-systemd restore contract contains media services"
                     )
