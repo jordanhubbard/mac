@@ -8432,6 +8432,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: phase1 test media health max attempts.",
+    "family": "core",
+    "name": "MAC_PHASE1_TEST_MEDIA_HEALTH_MAX_ATTEMPTS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-phase1-quiesce.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: phase1 test mode.",
     "family": "core",
     "name": "MAC_PHASE1_TEST_MODE",

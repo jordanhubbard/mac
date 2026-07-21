@@ -11,9 +11,12 @@ is hybrid, union, and fail-closed:
 2. CodeGraph static reachability: union in `codegraph affected` so a change that
    makes a test reach NEW code is still covered even though the map (built at the
    base revision) could not know about it.
-3. Full-suite fallback: any changed file that neither layer can safely map
-   (stale/missing map entry plus unusable CodeGraph, an opaque infra file, or a
-   globally invalidating file) forces a full run.
+3. Reviewed path contracts: generated data, shell entrypoints, and CI files
+   select the repository tests that own their behavior. The mapping is kept in
+   this executable so changing the selector itself also has an explicit test.
+4. Full-suite fallback: any changed file that none of those layers can safely
+   map (stale/missing map entry plus unusable CodeGraph, an unknown opaque infra
+   file, or a globally invalidating file) forces a full run.
 
 `resolve()` is a pure function (no git, no IO) so the safety matrix is fully
 unit-tested; `select_from_git()` gathers the git diff, map, and CodeGraph and
@@ -40,6 +43,24 @@ DOC_SUFFIXES = {".md", ".rst", ".txt", ".adoc", ".png", ".jpg", ".jpeg", ".gif",
 DEFAULT_POLICY = ROOT / "test-policy.toml"
 DEFAULT_MAP = ROOT / "src" / "mac" / "data" / "test_impact_map.json"
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
+
+# Exact contracts for non-source paths that coverage and CodeGraph cannot map.
+# This list is intentionally code-reviewed and exact-path only: unknown shell,
+# CI, data, and configuration files must continue to force a full run. Map both
+# sides of generated artifacts so a generator or generated-output-only change
+# cannot silently bypass its drift test.
+PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
+    ".github/workflows/ci.yml": ("tests/test_deployment_image_artifact.py",),
+    "deploy/fleet-node-phase1-quiesce.sh": (
+        "tests/test_fleet_node_phase1_quiesce.py",
+    ),
+    "docs/env-config-reference.md": ("tests/test_env_config.py",),
+    "scripts/generate-env-config-registry.py": ("tests/test_env_config.py",),
+    "scripts/resolve-impacted-tests.py": ("tests/test_resolve_impacted_tests.py",),
+    "scripts/run-contract-tests.sh": ("tests/test_contract_test_runner.py",),
+    "scripts/select-sanity-tests.py": ("tests/test_resolve_impacted_tests.py",),
+    "src/mac/data/env_config_registry.json": ("tests/test_env_config.py",),
+}
 
 
 @dataclass
@@ -118,6 +139,23 @@ def resolve(
     if global_full:
         return _full("global_infrastructure_changed", changed, global_files=global_full)
 
+    contracted_changes = [path for path in changed if path in PATH_TEST_CONTRACTS]
+    contracted_tests: set[str] = set()
+    missing_contract_tests: dict[str, list[str]] = {}
+    for path in contracted_changes:
+        expected = PATH_TEST_CONTRACTS[path]
+        existing = set(_existing(expected, repo_root))
+        contracted_tests.update(existing)
+        missing = sorted(set(expected) - existing)
+        if missing:
+            missing_contract_tests[path] = missing
+    if missing_contract_tests:
+        return _full(
+            "path_test_contract_missing",
+            changed,
+            missing_contract_tests=missing_contract_tests,
+        )
+
     test_changes = _existing(
         (path for path in changed if _is_test_file(path)), repo_root
     )
@@ -125,7 +163,8 @@ def resolve(
     opaque = [
         path
         for path in changed
-        if not _is_test_file(path)
+        if path not in PATH_TEST_CONTRACTS
+        and not _is_test_file(path)
         and not _is_source_code(path)
         and not _is_documentation(path)
     ]
@@ -140,7 +179,7 @@ def resolve(
     file_line_tests = impact_map.get("file_line_tests", {}) if impact_map else {}
     map_fresh = bool(fresh_files)
 
-    selected: set[str] = set(test_changes)
+    selected: set[str] = set(test_changes) | contracted_tests
     unresolved_source: list[str] = []
     for path in source_changes:
         if path in fresh_files and path in file_tests:
@@ -173,7 +212,7 @@ def resolve(
 
     # Cross-cutting guards run alongside any real code/test change, but never
     # for a pure documentation change (which needs no tests at all).
-    if source_changes or test_changes:
+    if source_changes or test_changes or contracted_changes:
         always = set(policy.always_run)
         if impact_map:
             always.update(impact_map.get("always_run", []))

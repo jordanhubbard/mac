@@ -41,6 +41,8 @@ def repo(tmp_path: Path) -> Path:
         "tests/test_always.py",
         "tests/test_canary.py",
         "tests/test_changed.py",
+        "tests/test_env_config.py",
+        "tests/test_resolve_impacted_tests.py",
     ):
         target = tmp_path / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -109,6 +111,51 @@ def test_opaque_infra_file_forces_full(repo, policy, impact_map):
         result = _resolve(repo, policy, impact_map, [opaque])
         assert result["mode"] == "full", opaque
         assert result["reason"] == "unmappable_non_code_change"
+
+
+def test_reviewed_opaque_path_selects_owning_contract_and_guards(
+    repo, policy, impact_map
+):
+    result = _resolve(
+        repo,
+        policy,
+        impact_map,
+        ["src/mac/data/env_config_registry.json"],
+    )
+    assert result["mode"] == "focused"
+    assert result["reason"] == "impact_hybrid_scope"
+    assert set(result["tests"]) == {
+        "tests/test_env_config.py",
+        "tests/test_always.py",
+        "tests/test_canary.py",
+    }
+
+
+def test_reviewed_documentation_path_runs_its_contract(repo, policy, impact_map):
+    result = _resolve(repo, policy, impact_map, ["docs/env-config-reference.md"])
+    assert result["mode"] == "focused"
+    assert "tests/test_env_config.py" in result["tests"]
+
+
+def test_missing_reviewed_contract_test_fails_closed(repo, policy, impact_map):
+    (repo / "tests/test_env_config.py").unlink()
+    result = _resolve(
+        repo,
+        policy,
+        impact_map,
+        ["src/mac/data/env_config_registry.json"],
+    )
+    assert result["mode"] == "full"
+    assert result["reason"] == "path_test_contract_missing"
+    assert result["missing_contract_tests"] == {
+        "src/mac/data/env_config_registry.json": ["tests/test_env_config.py"]
+    }
+
+
+def test_selector_has_a_reviewed_self_contract(repo, policy, impact_map):
+    result = _resolve(repo, policy, impact_map, ["scripts/resolve-impacted-tests.py"])
+    assert result["mode"] == "focused"
+    assert "tests/test_resolve_impacted_tests.py" in result["tests"]
 
 
 def test_documentation_only_selects_no_tests(repo, policy, impact_map):

@@ -706,6 +706,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PHASE1_SUPERVISOR` | str | consumer-defined | core | Core setting: phase1 supervisor. |
 | `MAC_PHASE1_SUPERVISOR_KIND` | str | consumer-defined | core | Core setting: phase1 supervisor kind. |
 | `MAC_PHASE1_SUPERVISOR_PROOF_PATH` | str | consumer-defined | core | Core setting: phase1 supervisor proof path. |
+| `MAC_PHASE1_TEST_MEDIA_HEALTH_MAX_ATTEMPTS` | int | consumer-defined | core | Core setting: phase1 test media health max attempts. |
 | `MAC_PHASE1_TEST_MODE` | str | consumer-defined | core | Core setting: phase1 test mode. |
 | `MAC_PHASE1_TOTAL_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: phase1 total timeout seconds. |
 | `MAC_PLIST_BACKUP` | str | consumer-defined | core | Core setting: plist backup. |
