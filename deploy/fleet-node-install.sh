@@ -377,7 +377,6 @@ ROLLBACK_ACTIVE_GATEWAY=""
 ROLLBACK_AGENT_PRIOR_STATE=""
 ROLLBACK_PRIOR_GENERATION=""
 ROLLBACK_PRIOR_REVISION=""
-ROLLBACK_SEALED_STATE_JSON=""
 
 # Apply a restrictive umask before creating LOG_DIR so it gets 0700 (owner only).
 umask 0077
@@ -3852,7 +3851,9 @@ write_rollback_script() {
   local rollback_aux_existed_quoted rollback_aux_mode_quoted
   local rollback_stage="$ROLLBACK_SCRIPT.stage.$$"
   if [ -e "$ROLLBACK_INTENT" ] || [ -L "$ROLLBACK_INTENT" ]; then
-    ROLLBACK_INTENT_SHA256="$(verify_phase2_rollback_intent)" \
+    verify_existing_phase2_sealed_state >/dev/null \
+      || die "existing phase-2 rollback intent state is invalid"
+    ROLLBACK_INTENT_SHA256="$(verify_phase2_rollback_intent sealed-replay)" \
       || die "existing phase-2 rollback intent is invalid"
     return 0
   fi
@@ -4957,6 +4958,11 @@ EOF
 }
 
 verify_phase2_rollback_intent() {
+  local rollback_state_mode="${1:-current}"
+  case "$rollback_state_mode" in
+    current|sealed-replay) ;;
+    *) die "unsupported phase-2 rollback verification mode" ;;
+  esac
   MAC_ROLLBACK_INTENT="$ROLLBACK_INTENT" \
   MAC_ROLLBACK_SCRIPT="$ROLLBACK_SCRIPT" \
   MAC_ROLLBACK_COMPLETION="$ROLLBACK_COMPLETION_RECEIPT" \
@@ -4981,7 +4987,7 @@ verify_phase2_rollback_intent() {
   MAC_ROLLBACK_SUPERVISOR_HELPER_SHA256="$ROLLBACK_SUPERVISOR_HELPER_SHA256" \
   MAC_ROLLBACK_LIFECYCLE="$ROLLBACK_LAUNCHD_LIFECYCLE" \
   MAC_ROLLBACK_LIFECYCLE_SHA256="$ROLLBACK_LAUNCHD_LIFECYCLE_SHA256" \
-    "$PY" - "${ROLLBACK_SEALED_STATE_JSON:-}" <<'PY'
+    "$PY" - "$rollback_state_mode" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -5027,26 +5033,11 @@ try:
     intent = json.loads(intent_raw)
 except (TypeError, ValueError):
     raise SystemExit("phase-2 rollback intent is malformed")
+if not isinstance(intent, dict):
+    raise SystemExit("phase-2 rollback intent differs at: document_type")
 intent_sha256 = hashlib.sha256(intent_raw).hexdigest()
-sealed_state_raw = sys.argv[1]
-sealed_state = None
-if sealed_state_raw:
-    try:
-        sealed_state = json.loads(sealed_state_raw)
-    except (TypeError, ValueError):
-        raise SystemExit("phase-2 rollback intent differs at: sealed_state")
-    expected_sealed_state = {
-        "schema": "mac.fleet_node_rollback_sealed_state.v1",
-        "intent_sha256": intent_sha256,
-        "prior_generation": intent.get("prior_generation") if isinstance(intent, dict) else None,
-        "prior_revision": intent.get("prior_revision") if isinstance(intent, dict) else None,
-        "prior_topology": intent.get("prior_topology") if isinstance(intent, dict) else None,
-        "artifacts": intent.get("artifacts") if isinstance(intent, dict) else None,
-    }
-    if sealed_state != expected_sealed_state:
-        raise SystemExit("phase-2 rollback intent differs at: sealed_state")
-
-if sealed_state is None:
+sealed_replay = sys.argv[1] == "sealed-replay"
+if not sealed_replay:
     expected_prior_generation = os.environ["MAC_ROLLBACK_PRIOR_GENERATION"] or None
     expected_prior_revision = os.environ["MAC_ROLLBACK_PRIOR_REVISION"] or None
     expected_topology = {
@@ -5063,10 +5054,10 @@ if sealed_state is None:
         "openclaw_existed": os.environ["MAC_ROLLBACK_OPENCLAW_EXISTED"] == "1",
     }
 else:
-    expected_prior_generation = sealed_state["prior_generation"]
-    expected_prior_revision = sealed_state["prior_revision"]
-    expected_topology = sealed_state["prior_topology"]
-    expected_artifacts = sealed_state["artifacts"]
+    expected_prior_generation = intent.get("prior_generation")
+    expected_prior_revision = intent.get("prior_revision")
+    expected_topology = intent.get("prior_topology")
+    expected_artifacts = intent.get("artifacts")
 expected_contracts = {
     "supervisor_helper": {
         "path": os.environ["MAC_ROLLBACK_SUPERVISOR_HELPER"],
@@ -5078,8 +5069,6 @@ expected_contracts = {
     },
 }
 rollback = intent.get("rollback") if isinstance(intent, dict) else None
-if not isinstance(intent, dict):
-    raise SystemExit("phase-2 rollback intent differs at: document_type")
 expected_prerequisites = {
     "schema": "mac.fleet_prerequisite_rollback_binding.v1",
     "node_identity_sha256": os.environ["MAC_ROLLBACK_NODE_IDENTITY_SHA256"],
@@ -5323,7 +5312,7 @@ PY
     || die "published phase-2 rollback intent failed exact readback"
 }
 
-load_existing_phase2_rollback_state() {
+verify_existing_phase2_sealed_state() {
   MAC_ROLLBACK_INTENT="$ROLLBACK_INTENT" \
   MAC_ROLLBACK_AGENT="$AGENT" MAC_ROLLBACK_FLEET="$FLEET_NAME" \
   MAC_ROLLBACK_OS="$OS_KIND" MAC_ROLLBACK_GENERATION="$DEPLOY_GENERATION" \
@@ -5446,14 +5435,7 @@ if (
     raise SystemExit("existing phase-2 rollback intent has invalid sealed state")
 
 
-print(json.dumps({
-    "schema": "mac.fleet_node_rollback_sealed_state.v1",
-    "intent_sha256": hashlib.sha256(intent_raw).hexdigest(),
-    "prior_generation": prior_generation,
-    "prior_revision": prior_revision,
-    "prior_topology": topology,
-    "artifacts": artifacts,
-}, sort_keys=True, separators=(",", ":")))
+print(hashlib.sha256(intent_raw).hexdigest())
 PY
 }
 
@@ -5467,9 +5449,9 @@ arm_phase2_rollback() {
   [ ! -d "$HERMES_DIR" ] || HERMES_BACKUP="$MAC_HOME/backups/hermes-agent.${AGENT}.${DEPLOY_TS}"
   if [ -e "$ROLLBACK_INTENT" ] || [ -L "$ROLLBACK_INTENT" ]; then
     BIN_BACKUP="$MAC_HOME/backups/bin.${AGENT}.${DEPLOY_TS}"
-    ROLLBACK_SEALED_STATE_JSON="$(load_existing_phase2_rollback_state)" \
+    verify_existing_phase2_sealed_state >/dev/null \
       || die "existing phase-2 rollback intent state is invalid"
-    ROLLBACK_INTENT_SHA256="$(verify_phase2_rollback_intent)" \
+    ROLLBACK_INTENT_SHA256="$(verify_phase2_rollback_intent sealed-replay)" \
       || die "existing phase-2 rollback intent is invalid"
     DEPLOY_ROLLBACK_ARMED=1
     return 0
@@ -5538,7 +5520,9 @@ backup_existing_artifacts() {
   # the separate apply-phase2 process; regenerating it here would lose the
   # arm process's auxiliary snapshot arrays and violate the intent binding.
   local preserved_intent_sha256
-  preserved_intent_sha256="$(verify_phase2_rollback_intent)" \
+  verify_existing_phase2_sealed_state >/dev/null \
+    || die "phase-2 rollback intent sealed state failed validation after artifact backup"
+  preserved_intent_sha256="$(verify_phase2_rollback_intent sealed-replay)" \
     || die "phase-2 rollback intent failed validation after artifact backup"
   [ "$preserved_intent_sha256" = "$ROLLBACK_INTENT_SHA256" ] \
     || die "phase-2 rollback intent changed during artifact backup"

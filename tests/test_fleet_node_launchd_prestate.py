@@ -294,8 +294,8 @@ def test_apply_phase_loads_prior_state_from_the_sealed_rollback_intent(
     }
     intent_path.write_text(json.dumps(intent) + "\n", encoding="utf-8")
     intent_path.chmod(0o600)
-    loader = _function(
-        "load_existing_phase2_rollback_state", "arm_phase2_rollback"
+    validator = _function(
+        "verify_existing_phase2_sealed_state", "arm_phase2_rollback"
     )
     command = f"""set -euo pipefail
 PY=${{TEST_PY:?}}
@@ -314,8 +314,8 @@ VENV={venv}
 VENV_BACKUP={venv_backup}
 HERMES_DIR={hermes}
 BIN_BACKUP={bin_backup}
-{loader}
-load_existing_phase2_rollback_state
+{validator}
+verify_existing_phase2_sealed_state
 """
     result = subprocess.run(
         ["/bin/bash", "-c", command],
@@ -331,20 +331,14 @@ load_existing_phase2_rollback_state
     )
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {
-        "schema": "mac.fleet_node_rollback_sealed_state.v1",
-        "intent_sha256": hashlib.sha256(intent_path.read_bytes()).hexdigest(),
-        "prior_generation": "sealed-prior-generation",
-        "prior_revision": "b" * 40,
-        "prior_topology": intent["prior_topology"],
-        "artifacts": intent["artifacts"],
-    }
+    assert result.stdout.strip() == hashlib.sha256(intent_path.read_bytes()).hexdigest()
 
     verifier = _function(
         "verify_phase2_rollback_intent", "write_phase2_rollback_intent"
     )
     verify_command = f"""set -euo pipefail
 PY=${{TEST_PY:?}}
+MAC_HOME=${{TEST_MAC_HOME:?}}
 ROLLBACK_INTENT=${{TEST_INTENT:?}}
 ROLLBACK_SCRIPT={rollback_script}
 ROLLBACK_COMPLETION_RECEIPT={completion_receipt}
@@ -353,6 +347,7 @@ FLEET_NAME=mac
 OS_KIND=darwin
 DEPLOY_GENERATION={GENERATION}
 DEPLOY_REV={REVISION}
+DEPLOY_TS={deploy_ts}
 ROLLBACK_PRIOR_GENERATION=recaptured-wrong-generation
 ROLLBACK_PRIOR_REVISION={'c' * 40}
 SUPERVISOR_KIND=launchd
@@ -374,17 +369,18 @@ ROLLBACK_SUPERVISOR_HELPER={supervisor_helper}
 ROLLBACK_SUPERVISOR_HELPER_SHA256={supervisor_helper_sha256}
 ROLLBACK_LAUNCHD_LIFECYCLE={lifecycle_helper}
 ROLLBACK_LAUNCHD_LIFECYCLE_SHA256={lifecycle_helper_sha256}
-ROLLBACK_SEALED_STATE_JSON="${{TEST_CAPSULE:?}}"
+{validator}
 {verifier}
-verify_phase2_rollback_intent
+verify_existing_phase2_sealed_state >/dev/null
+verify_phase2_rollback_intent sealed-replay
 """
     verified = subprocess.run(
         ["/bin/bash", "-c", verify_command],
         env={
             **os.environ,
             "TEST_PY": sys.executable,
+            "TEST_MAC_HOME": str(mac_home),
             "TEST_INTENT": str(intent_path),
-            "TEST_CAPSULE": result.stdout.strip(),
         },
         check=False,
         capture_output=True,
@@ -396,15 +392,18 @@ verify_phase2_rollback_intent
         intent_path.read_bytes()
     ).hexdigest()
 
-    stale_capsule = json.loads(result.stdout)
-    stale_capsule["intent_sha256"] = "0" * 64
+    tampered_intent = dict(intent)
+    tampered_intent["artifacts"] = dict(intent["artifacts"])
+    tampered_intent["artifacts"]["bin_backup"] = str(tmp_path / "wrong-backup")
+    intent_path.write_text(json.dumps(tampered_intent) + "\n", encoding="utf-8")
+    intent_path.chmod(0o600)
     stale = subprocess.run(
         ["/bin/bash", "-c", verify_command],
         env={
             **os.environ,
             "TEST_PY": sys.executable,
+            "TEST_MAC_HOME": str(mac_home),
             "TEST_INTENT": str(intent_path),
-            "TEST_CAPSULE": json.dumps(stale_capsule, separators=(",", ":")),
         },
         check=False,
         capture_output=True,
@@ -412,8 +411,8 @@ verify_phase2_rollback_intent
     )
 
     assert stale.returncode != 0
-    assert "differs at: sealed_state" in stale.stderr
-    assert "0" * 64 not in stale.stderr
+    assert "invalid sealed state" in stale.stderr
+    assert str(tmp_path / "wrong-backup") not in stale.stderr
 
 
 @pytest.mark.parametrize(
