@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy" / "deploy-mac-fleet.sh"
+NODE_INSTALL = ROOT / "deploy" / "fleet-node-install.sh"
 
 
 def _function(source: str, name: str, next_name: str) -> str:
@@ -362,6 +364,69 @@ def test_stage_cleanup_normalizes_only_owner_private_inherited_setgid() -> None:
     assert "unsafe staged bundle cleanup root" in result.stderr
     assert unsafe.exists()
     unsafe.rmdir()
+
+
+def test_finalizer_install_is_destination_atomic_and_phase_workers_fail_fast(
+    tmp_path: Path,
+) -> None:
+    source = DEPLOY.read_text(encoding="utf-8")
+    installer = source.split("node_finalizer_installer_source() {", 1)[1].split(
+        "\n}\n\ninstall_remote_node_finalizer", 1
+    )[0]
+    installer = installer.split("cat <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+    destination = tmp_path / "finalizers"
+    destination.mkdir(mode=0o700)
+    staged = tmp_path / "staged-finalizer.py"
+    payload = b"print('finalize')\n"
+    staged.write_bytes(payload)
+    target = destination / "generation.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            installer,
+            str(staged),
+            str(target),
+            hashlib.sha256(payload).hexdigest(),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not staged.exists()
+    assert target.read_bytes() == payload
+    assert target.stat().st_mode & 0o7777 == 0o700
+    assert "dir=str(target.parent)" in installer
+    assert "os.replace(temporary, target)" in installer
+    assert "os.replace(source, target)" not in installer
+
+    arm = source.split("typed_phase2_arm_worker() {", 1)[1].split(
+        "\n}\n\ntyped_phase2_apply_worker", 1
+    )[0]
+    apply = source.split("typed_phase2_apply_worker() {", 1)[1].split(
+        "\n}\n\ntyped_finalize_worker", 1
+    )[0]
+    finalize = source.split("typed_finalize_worker() {", 1)[1].split(
+        "\n}\n\nrun_typed_cohort", 1
+    )[0]
+    assert "install_remote_node_finalizer \"$agent\" || return 1" in arm
+    assert arm.count("|| return 1") >= 3
+    assert apply.count("|| return 1") >= 4
+    assert finalize.count("|| return 1") >= 4
+
+
+def test_node_installer_remains_compatible_with_macos_bash_32() -> None:
+    source = NODE_INSTALL.read_text(encoding="utf-8")
+    assert "mapfile" not in source
+    result = subprocess.run(
+        ["/bin/bash", "-n", str(NODE_INSTALL)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_prerequisite_budget_rejects_insufficient_remaining_lifetime(tmp_path: Path) -> None:

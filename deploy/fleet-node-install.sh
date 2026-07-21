@@ -9279,7 +9279,6 @@ validate_typed_prerequisite_bundle() {
     || die "synchronized apply-phase2 node identity digest is malformed"
 
   local helper_actual summary_tmp values
-  local -a summary_values=()
   helper_actual="$("$PY" - "$PREREQUISITE_HELPER" <<'PY'
 import hashlib
 import os
@@ -9387,9 +9386,15 @@ PY
     rm -f "$summary_tmp"
     die "synchronized apply-phase2 prerequisite summary failed validation"
   }
-  mapfile -t summary_values <<<"$values"
-  PREREQUISITE_BUNDLE_SHA256="${summary_values[0]:-}"
-  PREREQUISITE_EXPECTATIONS_SHA256="${summary_values[1]:-}"
+  case "$values" in
+    *$'\n'*) ;;
+    *) die "synchronized apply-phase2 prerequisite summary lacks its two bindings" ;;
+  esac
+  PREREQUISITE_BUNDLE_SHA256="${values%%$'\n'*}"
+  PREREQUISITE_EXPECTATIONS_SHA256="${values#*$'\n'}"
+  case "$PREREQUISITE_EXPECTATIONS_SHA256" in
+    *$'\n'*) die "synchronized apply-phase2 prerequisite summary has extra bindings" ;;
+  esac
   [ -n "$PREREQUISITE_BUNDLE_SHA256" ] \
     && [ -n "$PREREQUISITE_EXPECTATIONS_SHA256" ] \
     || die "synchronized apply-phase2 prerequisite summary lacks its binding"

@@ -4972,8 +4972,97 @@ node_finalizer_capability_name() {
   node_finalizer_capability_name_for_generation "$(deployment_id_for_agent "$1")"
 }
 
+node_finalizer_installer_source() {
+  cat <<'PY'
+import hashlib
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+source, target, expected = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+try:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or not 1 <= metadata.st_size <= 1024 * 1024
+    ):
+        raise SystemExit("staged finalizer is unsafe")
+    raw = bytearray()
+    while len(raw) < metadata.st_size:
+        chunk = os.read(descriptor, min(65536, metadata.st_size - len(raw)))
+        if not chunk:
+            raise SystemExit("staged finalizer was truncated")
+        raw.extend(chunk)
+    after = os.fstat(descriptor)
+    identity = lambda value: (
+        value.st_dev,
+        value.st_ino,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+    if identity(metadata) != identity(after):
+        raise SystemExit("staged finalizer changed while reading")
+    if hashlib.sha256(raw).hexdigest() != expected:
+        raise SystemExit("staged finalizer digest differs")
+finally:
+    os.close(descriptor)
+
+parent_metadata = target.parent.lstat()
+if (
+    not stat.S_ISDIR(parent_metadata.st_mode)
+    or stat.S_ISLNK(parent_metadata.st_mode)
+    or parent_metadata.st_uid != os.getuid()
+    or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+):
+    raise SystemExit("finalizer capability directory is unsafe")
+
+temporary_descriptor, temporary_raw = tempfile.mkstemp(
+    prefix="." + target.name + ".", dir=str(target.parent)
+)
+temporary = Path(temporary_raw)
+try:
+    os.fchmod(temporary_descriptor, 0o700)
+    with os.fdopen(temporary_descriptor, "wb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, target)
+    installed = target.lstat()
+    if (
+        not stat.S_ISREG(installed.st_mode)
+        or installed.st_uid != os.getuid()
+        or installed.st_nlink != 1
+        or stat.S_IMODE(installed.st_mode) != 0o700
+        or installed.st_size != len(raw)
+    ):
+        raise SystemExit("installed finalizer capability is unsafe")
+    directory = os.open(target.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+finally:
+    try:
+        temporary.unlink()
+    except FileNotFoundError:
+        pass
+
+final_source = source.lstat()
+if identity(metadata) != identity(final_source):
+    raise SystemExit("staged finalizer changed before cleanup")
+source.unlink()
+PY
+}
+
 install_remote_node_finalizer() {
-  local agent="$1" deployment_id stage name expected command
+  local agent="$1" deployment_id stage name expected command installer_source
   local ssh_parts=() ssh_args=() ssh_target item last_index
   deployment_id="$(deployment_id_for_agent "$agent")"
   name="$(node_finalizer_capability_name "$agent")"
@@ -4982,40 +5071,13 @@ install_remote_node_finalizer() {
   fenced_remote_upload "$agent" "$deployment_id" "$NODE_FINALIZER_HELPER" "$stage"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  installer_source="$(node_finalizer_installer_source)"
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
-    "set -e; umask 077; mkdir -p \"\$HOME/.mac/fleet-finalizers\"; chmod 0700 \"\$HOME/.mac/fleet-finalizers\"; python3 - $(shell_quote "$stage") \"\$HOME/.mac/fleet-finalizers/$name\" $(shell_quote "$expected")")"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 \
-    "${ssh_args[@]}" "$ssh_target" "$command" <<'PY'
-import hashlib
-import os
-import stat
-import sys
-from pathlib import Path
-
-source, target, expected = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-try:
-    metadata = os.fstat(descriptor)
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_nlink != 1 or not 1 <= metadata.st_size <= 1024 * 1024:
-        raise SystemExit("staged finalizer is unsafe")
-    raw = bytearray()
-    while len(raw) < metadata.st_size:
-        chunk = os.read(descriptor, min(65536, metadata.st_size - len(raw)))
-        if not chunk: raise SystemExit("staged finalizer was truncated")
-        raw.extend(chunk)
-    after = os.fstat(descriptor)
-    if (metadata.st_dev, metadata.st_ino, metadata.st_nlink, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_nlink, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
-        raise SystemExit("staged finalizer changed while reading")
-    if hashlib.sha256(raw).hexdigest() != expected:
-        raise SystemExit("staged finalizer digest differs")
-finally:
-    os.close(descriptor)
-os.chmod(source, 0o700)
-os.replace(source, target)
-directory = os.open(target.parent, os.O_RDONLY)
-try: os.fsync(directory)
-finally: os.close(directory)
-PY
+    "set -e; umask 077; mkdir -p \"\$HOME/.mac/fleet-finalizers\"; chmod 0700 \"\$HOME/.mac/fleet-finalizers\"; python3 -c $(shell_quote "$installer_source") $(shell_quote "$stage") \"\$HOME/.mac/fleet-finalizers/$name\" $(shell_quote "$expected")")"
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$command"; then
+    return 1
+  fi
   echo "==> ${agent}: immutable node finalizer capability installed"
 }
 
@@ -13029,13 +13091,13 @@ typed_phase2_arm_worker() {
   local spec="$1" hub_token="$2" hub_tunnel_pubkey="$3" github_review_key_b64="$4"
   local fields=() agent
   IFS='|' read -r -a fields <<<"$spec"; agent="${fields[0]}"
-  install_remote_node_finalizer "$agent"
+  install_remote_node_finalizer "$agent" || return 1
   deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0 \
     "$github_review_key_b64" 0 1 arm-phase2 \
     "$(node_prerequisite_bundle_file "$agent")" \
     "$(node_prerequisite_expectations_file "$agent")" \
-    "$(node_route_identity_sha256 "$agent")"
-  collect_phase2_arm_evidence "$agent" >/dev/null
+    "$(node_route_identity_sha256 "$agent")" || return 1
+  collect_phase2_arm_evidence "$agent" >/dev/null || return 1
 }
 
 typed_phase2_apply_worker() {
@@ -13050,14 +13112,14 @@ typed_phase2_apply_worker() {
     direct_mesh_hub=1
   fi
   assert_prerequisite_remaining_budget "$agent" \
-    "${MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS:-120}"
+    "${MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS:-120}" || return 1
   deploy_host "$spec" "$hub_token" "$hub_tunnel_pubkey" 0 \
     "$github_review_key_b64" "$direct_mesh_hub" 1 apply-phase2 \
     "$(node_prerequisite_bundle_file "$agent")" \
     "$(node_prerequisite_expectations_file "$agent")" \
-    "$(node_route_identity_sha256 "$agent")"
-  install_pending_worker_credential "$agent" "$supervisor" "$fleet_name"
-  install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name"
+    "$(node_route_identity_sha256 "$agent")" || return 1
+  install_pending_worker_credential "$agent" "$supervisor" "$fleet_name" || return 1
+  install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name" || return 1
   evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
   [ -s "$evidence" ] || {
     echo "ERROR: ${agent}: typed apply lacks prepared evidence" >&2
@@ -13071,13 +13133,13 @@ typed_finalize_worker() {
   agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
   generation="$(worker_generation_for_agent "$agent")"; fleet_name="${fields[23]:-mac}"
   if spec_requires_report_repository_executor "$spec"; then
-    reconcile_report_repository_executor_approval "$agent" "$hub_agent" 1
+    reconcile_report_repository_executor_approval "$agent" "$hub_agent" 1 || return 1
   fi
   run_remote_node_finalizer "$agent" "$fleet_name" "$generation" \
     "$GIT_REV" "$TS" "$(sha256_file "$NODE_FINALIZER_HELPER")" \
-    "$TMPDIR_LOCAL/finalize-${agent_id}.json"
-  collect_finalize_evidence "$agent"
-  finalize_remote_deployment_release "$agent" "$(deployment_id_for_agent "$agent")"
+    "$TMPDIR_LOCAL/finalize-${agent_id}.json" || return 1
+  collect_finalize_evidence "$agent" || return 1
+  finalize_remote_deployment_release "$agent" "$(deployment_id_for_agent "$agent")" || return 1
 }
 
 run_typed_cohort() {
