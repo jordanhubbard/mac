@@ -132,6 +132,59 @@ def test_unattributed_test_becomes_always_run(tmp_path):
     assert document["stats"]["unattributed_tests"] == 1
 
 
+def test_high_fanout_lines_are_pruned_but_file_level_is_retained(tmp_path):
+    """A cap drops the least-selective (highest-fanout) line entries to keep the
+    committed artifact small, but never touches file_tests — so a change to a
+    pruned line still resolves to every test that executed the file."""
+    db = tmp_path / ".coverage"
+    timings = tmp_path / "timings.json"
+    _write_coverage_db(db)
+    _write_timings(timings)
+
+    # Cap at 1: line 12 (executed by BOTH tests) is pruned; lines 10 and 11
+    # (single test) survive.
+    document = BUILDER.build_map(db, timings, repo_root=tmp_path, max_line_fanout=1)
+    lines = document["file_line_tests"]["src/mac/foo.py"]
+    assert "12" not in lines
+    assert set(lines) == {"10", "11"}
+    # File-level index is unchanged: both tests remain selectable for the file.
+    assert _tests_for(document, "file_tests", "src/mac/foo.py") == {
+        "tests/test_foo.py::test_a",
+        "tests/test_foo.py::test_b",
+    }
+    assert document["stats"]["line_fanout_cap"] == 1
+    assert document["stats"]["pruned_high_fanout_lines"] == 1
+
+
+def test_nonpositive_cap_keeps_every_line(tmp_path):
+    db = tmp_path / ".coverage"
+    timings = tmp_path / "timings.json"
+    _write_coverage_db(db)
+    _write_timings(timings)
+
+    document = BUILDER.build_map(db, timings, repo_root=tmp_path, max_line_fanout=0)
+    assert set(document["file_line_tests"]["src/mac/foo.py"]) == {"10", "11", "12"}
+    assert document["stats"]["pruned_high_fanout_lines"] == 0
+
+
+def test_output_is_written_compact(tmp_path):
+    """The artifact must be emitted without indentation: pretty-printing roughly
+    tripled the committed size for no machine-read benefit."""
+    db = tmp_path / ".coverage"
+    timings = tmp_path / "timings.json"
+    _write_coverage_db(db)
+    _write_timings(timings)
+    out = tmp_path / "map.json"
+    rc = BUILDER.main(
+        ["--coverage-file", str(db), "--timings", str(timings), "--output", str(out)]
+    )
+    assert rc == 0
+    text = out.read_text(encoding="utf-8")
+    # Compact separators leave no ", " or ": " spacing and no newline indentation.
+    assert ", " not in text and ": " not in text
+    assert "\n" not in text.rstrip("\n")
+
+
 def test_missing_coverage_file_is_a_clean_error(tmp_path):
     rc = BUILDER.main(
         [
