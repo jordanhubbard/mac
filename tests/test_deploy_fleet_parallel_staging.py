@@ -419,7 +419,7 @@ def test_typed_arm_and_apply_reuse_one_digest_verified_stage() -> None:
     assert "receipt.get(\"items\") != proved" in verifier
 
 
-def test_stage_cleanup_is_terminal_for_finalize_and_abort_recovery() -> None:
+def test_stage_cleanup_is_terminal_for_finalize_and_skipped_for_forward_repair() -> None:
     source = DEPLOY.read_text(encoding="utf-8")
     finalize = source.split("finalize_remote_deployment_release() {", 1)[1].split(
         "\n}\n\nrefresh_release_ready_quiescence", 1
@@ -433,6 +433,11 @@ def test_stage_cleanup_is_terminal_for_finalize_and_abort_recovery() -> None:
     assert recovery.index("cleanup_remote_staged_deployment_bundle") < recovery.index(
         "release_remote_deployment_lock"
     )
+    cleanup_guard = recovery.index('if [ "$action" != retain_forward ]')
+    cleanup = recovery.index("cleanup_remote_staged_deployment_bundle", cleanup_guard)
+    release = recovery.index("release_remote_deployment_lock", cleanup)
+    assert cleanup_guard < cleanup < release
+    assert "retain_remote_generation_for_forward_repair" in recovery
     typed = source.split("run_typed_cohort() {", 1)[1].split("\n}\n\nmain() {", 1)[0]
     assert "cleanup_remote_staged_deployment_bundle" not in typed
 

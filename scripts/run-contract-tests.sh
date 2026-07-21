@@ -42,6 +42,7 @@ _MAC_TEST_SELECT_BASE_REQUESTED="${MAC_TEST_SELECT_BASE:-}"
 # Scheduled full run: after a passing portfolio gate, rebuild the committed
 # test-impact map from the fresh per-test coverage so selection stays fresh.
 _MAC_TEST_REBUILD_MAP_REQUESTED="${MAC_TEST_REBUILD_MAP:-0}"
+_MAC_COVERAGE_DIR=""
 
 # Fleet executors inherit deployment/task environment. Keep repository tests
 # hermetic so they exercise the checked-out code, not the live agent runtime.
@@ -63,6 +64,7 @@ unset GH_TOKEN GITHUB_TOKEN GITEA_TOKEN GIT_TOKEN
 # the protected process/container phase concurrent after the runner separates
 # it from the xdist-safe bulk phase.
 unset PYTEST_ADDOPTS
+unset COVERAGE_FILE COVERAGE_PROCESS_START
 
 # Coding-agent route detection (coding_agent._route_fields) fingerprints each
 # CLI route from provider endpoint/model/credential env vars, several of which
@@ -89,7 +91,13 @@ unset CURSOR_API_KEY CURSOR_AGENT_ENDPOINT
 # identity so git-touching tests still work. Cleaned up on exit.
 _MAC_TEST_HOME="$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/mac-contract-home.$$")"
 mkdir -p "$_MAC_TEST_HOME/.config"
-trap 'rm -rf "$_MAC_TEST_HOME"' EXIT
+cleanup_contract_test_runtime() {
+    rm -rf "$_MAC_TEST_HOME"
+    if [ -n "$_MAC_COVERAGE_DIR" ]; then
+        rm -rf "$_MAC_COVERAGE_DIR"
+    fi
+}
+trap cleanup_contract_test_runtime EXIT
 export HOME="$_MAC_TEST_HOME"
 export XDG_CONFIG_HOME="$_MAC_TEST_HOME/.config"
 git config --global user.email "mac-contract-tests@example.invalid" >/dev/null 2>&1 || true
@@ -178,7 +186,6 @@ if [ "$#" -eq 0 ]; then
         portfolio_dir="$(pwd)/.test-portfolio"
         rm -rf "$portfolio_dir"
         mkdir -p "$portfolio_dir"
-        export COVERAGE_FILE="$portfolio_dir/.coverage"
         export MAC_TEST_PORTFOLIO_OUTPUT="$portfolio_dir/timings.json"
     fi
     # MAC_TEST_JOBS controls worker count: unset => auto (one per core); an
@@ -211,6 +218,20 @@ if [ "$#" -eq 0 ]; then
     # loadscope (which keeps a module's tests + module-scoped fixtures on one
     # worker).
     _SERIAL_MARK="process_e2e or postgres or container_contract or docker_e2e"
+
+    # Every invocation owns a separate coverage namespace. Multiple agents and
+    # local actors routinely test the same checkout concurrently; sharing the
+    # default .coverage* and coverage.json files let one run erase, combine, or
+    # truncate another run between JSON generation and policy evaluation.
+    # Evaluate only the invocation-private report, then atomically publish a
+    # conventional coverage.json artifact after the policy has consumed it.
+    coverage_json=""
+    if [ "$_MAC_TEST_COVERAGE_REQUESTED" != "0" ]; then
+        _MAC_COVERAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mac-contract-coverage.XXXXXX")"
+        chmod 0700 "$_MAC_COVERAGE_DIR"
+        export COVERAGE_FILE="$_MAC_COVERAGE_DIR/.coverage"
+        coverage_json="$_MAC_COVERAGE_DIR/coverage.json"
+    fi
 
     # Impact-based subset gate. Placed before the coverage machinery so a focused
     # resolution runs the small selected set SERIALLY (subsets are small by
@@ -246,12 +267,17 @@ if [ "$#" -eq 0 ]; then
             "$PY" -m coverage combine >/dev/null 2>&1 || true
             diff_status=0
             if [ "$sel_status" -eq 0 ]; then
-                "$PY" -m coverage json -o coverage.json || diff_status=$?
+                "$PY" -m coverage json -o "$coverage_json" || diff_status=$?
                 if [ "$diff_status" -eq 0 ]; then
-                    "$PY" scripts/coverage-policy.py --coverage-json coverage.json \
+                    "$PY" scripts/coverage-policy.py --coverage-json "$coverage_json" \
                         --mode diff --base "$_MAC_TEST_SELECT_BASE_REQUESTED" \
                         --repo-root "$(pwd)" || diff_status=$?
                 fi
+            fi
+            if [ -s "$coverage_json" ]; then
+                coverage_publish="coverage.json.tmp.$$"
+                cp -f "$coverage_json" "$coverage_publish"
+                mv -f "$coverage_publish" coverage.json
             fi
             if [ "$sel_status" -ne 0 ]; then
                 exit "$sel_status"
@@ -321,14 +347,22 @@ if [ "$#" -eq 0 ]; then
     report_status=0
     policy_status=0
     if [ "$combine_status" -eq 0 ]; then
-        "$PY" -m coverage json -o coverage.json || json_status=$?
+        "$PY" -m coverage json -o "$coverage_json" || json_status=$?
     fi
     if [ "$combine_status" -eq 0 ] && [ "$json_status" -eq 0 ]; then
         "$PY" -m coverage report || report_status=$?
-        "$PY" scripts/coverage-policy.py --coverage-json coverage.json || policy_status=$?
+        "$PY" scripts/coverage-policy.py --coverage-json "$coverage_json" || policy_status=$?
+    fi
+    if [ -s "$coverage_json" ]; then
+        coverage_publish="coverage.json.tmp.$$"
+        cp -f "$coverage_json" "$coverage_publish"
+        mv -f "$coverage_publish" coverage.json
     fi
     portfolio_status=0
     if [ -n "$portfolio_dir" ]; then
+        portfolio_coverage_tmp="$portfolio_dir/.coverage.tmp.$$"
+        cp -f "$COVERAGE_FILE" "$portfolio_coverage_tmp"
+        mv -f "$portfolio_coverage_tmp" "$portfolio_dir/.coverage"
         "$PY" scripts/test-portfolio.py --output-dir "$portfolio_dir" --report-only \
             || portfolio_status=$?
     fi
@@ -355,7 +389,7 @@ if [ "$#" -eq 0 ]; then
     if [ "$_MAC_TEST_REBUILD_MAP_REQUESTED" = "1" ] && [ -n "$portfolio_dir" ] \
         && [ "$policy_status" -eq 0 ]; then
         "$PY" scripts/build-test-impact-map.py \
-            --coverage-file "$portfolio_dir/.coverage" \
+            --coverage-file "$COVERAGE_FILE" \
             --timings "$portfolio_dir/timings.json" \
             --output "src/mac/data/test_impact_map.json" \
             || echo "run-contract-tests.sh: impact-map rebuild failed (gate result unaffected)" >&2

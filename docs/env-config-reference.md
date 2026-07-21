@@ -288,6 +288,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_QDRANT_PORT` | int | consumer-defined | deployment | Deployment setting: deploy qdrant port. |
 | `MAC_DEPLOY_QDRANT_URL` | str | consumer-defined | deployment | Deployment setting: deploy qdrant url. |
 | `MAC_DEPLOY_RECONCILE_MAX_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy reconcile max retries. |
+| `MAC_DEPLOY_RECOVERY_POLICY` | str | consumer-defined | deployment | Deployment setting: deploy recovery policy. |
 | `MAC_DEPLOY_RELEASE_COMMIT_RETRIES` | int | consumer-defined | deployment | Deployment setting: deploy release commit retries. |
 | `MAC_DEPLOY_RELEASE_GENERATION` | str | consumer-defined | deployment | Deployment setting: deploy release generation. |
 | `MAC_DEPLOY_RELEASE_PLAN_B64` | str | consumer-defined | deployment | Deployment setting: deploy release plan b64. |

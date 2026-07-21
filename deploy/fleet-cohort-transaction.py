@@ -825,6 +825,7 @@ def _validate_journal(
             "cleanup_only",
             "phase1_restore",
             "phase2_rollback",
+            "retain_forward",
         ):
             raise JournalError(
                 "invalid_schema", f"cohort node {ordinal} abort_kind is invalid"
@@ -947,7 +948,7 @@ def _validate_node_consistency(node: dict[str, Any], ordinal: int) -> None:
             "phase2_started": "phase2_rollback",
             "prepared": "phase2_rollback",
         }[source]
-        if node["abort_kind"] != expected_action:
+        if node["abort_kind"] not in {expected_action, "retain_forward"}:
             raise JournalError(
                 "invalid_schema", f"cohort node {ordinal} recovery action is ambiguous"
             )
@@ -2425,6 +2426,45 @@ def _rollback_candidates(journal: dict[str, Any]) -> list[dict[str, Any]]:
     return candidates
 
 
+def _recovery_candidates(
+    journal: dict[str, Any], policy: str
+) -> list[dict[str, Any]]:
+    """Return recovery work with one journal-wide, durably bound policy.
+
+    Roll-forward retention is the safe operational default: it leaves the
+    observed node generation and its diagnostic artifacts in place while the
+    hub epoch is closed and the controller lock is released for a successor
+    deployment.  Restoring an older generation is an explicit break-glass
+    policy.  Once the first node records either policy, later recovery passes
+    must finish that same policy instead of silently mixing directions.
+    """
+
+    if policy not in {"retain-forward", "rollback"}:
+        raise JournalError("invalid_input", "unsupported cohort recovery policy")
+    bound_kinds = {
+        node["abort_kind"]
+        for node in journal["cohort"]
+        if node["abort_kind"] is not None
+    }
+    if "retain_forward" in bound_kinds:
+        bound_policy = "retain-forward"
+    elif bound_kinds:
+        bound_policy = "rollback"
+    else:
+        bound_policy = policy
+    if bound_kinds and policy != bound_policy:
+        raise JournalError(
+            "recovery_policy_conflict",
+            "cohort recovery policy differs from its durable first action",
+        )
+
+    candidates = _rollback_candidates(journal)
+    if bound_policy == "retain-forward":
+        for candidate in candidates:
+            candidate["recovery_action"] = "retain_forward"
+    return candidates
+
+
 def _finalization_candidates(journal: dict[str, Any]) -> list[dict[str, Any]]:
     if journal["state"] != "hub_committed":
         return []
@@ -3027,7 +3067,12 @@ def command_abort_start(
         node = _node(journal, args)
         if node["state"] == "aborting":
             return False
-        candidates = _rollback_candidates(journal)
+        requested_policy = (
+            "retain-forward"
+            if args.recovery_action == "retain_forward"
+            else "rollback"
+        )
+        candidates = _recovery_candidates(journal, requested_policy)
         if not candidates or candidates[0]["agent_name"] != node["name"]:
             raise JournalError(
                 "invalid_transition", "nodes must recover in reverse mutation order"
@@ -3457,16 +3502,33 @@ def command_recovery(
     elif journal["state"] in TERMINAL_STATES:
         direction = "none"
     else:
-        direction = "rollback"
+        direction = (
+            "retain_forward"
+            if args.policy == "retain-forward"
+            else "rollback"
+        )
     hub_action = {
         "unopened": "none",
         "open_intent": "resolve_open",
-        "open": "abort_epoch" if direction == "rollback" else "none",
+        "open": (
+            "abort_epoch"
+            if direction in {"rollback", "retain_forward"}
+            else "none"
+        ),
         "prove_intent": "resolve_prove",
-        "proved": ("abort_epoch" if direction == "rollback" else "resolve_commit"),
+        "proved": (
+            "abort_epoch"
+            if direction in {"rollback", "retain_forward"}
+            else "resolve_commit"
+        ),
         "aborted": "none",
         "committed": "none",
     }[journal["hub_state"]]
+    candidates = (
+        []
+        if journal["state"] in TERMINAL_STATES
+        else _recovery_candidates(journal, args.policy)
+    )
     return {
         "recovery_required": journal["state"] not in TERMINAL_STATES,
         "epoch": _summary(journal),
@@ -3490,7 +3552,7 @@ def command_recovery(
                 else None
             ),
         },
-        "candidates": _rollback_candidates(journal),
+        "candidates": candidates,
         "finalization_candidates": _finalization_candidates(journal),
     }, False
 
@@ -3634,7 +3696,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_node(abort_start)
     abort_start.add_argument(
         "--recovery-action",
-        choices=("cleanup_only", "phase1_restore", "phase2_rollback"),
+        choices=(
+            "cleanup_only",
+            "phase1_restore",
+            "phase2_rollback",
+            "retain_forward",
+        ),
     )
     abort_start.set_defaults(handler=command_abort_start)
 
@@ -3697,6 +3764,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     recovery = commands.add_parser("recovery")
     _add_epoch(recovery, optional=True)
+    recovery.add_argument(
+        "--policy",
+        choices=("retain-forward", "rollback"),
+        default="retain-forward",
+    )
     recovery.set_defaults(handler=command_recovery)
 
     return parser

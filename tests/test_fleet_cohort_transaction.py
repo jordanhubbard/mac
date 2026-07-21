@@ -476,8 +476,17 @@ class Scenario:
         self.call("commit", evidence_file=self.hub_receipt("committed"))
 
 
-def recovery(scenario: Scenario) -> dict[str, Any]:
-    _result, payload = run_cli(scenario.directory, "recovery", "--epoch", EPOCH)
+def recovery(
+    scenario: Scenario, *, policy: str = "retain-forward"
+) -> dict[str, Any]:
+    _result, payload = run_cli(
+        scenario.directory,
+        "recovery",
+        "--epoch",
+        EPOCH,
+        "--policy",
+        policy,
+    )
     return payload
 
 
@@ -563,34 +572,34 @@ def advance_one_node_to(scenario: Scenario, checkpoint: str) -> None:
         "required",
     ),
     [
-        ("init", "rollback", "none", None, 0, True),
-        ("hub-route-bound", "rollback", "none", None, 0, True),
-        ("route-bound", "rollback", "none", None, 0, True),
-        ("phase1-prepare-start", "rollback", "none", "cleanup_only", 0, True),
-        ("phase1-armed", "rollback", "none", "cleanup_only", 0, True),
+        ("init", "retain_forward", "none", None, 0, True),
+        ("hub-route-bound", "retain_forward", "none", None, 0, True),
+        ("route-bound", "retain_forward", "none", None, 0, True),
+        ("phase1-prepare-start", "retain_forward", "none", "retain_forward", 0, True),
+        ("phase1-armed", "retain_forward", "none", "retain_forward", 0, True),
         (
             "hub-open-start",
-            "rollback",
+            "retain_forward",
             "resolve_open",
-            "cleanup_only",
+            "retain_forward",
             0,
             True,
         ),
-        ("hub-opened", "rollback", "abort_epoch", "cleanup_only", 0, True),
-        ("quiesce-start", "rollback", "abort_epoch", "phase1_restore", 0, True),
-        ("quiesced", "rollback", "abort_epoch", "phase1_restore", 0, True),
-        ("phase2-armed", "rollback", "abort_epoch", "phase1_restore", 0, True),
-        ("phase2-start", "rollback", "abort_epoch", "phase2_rollback", 0, True),
-        ("prepared", "rollback", "abort_epoch", "phase2_rollback", 0, True),
+        ("hub-opened", "retain_forward", "abort_epoch", "retain_forward", 0, True),
+        ("quiesce-start", "retain_forward", "abort_epoch", "retain_forward", 0, True),
+        ("quiesced", "retain_forward", "abort_epoch", "retain_forward", 0, True),
+        ("phase2-armed", "retain_forward", "abort_epoch", "retain_forward", 0, True),
+        ("phase2-start", "retain_forward", "abort_epoch", "retain_forward", 0, True),
+        ("prepared", "retain_forward", "abort_epoch", "retain_forward", 0, True),
         (
             "hub-prove-start",
-            "rollback",
+            "retain_forward",
             "resolve_prove",
-            "phase2_rollback",
+            "retain_forward",
             0,
             True,
         ),
-        ("hub-proved", "rollback", "abort_epoch", "phase2_rollback", 0, True),
+        ("hub-proved", "retain_forward", "abort_epoch", "retain_forward", 0, True),
         ("commit-start", "resolve_commit", "resolve_commit", None, 0, True),
         ("commit", "finalize", "none", None, 1, True),
         ("finalize-start", "finalize", "none", None, 1, True),
@@ -956,7 +965,7 @@ def test_hub_open_receipt_must_match_exact_prior_hold_ownership(
     assert scenario.journal["hub_state"] == "open"
 
 
-def test_rollback_is_reverse_order_and_uses_durable_intent_not_a_probe(
+def test_explicit_rollback_is_reverse_order_and_uses_durable_intent_not_a_probe(
     tmp_path: Path,
 ) -> None:
     scenario = Scenario(tmp_path, node_count=2)
@@ -971,7 +980,7 @@ def test_rollback_is_reverse_order_and_uses_durable_intent_not_a_probe(
         "prepared", node=first, evidence_file=scenario.evidence("prepared-first")
     )
 
-    result = recovery(scenario)
+    result = recovery(scenario, policy="rollback")
     assert [item["agent_name"] for item in result["candidates"]] == [
         second["name"],
         first["name"],
@@ -995,6 +1004,59 @@ def test_rollback_is_reverse_order_and_uses_durable_intent_not_a_probe(
     assert [node["abort_kind"] for node in scenario.journal["cohort"]] == [
         "phase2_rollback",
         "phase1_restore",
+    ]
+    assert recovery(scenario, policy="rollback")["recovery_required"] is False
+
+
+def test_default_recovery_retains_every_mutated_node_and_binds_that_policy(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(tmp_path, node_count=2)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    scenario.quiesce()
+    scenario.arm_phase2()
+    first, second = scenario.nodes
+    scenario.call("phase2-start", node=first)
+
+    result = recovery(scenario)
+    assert result["direction"] == "retain_forward"
+    assert [item["agent_name"] for item in result["candidates"]] == [
+        second["name"],
+        first["name"],
+    ]
+    assert {item["recovery_action"] for item in result["candidates"]} == {
+        "retain_forward"
+    }
+
+    scenario.call("hub-aborted", evidence_file=scenario.hub_receipt("aborted"))
+    scenario.call("abort-start", node=second, recovery_action="retain_forward")
+    _result, conflict = run_cli(
+        scenario.directory,
+        "recovery",
+        "--epoch",
+        EPOCH,
+        "--policy",
+        "rollback",
+        check=False,
+    )
+    assert conflict["error"]["code"] == "recovery_policy_conflict"
+
+    for node in (second, first):
+        if node is not second:
+            scenario.call("abort-start", node=node, recovery_action="retain_forward")
+        scenario.call(
+            "aborted-node",
+            node=node,
+            evidence_file=scenario.evidence(f"retained-{node['name']}"),
+        )
+    scenario.call("abort")
+
+    assert scenario.journal["state"] == "aborted"
+    assert [node["abort_kind"] for node in scenario.journal["cohort"]] == [
+        "retain_forward",
+        "retain_forward",
     ]
     assert recovery(scenario)["recovery_required"] is False
 
@@ -1041,13 +1103,13 @@ def test_quiesce_and_phase2_start_intents_close_both_mutation_kill_windows(
     node = scenario.nodes[0]
 
     scenario.call("quiesce-start", node=node)
-    candidate = recovery(scenario)["candidates"][0]
+    candidate = recovery(scenario, policy="rollback")["candidates"][0]
     assert candidate["state"] == "quiesce_started"
     assert candidate["recovery_action"] == "phase1_restore"
     scenario.call("quiesced", node=node, evidence_file=scenario.evidence("quiesced"))
     scenario.arm_phase2()
     scenario.call("phase2-start", node=node)
-    candidate = recovery(scenario)["candidates"][0]
+    candidate = recovery(scenario, policy="rollback")["candidates"][0]
     assert candidate["state"] == "phase2_started"
     assert candidate["recovery_action"] == "phase2_rollback"
     assert candidate["rollback_intent_sha256"] == ROLLBACK_DIGEST

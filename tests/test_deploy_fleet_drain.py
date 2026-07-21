@@ -971,6 +971,9 @@ def test_typed_restarts_reuse_the_one_journal_bound_generation():
 
     assert 'deployment_id_for_agent "$1"' in generation
     assert "secrets.token_hex" not in restart
+    assert 'phase1_resolved_supervisor_for_agent "$agent"' in restart
+    assert 'supervisor="$resolved_supervisor"' in restart
+    assert "configured supervisor differs from phase-1 proof" in restart
     assert 'generation="$(worker_generation_for_agent "$agent")"' in typed
     assert '--generation "$generation"' in typed
     deploy_host = deploy.split("deploy_host() {", 1)[1].split(
@@ -1082,6 +1085,62 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
     assert "return 1" in failure_block
 
 
+def test_typed_restart_resolves_auto_from_generation_bound_phase1_contract(
+    tmp_path: Path,
+):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    resolver = (
+        "phase1_resolved_supervisor_for_agent() {"
+        + deploy.split("phase1_resolved_supervisor_for_agent() {", 1)[1].split(
+            "\n}\n\ncleanup_failed_phase1_prepare_lock", 1
+        )[0]
+        + "\n}"
+    )
+    revision = "a" * 40
+    generation = f"{revision}:rocky:20260721T214448Z:nonce"
+    contract = {
+        "schema": "mac.phase1_cohort_restore_contract.v1",
+        "status": "prepared",
+        "agent": "rocky",
+        "generation": generation,
+        "revision": revision,
+        "rollback_capable": True,
+        "supervisor": {"manager": "launchd"},
+    }
+    contract_raw = (
+        json.dumps(contract, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    ready = {
+        "schema": "mac.phase1_restore_contract_ready.v1",
+        "agent": "rocky",
+        "generation": generation,
+        "revision": revision,
+        "contract_sha256": hashlib.sha256(contract_raw).hexdigest(),
+        "contract": contract,
+    }
+    contract_path = tmp_path / "phase1.json"
+    contract_path.write_text(
+        json.dumps(ready, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    contract_path.chmod(0o600)
+    command = f"""set -euo pipefail
+PYTHON_BIN={shlex.quote(sys.executable)}
+GIT_REV={revision}
+CONTRACT={shlex.quote(str(contract_path))}
+phase1_restore_contract_file_for_agent() {{ printf '%s\\n' "$CONTRACT"; }}
+deployment_id_for_agent() {{ printf '%s\\n' {shlex.quote(generation)}; }}
+{resolver}
+phase1_resolved_supervisor_for_agent rocky
+"""
+    result = subprocess.run(
+        ["/bin/bash", "-c", command], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "launchd"
+
+
 def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():
     text = script_text()
 
@@ -1146,7 +1205,7 @@ def test_deployment_preserves_operator_holds_and_clears_only_its_own():
     assert 'set_remote_mac_startup_hold_policy "$agent" 0' in deploy
 
 
-def test_failed_typed_transaction_aborts_exact_epoch_before_node_rollback():
+def test_failed_typed_transaction_aborts_exact_epoch_before_node_retention():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     recovery = deploy.split("recover_active_cohort_transaction_v2() {", 1)[1].split(
         "\n}\n\nrecover_incomplete_cohort_transaction_before_deploy", 1
@@ -1157,6 +1216,8 @@ def test_failed_typed_transaction_aborts_exact_epoch_before_node_rollback():
     rollback_nodes = recovery.index("recover_cohort_node", journal_hub_abort)
     journal_abort = recovery.index("cohort_journal_mutate abort", rollback_nodes)
     assert abort_hub < journal_hub_abort < rollback_nodes < journal_abort
+    assert 'if [ "$direction" = rollback ] || [ "$direction" = retain_forward ]' in recovery
+    assert "incomplete typed cohort retained newest state for roll-forward repair" in recovery
     assert "commit_hub_epoch_exact" in recovery
     assert recovery.index("commit_hub_epoch_exact") < recovery.index(
         "cohort_journal_mutate commit"
@@ -2831,10 +2892,11 @@ PYTHON_BIN={shlex.quote(sys.executable)}
 DEPLOY_CONTROLLER_NONCE=controller
 COHORT_JOURNAL_ACTIVE=1
 COHORT_JOURNAL_REVISION=0
+RECOVERY_POLICY=retain-forward
 cohort_journal() {{
   case "$1" in
     status) printf '%s\n' '{{"journal":{{"revision":1,"fleet":"mac"}}}}' ;;
-    recovery) printf '%s\n' '{{"direction":"rollback"}}' ;;
+    recovery) printf '%s\n' '{{"direction":"retain_forward"}}' ;;
   esac
 }}
 verify_cohort_recovery_routes() {{ printf '%s\n' verify >> {shlex.quote(str(events))}; return 42; }}

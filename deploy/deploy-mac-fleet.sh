@@ -158,6 +158,8 @@ HOLD_ADOPTIONS_SOURCE="${MAC_DEPLOY_HOLD_ADOPTIONS_FILE:-}"
 HOLD_ADOPTIONS_FILE=""
 REQUIRE_RELEASE_ALL_SELECTED_RAW="${MAC_DEPLOY_REQUIRE_RELEASE_ALL_SELECTED:-0}"
 REQUIRE_RELEASE_ALL_SELECTED=0
+RECOVERY_POLICY_RAW="${MAC_DEPLOY_RECOVERY_POLICY:-retain-forward}"
+RECOVERY_POLICY=""
 if [ -n "${MAC_DEPLOY_SUCCESSOR_HOLD_REASON:-}" ]; then
   SUCCESSOR_HOLD_REASON_RAW="$MAC_DEPLOY_SUCCESSOR_HOLD_REASON"
   SUCCESSOR_HOLD_REASON_SUPPLIED=1
@@ -236,6 +238,7 @@ Usage:
   deploy/deploy-mac-fleet.sh --hub <hub-node> [--ssh-port <port>]
                             [--hold-adoptions <owner-only-json>]
                             [--require-release-all-selected]
+                            [--recovery-policy retain-forward|rollback]
                             [--successor-hold-reason <reason>] [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap <hub-node>
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-reviewed-openshell-cli [agent ...]
@@ -301,6 +304,11 @@ frozen selection and pinned live endpoints used by deployment. It creates no
 cohort journal, lock, hold, restore contract, or service/source mutation. The
 owner-private qualification receipt is evidence only and never authorizes a
 later deployment.
+
+Incomplete deployments retain their newest on-node state, diagnostic bundle,
+dispatch hold, and process barrier by default so repair can roll forward in
+place. --recovery-policy rollback is an explicit break-glass override that
+restores the journal-bound prior generation before a successor deployment.
 USAGE
 }
 
@@ -348,6 +356,18 @@ while [ "$#" -gt 0 ]; do
       ;;
     --require-release-all-selected)
       REQUIRE_RELEASE_ALL_SELECTED_RAW=1
+      shift
+      ;;
+    --recovery-policy)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --recovery-policy requires retain-forward or rollback" >&2
+        exit 2
+      fi
+      RECOVERY_POLICY_RAW="$2"
+      shift 2
+      ;;
+    --recovery-policy=*)
+      RECOVERY_POLICY_RAW="${1#--recovery-policy=}"
       shift
       ;;
     --successor-hold-reason)
@@ -588,6 +608,15 @@ case "$(normalize_boolean_token "$REQUIRE_RELEASE_ALL_SELECTED_RAW")" in
     exit 2
     ;;
 esac
+case "$(normalize_boolean_token "$RECOVERY_POLICY_RAW")" in
+  retain-forward) RECOVERY_POLICY=retain-forward ;;
+  rollback) RECOVERY_POLICY=rollback ;;
+  *)
+    echo "ERROR: recovery policy must be retain-forward or rollback" >&2
+    exit 2
+    ;;
+esac
+readonly RECOVERY_POLICY
 if [ -n "$HOLD_ADOPTIONS_SOURCE" ]; then
   # Adoption is authority to clear an operator hold. It is never meaningful as
   # a partial best-effort action: the selected epoch must own and release all.
@@ -4535,9 +4564,14 @@ read_hub_epoch_status_exact() {
 
 abort_hub_epoch_exact() {
   local hub_agent="$1" epoch_id="$2" identity="$3" output="$4"
-  local request="$TMPDIR_LOCAL/hub-abort-request.json"
+  local request="$TMPDIR_LOCAL/hub-abort-request.json" reason
+  if [ "$RECOVERY_POLICY" = retain-forward ]; then
+    reason="controller recovery closed an incomplete epoch while retaining newest node state for forward repair"
+  else
+    reason="controller recovery rolled back an incomplete synchronized cohort"
+  fi
   write_hub_identity_request "$request" "$identity" abort \
-    "controller recovery rolled back an incomplete synchronized cohort"
+    "$reason"
   hub_epoch_client_request "$hub_agent" "$request" "$output" \
     abort --epoch "$epoch_id"
 }
@@ -5831,6 +5865,61 @@ value = payload.get("contract_sha256")
 if not isinstance(value, str) or len(value) != 64:
     raise SystemExit("phase-1 restore contract digest is unavailable")
 print(value)
+PY
+}
+
+phase1_resolved_supervisor_for_agent() {
+  local agent="$1" generation path
+  generation="$(deployment_id_for_agent "$agent")"
+  path="$(phase1_restore_contract_file_for_agent "$agent")"
+  "$PYTHON_BIN" - "$path" "$agent" "$generation" "$GIT_REV" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+
+path, agent, generation, revision = sys.argv[1:]
+descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+try:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or not 1 <= metadata.st_size <= 4 * 1024 * 1024
+    ):
+        raise SystemExit("phase-1 supervisor contract is unsafe")
+    raw = os.read(descriptor, metadata.st_size + 1)
+    if len(raw) != metadata.st_size:
+        raise SystemExit("phase-1 supervisor contract changed while reading")
+finally:
+    os.close(descriptor)
+payload = json.loads(raw)
+contract = payload.get("contract") if isinstance(payload, dict) else None
+supervisor = contract.get("supervisor") if isinstance(contract, dict) else None
+canonical_contract = (
+    json.dumps(contract, sort_keys=True, separators=(",", ":")) + "\n"
+).encode()
+if (
+    payload.get("schema") != "mac.phase1_restore_contract_ready.v1"
+    or payload.get("agent") != agent
+    or payload.get("generation") != generation
+    or payload.get("revision") != revision
+    or payload.get("contract_sha256") != hashlib.sha256(canonical_contract).hexdigest()
+    or not isinstance(contract, dict)
+    or contract.get("schema") != "mac.phase1_cohort_restore_contract.v1"
+    or contract.get("status") != "prepared"
+    or contract.get("agent") != agent
+    or contract.get("generation") != generation
+    or contract.get("revision") != revision
+    or contract.get("rollback_capable") is not True
+    or not isinstance(supervisor, dict)
+    or supervisor.get("manager") not in {"launchd", "systemd", "supervisord"}
+):
+    raise SystemExit("phase-1 supervisor contract differs from the active generation")
+print(supervisor["manager"])
 PY
 }
 
@@ -7308,9 +7397,17 @@ restart_remote_mac_agent_under_epoch() {
   # selected supervisor unit under the deployment lock; never call the legacy
   # per-node hold/release gate from inside an open hub transaction.
   local agent="$1" supervisor="$2" fleet_name="$3" deployment_id command
+  local resolved_supervisor
   local ssh_parts=() ssh_args=() ssh_target item last_index
   deployment_id="$(deployment_id_for_agent "$agent")"
   assert_remote_deployment_lock "$agent" "$deployment_id"
+  resolved_supervisor="$(phase1_resolved_supervisor_for_agent "$agent")" \
+    || return 1
+  if [ "$supervisor" != auto ] && [ "$supervisor" != "$resolved_supervisor" ]; then
+    echo "ERROR: ${agent}: configured supervisor differs from phase-1 proof" >&2
+    return 1
+  fi
+  supervisor="$resolved_supervisor"
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
   case "$supervisor" in
@@ -11596,6 +11693,98 @@ finally:
 PY
 }
 
+retain_remote_generation_for_forward_repair() {
+  local output="$1" agent="$2" deployment_id="$3" generation="$4"
+  local source_commit="$5" deploy_ts="$6" agent_id hold_reason code
+  agent_id="$(stable_worker_agent_id "$agent")"
+  hold_reason="mac fleet roll-forward repair retained after ${deploy_ts}"
+
+  # Hub fencing is the primary safety boundary. Preserve any pre-existing hold
+  # reason; if the epoch abort restored an unheld state, install a dedicated
+  # repair hold before touching the node-local controller lock.
+  hub_agent_restart_gate rehold "$agent_id" "$generation" "" "$hold_reason" \
+    0 0 0 >/dev/null
+  set_remote_mac_startup_hold_policy "$agent" 0
+
+  code='import datetime as dt
+import json
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+deployment_id, generation, source_commit, deploy_ts, staged_raw, agent = sys.argv[1:]
+mac_home = Path.home() / ".mac"
+logs = mac_home / "logs"
+logs.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+def atomic_private(path, payload):
+    fd, raw = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    temporary = Path(raw)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+barrier = mac_home / "deploy-start-barrier"
+fd, raw = tempfile.mkstemp(prefix=barrier.name + ".", dir=str(mac_home))
+temporary = Path(raw)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(generation + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, barrier)
+finally:
+    temporary.unlink(missing_ok=True)
+
+post_path = logs / ("deploy-%s-post.json" % deploy_ts)
+post_status = "absent"
+installed_revision = ""
+try:
+    post = json.loads(post_path.read_text(encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    post = None
+if isinstance(post, dict):
+    post_status = str(post.get("status") or "present")[:64]
+    candidate = str(post.get("revision") or "")
+    if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", candidate):
+        installed_revision = candidate
+
+payload = {
+    "schema": "mac.fleet_node_forward_retention.v1",
+    "status": "retained_for_forward_repair",
+    "agent": agent,
+    "generation": generation,
+    "deployment_id": deployment_id,
+    "source_commit": source_commit,
+    "installed_revision": installed_revision,
+    "post_manifest_status": post_status,
+    "dispatch_hold_state_retained": (mac_home / "deploy-dispatch-hold.json").is_file(),
+    "process_barrier_retained": barrier.is_file(),
+    "diagnostic_bundle_retained": Path(staged_raw).is_dir(),
+    "rollback_performed": False,
+    "repair_required": True,
+    "observed_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+}
+record = logs / ("fail-forward-%s.json" % deploy_ts)
+atomic_private(record, payload)
+print(json.dumps(payload, sort_keys=True, separators=(",", ":")))'
+  run_fenced_remote_python \
+    "$agent" "$deployment_id" "$code" "$deployment_id" "$generation" \
+    "$source_commit" "$deploy_ts" \
+    "$(staged_bundle_remote_root_for_deployment "$deployment_id")" "$agent" > "$output"
+  chmod 0600 "$output"
+}
+
 write_cohort_composite_rollback_evidence() {
   local output="$1" phase2_file="$2" phase1_file="$3" agent="$4"
   local generation="$5" restore_contract_sha256="$6"
@@ -11714,7 +11903,7 @@ PY
   fi
   action="$requested_action"
   case "$action" in
-    cleanup_only|phase1_restore|phase2_rollback) ;;
+    cleanup_only|phase1_restore|phase2_rollback|retain_forward) ;;
     *) echo "ERROR: ${agent}: recovery probe returned an invalid action" >&2; return 1 ;;
   esac
   if ! cohort_journal_mutate abort-start "$epoch_id" \
@@ -11773,12 +11962,22 @@ PY
         return 1
       fi
       ;;
+    retain_forward)
+      if ! retain_remote_generation_for_forward_repair \
+        "$evidence" "$agent" "$deployment_id" "$runtime_generation" \
+        "$source_commit" "$deploy_ts"; then
+        return 1
+      fi
+      ;;
   esac
-  # Make lock retirement part of the retryable node operation. If the process
-  # dies after this unlink, the next pass reacquires the same old identity,
-  # replays the idempotent restore receipt, and retires it again.
-  if ! cleanup_remote_staged_deployment_bundle "$agent" "$deployment_id"; then
-    return 1
+  # Rollback retires its no-longer-useful staged bundle. Fail-forward recovery
+  # deliberately keeps the immutable bundle and on-node evidence for live
+  # diagnosis; only its controller lock is released so a successor generation
+  # can continue from the retained state immediately.
+  if [ "$action" != retain_forward ]; then
+    if ! cleanup_remote_staged_deployment_bundle "$agent" "$deployment_id"; then
+      return 1
+    fi
   fi
   if ! release_remote_deployment_lock "$agent" "$deployment_id"; then
     return 1
@@ -11789,7 +11988,11 @@ PY
     --generation "$runtime_generation" --evidence-file "$evidence" >/dev/null; then
     return 1
   fi
-  echo "==> ${agent}: durable cohort recovery completed with ${action}"
+  if [ "$action" = retain_forward ]; then
+    echo "==> ${agent}: newest state retained under dispatch hold for roll-forward repair"
+  else
+    echo "==> ${agent}: durable cohort recovery completed with ${action}"
+  fi
 }
 
 recover_active_cohort_transaction() {
@@ -11803,7 +12006,7 @@ recover_active_cohort_transaction() {
     'import json,sys; print(json.load(sys.stdin)["journal"]["hub_agent"])')"
   fleet_name="$(printf '%s' "$status" | "$PYTHON_BIN" -c \
     'import json,sys; print(json.load(sys.stdin)["journal"]["fleet"])')"
-  recovery="$(cohort_journal recovery --epoch "$epoch_id")"
+  recovery="$(cohort_journal recovery --epoch "$epoch_id" --policy "$RECOVERY_POLICY")"
   state="$(printf '%s' "$recovery" | "$PYTHON_BIN" -c \
     'import json,sys; print((json.load(sys.stdin).get("epoch") or {}).get("state") or "")')"
   case "$state" in
@@ -11873,7 +12076,7 @@ PY
         cohort_journal_mutate commit-absent "$epoch_id" \
           "$COHORT_JOURNAL_REVISION" commit-absent "$owner_nonce" \
           --evidence-file "$absence_proof" >/dev/null
-        recovery="$(cohort_journal recovery --epoch "$epoch_id")"
+        recovery="$(cohort_journal recovery --epoch "$epoch_id" --policy "$RECOVERY_POLICY")"
         ;;
       *)
         echo "ERROR: hub returned an unknown release epoch status" >&2
@@ -12234,7 +12437,7 @@ recover_active_cohort_transaction_v2() {
   if ! fleet_name="$(printf '%s' "$status" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["journal"]["fleet"])')"; then
     return 1
   fi
-  if ! recovery="$(cohort_journal recovery --epoch "$epoch_id")"; then
+  if ! recovery="$(cohort_journal recovery --epoch "$epoch_id" --policy "$RECOVERY_POLICY")"; then
     return 1
   fi
   if ! printf '%s\n' "$recovery" > "$recovery_file" || ! chmod 0600 "$recovery_file"; then
@@ -12291,7 +12494,7 @@ recover_active_cohort_transaction_v2() {
     if ! printf '%s\n' "$status" > "$status_file"; then
       return 1
     fi
-    if ! recovery="$(cohort_journal recovery --epoch "$epoch_id")"; then
+    if ! recovery="$(cohort_journal recovery --epoch "$epoch_id" --policy "$RECOVERY_POLICY")"; then
       return 1
     fi
     if ! printf '%s\n' "$recovery" > "$recovery_file"; then
@@ -12303,7 +12506,7 @@ recover_active_cohort_transaction_v2() {
     direction=finalize
   fi
 
-  if [ "$direction" = rollback ]; then
+  if [ "$direction" = rollback ] || [ "$direction" = retain_forward ]; then
     receipt="$TMPDIR_LOCAL/recovered-hub-transition.json"
     case "$hub_action" in
       resolve_open)
@@ -12389,11 +12592,15 @@ PY
       return 1
     fi
     COHORT_JOURNAL_ACTIVE=0
-    echo "==> fleet: incomplete typed cohort was durably rolled back"
+    if [ "$direction" = retain_forward ]; then
+      echo "==> fleet: incomplete typed cohort retained newest state for roll-forward repair"
+    else
+      echo "==> fleet: incomplete typed cohort was durably rolled back"
+    fi
     return 0
   fi
 
-  if ! recovery="$(cohort_journal recovery --epoch "$epoch_id")"; then
+  if ! recovery="$(cohort_journal recovery --epoch "$epoch_id" --policy "$RECOVERY_POLICY")"; then
     return 1
   fi
   if ! printf '%s\n' "$recovery" > "$recovery_file"; then

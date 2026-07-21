@@ -32,7 +32,7 @@ cut-over.
 | Exact cohort | Stable agent IDs and current targets come from the frozen fleet registry | Selected set and release receipt contain the same IDs exactly once |
 | Quiescent boundary | Every selected agent is held, drained, task-free, service-claim-free, and free of old supervisor- or daemon-owned resources before artifact mutation | Hub drain records, bounded supervisor-unload proof, exact OpenShell inventory, cross-runtime container inventory, and a generation-bound local quiescence receipt |
 | Recoverable node generation | Source, virtualenv, service definitions, and supervisor topology change as one fenced generation; a failed replacement cannot be accepted as deployable | Prior-state receipt, owner-private artifact snapshots, mutation journal, bounded rollback receipts, successful remote transaction exit, and controller-side post-manifest revalidation |
-| Crash-recoverable cohort | The controller persists intent before every mutation and compensates prepared nodes in reverse order after a proved-absent hub commit | Owner-fenced cohort journal, retained restore-contract digests, phase-2 rollback receipts, and exact epoch-status reconciliation |
+| Crash-recoverable cohort | The controller persists intent before every mutation and retains the newest held node state for successor repair after a proved-absent hub commit; prior-generation restore is explicit break-glass only | Owner-fenced cohort journal, forward-retention receipts, retained diagnostic bundles, optional rollback receipts, and exact epoch-status reconciliation |
 | Atomic ownership handoff | Deployment holds become one successor hold in a single database transaction | No committed row is unheld; stale ownership rolls back the entire cohort |
 | Idempotent epoch | Epoch identity binds holds, outcome, successor reason, generation, credential principal, and report-executor expectations | Same request replays one receipt; any changed input is rejected |
 | Attested generation | Every worker proves the deployed generation, bound principal, startup self-test, and read-only report executor | Exact post-deploy rows and controller approval match the immutable runtime |
@@ -147,14 +147,17 @@ accepted only after its exact generation-bound rollback contract is durable.
 Journal updates use compare-and-swap transitions and atomic, fsync-backed
 owner-only files. The journal contains no targets or credential material.
 
-Controller exit is therefore an abort boundary, not permission to abandon a
-partly changed cohort. A live controller owns the journal exclusively. A later
-invocation may adopt it only after proving the recorded controller is gone,
-then it restores in reverse mutation order. Recovery invokes the exact retained
-`restore_executable.argv` recorded and digested before phase 1, never a helper
-from the current checkout; nodes that reached phase 2 use their exact recorded
-generation rollback first. Each successful compensation is journaled so that
-another interruption resumes rather than repeats ambiguous work.
+Controller exit is therefore a held repair boundary, not permission to abandon
+or automatically undo a partly changed cohort. A live controller owns the
+journal exclusively. A later invocation may adopt it only after proving the
+recorded controller is gone. It closes the incomplete hub epoch, preserves each
+node's newest observed state and immutable diagnostic bundle in reverse
+mutation order, and releases only the old controller lock so a successor
+generation can roll forward immediately. `--recovery-policy rollback` is a
+separate break-glass path; when selected, it invokes only the exact retained
+`restore_executable.argv` and generation rollback recorded before mutation.
+The first node recovery action durably binds the policy so interruptions cannot
+mix retention and restore.
 
 The hub handoff has a distinct uncertainty rule. The controller durably records
 `commit-start` before calling the atomic epoch endpoint. If the response is
@@ -284,7 +287,7 @@ manifest binds the phase-1, daemon-resource, and gateway-readiness receipt
 digests; the latest manifest must be byte-for-byte equivalent in those
 summaries.
 
-An existing node arms automatic rollback only after complete prior source and
+An existing node arms break-glass rollback only after complete prior source and
 virtualenv backups exist. Before phase-2 writes, it also snapshots the complete
 executable tree, environment and generation markers, successor gateway
 definitions, and the exact prior supervisor topology. After the old OpenClaw
@@ -310,12 +313,12 @@ its completion receipt. Loaded jobs without a safe exact definition and active
 systemd oneshot services remain ineligible because they cannot be replayed
 without inventing prior state.
 A new node with no complete prior generation remains held and cannot have a
-post manifest accepted as deployable, but requires cleanup or a retry instead
-of pretending it can roll back. Any nonzero exit after phase-2 mutation first
-revalidates the deployment fence while the lock renewer is still alive, then
-invokes the owner-only rollback program. Loss of the fence forbids further
-mutation. The original deployment failure remains the result even when
-rollback succeeds.
+post manifest accepted as deployable. Any nonzero exit retains the newest
+state, writes an owner-only `mac.fleet_node_forward_retention.v1` receipt,
+keeps the node-local startup barrier and immutable staged bundle, and releases
+only the controller lock. Loss of the fence forbids further mutation. A later
+top-of-tree deployment adopts the hold and repairs this state in place instead
+of first reconstructing an increasingly expensive old world.
 
 Rollback preflights every required backup before changing supervisor state,
 then uses one bounded helper to stop every exact MAC service identity and prove
@@ -359,9 +362,12 @@ terminal only after all finalization receipts are durable.
 Before commit, recovery first rebinds every current route to its journaled
 endpoint identity. It resolves any lost hub open or prove response from the
 one-use envelope, aborts the exact hub epoch, discards only unreserved pending
-credentials created by that epoch, and then compensates nodes in reverse
-mutation order. Current active credentials and unrelated pending credentials
-are never removed. The abort result remains held.
+credentials created by that epoch, and then records forward retention for
+nodes in reverse mutation order. Current active credentials, unrelated pending
+credentials, installed files, and diagnostic bundles are never removed. The
+result remains held and is immediately eligible for a successor roll-forward
+deployment. Explicit rollback uses the same route and evidence fences but is
+never selected by default.
 
 ### Attestation-key recovery and report-executor approval
 

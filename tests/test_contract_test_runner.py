@@ -27,7 +27,7 @@ def _run_with_fake_python(
     fake_python = bin_dir / "python3"
     fake_python.write_text(
         """#!/bin/sh
-printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "$*" >> "$FAKE_PY_LOG"
+printf 'PYTEST_ADDOPTS=%s\tDISABLE=%s\tCOVERAGE_FILE=%s\t%s\n' "${PYTEST_ADDOPTS-<unset>}" "${MAC_TEST_DISABLE_GROUPS-<unset>}" "${COVERAGE_FILE-<unset>}" "$*" >> "$FAKE_PY_LOG"
 case "$*" in
     *os.cpu_count*)
         # The runner computes its headroom-aware default worker count with a
@@ -40,9 +40,9 @@ if [ "$*" = "-m coverage combine" ]; then
     printf '%s\n' "$FAKE_COMBINE_OUTPUT"
     exit "$FAKE_COMBINE_STATUS"
 fi
-if [ "$*" = "-m coverage json -o coverage.json" ]; then
-    exit "$FAKE_JSON_STATUS"
-fi
+case "$*" in
+    "-m coverage json -o "*) exit "$FAKE_JSON_STATUS" ;;
+esac
 exit 0
 """,
         encoding="utf-8",
@@ -161,6 +161,32 @@ def test_contract_runner_preserves_explicit_worker_override(tmp_path):
     assert completed.returncode == 0, completed.stdout + completed.stderr
     bulk = next(line for line in calls if "-m coverage run -m pytest -n" in line)
     assert "-n 3 --dist loadscope" in bulk
+
+
+def test_contract_runner_isolates_coverage_state_per_invocation(tmp_path):
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    first, first_calls = _run_with_fake_python(first_root)
+    second, second_calls = _run_with_fake_python(second_root)
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert second.returncode == 0, second.stdout + second.stderr
+    first_files = {
+        line.split("COVERAGE_FILE=", 1)[1].split("\t", 1)[0]
+        for line in first_calls
+        if "-m coverage" in line and "--version" not in line
+    }
+    second_files = {
+        line.split("COVERAGE_FILE=", 1)[1].split("\t", 1)[0]
+        for line in second_calls
+        if "-m coverage" in line and "--version" not in line
+    }
+    assert len(first_files) == 1
+    assert len(second_files) == 1
+    assert first_files != second_files
+    assert next(iter(first_files)).endswith("/.coverage")
 
 
 def test_contract_runner_honors_explicit_auto_override(tmp_path):

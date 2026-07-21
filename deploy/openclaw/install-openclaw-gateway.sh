@@ -187,14 +187,21 @@ except subprocess.TimeoutExpired:
     try:
         stdout, stderr = proc.communicate(timeout=0.5)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, stderr = proc.communicate(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            stdout, stderr = b"", b""
+        stdout, stderr = b"", b""
+    # The direct child can exit on TERM while a grandchild keeps running (and
+    # keeps inherited coverage/output descriptors open). Always reap the whole
+    # dedicated process group after the grace period, not only when the direct
+    # child itself missed the deadline.
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        final_stdout, final_stderr = proc.communicate(timeout=0.5)
+        stdout = final_stdout or stdout
+        stderr = final_stderr or stderr
+    except subprocess.TimeoutExpired:
+        pass
     sys.stdout.buffer.write(stdout or b"")
     sys.stderr.buffer.write(stderr or b"")
     sys.stderr.write(
@@ -1632,14 +1639,17 @@ except subprocess.TimeoutExpired:
     try:
         stdout, stderr = proc.communicate(timeout=0.5)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, stderr = proc.communicate(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            stdout, stderr = b"", b""
+        stdout, stderr = b"", b""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        final_stdout, final_stderr = proc.communicate(timeout=0.5)
+        stdout = final_stdout or stdout
+        stderr = final_stderr or stderr
+    except subprocess.TimeoutExpired:
+        pass
     sys.stdout.buffer.write(stdout or b"")
     sys.stderr.buffer.write(stderr or b"")
     sys.stderr.write(

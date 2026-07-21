@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -2576,7 +2577,9 @@ case "$1" in
   enable)
     case "$MAC_TEST_SCENARIO" in
       hermes-start-failure) exit 72 ;;
-      hermes-start-timeout) sleep 30 ;;
+      hermes-start-timeout)
+        python3 -c 'import fcntl,os,signal; signal.signal(signal.SIGTERM,signal.SIG_IGN); f=open(os.environ["MAC_TEST_TIMEOUT_LOCK"],"w"); fcntl.flock(f,fcntl.LOCK_EX); open(os.environ["MAC_TEST_TIMEOUT_READY"],"w").write("ready"); os.close(1); os.close(2); signal.pause()'
+        ;;
       *) touch "$MAC_TEST_STATE/hermes-started" ;;
     esac
     ;;
@@ -2608,7 +2611,9 @@ case "$1:$2" in
   start:*-hermes-gateway)
     case "$MAC_TEST_SCENARIO" in
       hermes-start-failure) exit 72 ;;
-      hermes-start-timeout) sleep 30 ;;
+      hermes-start-timeout)
+        python3 -c 'import fcntl,os,signal; signal.signal(signal.SIGTERM,signal.SIG_IGN); f=open(os.environ["MAC_TEST_TIMEOUT_LOCK"],"w"); fcntl.flock(f,fcntl.LOCK_EX); open(os.environ["MAC_TEST_TIMEOUT_READY"],"w").write("ready"); os.close(1); os.close(2); signal.pause()'
+        ;;
       *) touch "$MAC_TEST_STATE/hermes-started" ;;
     esac
     ;;
@@ -2684,6 +2689,8 @@ esac
         "MAC_TEST_SCENARIO": scenario,
         "MAC_TEST_STATE": str(state_dir),
         "MAC_TEST_RUNTIME_SOURCE_MARKER": str(tmp_path / "runtime-env-was-sourced"),
+        "MAC_TEST_TIMEOUT_LOCK": str(tmp_path / "timeout-child.lock"),
+        "MAC_TEST_TIMEOUT_READY": str(tmp_path / "timeout-child.ready"),
     }
     if fleet_transaction:
         env["MAC_DEPLOY_GENERATION"] = "release-epoch:agent-test:attempt-1"
@@ -2992,6 +2999,12 @@ def test_rollback_bounds_hung_hermes_restore_command(
     assert result.returncode == 124
     assert "OpenClaw subprocess timed out" in result.stderr
     assert f"bounded {supervisor} Hermes restore failed (exit 124)" in result.stderr
+    assert (tmp_path / "timeout-child.ready").read_text(encoding="utf-8") == "ready"
+    with (tmp_path / "timeout-child.lock").open("a", encoding="utf-8") as stream:
+        # This is a synchronization assertion, not a wall-clock assertion: the
+        # bounded runner may return only after the entire child process group
+        # has released its kernel-owned lock.
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 def test_rollback_restore_has_no_unbounded_or_cross_scope_linux_fallback() -> None:

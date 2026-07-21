@@ -175,9 +175,13 @@ logical_planned
   -> finalized
 ```
 
-Abort states retain the forward state that selected the compensation and record
-`abort_started -> aborted` per node. Compensation runs in reverse mutation
-order.
+Abort states retain the forward state that selected recovery and record
+`abort_started -> aborted` per node. Recovery walks nodes in reverse mutation
+order. Its normal action is `retain_forward`: preserve the newest node state,
+process barrier, dispatch hold, and immutable diagnostic bundle, then release
+only the controller lock for a successor deployment. Prior-generation
+compensation requires the explicit `--recovery-policy rollback` break-glass
+choice and that policy is durably bound by the first node action.
 
 Global states are:
 
@@ -197,9 +201,11 @@ preparing | commit_intent-with-proved-absence
 
 `commit_intent` durably binds the exact release plan before the hub request.
 When the response is lost, recovery asks the hub authority for exact status. A
-matching `committed` marker forces roll-forward. Exact `absent` permits abort
-only after its proof is journaled. `mismatch` or unknown transport state permits
-neither rollback nor replay.
+matching `committed` marker forces commit finalization. Exact `absent` permits
+the incomplete hub epoch to close only after its proof is journaled; nodes then
+remain at their newest observed state for forward repair by default.
+`mismatch` or unknown transport state permits neither recovery direction nor
+replay.
 
 `hub_committed` is irreversible but is not terminal. The journal remains active
 until every node finalization receipt is durable. The finalizer executable
@@ -207,9 +213,11 @@ digest is bound when phase 2 is armed, so a later controller adopts the journal
 and resumes finalization with the exact installed bytes instead of its current
 checkout.
 
-`aborted_held` is terminal only when node compensation, hub staged-state abort,
-and exact retained hold ownership are all proved. It deliberately does not mean
-dispatchable.
+`aborted_held` is terminal only when the hub staged-state abort, exact retained
+hold ownership, node-local process barrier, and chosen node recovery action are
+all proved. Under the default policy the action explicitly proves
+`rollback_performed=false` and retains the failed generation's diagnostics. It
+deliberately does not mean dispatchable.
 
 Journal ownership binds controller nonce, boot identity, PID, and process start
 time. PID liveness alone is insufficient because PID reuse after reboot can

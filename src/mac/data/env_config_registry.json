@@ -3408,6 +3408,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy recovery policy.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_RECOVERY_POLICY",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy release commit retries.",
     "family": "deployment",
     "name": "MAC_DEPLOY_RELEASE_COMMIT_RETRIES",
