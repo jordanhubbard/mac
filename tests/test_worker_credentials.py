@@ -196,6 +196,12 @@ def test_recovery_discards_only_exact_unreserved_pending_issuance(
         )
         == []
     )
+    assert (
+        lifecycle.discard_unreserved_pending(
+            "agent_new_worker", created_by="fleet-release:epoch-a"
+        )
+        == []
+    )
 
 
 def test_deleted_agent_rejects_issued_token_issue_and_activation(tmp_path: Path) -> None:

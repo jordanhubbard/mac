@@ -3940,13 +3940,24 @@ cohort_journal_revision() {
 cohort_journal_mutate() {
   local command="$1" epoch_id="$2" revision="$3" operation_id="$4" owner_nonce="$5"
   shift 5
-  local result
-  result="$(cohort_journal "$command" \
+  local result next_revision
+  if ! result="$(cohort_journal "$command" \
     --epoch "$epoch_id" \
     --expected-revision "$revision" \
     --operation-id "$operation_id" \
-    --owner-nonce "$owner_nonce" "$@")"
-  COHORT_JOURNAL_REVISION="$(printf '%s' "$result" | cohort_journal_revision)"
+    --owner-nonce "$owner_nonce" "$@")"; then
+    return 1
+  fi
+  if ! next_revision="$(printf '%s' "$result" | cohort_journal_revision)"; then
+    return 1
+  fi
+  case "$next_revision" in
+    ''|*[!0-9]*)
+      echo "ERROR: cohort journal returned an invalid revision" >&2
+      return 1
+      ;;
+  esac
+  COHORT_JOURNAL_REVISION="$next_revision"
   printf '%s\n' "$result"
 }
 

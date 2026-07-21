@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -57,6 +58,30 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
     assert "phase_status_files" in bounded
     assert '[ "$failed" -ne 0 ] && [ "$aggregate_failures" != 1 ]' in bounded
     assert 'while [ "$index" -lt "$total" ]' in bounded
+
+
+def test_cohort_journal_mutation_failure_preserves_revision() -> None:
+    source = DEPLOY.read_text(encoding="utf-8")
+    mutate = _function(
+        source,
+        "cohort_journal_mutate",
+        "write_cohort_transaction_input() {",
+    )
+    snippet = f"""set -u
+PYTHON_BIN={shlex.quote(sys.executable)}
+COHORT_JOURNAL_REVISION=7
+cohort_journal() {{ printf '%s\n' '{{"error":"rejected"}}' >&2; return 17; }}
+cohort_journal_revision() {{ "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["journal"]["revision"])'; }}
+{mutate}
+set +e
+if cohort_journal_mutate phase epoch 7 operation owner >/dev/null; then result=0; else result=$?; fi
+printf '%s|%s\n' "$result" "$COHORT_JOURNAL_REVISION"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "1|7"
 
 
 def test_bounded_scheduler_stops_new_work_after_first_failure(tmp_path: Path) -> None:

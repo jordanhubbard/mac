@@ -2241,7 +2241,12 @@ def systemd_user_state(unit: str) -> str:
         if key in values:
             raise QuiescenceFailure("systemd user automation inspection was ambiguous")
         values[key] = value
-    if set(values) != {"LoadState", "ActiveState", "SubState", "MainPID"}:
+    expected = {"LoadState", "ActiveState", "SubState", "MainPID"}
+    if set(values) == expected - {"MainPID"} and unit.endswith(".timer"):
+        # systemd timers have no service process and older systemd releases
+        # omit the nonexistent MainPID property instead of rendering it as 0.
+        values["MainPID"] = "0"
+    if set(values) != expected:
         raise QuiescenceFailure("systemd user automation inspection was incomplete")
     if values["LoadState"] == "not-found":
         return "absent"

@@ -371,9 +371,15 @@ case "$command" in
         || [ -f "$state_file" ]; then
       state=inactive
     fi
-    printf 'LoadState=loaded\\nActiveState=%s\\nSubState=%s\\nMainPID=%s\\n' \
-      "$state" "$( [ "$state" = active ] && echo running || echo dead )" \
-      "$( [ "$state" = active ] && echo 321 || echo 0 )"
+    if [ "${FAKE_SYSTEMD_TIMER_OMITS_MAINPID:-0}" = 1 ] \
+        && [ "${unit%.timer}" != "$unit" ]; then
+      printf 'LoadState=loaded\\nActiveState=%s\\nSubState=%s\\n' \
+        "$state" "$( [ "$state" = active ] && echo waiting || echo dead )"
+    else
+      printf 'LoadState=loaded\\nActiveState=%s\\nSubState=%s\\nMainPID=%s\\n' \
+        "$state" "$( [ "$state" = active ] && echo running || echo dead )" \
+        "$( [ "$state" = active ] && echo 321 || echo 0 )"
+    fi
     [ "$want_restarts" != 1 ] || printf 'NRestarts=0\n'
     ;;
   is-enabled)
@@ -1760,6 +1766,32 @@ def test_openclaw_host_automation_is_journaled_quiesced_and_restored(
     assert not successor.exists()
     restore_receipt = json.loads(restored.stdout)
     assert restore_receipt["host_automation"] == automation
+
+
+def test_systemd_timer_without_main_pid_is_valid_automation_state(
+    tmp_path: Path,
+) -> None:
+    env = _base_case(tmp_path, "systemd", os_kind="linux")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    env["FAKE_SYSTEMD_STATE"] = str(state)
+    env["FAKE_HOST_AUTOMATION_LOADED"] = "1"
+    env["FAKE_SYSTEMD_TIMER_OMITS_MAINPID"] = "1"
+    _install_systemctl(tmp_path / "bin")
+    definition = (
+        Path(env["HOME"])
+        / ".config"
+        / "systemd"
+        / "user"
+        / "mac-openclaw-script-memory-sync.timer"
+    )
+    definition.parent.mkdir(parents=True)
+    definition.write_text("prior generation\n", encoding="utf-8")
+    definition.chmod(0o600)
+
+    prepared = _run_action(env, "prepare")
+
+    assert prepared.returncode == 0, prepared.stderr
 
 
 def test_launchd_host_automation_inventory_does_not_serialize_complete_domain(

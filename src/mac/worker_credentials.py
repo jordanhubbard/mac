@@ -874,7 +874,11 @@ class WorkerCredentialLifecycle:
                 (exact_agent,),
             )
             if locked.rowcount != 1:
-                raise WorkerCredentialError("worker agent does not exist")
+                # A typed fleet cohort may include a brand-new worker. If the
+                # epoch aborts before registration or credential issuance,
+                # there is nothing to discard. Treat that recovery operation
+                # as the same idempotent no-op as a repeated successful discard.
+                return []
             self._assert_release_epoch_reservation(conn, exact_agent)
             rows = conn.execute(
                 "SELECT * FROM worker_credentials WHERE agent_id = ? "

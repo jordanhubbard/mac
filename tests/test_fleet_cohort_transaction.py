@@ -681,6 +681,35 @@ def test_forward_lifecycle_is_durable_secret_free_and_requires_finalization(
     assert recovery(scenario)["recovery_required"] is False
 
 
+def test_phase1_intents_can_be_batched_before_parallel_preparation(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(tmp_path, node_count=3)
+    scenario.bind_routes()
+
+    for node in scenario.nodes:
+        scenario.call("phase1-prepare-start", node=node)
+
+    assert [node["state"] for node in scenario.journal["cohort"]] == [
+        "phase1_prepare_started",
+        "phase1_prepare_started",
+        "phase1_prepare_started",
+    ]
+
+    for node in scenario.nodes:
+        scenario.call(
+            "phase1-armed",
+            node=node,
+            evidence_file=scenario.evidence("phase1-%s" % node["name"]),
+        )
+
+    assert [node["state"] for node in scenario.journal["cohort"]] == [
+        "phase1_armed",
+        "phase1_armed",
+        "phase1_armed",
+    ]
+
+
 def test_typed_material_plans_accept_exact_journal_epoch_through_finalization(
     tmp_path: Path,
 ) -> None:

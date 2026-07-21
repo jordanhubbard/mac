@@ -2642,7 +2642,10 @@ def command_phase1_prepare_started(
             )
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
-        if any(item["state"] != "phase1_armed" for item in earlier) or any(
+        if any(
+            item["state"] not in {"phase1_prepare_started", "phase1_armed"}
+            for item in earlier
+        ) or any(
             item["state"] != "route_bound" for item in later
         ):
             raise JournalError(
@@ -2686,7 +2689,8 @@ def command_phase1_armed(
         earlier = journal["cohort"][: node["ordinal"]]
         later = journal["cohort"][node["ordinal"] + 1 :]
         if any(item["state"] != "phase1_armed" for item in earlier) or any(
-            item["state"] != "route_bound" for item in later
+            item["state"] not in {"route_bound", "phase1_prepare_started"}
+            for item in later
         ):
             raise JournalError(
                 "invalid_transition", "phase1 arms must follow cohort order"
