@@ -214,6 +214,47 @@ printf '%s\n' "$result"
     assert "c: preflight failed" in rendered
 
 
+def test_prerequisite_worker_propagates_remote_builder_failure(tmp_path: Path) -> None:
+    source = DEPLOY.read_text(encoding="utf-8")
+    prepare = _function(
+        source,
+        "prepare_remote_prerequisite_bundle",
+        "collect_phase2_arm_evidence() {",
+    )
+    snippet = f"""set -u
+DEPLOY_CONTROLLER_NONCE=fixture
+PREREQUISITE_RECEIPT_HELPER=/tmp/fleet-prerequisite-receipts.py
+MAC_REVIEWED_CODEGRAPH_VERSION=fixture
+PYTHON_BIN=/bin/false
+deployment_id_for_agent() {{ printf 'deployment-fixture\n'; }}
+stable_worker_agent_id() {{ printf 'agent_%s\n' "$1"; }}
+node_route_identity_sha256() {{ printf '%064d\n' 0; }}
+node_prerequisite_bundle_file() {{ printf '%s/bundle.json\n' {shlex.quote(str(tmp_path))}; }}
+node_prerequisite_expectations_file() {{ printf '%s/expectations.json\n' {shlex.quote(str(tmp_path))}; }}
+fenced_remote_upload() {{ return 0; }}
+ssh_target_args() {{ printf 'fixture-target\\0'; }}
+remote_deployment_fenced_exec() {{ printf 'fixture-command\n'; }}
+shell_quote() {{ printf '%s' "$1"; }}
+ssh() {{ return 23; }}
+{prepare}
+set +e
+prepare_remote_prerequisite_bundle 'node|unused|linux'
+result=$?
+set -e
+printf '%s\n' "$result"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "1"
+    assert "remote prerequisite proof failed" in result.stderr
+    assert "eight exact prerequisite participants proved" not in result.stderr
+
+
 def test_typed_arm_and_apply_reuse_one_digest_verified_stage() -> None:
     source = DEPLOY.read_text(encoding="utf-8")
     stage = source.split("stage_remote_deployment_bundle() {", 1)[1].split(

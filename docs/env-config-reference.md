@@ -725,6 +725,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_PREREQ_FIRECRAWL_URL` | str | consumer-defined | core | Core setting: prereq firecrawl url. |
 | `MAC_PREREQ_HELPER` | str | consumer-defined | core | Core setting: prereq helper. |
 | `MAC_PREREQ_IDENTITY` | str | consumer-defined | core | Core setting: prereq identity. |
+| `MAC_PREREQ_NETWORK_PROVIDER` | str | consumer-defined | core | Core setting: prereq network provider. |
 | `MAC_PREREQ_OPENSHELL_REQUIRED` | bool | consumer-defined | core | Core setting: prereq openshell required. |
 | `MAC_PREREQ_OS` | str | consumer-defined | core | Core setting: prereq os. |
 | `MAC_PREREQ_QDRANT_REQUIRED` | bool | consumer-defined | core | Core setting: prereq qdrant required. |

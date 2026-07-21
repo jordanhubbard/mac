@@ -4910,6 +4910,7 @@ PY
 prepare_remote_prerequisite_bundle() {
   local spec="$1" fields=() agent supervisor os_kind qdrant_url qdrant_required
   local firecrawl_url firecrawl_required webdav_url webdav_enabled openshell_required
+  local network_provider
   local deployment_id agent_id identity_sha remote_helper remote_root command
   local bundle expectations ssh_parts=() ssh_args=() ssh_target item last_index
   IFS='|' read -r -a fields <<<"$spec"
@@ -4921,6 +4922,7 @@ prepare_remote_prerequisite_bundle() {
   firecrawl_required="${fields[28]:-0}"
   webdav_enabled="${fields[46]:-0}"
   webdav_url="${fields[48]:-}"
+  network_provider="${fields[31]:-none}"
   supervisor="${fields[14]:-auto}"
   openshell_required="${fields[53]:-0}"
   deployment_id="$(deployment_id_for_agent "$agent")"
@@ -4937,10 +4939,11 @@ prepare_remote_prerequisite_bundle() {
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
-    "set -e; umask 077; rm -rf $(shell_quote "$remote_root"); mkdir -m 0700 $(shell_quote "$remote_root"); MAC_PREREQ_AGENT=$(shell_quote "$agent") MAC_PREREQ_AGENT_ID=$(shell_quote "$agent_id") MAC_PREREQ_IDENTITY=$(shell_quote "$identity_sha") MAC_PREREQ_HELPER=$(shell_quote "$remote_helper") MAC_PREREQ_ROOT=$(shell_quote "$remote_root") MAC_PREREQ_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_PREREQ_QDRANT_REQUIRED=$(shell_quote "$qdrant_required") MAC_PREREQ_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_PREREQ_FIRECRAWL_REQUIRED=$(shell_quote "$firecrawl_required") MAC_PREREQ_WEBDAV_URL=$(shell_quote "$webdav_url") MAC_PREREQ_WEBDAV_ENABLED=$(shell_quote "$webdav_enabled") MAC_PREREQ_OPENSHELL_REQUIRED=$(shell_quote "$openshell_required") MAC_PREREQ_SUPERVISOR=$(shell_quote "$supervisor") MAC_PREREQ_OS=$(shell_quote "$os_kind") MAC_PREREQ_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") python3 -")"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    "set -e; umask 077; rm -rf $(shell_quote "$remote_root"); mkdir -m 0700 $(shell_quote "$remote_root"); MAC_PREREQ_AGENT=$(shell_quote "$agent") MAC_PREREQ_AGENT_ID=$(shell_quote "$agent_id") MAC_PREREQ_IDENTITY=$(shell_quote "$identity_sha") MAC_PREREQ_HELPER=$(shell_quote "$remote_helper") MAC_PREREQ_ROOT=$(shell_quote "$remote_root") MAC_PREREQ_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_PREREQ_QDRANT_REQUIRED=$(shell_quote "$qdrant_required") MAC_PREREQ_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_PREREQ_FIRECRAWL_REQUIRED=$(shell_quote "$firecrawl_required") MAC_PREREQ_WEBDAV_URL=$(shell_quote "$webdav_url") MAC_PREREQ_WEBDAV_ENABLED=$(shell_quote "$webdav_enabled") MAC_PREREQ_OPENSHELL_REQUIRED=$(shell_quote "$openshell_required") MAC_PREREQ_SUPERVISOR=$(shell_quote "$supervisor") MAC_PREREQ_OS=$(shell_quote "$os_kind") MAC_PREREQ_NETWORK_PROVIDER=$(shell_quote "$network_provider") MAC_PREREQ_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") python3 -")"
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command" <<'PY'
 import hashlib
+import ipaddress
 import json
 import os
 import stat
@@ -4993,8 +4996,27 @@ def path_check(name, raw, *, executable=False):
 def service_check(name, url, required, fallback):
     parsed = urllib.parse.urlsplit(url or "")
     if truthy(required):
-        if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
-            raise SystemExit("required %s prerequisite is not an unauthenticated loopback service" % name)
+        hostname = parsed.hostname or ""
+        provider = os.environ["MAC_PREREQ_NETWORK_PROVIDER"]
+        local = hostname in {"127.0.0.1", "::1", "localhost"}
+        managed_mesh = False
+        if provider in {"tailscale", "headscale"}:
+            try:
+                address = ipaddress.ip_address(hostname)
+            except ValueError:
+                managed_mesh = hostname.endswith((".ts.net", ".svc.cluster.local"))
+            else:
+                managed_mesh = address.is_private or address in ipaddress.ip_network("100.64.0.0/10")
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or not (local or managed_mesh)
+        ):
+            raise SystemExit("required %s prerequisite is not an unauthenticated managed service" % name)
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         return {
             "name": name,
@@ -5133,20 +5155,43 @@ for receipt in receipts:
 command.extend(["--agent-id", agent, "--node-identity-sha256", identity, "--output", str(root / "bundle.json")])
 subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 PY
+  then
+    rm -f "$bundle" "$expectations"
+    command="$(remote_deployment_fenced_exec "$deployment_id" 0 rm -rf \
+      "$remote_root" "$remote_helper")"
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${ssh_args[@]}" "$ssh_target" "$command" >/dev/null 2>&1 || true
+    echo "ERROR: ${agent}: remote prerequisite proof failed" >&2
+    return 1
+  fi
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
     "cat $(shell_quote "$remote_root/bundle.json")")"
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-    "${ssh_args[@]}" "$ssh_target" "$command" > "$bundle"
-  chmod 0600 "$bundle"
+  if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$command" > "${bundle}.tmp"; then
+    rm -f "${bundle}.tmp" "$bundle" "$expectations"
+    echo "ERROR: ${agent}: prerequisite bundle retrieval failed" >&2
+    return 1
+  fi
+  chmod 0600 "${bundle}.tmp"
+  mv -f "${bundle}.tmp" "$bundle"
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
-    "cat $(shell_quote "$remote_root/expectations.json"); rm -rf $(shell_quote "$remote_root") $(shell_quote "$remote_helper")")"
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
-    "${ssh_args[@]}" "$ssh_target" "$command" > "$expectations"
-  chmod 0600 "$expectations"
-  "$PYTHON_BIN" "$PREREQUISITE_RECEIPT_HELPER" validate-bundle \
+    "set -e; cat $(shell_quote "$remote_root/expectations.json"); rm -rf $(shell_quote "$remote_root") $(shell_quote "$remote_helper")")"
+  if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" "$command" > "${expectations}.tmp"; then
+    rm -f "${expectations}.tmp" "$bundle" "$expectations"
+    echo "ERROR: ${agent}: prerequisite expectations retrieval failed" >&2
+    return 1
+  fi
+  chmod 0600 "${expectations}.tmp"
+  mv -f "${expectations}.tmp" "$expectations"
+  if ! "$PYTHON_BIN" "$PREREQUISITE_RECEIPT_HELPER" validate-bundle \
     --bundle "$bundle" --expectations "$expectations" \
     --agent-id "$agent" --node-identity-sha256 "$identity_sha" \
-    --max-age-seconds 3600 >/dev/null
+    --max-age-seconds 3600 >/dev/null; then
+    rm -f "$bundle" "$expectations"
+    echo "ERROR: ${agent}: prerequisite bundle validation failed" >&2
+    return 1
+  fi
   echo "==> ${agent}: eight exact prerequisite participants proved"
 }
 
@@ -8576,6 +8621,7 @@ run_bounded_node_phase() {
 
 preflight_probe_helper_source() {
   cat <<'PY'
+import ipaddress
 import json
 import os
 import platform
@@ -8590,7 +8636,7 @@ from pathlib import Path
 
 (
     agent, stable_id, generation, revision, expected_os, supervisor, hub_url,
-    codegraph_version, openshell_required, qdrant_url, qdrant_required,
+    codegraph_version, openshell_required, network_provider, qdrant_url, qdrant_required,
     firecrawl_url, firecrawl_required, webdav_url, webdav_required,
 ) = sys.argv[1:]
 expected_platform = {"darwin": "darwin", "linux": "linux"}.get(expected_os.lower())
@@ -8637,7 +8683,25 @@ def service_ready(url, required):
     if not truthy(required):
         return True
     parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
+    hostname = parsed.hostname or ""
+    local = hostname in {"127.0.0.1", "::1", "localhost"}
+    managed_mesh = False
+    if network_provider in {"tailscale", "headscale"}:
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            managed_mesh = hostname.endswith((".ts.net", ".svc.cluster.local"))
+        else:
+            managed_mesh = address.is_private or address in ipaddress.ip_network("100.64.0.0/10")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or not (local or managed_mesh)
+    ):
         return False
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
@@ -8757,7 +8821,7 @@ preflight_node_probe_worker() {
   local spec="$1" helper_file="$2" fields=() agent agent_id generation
   local expected_os supervisor hub_url identity_file evidence_file ssh_parts=()
   local ssh_args=() ssh_target item last_index reviewed_file reviewed_status
-  local openshell_required qdrant_url qdrant_required firecrawl_url firecrawl_required
+  local openshell_required network_provider qdrant_url qdrant_required firecrawl_url firecrawl_required
   local webdav_url webdav_required
   IFS='|' read -r -a fields <<<"$spec"
   agent="${fields[0]}"
@@ -8770,6 +8834,7 @@ preflight_node_probe_worker() {
   firecrawl_url="${fields[26]:-}"; firecrawl_required="${fields[28]:-0}"
   webdav_required="${fields[46]:-0}"; webdav_url="${fields[48]:-}"
   openshell_required="${fields[53]:-0}"
+  network_provider="${fields[31]:-none}"
   identity_file="$(node_route_identity_file "$agent")"
   evidence_file="$TMPDIR_LOCAL/preflight-probe-${agent_id}.json"
   write_live_endpoint_identity "$agent" "$identity_file"
@@ -8788,7 +8853,7 @@ preflight_node_probe_worker() {
   ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
     "${ssh_args[@]}" "$ssh_target" \
-    "python3 -c $(shell_quote "$(cat "$helper_file")") $(shell_quote "$agent") $(shell_quote "$agent_id") $(shell_quote "$generation") $(shell_quote "$GIT_REV") $(shell_quote "$expected_os") $(shell_quote "$supervisor") $(shell_quote "$hub_url") $(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") $(shell_quote "$openshell_required") $(shell_quote "$qdrant_url") $(shell_quote "$qdrant_required") $(shell_quote "$firecrawl_url") $(shell_quote "$firecrawl_required") $(shell_quote "$webdav_url") $(shell_quote "$webdav_required")" \
+    "python3 -c $(shell_quote "$(cat "$helper_file")") $(shell_quote "$agent") $(shell_quote "$agent_id") $(shell_quote "$generation") $(shell_quote "$GIT_REV") $(shell_quote "$expected_os") $(shell_quote "$supervisor") $(shell_quote "$hub_url") $(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") $(shell_quote "$openshell_required") $(shell_quote "$network_provider") $(shell_quote "$qdrant_url") $(shell_quote "$qdrant_required") $(shell_quote "$firecrawl_url") $(shell_quote "$firecrawl_required") $(shell_quote "$webdav_url") $(shell_quote "$webdav_required")" \
     > "$evidence_file"
   chmod 0600 "$evidence_file"
   "$PYTHON_BIN" - "$evidence_file" "$reviewed_file" "$agent" "$agent_id" "$generation" "$GIT_REV" <<'PY'

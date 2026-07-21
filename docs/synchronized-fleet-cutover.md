@@ -125,7 +125,9 @@ from the frozen `~/.mac/fleets.yaml`, binds its live endpoint identity, arms the
 generation-specific phase-1 restore contract, and obtains a read-only
 `mac.fleet_prerequisite_bundle.v1`. The bundle proves the selected supervisor,
 required executables, owner-private input files, source and immutable image
-identity, and required loopback service readiness. Any missing prerequisite
+identity, and required service readiness over either loopback or the configured
+private Tailscale/Headscale mesh. Credential-bearing URLs, public endpoints, and
+unmanaged network targets are rejected. Any missing prerequisite
 fails the complete cohort before the hub is changed or any service is stopped.
 Prerequisite repair and package or image installation are separate operations;
 the synchronized transaction never performs them opportunistically.

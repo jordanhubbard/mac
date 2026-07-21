@@ -8644,6 +8644,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: prereq network provider.",
+    "family": "core",
+    "name": "MAC_PREREQ_NETWORK_PROVIDER",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: prereq openshell required.",
     "family": "core",
     "name": "MAC_PREREQ_OPENSHELL_REQUIRED",

@@ -718,6 +718,12 @@ def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
     assert 'path_check("codegraph-node", codegraph_node, executable=True)' in builder
     assert 'os.readlink(codegraph_link) != str(codegraph_bin)' in builder
     assert "MAC_PREREQ_CODEGRAPH_VERSION=" in builder
+    assert "MAC_PREREQ_NETWORK_PROVIDER=" in builder
+    assert 'provider in {"tailscale", "headscale"}' in builder
+    assert 'ipaddress.ip_network("100.64.0.0/10")' in builder
+    assert 'hostname.endswith((".ts.net", ".svc.cluster.local"))' in builder
+    assert "parsed.username is not None" in builder
+    assert "parsed.query" in builder
 
 
 def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
