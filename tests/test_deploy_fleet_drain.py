@@ -1031,16 +1031,88 @@ def test_typed_deploy_proves_pending_identity_before_atomic_hub_commit():
     )[0]
     install = apply_worker.index("install_pending_worker_credential")
     candidate = apply_worker.index("install_and_prove_attestation_candidate", install)
-    assert install < candidate
+    readiness = apply_worker.index("collect_typed_release_ready_evidence", candidate)
+    assert install < candidate < readiness
     apply_handoff = typed.index('typed_phase2_apply_worker "$spec"')
     prepared = typed.index("cohort_journal_mutate prepared", apply_handoff)
     commit = typed.index("prove_and_commit_hub_epoch", prepared)
     finalize = typed.index("cohort_journal_mutate finalize-start", commit)
-    assert install < candidate < prepared < commit < finalize
+    assert install < candidate < readiness < prepared < commit < finalize
     commit_start = prove.index("cohort_journal_mutate commit-start")
     commit_request = prove.index("hub_epoch_client_request", commit_start)
     commit_receipt = prove.index("cohort_journal_mutate commit", commit_request)
     assert commit_start < commit_request < commit_receipt
+
+
+def test_typed_release_readiness_projects_the_open_epoch_without_legacy_gate():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    collector = deploy.split("collect_typed_release_ready_evidence() {", 1)[1].split(
+        "\n}\n\ntyped_phase2_arm_worker", 1
+    )[0]
+    assert '"$TMPDIR_LOCAL/participant-state-${agent_id}.json"' in collector
+    assert '"$TMPDIR_LOCAL/hub-open-receipt.json"' in collector
+    assert 'receipt.get("status") != "open"' in collector
+    assert 'participant.get("epoch_hold_reason")' in collector
+    assert 'participant.get("principal_id") != principal_id' in collector
+    assert "assert_phase1_attestation_matches_controller" in collector
+    assert "write_release_ready_evidence" in collector
+    assert "hub_agent_restart_gate" not in collector
+    assert "set_remote_mac_agent_service" not in collector
+
+
+def test_release_ready_writer_requires_exact_node_generation(tmp_path: Path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    writer = deploy.split("write_release_ready_evidence() {", 1)[1].split(
+        "\n}\n\nset_remote_mac_agent_service", 1
+    )[0]
+    embedded = writer.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    output = tmp_path / "ready.json"
+    deployment_id = "a" * 40 + ":rocky:stamp:nonce"
+    quiescence = json.dumps(
+        {
+            "schema": "mac.daemon_resource_quiescence_attestation.v1",
+            "agent": "rocky",
+            "generation": deployment_id,
+        }
+    )
+    arguments = [
+        str(output),
+        "rocky",
+        "agent_rocky",
+        "launchd",
+        "mac",
+        deployment_id,
+        "2026-07-21T00:00:00Z",
+        "fleet release epoch hold",
+        "1",
+        "principal-rocky",
+        "1",
+        deployment_id,
+        "0",
+        quiescence,
+    ]
+    result = subprocess.run(
+        [sys.executable, "-c", embedded, *arguments],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["schema"] == "mac.deploy_release_ready.v1"
+    assert payload["owns_hold"] is True
+    assert payload["principal_id"] == "principal-rocky"
+    assert output.stat().st_mode & 0o777 == 0o600
+
+    arguments[-3] = deployment_id + "-wrong"
+    mismatch = subprocess.run(
+        [sys.executable, "-c", embedded, *arguments],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert mismatch.returncode != 0
+    assert "exact daemon quiescence" in mismatch.stderr
 
 
 def test_deferred_supervisord_worker_never_autostarts_during_transaction():
@@ -1330,8 +1402,12 @@ def test_deployment_controller_is_fenced_across_every_restart_and_release():
     assert 'assert_remote_deployment_lock "$agent" "$expected_deployment_id"' in service
     assert 'if [ "$deployment_id" != "$expected_deployment_id" ]' in service
     arm = service.index('hub_agent_restart_gate "$release_gate_phase"')
-    ready_record = service.index("mac.deploy_release_ready.v1", arm)
+    ready_record = service.index("write_release_ready_evidence", arm)
     assert arm < ready_record
+    writer = deploy.split("write_release_ready_evidence() {", 1)[1].split(
+        "\n}\n\nset_remote_mac_agent_service", 1
+    )[0]
+    assert "mac.deploy_release_ready.v1" in writer
     commit = deploy.split("commit_fleet_release_epoch() {", 1)[1].split(
         "enforce_bound_worker_credentials() {", 1
     )[0]
@@ -2617,7 +2693,7 @@ def test_deferred_release_arms_each_worker_then_uses_one_batch_commit():
     assert 'release_commit_mode="${8:-immediate}"' in service
     deferred = service.split('if [ "$release_commit_mode" = deferred ]; then', 1)[1]
     assert "release_gate_phase=arm" in deferred
-    assert "mac.deploy_release_ready.v1" in deferred
+    assert "write_release_ready_evidence" in deferred
     arm = hub_gate.split('if phase == "arm":', 1)[1].split("cleared = False", 1)[0]
     assert '"release_ready": True' in arm
     assert "dispatch-hold/release" not in arm

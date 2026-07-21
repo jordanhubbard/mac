@@ -6325,6 +6325,81 @@ prepare_remote_mac_agent_deployment() {
   echo "==> ${agent}: durable hub dispatch barrier established before remote mutation"
 }
 
+write_release_ready_evidence() {
+  local ready_file="$1" agent="$2" agent_id="$3" supervisor="$4"
+  local fleet_name="$5" generation="$6" baseline="$7" hold_reason="$8"
+  local owns_hold="$9" principal_id="${10}" require_authenticated="${11}"
+  local deployment_id="${12}" require_report_executor="${13}"
+  local quiescence_attestation="${14}"
+  "$PYTHON_BIN" - "$ready_file" "$agent" "$agent_id" "$supervisor" "$fleet_name" \
+    "$generation" "$baseline" "$hold_reason" "$owns_hold" \
+    "$principal_id" "$require_authenticated" "$deployment_id" \
+    "$require_report_executor" "$quiescence_attestation" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+(
+    output,
+    agent,
+    agent_id,
+    supervisor,
+    fleet_name,
+    generation,
+    baseline,
+    hold_reason,
+    owns_hold,
+    principal_id,
+    require_authenticated,
+    deployment_id,
+    require_report_executor,
+    quiescence_raw,
+) = sys.argv[1:]
+quiescence = json.loads(quiescence_raw)
+if (
+    quiescence.get("schema")
+    != "mac.daemon_resource_quiescence_attestation.v1"
+    or quiescence.get("agent") != agent
+    or quiescence.get("generation") != deployment_id
+):
+    raise SystemExit("release readiness lacks exact daemon quiescence attestation")
+path = Path(output)
+fd, raw = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+tmp = Path(raw)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(
+            {
+                "schema": "mac.deploy_release_ready.v1",
+                "agent": agent,
+                "agent_id": agent_id,
+                "supervisor": supervisor,
+                "fleet_name": fleet_name,
+                "generation": generation,
+                "baseline_seen": baseline,
+                "hold_reason": hold_reason,
+                "owns_hold": owns_hold == "1",
+                "principal_id": principal_id,
+                "require_authenticated": require_authenticated == "1",
+                "deployment_id": deployment_id,
+                "require_report_executor": require_report_executor == "1",
+                "quiescence": quiescence,
+            },
+            stream,
+            sort_keys=True,
+        )
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    tmp.chmod(0o600)
+    os.replace(tmp, path)
+finally:
+    tmp.unlink(missing_ok=True)
+PY
+}
+
 set_remote_mac_agent_service() {
   local agent="$1" supervisor="$2" fleet_name="$3" action="$4"
   local release_mode="${5:-keep}" release_policy="${6:-authenticated}"
@@ -6717,68 +6792,11 @@ REMOTE_RELEASE
     fi
     if [ "$release_commit_mode" = deferred ]; then
       local ready_file="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
-      "$PYTHON_BIN" - "$ready_file" "$agent" "$agent_id" "$supervisor" "$fleet_name" \
-      "$generation" "$release_baseline" "$hold_reason" "$prior_owned" \
-        "$expected_principal_id" "$require_authenticated" "$deployment_id" \
-        "$require_report_executor" "$quiescence_attestation" <<'PY'
-import json
-import os
-import sys
-import tempfile
-from pathlib import Path
-
-(
-    output,
-    agent,
-    agent_id,
-    supervisor,
-    fleet_name,
-    generation,
-    baseline,
-    hold_reason,
-    owns_hold,
-    principal_id,
-    require_authenticated,
-    deployment_id,
-    require_report_executor,
-    quiescence_raw,
-) = sys.argv[1:]
-quiescence = json.loads(quiescence_raw)
-if quiescence.get("schema") != "mac.daemon_resource_quiescence_attestation.v1":
-    raise SystemExit("release readiness lacks daemon quiescence attestation")
-path = Path(output)
-fd, raw = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
-tmp = Path(raw)
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
-        json.dump(
-            {
-                "schema": "mac.deploy_release_ready.v1",
-                "agent": agent,
-                "agent_id": agent_id,
-                "supervisor": supervisor,
-                "fleet_name": fleet_name,
-                "generation": generation,
-                "baseline_seen": baseline,
-                "hold_reason": hold_reason,
-                "owns_hold": owns_hold == "1",
-                "principal_id": principal_id,
-                "require_authenticated": require_authenticated == "1",
-                "deployment_id": deployment_id,
-                "require_report_executor": require_report_executor == "1",
-                "quiescence": quiescence,
-            },
-            stream,
-            sort_keys=True,
-        )
-        stream.write("\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    tmp.chmod(0o600)
-    os.replace(tmp, path)
-finally:
-    tmp.unlink(missing_ok=True)
-PY
+      write_release_ready_evidence "$ready_file" "$agent" "$agent_id" \
+        "$supervisor" "$fleet_name" "$generation" "$release_baseline" \
+        "$hold_reason" "$prior_owned" "$expected_principal_id" \
+        "$require_authenticated" "$deployment_id" \
+        "$require_report_executor" "$quiescence_attestation"
       echo "==> ${agent}: release armed under durable hold for fleet epoch commit"
       return 0
     fi
@@ -13375,6 +13393,101 @@ typed_quiesce_worker() {
     "$supervisor" "$fleet_name" "$os_kind"
 }
 
+collect_typed_release_ready_evidence() {
+  # The hub epoch already owns the participant hold and pending identity. Build
+  # the local prepared record from that exact open receipt instead of entering
+  # the legacy per-node hold/release protocol a second time.
+  local spec="$1" fields=() agent agent_id fleet_name deployment_id generation
+  local supervisor require_report_executor=0 quiescence_attestation ready_file
+  local participant_state
+  local open_receipt="$TMPDIR_LOCAL/hub-open-receipt.json"
+  local manifest baseline_seen hold_reason principal_id
+  local values=() item
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
+  fleet_name="${fields[23]:-mac}"
+  participant_state="$TMPDIR_LOCAL/participant-state-${agent_id}.json"
+  manifest="$(pending_worker_manifest_file "$agent")"
+  deployment_id="$(deployment_id_for_agent "$agent")"
+  generation="$(worker_generation_for_agent "$agent")"
+  supervisor="$(phase1_resolved_supervisor_for_agent "$agent")" || return 1
+  if spec_requires_report_repository_executor "$spec"; then
+    require_report_executor=1
+  fi
+  while IFS= read -r -d '' item; do values+=("$item"); done < <(
+    "$PYTHON_BIN" - "$participant_state" "$open_receipt" "$manifest" \
+      "$agent_id" "$COHORT_EPOCH_ID" "$generation" <<'PY'
+import json
+import sys
+
+state_path, receipt_path, manifest_path, agent_id, epoch_id, generation = sys.argv[1:]
+state = json.load(open(state_path, encoding="utf-8"))
+receipt = json.load(open(receipt_path, encoding="utf-8"))
+manifest = json.load(open(manifest_path, encoding="utf-8"))
+if (
+    state.get("schema") != "mac.fleet_release_participant_state.v1"
+    or state.get("agent_id") != agent_id
+):
+    raise SystemExit("typed release readiness has invalid participant state")
+agents = receipt.get("agents")
+if (
+    receipt.get("schema") != "mac.fleet_release_epoch_receipt.v1"
+    or receipt.get("status") != "open"
+    or receipt.get("epoch_id") != epoch_id
+    or not isinstance(agents, list)
+    or receipt.get("cohort_size") != len(agents)
+):
+    raise SystemExit("typed release readiness has invalid hub open receipt")
+matches = [item for item in agents if item.get("agent_id") == agent_id]
+if len(matches) != 1:
+    raise SystemExit("typed release readiness lacks one exact hub participant")
+participant = matches[0]
+principal_id = str(manifest.get("principal_id") or "")
+if (
+    manifest.get("schema") != "mac.worker_credential_install.v1"
+    or manifest.get("agent_id") != agent_id
+    or not principal_id
+    or participant.get("principal_id") != principal_id
+    or participant.get("generation") != generation
+    or participant.get("prior_dispatch_hold")
+    is not state.get("expected_dispatch_hold")
+    or participant.get("prior_hold_reason") != state.get("expected_hold_reason")
+    or participant.get("prior_hold_at") != state.get("expected_hold_at")
+):
+    raise SystemExit("typed release readiness differs from the opened hub identity")
+baseline = str(state.get("baseline_seen") or "")
+hold_reason = str(participant.get("epoch_hold_reason") or "")
+if not baseline or not hold_reason:
+    raise SystemExit("typed release readiness lacks a baseline or epoch hold")
+for value in (baseline, hold_reason, principal_id):
+    sys.stdout.buffer.write(value.encode("utf-8") + b"\0")
+PY
+  )
+  [ "${#values[@]}" -eq 3 ] || {
+    echo "ERROR: ${agent}: typed hub identity projection is incomplete" >&2
+    return 1
+  }
+  baseline_seen="${values[0]}"; hold_reason="${values[1]}"; principal_id="${values[2]}"
+  assert_remote_deployment_lock "$agent" "$deployment_id" || return 1
+  if ! quiescence_attestation="$(
+    remote_daemon_quiescence_attestation "$agent" "$deployment_id"
+  )"; then
+    echo "ERROR: ${agent}: typed daemon quiescence could not be proved" >&2
+    return 1
+  fi
+  if ! assert_phase1_attestation_matches_controller \
+    "$agent_id" "$quiescence_attestation"; then
+    echo "ERROR: ${agent}: typed daemon proof differs from phase-1" >&2
+    return 1
+  fi
+  ready_file="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
+  write_release_ready_evidence "$ready_file" "$agent" "$agent_id" \
+    "$supervisor" "$fleet_name" "$generation" "$baseline_seen" \
+    "$hold_reason" 1 "$principal_id" 1 "$deployment_id" \
+    "$require_report_executor" "$quiescence_attestation" || return 1
+  echo "==> ${agent}: typed release readiness bound to hub epoch and phase-1 proof"
+}
+
 typed_phase2_arm_worker() {
   local spec="$1" hub_token="$2" hub_tunnel_pubkey="$3" github_review_key_b64="$4"
   local fields=() agent
@@ -13408,6 +13521,7 @@ typed_phase2_apply_worker() {
     "$(node_route_identity_sha256 "$agent")" || return 1
   install_pending_worker_credential "$agent" "$supervisor" "$fleet_name" || return 1
   install_and_prove_attestation_candidate "$agent" "$supervisor" "$fleet_name" || return 1
+  collect_typed_release_ready_evidence "$spec" || return 1
   evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
   [ -s "$evidence" ] || {
     echo "ERROR: ${agent}: typed apply lacks prepared evidence" >&2
