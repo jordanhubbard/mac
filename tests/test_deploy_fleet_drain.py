@@ -1058,6 +1058,13 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
     assert deploy_host.count(restart) == 1
     reconcile = deploy_host.index('reconcile_remote_deploy "$agent" "$target"')
     assert reconcile < deploy_host.index(restart, reconcile)
+    failed_reconcile = (
+        'if ! reconcile_remote_deploy "$agent" "$target" '
+        '"$openshell_disable_requested"; then'
+    )
+    assert failed_reconcile in deploy_host
+    failure_block = deploy_host.split(failed_reconcile, 1)[1].split("fi", 1)[0]
+    assert "return 1" in failure_block
 
 
 def test_deploy_restarts_agent_only_after_post_manifest_reconciliation():

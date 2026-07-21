@@ -12561,7 +12561,11 @@ verify_managed_openshell_runtime
 if [ "$NODE_ACTION" = legacy-one-shot ]; then
   # Optional capabilities and footprint reconciliation are independent
   # onboarding/post-commit jobs, never part of synchronized phase 2.
-  install_gpu_gen_server || true
+  if truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; then
+    log "gen server: deferring to the journaled phase-1 media lifecycle"
+  else
+    install_gpu_gen_server || true
+  fi
   install_agent_footprint || true
 else
   log "typed phase 2 deferred package-footprint reconciliation"
@@ -12654,7 +12658,9 @@ case "$(printf '%s' "$DEFER_CLEAR_DRAIN" | tr 'A-Z' 'a-z')" in
   *) clear_mac_agent_drain_after_deploy ;;
 esac
 
-if [ "$NODE_ACTION" = apply-phase2 ]; then
+if [ "$NODE_ACTION" = apply-phase2 ] \
+    || { [ "$NODE_ACTION" = legacy-one-shot ] \
+      && truthy "${MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE:-0}"; }; then
   reconcile_typed_media_services
 fi
 

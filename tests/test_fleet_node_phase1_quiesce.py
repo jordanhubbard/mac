@@ -1627,6 +1627,14 @@ def test_synchronized_node_install_reconciles_journaled_media_before_post_manife
     resume = main.index("reconcile_typed_media_services")
     post = main.index('write_deploy_manifest "post" "$MANIFEST_POST"')
     assert resume < post
+    lifecycle_gate = main[main.rfind("if ", 0, resume):resume]
+    assert '"$NODE_ACTION" = apply-phase2' in lifecycle_gate
+    assert '"$NODE_ACTION" = legacy-one-shot' in lifecycle_gate
+    assert 'MAC_DEPLOY_REQUIRE_PHASE1_QUIESCENCE' in lifecycle_gate
+    optional = main[:resume].rsplit(
+        'if [ "$NODE_ACTION" = legacy-one-shot ]; then', 1
+    )[1].split("\nfi\n", 1)[0]
+    assert "deferring to the journaled phase-1 media lifecycle" in optional
     reconcile = source.split("reconcile_typed_media_services() {", 1)[1].split(
         "\n}\n", 1
     )[0]

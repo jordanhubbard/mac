@@ -7181,7 +7181,10 @@ PY
       return 1
     fi
     echo "==> ${agent}: ssh exited non-zero; reconciling remote deploy state"
-    reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"
+    if ! reconcile_remote_deploy "$agent" "$target" "$openshell_disable_requested"; then
+      echo "==> ${agent}: remote deploy failed and no valid post manifest was published" >&2
+      return 1
+    fi
   fi
   if [ "$node_action" = arm-phase2 ] || [ "$node_action" = finalize ]; then
     return 0
