@@ -330,7 +330,9 @@ def test_stage_cleanup_normalizes_only_owner_private_inherited_setgid() -> None:
 
     legacy = Path(tempfile.mkdtemp(prefix="mac-deploy-stage-legacy-", dir="/tmp"))
     legacy.chmod(0o2700)
-    (legacy / "payload").write_text("staged", encoding="utf-8")
+    nested = legacy / "nested"
+    nested.mkdir()
+    (nested / "payload").write_text("staged", encoding="utf-8")
     result = subprocess.run(
         [sys.executable, "-c", cleanup, str(legacy)],
         text=True,

@@ -10717,7 +10717,6 @@ cleanup_committed_hub_relay() {
 staged_bundle_cleanup_source() {
   cat <<'PY'
 import os
-import shutil
 import stat
 import sys
 
@@ -10728,6 +10727,36 @@ if parent != "/tmp" or not name.startswith("mac-deploy-stage-"):
 
 parent_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
 directory_fd = None
+
+def remove_tree(directory):
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if not entry.is_dir(follow_symlinks=False):
+                os.unlink(entry.name, dir_fd=directory)
+                continue
+            child_fd = os.open(
+                entry.name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory,
+            )
+            try:
+                opened = os.fstat(child_fd)
+                named = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                if (
+                    not stat.S_ISDIR(opened.st_mode)
+                    or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+                ):
+                    raise SystemExit("staged bundle child changed during cleanup")
+                remove_tree(child_fd)
+                named = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+                    raise SystemExit("staged bundle child changed during cleanup")
+                os.rmdir(entry.name, dir_fd=directory)
+            finally:
+                os.close(child_fd)
+
 try:
     try:
         directory_fd = os.open(
@@ -10760,7 +10789,11 @@ try:
             or stat.S_IMODE(normalized.st_mode) != 0o700
         ):
             raise SystemExit("could not normalize staged bundle cleanup root")
-    shutil.rmtree(name, dir_fd=parent_fd)
+    remove_tree(directory_fd)
+    named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if (observed.st_dev, observed.st_ino) != (named.st_dev, named.st_ino):
+        raise SystemExit("staged bundle root changed during cleanup")
+    os.rmdir(name, dir_fd=parent_fd)
 finally:
     if directory_fd is not None:
         os.close(directory_fd)
