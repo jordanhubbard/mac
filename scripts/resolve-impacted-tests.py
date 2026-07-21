@@ -95,14 +95,21 @@ def resolve(
     changed_files: Iterable[str],
     changed_base_lines: dict[str, set[int]],
     *,
-    resolved_base_sha: str | None,
+    fresh_map_files: Iterable[str] | None,
     policy: SelectionPolicy,
     impact_map: dict | None,
     codegraph_tests: Iterable[str],
     codegraph_problem: str | None,
     repo_root: Path = ROOT,
 ) -> dict[str, object]:
-    """Pure hybrid resolution. Returns a ``mac.sanity_selection.v1`` document."""
+    """Pure hybrid resolution. Returns a ``mac.sanity_selection.v1`` document.
+
+    ``fresh_map_files`` is the set of mapped source files whose line/file index
+    is trustworthy for THIS selection base — computed by the IO layer
+    (``_fresh_map_files``): every mapped file on an exact base match, the subset
+    unchanged since the map's ``base_sha`` on an ancestor base, or empty when the
+    map is stale/divergent. A source file outside this set falls through to
+    CodeGraph/full, so the map is used per-file, never all-or-nothing."""
     changed = sorted({path for path in changed_files if path})
     if not changed:
         return _full("no_changed_file_scope", changed)
@@ -127,19 +134,16 @@ def resolve(
         # tests that exercise it, so the only safe scope is the full suite.
         return _full("unmappable_non_code_change", changed, opaque_files=sorted(opaque))
 
-    map_fresh = bool(
-        impact_map is not None
-        and resolved_base_sha is not None
-        and impact_map.get("base_sha") == resolved_base_sha
-    )
+    fresh_files = frozenset(fresh_map_files or ())
     nodeids = impact_map.get("nodeids", []) if impact_map else []
     file_tests = impact_map.get("file_tests", {}) if impact_map else {}
     file_line_tests = impact_map.get("file_line_tests", {}) if impact_map else {}
+    map_fresh = bool(fresh_files)
 
     selected: set[str] = set(test_changes)
     unresolved_source: list[str] = []
     for path in source_changes:
-        if map_fresh and path in file_tests:
+        if path in fresh_files and path in file_tests:
             base_lines = changed_base_lines.get(path)
             if base_lines:
                 line_index = file_line_tests.get(path, {})
@@ -288,6 +292,52 @@ def load_map(map_path: Path) -> dict | None:
     return document if isinstance(document, dict) else None
 
 
+def _is_ancestor(ancestor: str, descendant: str, repo_root: Path) -> bool:
+    """True iff ``ancestor`` is a first-parent/merge ancestor of ``descendant``."""
+    return (
+        _git(["merge-base", "--is-ancestor", ancestor, descendant], repo_root).returncode
+        == 0
+    )
+
+
+def _changed_between(older: str, newer: str, repo_root: Path) -> set[str] | None:
+    """Files whose bytes differ between the two commit TREES (endpoint compare,
+    not path history), or None on git error so the caller can fail closed."""
+    result = _git(["diff", "--name-only", older, newer], repo_root)
+    if result.returncode != 0:
+        return None
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _fresh_map_files(
+    impact_map: dict | None, resolved_base_sha: str | None, repo_root: Path
+) -> frozenset[str]:
+    """Mapped source files whose line/file index is valid for this base.
+
+    Exact base match -> every mapped file. Otherwise the map is still usable for
+    any mapped file whose content is byte-identical at the map's ``base_sha`` and
+    the selection base, but ONLY when ``base_sha`` is an ancestor of that base
+    (never trust a map from divergent or rewound history). Any git failure or a
+    non-ancestor base yields the empty set, i.e. the strict pre-existing
+    fail-closed behavior."""
+    if not impact_map or not resolved_base_sha:
+        return frozenset()
+    map_base = impact_map.get("base_sha")
+    mapped = set(impact_map.get("file_tests", {}))
+    if not map_base or not mapped:
+        return frozenset()
+    if map_base == resolved_base_sha:
+        return frozenset(mapped)
+    if not _is_ancestor(map_base, resolved_base_sha, repo_root):
+        return frozenset()
+    changed = _changed_between(map_base, resolved_base_sha, repo_root)
+    if changed is None:
+        return frozenset()
+    # A mapped file changed since base_sha => its base-side line numbers no
+    # longer align with the map; drop it (it falls through to CodeGraph/full).
+    return frozenset(mapped - changed)
+
+
 def select_from_git(
     *,
     base: str | None,
@@ -304,12 +354,15 @@ def select_from_git(
         return _full("selection_error", [], error=str(exc))
     source_changes = [path for path in changed_files if _is_source_code(path)]
     cg_tests, cg_problem = codegraph(source_changes, repo_root)
+    impact_map = load_map(policy.map_path)
     return resolve(
         changed_files,
         base_lines,
-        resolved_base_sha=_resolve_sha(base, repo_root),
+        fresh_map_files=_fresh_map_files(
+            impact_map, _resolve_sha(base, repo_root), repo_root
+        ),
         policy=policy,
-        impact_map=load_map(policy.map_path),
+        impact_map=impact_map,
         codegraph_tests=cg_tests,
         codegraph_problem=cg_problem,
         repo_root=repo_root,

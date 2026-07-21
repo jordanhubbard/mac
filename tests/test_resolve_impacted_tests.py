@@ -8,6 +8,7 @@ be safely mapped, the resolver must escalate to a full run.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -75,10 +76,13 @@ def policy() -> "R.SelectionPolicy":
 
 
 def _resolve(repo, policy, impact_map, changed, base_lines=None, *, fresh=True, cg=(), cg_problem=None):
+    # ``fresh`` models the IO-layer freshness decision: True => every mapped file
+    # is trustworthy for this base (exact match), False => none (stale/divergent).
+    fresh_files = list(impact_map.get("file_tests", {})) if (fresh and impact_map) else []
     return R.resolve(
         changed,
         base_lines or {},
-        resolved_base_sha=BASE_SHA if fresh else "b" * 40,
+        fresh_map_files=fresh_files,
         policy=policy,
         impact_map=impact_map,
         codegraph_tests=list(cg),
@@ -198,3 +202,97 @@ def test_missing_map_treats_all_source_as_unresolved(repo, policy):
         fresh=False, cg=(), cg_problem=None,
     )
     assert result["mode"] == "full"
+
+
+# --------------------------------------------------------------------------
+# Ancestor-tolerant, per-file freshness (_fresh_map_files, git-backed)
+# --------------------------------------------------------------------------
+
+
+def _git_repo(root: Path):
+    def g(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=root, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    g("init", "-q")
+    g("config", "user.email", "t@example.com")
+    g("config", "user.name", "Tester")
+    g("config", "commit.gpgsign", "false")
+    return g
+
+
+def _commit_file(g, root: Path, rel: str, content: str) -> str:
+    target = root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    g("add", rel)
+    g("commit", "-qm", f"touch {rel}")
+    return g("rev-parse", "HEAD")
+
+
+@pytest.fixture()
+def mapped_repo(tmp_path: Path):
+    """A real git repo with two mapped source files committed at a base SHA."""
+    g = _git_repo(tmp_path)
+    _commit_file(g, tmp_path, "src/mac/foo.py", "x = 1\n")
+    base = _commit_file(g, tmp_path, "src/mac/bar.py", "y = 2\n")
+    impact_map = {
+        "base_sha": base,
+        "file_tests": {"src/mac/foo.py": [0], "src/mac/bar.py": [1]},
+    }
+    return tmp_path, g, base, impact_map
+
+
+def test_fresh_files_exact_base_returns_all_mapped(mapped_repo):
+    root, _g, base, impact_map = mapped_repo
+    fresh = R._fresh_map_files(impact_map, base, root)
+    assert fresh == frozenset({"src/mac/foo.py", "src/mac/bar.py"})
+
+
+def test_fresh_files_ancestor_drops_only_the_changed_file(mapped_repo):
+    root, g, _base, impact_map = mapped_repo
+    # Advance main: change ONLY bar.py. foo.py is byte-identical to base.
+    newer = _commit_file(g, root, "src/mac/bar.py", "y = 3\n")
+    fresh = R._fresh_map_files(impact_map, newer, root)
+    # foo.py unchanged since base_sha -> still trustworthy; bar.py changed -> dropped.
+    assert fresh == frozenset({"src/mac/foo.py"})
+
+
+def test_fresh_files_non_ancestor_base_is_empty(mapped_repo):
+    root, g, base, impact_map = mapped_repo
+    # A map built at a DESCENDANT of the selection base is not an ancestor of it.
+    newer = _commit_file(g, root, "src/mac/foo.py", "x = 9\n")
+    stale_map = {**impact_map, "base_sha": newer}
+    assert R._fresh_map_files(stale_map, base, root) == frozenset()
+
+
+def test_fresh_files_handles_missing_inputs(mapped_repo):
+    root, _g, base, impact_map = mapped_repo
+    assert R._fresh_map_files(None, base, root) == frozenset()
+    assert R._fresh_map_files(impact_map, None, root) == frozenset()
+    assert R._fresh_map_files({"file_tests": {"src/x.py": [0]}}, base, root) == frozenset()
+
+
+def test_ancestor_freshness_end_to_end_line_selection(mapped_repo):
+    """Integration: on an ancestor base where only bar.py changed, a foo.py change
+    still resolves at line level from the map (map stays useful as main moves)."""
+    root, g, _base, impact_map = mapped_repo
+    impact_map["nodeids"] = ["tests/test_foo.py::test_a"]
+    impact_map["file_line_tests"] = {"src/mac/foo.py": {"1": [0]}}
+    newer = _commit_file(g, root, "src/mac/bar.py", "y = 3\n")
+
+    fresh = R._fresh_map_files(impact_map, newer, root)
+    result = R.resolve(
+        ["src/mac/foo.py"],
+        {"src/mac/foo.py": {1}},
+        fresh_map_files=fresh,
+        policy=R.SelectionPolicy(),
+        impact_map=impact_map,
+        codegraph_tests=[],
+        codegraph_problem="codegraph_unavailable",
+        repo_root=root,
+    )
+    assert result["mode"] == "focused"
+    assert result["map_fresh"] is True
+    assert result["tests"] == ["tests/test_foo.py::test_a"]
