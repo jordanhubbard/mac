@@ -151,25 +151,62 @@ jobs:
   portfolio:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       MAC_SECRET_KEY: ci-test-key-with-at-least-32-characters-of-entropy
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39
       - name: Set up primary Python
         run: uv python install 3.11
       - name: Sync dependencies
         run: uv sync --extra dev --python 3.11
-      - name: Measure per-test contribution and duration
+      - name: Measure per-test contribution and rebuild the impact map
         env:
           MAC_TEST_PORTFOLIO: "1"
+          MAC_TEST_REBUILD_MAP: "1"
         run: scripts/run-contract-tests.sh
       - name: Upload portfolio evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: test-portfolio
           path: .test-portfolio/
+      - name: Commit the refreshed impact map to main
+        # Only the scheduled/dispatched run on main is allowed to advance the
+        # committed map. run-contract-tests.sh only regenerates the artifact after
+        # a green whole-repo portfolio gate, so any commit here reflects a passing
+        # suite. [skip ci] keeps the data-only commit from re-triggering CI (and the
+        # image republish path). The rebase-retry loop tolerates a racing push to
+        # main; the map touches a single non-source data file, so it never conflicts
+        # with code changes and never invalidates another file's map freshness.
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          map=src/mac/data/test_impact_map.json
+          if git diff --quiet -- "$map"; then
+            echo "impact map unchanged; nothing to commit"
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$map"
+          git commit -m "chore(test-selection): refresh committed impact map [skip ci]" \
+            -m "Rebuilt from the scheduled portfolio coverage run at ${GITHUB_SHA}."
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              echo "pushed refreshed impact map"
+              exit 0
+            fi
+            echo "push rejected (attempt ${attempt}); rebasing onto origin/main"
+            git fetch origin main
+            git rebase origin/main
+          done
+          echo "failed to push refreshed impact map after retries" >&2
+          exit 1
 
   container-contract:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
