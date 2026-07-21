@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -40,11 +41,11 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
         'run_bounded_node_phase "$selected_specs_file" phase2-arm',
         "cohort_journal_mutate phase2-armed",
         "cohort_journal_mutate phase2-start",
-        'run_bounded_node_phase "$selected_specs_file" phase2-apply',
+        'typed_phase2_apply_worker "$spec"',
         "cohort_journal_mutate prepared",
         "prove_and_commit_hub_epoch",
         "cohort_journal_mutate finalize-start",
-        'run_bounded_node_phase "$selected_specs_file" finalize-node',
+        'typed_finalize_worker "$spec" "$hub_agent"',
         "cohort_journal_mutate finalized-node",
     )
     positions = [typed.index(value) for value in ordered]
@@ -58,6 +59,24 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
     assert quiescence.count("while IFS= read -r spec; do") == 1
     assert 'run_bounded_node_phase "$selected_specs_file" quiesce' not in quiescence
 
+    phase2_apply = typed.split(
+        'echo "==> fleet: applying and proving the held cohort"', 1
+    )[1].split("prove_and_commit_hub_epoch", 1)[0]
+    assert phase2_apply.count("while IFS= read -r spec; do") == 1
+    assert 'run_bounded_node_phase "$selected_specs_file" phase2-apply' not in phase2_apply
+    assert phase2_apply.index("cohort_journal_mutate phase2-start") < phase2_apply.index(
+        'typed_phase2_apply_worker "$spec"'
+    ) < phase2_apply.index("cohort_journal_mutate prepared")
+
+    finalization = typed.split(
+        'echo "==> fleet: finalizing committed node generations"', 1
+    )[1].split("cohort_journal_mutate finalize ", 1)[0]
+    assert finalization.count("while IFS= read -r spec; do") == 1
+    assert 'run_bounded_node_phase "$selected_specs_file" finalize-node' not in finalization
+    assert finalization.index("cohort_journal_mutate finalize-start") < finalization.index(
+        'typed_finalize_worker "$spec" "$hub_agent"'
+    ) < finalization.index("cohort_journal_mutate finalized-node")
+
     workers = source.split("typed_phase1_prepare_worker() {", 1)[1].split(
         "\nrun_typed_cohort() {", 1
     )[0]
@@ -69,6 +88,93 @@ def test_parallel_typed_barriers_keep_wal_parent_owned_and_ordered() -> None:
     assert "phase_status_files" in bounded
     assert '[ "$failed" -ne 0 ] && [ "$aggregate_failures" != 1 ]' in bounded
     assert 'while [ "$index" -lt "$total" ]' in bounded
+
+
+def test_phase2_controller_rollback_uses_intent_before_optional_post_manifest(
+    tmp_path: Path,
+) -> None:
+    source = DEPLOY.read_text(encoding="utf-8")
+    rollback = _function(
+        source,
+        "rollback_remote_phase2_generation",
+        "write_cohort_recovery_probe_evidence() {",
+    )
+    controller = rollback.split("code=\"$(command cat <<'PY'\n", 1)[1].split(
+        "\nPY\n)\"", 1
+    )[0]
+
+    generation = "generation-1"
+    revision = "a" * 40
+    deploy_ts = "20260721T191908Z"
+    prior_generation = "generation-0"
+    prior_revision = "b" * 40
+    logs = tmp_path / ".mac" / "logs"
+    logs.mkdir(parents=True)
+    intent_path = logs / f"rollback-{deploy_ts}-intent.json"
+    script_path = logs / f"rollback-{deploy_ts}.sh"
+    receipt_path = logs / f"rollback-{deploy_ts}-complete.json"
+    script = f"""#!/usr/bin/env bash
+set -euo pipefail
+{shlex.quote(sys.executable)} - {shlex.quote(str(intent_path))} {shlex.quote(str(script_path))} {shlex.quote(str(receipt_path))} <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+intent_path, script_path, receipt_path = map(Path, sys.argv[1:])
+intent_raw = intent_path.read_bytes()
+intent = json.loads(intent_raw)
+payload = {{
+    "schema": "mac.fleet_node_rollback.v1",
+    "status": "restored",
+    "generation": intent["generation"],
+    "revision": intent["revision"],
+    "prior_generation": intent["prior_generation"],
+    "prior_revision": intent["prior_revision"],
+    "intent_sha256": hashlib.sha256(intent_raw).hexdigest(),
+    "rollback_sha256": hashlib.sha256(script_path.read_bytes()).hexdigest(),
+}}
+receipt_path.write_text(json.dumps(payload), encoding="utf-8")
+os.chmod(receipt_path, 0o600)
+PY
+"""
+    script_path.write_text(script, encoding="utf-8")
+    script_path.chmod(0o700)
+    script_sha256 = hashlib.sha256(script_path.read_bytes()).hexdigest()
+    intent = {
+        "schema": "mac.fleet_node_rollback_intent.v1",
+        "status": "armed",
+        "generation": generation,
+        "revision": revision,
+        "prior_generation": prior_generation,
+        "prior_revision": prior_revision,
+        "rollback_capable": True,
+        "rollback": {
+            "path": str(script_path),
+            "sha256": script_sha256,
+            "completion_receipt": str(receipt_path),
+        },
+    }
+    intent_path.write_text(json.dumps(intent), encoding="utf-8")
+    intent_path.chmod(0o600)
+
+    environment = dict(os.environ)
+    environment["HOME"] = str(tmp_path)
+    result = subprocess.run(
+        [sys.executable, "-c", controller, generation, revision, deploy_ts],
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(result.stdout)
+    assert receipt["status"] == "restored"
+    assert receipt["intent_sha256"] == hashlib.sha256(intent_path.read_bytes()).hexdigest()
+    assert not (logs / f"deploy-manifest-{deploy_ts}-post.json").exists()
+    assert 'except FileNotFoundError:' in controller
+    assert 'receipt.get("post_manifest_sha256")' not in controller
 
 
 def test_cohort_journal_mutation_failure_preserves_revision() -> None:

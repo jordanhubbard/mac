@@ -11444,32 +11444,87 @@ def open_private(path, mode, limit):
     return descriptor, raw
 
 
-manifest_path = mac_home / "logs" / ("deploy-manifest-%s-post.json" % deploy_ts)
-manifest_fd, manifest_raw = open_private(manifest_path, 0o600, 4 * 1024 * 1024)
-os.close(manifest_fd)
-manifest_sha256 = hashlib.sha256(manifest_raw).hexdigest()
+intent_path = mac_home / "logs" / ("rollback-%s-intent.json" % deploy_ts)
+intent_fd, intent_raw = open_private(intent_path, 0o600, 4 * 1024 * 1024)
+os.close(intent_fd)
+intent_sha256 = hashlib.sha256(intent_raw).hexdigest()
 try:
-    manifest = json.loads(manifest_raw)
+    intent = json.loads(intent_raw)
 except (TypeError, ValueError):
-    raise SystemExit("phase-2 post manifest is malformed")
-deploy = manifest.get("deploy") if isinstance(manifest, dict) else None
-contract = manifest.get("rollback") if isinstance(manifest, dict) else None
+    raise SystemExit("phase-2 rollback intent is malformed")
+contract = intent.get("rollback") if isinstance(intent, dict) else None
+valid_sha256 = lambda value: (
+    isinstance(value, str)
+    and len(value) == 64
+    and all(character in "0123456789abcdef" for character in value)
+)
 if (
-    manifest.get("stage") != "post"
-    or not isinstance(deploy, dict)
-    or deploy.get("generation") != generation
-    or deploy.get("mac_git_rev") != revision
+    not isinstance(intent, dict)
+    or intent.get("schema") != "mac.fleet_node_rollback_intent.v1"
+    or intent.get("status") != "armed"
+    or intent.get("generation") != generation
+    or intent.get("revision") != revision
+    or intent.get("rollback_capable") is not True
     or not isinstance(contract, dict)
-    or contract.get("schema") != "mac.fleet_node_rollback_contract.v1"
-    or contract.get("status") != "armed"
-    or contract.get("generation") != generation
-    or contract.get("revision") != revision
+    or not isinstance(contract.get("path"), str)
+    or not contract.get("path")
+    or not valid_sha256(contract.get("sha256"))
+    or not isinstance(contract.get("completion_receipt"), str)
+    or not contract.get("completion_receipt")
 ):
-    raise SystemExit("phase-2 rollback contract belongs to another generation")
+    raise SystemExit("phase-2 rollback intent belongs to another generation")
 script_fd, script_raw = open_private(Path(contract.get("path") or ""), 0o700, 2 * 1024 * 1024)
 if hashlib.sha256(script_raw).hexdigest() != contract.get("sha256"):
     os.close(script_fd)
     raise SystemExit("phase-2 rollback executable digest differs")
+
+# A kill can occur after the pre-mutation intent is durably armed but before
+# the post manifest exists.  The intent is therefore rollback authority.  If
+# the post manifest does exist, it must corroborate that exact authority.
+manifest_path = mac_home / "logs" / ("deploy-manifest-%s-post.json" % deploy_ts)
+try:
+    manifest_fd, manifest_raw = open_private(
+        manifest_path, 0o600, 4 * 1024 * 1024
+    )
+except FileNotFoundError:
+    manifest_raw = None
+else:
+    os.close(manifest_fd)
+if manifest_raw is not None:
+    try:
+        manifest = json.loads(manifest_raw)
+    except (TypeError, ValueError):
+        os.close(script_fd)
+        raise SystemExit("phase-2 post manifest is malformed")
+    deploy = manifest.get("deploy") if isinstance(manifest, dict) else None
+    post_contract = manifest.get("rollback") if isinstance(manifest, dict) else None
+    post_intent = (
+        post_contract.get("intent") if isinstance(post_contract, dict) else None
+    )
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("stage") != "post"
+        or not isinstance(deploy, dict)
+        or deploy.get("generation") != generation
+        or deploy.get("mac_git_rev") != revision
+        or not isinstance(post_contract, dict)
+        or post_contract.get("schema")
+        != "mac.fleet_node_rollback_contract.v1"
+        or post_contract.get("status") != "armed"
+        or post_contract.get("authority") != "pre_mutation_intent"
+        or post_contract.get("generation") != generation
+        or post_contract.get("revision") != revision
+        or post_contract.get("path") != contract.get("path")
+        or post_contract.get("sha256") != contract.get("sha256")
+        or post_contract.get("completion_receipt")
+        != contract.get("completion_receipt")
+        or not isinstance(post_intent, dict)
+        or post_intent.get("schema") != "mac.fleet_node_rollback_intent.v1"
+        or post_intent.get("path") != str(intent_path)
+        or post_intent.get("sha256") != intent_sha256
+    ):
+        os.close(script_fd)
+        raise SystemExit("phase-2 post manifest differs from rollback intent")
 result = subprocess.run(
     ["/bin/bash", "/dev/fd/%d" % script_fd],
     pass_fds=(script_fd,),
@@ -11489,11 +11544,14 @@ try:
 except (TypeError, ValueError):
     raise SystemExit("phase-2 rollback receipt is malformed")
 if (
-    receipt.get("schema") != "mac.fleet_node_rollback.v1"
+    not isinstance(receipt, dict)
+    or receipt.get("schema") != "mac.fleet_node_rollback.v1"
     or receipt.get("status") != "restored"
     or receipt.get("generation") != generation
     or receipt.get("revision") != revision
-    or receipt.get("post_manifest_sha256") != manifest_sha256
+    or receipt.get("prior_generation") != intent.get("prior_generation")
+    or receipt.get("prior_revision") != intent.get("prior_revision")
+    or receipt.get("intent_sha256") != intent_sha256
     or receipt.get("rollback_sha256") != contract.get("sha256")
 ):
     raise SystemExit("phase-2 rollback receipt differs from the generation contract")
@@ -13257,34 +13315,36 @@ PY
   done < "$selected_specs_file"
 
   echo "==> fleet: applying and proving the held cohort"
-  # Apply intent is serialized for the complete cohort before parallel source
-  # replacement. Children own node evidence only; they never mutate the WAL.
+  # Deployment is a cohort-ordered handoff for the same reason as quiescence:
+  # one node must publish its prepared proof before the next node can start.
+  # This is the canary boundary; preparation and phase-2 arming remain parallel.
   while IFS= read -r spec; do
     [ -n "$spec" ] || continue
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     generation="$(worker_generation_for_agent "$agent")"
-    cohort_journal_mutate phase2-start "$COHORT_EPOCH_ID" \
+    if ! cohort_journal_mutate phase2-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "phase2-start-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
-      --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null
-  done < "$selected_specs_file"
-  run_bounded_node_phase "$selected_specs_file" phase2-apply \
-    typed_phase2_apply_worker "$hub_agent" "$hub_token" "$hub_tunnel_pubkey" \
-    "$github_review_key_b64" || return 1
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    IFS='|' read -r -a fields <<<"$spec"
-    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    generation="$(worker_generation_for_agent "$agent")"
+      --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null; then
+      return 1
+    fi
+    echo "==> ${agent}: phase-2 apply started (cohort order)"
+    if ! typed_phase2_apply_worker "$spec" "$hub_agent" "$hub_token" \
+      "$hub_tunnel_pubkey" "$github_review_key_b64"; then
+      return 1
+    fi
     evidence="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
     [ -s "$evidence" ] || {
       echo "ERROR: ${agent}: typed apply lacks prepared evidence" >&2
       return 1
     }
-    cohort_journal_mutate prepared "$COHORT_EPOCH_ID" \
+    if ! cohort_journal_mutate prepared "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "prepared-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" \
-      --evidence-file "$evidence" >/dev/null
+      --evidence-file "$evidence" >/dev/null; then
+      return 1
+    fi
+    echo "==> ${agent}: phase-2 apply proved (cohort order)"
   done < "$selected_specs_file"
 
   prove_and_commit_hub_epoch "$selected_specs_file" "$hub_agent"
@@ -13296,21 +13356,22 @@ PY
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
     generation="$(worker_generation_for_agent "$agent")"
-    cohort_journal_mutate finalize-start "$COHORT_EPOCH_ID" \
+    if ! cohort_journal_mutate finalize-start "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "finalize-start-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
-      --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null
-  done < "$selected_specs_file"
-  run_bounded_node_phase "$selected_specs_file" finalize-node \
-    typed_finalize_worker "$hub_agent" || return 1
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    IFS='|' read -r -a fields <<<"$spec"
-    agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
-    generation="$(worker_generation_for_agent "$agent")"
-    cohort_journal_mutate finalized-node "$COHORT_EPOCH_ID" \
+      --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" >/dev/null; then
+      return 1
+    fi
+    echo "==> ${agent}: finalization started (cohort order)"
+    if ! typed_finalize_worker "$spec" "$hub_agent"; then
+      return 1
+    fi
+    if ! cohort_journal_mutate finalized-node "$COHORT_EPOCH_ID" \
       "$COHORT_JOURNAL_REVISION" "finalized-${agent_id}" "$DEPLOY_CONTROLLER_NONCE" \
       --agent-name "$agent" --stable-id "$agent_id" --generation "$generation" \
-      --evidence-file "$TMPDIR_LOCAL/finalize-${agent_id}.json" >/dev/null
+      --evidence-file "$TMPDIR_LOCAL/finalize-${agent_id}.json" >/dev/null; then
+      return 1
+    fi
+    echo "==> ${agent}: finalization proved (cohort order)"
   done < "$selected_specs_file"
   cohort_journal_mutate finalize "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" finalize "$DEPLOY_CONTROLLER_NONCE" >/dev/null

@@ -695,7 +695,7 @@ def test_fleet_deploy_completes_bound_vm_credential_rollout() -> None:
     assert "provision_bound_worker_credential" not in main_body
     assert "enforce_bound_worker_credentials" not in main_body
     assert "issue_pending_worker_credential" in hub_open
-    apply_phase = 'run_bounded_node_phase "$selected_specs_file" phase2-apply'
+    apply_phase = 'typed_phase2_apply_worker "$spec"'
     assert "install_pending_worker_credential" in apply_worker
     assert typed.index("build_and_open_hub_epoch") < typed.index(apply_phase)
     assert typed.index(apply_phase) < typed.index("prove_and_commit_hub_epoch")

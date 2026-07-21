@@ -980,11 +980,11 @@ def test_typed_restarts_reuse_the_one_journal_bound_generation():
         "\n}\n\ntyped_finalize_worker", 1
     )[0]
     phase2_start = typed.index("cohort_journal_mutate phase2-start")
-    apply_barrier = typed.index(
-        'run_bounded_node_phase "$selected_specs_file" phase2-apply', phase2_start
+    apply_handoff = typed.index(
+        'typed_phase2_apply_worker "$spec"', phase2_start
     )
-    prepared = typed.index("cohort_journal_mutate prepared", apply_barrier)
-    assert phase2_start < apply_barrier < prepared
+    prepared = typed.index("cohort_journal_mutate prepared", apply_handoff)
+    assert phase2_start < apply_handoff < prepared
     assert 'deploy_host "$spec"' in apply_worker
     assert 'if [ "$node_action" = apply-phase2 ]' in deploy_host
     assert "restart_remote_mac_agent_under_epoch" in deploy_host
@@ -1003,10 +1003,8 @@ def test_typed_deploy_proves_pending_identity_before_atomic_hub_commit():
     install = apply_worker.index("install_pending_worker_credential")
     candidate = apply_worker.index("install_and_prove_attestation_candidate", install)
     assert install < candidate
-    apply_barrier = typed.index(
-        'run_bounded_node_phase "$selected_specs_file" phase2-apply'
-    )
-    prepared = typed.index("cohort_journal_mutate prepared", apply_barrier)
+    apply_handoff = typed.index('typed_phase2_apply_worker "$spec"')
+    prepared = typed.index("cohort_journal_mutate prepared", apply_handoff)
     commit = typed.index("prove_and_commit_hub_epoch", prepared)
     finalize = typed.index("cohort_journal_mutate finalize-start", commit)
     assert install < candidate < prepared < commit < finalize
