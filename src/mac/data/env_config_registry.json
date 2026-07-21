@@ -8204,6 +8204,7 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh",
       "deploy/fleet-node-phase1-quiesce.sh"
     ],
     "type": "str"

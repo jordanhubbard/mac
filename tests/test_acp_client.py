@@ -9,6 +9,7 @@ no subprocess, and no third-party deps.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Dict, List, Optional
 
 from mac.acp.client import ACPClient
@@ -31,14 +32,17 @@ class _Pipe:
     """A pair of peers connected to each other's inbox, pumpable in a loop."""
 
     def __init__(self) -> None:
+        self.activity = threading.Event()
         self.client_peer = Peer(send=self._to_agent)
         self.agent_peer = Peer(send=self._to_client)
 
     def _to_agent(self, data: bytes) -> None:
         self.agent_peer.feed(data)
+        self.activity.set()
 
     def _to_client(self, data: bytes) -> None:
         self.client_peer.feed(data)
+        self.activity.set()
 
     def drive(self, rounds: int = 10) -> None:
         """Pump both peers until neither processes a frame (steady state)."""
@@ -176,20 +180,28 @@ def _call(pipe: _Pipe, fn):
     pump the pipe from the main thread until it returns.
     """
 
-    import threading
-
     box: Dict[str, Any] = {}
+    completed = threading.Event()
 
     def _worker():
-        box["value"] = fn()
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # surface worker failures on the test thread
+            box["error"] = exc
+        finally:
+            completed.set()
 
+    pipe.activity.clear()
     t = threading.Thread(target=_worker)
     t.start()
-    # Pump until the worker finishes (responses get delivered as we pump).
-    for _ in range(1000):
-        pipe.drive()
-        if not t.is_alive():
-            break
-    t.join(timeout=5)
-    assert "value" in box, "client call did not complete"
+    # Wait for the request frame instead of racing a fixed number of pump
+    # iterations against thread scheduling. Once the frame exists, drive() is
+    # synchronous and drains the complete request/response exchange.
+    assert pipe.activity.wait(timeout=30), "client did not publish a request frame"
+    pipe.activity.clear()
+    pipe.drive()
+    assert completed.wait(timeout=30), "client call deadlocked after response delivery"
+    t.join()
+    if "error" in box:
+        raise box["error"]
     return box["value"]

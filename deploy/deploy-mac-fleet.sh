@@ -5112,6 +5112,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -5129,6 +5130,23 @@ def truthy(value):
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def managed_mesh_address(value):
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return any(
+        address in network
+        for network in (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("100.64.0.0/10"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("fc00::/7"),
+        )
+    )
+
+
 def digest(path):
     value = hashlib.sha256()
     with path.open("rb") as stream:
@@ -5138,7 +5156,10 @@ def digest(path):
 
 
 def path_check(name, raw, *, executable=False):
-    path = Path(raw).expanduser().resolve(strict=True)
+    try:
+        path = Path(raw).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise SystemExit("required %s path prerequisite is unavailable" % name) from exc
     metadata = path.stat()
     if path.is_dir():
         return {
@@ -5168,11 +5189,11 @@ def service_check(name, url, required, fallback):
         managed_mesh = False
         if provider in {"tailscale", "headscale"}:
             try:
-                address = ipaddress.ip_address(hostname)
+                ipaddress.ip_address(hostname)
             except ValueError:
                 managed_mesh = hostname.endswith((".ts.net", ".svc.cluster.local"))
             else:
-                managed_mesh = address.is_private or address in ipaddress.ip_network("100.64.0.0/10")
+                managed_mesh = managed_mesh_address(hostname)
         if (
             parsed.scheme not in {"http", "https"}
             or not hostname
@@ -5190,6 +5211,7 @@ def service_check(name, url, required, fallback):
             "host": parsed.hostname,
             "port": port,
             "timeout_seconds": 3,
+            "network_scope": "loopback" if local else "managed_mesh",
         }
     return path_check(name + "-config", fallback)
 
@@ -5258,9 +5280,28 @@ elif requested_supervisor == "supervisord" and supervisorctl is not None:
 else:
     raise SystemExit("requested supervisor is unavailable on the declared node OS")
 
-openshell_path = mac_env
-if truthy(os.environ["MAC_PREREQ_OPENSHELL_REQUIRED"]):
-    openshell_path = mac_home / "openshell" / "runtime-image-attestation.json"
+openshell_required = truthy(os.environ["MAC_PREREQ_OPENSHELL_REQUIRED"])
+docker_cli = next(
+    (
+        Path(candidate).expanduser().resolve(strict=True)
+        for candidate in (
+            shutil.which("docker"),
+            "/Applications/Docker.app/Contents/Resources/bin/docker",
+            "/opt/homebrew/bin/docker",
+            "/usr/local/bin/docker",
+            "/usr/bin/docker",
+        )
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK)
+    ),
+    None,
+)
+if openshell_required and docker_cli is None:
+    raise SystemExit("Docker Engine CLI prerequisite is unavailable for required OpenShell")
+openshell_checks = (
+    [path_check("openshell-container-cli", docker_cli, executable=True)]
+    if openshell_required
+    else [path_check("openshell-config", mac_env)]
+)
 
 checks = {
     "machine-onboarding": [
@@ -5270,7 +5311,7 @@ checks = {
         path_check("codegraph-node", codegraph_node, executable=True),
     ],
     "route-tunnel": [path_check("route-config", mac_env)],
-    "openshell": [path_check("openshell-contract", openshell_path)],
+    "openshell": openshell_checks,
     "qdrant": [service_check("qdrant", os.environ["MAC_PREREQ_QDRANT_URL"], os.environ["MAC_PREREQ_QDRANT_REQUIRED"], mac_env)],
     "firecrawl": [service_check("firecrawl", os.environ["MAC_PREREQ_FIRECRAWL_URL"], os.environ["MAC_PREREQ_FIRECRAWL_REQUIRED"], mac_env)],
     "webdav": [service_check("webdav", os.environ["MAC_PREREQ_WEBDAV_URL"], os.environ["MAC_PREREQ_WEBDAV_ENABLED"], mac_env)],
@@ -8861,7 +8902,50 @@ venv_python = mac_home / "venv" / "bin" / "python"
 hermes_root = mac_home / "src" / "mac" / "src" / "mac" / "_hermes"
 mac_env = mac_home / "mac.env"
 truthy = lambda value: value.strip().lower() in {"1", "true", "yes", "on"}
-openshell_contract = mac_home / "openshell" / "runtime-image-attestation.json"
+docker_cli = next(
+    (
+        candidate
+        for candidate in (
+            shutil.which("docker"),
+            "/Applications/Docker.app/Contents/Resources/bin/docker",
+            "/opt/homebrew/bin/docker",
+            "/usr/local/bin/docker",
+            "/usr/bin/docker",
+        )
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK)
+    ),
+    None,
+)
+docker_engine_ready = False
+if truthy(openshell_required) and docker_cli is not None:
+    try:
+        docker_probe = subprocess.run(
+            [docker_cli, "info", "--format", "{{json .ServerVersion}}"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        docker_probe = None
+    docker_engine_ready = docker_probe is not None and docker_probe.returncode == 0
+
+def managed_mesh_address(value):
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return any(
+        address in network
+        for network in (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("100.64.0.0/10"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("fc00::/7"),
+        )
+    )
 
 def service_ready(url, required):
     if not truthy(required):
@@ -8872,11 +8956,11 @@ def service_ready(url, required):
     managed_mesh = False
     if network_provider in {"tailscale", "headscale"}:
         try:
-            address = ipaddress.ip_address(hostname)
+            ipaddress.ip_address(hostname)
         except ValueError:
             managed_mesh = hostname.endswith((".ts.net", ".svc.cluster.local"))
         else:
-            managed_mesh = address.is_private or address in ipaddress.ip_network("100.64.0.0/10")
+            managed_mesh = managed_mesh_address(hostname)
     if (
         parsed.scheme not in {"http", "https"}
         or not hostname
@@ -8938,7 +9022,7 @@ checks = {
     "installed_python_runtime": venv_python.is_file() and os.access(venv_python, os.X_OK),
     "installed_hermes_runtime": hermes_root.is_dir() and not hermes_root.is_symlink(),
     "route_configuration": mac_env.is_file() and not mac_env.is_symlink(),
-    "openshell_contract_if_required": (not truthy(openshell_required)) or (openshell_contract.is_file() and not openshell_contract.is_symlink()),
+    "openshell_container_runtime_if_required": (not truthy(openshell_required)) or docker_engine_ready,
     "qdrant_if_required": service_ready(qdrant_url, qdrant_required),
     "firecrawl_if_required": service_ready(firecrawl_url, firecrawl_required),
     "webdav_if_required": service_ready(webdav_url, webdav_required),
@@ -8968,6 +9052,7 @@ payload = {
         "codegraph_node": str(codegraph_node),
         "python_runtime": str(venv_python),
         "hermes_runtime": str(hermes_root),
+        "openshell_container_cli": str(docker_cli) if docker_cli else None,
     },
     "supervisor": {"configured": supervisor, "commands": supervisor_commands},
     "checks": checks,

@@ -7,16 +7,18 @@ belong to independently operated prerequisite participants.  This helper runs
 the deliberately small read-only probe vocabulary used by those participants
 and seals the observations into an owner-private receipt bundle.
 
-Contracts may contain local paths and loopback health endpoints, so contracts
-and bundles are private controller inputs.  Receipts never retain paths, URLs,
-response bodies, environment values, or command output: only bounded names,
-status, timestamps, and SHA-256 digests are journal-safe.
+Contracts may contain local paths plus loopback or explicitly scoped managed
+mesh health endpoints, so contracts and bundles are private controller inputs.
+Receipts never retain paths, URLs, response bodies, environment values, or
+command output: only bounded names, status, timestamps, and SHA-256 digests are
+journal-safe.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -267,16 +269,49 @@ def _validate_loopback_host(value: Any) -> str:
     return value
 
 
+def _managed_mesh_address(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    networks = (
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("100.64.0.0/10"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+        ipaddress.ip_network("fc00::/7"),
+    )
+    return any(address in network for network in networks)
+
+
+def _validate_tcp_host(value: Any, network_scope: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise PrerequisiteError("TCP check host is invalid")
+    if network_scope == "loopback":
+        return _validate_loopback_host(value)
+    if network_scope != "managed_mesh":
+        raise PrerequisiteError("TCP check network_scope is invalid")
+    if _managed_mesh_address(value) or value.endswith(
+        (".ts.net", ".svc.cluster.local")
+    ):
+        return value
+    raise PrerequisiteError(
+        "managed mesh checks require an approved private address or DNS suffix"
+    )
+
+
 def _validate_tcp_check(value: dict[str, Any]) -> dict[str, Any]:
     check = _exact_dict(
         value,
-        frozenset({"name", "kind", "host", "port", "timeout_seconds"}),
+        frozenset(
+            {"name", "kind", "host", "port", "timeout_seconds", "network_scope"}
+        ),
         "TCP check",
     )
     _safe_name(check["name"], "check name")
     if check["kind"] != "tcp":
         raise PrerequisiteError("TCP check kind is invalid")
-    _validate_loopback_host(check["host"])
+    _validate_tcp_host(check["host"], check["network_scope"])
     port = check["port"]
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise PrerequisiteError("TCP check port is invalid")
@@ -458,10 +493,27 @@ def _probe_path(check: dict[str, Any]) -> dict[str, Any]:
 def _probe_tcp(check: dict[str, Any]) -> dict[str, Any]:
     started = time.monotonic()
     try:
+        resolved = socket.getaddrinfo(
+            check["host"], check["port"], type=socket.SOCK_STREAM
+        )
+        addresses = {item[4][0] for item in resolved}
+        if not addresses:
+            raise PrerequisiteError(f"TCP check {check['name']} did not resolve")
+        if check["network_scope"] == "loopback":
+            if any(not ipaddress.ip_address(value).is_loopback for value in addresses):
+                raise PrerequisiteError(
+                    f"TCP check {check['name']} resolved outside loopback"
+                )
+        elif any(not _managed_mesh_address(value) for value in addresses):
+            raise PrerequisiteError(
+                f"TCP check {check['name']} resolved outside the managed mesh"
+            )
         with socket.create_connection(
             (check["host"], check["port"]), check["timeout_seconds"]
         ):
             pass
+    except PrerequisiteError:
+        raise
     except OSError as exc:
         raise PrerequisiteError(f"TCP check {check['name']} failed") from exc
     return {"connected": True, "elapsed_ms": int((time.monotonic() - started) * 1000)}

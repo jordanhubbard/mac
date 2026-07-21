@@ -196,6 +196,7 @@ def test_http_and_tcp_adapters_are_loopback_read_only() -> None:
                     "host": "127.0.0.1",
                     "port": port,
                     "timeout_seconds": 1,
+                    "network_scope": "loopback",
                 },
                 {
                     "name": "health",
@@ -215,6 +216,92 @@ def test_http_and_tcp_adapters_are_loopback_read_only() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "100.72.16.110",
+        "10.23.4.5",
+        "fd7a:115c:a1e0::1",
+        "hub.example.ts.net",
+        "jordanh-worker1.ov-agent-farm.svc.cluster.local",
+    ],
+)
+def test_tcp_adapter_accepts_explicit_managed_mesh_scope(host: str) -> None:
+    contract = {
+        "schema": receipts.CONTRACT_SCHEMA,
+        "participant": "qdrant",
+        "agent_id": AGENT,
+        "node_identity_sha256": IDENTITY,
+        "checks": [
+            {
+                "name": "mesh-service",
+                "kind": "tcp",
+                "host": host,
+                "port": 6333,
+                "timeout_seconds": 1,
+                "network_scope": "managed_mesh",
+            }
+        ],
+    }
+
+    assert receipts._validate_contract(contract) == contract
+
+
+@pytest.mark.parametrize(
+    ("host", "scope"),
+    [
+        ("8.8.8.8", "managed_mesh"),
+        ("example.com", "managed_mesh"),
+        ("100.72.16.110", "loopback"),
+        ("127.0.0.1", "managed_mesh"),
+        ("127.0.0.1", "internet"),
+    ],
+)
+def test_tcp_adapter_rejects_hosts_outside_declared_scope(
+    host: str, scope: str
+) -> None:
+    contract = {
+        "schema": receipts.CONTRACT_SCHEMA,
+        "participant": "qdrant",
+        "agent_id": AGENT,
+        "node_identity_sha256": IDENTITY,
+        "checks": [
+            {
+                "name": "mesh-service",
+                "kind": "tcp",
+                "host": host,
+                "port": 6333,
+                "timeout_seconds": 1,
+                "network_scope": scope,
+            }
+        ],
+    }
+
+    with pytest.raises(receipts.PrerequisiteError):
+        receipts._validate_contract(contract)
+
+
+def test_tcp_probe_rejects_managed_mesh_dns_resolving_publicly(monkeypatch) -> None:
+    check = {
+        "name": "mesh-service",
+        "kind": "tcp",
+        "host": "hub.example.ts.net",
+        "port": 6333,
+        "timeout_seconds": 1,
+        "network_scope": "managed_mesh",
+    }
+    monkeypatch.setattr(
+        receipts.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (receipts.socket.AF_INET, receipts.socket.SOCK_STREAM, 6, "", ("8.8.8.8", 6333))
+        ],
+    )
+
+    with pytest.raises(receipts.PrerequisiteError, match="outside the managed mesh"):
+        receipts._probe_tcp(check)
 
 
 def test_bundle_requires_exact_participant_agent_and_identity_set() -> None:

@@ -532,5 +532,13 @@ def test_patch_does_not_publish_or_strengthen_runtime_attestation() -> None:
     )[0]
     assert "MAC_PREREQ_OPENSHELL_RUNTIME_ATTESTATION_SHA" not in builder
     assert "stable_private_path_check" not in builder
-    assert 'openshell_path = mac_home / "openshell" / "runtime-image-attestation.json"' in builder
-    assert '"openshell": [path_check("openshell-contract", openshell_path)]' in builder
+    assert "runtime-image-attestation.json" not in builder
+    assert "import shutil" in builder
+    assert 'path_check("openshell-container-cli", docker_cli, executable=True)' in builder
+    assert '"openshell": openshell_checks' in builder
+    probe = controller.split("preflight_probe_helper_source() {", 1)[1].split(
+        "\n}\n\nprepare_qualification_receipt_path", 1
+    )[0]
+    assert "runtime-image-attestation.json" not in probe
+    assert 'docker_cli, "info"' in probe
+    assert '"openshell_container_runtime_if_required"' in probe
