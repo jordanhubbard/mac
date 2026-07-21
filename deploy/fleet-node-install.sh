@@ -5318,13 +5318,7 @@ verify_existing_phase2_sealed_state() {
   MAC_ROLLBACK_OS="$OS_KIND" MAC_ROLLBACK_GENERATION="$DEPLOY_GENERATION" \
   MAC_ROLLBACK_REVISION="$DEPLOY_REV" \
   MAC_ROLLBACK_SUPERVISOR="$SUPERVISOR_KIND" \
-  MAC_ROLLBACK_SRC="$SRC_DIR" MAC_ROLLBACK_SRC_BACKUP="$SRC_BACKUP" \
-  MAC_ROLLBACK_VENV="$VENV" MAC_ROLLBACK_VENV_BACKUP="$VENV_BACKUP" \
-  MAC_ROLLBACK_HERMES="$HERMES_DIR" \
-  MAC_ROLLBACK_HERMES_BACKUP="$MAC_HOME/backups/hermes-agent.${AGENT}.${DEPLOY_TS}" \
-  MAC_ROLLBACK_BIN_BACKUP="$BIN_BACKUP" \
-  MAC_ROLLBACK_OPENCLAW_BACKUP="$MAC_HOME/backups/openclaw.${AGENT}.${DEPLOY_TS}" \
-    "$PY" - <<'PY'
+    "$PY" - "$MAC_HOME" "$DEPLOY_TS" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -5332,6 +5326,7 @@ import json
 import os
 import re
 import stat
+import sys
 
 
 def private_bytes(path: str) -> bytes:
@@ -5388,6 +5383,21 @@ revision_re = re.compile(r"[0-9a-f]{40}\Z")
 safe_text = lambda value: isinstance(value, str) and not any(
     character in value for character in "\t\r\n"
 )
+home = sys.argv[1].rstrip("/")
+agent = os.environ["MAC_ROLLBACK_AGENT"]
+deploy_ts = sys.argv[2]
+expected_source = {
+    "path": f"{home}/src/mac",
+    "backup": f"{home}/backups/mac-src.{agent}.{deploy_ts}",
+}
+expected_venv = {
+    "path": f"{home}/venv",
+    "backup": f"{home}/backups/venv.{agent}.{deploy_ts}",
+}
+expected_hermes_path = f"{home}/hermes-agent"
+expected_hermes_backup = f"{home}/backups/hermes-agent.{agent}.{deploy_ts}"
+expected_bin_backup = f"{home}/backups/bin.{agent}.{deploy_ts}"
+expected_openclaw_backup = f"{home}/backups/openclaw.{agent}.{deploy_ts}"
 if not isinstance(intent, dict):
     raise SystemExit("existing phase-2 rollback intent differs at: document_type")
 checks = (
@@ -5405,36 +5415,30 @@ checks = (
     ("artifacts_object", isinstance(artifacts, dict)),
     (
         "artifact_source",
-        source == {
-        "path": os.environ["MAC_ROLLBACK_SRC"],
-        "backup": os.environ["MAC_ROLLBACK_SRC_BACKUP"],
-        },
+        source == expected_source,
     ),
     (
         "artifact_venv",
-        venv == {
-        "path": os.environ["MAC_ROLLBACK_VENV"],
-        "backup": os.environ["MAC_ROLLBACK_VENV_BACKUP"],
-        },
+        venv == expected_venv,
     ),
     ("artifact_hermes_object", isinstance(hermes, dict)),
     (
         "artifact_hermes_path",
         isinstance(hermes, dict)
-        and hermes.get("path") == os.environ["MAC_ROLLBACK_HERMES"],
+        and hermes.get("path") == expected_hermes_path,
     ),
     (
         "artifact_hermes_backup",
-        hermes_backup in {None, os.environ["MAC_ROLLBACK_HERMES_BACKUP"]},
+        hermes_backup in {None, expected_hermes_backup},
     ),
     (
         "artifact_bin_backup",
         isinstance(artifacts, dict)
-        and artifacts.get("bin_backup") == os.environ["MAC_ROLLBACK_BIN_BACKUP"],
+        and artifacts.get("bin_backup") == expected_bin_backup,
     ),
     (
         "artifact_openclaw_backup",
-        openclaw_backup in {None, os.environ["MAC_ROLLBACK_OPENCLAW_BACKUP"]},
+        openclaw_backup in {None, expected_openclaw_backup},
     ),
     ("artifact_openclaw_existed_type", isinstance(openclaw_existed, bool)),
     (

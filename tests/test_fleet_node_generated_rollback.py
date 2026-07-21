@@ -932,12 +932,21 @@ def test_phase2_replay_revalidates_the_sealed_intent_without_field_transport() -
     verifier = source.split("verify_phase2_rollback_intent() {", 1)[1].split(
         "\n}\n\nwrite_phase2_rollback_intent() {", 1
     )[0]
+    sealed_verifier = source.split(
+        "verify_existing_phase2_sealed_state() {", 1
+    )[1].split("\n}\n\narm_phase2_rollback() {", 1)[0]
     assert "verify_existing_phase2_sealed_state >/dev/null" in arm_body
     assert "verify_phase2_rollback_intent sealed-replay" in arm_body
     assert "ROLLBACK_SEALED_STATE_JSON" not in arm_body
     assert "IFS=$'\\t' read" not in arm_body
     assert '"$PY" - "$rollback_state_mode"' in verifier
     assert 'sealed_replay = sys.argv[1] == "sealed-replay"' in verifier
+    assert '"$PY" - "$MAC_HOME" "$DEPLOY_TS"' in sealed_verifier
+    assert "MAC_ROLLBACK_HOME=" not in sealed_verifier
+    assert "MAC_ROLLBACK_DEPLOY_TS=" not in sealed_verifier
+    assert "MAC_ROLLBACK_SRC=" not in sealed_verifier
+    assert "MAC_ROLLBACK_VENV=" not in sealed_verifier
+    assert "MAC_ROLLBACK_BIN_BACKUP=" not in sealed_verifier
 
 
 def test_typed_synchronized_apply_consumes_receipts_and_skips_legacy_quiescence() -> None:

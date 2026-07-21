@@ -228,7 +228,7 @@ def test_apply_phase_loads_prior_state_from_the_sealed_rollback_intent(
     agent = "rocky"
     src = mac_home / "src" / "mac"
     venv = mac_home / "venv"
-    hermes = mac_home / "src" / "hermes-agent"
+    hermes = mac_home / "hermes-agent"
     src_backup = mac_home / "backups" / f"mac-src.{agent}.{deploy_ts}"
     venv_backup = mac_home / "backups" / f"venv.{agent}.{deploy_ts}"
     hermes_backup = mac_home / "backups" / f"hermes-agent.{agent}.{deploy_ts}"
@@ -308,12 +308,12 @@ DEPLOY_GENERATION={GENERATION}
 DEPLOY_REV={REVISION}
 SUPERVISOR_KIND=launchd
 DEPLOY_TS={deploy_ts}
-SRC_DIR={src}
-SRC_BACKUP={src_backup}
-VENV={venv}
-VENV_BACKUP={venv_backup}
-HERMES_DIR={hermes}
-BIN_BACKUP={bin_backup}
+SRC_DIR=recaptured-wrong-source
+SRC_BACKUP=recaptured-wrong-source-backup
+VENV=recaptured-wrong-venv
+VENV_BACKUP=recaptured-wrong-venv-backup
+HERMES_DIR=recaptured-wrong-hermes
+BIN_BACKUP=recaptured-wrong-bin-backup
 {validator}
 verify_existing_phase2_sealed_state
 """
