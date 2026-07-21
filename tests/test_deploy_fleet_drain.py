@@ -974,6 +974,14 @@ def test_typed_restarts_reuse_the_one_journal_bound_generation():
     assert 'phase1_resolved_supervisor_for_agent "$agent"' in restart
     assert 'supervisor="$resolved_supervisor"' in restart
     assert "configured supervisor differs from phase-1 proof" in restart
+    assert "systemctl start" in restart
+    assert "then systemctl restart" not in restart
+    assert "supervisorctl start" in restart
+    assert "then supervisorctl restart" not in restart
+    assert 'domain=\\"gui/\\$(id -u)\\"' in restart
+    assert "mac_launchd_stop_job_if_present" in restart
+    assert "mac_launchd_bootstrap_job" in restart
+    assert "system/com.${fleet_name}.agent" not in restart
     assert 'generation="$(worker_generation_for_agent "$agent")"' in typed
     assert '--generation "$generation"' in typed
     deploy_host = deploy.split("deploy_host() {", 1)[1].split(

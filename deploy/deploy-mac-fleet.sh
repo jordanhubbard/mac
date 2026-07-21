@@ -7412,13 +7412,21 @@ restart_remote_mac_agent_under_epoch() {
   last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
   case "$supervisor" in
     systemd)
-      command="if [ \"\$(id -u)\" -eq 0 ]; then systemctl restart $(shell_quote "${fleet_name}-agent.service"); else sudo -n systemctl restart $(shell_quote "${fleet_name}-agent.service"); fi"
+      # Phase 1 proved this exact unit stopped. Start the replacement instead
+      # of asking the manager to restart a service that is intentionally down.
+      command="if [ \"\$(id -u)\" -eq 0 ]; then systemctl start $(shell_quote "${fleet_name}-agent.service"); else sudo -n systemctl start $(shell_quote "${fleet_name}-agent.service"); fi"
       ;;
     launchd)
-      command="if [ \"\$(id -u)\" -eq 0 ]; then launchctl kickstart -k $(shell_quote "system/com.${fleet_name}.agent"); else sudo -n launchctl kickstart -k $(shell_quote "system/com.${fleet_name}.agent"); fi"
+      # The installer writes a per-user LaunchAgent and defers registration
+      # until this exact post-manifest handoff. A system-domain kickstart can
+      # neither find nor bootstrap it. Reuse the reviewed bounded lifecycle to
+      # prove the old job absent and bootstrap the replacement in gui/<uid>.
+      command="lifecycle=\"\$HOME/.mac/logs/launchd-lifecycle-${TS}.sh\"; label=$(shell_quote "com.${fleet_name}.agent"); domain=\"gui/\$(id -u)\"; plist=\"\$HOME/Library/LaunchAgents/\${label}.plist\"; [ -f \"\$lifecycle\" ] && [ ! -L \"\$lifecycle\" ] || { echo \"bounded launchd lifecycle contract is unavailable: \$lifecycle\" >&2; exit 1; }; [ -f \"\$plist\" ] && [ ! -L \"\$plist\" ] || { echo \"launchd agent plist missing or unsafe: \$plist\" >&2; exit 1; }; . \"\$lifecycle\"; mac_launchd_stop_job_if_present \"\$domain/\$label\" \"\$label\" user; mac_launchd_bootstrap_job \"\$domain\" \"\$plist\" \"\$domain/\$label\" \"\$label\" user"
       ;;
     supervisord)
-      command="if [ \"\$(id -u)\" -eq 0 ]; then supervisorctl restart $(shell_quote "${fleet_name}-agent"); else sudo -n supervisorctl restart $(shell_quote "${fleet_name}-agent"); fi"
+      # supervisorctl restart rejects an intentionally STOPPED program on
+      # some versions; phase 1 already performed and proved the stop.
+      command="if [ \"\$(id -u)\" -eq 0 ]; then supervisorctl start $(shell_quote "${fleet_name}-agent"); else sudo -n supervisorctl start $(shell_quote "${fleet_name}-agent"); fi"
       ;;
     *) echo "ERROR: ${agent}: unsupported typed supervisor ${supervisor}" >&2; return 1 ;;
   esac
