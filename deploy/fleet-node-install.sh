@@ -12369,7 +12369,18 @@ def launchd_sample():
         label = mapping["launchd"]
         rc, stdout, stderr = run([launchctl, "print", domain + "/" + label])
         text = stdout + stderr
-        if rc == 113 and len([line for line in text.splitlines() if line.strip()]) == 1 and "Could not find service" in text:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        legacy_absent = len(lines) == 1 and "Could not find service" in lines[0]
+        current_macos_absent = (
+            len(lines) == 2
+            and lines[0] == "Bad request."
+            and re.fullmatch(
+                r'Could not find service "[^"\r\n]+" in domain for user gui: [0-9]+',
+                lines[1],
+            )
+            is not None
+        )
+        if rc == 113 and (legacy_absent or current_macos_absent):
             result[owner] = {"state": "absent", "pid": 0, "restarts": 0}
             continue
         if rc != 0:

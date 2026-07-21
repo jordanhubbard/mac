@@ -233,7 +233,14 @@ if manager == "systemctl":
 
 if manager == "launchctl":
     if state == "absent":
-        print("Could not find service", file=sys.stderr)
+        if config.get("mode") == "current-macos-absent":
+            print("Bad request.", file=sys.stderr)
+            print(
+                'Could not find service "%s" in domain for user gui: 501' % identity,
+                file=sys.stderr,
+            )
+        else:
+            print("Could not find service", file=sys.stderr)
         raise SystemExit(113)
     print("{{")
     print("    state = " + state)
@@ -383,6 +390,24 @@ def test_exact_probe_records_exclusive_stable_gateway_readiness(
         assert all(item["state"] == "absent" for item in receipt["state"].values())
     else:
         assert receipt["state"][implementation]["state"] == "running"
+
+
+def test_launchd_probe_accepts_current_macos_two_line_absent_state(
+    tmp_path: Path,
+) -> None:
+    completed, output = _run_probe(
+        tmp_path,
+        "launchd",
+        "openclaw",
+        _state("launchd", "openclaw"),
+        mode="current-macos-absent",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    receipt = json.loads(output.read_text(encoding="utf-8"))
+    assert receipt["state"]["openclaw"]["state"] == "running"
+    assert receipt["state"]["hermes"]["state"] == "absent"
+    assert receipt["state"]["nemoclaw"]["state"] == "absent"
 
 
 @pytest.mark.parametrize("manager", ["systemd", "launchd", "supervisord"])
