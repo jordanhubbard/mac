@@ -8902,6 +8902,21 @@ venv_python = mac_home / "venv" / "bin" / "python"
 hermes_root = mac_home / "src" / "mac" / "src" / "mac" / "_hermes"
 mac_env = mac_home / "mac.env"
 truthy = lambda value: value.strip().lower() in {"1", "true", "yes", "on"}
+installed_python_ready = venv_python.is_file() and os.access(venv_python, os.X_OK)
+installed_python_311 = False
+if installed_python_ready:
+    try:
+        python_probe = subprocess.run(
+            [str(venv_python), "-c", "import sys; raise SystemExit(sys.version_info < (3, 11))"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        python_probe = None
+    installed_python_311 = python_probe is not None and python_probe.returncode == 0
 docker_cli = next(
     (
         candidate
@@ -9010,7 +9025,7 @@ if hub_health_required:
     hub_health_reachable = completed is not None and completed.returncode == 0
 checks = {
     "configured_os_matches": expected_platform == observed_platform,
-    "python_3_11_or_newer": sys.version_info >= (3, 11),
+    "python_3_11_or_newer": installed_python_311,
     "home_owned_by_remote_user": home_stat.st_uid == os.getuid(),
     "home_writable": os.access(home, os.W_OK),
     "mac_home_safe_if_present": mac_home_safe,
@@ -9019,7 +9034,7 @@ checks = {
     "mac_cli": mac_bin.is_file() and os.access(mac_bin, os.X_OK),
     "github_cli": github_cli is not None,
     "reviewed_codegraph_runtime": codegraph_ready,
-    "installed_python_runtime": venv_python.is_file() and os.access(venv_python, os.X_OK),
+    "installed_python_runtime": installed_python_ready,
     "installed_hermes_runtime": hermes_root.is_dir() and not hermes_root.is_symlink(),
     "route_configuration": mac_env.is_file() and not mac_env.is_symlink(),
     "openshell_container_runtime_if_required": (not truthy(openshell_required)) or docker_engine_ready,

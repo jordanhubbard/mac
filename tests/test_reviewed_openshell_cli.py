@@ -542,4 +542,6 @@ def test_patch_does_not_publish_or_strengthen_runtime_attestation() -> None:
     assert "runtime-image-attestation.json" not in probe
     assert 'docker_cli, "info"' in probe
     assert '"openshell_container_runtime_if_required"' in probe
+    assert '"python_3_11_or_newer": installed_python_311' in probe
+    assert "sys.version_info >= (3, 11)" not in probe
     assert 'details.append("failed checks=" + ",".join(failed_checks))' in controller
