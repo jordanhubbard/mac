@@ -1333,6 +1333,60 @@ class OpenShellStatusReport(BaseModel):
     detail: Dict[str, Any] = Field(default_factory=dict)
 
 
+class DirectivePropose(BaseModel):
+    document: Dict[str, Any]
+    actor: str = "human"
+
+
+class DirectiveCheck(BaseModel):
+    version: Optional[int] = None
+    actor: str = "human"
+
+
+class DirectiveApprove(BaseModel):
+    version: int
+    directive_digest: str
+    check_id: str
+    actor: str = "human"
+
+
+class DirectiveActivate(BaseModel):
+    version: int
+    directive_digest: str
+    actor: str = "human"
+
+
+class DirectiveDeactivate(BaseModel):
+    reason: str
+    actor: str = "human"
+
+
+class DirectiveBindingSet(BaseModel):
+    target_type: str
+    target_id: str
+    key: str
+    value: Any
+    actor: str = "human"
+
+
+class DirectiveWaiverCreate(BaseModel):
+    version: int
+    target_type: str
+    target_id: str
+    reason: str
+    expires_at: Optional[str] = None
+    actor: str = "human"
+
+
+class DirectiveWaiverRevoke(BaseModel):
+    reason: str
+    actor: str = "human"
+
+
+class DirectiveAck(BaseModel):
+    digest: str
+
+
 class ActionEventCreate(BaseModel):
     event_id: Optional[str] = None
     timestamp: Optional[str] = None
@@ -2035,6 +2089,14 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         # redacted on ingestion, but retain the evidence-artifact privilege
         # boundary because arbitrary application output can still be private.
         return "secret"
+    if path.startswith("/agents/") and (
+        path.endswith("/directives/effective")
+        or "/directive-activations/" in path
+    ):
+        # Policy distribution is a self-only worker control path.  It must be
+        # reachable by agent credentials even though the snapshot read uses
+        # GET; the route then binds the path agent to the token principal.
+        return "agent"
     if method == "GET":
         return "read"
     if path.startswith("/agents/") and (
@@ -2042,6 +2104,8 @@ def _required_scope(method: str, path: str) -> Optional[str]:
         or path.endswith("/command-audit")
         or path.endswith("/openshell/status")
         or path.endswith("/crash-reports")
+        or path.endswith("/directives/effective")
+        or "/directive-activations/" in path
     ):
         return "agent"
     if path.startswith("/crash-reports"):
@@ -7103,6 +7167,153 @@ def create_app(
     ) -> Dict[str, Any]:
         principal.assert_actor(agent_id)  # mac-wcfy
         return cp.record_command_audit(agent_id=agent_id, **_data(body)).to_dict()
+
+    # Fleet directives -------------------------------------------------
+    # Static paths precede /directives/{directive_id} so FastAPI never
+    # interprets "effective", "bindings", or "waivers" as directive ids.
+
+    @app.post("/directives")
+    def propose_directive(
+        body: DirectivePropose,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.directives.propose(body.document, actor=body.actor)
+
+    @app.get("/directives")
+    def list_directives(
+        state: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return cp.directives.list(state=state)
+
+    @app.get("/directives/effective")
+    def effective_directives(
+        repository_id: Optional[str] = Query(default=None),
+        project: Optional[str] = Query(default=None),
+        agent_id: Optional[str] = Query(default=None),
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        if agent_id is not None:
+            principal.assert_actor(agent_id)
+        return cp.directives.effective_snapshot(
+            repository_id=repository_id,
+            project=project,
+            agent_id=agent_id,
+        )
+
+    @app.get("/agents/{agent_id}/directives/effective")
+    def effective_directives_for_agent(
+        agent_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)
+        return cp.directives.effective_snapshot(agent_id=agent_id)
+
+    @app.get("/directive-bindings")
+    def list_directive_bindings(
+        target_type: Optional[str] = Query(default=None),
+        target_id: Optional[str] = Query(default=None),
+        active: bool = Query(default=True),
+    ) -> List[Dict[str, Any]]:
+        return cp.directives.list_bindings(
+            target_type=target_type,
+            target_id=target_id,
+            active=active,
+        )
+
+    @app.post("/directive-bindings")
+    def set_directive_binding(
+        body: DirectiveBindingSet,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.directives.set_binding(**_data(body))
+
+    @app.get("/directive-waivers")
+    def list_directive_waivers(
+        directive_id: Optional[str] = Query(default=None),
+    ) -> List[Dict[str, Any]]:
+        return cp.directives.list_waivers(directive_id)
+
+    @app.post("/directive-waivers/{waiver_id}/revoke")
+    def revoke_directive_waiver(
+        waiver_id: str,
+        body: DirectiveWaiverRevoke,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.directives.revoke_waiver(waiver_id, **_data(body))
+
+    @app.post("/agents/{agent_id}/directive-activations/{activation_id}/ack")
+    def acknowledge_directive_activation(
+        agent_id: str,
+        activation_id: str,
+        body: DirectiveAck,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.assert_actor(agent_id)
+        return cp.directives.acknowledge(
+            activation_id,
+            agent_id=agent_id,
+            digest=body.digest,
+        )
+
+    @app.get("/directives/{directive_id}")
+    def get_directive(directive_id: str) -> Dict[str, Any]:
+        return cp.directives.get(directive_id)
+
+    @app.get("/directives/{directive_id}/versions")
+    def list_directive_versions(directive_id: str) -> List[Dict[str, Any]]:
+        return cp.directives.versions(directive_id)
+
+    @app.get("/directives/{directive_id}/impact")
+    def directive_impact(directive_id: str) -> Dict[str, Any]:
+        return cp.directives.impact(directive_id)
+
+    @app.post("/directives/{directive_id}/check")
+    def check_directive(
+        directive_id: str,
+        body: DirectiveCheck,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.directives.check(directive_id, **_data(body))
+
+    @app.post("/directives/{directive_id}/approve")
+    def approve_directive(
+        directive_id: str,
+        body: DirectiveApprove,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.directives.approve(directive_id, **_data(body))
+
+    @app.post("/directives/{directive_id}/activate")
+    def activate_directive(
+        directive_id: str,
+        body: DirectiveActivate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.directives.activate(directive_id, **_data(body))
+
+    @app.post("/directives/{directive_id}/deactivate")
+    def deactivate_directive(
+        directive_id: str,
+        body: DirectiveDeactivate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.directives.deactivate(directive_id, **_data(body))
+
+    @app.post("/directives/{directive_id}/waivers")
+    def create_directive_waiver(
+        directive_id: str,
+        body: DirectiveWaiverCreate,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        principal.require_global_fleet()
+        return cp.directives.create_waiver(directive_id, **_data(body))
 
     @app.post("/openshell/policies")
     def create_openshell_policy(

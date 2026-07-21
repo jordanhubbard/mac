@@ -4434,6 +4434,18 @@
   },
   {
     "default": null,
+    "description": "Core setting: directives enabled.",
+    "family": "core",
+    "name": "MAC_DIRECTIVES_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/directive_service.py",
+      "src/mac/services.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Core setting: dispatch priority aging seconds.",
     "family": "core",
     "name": "MAC_DISPATCH_PRIORITY_AGING_SECONDS",

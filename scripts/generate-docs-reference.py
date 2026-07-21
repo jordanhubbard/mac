@@ -8,23 +8,32 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
-from mac.api import create_app
-from mac.services import ControlPlane
-
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from mac.api import create_app  # noqa: E402
+from mac.services import ControlPlane  # noqa: E402
+
+
 CLI_OUTPUT = ROOT / "docs" / "reference" / "cli.md"
 OPENAPI_OUTPUT = ROOT / "docs" / "reference" / "openapi.md"
 INVENTORY_OUTPUT = ROOT / "docs" / "reference" / "documentation-inventory.md"
 ARCHIVE_OUTPUT = ROOT / "docs" / "archive" / "index.md"
+
+
 def _help(*parts: str) -> str:
-    executable = ROOT / ".venv" / "bin" / "mac"
     result = subprocess.run(
-        [str(executable), *parts, "--help"],
+        [sys.executable, "-m", "mac.cli", *parts, "--help"],
         cwd=ROOT,
-        env={"PATH": os.environ.get("PATH", "")},
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            # Editable environments may point at another worktree. Generated
+            # help must always import the source beside this generator.
+            "PYTHONPATH": str(ROOT / "src"),
+        },
         capture_output=True,
         text=True,
         check=False,

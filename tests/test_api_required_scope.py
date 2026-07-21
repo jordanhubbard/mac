@@ -22,6 +22,13 @@ def test_non_v1_paths_unchanged():
     assert _required_scope("POST", "/agentbus") == "agent"
     assert _required_scope("POST", "/action-events") == "agent"
     assert _required_scope("POST", "/agents/agent_1/openshell/status") == "agent"
+    assert _required_scope("GET", "/agents/agent_1/directives/effective") == "agent"
+    assert (
+        _required_scope(
+            "POST", "/agents/agent_1/directive-activations/activation_1/ack"
+        )
+        == "agent"
+    )
     assert _required_scope("GET", "/optimizer/status") == "read"
     assert _required_scope("POST", "/optimizer/tick") == "admin"
     assert _required_scope("POST", "/optimizer/policies") == "admin"

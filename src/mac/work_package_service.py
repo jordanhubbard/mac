@@ -215,6 +215,7 @@ class WorkPackageAdmissionResult:
 
 
 ExternalLineageVerifier = Callable[[Any, Mapping[str, Any]], None]
+TaskMetadataEnricher = Callable[[str, Optional[str]], Mapping[str, Any]]
 
 
 class WorkPackageService:
@@ -227,11 +228,13 @@ class WorkPackageService:
         repository_verifier: Optional[RepositoryBaseVerifier] = None,
         external_lineage_verifier: Optional[ExternalLineageVerifier] = None,
         telemetry: Optional[WorkPackageTelemetryService] = None,
+        task_metadata_enricher: Optional[TaskMetadataEnricher] = None,
     ) -> None:
         self.store = store
         self.repository_verifier = repository_verifier or GitRepositoryBaseVerifier()
         self.external_lineage_verifier = external_lineage_verifier
         self.telemetry = telemetry or WorkPackageTelemetryService(store)
+        self.task_metadata_enricher = task_metadata_enricher
 
     def get(self, package_id: str) -> WorkPackage:
         """Return one exact package identity and its current pointers."""
@@ -388,6 +391,16 @@ class WorkPackageService:
         definition = compiled.definition
         package_id = str(definition["package_id"])
         repository_id = str(definition["repository_id"])
+        task_metadata_overlay = (
+            dict(
+                self.task_metadata_enricher(
+                    repository_id,
+                    str(definition.get("project") or "") or None,
+                )
+            )
+            if self.task_metadata_enricher is not None
+            else {}
+        )
         existing = self.store.query_one(
             "SELECT * FROM work_packages WHERE id = ?", (package_id,)
         )
@@ -570,6 +583,7 @@ class WorkPackageService:
                     now=now,
                     materialized=materialization_map[node.node_key],
                     materialization_map=materialization_map,
+                    task_metadata_overlay=task_metadata_overlay,
                 )
             if _controller_task_identity is not None:
                 root_update = conn.execute(
@@ -854,6 +868,7 @@ class WorkPackageService:
         now: str,
         materialized: Mapping[str, Any],
         materialization_map: Mapping[str, Mapping[str, Any]],
+        task_metadata_overlay: Mapping[str, Any],
     ) -> None:
         task_id = str(materialized["task_id"])
         internal_ids = [
@@ -862,6 +877,8 @@ class WorkPackageService:
         external_ids = [str(item["task_id"]) for item in node.external_dependencies]
         dependencies = sorted(set(internal_ids + external_ids))
         task_metadata = dict(node.metadata)
+        for key, value in task_metadata_overlay.items():
+            task_metadata.setdefault(str(key), value)
         task_metadata["no_dispatch"] = True
         task_metadata["work_package"] = {
             "schema": "mac.work_package.task.v1",

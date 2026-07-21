@@ -225,6 +225,65 @@ def _deployment_heartbeat_payload(
     return payload
 
 
+def _synchronize_directive_policy(
+    client: MacApiClient,
+    agent_id: str,
+) -> JsonDict:
+    """Fetch and acknowledge every pending policy epoch before claiming work."""
+
+    path = "/agents/%s/directives/effective" % quote(agent_id, safe="")
+
+    def fetch() -> Any:
+        get = getattr(client, "get", None)
+        if callable(get):
+            return get(path)
+        return client.request("GET", path, None)
+
+    try:
+        snapshot = fetch()
+    except MacApiError as exc:
+        # Rolling compatibility with a pre-directive hub is intentionally the
+        # only soft failure. Current-hub transport/evaluation failures stay
+        # fail-closed and prevent the worker from reaching claim-next.
+        if "not found" in str(exc).lower():
+            return {"schema": "mac.directive.snapshot.v1", "enabled": False}
+        raise
+    if not isinstance(snapshot, dict):
+        raise MacApiError("hub returned an invalid directive policy snapshot")
+    pending = snapshot.get("pending_activations") or []
+    if not isinstance(pending, list):
+        raise MacApiError("hub returned invalid pending directive activations")
+    for activation in pending:
+        if not isinstance(activation, dict):
+            raise MacApiError("hub returned an invalid directive activation")
+        activation_id = str(activation.get("activation_id") or "").strip()
+        digest = str(activation.get("digest") or "").strip()
+        document = activation.get("document")
+        if not activation_id or not digest or not isinstance(document, dict):
+            raise MacApiError("hub returned an incomplete directive activation")
+        observed_digest = hashlib.sha256(
+            json.dumps(
+                document,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if observed_digest != digest:
+            raise MacApiError("directive activation document digest mismatch")
+        client.post(
+            "/agents/%s/directive-activations/%s/ack"
+            % (quote(agent_id, safe=""), quote(activation_id, safe="")),
+            {"digest": digest},
+        )
+    if pending:
+        confirmed = fetch()
+        if not isinstance(confirmed, dict) or confirmed.get("pending_activations"):
+            raise MacApiError("directive acknowledgement did not clear pending policy")
+        snapshot = confirmed
+    return snapshot
+
+
 REQUIRED_CHANGED_FILE_KEYS = (
     "required_changed_files",
     "required_files",
@@ -964,6 +1023,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             # Remember the failure, but first prove there is no durable hold
             # and allow only that bounded control phase to request restart.
             heartbeat_error = exc
+        if heartbeat_error is None:
+            _synchronize_directive_policy(self.client, self.agent_id)
         current_hold = self._current_dispatch_hold()
         if current_hold is not None:
             reason = str(current_hold.get("dispatch_hold_reason") or "dispatch held")
@@ -7909,9 +7970,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "/agents/%s/heartbeat" % quote(agent_id, safe=""),
                 heartbeat_payload,
             )
+            directive_snapshot = _synchronize_directive_policy(client, agent_id)
             print(
                 json.dumps(
-                    {**startup_info, "status": "heartbeat", "agent": heartbeat, "registered": registered},
+                    {
+                        **startup_info,
+                        "status": "heartbeat",
+                        "agent": heartbeat,
+                        "registered": registered,
+                        "directive_snapshot": directive_snapshot,
+                    },
                     indent=2,
                     sort_keys=True,
                 )

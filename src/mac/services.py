@@ -167,6 +167,7 @@ from mac.agentbus_control import (
 from mac.action_event_service import ActionEventService
 from mac.agentbus_service import AgentBusService
 from mac.deploy_service import DeployService
+from mac.directive_service import DirectiveService
 from mac.codegraph_audit import codegraph_audit_manifest_problems
 from mac import evidence_blobs
 from mac.evidence_validators import rejected_verdict_feedback_problems, validate_evidence_type
@@ -1482,6 +1483,18 @@ class ControlPlane:
         self.managed_work_plans = ManagedWorkPlanBridge(
             self.store,
             self.work_packages,
+        )
+        self.directives = DirectiveService(
+            self.store,
+            enabled=_truthy_env("MAC_DIRECTIVES_ENABLED"),
+            workflow_resolver=lambda slug, version: self.workflows.get_workflow(
+                slug, version=version
+            ),
+            macro_expander=self._expand_directive_macro,
+            activation_notifier=self._publish_directive_activation,
+        )
+        self.work_packages.task_metadata_enricher = (
+            self._directive_work_package_task_metadata
         )
         self.agent_state = AgentStateService(
             self.store,
@@ -4590,6 +4603,21 @@ class ControlPlane:
             task_capabilities,
             normalized_metadata,
         )
+        if self.directives.enabled:
+            execution_contract = ensure_json_object(
+                normalized_metadata.get("execution_contract")
+            )
+            origin = ensure_json_object(normalized_metadata.get("origin"))
+            repository_id = str(
+                execution_contract.get("repository_id")
+                or origin.get("repository_id")
+                or normalized_metadata.get("repository_id")
+                or ""
+            ).strip() or None
+            normalized_metadata["directive_snapshot"] = self.directives.effective_snapshot(
+                repository_id=repository_id,
+                project=project,
+            )
         publication_policy = self._single_task_publication_policy(normalized_metadata)
         if (
             publication_policy == PUBLICATION_LANE_LEGACY
@@ -17942,6 +17970,263 @@ class ControlPlane:
             self._require_live_agent(str(sender))
         return self.agentbus.publish(*args, **kwargs)
 
+    # Fleet directives use AgentBus only as a low-latency invalidation signal.
+    # The durable activation, digest, cohort and acknowledgement remain in the
+    # directive tables, so a missed notification is recovered by worker poll.
+
+    def _publish_directive_activation(self, agent_id: str, payload: JsonDict) -> None:
+        target = self._require_live_agent(agent_id)
+        persona = self._ensure_operator_persona()
+        self.agentbus.publish(
+            sender_agent_id=persona.id,
+            recipient_agent_id=target.id,
+            topic="directive.activation",
+            content_type="application/vnd.mac.directive-activation+json",
+            headers={
+                "activation_id": str(payload["activation_id"]),
+                "directive_digest": str(payload["digest"]),
+            },
+            payload=payload,
+        )
+
+    def _directive_work_package_task_metadata(
+        self,
+        repository_id: str,
+        project: Optional[str],
+    ) -> JsonDict:
+        if not self.directives.enabled:
+            return {}
+        return {
+            "directive_snapshot": self.directives.effective_snapshot(
+                repository_id=repository_id,
+                project=project,
+            )
+        }
+
+    def _expand_directive_macro(
+        self,
+        activation: JsonDict,
+        repository: JsonDict,
+        macro: JsonDict,
+        context: JsonDict,
+    ) -> JsonDict:
+        """Compile a registered workflow macro into one held managed DAG.
+
+        The workflow is an instruction template, never executable policy.  A
+        single mutation station preserves its ordered node instructions; the
+        existing managed assembly/certification stations then own integration
+        and proof.  Nothing in this path activates the admitted package.
+        """
+
+        from mac.workflow_models import WorkflowDefinition
+        from mac.directive_models import DIRECTIVE_SNAPSHOT_SCHEMA, canonical_digest
+
+        workflow = self.workflows.get_workflow(
+            str(macro["workflow"]), version=int(macro["version"])
+        )
+        if not workflow.enabled:
+            raise ValidationError("directive workflow is disabled: %s" % workflow.slug)
+        definition = WorkflowDefinition.parse(workflow.definition)
+        instructions = [
+            "Apply registered workflow %s@%d to repository %s."
+            % (workflow.slug, workflow.version, repository["id"]),
+            "Resolved macro inputs: %s" % json_dumps(macro.get("inputs") or {}),
+        ]
+        capabilities = set()
+        roles = []
+        for node in definition.nodes:
+            instructions.append(
+                "\n[%s | role=%s]\n%s"
+                % (node.node_key, node.role_required, node.instructions)
+            )
+            capabilities.update(node.required_capabilities)
+            if node.role_required:
+                roles.append(node.role_required)
+        effect_values = {
+            kind: [str(item) for item in (macro.get("effects") or {}).get(kind, [])]
+            for kind in ("reads", "writes", "exclusive", "external")
+            if (macro.get("effects") or {}).get(kind)
+        }
+        local_resources = sorted(
+            {
+                item
+                for kind in ("reads", "writes", "exclusive")
+                for item in effect_values.get(kind, [])
+            }
+        ) or ["repository:%s" % repository["id"]]
+        identity = {
+            "directive_id": activation["directive_id"],
+            "directive_version": activation["directive_version"],
+            "directive_digest": activation["directive_digest"],
+            "repository_id": repository["id"],
+            "workflow": workflow.slug,
+            "workflow_version": workflow.version,
+            "inputs": macro.get("inputs") or {},
+        }
+        package_id = "wp_directive_%s" % hashlib.sha256(
+            json_dumps(identity).encode("utf-8")
+        ).hexdigest()[:24]
+        current_snapshot = self.directives.effective_snapshot(
+            repository_id=str(repository["id"]),
+            project=str(repository["project"]),
+        )
+        prospective_policy = dict(current_snapshot.get("set") or {})
+        prospective_policy.update(context["directive"].get("set") or {})
+        prospective_directives = list(current_snapshot.get("directives") or [])
+        prospective_directives.append(
+            {
+                "directive_id": activation["directive_id"],
+                "version": activation["directive_version"],
+                "digest": activation["directive_digest"],
+                "variables": context.get("variables") or {},
+            }
+        )
+        snapshot_payload = {
+            "enabled": True,
+            "epoch": activation["epoch"],
+            "repository_id": repository["id"],
+            "project": repository["project"],
+            "agent_id": None,
+            "set": prospective_policy,
+            "directives": prospective_directives,
+        }
+        prospective_snapshot = {
+            "schema": DIRECTIVE_SNAPSHOT_SCHEMA,
+            **snapshot_payload,
+            "digest": canonical_digest(snapshot_payload),
+            "pending_activations": [],
+        }
+        proposal = {
+            "nodes": [
+                {
+                    "node_id": "apply_directive",
+                    "title": "Apply %s" % workflow.name,
+                    "description": "\n".join(instructions),
+                    "kind": "mutation",
+                    "required_capabilities": sorted(capabilities),
+                    "estimates": {"confidence": "high"},
+                    "effects": effect_values,
+                    "expected_outputs": ["directive-change-candidate"],
+                    "verification": {"profile": "repository-default"},
+                    "metadata": {
+                        "directive_id": activation["directive_id"],
+                        "directive_version": activation["directive_version"],
+                        "directive_digest": activation["directive_digest"],
+                        "workflow_id": workflow.id,
+                        "workflow_version": workflow.version,
+                        "workflow_roles": sorted(set(roles)),
+                        "macro_inputs": macro.get("inputs") or {},
+                        "directive_snapshot": prospective_snapshot,
+                    },
+                },
+                {
+                    "node_id": "assemble",
+                    "title": "Assemble directive candidate",
+                    "kind": "integration",
+                    "depends_on": ["apply_directive"],
+                    "effects": {"reads": local_resources},
+                    "expected_outputs": ["assembled-tree"],
+                    "verification": {"profile": "integration-default"},
+                    "metadata": {"directive_snapshot": prospective_snapshot},
+                },
+                {
+                    "node_id": "certify",
+                    "title": "Certify directive candidate",
+                    "kind": "certification",
+                    "depends_on": ["assemble"],
+                    "effects": {"reads": local_resources},
+                    "expected_outputs": ["directive-certificate"],
+                    "verification": {"profile": "certification-default"},
+                    "metadata": {"directive_snapshot": prospective_snapshot},
+                },
+            ],
+            "metadata": {
+                "directive_id": activation["directive_id"],
+                "directive_version": activation["directive_version"],
+                "directive_digest": activation["directive_digest"],
+                "workflow": {"slug": workflow.slug, "version": workflow.version},
+                "automatic_activation": False,
+            },
+        }
+        preview = self.managed_work_plans.preview(
+            proposal,
+            request={
+                "goal": "Apply fleet directive %s using workflow %s@%d"
+                % (context["directive"]["name"], workflow.slug, workflow.version),
+                "repository_id": repository["id"],
+                "project": repository["project"],
+                "package_id": package_id,
+            },
+            source="fleet-directive",
+        )
+        acceptance = self.managed_work_plans.accept(
+            preview.plan,
+            actor="directive-control-plane",
+            reason="approved fleet directive %s" % activation["id"],
+        ).to_dict()
+        return {
+            "schema": "mac.directive.macro_expansion.v1",
+            "work_package_id": acceptance["package"]["id"],
+            "task_ids": acceptance["task_ids"],
+            "held": bool(acceptance["held"]),
+            "activation": acceptance["activation"],
+        }
+
+    # Transport-shaped directive facade used by LocalDispatch.  Keeping this
+    # naming identical to RemoteDispatch lets the CLI exercise one contract.
+
+    def propose_directive(self, document: Dict[str, Any], **kwargs: Any) -> JsonDict:
+        return self.directives.propose(document, **kwargs)
+
+    def list_directives(self, **kwargs: Any) -> List[JsonDict]:
+        return self.directives.list(**kwargs)
+
+    def get_directive(self, directive_id: str) -> JsonDict:
+        return self.directives.get(directive_id)
+
+    def list_directive_versions(self, directive_id: str) -> List[JsonDict]:
+        return self.directives.versions(directive_id)
+
+    def check_directive(self, directive_id: str, **kwargs: Any) -> JsonDict:
+        return self.directives.check(directive_id, **kwargs)
+
+    def approve_directive(self, directive_id: str, **kwargs: Any) -> JsonDict:
+        return self.directives.approve(directive_id, **kwargs)
+
+    def activate_directive(self, directive_id: str, **kwargs: Any) -> JsonDict:
+        return self.directives.activate(directive_id, **kwargs)
+
+    def deactivate_directive(self, directive_id: str, **kwargs: Any) -> JsonDict:
+        return self.directives.deactivate(directive_id, **kwargs)
+
+    def directive_impact(self, directive_id: str) -> JsonDict:
+        return self.directives.impact(directive_id)
+
+    def effective_directives(self, **kwargs: Any) -> JsonDict:
+        return self.directives.effective_snapshot(**kwargs)
+
+    def set_directive_binding(self, **kwargs: Any) -> JsonDict:
+        return self.directives.set_binding(**kwargs)
+
+    def list_directive_bindings(self, **kwargs: Any) -> List[JsonDict]:
+        return self.directives.list_bindings(**kwargs)
+
+    def create_directive_waiver(self, directive_id: str, **kwargs: Any) -> JsonDict:
+        return self.directives.create_waiver(directive_id, **kwargs)
+
+    def list_directive_waivers(self, **kwargs: Any) -> List[JsonDict]:
+        return self.directives.list_waivers(kwargs.pop("directive_id", None))
+
+    def revoke_directive_waiver(self, waiver_id: str, **kwargs: Any) -> JsonDict:
+        return self.directives.revoke_waiver(waiver_id, **kwargs)
+
+    def acknowledge_directive_activation(
+        self, agent_id: str, activation_id: str, *, digest: str
+    ) -> JsonDict:
+        return self.directives.acknowledge(
+            activation_id, agent_id=agent_id, digest=digest
+        )
+
     # Human directives: the hub-verified human->agent channel. Authority is
     # attested provenance — the API layer refuses agent-bound tokens on this
     # topic, so receipt of one IS proof of operator origin. This is how a
@@ -22203,6 +22488,8 @@ class ControlPlane:
             return "agent_status_unavailable"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return "agent_health_unavailable"
+        if not self.directives.agent_policy_ready(agent.id):
+            return "directive_policy_unacknowledged"
         if active_count >= self._agent_capacity(agent):
             return "agent_capacity_full"
         if not machine.trusted:
@@ -22420,6 +22707,8 @@ class ControlPlane:
             return False, "agent_status_unavailable"
         if agent.health_status != HealthStatus.HEALTHY.value:
             return False, "agent_health_unavailable"
+        if not self.directives.agent_policy_ready(agent.id):
+            return False, "directive_policy_unacknowledged"
         try:
             self._assert_current_read_only_report_task_contract(task)
         except ValidationError:

@@ -10,6 +10,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -203,6 +204,7 @@ def _clean_environment(workspace: Path) -> dict[str, str]:
     path = os.pathsep.join(
         str(item)
         for item in (
+            Path(sys.executable).parent,
             ROOT / ".venv" / "bin",
             Path("/usr/local/bin"),
             Path("/opt/homebrew/bin"),

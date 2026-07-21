@@ -47,6 +47,8 @@ request and response definitions.
 | `GET` | `/agents/{agent_id}/command-audit` | List Agent Command Audit |
 | `POST` | `/agents/{agent_id}/command-audit` | Record Agent Command Audit |
 | `POST` | `/agents/{agent_id}/crash-reports` | Report Agent Crash |
+| `POST` | `/agents/{agent_id}/directive-activations/{activation_id}/ack` | Acknowledge Directive Activation |
+| `GET` | `/agents/{agent_id}/directives/effective` | Effective Directives For Agent |
 | `POST` | `/agents/{agent_id}/disable` | Disable Agent |
 | `DELETE` | `/agents/{agent_id}/dispatch-hold` | Clear Dispatch Hold |
 | `POST` | `/agents/{agent_id}/dispatch-hold` | Set Dispatch Hold |
@@ -134,6 +136,21 @@ request and response definitions.
 | `POST` | `/dashboard/terminal-sessions/{session_id}/resize` | Dashboard Terminal Session Resize |
 | `POST` | `/dashboard/workflow-plan/accept` | Dashboard Workflow Plan Accept |
 | `POST` | `/dashboard/workflow-plan/preview` | Dashboard Workflow Plan Preview |
+| `GET` | `/directive-bindings` | List Directive Bindings |
+| `POST` | `/directive-bindings` | Set Directive Binding |
+| `GET` | `/directive-waivers` | List Directive Waivers |
+| `POST` | `/directive-waivers/{waiver_id}/revoke` | Revoke Directive Waiver |
+| `GET` | `/directives` | List Directives |
+| `POST` | `/directives` | Propose Directive |
+| `GET` | `/directives/effective` | Effective Directives |
+| `GET` | `/directives/{directive_id}` | Get Directive |
+| `POST` | `/directives/{directive_id}/activate` | Activate Directive |
+| `POST` | `/directives/{directive_id}/approve` | Approve Directive |
+| `POST` | `/directives/{directive_id}/check` | Check Directive |
+| `POST` | `/directives/{directive_id}/deactivate` | Deactivate Directive |
+| `GET` | `/directives/{directive_id}/impact` | Directive Impact |
+| `GET` | `/directives/{directive_id}/versions` | List Directive Versions |
+| `POST` | `/directives/{directive_id}/waivers` | Create Directive Waiver |
 | `POST` | `/dispatch/assign` | Dispatch Once |
 | `GET` | `/dispatch/dead-letters` | Dead Letters |
 | `GET` | `/dispatch/dead-letters/page` | Dead Letters Page |

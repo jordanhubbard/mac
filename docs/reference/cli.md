@@ -9,13 +9,13 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 $ mac --help
 usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
-           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,openshell,machine,agent,fleet,journal,optimizer,mood,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
            ...
 
 Multi-agent coordinator control plane
 
 positional arguments:
-  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,openshell,machine,agent,fleet,journal,optimizer,mood,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
     diagnostics         run read-only control-plane health checks
     init                initialize the SQLite store
     config              configuration helpers
@@ -36,6 +36,8 @@ positional arguments:
     project             project summary commands
     work-package        versioned work-DAG admission, readiness, and
                         controller stages
+    directive           versioned fleet rules, conditional bindings, and held
+                        workflow macros
     openshell           OpenShell sandbox guardrail commands
     machine             machine registry commands
     agent               agent registry commands
@@ -447,6 +449,30 @@ positional arguments:
     finalize-publication
                         consume the exact landing receipt and complete the
                         product graph
+
+options:
+  -h, --help            show this help message and exit
+```
+
+## mac directive
+
+```console
+$ mac directive --help
+usage: mac directive [-h]
+                     {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver}
+                     ...
+
+positional arguments:
+  {propose,list,show,versions,check,impact,approve,activate,deactivate,effective,binding,waiver}
+    propose             validate and create an immutable directive version
+    check               analyze exact policy, bindings, conflicts, and macro
+                        effects
+    approve             approve one exact passing check and immutable digest
+    activate            distribute an approved version for fleet
+                        acknowledgement
+    effective           render the currently active policy snapshot
+    binding             hub-owned variable bindings
+    waiver              audited exact-version repository/project exceptions
 
 options:
   -h, --help            show this help message and exit

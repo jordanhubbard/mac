@@ -1015,6 +1015,154 @@ CREATE TABLE IF NOT EXISTS openshell_agent_status (
 CREATE INDEX IF NOT EXISTS idx_openshell_agent_status_status
     ON openshell_agent_status (status, reported_at);
 
+CREATE TABLE IF NOT EXISTS fleet_directives (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    current_version INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    reserved INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_directives_state_name
+    ON fleet_directives (state, name);
+
+CREATE TABLE IF NOT EXISTS fleet_directive_versions (
+    id TEXT PRIMARY KEY,
+    directive_id TEXT NOT NULL REFERENCES fleet_directives(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(directive_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_directive_versions_directive
+    ON fleet_directive_versions (directive_id, version);
+CREATE OR REPLACE FUNCTION trg_fleet_directive_versions_immutable()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'fleet directive versions are immutable';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_fleet_directive_versions_immutable ON fleet_directive_versions;
+CREATE TRIGGER trg_fleet_directive_versions_immutable
+BEFORE UPDATE OR DELETE ON fleet_directive_versions
+FOR EACH ROW EXECUTE FUNCTION trg_fleet_directive_versions_immutable();
+
+CREATE TABLE IF NOT EXISTS fleet_directive_bindings (
+    id TEXT PRIMARY KEY,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    binding_key TEXT NOT NULL,
+    binding_value TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,
+    UNIQUE(target_type, target_id, binding_key, version)
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_directive_bindings_target
+    ON fleet_directive_bindings (target_type, target_id, active, binding_key);
+
+CREATE TABLE IF NOT EXISTS fleet_directive_checks (
+    id TEXT PRIMARY KEY,
+    directive_id TEXT NOT NULL REFERENCES fleet_directives(id) ON DELETE CASCADE,
+    directive_version INTEGER NOT NULL,
+    directive_digest TEXT NOT NULL,
+    context_digest TEXT NOT NULL,
+    policy_digest TEXT NOT NULL,
+    status TEXT NOT NULL,
+    report TEXT NOT NULL,
+    checked_by TEXT NOT NULL,
+    checked_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_directive_checks_directive
+    ON fleet_directive_checks (directive_id, directive_version, checked_at);
+
+CREATE TABLE IF NOT EXISTS fleet_directive_approvals (
+    id TEXT PRIMARY KEY,
+    directive_id TEXT NOT NULL REFERENCES fleet_directives(id) ON DELETE CASCADE,
+    directive_version INTEGER NOT NULL,
+    directive_digest TEXT NOT NULL,
+    check_id TEXT NOT NULL REFERENCES fleet_directive_checks(id),
+    context_digest TEXT NOT NULL,
+    policy_digest TEXT NOT NULL,
+    approved_by TEXT NOT NULL,
+    approved_at TEXT NOT NULL,
+    UNIQUE(directive_id, directive_version, directive_digest)
+);
+
+CREATE TABLE IF NOT EXISTS fleet_directive_activations (
+    id TEXT PRIMARY KEY,
+    directive_id TEXT NOT NULL REFERENCES fleet_directives(id) ON DELETE CASCADE,
+    directive_version INTEGER NOT NULL,
+    directive_digest TEXT NOT NULL,
+    check_id TEXT NOT NULL REFERENCES fleet_directive_checks(id),
+    approval_id TEXT NOT NULL REFERENCES fleet_directive_approvals(id),
+    epoch INTEGER NOT NULL UNIQUE,
+    state TEXT NOT NULL,
+    cohort TEXT NOT NULL,
+    expected_acks INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    activated_at TEXT,
+    deactivated_at TEXT,
+    deactivated_by TEXT,
+    deactivation_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_directive_activations_state_epoch
+    ON fleet_directive_activations (state, epoch);
+ALTER TABLE fleet_directive_activations
+    ADD COLUMN IF NOT EXISTS deactivated_by TEXT;
+ALTER TABLE fleet_directive_activations
+    ADD COLUMN IF NOT EXISTS deactivation_reason TEXT;
+
+CREATE TABLE IF NOT EXISTS fleet_directive_acks (
+    id TEXT PRIMARY KEY,
+    activation_id TEXT NOT NULL REFERENCES fleet_directive_activations(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id),
+    directive_digest TEXT NOT NULL,
+    acknowledged_at TEXT NOT NULL,
+    UNIQUE(activation_id, agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS fleet_directive_waivers (
+    id TEXT PRIMARY KEY,
+    directive_id TEXT NOT NULL REFERENCES fleet_directives(id) ON DELETE CASCADE,
+    directive_version INTEGER NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    revoked_by TEXT,
+    revoked_at TEXT,
+    revoke_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_directive_waivers_lookup
+    ON fleet_directive_waivers (directive_id, directive_version, target_type, target_id);
+
+CREATE TABLE IF NOT EXISTS fleet_directive_macro_instances (
+    id TEXT PRIMARY KEY,
+    activation_id TEXT NOT NULL REFERENCES fleet_directive_activations(id) ON DELETE CASCADE,
+    repository_id TEXT NOT NULL,
+    work_package_id TEXT,
+    state TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(activation_id, repository_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fleet_directive_macro_instances_state
+    ON fleet_directive_macro_instances (state, updated_at);
+
 CREATE TABLE IF NOT EXISTS agent_lifecycle_events (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,

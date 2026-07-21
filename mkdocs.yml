@@ -122,6 +122,7 @@ nav:
       - CLI: reference/cli.md
       - HTTP API: reference/openapi.md
       - Environment: env-config-reference.md
+      - Fleet directives: fleet-directives.md
       - Repository contract: repository-runtime-contract.md
       - Fleet registry: fleet-registry-schema.md
       - Documentation inventory: reference/documentation-inventory.md

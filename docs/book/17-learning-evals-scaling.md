@@ -36,3 +36,47 @@ Scaling decisions should use comparable canonical outcomes: queue time,
 execution time, review latency, rework, certification, and publication success.
 Faster internal task transitions do not compensate for a lower rate of useful
 work reaching the canonical branch.
+
+Fleet directives turn an operator rule into versioned control-plane data. They
+are deliberately narrower than agent prompts: conditions use a small typed
+language, substitutions are marked, conflicts are checked before approval, and
+an activation does not become effective until its live worker cohort has
+acknowledged the exact digest. Workflow macros create held DAGs; an operator
+must still inspect and activate those packages.
+
+This executable example activates an unconditional boolean rule on a local
+authority with no workers. A production cohort would leave the activation in
+`distributing` until every live worker acknowledged it.
+
+```bash
+export MAC_DIRECTIVES_ENABLED=1
+mac --db "$DOCS_DB" init
+cat >"$TMPDIR/review-policy.yaml" <<'YAML'
+schema: mac.directive.v1
+name: review.require-independent
+description: Require independent review for every newly created task.
+scope: fleet
+set:
+  review.independent_required: true
+YAML
+directive_json="$(mac --db "$DOCS_DB" --json directive propose \
+  --document-file "$TMPDIR/review-policy.yaml" --actor docs)"
+directive_id="$(printf '%s' "$directive_json" | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+digest="$(printf '%s' "$directive_json" | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["versions"][0]["digest"])')"
+check_json="$(mac --db "$DOCS_DB" --json directive check \
+  "$directive_id" --version 1 --actor docs)"
+check_id="$(printf '%s' "$check_json" | \
+  python3 -c 'import json,sys; data=json.load(sys.stdin); assert data["status"] == "pass"; print(data["id"])')"
+mac --db "$DOCS_DB" directive approve "$directive_id" \
+  --version 1 --digest "$digest" --check-id "$check_id" --actor docs >/dev/null
+mac --db "$DOCS_DB" directive activate "$directive_id" \
+  --version 1 --digest "$digest" --actor docs >/dev/null
+mac --db "$DOCS_DB" --json directive effective | \
+  python3 -c 'import json,sys; assert json.load(sys.stdin)["set"]["review.independent_required"] is True'
+```
+
+The complete directive schema, binding precedence, conflict rules, waiver
+boundary, and Make-to-Bazel workflow example are in the
+[fleet directive reference](../fleet-directives.md).

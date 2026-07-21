@@ -85,6 +85,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `dashboard-connection.md` | Dashboard Connection Contract |
 | supplemental reference | `env-config-reference.md` | MAC environment configuration reference |
 | runbook | `fleet-cutover-transaction-protocol.md` | Fleet Cut-over Transaction Protocol |
+| supplemental reference | `fleet-directives.md` | Fleet directives |
 | runbook | `fleet-node-onboarding-checklist.md` | Fleet node onboarding checklist |
 | supplemental reference | `fleet-operational-learning.md` | Fleet operational learning |
 | supplemental reference | `fleet-registry-schema.md` | Fleet registry schema |

@@ -2553,6 +2553,98 @@ class RemoteDispatch:
     def list_observability(self, **kw: Any) -> List[_Dictish]:
         return _wrap_list(self._get("/observability", **kw))
 
+    def propose_directive(self, document: Dict[str, Any], **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post("/directives", _drop_none({"document": document, **kw}))
+        )
+
+    def list_directives(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/directives", **kw))
+
+    def get_directive(self, directive_id: str) -> _Dictish:
+        return _Dictish(self._get("/directives/%s" % quote(directive_id, safe="")))
+
+    def list_directive_versions(self, directive_id: str) -> List[_Dictish]:
+        return _wrap_list(
+            self._get("/directives/%s/versions" % quote(directive_id, safe=""))
+        )
+
+    def check_directive(self, directive_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/directives/%s/check" % quote(directive_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def approve_directive(self, directive_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/directives/%s/approve" % quote(directive_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def activate_directive(self, directive_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/directives/%s/activate" % quote(directive_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def deactivate_directive(self, directive_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/directives/%s/deactivate" % quote(directive_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def directive_impact(self, directive_id: str) -> _Dictish:
+        return _Dictish(
+            self._get("/directives/%s/impact" % quote(directive_id, safe=""))
+        )
+
+    def effective_directives(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._get("/directives/effective", **kw))
+
+    def set_directive_binding(self, **kw: Any) -> _Dictish:
+        return _Dictish(self._post("/directive-bindings", _drop_none(kw)))
+
+    def list_directive_bindings(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/directive-bindings", **kw))
+
+    def create_directive_waiver(self, directive_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/directives/%s/waivers" % quote(directive_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def list_directive_waivers(self, **kw: Any) -> List[_Dictish]:
+        return _wrap_list(self._get("/directive-waivers", **kw))
+
+    def revoke_directive_waiver(self, waiver_id: str, **kw: Any) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/directive-waivers/%s/revoke" % quote(waiver_id, safe=""),
+                _drop_none(kw),
+            )
+        )
+
+    def acknowledge_directive_activation(
+        self, agent_id: str, activation_id: str, *, digest: str
+    ) -> _Dictish:
+        return _Dictish(
+            self._post(
+                "/agents/%s/directive-activations/%s/ack"
+                % (quote(agent_id, safe=""), quote(activation_id, safe="")),
+                {"digest": digest},
+            )
+        )
+
     def create_openshell_policy(self, *args: Any, **kw: Any) -> _Dictish:
         name = args[0] if args else kw.pop("name")
         policy_text = args[1] if len(args) > 1 else kw.pop("policy_text")

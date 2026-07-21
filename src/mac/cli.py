@@ -2935,6 +2935,156 @@ def cmd_fleet_snapshot(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_snapshot(exclude_agent_id=getattr(args, "agent", None)))
 
 
+def _read_directive_document(path: str) -> Dict[str, Any]:
+    import yaml
+
+    raw = _read_text_arg(None, path, label="directive document")
+    try:
+        value = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise SystemExit("directive document is invalid YAML/JSON: %s" % exc)
+    if not isinstance(value, dict):
+        raise SystemExit("directive document must be a YAML/JSON object")
+    return value
+
+
+def cmd_directive_propose(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).propose_directive(
+            _read_directive_document(args.document_file), actor=args.actor
+        )
+    )
+
+
+def cmd_directive_list(args: argparse.Namespace) -> None:
+    _print(_plane(args).list_directives(state=args.state))
+
+
+def cmd_directive_show(args: argparse.Namespace) -> None:
+    _print(_plane(args).get_directive(args.directive))
+
+
+def cmd_directive_versions(args: argparse.Namespace) -> None:
+    _print(_plane(args).list_directive_versions(args.directive))
+
+
+def cmd_directive_check(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).check_directive(
+            args.directive, version=args.version, actor=args.actor
+        )
+    )
+
+
+def cmd_directive_impact(args: argparse.Namespace) -> None:
+    _print(_plane(args).directive_impact(args.directive))
+
+
+def cmd_directive_approve(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).approve_directive(
+            args.directive,
+            version=args.version,
+            directive_digest=args.digest,
+            check_id=args.check_id,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_directive_activate(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).activate_directive(
+            args.directive,
+            version=args.version,
+            directive_digest=args.digest,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_directive_deactivate(args: argparse.Namespace) -> None:
+    reason = _read_text_arg(args.reason, args.reason_file, label="reason")
+    if not reason.strip():
+        raise SystemExit("directive deactivate requires --reason or --reason-file")
+    _print(
+        _plane(args).deactivate_directive(
+            args.directive, reason=reason, actor=args.actor
+        )
+    )
+
+
+def cmd_directive_effective(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).effective_directives(
+            repository_id=args.repository_id,
+            project=args.project,
+        )
+    )
+
+
+def cmd_directive_binding_set(args: argparse.Namespace) -> None:
+    value = _read_json_arg(
+        args.value,
+        args.value_file,
+        label="directive binding value",
+        default=None,
+    )
+    if value is None:
+        raise SystemExit("directive binding set requires --value or --value-file")
+    _print(
+        _plane(args).set_directive_binding(
+            target_type=args.target_type,
+            target_id=args.target_id,
+            key=args.key,
+            value=value,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_directive_binding_list(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).list_directive_bindings(
+            target_type=args.target_type,
+            target_id=args.target_id,
+            active=not args.inactive,
+        )
+    )
+
+
+def cmd_directive_waiver_create(args: argparse.Namespace) -> None:
+    reason = _read_text_arg(args.reason, args.reason_file, label="waiver reason")
+    if not reason.strip():
+        raise SystemExit("directive waiver create requires --reason or --reason-file")
+    _print(
+        _plane(args).create_directive_waiver(
+            args.directive,
+            version=args.version,
+            target_type=args.target_type,
+            target_id=args.target_id,
+            reason=reason,
+            expires_at=args.expires_at,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_directive_waiver_list(args: argparse.Namespace) -> None:
+    _print(_plane(args).list_directive_waivers(directive_id=args.directive))
+
+
+def cmd_directive_waiver_revoke(args: argparse.Namespace) -> None:
+    reason = _read_text_arg(args.reason, args.reason_file, label="waiver revoke reason")
+    if not reason.strip():
+        raise SystemExit("directive waiver revoke requires --reason or --reason-file")
+    _print(
+        _plane(args).revoke_directive_waiver(
+            args.waiver, actor=args.actor, reason=reason
+        )
+    )
+
+
 def cmd_openshell_render_policy(args: argparse.Namespace) -> None:
     """Render the OpenShell guardrail policy from the operator template + fleet
     values; install at ~/.mac/openshell-policy.yaml (or print). The policy half
@@ -5912,6 +6062,122 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wp_finalize_publication.add_argument("--receipt-id")
     _set(cmd_work_package_finalize_publication, wp_finalize_publication)
+
+    directive = sub.add_parser(
+        "directive",
+        help="versioned fleet rules, conditional bindings, and held workflow macros",
+    ).add_subparsers(
+        dest="directive_command", required=True
+    )
+    directive_propose = directive.add_parser(
+        "propose", help="validate and create an immutable directive version"
+    )
+    directive_propose.add_argument(
+        "--document-file",
+        required=True,
+        help="directive YAML/JSON path, or '-' for stdin",
+    )
+    directive_propose.add_argument("--actor", default="human")
+    _set(cmd_directive_propose, directive_propose)
+
+    directive_list = directive.add_parser("list")
+    directive_list.add_argument("--state")
+    _set(cmd_directive_list, directive_list)
+
+    directive_show = directive.add_parser("show")
+    directive_show.add_argument("directive")
+    _set(cmd_directive_show, directive_show)
+
+    directive_versions = directive.add_parser("versions")
+    directive_versions.add_argument("directive")
+    _set(cmd_directive_versions, directive_versions)
+
+    directive_check = directive.add_parser(
+        "check", help="analyze exact policy, bindings, conflicts, and macro effects"
+    )
+    directive_check.add_argument("directive")
+    directive_check.add_argument("--version", type=int)
+    directive_check.add_argument("--actor", default="human")
+    _set(cmd_directive_check, directive_check)
+
+    directive_impact = directive.add_parser("impact")
+    directive_impact.add_argument("directive")
+    _set(cmd_directive_impact, directive_impact)
+
+    directive_approve = directive.add_parser(
+        "approve", help="approve one exact passing check and immutable digest"
+    )
+    directive_approve.add_argument("directive")
+    directive_approve.add_argument("--version", required=True, type=int)
+    directive_approve.add_argument("--digest", required=True)
+    directive_approve.add_argument("--check-id", required=True)
+    directive_approve.add_argument("--actor", default="human")
+    _set(cmd_directive_approve, directive_approve)
+
+    directive_activate = directive.add_parser(
+        "activate", help="distribute an approved version for fleet acknowledgement"
+    )
+    directive_activate.add_argument("directive")
+    directive_activate.add_argument("--version", required=True, type=int)
+    directive_activate.add_argument("--digest", required=True)
+    directive_activate.add_argument("--actor", default="human")
+    _set(cmd_directive_activate, directive_activate)
+
+    directive_deactivate = directive.add_parser("deactivate")
+    directive_deactivate.add_argument("directive")
+    directive_deactivate.add_argument("--reason")
+    directive_deactivate.add_argument("--reason-file")
+    directive_deactivate.add_argument("--actor", default="human")
+    _set(cmd_directive_deactivate, directive_deactivate)
+
+    directive_effective = directive.add_parser(
+        "effective", help="render the currently active policy snapshot"
+    )
+    directive_effective.add_argument("--repository-id")
+    directive_effective.add_argument("--project")
+    _set(cmd_directive_effective, directive_effective)
+
+    directive_binding = directive.add_parser(
+        "binding", help="hub-owned variable bindings"
+    ).add_subparsers(dest="directive_binding_command", required=True)
+    directive_binding_set = directive_binding.add_parser("set")
+    directive_binding_set.add_argument("target_type", choices=("fleet", "project", "repository"))
+    directive_binding_set.add_argument("target_id")
+    directive_binding_set.add_argument("key")
+    directive_binding_set.add_argument("--value", help="inline JSON value")
+    directive_binding_set.add_argument(
+        "--value-file", help="JSON value path, or '-' for stdin"
+    )
+    directive_binding_set.add_argument("--actor", default="human")
+    _set(cmd_directive_binding_set, directive_binding_set)
+    directive_binding_list = directive_binding.add_parser("list")
+    directive_binding_list.add_argument("--target-type", choices=("fleet", "project", "repository"))
+    directive_binding_list.add_argument("--target-id")
+    directive_binding_list.add_argument("--inactive", action="store_true")
+    _set(cmd_directive_binding_list, directive_binding_list)
+
+    directive_waiver = directive.add_parser(
+        "waiver", help="audited exact-version repository/project exceptions"
+    ).add_subparsers(dest="directive_waiver_command", required=True)
+    directive_waiver_create = directive_waiver.add_parser("create")
+    directive_waiver_create.add_argument("directive")
+    directive_waiver_create.add_argument("--version", required=True, type=int)
+    directive_waiver_create.add_argument("--target-type", required=True, choices=("project", "repository"))
+    directive_waiver_create.add_argument("--target-id", required=True)
+    directive_waiver_create.add_argument("--reason")
+    directive_waiver_create.add_argument("--reason-file")
+    directive_waiver_create.add_argument("--expires-at")
+    directive_waiver_create.add_argument("--actor", default="human")
+    _set(cmd_directive_waiver_create, directive_waiver_create)
+    directive_waiver_list = directive_waiver.add_parser("list")
+    directive_waiver_list.add_argument("--directive")
+    _set(cmd_directive_waiver_list, directive_waiver_list)
+    directive_waiver_revoke = directive_waiver.add_parser("revoke")
+    directive_waiver_revoke.add_argument("waiver")
+    directive_waiver_revoke.add_argument("--reason")
+    directive_waiver_revoke.add_argument("--reason-file")
+    directive_waiver_revoke.add_argument("--actor", default="human")
+    _set(cmd_directive_waiver_revoke, directive_waiver_revoke)
 
     openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
     osh_reconcile = openshell.add_parser(

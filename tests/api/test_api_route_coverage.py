@@ -1193,6 +1193,62 @@ network_policies:
     ctx["health_rollout_id"] = rollout("route-rollout-health")["id"]
     ctx["rescue_rollout_id"] = rollout("route-rollout-rescue")["id"]
 
+    directive_document = {
+        "schema": "mac.directive.v1",
+        "name": "route.coverage.lifecycle",
+        "description": "Exercise directive lifecycle route coverage.",
+        "scope": "fleet",
+        "set": {"route.coverage.lifecycle": True},
+    }
+    directive = cp.directives.propose(directive_document, actor="route-coverage")
+    ctx["directive_id"] = directive["id"]
+    ctx["directive_digest"] = directive["versions"][0]["digest"]
+    ctx["directive_check_id"] = "updated-after-check-route"
+    waiver = cp.directives.create_waiver(
+        directive["id"],
+        version=1,
+        target_type="project",
+        target_id=ctx["project_name"],
+        reason="route coverage revoke fixture",
+        actor="route-coverage",
+    )
+    ctx["directive_waiver_id"] = waiver["id"]
+
+    ack_directive = cp.directives.propose(
+        {
+            "schema": "mac.directive.v1",
+            "name": "route.coverage.ack",
+            "description": "Exercise worker-bound directive acknowledgement.",
+            "scope": "fleet",
+            "set": {"route.coverage.ack": True},
+        },
+        actor="route-coverage",
+    )
+    ack_version = ack_directive["versions"][0]
+    ack_check = cp.directives.check(ack_directive["id"], actor="route-coverage")
+    cp.directives.approve(
+        ack_directive["id"],
+        version=1,
+        directive_digest=ack_version["digest"],
+        check_id=ack_check["id"],
+        actor="route-coverage",
+    )
+    activation = cp.directives.activate(
+        ack_directive["id"],
+        version=1,
+        directive_digest=ack_version["digest"],
+        actor="route-coverage",
+    )
+    for cohort_agent_id in activation["cohort"]:
+        if cohort_agent_id != default_agent["id"]:
+            cp.directives.acknowledge(
+                activation["id"],
+                agent_id=cohort_agent_id,
+                digest=ack_version["digest"],
+            )
+    ctx["directive_activation_id"] = activation["id"]
+    ctx["directive_ack_digest"] = ack_version["digest"]
+
     ctx["absent_dispatch_hold_epoch_id"] = "route-coverage-absent-epoch"
     return ctx
 
@@ -1370,6 +1426,9 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "thread_id": ctx["thread_id"],
         "workflow_id": ctx["workflow_id"],
         "workflow_id_or_slug": ctx["workflow_id"],
+        "directive_id": ctx["directive_id"],
+        "waiver_id": ctx["directive_waiver_id"],
+        "activation_id": ctx["directive_activation_id"],
     }
     for param, ctx_key in special.get((method, path_template), {}).items():
         values[param] = ctx[ctx_key]
@@ -1447,6 +1506,56 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
         return RequestCase(path, kwargs, expected)
 
     bodies: Dict[RouteKey, Dict[str, Any]] = {
+        ("POST", "/directives"): {
+            "document": {
+                "schema": "mac.directive.v1",
+                "name": "route.coverage.proposal",
+                "description": "Exercise directive proposal route coverage.",
+                "scope": "fleet",
+                "set": {"route.coverage.proposal": True},
+            },
+            "actor": "route-coverage",
+        },
+        ("POST", "/directive-bindings"): {
+            "target_type": "fleet",
+            "target_id": "fleet",
+            "key": "route.coverage.target",
+            "value": "//route:all",
+            "actor": "route-coverage",
+        },
+        ("POST", "/directive-waivers/{waiver_id}/revoke"): {
+            "reason": "route coverage completed",
+            "actor": "route-coverage",
+        },
+        ("POST", "/agents/{agent_id}/directive-activations/{activation_id}/ack"): {
+            "digest": ctx["directive_ack_digest"],
+        },
+        ("POST", "/directives/{directive_id}/check"): {
+            "version": 1,
+            "actor": "route-coverage",
+        },
+        ("POST", "/directives/{directive_id}/approve"): {
+            "version": 1,
+            "directive_digest": ctx["directive_digest"],
+            "check_id": ctx["directive_check_id"],
+            "actor": "route-coverage",
+        },
+        ("POST", "/directives/{directive_id}/activate"): {
+            "version": 1,
+            "directive_digest": ctx["directive_digest"],
+            "actor": "route-coverage",
+        },
+        ("POST", "/directives/{directive_id}/deactivate"): {
+            "reason": "route coverage completed",
+            "actor": "route-coverage",
+        },
+        ("POST", "/directives/{directive_id}/waivers"): {
+            "version": 1,
+            "target_type": "project",
+            "target_id": ctx["project_name"],
+            "reason": "route coverage create fixture",
+            "actor": "route-coverage",
+        },
         # POST /humans (register_human) body case.
         ("POST", "/humans"): {"username": "route-human-case"},
         ("POST", "/tenants"): {"name": "Route Coverage Tenant Case"},
@@ -2386,6 +2495,7 @@ edges:
 
 
 def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAC_DIRECTIVES_ENABLED", "1")
     monkeypatch.setenv("TOKENHUB_URL", "https://tokenhub.example.test")
     monkeypatch.setenv("TOKENHUB_ADMIN_TOKEN", "route-tokenhub-admin")
     monkeypatch.setenv("QDRANT_URL", "https://qdrant.example.test")
@@ -2471,6 +2581,11 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
             )
             ctx["review_worker_id"] = fresh_worker["id"]
             ctx["review_worker_key"] = fresh_worker["attestation_key"]
+            cp.directives.acknowledge(
+                ctx["directive_activation_id"],
+                agent_id=ctx["review_worker_id"],
+                digest=ctx["directive_ack_digest"],
+            )
             fresh_task = _ok(
                 client.post(
                     "/tasks",
@@ -2511,6 +2626,8 @@ def test_every_mac_api_route_has_a_realistic_e2e_request(monkeypatch, tmp_path):
             ctx["review_id"] = response.json()["id"]
         elif route_path == "/secrets/{secret_id}/access":
             ctx["secret_audit_id"] = response.json()["audit_id"]
+        elif route_path == "/directives/{directive_id}/check":
+            ctx["directive_check_id"] = response.json()["id"]
         executed.add((method, route_path))
 
     route_set = set(_route_keys(app))
