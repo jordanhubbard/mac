@@ -912,10 +912,31 @@ def test_phase2_rollback_verifier_reports_only_named_mismatches() -> None:
     assert '"phase-2 rollback intent differs at: " + ",".join(mismatches)' in verifier
     assert '"phase-2 rollback intent differs at: document_type"' in verifier
     assert '"prerequisites"' in verifier
+    assert "sealed_state" in verifier
+    assert '"artifact_openclaw_backup"' in verifier
     assert '"rollback_sha256"' in verifier
     assert "belongs to another node generation" not in verifier
     assert "print(expected_" not in verifier
-    assert "print(intent" not in verifier
+    assert "print(intent)" not in verifier
+
+
+def test_phase2_replay_uses_a_digest_bound_state_capsule_without_field_splitting() -> None:
+    source = NODE_INSTALL.read_text(encoding="utf-8")
+    arm_body = source.split("arm_phase2_rollback() {", 1)[1].split(
+        "\n}\n\nbackup_existing_artifacts() {", 1
+    )[0]
+    verifier = source.split("verify_phase2_rollback_intent() {", 1)[1].split(
+        "\n}\n\nwrite_phase2_rollback_intent() {", 1
+    )[0]
+    assert (
+        'ROLLBACK_SEALED_STATE_JSON="$(load_existing_phase2_rollback_state)"'
+        in arm_body
+    )
+    assert "sealed_prior_generation" not in arm_body
+    assert "IFS=$'\\t' read" not in arm_body
+    assert '"$PY" - "${ROLLBACK_SEALED_STATE_JSON:-}"' in verifier
+    assert "sealed_state_raw = sys.argv[1]" in verifier
+    assert '"intent_sha256": intent_sha256' in verifier
 
 
 def test_typed_synchronized_apply_consumes_receipts_and_skips_legacy_quiescence() -> None:

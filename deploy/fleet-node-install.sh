@@ -377,6 +377,7 @@ ROLLBACK_ACTIVE_GATEWAY=""
 ROLLBACK_AGENT_PRIOR_STATE=""
 ROLLBACK_PRIOR_GENERATION=""
 ROLLBACK_PRIOR_REVISION=""
+ROLLBACK_SEALED_STATE_JSON=""
 
 # Apply a restrictive umask before creating LOG_DIR so it gets 0700 (owner only).
 umask 0077
@@ -4980,13 +4981,14 @@ verify_phase2_rollback_intent() {
   MAC_ROLLBACK_SUPERVISOR_HELPER_SHA256="$ROLLBACK_SUPERVISOR_HELPER_SHA256" \
   MAC_ROLLBACK_LIFECYCLE="$ROLLBACK_LAUNCHD_LIFECYCLE" \
   MAC_ROLLBACK_LIFECYCLE_SHA256="$ROLLBACK_LAUNCHD_LIFECYCLE_SHA256" \
-    "$PY" - <<'PY'
+    "$PY" - "${ROLLBACK_SEALED_STATE_JSON:-}" <<'PY'
 from __future__ import annotations
 
 import hashlib
 import json
 import os
 import stat
+import sys
 
 
 def private_bytes(path: str, mode: int, limit: int) -> bytes:
@@ -5025,14 +5027,46 @@ try:
     intent = json.loads(intent_raw)
 except (TypeError, ValueError):
     raise SystemExit("phase-2 rollback intent is malformed")
-expected_artifacts = {
-    "source": {"path": os.environ["MAC_ROLLBACK_SRC"], "backup": os.environ["MAC_ROLLBACK_SRC_BACKUP"]},
-    "venv": {"path": os.environ["MAC_ROLLBACK_VENV"], "backup": os.environ["MAC_ROLLBACK_VENV_BACKUP"]},
-    "hermes": {"path": os.environ["MAC_ROLLBACK_HERMES"], "backup": os.environ["MAC_ROLLBACK_HERMES_BACKUP"] or None},
-    "bin_backup": os.environ["MAC_ROLLBACK_BIN_BACKUP"],
-    "openclaw_backup": os.environ["MAC_ROLLBACK_OPENCLAW_BACKUP"] or None,
-    "openclaw_existed": os.environ["MAC_ROLLBACK_OPENCLAW_EXISTED"] == "1",
-}
+intent_sha256 = hashlib.sha256(intent_raw).hexdigest()
+sealed_state_raw = sys.argv[1]
+sealed_state = None
+if sealed_state_raw:
+    try:
+        sealed_state = json.loads(sealed_state_raw)
+    except (TypeError, ValueError):
+        raise SystemExit("phase-2 rollback intent differs at: sealed_state")
+    expected_sealed_state = {
+        "schema": "mac.fleet_node_rollback_sealed_state.v1",
+        "intent_sha256": intent_sha256,
+        "prior_generation": intent.get("prior_generation") if isinstance(intent, dict) else None,
+        "prior_revision": intent.get("prior_revision") if isinstance(intent, dict) else None,
+        "prior_topology": intent.get("prior_topology") if isinstance(intent, dict) else None,
+        "artifacts": intent.get("artifacts") if isinstance(intent, dict) else None,
+    }
+    if sealed_state != expected_sealed_state:
+        raise SystemExit("phase-2 rollback intent differs at: sealed_state")
+
+if sealed_state is None:
+    expected_prior_generation = os.environ["MAC_ROLLBACK_PRIOR_GENERATION"] or None
+    expected_prior_revision = os.environ["MAC_ROLLBACK_PRIOR_REVISION"] or None
+    expected_topology = {
+        "supervisor": os.environ["MAC_ROLLBACK_SUPERVISOR"],
+        "active_gateway": os.environ["MAC_ROLLBACK_ACTIVE_GATEWAY"],
+        "agent_prior_state": os.environ["MAC_ROLLBACK_AGENT_PRIOR_STATE"],
+    }
+    expected_artifacts = {
+        "source": {"path": os.environ["MAC_ROLLBACK_SRC"], "backup": os.environ["MAC_ROLLBACK_SRC_BACKUP"]},
+        "venv": {"path": os.environ["MAC_ROLLBACK_VENV"], "backup": os.environ["MAC_ROLLBACK_VENV_BACKUP"]},
+        "hermes": {"path": os.environ["MAC_ROLLBACK_HERMES"], "backup": os.environ["MAC_ROLLBACK_HERMES_BACKUP"] or None},
+        "bin_backup": os.environ["MAC_ROLLBACK_BIN_BACKUP"],
+        "openclaw_backup": os.environ["MAC_ROLLBACK_OPENCLAW_BACKUP"] or None,
+        "openclaw_existed": os.environ["MAC_ROLLBACK_OPENCLAW_EXISTED"] == "1",
+    }
+else:
+    expected_prior_generation = sealed_state["prior_generation"]
+    expected_prior_revision = sealed_state["prior_revision"]
+    expected_topology = sealed_state["prior_topology"]
+    expected_artifacts = sealed_state["artifacts"]
 expected_contracts = {
     "supervisor_helper": {
         "path": os.environ["MAC_ROLLBACK_SUPERVISOR_HELPER"],
@@ -5046,12 +5080,6 @@ expected_contracts = {
 rollback = intent.get("rollback") if isinstance(intent, dict) else None
 if not isinstance(intent, dict):
     raise SystemExit("phase-2 rollback intent differs at: document_type")
-
-expected_topology = {
-    "supervisor": os.environ["MAC_ROLLBACK_SUPERVISOR"],
-    "active_gateway": os.environ["MAC_ROLLBACK_ACTIVE_GATEWAY"],
-    "agent_prior_state": os.environ["MAC_ROLLBACK_AGENT_PRIOR_STATE"],
-}
 expected_prerequisites = {
     "schema": "mac.fleet_prerequisite_rollback_binding.v1",
     "node_identity_sha256": os.environ["MAC_ROLLBACK_NODE_IDENTITY_SHA256"],
@@ -5073,13 +5101,11 @@ checks = (
     ("revision", intent.get("revision") == os.environ["MAC_ROLLBACK_REVISION"]),
     (
         "prior_generation",
-        intent.get("prior_generation")
-        == (os.environ["MAC_ROLLBACK_PRIOR_GENERATION"] or None),
+        intent.get("prior_generation") == expected_prior_generation,
     ),
     (
         "prior_revision",
-        intent.get("prior_revision")
-        == (os.environ["MAC_ROLLBACK_PRIOR_REVISION"] or None),
+        intent.get("prior_revision") == expected_prior_revision,
     ),
     ("rollback_capable", intent.get("rollback_capable") is True),
     ("prior_topology", intent.get("prior_topology") == expected_topology),
@@ -5087,7 +5113,39 @@ checks = (
         "prerequisites",
         intent.get("prerequisites") == expected_prerequisites,
     ),
-    ("artifacts", intent.get("artifacts") == expected_artifacts),
+    (
+        "artifact_source",
+        isinstance(intent.get("artifacts"), dict)
+        and intent["artifacts"].get("source") == expected_artifacts.get("source"),
+    ),
+    (
+        "artifact_venv",
+        isinstance(intent.get("artifacts"), dict)
+        and intent["artifacts"].get("venv") == expected_artifacts.get("venv"),
+    ),
+    (
+        "artifact_hermes",
+        isinstance(intent.get("artifacts"), dict)
+        and intent["artifacts"].get("hermes") == expected_artifacts.get("hermes"),
+    ),
+    (
+        "artifact_bin_backup",
+        isinstance(intent.get("artifacts"), dict)
+        and intent["artifacts"].get("bin_backup")
+        == expected_artifacts.get("bin_backup"),
+    ),
+    (
+        "artifact_openclaw_backup",
+        isinstance(intent.get("artifacts"), dict)
+        and intent["artifacts"].get("openclaw_backup")
+        == expected_artifacts.get("openclaw_backup"),
+    ),
+    (
+        "artifact_openclaw_existed",
+        isinstance(intent.get("artifacts"), dict)
+        and intent["artifacts"].get("openclaw_existed")
+        == expected_artifacts.get("openclaw_existed"),
+    ),
     ("contracts", intent.get("contracts") == expected_contracts),
     ("rollback_object", isinstance(rollback, dict)),
     (
@@ -5110,7 +5168,7 @@ checks = (
 mismatches = [name for name, matched in checks if not matched]
 if mismatches:
     raise SystemExit("phase-2 rollback intent differs at: " + ",".join(mismatches))
-print(hashlib.sha256(intent_raw).hexdigest())
+print(intent_sha256)
 PY
 }
 
@@ -5280,6 +5338,7 @@ load_existing_phase2_rollback_state() {
     "$PY" - <<'PY'
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -5320,8 +5379,9 @@ def private_bytes(path: str) -> bytes:
         os.close(descriptor)
 
 
+intent_raw = private_bytes(os.environ["MAC_ROLLBACK_INTENT"])
 try:
-    intent = json.loads(private_bytes(os.environ["MAC_ROLLBACK_INTENT"]))
+    intent = json.loads(intent_raw)
 except (TypeError, ValueError):
     raise SystemExit("existing phase-2 rollback intent is malformed")
 artifacts = intent.get("artifacts") if isinstance(intent, dict) else None
@@ -5386,23 +5446,14 @@ if (
     raise SystemExit("existing phase-2 rollback intent has invalid sealed state")
 
 
-def encoded(value):
-    return "~" if value is None else value
-
-
-print(
-    "\t".join(
-        (
-            encoded(prior_generation),
-            encoded(prior_revision),
-            topology["active_gateway"],
-            topology["agent_prior_state"],
-            encoded(hermes_backup),
-            encoded(openclaw_backup),
-            "1" if openclaw_existed else "0",
-        )
-    )
-)
+print(json.dumps({
+    "schema": "mac.fleet_node_rollback_sealed_state.v1",
+    "intent_sha256": hashlib.sha256(intent_raw).hexdigest(),
+    "prior_generation": prior_generation,
+    "prior_revision": prior_revision,
+    "prior_topology": topology,
+    "artifacts": artifacts,
+}, sort_keys=True, separators=(",", ":")))
 PY
 }
 
@@ -5415,27 +5466,9 @@ arm_phase2_rollback() {
   HERMES_BACKUP=""
   [ ! -d "$HERMES_DIR" ] || HERMES_BACKUP="$MAC_HOME/backups/hermes-agent.${AGENT}.${DEPLOY_TS}"
   if [ -e "$ROLLBACK_INTENT" ] || [ -L "$ROLLBACK_INTENT" ]; then
-    local sealed_state sealed_prior_generation sealed_prior_revision
-    local sealed_active_gateway sealed_agent_prior_state sealed_hermes_backup
-    local sealed_openclaw_backup sealed_openclaw_existed
     BIN_BACKUP="$MAC_HOME/backups/bin.${AGENT}.${DEPLOY_TS}"
-    sealed_state="$(load_existing_phase2_rollback_state)" \
+    ROLLBACK_SEALED_STATE_JSON="$(load_existing_phase2_rollback_state)" \
       || die "existing phase-2 rollback intent state is invalid"
-    IFS=$'\t' read -r \
-      sealed_prior_generation sealed_prior_revision \
-      sealed_active_gateway sealed_agent_prior_state sealed_hermes_backup \
-      sealed_openclaw_backup sealed_openclaw_existed <<<"$sealed_state"
-    [ "$sealed_prior_generation" != "~" ] || sealed_prior_generation=""
-    [ "$sealed_prior_revision" != "~" ] || sealed_prior_revision=""
-    [ "$sealed_hermes_backup" != "~" ] || sealed_hermes_backup=""
-    [ "$sealed_openclaw_backup" != "~" ] || sealed_openclaw_backup=""
-    ROLLBACK_PRIOR_GENERATION="$sealed_prior_generation"
-    ROLLBACK_PRIOR_REVISION="$sealed_prior_revision"
-    ROLLBACK_ACTIVE_GATEWAY="$sealed_active_gateway"
-    ROLLBACK_AGENT_PRIOR_STATE="$sealed_agent_prior_state"
-    HERMES_BACKUP="$sealed_hermes_backup"
-    OPENCLAW_HOME_BACKUP="$sealed_openclaw_backup"
-    OPENCLAW_HOME_EXISTED="$sealed_openclaw_existed"
     ROLLBACK_INTENT_SHA256="$(verify_phase2_rollback_intent)" \
       || die "existing phase-2 rollback intent is invalid"
     DEPLOY_ROLLBACK_ARMED=1

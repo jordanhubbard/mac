@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -234,6 +235,17 @@ def test_apply_phase_loads_prior_state_from_the_sealed_rollback_intent(
     bin_backup = mac_home / "backups" / f"bin.{agent}.{deploy_ts}"
     openclaw_backup = mac_home / "backups" / f"openclaw.{agent}.{deploy_ts}"
     intent_path = logs / f"rollback-{deploy_ts}-intent.json"
+    rollback_script = logs / f"rollback-{deploy_ts}.sh"
+    rollback_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    rollback_script.chmod(0o700)
+    completion_receipt = logs / f"rollback-{deploy_ts}-completion.json"
+    supervisor_helper = logs / "rollback-supervisor.py"
+    lifecycle_helper = logs / "launchd-lifecycle.py"
+    node_identity_sha256 = "1" * 64
+    bundle_sha256 = "2" * 64
+    expectations_sha256 = "3" * 64
+    supervisor_helper_sha256 = "4" * 64
+    lifecycle_helper_sha256 = "5" * 64
     intent = {
         "schema": "mac.fleet_node_rollback_intent.v1",
         "status": "armed",
@@ -257,6 +269,27 @@ def test_apply_phase_loads_prior_state_from_the_sealed_rollback_intent(
             "bin_backup": str(bin_backup),
             "openclaw_backup": str(openclaw_backup),
             "openclaw_existed": True,
+        },
+        "prerequisites": {
+            "schema": "mac.fleet_prerequisite_rollback_binding.v1",
+            "node_identity_sha256": node_identity_sha256,
+            "bundle_sha256": bundle_sha256,
+            "expectations_sha256": expectations_sha256,
+        },
+        "contracts": {
+            "supervisor_helper": {
+                "path": str(supervisor_helper),
+                "sha256": supervisor_helper_sha256,
+            },
+            "lifecycle_helper": {
+                "path": str(lifecycle_helper),
+                "sha256": lifecycle_helper_sha256,
+            },
+        },
+        "rollback": {
+            "path": str(rollback_script),
+            "sha256": hashlib.sha256(rollback_script.read_bytes()).hexdigest(),
+            "completion_receipt": str(completion_receipt),
         },
     }
     intent_path.write_text(json.dumps(intent) + "\n", encoding="utf-8")
@@ -298,15 +331,89 @@ load_existing_phase2_rollback_state
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.rstrip("\n").split("\t") == [
-        "sealed-prior-generation",
-        "b" * 40,
-        "hermes",
-        "active",
-        str(hermes_backup),
-        str(openclaw_backup),
-        "1",
-    ]
+    assert json.loads(result.stdout) == {
+        "schema": "mac.fleet_node_rollback_sealed_state.v1",
+        "intent_sha256": hashlib.sha256(intent_path.read_bytes()).hexdigest(),
+        "prior_generation": "sealed-prior-generation",
+        "prior_revision": "b" * 40,
+        "prior_topology": intent["prior_topology"],
+        "artifacts": intent["artifacts"],
+    }
+
+    verifier = _function(
+        "verify_phase2_rollback_intent", "write_phase2_rollback_intent"
+    )
+    verify_command = f"""set -euo pipefail
+PY=${{TEST_PY:?}}
+ROLLBACK_INTENT=${{TEST_INTENT:?}}
+ROLLBACK_SCRIPT={rollback_script}
+ROLLBACK_COMPLETION_RECEIPT={completion_receipt}
+AGENT={agent}
+FLEET_NAME=mac
+OS_KIND=darwin
+DEPLOY_GENERATION={GENERATION}
+DEPLOY_REV={REVISION}
+ROLLBACK_PRIOR_GENERATION=recaptured-wrong-generation
+ROLLBACK_PRIOR_REVISION={'c' * 40}
+SUPERVISOR_KIND=launchd
+ROLLBACK_ACTIVE_GATEWAY=none
+ROLLBACK_AGENT_PRIOR_STATE=inactive
+NODE_IDENTITY_SHA256={node_identity_sha256}
+PREREQUISITE_BUNDLE_SHA256={bundle_sha256}
+PREREQUISITE_EXPECTATIONS_SHA256={expectations_sha256}
+SRC_DIR={src}
+SRC_BACKUP={src_backup}
+VENV={venv}
+VENV_BACKUP={venv_backup}
+HERMES_DIR={hermes}
+HERMES_BACKUP=
+BIN_BACKUP={bin_backup}
+OPENCLAW_HOME_BACKUP=
+OPENCLAW_HOME_EXISTED=0
+ROLLBACK_SUPERVISOR_HELPER={supervisor_helper}
+ROLLBACK_SUPERVISOR_HELPER_SHA256={supervisor_helper_sha256}
+ROLLBACK_LAUNCHD_LIFECYCLE={lifecycle_helper}
+ROLLBACK_LAUNCHD_LIFECYCLE_SHA256={lifecycle_helper_sha256}
+ROLLBACK_SEALED_STATE_JSON="${{TEST_CAPSULE:?}}"
+{verifier}
+verify_phase2_rollback_intent
+"""
+    verified = subprocess.run(
+        ["/bin/bash", "-c", verify_command],
+        env={
+            **os.environ,
+            "TEST_PY": sys.executable,
+            "TEST_INTENT": str(intent_path),
+            "TEST_CAPSULE": result.stdout.strip(),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert verified.returncode == 0, verified.stderr
+    assert verified.stdout.strip() == hashlib.sha256(
+        intent_path.read_bytes()
+    ).hexdigest()
+
+    stale_capsule = json.loads(result.stdout)
+    stale_capsule["intent_sha256"] = "0" * 64
+    stale = subprocess.run(
+        ["/bin/bash", "-c", verify_command],
+        env={
+            **os.environ,
+            "TEST_PY": sys.executable,
+            "TEST_INTENT": str(intent_path),
+            "TEST_CAPSULE": json.dumps(stale_capsule, separators=(",", ":")),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert stale.returncode != 0
+    assert "differs at: sealed_state" in stale.stderr
+    assert "0" * 64 not in stale.stderr
 
 
 @pytest.mark.parametrize(
