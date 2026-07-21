@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import socket
 import sys
@@ -1663,8 +1664,67 @@ def test_synchronized_media_resume_fd_pins_and_authenticates_retained_helper() -
     assert 'metadata.st_nlink != 1' in body
     assert 'stat.S_IMODE(metadata.st_mode) != 0o700' in body
     assert 'hashlib.sha256(raw).hexdigest() != expected' in body
+    assert 'MAC_PHASE1_HELPER_SOURCE="$helper"' in body
     assert '"/dev/fd/%d" % descriptor' in body
     assert 'pass_fds=(descriptor,)' in body
+
+
+def test_synchronized_media_resume_passes_canonical_retained_helper_path(
+    tmp_path: Path,
+) -> None:
+    source = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    body = "resume_typed_media_services() {" + source.split(
+        "resume_typed_media_services() {", 1
+    )[1].split("\n}\n\ninstall_gpu_gen_server() {", 1)[0] + "\n}"
+    helper = tmp_path / "retained-phase1-helper"
+    marker = tmp_path / "observed-helper"
+    helper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        '[ "${1:-}" = resume-media ]\n'
+        '[ "$MAC_PHASE1_HELPER_SOURCE" = "$EXPECTED_HELPER" ]\n'
+        'printf "%s\\n" "$MAC_PHASE1_HELPER_SOURCE" > "$EXPECTED_MARKER"\n',
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
+    plan = tmp_path / "media-plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "restore_executable": {
+                    "path": str(helper),
+                    "sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
+                },
+                "source_contract_sha256": "a" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    harness = tmp_path / "resume-media.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        f"PY={shlex.quote(sys.executable)}\n"
+        f"TYPED_MEDIA_PLAN={shlex.quote(str(plan))}\n"
+        f"EXPECTED_HELPER={shlex.quote(str(helper))}\n"
+        f"EXPECTED_MARKER={shlex.quote(str(marker))}\n"
+        "export EXPECTED_HELPER EXPECTED_MARKER\n"
+        "AGENT=rocky\nFLEET_NAME=mac\nOS_KIND=darwin\n"
+        "DEPLOY_REV=" + "b" * 40 + "\n"
+        "DEPLOY_GENERATION=generation\nSUPERVISOR_KIND=launchd\n"
+        f"MAC_HOME={shlex.quote(str(tmp_path))}\n"
+        "log() { :; }\n"
+        + body
+        + "\nresume_typed_media_services\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["/bin/bash", str(harness)], text=True, capture_output=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert marker.read_text(encoding="utf-8").strip() == str(helper)
 
 
 def test_synchronized_media_reconciliation_never_mutates_unjournaled_gen_venv() -> None:
