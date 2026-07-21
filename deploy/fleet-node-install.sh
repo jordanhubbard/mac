@@ -5388,51 +5388,101 @@ revision_re = re.compile(r"[0-9a-f]{40}\Z")
 safe_text = lambda value: isinstance(value, str) and not any(
     character in value for character in "\t\r\n"
 )
-if (
-    not isinstance(intent, dict)
-    or intent.get("schema") != "mac.fleet_node_rollback_intent.v1"
-    or intent.get("status") != "armed"
-    or intent.get("agent") != os.environ["MAC_ROLLBACK_AGENT"]
-    or intent.get("fleet") != os.environ["MAC_ROLLBACK_FLEET"]
-    or intent.get("os_kind") != os.environ["MAC_ROLLBACK_OS"]
-    or intent.get("generation") != os.environ["MAC_ROLLBACK_GENERATION"]
-    or intent.get("revision") != os.environ["MAC_ROLLBACK_REVISION"]
-    or intent.get("rollback_capable") is not True
-    or not isinstance(artifacts, dict)
-    or source != {
+if not isinstance(intent, dict):
+    raise SystemExit("existing phase-2 rollback intent differs at: document_type")
+checks = (
+    ("schema", intent.get("schema") == "mac.fleet_node_rollback_intent.v1"),
+    ("status", intent.get("status") == "armed"),
+    ("agent", intent.get("agent") == os.environ["MAC_ROLLBACK_AGENT"]),
+    ("fleet", intent.get("fleet") == os.environ["MAC_ROLLBACK_FLEET"]),
+    ("os_kind", intent.get("os_kind") == os.environ["MAC_ROLLBACK_OS"]),
+    (
+        "generation",
+        intent.get("generation") == os.environ["MAC_ROLLBACK_GENERATION"],
+    ),
+    ("revision", intent.get("revision") == os.environ["MAC_ROLLBACK_REVISION"]),
+    ("rollback_capable", intent.get("rollback_capable") is True),
+    ("artifacts_object", isinstance(artifacts, dict)),
+    (
+        "artifact_source",
+        source == {
         "path": os.environ["MAC_ROLLBACK_SRC"],
         "backup": os.environ["MAC_ROLLBACK_SRC_BACKUP"],
-    }
-    or venv != {
+        },
+    ),
+    (
+        "artifact_venv",
+        venv == {
         "path": os.environ["MAC_ROLLBACK_VENV"],
         "backup": os.environ["MAC_ROLLBACK_VENV_BACKUP"],
-    }
-    or not isinstance(hermes, dict)
-    or hermes.get("path") != os.environ["MAC_ROLLBACK_HERMES"]
-    or hermes_backup not in {None, os.environ["MAC_ROLLBACK_HERMES_BACKUP"]}
-    or artifacts.get("bin_backup") != os.environ["MAC_ROLLBACK_BIN_BACKUP"]
-    or openclaw_backup not in {None, os.environ["MAC_ROLLBACK_OPENCLAW_BACKUP"]}
-    or not isinstance(openclaw_existed, bool)
-    or openclaw_existed != (openclaw_backup is not None)
-    or not isinstance(topology, dict)
-    or topology.get("supervisor") != os.environ["MAC_ROLLBACK_SUPERVISOR"]
-    or topology.get("active_gateway") not in {"none", "hermes", "openclaw"}
-    or topology.get("agent_prior_state") not in {"active", "inactive", "absent"}
-    or (prior_generation is not None and not generation_re.fullmatch(prior_generation))
-    or (prior_revision is not None and not revision_re.fullmatch(prior_revision))
-    or not all(
-        value is None or safe_text(value)
-        for value in (
+        },
+    ),
+    ("artifact_hermes_object", isinstance(hermes, dict)),
+    (
+        "artifact_hermes_path",
+        isinstance(hermes, dict)
+        and hermes.get("path") == os.environ["MAC_ROLLBACK_HERMES"],
+    ),
+    (
+        "artifact_hermes_backup",
+        hermes_backup in {None, os.environ["MAC_ROLLBACK_HERMES_BACKUP"]},
+    ),
+    (
+        "artifact_bin_backup",
+        isinstance(artifacts, dict)
+        and artifacts.get("bin_backup") == os.environ["MAC_ROLLBACK_BIN_BACKUP"],
+    ),
+    (
+        "artifact_openclaw_backup",
+        openclaw_backup in {None, os.environ["MAC_ROLLBACK_OPENCLAW_BACKUP"]},
+    ),
+    ("artifact_openclaw_existed_type", isinstance(openclaw_existed, bool)),
+    (
+        "artifact_openclaw_invariant",
+        openclaw_existed == (openclaw_backup is not None),
+    ),
+    ("prior_topology_object", isinstance(topology, dict)),
+    (
+        "prior_topology_supervisor",
+        isinstance(topology, dict)
+        and topology.get("supervisor") == os.environ["MAC_ROLLBACK_SUPERVISOR"],
+    ),
+    (
+        "prior_topology_gateway",
+        isinstance(topology, dict)
+        and topology.get("active_gateway") in {"none", "hermes", "openclaw"},
+    ),
+    (
+        "prior_topology_agent",
+        isinstance(topology, dict)
+        and topology.get("agent_prior_state") in {"active", "inactive", "absent"},
+    ),
+    (
+        "prior_generation",
+        prior_generation is None or bool(generation_re.fullmatch(prior_generation)),
+    ),
+    (
+        "prior_revision",
+        prior_revision is None or bool(revision_re.fullmatch(prior_revision)),
+    ),
+    (
+        "safe_text",
+        isinstance(topology, dict)
+        and all(value is None or safe_text(value) for value in (
             prior_generation,
             prior_revision,
             topology.get("active_gateway"),
             topology.get("agent_prior_state"),
             hermes_backup,
             openclaw_backup,
-        )
+        )),
+    ),
+)
+mismatches = [name for name, matched in checks if not matched]
+if mismatches:
+    raise SystemExit(
+        "existing phase-2 rollback intent differs at: " + ",".join(mismatches)
     )
-):
-    raise SystemExit("existing phase-2 rollback intent has invalid sealed state")
 
 
 print(hashlib.sha256(intent_raw).hexdigest())

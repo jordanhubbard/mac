@@ -411,7 +411,7 @@ verify_phase2_rollback_intent sealed-replay
     )
 
     assert stale.returncode != 0
-    assert "invalid sealed state" in stale.stderr
+    assert "differs at: artifact_bin_backup" in stale.stderr
     assert str(tmp_path / "wrong-backup") not in stale.stderr
 
 
