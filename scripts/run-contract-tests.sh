@@ -4,13 +4,11 @@ set -euo pipefail
 _MAC_TEST_PORTFOLIO_REQUESTED="${MAC_TEST_PORTFOLIO:-0}"
 # Worker count for the xdist-safe bulk slice. Empty => a headroom-aware default
 # (~2/3 of cores, min 2) computed once the interpreter is resolved. That is a
-# big jump from the old fixed 2 while deliberately NOT saturating every core:
-# the fleet quiescence/rollback tests assert sub-second timing contracts (e.g. a
-# 150ms launchd transition bound) by spawning real subprocesses, and full-core
-# oversubscription ("-n auto") makes a fresh interpreter lose that CPU race and
-# flakes them. Explicit values still win: MAC_TEST_JOBS=auto (one per core, for
-# hosts without those timing tests), MAC_TEST_JOBS=<N> (pin), MAC_TEST_JOBS=0
-# (serial, for memory- or core-constrained hosts).
+# big jump from the old fixed 2 while retaining CPU and memory headroom for the
+# suite's real subprocesses and containers on heterogeneous hosts. Test
+# semantics must never depend on winning a scheduler race; explicit values
+# still win: MAC_TEST_JOBS=auto (one per reported core), MAC_TEST_JOBS=<N>
+# (pin), MAC_TEST_JOBS=0 (serial, for memory- or core-constrained hosts).
 _MAC_TEST_JOBS_REQUESTED="${MAC_TEST_JOBS:-}"
 # Coverage is the repository's merge-gate safety rail (statement/branch floors),
 # but it also dominates full-suite wall-clock. Rollout VERIFICATION and local
@@ -191,8 +189,8 @@ if [ "$#" -eq 0 ]; then
     _MAC_TEST_JOBS="$_MAC_TEST_JOBS_REQUESTED"
     case "$_MAC_TEST_JOBS" in
         '')
-            # Unset: headroom-aware default (~2/3 of cores, min 2) so the timing
-            # contracts above keep a free CPU instead of racing every worker.
+            # Unset: headroom-aware default (~2/3 of cores, min 2) so real
+            # subprocess/container work does not oversubscribe the host.
             _MAC_TEST_JOBS="$("$PY" -c 'import os; print(max(2, (os.cpu_count() or 2) * 2 // 3))')"
             ;;
         0|auto) ;;

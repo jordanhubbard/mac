@@ -1018,6 +1018,16 @@ total_timeout = bounded_number(
 media_readiness_seconds = bounded_number(
     "MAC_PHASE1_MEDIA_READINESS_SECONDS", 900.0, 0.1, 1800.0
 )
+test_media_health_max_attempts = None
+if os.environ.get("MAC_PHASE1_TEST_MODE") == "1":
+    raw_test_attempts = os.environ.get("MAC_PHASE1_TEST_MEDIA_HEALTH_MAX_ATTEMPTS")
+    if raw_test_attempts is not None:
+        try:
+            test_media_health_max_attempts = int(raw_test_attempts)
+        except (TypeError, ValueError):
+            raise QuiescenceFailure("invalid phase-1 test media health attempt bound")
+        if not 1 <= test_media_health_max_attempts <= 100:
+            raise QuiescenceFailure("phase-1 test media health attempt bound is outside its range")
 poll_seconds = bounded_number(
     "MAC_PHASE1_POLL_SECONDS", 0.5, 0.01, 10.0
 )
@@ -1567,6 +1577,7 @@ def media_health_ports() -> dict[str, int]:
 
 
 def prove_media_health(unit: str, port: int, health_deadline: float) -> None:
+    attempts = 0
     while True:
         connection = None
         try:
@@ -1591,6 +1602,14 @@ def prove_media_health(unit: str, port: int, health_deadline: float) -> None:
         finally:
             if connection is not None:
                 connection.close()
+        attempts += 1
+        if (
+            test_media_health_max_attempts is not None
+            and attempts >= test_media_health_max_attempts
+        ):
+            raise QuiescenceFailure(
+                "resumed media service did not pass its bounded health check"
+            )
         remaining = min(deadline, health_deadline) - time.monotonic()
         if remaining <= 0:
             raise QuiescenceFailure(

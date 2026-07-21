@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 from pathlib import Path
@@ -163,13 +164,94 @@ def test_contract_runner_preserves_explicit_worker_override(tmp_path):
 
 
 def test_contract_runner_honors_explicit_auto_override(tmp_path):
-    # Power users on hosts without the sub-second timing tests can still opt into
-    # one worker per core.
+    # Power users can trade the default subprocess/memory headroom for one
+    # worker per reported core.
     completed, calls = _run_with_fake_python(tmp_path, jobs="auto")
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     bulk = next(line for line in calls if "-m coverage run -m pytest -n" in line)
     assert "-n auto --dist loadscope" in bulk
+
+
+def test_suite_never_asserts_wall_clock_performance() -> None:
+    """Semantic tests use events/virtual clocks; real time is anti-hang only."""
+
+    clock_methods = {"monotonic", "perf_counter", "time"}
+    elapsed_name_fragments = {"elapsed", "duration", "latency", "runtime", "wall_time"}
+    violations: list[str] = []
+
+    def has_clock_call(node: ast.AST) -> bool:
+        return any(
+            isinstance(item, ast.Call)
+            and (
+                (
+                    isinstance(item.func, ast.Attribute)
+                    and item.func.attr in clock_methods
+                )
+                or (
+                    isinstance(item.func, ast.Name)
+                    and item.func.id in clock_methods
+                )
+            )
+            for item in ast.walk(node)
+        )
+
+    for path in sorted((ROOT / "tests").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for function in (
+            item
+            for item in ast.walk(tree)
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
+            timed_names: set[str] = set()
+            assignments = [
+                item
+                for item in ast.walk(function)
+                if isinstance(item, (ast.Assign, ast.AnnAssign))
+            ]
+            changed = True
+            while changed:
+                changed = False
+                for assignment in assignments:
+                    value = assignment.value
+                    if value is None:
+                        continue
+                    depends_on_clock = has_clock_call(value) or any(
+                        isinstance(item, ast.Name) and item.id in timed_names
+                        for item in ast.walk(value)
+                    )
+                    if not depends_on_clock:
+                        continue
+                    targets = (
+                        assignment.targets
+                        if isinstance(assignment, ast.Assign)
+                        else [assignment.target]
+                    )
+                    for target in targets:
+                        for item in ast.walk(target):
+                            if isinstance(item, ast.Name) and item.id not in timed_names:
+                                timed_names.add(item.id)
+                                changed = True
+            for assertion in (
+                item for item in ast.walk(function) if isinstance(item, ast.Assert)
+            ):
+                if has_clock_call(assertion.test) or any(
+                    isinstance(item, ast.Name)
+                    and item.id in timed_names
+                    and any(
+                        fragment in item.id.lower()
+                        for fragment in elapsed_name_fragments
+                    )
+                    for item in ast.walk(assertion.test)
+                ):
+                    violations.append(
+                        "%s:%d" % (path.relative_to(ROOT), assertion.lineno)
+                    )
+
+    assert violations == [], (
+        "wall-clock assertions are forbidden; use explicit synchronization, "
+        "a virtual clock, or a generous anti-hang timeout: %s" % violations
+    )
 
 
 def test_contract_runner_rejects_partial_combine_even_when_coverage_exits_zero(tmp_path):

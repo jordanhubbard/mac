@@ -138,6 +138,20 @@ def test_tested_main_publishes_immutable_multiarch_openshell_runtime() -> None:
     assert "qemu-system-riscv64 -machine help | grep -F virt" in verifier
 
 
+def test_mainline_uses_fail_closed_impact_selection_between_nightly_full_runs() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    mainline = _workflow_job(workflow, "mainline")
+    nightly = _workflow_job(workflow, "nightly")
+
+    assert "fetch-depth: 0" in mainline
+    assert "MAC_TEST_SELECT_BASE: ${{ github.event.before }}" in mainline
+    assert "scripts/run-contract-tests.sh" in mainline
+    assert "MAC_TEST_SELECT_BASE" not in nightly
+    assert "scripts/run-contract-tests.sh" in nightly
+
+
 def test_image_publication_is_blocked_on_live_pinned_postgres_contract() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 

@@ -329,10 +329,10 @@ def _run_probe(
         "FAKE_GATEWAY_CONFIG": str(config),
         "FAKE_GATEWAY_CHILD_PID": str(tmp_path / "child.pid"),
         # Linux runners add a non-root sudo -> Python exec hop before the fake
-        # manager.  Give process startup a portable budget while retaining a
-        # short, deterministic bound for the deliberate timeout fixtures.
+        # manager. Ordinary readiness cases test topology, not scheduler speed;
+        # only the deliberate timeout fixtures use a short command deadline.
         "MAC_TEST_GATEWAY_COMMAND_TIMEOUT": (
-            "1.0" if mode in {"timeout", "child-timeout"} else "2.0"
+            "1.0" if mode in {"timeout", "child-timeout"} else "30.0"
         ),
     }
     completed = subprocess.run(
@@ -341,7 +341,7 @@ def _run_probe(
         check=False,
         capture_output=True,
         text=True,
-        timeout=5,
+        timeout=60,
     )
     return completed, output
 

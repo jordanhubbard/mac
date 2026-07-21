@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -589,11 +588,15 @@ def test_rejected_batch_recovers_same_idempotent_wip_andon_station(
 
 
 def test_trigger_wakes_background_thread_without_running_inline(tmp_path: Path) -> None:
-    called = threading.Event()
+    discover_entered = threading.Event()
+    release_discover = threading.Event()
+    trigger_returned = threading.Event()
+    trigger_result: list[bool] = []
 
     class _SignallingInventory(_Inventory):
         def discover(self, *, after_key: str, limit: int) -> list[PipelineSnapshot]:
-            called.set()
+            discover_entered.set()
+            assert release_discover.wait(30), "test never released inventory discovery"
             return []
 
     controller, _ = _controller(
@@ -603,13 +606,21 @@ def test_trigger_wakes_background_thread_without_running_inline(tmp_path: Path) 
         initial_delay=60,
     )
     assert controller.start() is True
+    trigger_thread = threading.Thread(
+        target=lambda: (
+            trigger_result.append(controller.trigger()),
+            trigger_returned.set(),
+        )
+    )
     try:
-        before = time.monotonic()
-        assert controller.trigger() is True
-        elapsed = time.monotonic() - before
-        assert elapsed < 5
-        assert called.wait(10.0)
+        trigger_thread.start()
+        assert trigger_returned.wait(30), "trigger ran pipeline work inline"
+        assert trigger_result == [True]
+        assert discover_entered.wait(30), "background pipeline did not wake"
     finally:
+        release_discover.set()
+        trigger_thread.join(timeout=30)
+        assert not trigger_thread.is_alive()
         assert controller.stop() is True
 
 

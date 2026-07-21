@@ -230,29 +230,26 @@ def _base_case(tmp_path: Path, manager: str, *, os_kind: str = "linux") -> dict[
         "MAC_PHASE1_DAEMON_FUNCTIONS_FILE": str(block),
         "FAKE_DAEMON_WRITER": str(writer),
         "FAKE_PHASE1_EVENTS": str(events),
-        "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS": "0.5",
-        "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS": "3",
+        # These ordinary lifecycle cases test state and evidence, not speed.
+        # Keep deadlines as generous anti-hang guards; dedicated timeout cases
+        # below override them with deliberately short values.
+        "MAC_PHASE1_COMMAND_TIMEOUT_SECONDS": "30",
+        "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS": "120",
         "MAC_PHASE1_POLL_SECONDS": "0.01",
         "MAC_PHASE1_TEST_MODE": "1",
         "FAKE_MANAGER_BIN_DIR": str(fake_bin),
         "FAKE_USER_RUNTIME_DIR": str(user_runtime),
     }
-    # coverage.py's ``patch = ["subprocess"]`` propagates measurement into every
-    # Python child via COVERAGE_PROCESS_{START,CONFIG} + a site .pth hook. This
-    # phase-1 bash script (and its fake managers) spawn ``$PY`` repeatedly under
-    # sub-second command budgets (MAC_PHASE1_COMMAND_TIMEOUT_SECONDS=0.5), yet
-    # none of them import ``mac`` — so tracing them yields ZERO src/mac coverage
-    # while making each interpreter start ~5.6x slower. Under parallel xdist
-    # contention that overhead expires the phase-1 deadlines and flakes these
-    # tests. Strip it so the throwaway children run at native speed; the tight
-    # budgets stay meaningful and coverage totals are unaffected.
+    # The throwaway Python children do not import ``mac``. Avoid propagating
+    # coverage tracing into them: it adds no coverage and needlessly slows this
+    # subprocess-heavy contract fixture.
     env.pop("COVERAGE_PROCESS_START", None)
     env.pop("COVERAGE_PROCESS_CONFIG", None)
     return env
 
 
 def _run_action(
-    env: dict[str, str], action: str, *, timeout: float = 10
+    env: dict[str, str], action: str, *, timeout: float = 180
 ) -> subprocess.CompletedProcess[str]:
     command = ["/bin/bash", str(SCRIPT), action]
     if action in {"restore", "restore-phase1", "resume-media"}:
@@ -274,7 +271,7 @@ def _run_action(
     )
 
 
-def _run(env: dict[str, str], *, timeout: float = 10) -> subprocess.CompletedProcess[str]:
+def _run(env: dict[str, str], *, timeout: float = 180) -> subprocess.CompletedProcess[str]:
     prepared = _run_action(env, "prepare", timeout=timeout)
     if prepared.returncode != 0:
         return prepared
@@ -1596,9 +1593,7 @@ def test_resume_media_blocks_when_active_service_health_is_unavailable(
         {
             "FAKE_SYSTEMD_STATE": str(state),
             "FAKE_MEDIA_STATE": "active",
-            "MAC_PHASE1_MEDIA_READINESS_SECONDS": "0.15",
-            "MAC_PHASE1_TOTAL_TIMEOUT_SECONDS": "1",
-            "MAC_PHASE1_POLL_SECONDS": "0.01",
+            "MAC_PHASE1_TEST_MEDIA_HEALTH_MAX_ATTEMPTS": "1",
         }
     )
     mac_env = Path(env["MAC_HOME"]) / "mac.env"

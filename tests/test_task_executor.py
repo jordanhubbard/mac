@@ -3823,37 +3823,130 @@ def test_main_emits_plan_decomposed_telemetry(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_stall_watchdog_kills_silent_hang_quickly(tmp_path):
-    # A hung process goes quiet; the watchdog kills on output stall — long
-    # before any total-runtime budget — with an explicit diagnosable marker.
-    import time as _time
-    start = _time.monotonic()
-    r = te.run_with_stall_watchdog(
-        ["bash", "-c", "echo working; sleep 60"], tmp_path,
-        stall_timeout=1.0, hard_timeout=120.0,
+def _run_watchdog_with_virtual_clock(
+    monkeypatch,
+    tmp_path,
+    *,
+    clock: list[float],
+    stdout_chunks: list[bytes],
+    complete_after_drain: bool,
+    stall_timeout: float,
+    hard_timeout: float,
+):
+    class _Pipe:
+        def __init__(self, chunks, process):
+            self.chunks = list(chunks)
+            self.process = process
+            self.finished = False
+
+        def read1(self, _size):
+            if self.chunks:
+                return self.chunks.pop(0)
+            if not self.finished:
+                self.finished = True
+                self.process.finished_pipes += 1
+                if complete_after_drain and self.process.finished_pipes == 2:
+                    self.process.returncode = 0
+            return b""
+
+        def close(self):
+            return None
+
+    class _Process:
+        pid = 4321
+
+        def __init__(self):
+            self.returncode = None
+            self.finished_pipes = 0
+            self.stdout = _Pipe(stdout_chunks, self)
+            self.stderr = _Pipe([], self)
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    class _ImmediateThread:
+        def __init__(self, *, target, args, daemon):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+        def join(self, timeout=None):
+            return None
+
+    process = _Process()
+    remaining_clock = iter(clock)
+    last_clock = [clock[-1]]
+
+    def monotonic():
+        try:
+            last_clock[0] = next(remaining_clock)
+        except StopIteration:
+            pass
+        return last_clock[0]
+
+    monkeypatch.setattr(te.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(te.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(te.time, "monotonic", monotonic)
+    monkeypatch.setattr(te.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        te.os,
+        "killpg",
+        lambda _pid, _signal: setattr(process, "returncode", -9),
+    )
+    return te.run_with_stall_watchdog(
+        ["synthetic"],
+        tmp_path,
+        stall_timeout=stall_timeout,
+        hard_timeout=hard_timeout,
+    )
+
+
+def test_stall_watchdog_kills_silent_hang(monkeypatch, tmp_path):
+    r = _run_watchdog_with_virtual_clock(
+        monkeypatch,
+        tmp_path,
+        clock=[0.0, 0.0, 0.0, 2.0],
+        stdout_chunks=[b"working\n"],
+        complete_after_drain=False,
+        stall_timeout=1.0,
+        hard_timeout=120.0,
     )
     assert r.returncode == 124
     assert "stalled: no output" in r.stderr
-    assert "working" in r.stdout            # pre-hang output preserved
-    assert _time.monotonic() - start < 20   # killed on stall, not after 60s
+    assert "working" in r.stdout
 
 
-def test_stall_watchdog_lets_slow_but_chatty_work_finish(tmp_path):
-    # Steady progress output means NO kill even when total runtime exceeds the
-    # stall window — the exact scenario stale total-runtime budgets murdered.
-    r = te.run_with_stall_watchdog(
-        ["bash", "-c", "for i in 1 2 3 4 5 6; do echo tick $i; sleep 0.5; done; echo done"],
-        tmp_path, stall_timeout=1.5, hard_timeout=120.0,
+def test_stall_watchdog_lets_completed_chatty_work_finish(monkeypatch, tmp_path):
+    r = _run_watchdog_with_virtual_clock(
+        monkeypatch,
+        tmp_path,
+        clock=[0.0, 0.0, 0.0, 0.0],
+        stdout_chunks=[b"tick 1\n", b"tick 2\n", b"done\n"],
+        complete_after_drain=True,
+        stall_timeout=1.5,
+        hard_timeout=120.0,
     )
     assert r.returncode == 0
     assert "done" in r.stdout
 
 
-def test_stall_watchdog_hard_ceiling_stops_chatty_loops(tmp_path):
-    # The backstop: a pathological always-printing loop still dies at the ceiling.
-    r = te.run_with_stall_watchdog(
-        ["bash", "-c", "while true; do echo spin; sleep 0.2; done"], tmp_path,
-        stall_timeout=5.0, hard_timeout=2.0,
+def test_stall_watchdog_hard_ceiling_stops_chatty_loops(monkeypatch, tmp_path):
+    r = _run_watchdog_with_virtual_clock(
+        monkeypatch,
+        tmp_path,
+        clock=[0.0, 0.0, 0.0, 3.0],
+        stdout_chunks=[b"spin\n"],
+        complete_after_drain=False,
+        stall_timeout=5.0,
+        hard_timeout=2.0,
     )
     assert r.returncode == 124
     assert "hard ceiling" in r.stderr

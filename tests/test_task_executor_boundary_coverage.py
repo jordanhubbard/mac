@@ -147,35 +147,47 @@ def test_run_audited_command_timeout_decodes_bytes(monkeypatch, tmp_path) -> Non
     assert audits[-1]["metadata"]["timeout_seconds"] == 2
 
 
-def test_run_captured_kills_process_group_on_timeout(tmp_path) -> None:
-    """The timeout path must SIGKILL the whole process tree promptly.
+def test_run_captured_kills_process_group_before_draining_timeout_output(
+    monkeypatch, tmp_path
+) -> None:
+    """The timeout path kills the process group before its final pipe drain."""
+    events: list[tuple[object, ...]] = []
 
-    A grandchild inheriting the stdout pipe used to keep the post-kill
-    output drain blocked until it exited on its own (the 900s rc-124 hangs
-    on unsandboxed fleet hosts), and the grandchild itself leaked.
-    """
-    import os
-    import time
+    class _TimedOutProcess:
+        pid = 4321
+        returncode = None
 
-    script = "echo started; sleep 30 & echo $!; wait"
-    start = time.monotonic()
+        def communicate(self, timeout=None):
+            events.append(("communicate", timeout))
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(
+                    ["synthetic"], timeout, output="started\n", stderr=""
+                )
+            self.returncode = -9
+            return "started\n", ""
+
+        def kill(self):
+            events.append(("kill",))
+
+    process = _TimedOutProcess()
+    monkeypatch.setattr(te.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(
+        te.os,
+        "killpg",
+        lambda pid, signum: events.append(("killpg", pid, signum)),
+    )
+
     with pytest.raises(subprocess.TimeoutExpired) as exc_info:
-        te._run_captured(["sh", "-c", script], tmp_path, 1.0)
-    elapsed = time.monotonic() - start
-    # Old behavior blocked ~30s draining the grandchild's inherited pipe.
-    assert elapsed < 20
-    lines = (exc_info.value.output or "").split()
-    assert lines[0] == "started"
-    grandchild_pid = int(lines[1])
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        try:
-            os.kill(grandchild_pid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.1)
-    else:
-        pytest.fail("grandchild survived the process-group kill")
+        te._run_captured(["synthetic"], tmp_path, 1.0)
+
+    import signal
+
+    assert events == [
+        ("communicate", 1.0),
+        ("killpg", 4321, signal.SIGKILL),
+        ("communicate", None),
+    ]
+    assert exc_info.value.output == "started\n"
 
 
 def test_run_audited_command_records_oserror(monkeypatch, tmp_path) -> None:

@@ -1029,6 +1029,29 @@ exec "$@"
 
     command = """set -euo pipefail
 . "$1"
+# Transaction semantics are independent of the bounded-runner implementation.
+# Exercise the real launchd and artifact code against the fake executables, but
+# do not let scheduler latency turn this rollback test into a timeout test.
+# Dedicated tests above cover the bounded runner and its process-group cleanup.
+mac_launchd_run_control_bounded() {
+  local mode="$1"
+  shift 2
+  case "$mode" in
+    user) launchctl "$@" ;;
+    system) sudo -n launchctl "$@" ;;
+    *) return 2 ;;
+  esac
+}
+mac_launchd_run_python_bounded() {
+  local mode="$1" program="$3" python_bin=""
+  shift 3
+  python_bin="$(mac_launchd_python_bin)" || return $?
+  case "$mode" in
+    user) "$python_bin" -c "$program" "$@" ;;
+    system) sudo -n "$python_bin" -c "$program" "$@" ;;
+    *) return 2 ;;
+  esac
+}
 CALLER_CLEANUP_PATH="$8"
 deployment_exit_handler_equivalent() {
   local original_rc="$1"
@@ -1084,14 +1107,12 @@ mac_launchd_transaction_commit
             "FAKE_TX_MODE": mode,
             "FAKE_SUDO_CONTROL_CALLS": str(sudo_control_calls),
             "FAKE_SUDO_ARTIFACT_CALLS": str(sudo_artifact_calls),
-            "MAC_LAUNCHD_TRANSITION_TIMEOUT_SECONDS": "2",
-            "MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS": "1",
             "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
         },
         check=False,
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=60,
     )
 
 
