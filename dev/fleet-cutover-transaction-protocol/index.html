@@ -1854,9 +1854,13 @@ authenticated URLs are not journal data.</p>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  -&gt; finalizing
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>  -&gt; finalized
 </code></pre></div>
-<p>Abort states retain the forward state that selected the compensation and record
-<code>abort_started -&gt; aborted</code> per node. Compensation runs in reverse mutation
-order.</p>
+<p>Abort states retain the forward state that selected recovery and record
+<code>abort_started -&gt; aborted</code> per node. Recovery walks nodes in reverse mutation
+order. Its normal action is <code>retain_forward</code>: preserve the newest node state,
+process barrier, dispatch hold, and immutable diagnostic bundle, then release
+only the controller lock for a successor deployment. Prior-generation
+compensation requires the explicit <code>--recovery-policy rollback</code> break-glass
+choice and that policy is durably bound by the first node action.</p>
 <p>Global states are:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>preparing
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -&gt; hub_open
@@ -1872,17 +1876,21 @@ order.</p>
 </code></pre></div>
 <p><code>commit_intent</code> durably binds the exact release plan before the hub request.
 When the response is lost, recovery asks the hub authority for exact status. A
-matching <code>committed</code> marker forces roll-forward. Exact <code>absent</code> permits abort
-only after its proof is journaled. <code>mismatch</code> or unknown transport state permits
-neither rollback nor replay.</p>
+matching <code>committed</code> marker forces commit finalization. Exact <code>absent</code> permits
+the incomplete hub epoch to close only after its proof is journaled; nodes then
+remain at their newest observed state for forward repair by default.
+<code>mismatch</code> or unknown transport state permits neither recovery direction nor
+replay.</p>
 <p><code>hub_committed</code> is irreversible but is not terminal. The journal remains active
 until every node finalization receipt is durable. The finalizer executable
 digest is bound when phase 2 is armed, so a later controller adopts the journal
 and resumes finalization with the exact installed bytes instead of its current
 checkout.</p>
-<p><code>aborted_held</code> is terminal only when node compensation, hub staged-state abort,
-and exact retained hold ownership are all proved. It deliberately does not mean
-dispatchable.</p>
+<p><code>aborted_held</code> is terminal only when the hub staged-state abort, exact retained
+hold ownership, node-local process barrier, and chosen node recovery action are
+all proved. Under the default policy the action explicitly proves
+<code>rollback_performed=false</code> and retains the failed generation's diagnostics. It
+deliberately does not mean dispatchable.</p>
 <p>Journal ownership binds controller nonce, boot identity, PID, and process start
 time. PID liveness alone is insufficient because PID reuse after reboot can
 impersonate the previous owner.</p>
