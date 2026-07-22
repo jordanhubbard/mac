@@ -41,7 +41,9 @@ def normalized_arch(value: str) -> str:
     return result
 
 
-def parse_specs(values: list[str]) -> dict[tuple[str, str], tuple[str, str, str]]:
+def parse_specs(
+    values: list[str], *, asset_prefix: str = "openshell-"
+) -> dict[tuple[str, str], tuple[str, str, str]]:
     specs: dict[tuple[str, str], tuple[str, str, str]] = {}
     for raw in values:
         parts = raw.split(":", 4)
@@ -49,7 +51,9 @@ def parse_specs(values: list[str]) -> dict[tuple[str, str], tuple[str, str, str]
             raise ValueError("reviewed OpenShell asset spec is malformed")
         os_kind, arch, asset, digest, cli_digest = parts
         key = (normalized_os(os_kind), normalized_arch(arch))
-        if key in specs or not re.fullmatch(r"openshell-[A-Za-z0-9._-]+\.tar\.gz", asset):
+        if key in specs or not re.fullmatch(
+            re.escape(asset_prefix) + r"[A-Za-z0-9._-]+\.tar\.gz", asset
+        ):
             raise ValueError("reviewed OpenShell asset spec is ambiguous")
         if (
             re.fullmatch(r"[0-9a-f]{64}", digest) is None
@@ -60,6 +64,17 @@ def parse_specs(values: list[str]) -> dict[tuple[str, str], tuple[str, str, str]
     if not specs:
         raise ValueError("reviewed OpenShell asset specs are required")
     return specs
+
+
+def gateway_spec(args: argparse.Namespace, os_kind: str, arch: str) -> tuple[str, str, str] | None:
+    values = getattr(args, "gateway_asset_spec", [])
+    if os_kind != "linux" or not values:
+        return None
+    specs = parse_specs(values, asset_prefix="openshell-gateway-")
+    try:
+        return specs[(os_kind, arch)]
+    except KeyError as exc:
+        raise ValueError("target has no reviewed OpenShell gateway asset") from exc
 
 
 def stable_bytes(path: Path, *, private: bool, limit: int) -> bytes:
@@ -172,6 +187,13 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
         "managed_openclaw": managed,
         "required": required,
     }
+    gateway = gateway_spec(args, os_kind, arch)
+    if gateway is not None:
+        gateway_asset, gateway_asset_sha, expected_gateway_sha = gateway
+        base.update(
+            gateway_asset=gateway_asset,
+            gateway_asset_sha256=gateway_asset_sha,
+        )
     if not required:
         return {**base, "status": "ready", "reason": "openclaw_not_managed"}
 
@@ -218,6 +240,40 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
     cli_sha = sha256(binary_raw)
     if cli_sha != expected_cli_sha:
         return {**base, "status": "migration_required", "reason": "canonical_cli_digest_mismatch"}
+    if gateway is not None:
+        canonical_gateway = mac_home.parent / ".local" / "bin" / "openshell-gateway"
+        try:
+            gateway_raw = stable_bytes(
+                canonical_gateway, private=False, limit=MAX_BINARY_BYTES
+            )
+        except FileNotFoundError:
+            return {
+                **base,
+                "status": "migration_required",
+                "reason": "canonical_gateway_missing",
+            }
+        except (OSError, ValueError):
+            return {
+                **base,
+                "status": "migration_required",
+                "reason": "canonical_gateway_untrusted",
+            }
+        if not os.access(canonical_gateway, os.X_OK):
+            return {
+                **base,
+                "status": "migration_required",
+                "reason": "canonical_gateway_not_executable",
+            }
+        gateway_sha = sha256(gateway_raw)
+        if gateway_sha != expected_gateway_sha:
+            return {
+                **base,
+                "status": "migration_required",
+                "reason": "canonical_gateway_digest_mismatch",
+            }
+        base.update(
+            gateway_path=str(canonical_gateway), gateway_sha256=gateway_sha
+        )
     try:
         receipt_raw = stable_bytes(receipt_path, private=True, limit=1024 * 1024)
         receipt = json.loads(receipt_raw)
@@ -319,10 +375,61 @@ def atomic_publish(args: argparse.Namespace, source: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def extract_reviewed_archive(args: argparse.Namespace, archive: Path) -> Path:
+def atomic_publish_gateway(args: argparse.Namespace, source: Path) -> None:
+    mac_home = Path(args.mac_home).expanduser().resolve()
     os_kind = normalized_os(args.expected_os)
     arch = normalized_arch(platform.machine())
-    _asset, expected_sha, _expected_cli_sha = parse_specs(args.asset_spec)[(os_kind, arch)]
+    gateway = gateway_spec(args, os_kind, arch)
+    if gateway is None:
+        return
+    _asset, _asset_sha, expected_gateway_sha = gateway
+    source_raw = stable_bytes(source, private=False, limit=MAX_BINARY_BYTES)
+    if sha256(source_raw) != expected_gateway_sha:
+        raise ValueError(
+            "reviewed OpenShell gateway digest differs from its reviewed archive"
+        )
+    canonical_dir = mac_home.parent / ".local" / "bin"
+    canonical_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    metadata = canonical_dir.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        raise ValueError("reviewed OpenShell gateway directory is not owner-controlled")
+    canonical = canonical_dir / "openshell-gateway"
+    descriptor, temporary_raw = tempfile.mkstemp(
+        prefix=".openshell-gateway.", dir=canonical_dir
+    )
+    temporary = Path(temporary_raw)
+    try:
+        os.fchmod(descriptor, 0o700)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(source_raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, canonical)
+        os.chmod(canonical, 0o700)
+        directory_fd = os.open(canonical_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def extract_reviewed_archive(
+    args: argparse.Namespace, archive: Path, *, gateway: bool = False
+) -> Path:
+    os_kind = normalized_os(args.expected_os)
+    arch = normalized_arch(platform.machine())
+    specs = (
+        parse_specs(args.gateway_asset_spec, asset_prefix="openshell-gateway-")
+        if gateway
+        else parse_specs(args.asset_spec)
+    )
+    _asset, expected_sha, _expected_binary_sha = specs[(os_kind, arch)]
     raw = stable_bytes(archive, private=False, limit=MAX_ARCHIVE_BYTES)
     if sha256(raw) != expected_sha:
         raise ValueError("reviewed OpenShell asset digest mismatch")
@@ -333,7 +440,9 @@ def extract_reviewed_archive(args: argparse.Namespace, archive: Path) -> Path:
             candidates = [
                 item
                 for item in members
-                if item.isfile() and Path(item.name).name == "openshell"
+                if item.isfile()
+                and Path(item.name).name
+                == ("openshell-gateway" if gateway else "openshell")
             ]
             if len(members) > 256 or len(candidates) != 1:
                 raise ValueError("reviewed OpenShell archive shape is invalid")
@@ -343,7 +452,7 @@ def extract_reviewed_archive(args: argparse.Namespace, archive: Path) -> Path:
             stream = bundle.extractfile(member)
             if stream is None:
                 raise ValueError("reviewed OpenShell binary is unreadable")
-            binary = temporary_dir / "openshell"
+            binary = temporary_dir / ("openshell-gateway" if gateway else "openshell")
             descriptor = os.open(binary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
             try:
                 remaining = member.size
@@ -370,10 +479,15 @@ def extract_reviewed_archive(args: argparse.Namespace, archive: Path) -> Path:
         raise
 
 
-def download_and_extract(args: argparse.Namespace) -> Path:
+def download_and_extract(args: argparse.Namespace, *, gateway: bool = False) -> Path:
     os_kind = normalized_os(args.expected_os)
     arch = normalized_arch(platform.machine())
-    asset, _expected_sha, _expected_cli_sha = parse_specs(args.asset_spec)[(os_kind, arch)]
+    specs = (
+        parse_specs(args.gateway_asset_spec, asset_prefix="openshell-gateway-")
+        if gateway
+        else parse_specs(args.asset_spec)
+    )
+    asset, _expected_sha, _expected_binary_sha = specs[(os_kind, arch)]
     if not re.fullmatch(r"https://github\.com/NVIDIA/OpenShell/releases/download/v[0-9.]+", args.base_url):
         raise ValueError("reviewed OpenShell base URL is not allowed")
     temporary_dir = Path(tempfile.mkdtemp(prefix="mac-reviewed-openshell-"))
@@ -415,7 +529,7 @@ def download_and_extract(args: argparse.Namespace) -> Path:
         raise ValueError("reviewed OpenShell asset download failed")
     os.chmod(archive, 0o600)
     try:
-        return extract_reviewed_archive(args, archive)
+        return extract_reviewed_archive(args, archive, gateway=gateway)
     finally:
         shutil.rmtree(temporary_dir, ignore_errors=True)
 
@@ -428,6 +542,7 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--asset-spec", action="append", default=[])
+    parser.add_argument("--gateway-asset-spec", action="append", default=[])
     parser.add_argument("--archive")
     parser.add_argument("--required", action="store_true")
     args = parser.parse_args()
@@ -450,6 +565,14 @@ def main() -> int:
                 atomic_publish(args, binary)
             finally:
                 shutil.rmtree(binary.parent, ignore_errors=True)
+            if gateway_spec(
+                args, normalized_os(args.expected_os), normalized_arch(platform.machine())
+            ) is not None:
+                gateway_binary = download_and_extract(args, gateway=True)
+                try:
+                    atomic_publish_gateway(args, gateway_binary)
+                finally:
+                    shutil.rmtree(gateway_binary.parent, ignore_errors=True)
     result = preflight(args)
     if result.get("status") != "ready":
         raise SystemExit("reviewed OpenShell CLI migration did not converge")

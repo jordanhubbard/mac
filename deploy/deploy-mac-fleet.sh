@@ -4759,7 +4759,7 @@ reviewed_openshell_cli_status_file() {
 run_remote_reviewed_openshell_cli_helper() {
   local action="$1" agent="$2" os_kind="$3" required="$4" output="$5"
   local ssh_parts=() ssh_args=() ssh_target item last_index command spec identity_spec
-  local -a helper_args=() identity_specs=()
+  local -a helper_args=() identity_specs=() gateway_helper_args=() gateway_identity_specs=()
   case "$action" in
     preflight|migrate) ;;
     *) echo "ERROR: invalid reviewed OpenShell CLI action" >&2; return 2 ;;
@@ -4774,8 +4774,15 @@ run_remote_reviewed_openshell_cli_helper() {
   while IFS= read -r identity_spec; do
     identity_specs+=("$identity_spec")
   done < <(reviewed_openshell_cli_identity_specs)
+  while IFS= read -r spec; do
+    gateway_helper_args+=(--gateway-asset-spec "$spec")
+    gateway_identity_specs+=("gateway:$spec")
+  done < <(reviewed_openshell_gateway_specs)
   command="python3 - $(shell_quote "$action") --mac-home $(shell_quote '~/.mac') --expected-os $(shell_quote "$os_kind") --version $(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") --base-url $(shell_quote "$OPENSHELL_REVIEWED_CLI_BASE_URL")"
   for item in "${helper_args[@]}"; do
+    command+=" $(shell_quote "$item")"
+  done
+  for item in "${gateway_helper_args[@]}"; do
     command+=" $(shell_quote "$item")"
   done
   case "$(normalize_boolean_token "$required")" in
@@ -4795,7 +4802,8 @@ run_remote_reviewed_openshell_cli_helper() {
   fi
   chmod 0600 "$output"
   if ! "$PYTHON_BIN" - "$output" "$action" "$os_kind" "$required" \
-      "$OPENSHELL_REVIEWED_CLI_VERSION" "${identity_specs[@]}" <<'PY'
+      "$OPENSHELL_REVIEWED_CLI_VERSION" "${identity_specs[@]}" \
+      "${gateway_identity_specs[@]}" <<'PY'
 import json,re,sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 allowed={"ready"} if sys.argv[2] == "migrate" else {"ready","migration_required"}
@@ -4803,7 +4811,22 @@ expected_os=sys.argv[3]
 fleet_required=str(sys.argv[4]).strip().lower() in {"1","true","yes","on"}
 expected_version=sys.argv[5]
 identities={}
+gateway_identities={}
 for raw in sys.argv[6:]:
+    if raw.startswith("gateway:"):
+        parts=raw.split(":",5)
+        if len(parts) != 6:
+            raise SystemExit("controller reviewed OpenShell gateway identity is malformed")
+        _kind,os_kind,arch,asset,asset_sha,gateway_sha=parts
+        if (
+            (os_kind,arch) in gateway_identities
+            or re.fullmatch(r"openshell-gateway-[A-Za-z0-9._-]+\.tar\.gz",asset) is None
+            or re.fullmatch(r"[0-9a-f]{64}",asset_sha) is None
+            or re.fullmatch(r"[0-9a-f]{64}",gateway_sha) is None
+        ):
+            raise SystemExit("controller reviewed OpenShell gateway identity is invalid")
+        gateway_identities[(os_kind,arch)]=(asset,asset_sha,gateway_sha)
+        continue
     parts=raw.split(":",4)
     if len(parts) != 5:
         raise SystemExit("controller reviewed OpenShell CLI identity is malformed")
@@ -4834,6 +4857,16 @@ if identity is None:
 asset,asset_sha,cli_sha=identity
 if value.get("asset") != asset or value.get("asset_sha256") != asset_sha:
     raise SystemExit("reviewed OpenShell CLI status differs from controller-reviewed asset identity")
+if expected_os == "linux":
+    gateway_identity=gateway_identities.get((expected_os,value.get("arch")))
+    if gateway_identity is None:
+        raise SystemExit("reviewed OpenShell status has no controller-reviewed gateway identity")
+    gateway_asset,gateway_asset_sha,gateway_sha=gateway_identity
+    if (
+        value.get("gateway_asset") != gateway_asset
+        or value.get("gateway_asset_sha256") != gateway_asset_sha
+    ):
+        raise SystemExit("reviewed OpenShell gateway status differs from controller-reviewed asset identity")
 status=value.get("status")
 reason=value.get("reason")
 repairable_reasons={
@@ -4847,6 +4880,10 @@ repairable_reasons={
     "reviewed_cli_receipt_missing",
     "reviewed_cli_receipt_untrusted",
     "reviewed_cli_receipt_mismatch",
+    "canonical_gateway_missing",
+    "canonical_gateway_untrusted",
+    "canonical_gateway_not_executable",
+    "canonical_gateway_digest_mismatch",
 }
 if status == "migration_required":
     if reason not in repairable_reasons | {"managed_openclaw_identity_untrusted"}:
@@ -4861,6 +4898,8 @@ elif reason == "reviewed_cli_ready":
         raise SystemExit("reviewed OpenShell CLI status differs from controller-reviewed CLI identity")
     if re.fullmatch(r"[0-9a-f]{64}",str(value.get("receipt_sha256") or "")) is None:
         raise SystemExit("reviewed OpenShell CLI status lacks its exact receipt evidence")
+    if expected_os == "linux" and value.get("gateway_sha256") != gateway_sha:
+        raise SystemExit("reviewed OpenShell gateway status differs from controller-reviewed binary identity")
 else:
     raise SystemExit("reviewed OpenShell CLI ready status has an unknown reason")
 PY
@@ -4921,7 +4960,9 @@ reviewed_openshell_cli_migration_repairable_reason() {
     canonical_cli_untrusted|canonical_cli_not_executable|\
     canonical_cli_digest_mismatch|\
     reviewed_cli_receipt_missing|reviewed_cli_receipt_untrusted|\
-    reviewed_cli_receipt_mismatch)
+    reviewed_cli_receipt_mismatch|canonical_gateway_missing|\
+    canonical_gateway_untrusted|canonical_gateway_not_executable|\
+    canonical_gateway_digest_mismatch)
       return 0
       ;;
     *)

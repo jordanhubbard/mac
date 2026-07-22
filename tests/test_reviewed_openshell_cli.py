@@ -188,6 +188,73 @@ def test_registry_carries_exact_archive_and_extracted_cli_identities() -> None:
     assert all(re.fullmatch(r"[0-9a-f]{64}", spec[3]) for spec in specs)
     assert all(re.fullmatch(r"[0-9a-f]{64}", spec[4]) for spec in specs)
 
+    gateway_result = subprocess.run(
+        ["bash", "-c", '. "$1"; reviewed_openshell_gateway_specs', "bash", str(ASSETS)],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    gateway_specs = [line.split(":") for line in gateway_result.stdout.splitlines()]
+    assert len(gateway_specs) == 2
+    assert all(len(spec) == 5 for spec in gateway_specs)
+    assert {(spec[0], spec[1]) for spec in gateway_specs} == {
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+    }
+    assert all(spec[2].startswith("openshell-gateway-") for spec in gateway_specs)
+    assert all(re.fullmatch(r"[0-9a-f]{64}", spec[3]) for spec in gateway_specs)
+    assert all(re.fullmatch(r"[0-9a-f]{64}", spec[4]) for spec in gateway_specs)
+
+
+def test_linux_preflight_rejects_schema_incompatible_gateway_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    monkeypatch.setattr(module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(module.platform, "machine", lambda: "x86_64")
+    mac_home = _managed_legacy_home(tmp_path)
+    cli = tmp_path / "openshell"
+    cli.write_bytes(b"reviewed-cli")
+    cli.chmod(0o700)
+    gateway = tmp_path / "openshell-gateway"
+    gateway.write_bytes(b"reviewed-gateway")
+    gateway.chmod(0o700)
+    args = argparse.Namespace(
+        action="preflight",
+        mac_home=str(mac_home),
+        expected_os="linux",
+        version="0.0.72",
+        base_url="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72",
+        asset_spec=[
+            "linux:x86_64:openshell-x86_64-test.tar.gz:"
+            + "a" * 64
+            + ":"
+            + hashlib.sha256(cli.read_bytes()).hexdigest()
+        ],
+        gateway_asset_spec=[
+            "linux:x86_64:openshell-gateway-x86_64-test.tar.gz:"
+            + "b" * 64
+            + ":"
+            + hashlib.sha256(gateway.read_bytes()).hexdigest()
+        ],
+        archive=None,
+        required=True,
+    )
+    module.atomic_publish(args, cli)
+    installed_gateway = tmp_path / ".local" / "bin" / "openshell-gateway"
+    installed_gateway.parent.mkdir(parents=True, mode=0o700)
+    installed_gateway.write_bytes(b"legacy-gateway")
+    installed_gateway.chmod(0o700)
+
+    mismatch = module.preflight(args)
+    assert mismatch["status"] == "migration_required"
+    assert mismatch["reason"] == "canonical_gateway_digest_mismatch"
+
+    module.atomic_publish_gateway(args, gateway)
+    ready = module.preflight(args)
+    assert ready["status"] == "ready"
+    assert ready["gateway_sha256"] == hashlib.sha256(gateway.read_bytes()).hexdigest()
+
 
 def test_helper_installs_only_exact_reviewed_archive_and_rechecks(tmp_path: Path) -> None:
     mac_home = _managed_legacy_home(tmp_path)
@@ -340,7 +407,7 @@ def test_phase2_installer_receives_the_same_reviewed_cli_identity() -> None:
 
 def _controller_status_validator() -> str:
     controller = CONTROLLER.read_text(encoding="utf-8")
-    marker = '"${identity_specs[@]}" <<\'PY\'\n'
+    marker = '"${gateway_identity_specs[@]}" <<\'PY\'\n'
     return controller.split(marker, 1)[1].split("\nPY\n", 1)[0]
 
 
@@ -361,6 +428,16 @@ def _run_controller_status_validator(
             "b" * 64,
         ]
     )
+    gateway_identity = ":".join(
+        [
+            "gateway",
+            "linux",
+            "x86_64",
+            "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+            "f" * 64,
+            "1" * 64,
+        ]
+    )
     return subprocess.run(
         [
             sys.executable,
@@ -371,6 +448,7 @@ def _run_controller_status_validator(
             required,
             "0.0.72",
             identity,
+            gateway_identity,
         ],
         input=_controller_status_validator(),
         text=True,
@@ -392,6 +470,9 @@ def _ready_controller_status() -> dict[str, object]:
         "status": "ready",
         "reason": "reviewed_cli_ready",
         "cli_sha256": "b" * 64,
+        "gateway_asset": "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+        "gateway_asset_sha256": "f" * 64,
+        "gateway_sha256": "1" * 64,
         "receipt_sha256": "c" * 64,
     }
 
@@ -403,6 +484,7 @@ def _ready_controller_status() -> dict[str, object]:
         ("asset", "openshell-forged-linux-musl.tar.gz"),
         ("asset_sha256", "d" * 64),
         ("cli_sha256", "e" * 64),
+        ("gateway_sha256", "2" * 64),
     ],
 )
 def test_controller_rejects_shape_valid_target_selected_cli_identity(
@@ -414,7 +496,7 @@ def test_controller_rejects_shape_valid_target_selected_cli_identity(
     result = _run_controller_status_validator(tmp_path, status)
 
     assert result.returncode != 0
-    assert "reviewed OpenShell CLI" in result.stderr
+    assert "reviewed OpenShell" in result.stderr
 
 
 def test_controller_accepts_only_exact_reviewed_cli_identity(tmp_path: Path) -> None:

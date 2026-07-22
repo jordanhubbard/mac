@@ -365,18 +365,17 @@ def _base_command(
         str(port),
         "--receipt",
         str(receipt),
-        # Happy-path budgets. Kept generous so ambient CPU contention (parallel
-        # xdist workers, or a co-scheduled suite) can't expire a deadline on a
-        # run that is actually succeeding — the earlier flakiness. Tests that
-        # deliberately prove deadline/timeout EXPIRY override these with their
-        # own short values downstream (argparse honors the last occurrence), so
-        # their timing fidelity is unaffected.
+        # Happy-path topology tests are assertions about state, not scheduler
+        # speed. Keep their internal deadline behind the harness's own hang
+        # guard so CPU contention cannot turn a correct state transition into a
+        # timing failure. Tests that exercise deadline expiry append explicit
+        # short values below (argparse honors the last occurrence).
         "--deadline-seconds",
-        "8",
+        "45",
         "--compensation-deadline-seconds",
-        "12",
+        "45",
         "--command-timeout-seconds",
-        "3",
+        "30",
         "--poll-seconds",
         "0.02",
         "--stable-observations",
@@ -974,6 +973,7 @@ def test_launchd_quiesce_removes_both_control_domains_and_system_supervisor(
     assert _read_state(tmp_path)["jobs"] == {}
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize("system", [False, True])
 def test_launchd_restore_supports_explicit_gui_and_system_topologies(
     tmp_path: Path,

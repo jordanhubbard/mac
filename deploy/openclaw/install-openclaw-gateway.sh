@@ -184,6 +184,14 @@ except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # macOS can deny a group signal after the session leader exits even
+        # though the timeout is already authoritative.  Fall back to the
+        # direct child and keep the timeout result deterministic.
+        try:
+            proc.terminate()
+        except (ProcessLookupError, PermissionError):
+            pass
     try:
         stdout, stderr = proc.communicate(timeout=0.5)
     except subprocess.TimeoutExpired:
@@ -196,6 +204,11 @@ except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        try:
+            proc.kill()
+        except (ProcessLookupError, PermissionError):
+            pass
     try:
         final_stdout, final_stderr = proc.communicate(timeout=0.5)
         stdout = final_stdout or stdout
@@ -1636,6 +1649,11 @@ except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        try:
+            proc.terminate()
+        except (ProcessLookupError, PermissionError):
+            pass
     try:
         stdout, stderr = proc.communicate(timeout=0.5)
     except subprocess.TimeoutExpired:
@@ -1644,6 +1662,11 @@ except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        try:
+            proc.kill()
+        except (ProcessLookupError, PermissionError):
+            pass
     try:
         final_stdout, final_stderr = proc.communicate(timeout=0.5)
         stdout = final_stdout or stdout

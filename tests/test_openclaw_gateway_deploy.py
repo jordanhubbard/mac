@@ -1388,6 +1388,7 @@ def test_stop_wrapper_fails_closed_without_sandbox_absence_proof(
         assert "sandbox remained present after deletion" in result.stderr
 
 
+@pytest.mark.process_e2e
 def test_stop_wrapper_bounds_hung_openshell_inspection(tmp_path: Path) -> None:
     stop_wrapper, base_env, _calls_path = _render_stop_wrapper_with_fake_openshell(
         tmp_path
