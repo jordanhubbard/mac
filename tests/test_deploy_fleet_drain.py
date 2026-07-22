@@ -833,6 +833,12 @@ def test_network_prerequisite_preparation_is_separate_and_secret_safe():
     assert main.index('if [ "$PREPARE_NETWORK_PREREQUISITES" = 1 ]; then') < (
         main.index('classify_network_prerequisites "$selected_specs_file"')
     )
+    network_mode = main.split(
+        'if [ "$PREPARE_NETWORK_PREREQUISITES" = 1 ]; then', 1
+    )[1].split('echo "==> network prerequisites prepared', 1)[0]
+    assert 'hub_token="$(read_hub_token)"' in network_mode
+    assert 'MAC_URL="$hub_url_field" MAC_API_TOKEN="$hub_token"' in network_mode
+    assert 'prepare_network_prerequisites "$selected_specs_file"' in network_mode
     journal_gate = main.split("initialize_cohort_transaction", 1)[0]
     assert '[ "$PREPARE_NETWORK_PREREQUISITES" != 1 ]' in journal_gate
 

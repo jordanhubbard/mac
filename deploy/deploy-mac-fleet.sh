@@ -14188,7 +14188,19 @@ PY
         echo "ERROR: network prerequisite preparation cannot be combined with deployment or hold authority" >&2
         return 2
       }
-    prepare_network_prerequisites "$selected_specs_file"
+    if [ -z "$hub_token" ]; then
+      hub_token="$(read_hub_token)"
+    fi
+    hub_url_field="$(awk -F '|' 'NF { print $8; exit }' "$selected_specs_file")"
+    [ -n "$hub_url_field" ] && [ -n "$hub_token" ] || {
+      echo "ERROR: network prerequisite preparation requires the selected hub endpoint and token" >&2
+      return 1
+    }
+    # Bind the existing encrypted secret resolver to this fleet's selected hub
+    # for the duration of preparation. Neither value is placed in SSH argv;
+    # the resolved mesh key still crosses only on the target session's stdin.
+    MAC_URL="$hub_url_field" MAC_API_TOKEN="$hub_token" \
+      prepare_network_prerequisites "$selected_specs_file"
     echo "==> network prerequisites prepared; no cohort transaction was opened"
     rm -rf "$TMPDIR_LOCAL"
     return 0
