@@ -130,6 +130,7 @@ HUB_EPOCH_MATERIAL_HELPER="$ROOT/deploy/fleet-release-epoch-material.py"
 PREREQUISITE_RECEIPT_HELPER="$ROOT/deploy/fleet-prerequisite-receipts.py"
 NODE_FINALIZER_HELPER="$ROOT/deploy/fleet-node-finalize.py"
 REVIEWED_OPENSHELL_CLI_HELPER="$ROOT/deploy/openshell/reviewed-cli.py"
+OPENSH_STORAGE_COMPAT_HELPER="$ROOT/deploy/openshell/storage-compatibility.py"
 REVIEWED_OPENSHELL_ASSET_REGISTRY="$ROOT/deploy/openshell/reviewed-cli-assets.sh"
 PHASE1_DAEMON_FUNCTIONS="$TMPDIR_LOCAL/daemon-resource-quiescence-functions.sh"
 [ -r "$REVIEWED_OPENSHELL_ASSET_REGISTRY" ] || {
@@ -294,10 +295,11 @@ must advertise the distinct POST /agents/dispatch-hold/transition-batch route.
 hub that does not yet expose the typed epoch API. It leaves the hub held; the
 next normal invocation must include that hub in a typed cohort and commit it.
 
---prepare-reviewed-openshell-cli is an explicit prerequisite repair operation.
-It performs no cohort transaction: all selected nodes are classified read-only
-first, then only managed legacy nodes receive the exact reviewed CLI asset and
-owner-private receipt. Run the normal typed deployment separately afterward.
+--prepare-reviewed-openshell-cli is an explicit OpenShell prerequisite repair
+operation. It performs no cohort transaction: all selected nodes are classified
+read-only first, then managed legacy nodes receive the exact reviewed CLI asset
+and incompatible legacy sandbox records are backed up and migrated. Run the
+normal typed deployment separately afterward.
 
 --preflight-only performs bounded, read-only qualification against the same
 frozen selection and pinned live endpoints used by deployment. It creates no
@@ -4341,6 +4343,7 @@ legacy_hub_bootstrap() {
   deployment_id="$(deployment_id_for_agent "$agent")"
   echo "==> ${agent}: executing explicit pre-held hub API bootstrap"
   classify_reviewed_openshell_cli_prerequisites "$selected_specs_file"
+  classify_openshell_storage_prerequisites "$selected_specs_file"
   preflight_legacy_hub_prerequisites \
     "$agent" "$supervisor" "$fleet_name" "$os_kind"
   prepare_remote_phase1_restore_contract \
@@ -4981,6 +4984,182 @@ prepare_reviewed_openshell_cli_prerequisites() {
     status="$(reviewed_openshell_cli_status_value "$agent" status)"
     [ "$status" = ready ] || {
       echo "ERROR: ${agent}: reviewed OpenShell CLI prerequisite did not converge" >&2
+      return 1
+    }
+  done < "$selected_specs_file"
+}
+
+openshell_storage_status_file() {
+  printf '%s/openshell-storage-%s.json\n' \
+    "$TMPDIR_LOCAL" "$(stable_worker_agent_id "$1")"
+}
+
+run_remote_openshell_storage_helper() {
+  local action="$1" agent="$2" os_kind="$3" required="$4" output="$5"
+  local ssh_parts=() ssh_args=() ssh_target last_index command helper_sha256
+  case "$action" in
+    preflight|migrate) ;;
+    *) echo "ERROR: invalid OpenShell storage compatibility action" >&2; return 2 ;;
+  esac
+  [ -r "$OPENSH_STORAGE_COMPAT_HELPER" ] || {
+    echo "ERROR: OpenShell storage compatibility helper is missing" >&2
+    return 1
+  }
+  helper_sha256="$(sha256_file "$OPENSH_STORAGE_COMPAT_HELPER")"
+  case "$(normalize_boolean_token "$required")" in
+    0|false|no|off|'')
+      "$PYTHON_BIN" - "$output" "$os_kind" "$helper_sha256" <<'PY'
+import json,os,sys,tempfile
+path=sys.argv[1]
+value={
+    "schema":"mac.openshell_storage_compatibility.v1",
+    "status":"ready",
+    "reason":"openshell_not_required",
+    "expected_os":sys.argv[2],
+    "sandbox_count":0,
+    "legacy_count":0,
+    "helper_sha256":sys.argv[3],
+}
+parent=os.path.dirname(path)
+fd,temp=tempfile.mkstemp(prefix=".storage-",dir=parent)
+try:
+    with os.fdopen(fd,"w",encoding="utf-8") as stream:
+        os.fchmod(stream.fileno(),0o600)
+        json.dump(value,stream,sort_keys=True,separators=(",",":")); stream.write("\n")
+    os.replace(temp,path)
+except Exception:
+    try: os.unlink(temp)
+    except FileNotFoundError: pass
+    raise
+PY
+      ;;
+    *)
+      command="python3 - $(shell_quote "$action") --home $(shell_quote '~') --expected-os $(shell_quote "$os_kind") --controller-sha256 $(shell_quote "$helper_sha256")"
+      while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+      last_index=$((${#ssh_parts[@]} - 1))
+      ssh_target="${ssh_parts[$last_index]}"
+      ssh_args=("${ssh_parts[@]:0:$last_index}")
+      if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+        -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+        "${ssh_args[@]}" "$ssh_target" "$command" \
+          < "$OPENSH_STORAGE_COMPAT_HELPER" > "$output"; then
+        rm -f "$output"
+        echo "ERROR: ${agent}: OpenShell storage ${action} failed" >&2
+        return 1
+      fi
+      ;;
+  esac
+  chmod 0600 "$output"
+  if ! "$PYTHON_BIN" - "$output" "$action" "$os_kind" "$helper_sha256" <<'PY'
+import json,re,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+action=sys.argv[2]
+expected_os=sys.argv[3]
+expected_sha=sys.argv[4]
+if (
+    not isinstance(value,dict)
+    or value.get("expected_os") != expected_os
+    or value.get("helper_sha256") != expected_sha
+):
+    raise SystemExit("OpenShell storage helper returned an invalid status")
+if action == "preflight":
+    if value.get("schema") != "mac.openshell_storage_compatibility.v1":
+        raise SystemExit("OpenShell storage preflight schema is invalid")
+    if value.get("status") not in {"ready","migration_required"}:
+        raise SystemExit("OpenShell storage preflight status is invalid")
+    reason=value.get("reason")
+    if value.get("status") == "migration_required":
+        if reason != "legacy_sandbox_spec_field9" or not int(value.get("legacy_count") or 0):
+            raise SystemExit("OpenShell storage migration classification is invalid")
+    elif reason not in {"storage_absent","storage_compatible","openshell_not_required"}:
+        raise SystemExit("OpenShell storage ready reason is invalid")
+else:
+    if (
+        value.get("schema") != "mac.openshell_storage_migration.v1"
+        or value.get("status") != "migrated"
+        or value.get("reason") != "legacy_sandbox_spec_field9_rewritten"
+        or not int(value.get("migrated_count") or 0)
+        or re.fullmatch(r"[0-9a-f]{64}",str(value.get("backup_sha256") or "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}",str(value.get("database_sha256") or "")) is None
+        or not str(value.get("backup_path") or "").startswith("/")
+        or "/.mac/logs/openshell-storage-migrations/" not in str(value.get("backup_path") or "")
+        or not str(value.get("receipt_path") or "").startswith("/")
+        or "/.mac/logs/openshell-storage-migrations/" not in str(value.get("receipt_path") or "")
+    ):
+        raise SystemExit("OpenShell storage migration evidence is invalid")
+PY
+  then
+    rm -f "$output"
+    echo "ERROR: ${agent}: OpenShell storage ${action} status was not controller-bound" >&2
+    return 1
+  fi
+}
+
+openshell_storage_status_value() {
+  local agent="$1" key="$2"
+  "$PYTHON_BIN" - "$(openshell_storage_status_file "$agent")" "$key" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8")).get(sys.argv[2])
+if value is not None: print(value)
+PY
+}
+
+classify_openshell_storage_prerequisites() {
+  local selected_specs_file="$1" spec fields=() agent os_kind required status reason failed=0
+  echo "==> fleet: classifying OpenShell storage compatibility without remote mutation"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
+    run_remote_openshell_storage_helper preflight "$agent" "$os_kind" "$required" \
+      "$(openshell_storage_status_file "$agent")"
+    status="$(openshell_storage_status_value "$agent" status)"
+    if [ "$status" != ready ]; then
+      reason="$(openshell_storage_status_value "$agent" reason)"
+      echo "ERROR: ${agent}: OpenShell storage requires explicit repair (${reason})" >&2
+      failed=1
+    fi
+  done < "$selected_specs_file"
+  if [ "$failed" = 1 ]; then
+    echo "ERROR: run this separate OpenShell prerequisite operation before cutover:" >&2
+    echo "  deploy/deploy-mac-fleet.sh --hub $(shell_quote "$HUB_SELECTOR") --prepare-reviewed-openshell-cli [agent ...]" >&2
+    return 1
+  fi
+}
+
+prepare_openshell_storage_prerequisites() {
+  local selected_specs_file="$1" spec fields=() agent os_kind required status
+  echo "==> fleet: classifying every OpenShell storage prerequisite before repair"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
+    run_remote_openshell_storage_helper preflight "$agent" "$os_kind" "$required" \
+      "$(openshell_storage_status_file "$agent")"
+  done < "$selected_specs_file"
+
+  echo "==> fleet: applying backup-first OpenShell storage migrations"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
+    status="$(openshell_storage_status_value "$agent" status)"
+    [ "$status" = migration_required ] || continue
+    run_remote_openshell_storage_helper migrate "$agent" "$os_kind" "$required" \
+      "$(openshell_storage_status_file "$agent")"
+    echo "==> ${agent}: OpenShell storage migrated with owner-private backup"
+  done < "$selected_specs_file"
+
+  echo "==> fleet: re-proving OpenShell storage compatibility"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
+    run_remote_openshell_storage_helper preflight "$agent" "$os_kind" "$required" \
+      "$(openshell_storage_status_file "$agent")"
+    status="$(openshell_storage_status_value "$agent" status)"
+    [ "$status" = ready ] || {
+      echo "ERROR: ${agent}: OpenShell storage migration did not converge" >&2
       return 1
     }
   done < "$selected_specs_file"
@@ -13557,6 +13736,7 @@ run_typed_cohort() {
   # prerequisite command.  It never mutates infrastructure that phase-2
   # rollback does not own.
   classify_reviewed_openshell_cli_prerequisites "$selected_specs_file"
+  classify_openshell_storage_prerequisites "$selected_specs_file"
 
   echo "==> fleet: arming exact phase-1 restore contracts"
   # Parent-owned WAL intents are complete and ordered before any child starts.
@@ -13823,7 +14003,8 @@ PY
       return 2
     }
     prepare_reviewed_openshell_cli_prerequisites "$selected_specs_file"
-    echo "==> reviewed OpenShell CLI prerequisites prepared; no cohort transaction was opened"
+    prepare_openshell_storage_prerequisites "$selected_specs_file"
+    echo "==> reviewed OpenShell prerequisites prepared; no cohort transaction was opened"
     rm -rf "$TMPDIR_LOCAL"
     return 0
   fi
