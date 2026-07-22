@@ -161,6 +161,46 @@ def test_sqlite_migration_rolls_back_every_row_on_malformed_payload(
     assert values["malformed"] == malformed
 
 
+def test_compatible_database_with_legacy_backup_requires_receipt_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    home = tmp_path / "home"
+    home.mkdir()
+    old_database = tmp_path / "old.db"
+    database = tmp_path / "openshell.db"
+    legacy = _sandbox(_field(9, 0, 1))
+    current, changed = module.rewrite_sandbox_payload(legacy)
+    assert changed is True
+    _database(old_database, [("sandbox", "sandbox", "worker", legacy)])
+    _database(database, [("sandbox", "sandbox", "worker", current)])
+    module.create_backup(old_database, home / ".mac/logs/openshell-storage-migrations")
+
+    preflight = module.preflight(home, database, "linux", "a" * 64)
+
+    assert preflight["status"] == "proof_required"
+    assert preflight["recovery_legacy_count"] == 1
+
+    class Manager:
+        kind = "systemd-user"
+
+        @staticmethod
+        def active() -> bool:
+            return True
+
+    monkeypatch.setattr(module, "detect_gateway_manager", lambda *_: Manager())
+    monkeypatch.setattr(module, "wait_for_gateway_endpoint", lambda: None)
+    monkeypatch.setattr(module, "prove_inventory", lambda _home: 1)
+
+    result = module.migrate(home, database, "linux", "a" * 64)
+
+    assert result["recovered_pending_proof"] is True
+    assert result["migrated_count"] == 1
+    receipt = module.receipt_path(home)
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    assert module.preflight(home, database, "linux", "a" * 64)["status"] == "ready"
+
+
 def test_controller_keeps_storage_repair_outside_the_cohort_transaction() -> None:
     text = CONTROLLER.read_text(encoding="utf-8")
     cohort = text.split("run_typed_cohort() {", 1)[1].split("\n}\n\n", 1)[0]
@@ -189,6 +229,10 @@ def test_optional_execution_does_not_skip_existing_storage_classification() -> N
     assert helper.index('helper_sha256="$(sha256_file') < helper.index(
         'command="python3 - '
     )
+    preparation = text.split("prepare_openshell_storage_prerequisites() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert '[ "$status" = proof_required ]' in preparation
 
 
 def test_helper_is_repository_owned_and_executable() -> None:

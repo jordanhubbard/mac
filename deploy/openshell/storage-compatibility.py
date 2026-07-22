@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import sqlite3
 import stat
 import subprocess
@@ -513,6 +514,20 @@ def prove_inventory(home: Path) -> int:
         offset += len(value)
 
 
+def wait_for_gateway_endpoint(timeout: float = 30.0) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            with socket.create_connection(("127.0.0.1", 17670), timeout=0.25):
+                return
+        except OSError as exc:
+            if time.monotonic() >= deadline:
+                raise CompatibilityError(
+                    "reviewed OpenShell gateway endpoint did not become ready"
+                ) from exc
+            time.sleep(0.1)
+
+
 def atomic_receipt(path: Path, value: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path.parent, 0o700)
@@ -530,6 +545,61 @@ def atomic_receipt(path: Path, value: dict[str, object]) -> None:
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def receipt_path(home: Path) -> Path:
+    return home / ".mac/logs/openshell-storage-migrations/latest.json"
+
+
+def current_receipt_is_valid(home: Path) -> bool:
+    path = receipt_path(home)
+    if not path.exists() and not path.is_symlink():
+        return False
+    require_private_regular(path, exact_mode=0o600)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise CompatibilityError(
+            "OpenShell storage migration receipt is malformed"
+        ) from exc
+    if not isinstance(value, dict):
+        raise CompatibilityError("OpenShell storage migration receipt is malformed")
+    return (
+        value.get("schema") == RECEIPT_SCHEMA
+        and value.get("status") == "migrated"
+        and isinstance(value.get("backup_sha256"), str)
+        and len(value["backup_sha256"]) == 64
+    )
+
+
+def pending_migration_backup(
+    home: Path, current: dict[str, object]
+) -> tuple[Path, str, dict[str, object]] | None:
+    backup_dir = home / ".mac/logs/openshell-storage-migrations"
+    if not backup_dir.exists() and not backup_dir.is_symlink():
+        return None
+    metadata = backup_dir.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or backup_dir.is_symlink()
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise CompatibilityError("OpenShell migration backup directory is untrusted")
+    for backup in sorted(
+        backup_dir.glob("openshell-before-field9-*.db"),
+        key=lambda path: path.name,
+        reverse=True,
+    ):
+        require_private_regular(backup, exact_mode=0o600)
+        before = inspect_database(backup)
+        before.pop("legacy")
+        if (
+            int(before["legacy_count"]) > 0
+            and before["sandbox_count"] == current["sandbox_count"]
+        ):
+            return backup, hashlib.sha256(backup.read_bytes()).hexdigest(), before
+    return None
 
 
 def preflight(
@@ -552,6 +622,26 @@ def preflight(
         return value
     inspected = inspect_database(database)
     inspected.pop("legacy")
+    database_sha256 = hashlib.sha256(database.read_bytes()).hexdigest()
+    pending = None
+    if not inspected["legacy_count"] and not current_receipt_is_valid(home):
+        pending = pending_migration_backup(home, inspected)
+    if pending is not None:
+        backup, backup_sha256, before = pending
+        value = {
+            "schema": SCHEMA,
+            "status": "proof_required",
+            "reason": "compatible_storage_lacks_migration_receipt",
+            "expected_os": expected_os,
+            "database_sha256": database_sha256,
+            "recovery_backup_path": str(backup),
+            "recovery_backup_sha256": backup_sha256,
+            "recovery_legacy_count": before["legacy_count"],
+            **inspected,
+        }
+        if controller_sha256:
+            value["helper_sha256"] = controller_sha256
+        return value
     value = {
         "schema": SCHEMA,
         "status": "migration_required" if inspected["legacy_count"] else "ready",
@@ -582,6 +672,26 @@ def migrate(
         raise CompatibilityError(
             "reviewed OpenShell gateway is not active before migration"
         )
+    if initial["status"] == "proof_required":
+        wait_for_gateway_endpoint()
+        inventory_count = prove_inventory(home)
+        completed = {
+            "schema": RECEIPT_SCHEMA,
+            "status": "migrated",
+            "reason": "legacy_sandbox_spec_field9_rewritten",
+            "expected_os": expected_os,
+            "database_sha256": initial["database_sha256"],
+            "backup_path": initial["recovery_backup_path"],
+            "backup_sha256": initial["recovery_backup_sha256"],
+            "gateway_manager": manager.kind,
+            "inventory_count": inventory_count,
+            "helper_sha256": controller_sha256,
+            "migrated_count": initial["recovery_legacy_count"],
+            "recovered_pending_proof": True,
+            "receipt_path": str(receipt_path(home)),
+        }
+        atomic_receipt(receipt_path(home), completed)
+        return completed
     start_error: Exception | None = None
     try:
         manager.stop()
@@ -599,6 +709,7 @@ def migrate(
         raise CompatibilityError(
             "storage migrated but the gateway restart failed"
         ) from start_error
+    wait_for_gateway_endpoint()
     inventory_count = prove_inventory(home)
     completed = {
         "schema": RECEIPT_SCHEMA,
@@ -611,11 +722,12 @@ def migrate(
         "gateway_manager": manager.kind,
         "inventory_count": inventory_count,
         "helper_sha256": controller_sha256,
+        "recovered_pending_proof": False,
         **migration,
     }
-    receipt = home / ".mac/logs/openshell-storage-migrations/latest.json"
-    atomic_receipt(receipt, completed)
+    receipt = receipt_path(home)
     completed["receipt_path"] = str(receipt)
+    atomic_receipt(receipt, completed)
     return completed
 
 

@@ -5039,12 +5039,21 @@ if (
 if action == "preflight":
     if value.get("schema") != "mac.openshell_storage_compatibility.v1":
         raise SystemExit("OpenShell storage preflight schema is invalid")
-    if value.get("status") not in {"ready","migration_required"}:
+    if value.get("status") not in {"ready","migration_required","proof_required"}:
         raise SystemExit("OpenShell storage preflight status is invalid")
     reason=value.get("reason")
     if value.get("status") == "migration_required":
         if reason != "legacy_sandbox_spec_field9" or not int(value.get("legacy_count") or 0):
             raise SystemExit("OpenShell storage migration classification is invalid")
+    elif value.get("status") == "proof_required":
+        if (
+            reason != "compatible_storage_lacks_migration_receipt"
+            or int(value.get("legacy_count") or 0)
+            or not int(value.get("recovery_legacy_count") or 0)
+            or re.fullmatch(r"[0-9a-f]{64}",str(value.get("recovery_backup_sha256") or "")) is None
+            or "/.mac/logs/openshell-storage-migrations/" not in str(value.get("recovery_backup_path") or "")
+        ):
+            raise SystemExit("OpenShell storage pending proof classification is invalid")
     elif reason not in {"storage_absent","storage_compatible"}:
         raise SystemExit("OpenShell storage ready reason is invalid")
 else:
@@ -5118,7 +5127,7 @@ prepare_openshell_storage_prerequisites() {
     IFS='|' read -r -a fields <<<"$spec"
     agent="${fields[0]}"; os_kind="${fields[2]}"; required="${fields[53]:-0}"
     status="$(openshell_storage_status_value "$agent" status)"
-    [ "$status" = migration_required ] || continue
+    [ "$status" = migration_required ] || [ "$status" = proof_required ] || continue
     run_remote_openshell_storage_helper migrate "$agent" "$os_kind" "$required" \
       "$(openshell_storage_status_file "$agent")"
     echo "==> ${agent}: OpenShell storage migrated with owner-private backup"
