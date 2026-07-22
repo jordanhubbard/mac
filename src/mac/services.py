@@ -49,6 +49,7 @@ from mac.repository_contract import (
 from mac.resource_inventory import agent_resource_command_names as _agent_resource_command_names
 from mac.models import (
     Agent,
+    AgentInstanceKind,
     AgentProvisioningRequest,
     AgentRole,
     Workflow,
@@ -14182,6 +14183,7 @@ class ControlPlane:
         actor: str = "human",
         status: Optional[str] = None,
         health_status: Optional[str] = None,
+        instance_kind: Optional[str] = None,
         allow_resurrection: bool = False,
     ) -> Agent:
         self.get_machine(machine_id)
@@ -14194,7 +14196,8 @@ class ControlPlane:
         now = utcnow()
         aid = agent_id or new_id("agent")
         existing_agent_row = self.store.query_one(
-            "SELECT id, status, health_status, deleted_at FROM agents WHERE id = ?",
+            "SELECT id, status, health_status, instance_kind, deleted_at "
+            "FROM agents WHERE id = ?",
             (aid,),
         )
         if capabilities is None:
@@ -14215,9 +14218,24 @@ class ControlPlane:
             if existing_identity_agent_id is not None:
                 aid = existing_identity_agent_id
                 existing_agent_row = self.store.query_one(
-                    "SELECT id, status, health_status, deleted_at FROM agents WHERE id = ?",
+                    "SELECT id, status, health_status, instance_kind, deleted_at "
+                    "FROM agents WHERE id = ?",
                     (aid,),
                 )
+        if instance_kind is None:
+            instance_kind_value = (
+                str(existing_agent_row["instance_kind"])
+                if existing_agent_row is not None
+                else AgentInstanceKind.STATIC.value
+            )
+        else:
+            instance_kind_value = _state_value(instance_kind).strip()
+        try:
+            AgentInstanceKind(instance_kind_value)
+        except ValueError:
+            raise ValidationError(
+                "unsupported agent instance_kind: %s" % instance_kind_value
+            )
         resource_value = self._agent_resources_with_preserved_control_plane_fields(aid, resources)
         resources_json = json_dumps(resource_value)
         registration_status = AgentStatus.IDLE.value
@@ -14316,13 +14334,15 @@ class ControlPlane:
             registration_write = conn.execute(
                 """
                 INSERT INTO agents (
-                    id, machine_id, name, capabilities, resources, status, health_status,
+                    id, machine_id, name, instance_kind, capabilities, resources,
+                    status, health_status,
                     current_task_id, created_at, updated_at, last_seen_at,
                     hermes_instance_id, attestation_key_ciphertext
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     machine_id = excluded.machine_id,
                     name = excluded.name,
+                    instance_kind = excluded.instance_kind,
                     capabilities = excluded.capabilities,
                     resources = excluded.resources,
                     status = CASE
@@ -14356,6 +14376,7 @@ class ControlPlane:
                     aid,
                     machine_id,
                     name,
+                    instance_kind_value,
                     capabilities_json,
                     resources_json,
                     registration_status,
@@ -14381,6 +14402,7 @@ class ControlPlane:
                     "agent_id": aid,
                     "agent_name": name,
                     "machine_id": machine_id,
+                    "instance_kind": instance_kind_value,
                     "capabilities": json_loads(capabilities_json, []),
                     "resource_keys": sorted(ensure_json_object(json_loads(resources_json, {})).keys()),
                     "status": registration_status,
@@ -14837,6 +14859,7 @@ class ControlPlane:
         status: Optional[str] = None,
         health_status: Optional[str] = None,
         hermes_instance_id: Optional[str] = None,
+        instance_kind: Optional[str] = None,
         actor: str = "human",
     ) -> Agent:
         agent_before = self.get_agent(agent_id)
@@ -14847,6 +14870,7 @@ class ControlPlane:
         next_status = agent_before.status
         next_health_status = agent_before.health_status
         next_hermes_instance_id = agent_before.hermes_instance_id
+        next_instance_kind = agent_before.instance_kind
         requested_resource_value: Optional[Dict[str, Any]] = None
         resource_param_index: Optional[int] = None
         if name is not None:
@@ -14926,6 +14950,19 @@ class ControlPlane:
                 next_hermes_instance_id = None
             if next_hermes_instance_id != agent_before.hermes_instance_id:
                 changed_fields.append("hermes_instance_id")
+        if instance_kind is not None:
+            instance_kind_value = _state_value(instance_kind).strip()
+            try:
+                AgentInstanceKind(instance_kind_value)
+            except ValueError:
+                raise ValidationError(
+                    "unsupported agent instance_kind: %s" % instance_kind_value
+                )
+            updates.append("instance_kind = ?")
+            params.append(instance_kind_value)
+            next_instance_kind = instance_kind_value
+            if instance_kind_value != agent_before.instance_kind:
+                changed_fields.append("instance_kind")
         if not updates:
             return self.get_agent(agent_id)
         updates.append("updated_at = ?")
@@ -14968,6 +15005,8 @@ class ControlPlane:
                     "health_status": next_health_status,
                     "previous_hermes_instance_id": agent_before.hermes_instance_id,
                     "hermes_instance_id": next_hermes_instance_id,
+                    "previous_instance_kind": agent_before.instance_kind,
+                    "instance_kind": next_instance_kind,
                 },
                 now,
             )
@@ -16924,6 +16963,7 @@ class ControlPlane:
                 {
                     "name": agent.name,
                     "agent_id": agent.id,
+                    "instance_kind": agent.instance_kind,
                     "status": agent.status,
                     "health": agent.health_status,
                     "capabilities": list(agent.capabilities),
@@ -21072,6 +21112,11 @@ class ControlPlane:
             if "last_control_stream_consumed_at" in keys
             else None
         )
+        instance_kind = (
+            row["instance_kind"]
+            if "instance_kind" in keys
+            else AgentInstanceKind.STATIC.value
+        )
         return Agent(
             row["id"],
             row["machine_id"],
@@ -21095,6 +21140,7 @@ class ControlPlane:
             last_control_stream_published_at,
             last_control_stream_consumed_at,
             row["deleted_at"] if "deleted_at" in keys else None,
+            instance_kind,
         )
 
     def _project_item_from_row(self, row: Any) -> ProjectItem:

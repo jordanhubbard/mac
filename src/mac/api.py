@@ -843,6 +843,7 @@ class AgentRegister(BaseModel):
     actor: str = "human"
     status: Optional[str] = None
     health_status: Optional[str] = None
+    instance_kind: Optional[str] = None
 
 
 class AgentAttestationKeyVerify(BaseModel):
@@ -872,6 +873,7 @@ class AgentUpdate(BaseModel):
     status: Optional[str] = None
     health_status: Optional[str] = None
     hermes_instance_id: Optional[str] = None
+    instance_kind: Optional[str] = None
     actor: str = "human"
 
 
@@ -881,6 +883,7 @@ class AgentBulkUpdate(BaseModel):
     health_status: Optional[str] = None
     capabilities: Optional[List[str]] = None
     hermes_instance_id: Optional[str] = None
+    instance_kind: Optional[str] = None
     actor: str = "human"
 
 
@@ -6153,6 +6156,11 @@ def create_app(
         requested_agent_id = str(data.get("agent_id") or "")
         if not principal.is_admin:
             principal.assert_actor(requested_agent_id)
+            if data.get("instance_kind") is not None:
+                # Lifecycle classification is operator policy. A compromised
+                # static worker must not be able to relabel itself fungible
+                # and thereby opt into replacement/re-attestation behavior.
+                principal.require_admin()
         resources = dict(data.get("resources") or {})
         resources.pop("worker_credential_authenticated", None)
         if (

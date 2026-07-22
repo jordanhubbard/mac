@@ -76,6 +76,29 @@ def _make_agent(tmp_path, name="worker-1", hostname="host-1", agent_id=None, tru
     return agent
 
 
+def test_agent_instance_kind_update(tmp_path):
+    agent = _make_agent(tmp_path, name="headless-worker")
+    assert agent["instance_kind"] == "static"
+
+    rc, updated = _run(
+        tmp_path,
+        "agent",
+        "update",
+        agent["id"],
+        "--instance-kind",
+        "fungible",
+    )
+
+    assert rc == 0
+    assert updated["instance_kind"] == "fungible"
+
+    rc, listed = _run(tmp_path, "agent", "list")
+    assert rc == 0
+    assert next(item for item in listed if item["id"] == agent["id"])[
+        "instance_kind"
+    ] == "fungible"
+
+
 def test_openshell_sandbox_gc_dry_run(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "mac.openshell_sandbox_gc.subprocess.run",

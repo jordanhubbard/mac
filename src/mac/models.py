@@ -79,6 +79,13 @@ class StrEnum(str, Enum):
         return self.value
 
 
+class AgentInstanceKind(StrEnum):
+    """How tightly an agent identity is bound to its compute instance."""
+
+    STATIC = "static"
+    FUNGIBLE = "fungible"
+
+
 class TaskState(StrEnum):
     OPEN = "open"
     WAITING = "waiting"
@@ -1154,6 +1161,11 @@ class Agent:
     # identities (ephemeral agents' results must outlive the agent); liveness
     # operations (heartbeat, claims, publishing) refuse tombstoned agents.
     deleted_at: Optional[str] = None
+    # Static agents are durable named installations such as Rocky, Natasha,
+    # and Bullwinkle. Fungible agents may be rebound to replacement compute
+    # instances (for example HGX-created headless workers) after re-attestation.
+    # This is independent of resources.ephemeral, which controls identity TTL.
+    instance_kind: str = AgentInstanceKind.STATIC.value
 
     def to_dict(self) -> JsonDict:
         return asdict(self)

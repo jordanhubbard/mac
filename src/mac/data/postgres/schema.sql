@@ -321,6 +321,8 @@ CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
     machine_id TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
+    instance_kind TEXT NOT NULL DEFAULT 'static'
+        CHECK (instance_kind IN ('static', 'fungible')),
     capabilities TEXT NOT NULL,
     resources TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -346,6 +348,8 @@ CREATE TABLE IF NOT EXISTS agents (
     updated_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL
 );
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS instance_kind TEXT NOT NULL
+    DEFAULT 'static' CHECK (instance_kind IN ('static', 'fungible'));
 CREATE INDEX IF NOT EXISTS idx_agents_status_health ON agents (status, health_status);
 
 -- Hub-authoritative per-worker identities. Only a SHA-256 bearer hash is

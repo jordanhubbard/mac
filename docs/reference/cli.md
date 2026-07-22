@@ -519,11 +519,11 @@ options:
 ```console
 $ mac agent --help
 usage: mac agent [-h]
-                 {register,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}
+                 {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}
                  ...
 
 positional arguments:
-  {register,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}
+  {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}
     attestation-recover
                         admin-only conditional recovery for a missing/stale
                         worker signing key

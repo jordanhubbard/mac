@@ -821,6 +821,8 @@ class SQLiteStore:
                     id TEXT PRIMARY KEY,
                     machine_id TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
                     name TEXT NOT NULL,
+                    instance_kind TEXT NOT NULL DEFAULT 'static'
+                        CHECK (instance_kind IN ('static', 'fungible')),
                     capabilities TEXT NOT NULL,
                     resources TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -6074,6 +6076,12 @@ class SQLiteStore:
         self._ensure_column("agents", "running_digest", "running_digest TEXT")
         self._ensure_column("agents", "role_id", "role_id TEXT")
         self._ensure_column("agents", "hermes_instance_id", "hermes_instance_id TEXT")
+        self._ensure_column(
+            "agents",
+            "instance_kind",
+            "instance_kind TEXT NOT NULL DEFAULT 'static' "
+            "CHECK (instance_kind IN ('static', 'fungible'))",
+        )
         # task_c394685a: tombstone column — decommissioned agents keep their
         # row so AgentBus streams/events/deliveries survive with real
         # identities instead of cascading away with the agent.

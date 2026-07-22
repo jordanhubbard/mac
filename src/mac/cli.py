@@ -2448,6 +2448,16 @@ def cmd_agent_register(args: argparse.Namespace) -> None:
             resources=_json_arg(args.resources, {}),
             agent_id=args.agent_id,
             hermes_instance_id=args.hermes_instance_id,
+            instance_kind=getattr(args, "instance_kind", None),
+        )
+    )
+
+
+def cmd_agent_update(args: argparse.Namespace) -> None:
+    _print(
+        _plane(args).update_agent(
+            args.agent_id,
+            instance_kind=args.instance_kind,
         )
     )
 
@@ -6379,7 +6389,17 @@ def build_parser() -> argparse.ArgumentParser:
     agent_register.add_argument("--resources")
     agent_register.add_argument("--agent-id")
     agent_register.add_argument("--hermes-instance-id")
+    agent_register.add_argument(
+        "--instance-kind", choices=("static", "fungible"), default=None
+    )
     _set(cmd_agent_register, agent_register)
+
+    agent_update = agent.add_parser("update")
+    agent_update.add_argument("agent_id")
+    agent_update.add_argument(
+        "--instance-kind", choices=("static", "fungible"), required=True
+    )
+    _set(cmd_agent_update, agent_update)
 
     agent_list = agent.add_parser("list")
     agent_list.add_argument("--health", action="store_true")

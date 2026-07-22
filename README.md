@@ -95,7 +95,8 @@ remains subject to its own license.
 This project provides durable contracts for coordinating a fleet:
 
 - SQLite-backed task ledger with state transitions, leases, history, evidence, dependencies, and recovery.
-- Machine and agent registry with capabilities, resources, health, and availability.
+- Machine and agent registry with static/fungible instance kind, capabilities,
+  resources, health, and availability.
 - Dispatcher that matches open work to healthy capable agents and accounts for
   tenant pool policy, resources, capacity, stale heartbeats, and expired leases.
 - Structured agent message bus that rejects arbitrary execution payloads.

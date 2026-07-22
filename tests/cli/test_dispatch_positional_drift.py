@@ -261,6 +261,7 @@ def test_cmd_registration_uses_keyword_args_only(monkeypatch) -> None:
         "resources": {},
         "agent_id": "agent_test",
         "hermes_instance_id": None,
+        "instance_kind": None,
     }
 
 
