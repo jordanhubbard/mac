@@ -1918,7 +1918,15 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "ExecStart=__MAC_HOME__/bin/openclaw-gateway" in unit
     assert "ExecStop=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
     assert "ExecStopPost=__MAC_HOME__/bin/openclaw-gateway-stop" in unit
+    assert "SuccessExitStatus=143 SIGTERM" in unit
+    assert "TimeoutStopSec=600" in unit
     assert "User=__MAC_USER__" in unit
+
+    launchd = deploy.split("install_darwin_openclaw_service() {", 1)[1].split(
+        "install_darwin_hermes_service() {", 1
+    )[0]
+    assert "<key>ExitTimeOut</key><integer>600</integer>" in launchd
+    assert "<key>AbandonProcessGroup</key><false/>" in launchd
 
 
 def test_openclaw_prefers_reviewed_cli_over_stale_configured_runtime(

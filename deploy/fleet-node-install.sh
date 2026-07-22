@@ -12119,6 +12119,8 @@ install_darwin_openclaw_service() {
   <array><string>$MAC_HOME/bin/openclaw-gateway</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>ExitTimeOut</key><integer>600</integer>
+  <key>AbandonProcessGroup</key><false/>
   <key>WorkingDirectory</key><string>$MAC_HOME</string>
   <key>StandardOutPath</key><string>$LOG_DIR/openclaw-gateway.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/openclaw-gateway.log</string>
