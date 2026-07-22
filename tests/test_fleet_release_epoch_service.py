@@ -645,6 +645,26 @@ def test_open_is_pre_mutation_and_abort_restores_exact_prior_hold(
     assert restored.dispatch_hold is True
     assert restored.dispatch_hold_reason == "operator maintenance"
     assert restored.dispatch_hold_at == prior.dispatch_hold_at
+    assert cp.fleet_release_epochs._restored_prior_hold_matches(
+        {
+            "dispatch_hold": restored.dispatch_hold,
+            "dispatch_hold_reason": restored.dispatch_hold_reason,
+            "dispatch_hold_at": restored.dispatch_hold_at,
+        },
+        {
+            "prior_dispatch_hold": True,
+            "prior_hold_reason": "operator maintenance",
+            "prior_hold_at": prior.dispatch_hold_at,
+        },
+    )
+    assert cp.fleet_release_epochs._restored_prior_hold_matches(
+        {
+            "dispatch_hold": False,
+            "dispatch_hold_reason": None,
+            "dispatch_hold_at": None,
+        },
+        {"prior_dispatch_hold": False},
+    )
     states = {
         item["id"]: item["state"]
         for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
@@ -706,6 +726,48 @@ def test_abort_accepts_prior_operator_hold_already_restored_exactly(
     assert restored.dispatch_hold is True
     assert restored.dispatch_hold_reason == "operator maintenance"
     assert restored.dispatch_hold_at == prior.dispatch_hold_at
+    states = {
+        item["id"]: item["state"]
+        for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
+    }
+    assert states == {old.record["id"]: "active", pending.record["id"]: "revoked"}
+
+
+def test_abort_accepts_prior_unheld_snapshot_already_restored_exactly(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    old = _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    epoch_id = "epoch-abort-prior-unheld-restored"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation="generation-abort-unheld",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    cp.store.execute(
+        "UPDATE agents SET dispatch_hold = 0, dispatch_hold_reason = NULL, "
+        "dispatch_hold_at = NULL WHERE id = ?",
+        ("agent_alpha",),
+    )
+
+    aborted = cp.fleet_release_epochs.abort(
+        epoch_id,
+        opened["identity_sha256"],
+        reason="coordinator recovered exact prior unheld snapshot before abort",
+    )
+
+    assert aborted["status"] == "aborted"
+    restored = cp.get_agent("agent_alpha")
+    assert restored.dispatch_hold is False
+    assert restored.dispatch_hold_reason is None
+    assert restored.dispatch_hold_at is None
     states = {
         item["id"]: item["state"]
         for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
