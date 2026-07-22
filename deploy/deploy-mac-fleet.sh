@@ -12926,20 +12926,34 @@ recover_active_cohort_transaction_v2() {
         fi
         ;;
       resolve_prove)
-        if ! replay_hub_epoch_recovery_request \
-          "$hub_agent" "$epoch_id" prove "$receipt"; then
+        # Resolve the durable prove intent from hub truth before replaying it.
+        # An open epoch may already have had its exact prior operator hold
+        # restored by an interrupted coordinator. Replaying proof would reject
+        # that safe abort state, while an exact-identity abort can close it.
+        if ! read_hub_epoch_status_exact \
+          "$hub_agent" "$epoch_id" "$identity" "$receipt"; then
           return 1
         fi
-        if ! cohort_journal_mutate hub-proved "$epoch_id" "$COHORT_JOURNAL_REVISION" \
-          hub-proved-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null; then
+        if ! outcome="$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["status"])' "$receipt")"; then
           return 1
         fi
-        if ! remove_hub_epoch_recovery_request "$hub_agent" "$epoch_id" prove; then
-          return 1
-        fi
-        if ! identity="$(hub_receipt_identity_sha256 "$receipt")"; then
-          return 1
-        fi
+        case "$outcome" in
+          open) ;;
+          proved)
+            if ! cohort_journal_mutate hub-proved "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+              hub-proved-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null; then
+              return 1
+            fi
+            ;;
+          aborted)
+            if ! cohort_journal_mutate hub-aborted "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+              hub-aborted-recovered "$owner_nonce" --evidence-file "$receipt" >/dev/null; then
+              return 1
+            fi
+            hub_action=none
+            ;;
+          *) echo "ERROR: durable prove intent cannot be recovered from hub status ${outcome}" >&2; return 1 ;;
+        esac
         ;;
       abort_epoch) ;;
       none) ;;

@@ -667,6 +667,52 @@ def test_open_is_pre_mutation_and_abort_restores_exact_prior_hold(
     )
 
 
+def test_abort_accepts_prior_operator_hold_already_restored_exactly(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    old = _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    prior = cp.set_agent_dispatch_hold("agent_alpha", "operator maintenance")
+    epoch_id = "epoch-abort-prior-hold-restored"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation="generation-abort-restored",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+                expected_dispatch_hold=True,
+                expected_hold_reason="operator maintenance",
+                expected_hold_at=prior.dispatch_hold_at,
+            )
+        ],
+    )
+    cp.store.execute(
+        "UPDATE agents SET dispatch_hold = 1, dispatch_hold_reason = ?, "
+        "dispatch_hold_at = ? WHERE id = ?",
+        ("operator maintenance", prior.dispatch_hold_at, "agent_alpha"),
+    )
+
+    aborted = cp.fleet_release_epochs.abort(
+        epoch_id,
+        opened["identity_sha256"],
+        reason="coordinator recovered exact prior hold before abort",
+    )
+
+    assert aborted["status"] == "aborted"
+    restored = cp.get_agent("agent_alpha")
+    assert restored.dispatch_hold is True
+    assert restored.dispatch_hold_reason == "operator maintenance"
+    assert restored.dispatch_hold_at == prior.dispatch_hold_at
+    states = {
+        item["id"]: item["state"]
+        for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
+    }
+    assert states == {old.record["id"]: "active", pending.record["id"]: "revoked"}
+
+
 def test_full_cohort_commit_failure_rolls_back_early_promotions(tmp_path: Path) -> None:
     cp = _plane(tmp_path / "mac.db", ("alpha", "beta"))
     old: dict[str, object] = {}

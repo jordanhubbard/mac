@@ -894,6 +894,23 @@ class FleetReleaseEpochService:
             and agent_row["dispatch_hold_at"] == participant["epoch_hold_at"]
         )
 
+    @staticmethod
+    def _restored_prior_hold_matches(agent_row: Any, participant: Any) -> bool:
+        """Recognize the exact pre-epoch hold snapshot during abort recovery."""
+
+        if participant["prior_dispatch_hold"]:
+            return bool(
+                agent_row["dispatch_hold"]
+                and agent_row["dispatch_hold_reason"]
+                == participant["prior_hold_reason"]
+                and agent_row["dispatch_hold_at"] == participant["prior_hold_at"]
+            )
+        return bool(
+            not agent_row["dispatch_hold"]
+            and agent_row["dispatch_hold_reason"] is None
+            and agent_row["dispatch_hold_at"] is None
+        )
+
     def _validate_node_readiness(
         self, conn: Any, agent_row: Any, participant: Any
     ) -> Dict[str, Any]:
@@ -1633,9 +1650,15 @@ class FleetReleaseEpochService:
             for participant in participants:
                 agent_id = str(participant["agent_id"])
                 locked[agent_id] = self._lock_agent(conn, agent_id)
-                if not self._epoch_hold_matches(locked[agent_id], participant):
+                if not (
+                    self._epoch_hold_matches(locked[agent_id], participant)
+                    or self._restored_prior_hold_matches(
+                        locked[agent_id], participant
+                    )
+                ):
                     raise ValidationError(
-                        "fleet release abort lost epoch-owned hold for %s" % agent_id
+                        "fleet release abort lost epoch-owned hold and did not find "
+                        "the exact prior snapshot for %s" % agent_id
                     )
                 if self._active_claims(conn, agent_id):
                     raise ValidationError(

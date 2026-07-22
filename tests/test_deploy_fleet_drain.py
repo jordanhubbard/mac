@@ -1412,6 +1412,14 @@ def test_failed_typed_transaction_aborts_exact_epoch_before_node_retention():
     assert recovery.index("commit_hub_epoch_exact") < recovery.index(
         "cohort_journal_mutate commit"
     )
+    resolve_prove = recovery.split("resolve_prove)", 1)[1].split(
+        "\n      abort_epoch)", 1
+    )[0]
+    assert "read_hub_epoch_status_exact" in resolve_prove
+    assert "replay_hub_epoch_recovery_request" not in resolve_prove
+    assert 'open) ;;' in resolve_prove
+    assert "cohort_journal_mutate hub-proved" in resolve_prove
+    assert "cohort_journal_mutate hub-aborted" in resolve_prove
 
 
 def test_brand_new_agent_registers_draining_before_hub_hold_acquisition():
