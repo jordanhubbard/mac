@@ -4995,7 +4995,7 @@ openshell_storage_status_file() {
 }
 
 run_remote_openshell_storage_helper() {
-  local action="$1" agent="$2" os_kind="$3" required="$4" output="$5"
+  local action="$1" agent="$2" os_kind="$3" _required="$4" output="$5"
   local ssh_parts=() ssh_args=() ssh_target last_index command helper_sha256
   case "$action" in
     preflight|migrate) ;;
@@ -5006,49 +5006,23 @@ run_remote_openshell_storage_helper() {
     return 1
   }
   helper_sha256="$(sha256_file "$OPENSH_STORAGE_COMPAT_HELPER")"
-  case "$(normalize_boolean_token "$required")" in
-    0|false|no|off|'')
-      "$PYTHON_BIN" - "$output" "$os_kind" "$helper_sha256" <<'PY'
-import json,os,sys,tempfile
-path=sys.argv[1]
-value={
-    "schema":"mac.openshell_storage_compatibility.v1",
-    "status":"ready",
-    "reason":"openshell_not_required",
-    "expected_os":sys.argv[2],
-    "sandbox_count":0,
-    "legacy_count":0,
-    "helper_sha256":sys.argv[3],
-}
-parent=os.path.dirname(path)
-fd,temp=tempfile.mkstemp(prefix=".storage-",dir=parent)
-try:
-    with os.fdopen(fd,"w",encoding="utf-8") as stream:
-        os.fchmod(stream.fileno(),0o600)
-        json.dump(value,stream,sort_keys=True,separators=(",",":")); stream.write("\n")
-    os.replace(temp,path)
-except Exception:
-    try: os.unlink(temp)
-    except FileNotFoundError: pass
-    raise
-PY
-      ;;
-    *)
-      command="python3 - $(shell_quote "$action") --home $(shell_quote '~') --expected-os $(shell_quote "$os_kind") --controller-sha256 $(shell_quote "$helper_sha256")"
-      while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
-      last_index=$((${#ssh_parts[@]} - 1))
-      ssh_target="${ssh_parts[$last_index]}"
-      ssh_args=("${ssh_parts[@]:0:$last_index}")
-      if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
-        -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
-        "${ssh_args[@]}" "$ssh_target" "$command" \
-          < "$OPENSH_STORAGE_COMPAT_HELPER" > "$output"; then
-        rm -f "$output"
-        echo "ERROR: ${agent}: OpenShell storage ${action} failed" >&2
-        return 1
-      fi
-      ;;
-  esac
+  # Existing managed storage must be compatible even when new OpenShell task
+  # execution is optional for this fleet record: phase 1 still inventories and
+  # quiesces an installed OpenClaw sandbox. An absent database remains a valid
+  # read-only ready result from the helper.
+  command="python3 - $(shell_quote "$action") --home $(shell_quote '~') --expected-os $(shell_quote "$os_kind") --controller-sha256 $(shell_quote "$helper_sha256")"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+    "${ssh_args[@]}" "$ssh_target" "$command" \
+      < "$OPENSH_STORAGE_COMPAT_HELPER" > "$output"; then
+    rm -f "$output"
+    echo "ERROR: ${agent}: OpenShell storage ${action} failed" >&2
+    return 1
+  fi
   chmod 0600 "$output"
   if ! "$PYTHON_BIN" - "$output" "$action" "$os_kind" "$helper_sha256" <<'PY'
 import json,re,sys
@@ -5071,7 +5045,7 @@ if action == "preflight":
     if value.get("status") == "migration_required":
         if reason != "legacy_sandbox_spec_field9" or not int(value.get("legacy_count") or 0):
             raise SystemExit("OpenShell storage migration classification is invalid")
-    elif reason not in {"storage_absent","storage_compatible","openshell_not_required"}:
+    elif reason not in {"storage_absent","storage_compatible"}:
         raise SystemExit("OpenShell storage ready reason is invalid")
 else:
     if (

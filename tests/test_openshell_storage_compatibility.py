@@ -179,6 +179,18 @@ def test_controller_keeps_storage_repair_outside_the_cohort_transaction() -> Non
     ) < explicit.index("prepare_openshell_storage_prerequisites")
 
 
+def test_optional_execution_does_not_skip_existing_storage_classification() -> None:
+    text = CONTROLLER.read_text(encoding="utf-8")
+    helper = text.split("run_remote_openshell_storage_helper() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert "openshell_not_required" not in helper
+    assert 'command="python3 - ' in helper
+    assert helper.index('helper_sha256="$(sha256_file') < helper.index(
+        'command="python3 - '
+    )
+
+
 def test_helper_is_repository_owned_and_executable() -> None:
     assert HELPER.is_file()
     assert os.access(HELPER, os.X_OK)
