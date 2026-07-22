@@ -1657,7 +1657,7 @@ in this document pass. The deployment shell is the bounded transport adapter;
 the durable journal, typed node receipts, and hub epoch service are the
 transaction authorities.</p>
 <h2 id="objective">Objective<a class="headerlink" href="#objective" title="Permanent link">&para;</a></h2>
-<p>A cut-over of a selected heterogeneous fleet must converge to exactly one of
+<p>A cut-over of a selected failure-domain cohort must converge to exactly one of
 two outcomes:</p>
 <ol>
 <li>the exact prior, authenticating node generations remain held; or</li>
@@ -1668,6 +1668,11 @@ two outcomes:</p>
 <p>No crash, timeout, target swap, replay, or partial participant failure may
 produce an untracked hybrid. Synchronization is a logical barrier. It does not
 require equal node speed or synchronized wall clocks.</p>
+<p>Normal rollouts partition the heterogeneous fleet by supervisor family. The
+systemd, launchd, and supervisord cohorts commit independently against the same
+reviewed release identity, so a manager-specific failure blocks only that
+manager's lane. Mixed-supervisor cohorts are reserved for changes whose safety
+really requires one fleet-wide atomic outcome.</p>
 <h2 id="ownership-rule">Ownership rule<a class="headerlink" href="#ownership-rule" title="Permanent link">&para;</a></h2>
 <p>Every cut-over mutator must declare one classification before it can run:</p>
 <table>
