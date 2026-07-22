@@ -1107,19 +1107,30 @@ def test_typed_deploy_proves_pending_identity_before_atomic_hub_commit():
     assert commit_start < commit_request < commit_receipt
 
 
-def test_typed_release_readiness_projects_the_open_epoch_without_legacy_gate():
+def test_typed_release_readiness_hands_local_barrier_to_open_epoch_hold():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    barrier = deploy.split("release_typed_worker_start_barrier() {", 1)[1].split(
+        "\n}\n\ncollect_typed_release_ready_evidence", 1
+    )[0]
     collector = deploy.split("collect_typed_release_ready_evidence() {", 1)[1].split(
         "\n}\n\ntyped_phase2_arm_worker", 1
     )[0]
+    assert "assert_remote_deployment_lock" in barrier
+    assert 'remote_deployment_fenced_exec "$deployment_id" 0 bash -s' in barrier
+    assert '[ "$(cat "$barrier_path")" = "$generation" ]' in barrier
+    assert 'rm -f "$barrier_path"' in barrier
     assert '"$TMPDIR_LOCAL/participant-state-${agent_id}.json"' in collector
     assert '"$TMPDIR_LOCAL/hub-open-receipt.json"' in collector
     assert 'receipt.get("status") != "open"' in collector
     assert 'participant.get("epoch_hold_reason")' in collector
     assert 'participant.get("principal_id") != principal_id' in collector
     assert "assert_phase1_attestation_matches_controller" in collector
+    release = collector.index("release_typed_worker_start_barrier")
+    readiness = collector.index("hub_agent_restart_gate arm", release)
+    evidence = collector.index("write_release_ready_evidence", readiness)
+    assert release < readiness < evidence
+    assert '"$hold_reason" 1 0 1 "$hold_reason" "$principal_id" "" 1 0' in collector
     assert "write_release_ready_evidence" in collector
-    assert "hub_agent_restart_gate" not in collector
     assert "set_remote_mac_agent_service" not in collector
 
 

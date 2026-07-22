@@ -598,6 +598,7 @@ def test_remote_ssh_heredocs_keep_stdin_open():
         "REMOTE_REPORT_EXECUTOR_APPROVAL",
         "REMOTE_RELEASE_STATUS",
         "REMOTE_RELEASE_EPOCH",
+        "REMOTE_TYPED_BARRIER_RELEASE",
     ]
 
 

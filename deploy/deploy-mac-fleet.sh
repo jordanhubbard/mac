@@ -13752,6 +13752,40 @@ typed_quiesce_worker() {
     "$supervisor" "$fleet_name" "$os_kind"
 }
 
+release_typed_worker_start_barrier() {
+  # The hub epoch already owns the dispatch hold. Hand off from the node-local
+  # start barrier only after the exact deployment lock and generation still
+  # match, so the worker can publish the idle/healthy heartbeat required by the
+  # epoch proof without becoming dispatchable between the two barriers.
+  local agent="$1" deployment_id="$2" generation="$3"
+  local ssh_parts=() ssh_args=() ssh_target last_index item release_fence
+  assert_remote_deployment_lock "$agent" "$deployment_id" || return 1
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(
+    ssh_target_args "$agent"
+  )
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  release_fence="$(remote_deployment_fenced_exec "$deployment_id" 0 bash -s)"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" \
+    "MAC_DEPLOY_RELEASE_GENERATION=$(shell_quote "$generation") $release_fence" <<'REMOTE_TYPED_BARRIER_RELEASE'
+set -euo pipefail
+generation="${MAC_DEPLOY_RELEASE_GENERATION:?}"
+set -a
+. "$HOME/.mac/mac.env"
+set +a
+barrier_path="${MAC_WORKER_DEPLOY_BARRIER_FILE:?}"
+[ "${MAC_WORKER_DEPLOY_GENERATION:?}" = "$generation" ]
+if [ -e "$barrier_path" ]; then
+  [ ! -L "$barrier_path" ]
+  [ -f "$barrier_path" ]
+  [ "$(cat "$barrier_path")" = "$generation" ]
+  rm -f "$barrier_path"
+fi
+REMOTE_TYPED_BARRIER_RELEASE
+}
+
 collect_typed_release_ready_evidence() {
   # The hub epoch already owns the participant hold and pending identity. Build
   # the local prepared record from that exact open receipt instead of entering
@@ -13839,6 +13873,14 @@ PY
     echo "ERROR: ${agent}: typed daemon proof differs from phase-1" >&2
     return 1
   fi
+  release_typed_worker_start_barrier \
+    "$agent" "$deployment_id" "$generation" || return 1
+  # Approval for the report-repository lane is intentionally staged only after
+  # the atomic epoch commit. This pre-commit gate proves the base worker,
+  # generation and pending principal while the epoch-owned hub hold remains.
+  hub_agent_restart_gate arm "$agent_id" "$generation" "$baseline_seen" \
+    "$hold_reason" 1 0 1 "$hold_reason" "$principal_id" "" 1 0 >/dev/null \
+    || return 1
   ready_file="$TMPDIR_LOCAL/release-ready-${agent_id}.json"
   write_release_ready_evidence "$ready_file" "$agent" "$agent_id" \
     "$supervisor" "$fleet_name" "$generation" "$baseline_seen" \
