@@ -813,7 +813,9 @@ def test_full_cohort_commit_failure_rolls_back_early_promotions(tmp_path: Path) 
             )
         )
     cp.fleet_release_epochs.prove("epoch-two-agent", opened["identity_sha256"], proofs)
-    cp.set_agent_dispatch_hold("agent_beta", "operator superseded epoch")
+    superseding = cp.set_agent_dispatch_hold(
+        "agent_beta", "operator superseded epoch"
+    )
     with pytest.raises(ValidationError, match="epoch-owned hold"):
         cp.fleet_release_epochs.commit("epoch-two-agent", opened["identity_sha256"])
     for name in ("alpha", "beta"):
@@ -828,12 +830,29 @@ def test_full_cohort_commit_failure_rolls_back_early_promotions(tmp_path: Path) 
             pending[name].record["id"]: "pending_install",
         }
         assert cp._agent_attestation_key("agent_%s" % name) != candidates[name]
-    with pytest.raises(ValidationError, match="epoch-owned hold"):
-        cp.fleet_release_epochs.abort(
-            "epoch-two-agent",
-            opened["identity_sha256"],
-            reason="authority drift",
-        )
+    aborted = cp.fleet_release_epochs.abort(
+        "epoch-two-agent",
+        opened["identity_sha256"],
+        reason="preserve later operator safety hold",
+    )
+    assert aborted["status"] == "aborted"
+    alpha = cp.get_agent("agent_alpha")
+    assert alpha.dispatch_hold is False
+    beta = cp.get_agent("agent_beta")
+    assert beta.dispatch_hold is True
+    assert beta.dispatch_hold_reason == "operator superseded epoch"
+    assert beta.dispatch_hold_at == superseding.dispatch_hold_at
+    for name in ("alpha", "beta"):
+        states = {
+            item["id"]: item["state"]
+            for item in WorkerCredentialLifecycle(cp.store).list(
+                agent_id="agent_%s" % name
+            )
+        }
+        assert states == {
+            old[name].record["id"]: "active",
+            pending[name].record["id"]: "revoked",
+        }
 
 
 def test_proof_rejects_secret_bearing_receipt_and_wrong_candidate(

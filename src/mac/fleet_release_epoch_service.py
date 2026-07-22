@@ -911,6 +911,18 @@ class FleetReleaseEpochService:
             and agent_row["dispatch_hold_at"] is None
         )
 
+    @staticmethod
+    def _superseding_hold_matches(agent_row: Any, participant: Any) -> bool:
+        """Recognize a later safety hold that abort must preserve, never clear."""
+
+        return bool(
+            agent_row["dispatch_hold"]
+            and str(agent_row["dispatch_hold_reason"] or "").strip()
+            and agent_row["dispatch_hold_at"]
+            and agent_row["dispatch_hold_reason"]
+            != participant["epoch_hold_reason"]
+        )
+
     def _validate_node_readiness(
         self, conn: Any, agent_row: Any, participant: Any
     ) -> Dict[str, Any]:
@@ -1647,19 +1659,31 @@ class FleetReleaseEpochService:
                 (epoch_id,),
             ).fetchall()
             locked: Dict[str, Any] = {}
+            preserve_superseding_hold: set[str] = set()
             for participant in participants:
                 agent_id = str(participant["agent_id"])
                 locked[agent_id] = self._lock_agent(conn, agent_id)
-                if not (
-                    self._epoch_hold_matches(locked[agent_id], participant)
-                    or self._restored_prior_hold_matches(
+                epoch_owned = self._epoch_hold_matches(
+                    locked[agent_id], participant
+                )
+                prior_restored = self._restored_prior_hold_matches(
+                    locked[agent_id], participant
+                )
+                superseding_hold = (
+                    not epoch_owned
+                    and not prior_restored
+                    and self._superseding_hold_matches(
                         locked[agent_id], participant
                     )
-                ):
+                )
+                if not (epoch_owned or prior_restored or superseding_hold):
                     raise ValidationError(
                         "fleet release abort lost epoch-owned hold and did not find "
-                        "the exact prior snapshot for %s" % agent_id
+                        "the exact prior snapshot or a superseding safety hold for %s"
+                        % agent_id
                     )
+                if superseding_hold:
+                    preserve_superseding_hold.add(agent_id)
                 if self._active_claims(conn, agent_id):
                     raise ValidationError(
                         "fleet release abort found new active service claims for %s"
@@ -1703,7 +1727,12 @@ class FleetReleaseEpochService:
                     )
                 except WorkerCredentialError as exc:
                     raise ValidationError(str(exc)) from exc
-                if participant["prior_dispatch_hold"]:
+                if agent_id in preserve_superseding_hold:
+                    # A later operator hold is safer than the stale pre-epoch
+                    # snapshot. Abort releases epoch ownership but must not
+                    # overwrite that newer dispatch barrier.
+                    pass
+                elif participant["prior_dispatch_hold"]:
                     conn.execute(
                         "UPDATE agents SET dispatch_hold = 1, "
                         "dispatch_hold_reason = ?, dispatch_hold_at = ?, "
@@ -1733,6 +1762,14 @@ class FleetReleaseEpochService:
                         "reason": reason_value,
                         "prior_dispatch_hold": bool(participant["prior_dispatch_hold"]),
                         "prior_hold_reason": participant["prior_hold_reason"],
+                        "preserved_superseding_hold": (
+                            agent_id in preserve_superseding_hold
+                        ),
+                        "preserved_hold_reason": (
+                            locked[agent_id]["dispatch_hold_reason"]
+                            if agent_id in preserve_superseding_hold
+                            else None
+                        ),
                     },
                     now,
                 )
