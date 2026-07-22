@@ -707,6 +707,20 @@ def test_legacy_hub_bootstrap_preflights_onboarding_before_phase1():
     assert "read-only legacy onboarding prerequisite receipt passed" in preflight
 
 
+def test_legacy_hub_bootstrap_precedes_incompatible_journal_recovery():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    main = deploy.split("main() {", 1)[1].rsplit("\n}\n\nmain", 1)[0]
+    recovery_guard = main.split(
+        "recover_incomplete_cohort_transaction_before_deploy", 1
+    )[0].rsplit("if ", 1)[1]
+
+    assert '"$PREFLIGHT_ONLY" != 1' in recovery_guard
+    assert '"$LEGACY_HUB_BOOTSTRAP" != 1' in recovery_guard
+    assert main.index("recover_incomplete_cohort_transaction_before_deploy") < main.index(
+        "legacy_hub_bootstrap \"$selected_specs_file\""
+    )
+
+
 def test_legacy_hub_bootstrap_restores_phase1_after_deploy_failure(tmp_path):
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     legacy = (

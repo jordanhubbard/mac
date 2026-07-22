@@ -14135,7 +14135,12 @@ main() {
   # A dead prior controller is reconciled before this invocation is allowed to
   # create a new cohort identity. Recovery uses only journal-bound remote
   # artifacts, so a newer checkout can never reinterpret an older generation.
-  if [ "$PREFLIGHT_ONLY" != 1 ]; then
+  # Legacy bootstrap is the protocol-upgrade prerequisite for an old hub. It
+  # must be allowed to install the typed epoch API even when a prior typed run
+  # is durably waiting on an operation that the old API cannot complete. The
+  # bootstrap leaves that journal untouched; the next normal typed invocation
+  # reconciles it against the upgraded hub before creating a successor epoch.
+  if [ "$PREFLIGHT_ONLY" != 1 ] && [ "$LEGACY_HUB_BOOTSTRAP" != 1 ]; then
     recover_incomplete_cohort_transaction_before_deploy
   fi
   assert_frozen_deployment_source
