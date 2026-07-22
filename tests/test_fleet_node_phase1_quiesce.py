@@ -1787,6 +1787,18 @@ def test_synchronized_media_reconciliation_never_mutates_unjournaled_gen_venv() 
     assert "immutable prior gen venv" in typed
     assert "-m pip" not in typed
     assert "-m venv" not in typed
+    assert 'if [ "$image_required" = 1 ] || [ "$video_required" = 1 ]; then' in typed
+    assert 'if [ "$audio_required" = 1 ]; then' in typed
+    image_probe = typed.split(
+        'if [ "$image_required" = 1 ] || [ "$video_required" = 1 ]; then', 1
+    )[1].split('if [ "$audio_required" = 1 ]; then', 1)[0]
+    audio_probe = typed.split('if [ "$audio_required" = 1 ]; then', 1)[1]
+    assert "diffusers" in image_probe
+    assert "PIL" in image_probe
+    assert "soundfile" not in image_probe
+    assert "scipy" not in image_probe
+    assert "soundfile" in audio_probe
+    assert "scipy" in audio_probe
 
 
 def test_media_readiness_manifest_uses_stable_private_descriptor_reads() -> None:

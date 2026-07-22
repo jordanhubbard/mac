@@ -23,6 +23,7 @@ for provenance and is not a current operating contract.
 | architecture decision | `adr/0009-minimal-base-on-demand-layered-provisioning.md` | ADR 0009 - Minimal sandbox base + on-demand, layered, cached provisioning |
 | architecture decision | `adr/0010-fleet-ide-cutover-parity-matrix.md` | ADR 0010 — Fleet IDE Cut-over and Parity Matrix |
 | architecture decision | `adr/0011-hub-review-verification-scope.md` | ADR 0011 - Hub review verification uses affected tests |
+| architecture decision | `adr/0012-hybrid-native-steward-containerized-execution.md` | ADR 0012 - Native node steward with containerized task execution |
 | supplemental reference | `agent-lifecycle-proof.md` | Agent Lifecycle Proof |
 | historical archive | `archive/field-notes/assessment-task-1b6783.md` | Assessment: task_1b67831356c347c3a91d782982f47d1c |
 | historical archive | `archive/field-notes/assessment-task-7023d6.md` | Assessment: task_7023d6a7ef6e4bbf8f6c2da523a4320f |

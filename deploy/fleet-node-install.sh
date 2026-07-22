@@ -8911,13 +8911,20 @@ m = get_model(sys.argv[1]); print(m.repo if m else sys.argv[1])' "$gen_model" 2>
   if [ "$lifecycle_mode" = typed ]; then
     # Synchronized phase 2 may only mutate artifacts covered by its rollback
     # intent. The historical gen venv is not in that intent, so consume an
-    # already-working environment without upgrading or creating it.
+    # already-working environment without upgrading or creating it. Prove only
+    # the dependency surface of the journaled services: an image-only prior
+    # generation must not be rejected for lacking audio-only packages.
     gen_venv=""
-    local candidate
+    local candidate probe_modules="torch"
+    if [ "$image_required" = 1 ] || [ "$video_required" = 1 ]; then
+      probe_modules="${probe_modules},diffusers,accelerate,safetensors,PIL,huggingface_hub"
+    fi
+    if [ "$audio_required" = 1 ]; then
+      probe_modules="${probe_modules},transformers,accelerate,safetensors,huggingface_hub,numpy,soundfile,scipy"
+    fi
     for candidate in "$HOME/gen/venv" "$MAC_HOME/gen-venv"; do
       if [ -x "$candidate/bin/python" ] \
-          && "$candidate/bin/python" -c \
-            "import torch,diffusers,transformers,accelerate,safetensors,PIL,huggingface_hub,soundfile,scipy" \
+          && "$candidate/bin/python" -c "import $probe_modules" \
             >/dev/null 2>&1; then
         gen_venv="$candidate"
         break
