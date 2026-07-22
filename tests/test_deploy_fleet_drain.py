@@ -1223,6 +1223,10 @@ def test_openshell_deploy_validates_in_node_before_manifest_and_restart():
     # A bootstrap failure exits under set -e before service creation, drain clear,
     # or a durable post manifest can make the node appear deployable.
     assert "bootstrap_enabled_openshell || true" not in main
+    typed_apply = main.split(
+        'elif [ "$NODE_ACTION" = apply-phase2 ]; then', 1
+    )[1].split("\nelse\n", 1)[0]
+    assert "bootstrap_enabled_openshell" in typed_apply
 
     deploy_host = deploy.split("deploy_host() {", 1)[1].split("\n}\n\nhub_target()", 1)[
         0

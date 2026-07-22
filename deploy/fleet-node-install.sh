@@ -9969,6 +9969,15 @@ if [ "$NODE_ACTION" = legacy-one-shot ]; then
   install_or_validate_web_search_service
   write_hermes_web_search_config
   install_or_validate_publish_service
+elif [ "$NODE_ACTION" = apply-phase2 ]; then
+  # Phase 1 proves that the existing gateway can be quiesced and recovered; it
+  # does not prove that the old mac.env recipe matches the source generation
+  # being installed now.  Reconcile the exact reviewed bootstrap while the
+  # typed transaction still owns the drain.  Otherwise a stale create-argument
+  # vector can survive indefinitely and prevent the new worker from producing
+  # its hardened report-executor attestation.
+  bootstrap_enabled_openshell
+  log "typed phase 2 retained the receipt-proved shared-service authorities"
 else
   log "typed phase 2 retained the receipt-proved OpenShell and shared-service authorities"
 fi
