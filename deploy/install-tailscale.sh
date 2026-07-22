@@ -108,7 +108,7 @@ supervisord_conf_dir() {
 
 run_supervisorctl() {
   if command -v sudo >/dev/null 2>&1; then
-    sudo supervisorctl "$@" || supervisorctl "$@"
+    sudo -n supervisorctl "$@" || supervisorctl "$@"
   else
     supervisorctl "$@"
   fi
@@ -173,11 +173,11 @@ if ! command -v tailscale >/dev/null 2>&1; then
   echo "[tailscale] Installing Tailscale"
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    curl -fsSL https://tailscale.com/install.sh | sudo sh
+    curl -fsSL https://tailscale.com/install.sh | sudo -n sh
   elif command -v brew >/dev/null 2>&1; then
     brew install tailscale
   elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
-    curl -fsSL https://tailscale.com/install.sh | sudo sh
+    curl -fsSL https://tailscale.com/install.sh | sudo -n sh
   else
     echo "[tailscale] ERROR: unsupported platform; install tailscale manually" >&2
     exit 1
@@ -197,13 +197,13 @@ mkdir -p "$LOG_DIR"
 
 case "$SUPERVISOR_KIND" in
   systemd)
-    sudo systemctl enable tailscaled >/dev/null 2>&1 || true
-    sudo systemctl start tailscaled
+    sudo -n systemctl enable tailscaled >/dev/null 2>&1 || true
+    sudo -n systemctl start tailscaled
     ;;
   supervisord)
     conf_dir="$(supervisord_conf_dir)"
-    sudo install -d -m 0755 "$conf_dir"
-    sudo tee "$conf_dir/${FLEET_NAME}-tailscaled.conf" >/dev/null <<EOF
+    sudo -n install -d -m 0755 "$conf_dir"
+    sudo -n tee "$conf_dir/${FLEET_NAME}-tailscaled.conf" >/dev/null <<EOF
 [program:${FLEET_NAME}-tailscaled]
 command=/usr/sbin/tailscaled --state=/var/lib/${FLEET_NAME}/tailscale/tailscaled.state --socket=/run/tailscale/${FLEET_NAME}.sock --port=41641
 directory=/var/lib/${FLEET_NAME}/tailscale
@@ -215,16 +215,16 @@ stopwaitsecs=15
 stdout_logfile=$LOG_DIR/tailscaled.log
 stderr_logfile=$LOG_DIR/tailscaled.log
 EOF
-    sudo mkdir -p /var/lib/${FLEET_NAME}/tailscale /run/tailscale
+    sudo -n mkdir -p /var/lib/${FLEET_NAME}/tailscale /run/tailscale
     run_supervisorctl reread >/dev/null
     run_supervisorctl update >/dev/null
     run_supervisorctl restart "${FLEET_NAME}-tailscaled" >/dev/null 2>&1 \
       || run_supervisorctl start "${FLEET_NAME}-tailscaled" >/dev/null
     ;;
   launchd)
-    sudo launchctl enable system/com.tailscale.tailscaled 2>/dev/null || true
-    sudo launchctl bootstrap system /Library/LaunchDaemons/com.tailscale.tailscaled.plist 2>/dev/null || true
-    sudo launchctl kickstart -k system/com.tailscale.tailscaled 2>/dev/null || true
+    sudo -n launchctl enable system/com.tailscale.tailscaled 2>/dev/null || true
+    sudo -n launchctl bootstrap system /Library/LaunchDaemons/com.tailscale.tailscaled.plist 2>/dev/null || true
+    sudo -n launchctl kickstart -k system/com.tailscale.tailscaled 2>/dev/null || true
     ;;
 esac
 

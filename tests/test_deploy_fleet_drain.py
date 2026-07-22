@@ -810,6 +810,33 @@ def test_typed_optional_prerequisites_do_not_require_installed_mac_env():
     assert checks.count(", mac_home)]") >= 4
 
 
+def test_network_prerequisite_preparation_is_separate_and_secret_safe():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    prepare = deploy.split("prepare_network_prerequisites() {", 1)[1].split(
+        "\n}\n\nnode_prerequisite_bundle_file", 1
+    )[0]
+    remote = deploy.split("prepare_remote_tailscale_prerequisite() {", 1)[1].split(
+        "\n}\n\nprepare_network_prerequisites", 1
+    )[0]
+    main = deploy.split("main() {", 1)[1]
+
+    assert "--prepare-network-prerequisites" in deploy
+    assert prepare.index('echo "==> fleet: classifying') < prepare.index(
+        '[ "$blocked" = 0 ]'
+    )
+    assert prepare.index('[ "$blocked" = 0 ]') < prepare.index(
+        "prepare_remote_tailscale_prerequisite"
+    )
+    assert 'IFS= read -r MAC_DEPLOY_TAILSCALE_AUTH_KEY' in remote
+    assert 'printf \'%s\\n\' "$credential" | ssh' in remote
+    assert 'shell_quote "$credential"' not in remote
+    assert main.index('if [ "$PREPARE_NETWORK_PREREQUISITES" = 1 ]; then') < (
+        main.index('classify_network_prerequisites "$selected_specs_file"')
+    )
+    journal_gate = main.split("initialize_cohort_transaction", 1)[0]
+    assert '[ "$PREPARE_NETWORK_PREREQUISITES" != 1 ]' in journal_gate
+
+
 def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")

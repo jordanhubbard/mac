@@ -184,6 +184,7 @@ NEW_HUB_HEADSCALE_PREAUTH_KEY="${MAC_DEPLOY_NEW_HUB_HEADSCALE_PREAUTH_KEY:-}"
 REQUESTED_AGENTS=()
 LEGACY_HUB_BOOTSTRAP=0
 PREPARE_REVIEWED_OPENSHELL_CLI=0
+PREPARE_NETWORK_PREREQUISITES=0
 PREFLIGHT_ONLY=0
 QUALIFICATION_RECEIPT=""
 
@@ -243,6 +244,7 @@ Usage:
                             [--successor-hold-reason <reason>] [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap <hub-node>
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-reviewed-openshell-cli [agent ...]
+  deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-network-prerequisites [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --preflight-only
                             --qualification-receipt <owner-only-json> [agent ...]
   deploy/deploy-mac-fleet.sh --new-hub <hub-node> --target user@host[:port] [--ssh-port <port>]
@@ -300,6 +302,11 @@ operation. It performs no cohort transaction: all selected nodes are classified
 read-only first, then managed legacy nodes receive the exact reviewed CLI asset
 and incompatible legacy sandbox records are backed up and migrated. Run the
 normal typed deployment separately afterward.
+
+--prepare-network-prerequisites is an explicit first-node mesh bootstrap. It
+classifies every selected hub route before mutation, joins only unreachable
+tailscale/auto nodes using the configured secret source over SSH stdin, and
+re-proves hub TCP reachability. Run the normal typed deployment separately.
 
 --preflight-only performs bounded, read-only qualification against the same
 frozen selection and pinned live endpoints used by deployment. It creates no
@@ -392,6 +399,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --prepare-reviewed-openshell-cli)
       PREPARE_REVIEWED_OPENSHELL_CLI=1
+      shift
+      ;;
+    --prepare-network-prerequisites)
+      PREPARE_NETWORK_PREREQUISITES=1
       shift
       ;;
     --preflight-only)
@@ -585,6 +596,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 1 ] \
+    && [ "$PREPARE_NETWORK_PREREQUISITES" = 1 ]; then
+  echo "ERROR: prerequisite preparation modes must run separately" >&2
+  exit 2
+fi
+
 if [ "$PREFLIGHT_ONLY" = 1 ]; then
   [ -n "$QUALIFICATION_RECEIPT" ] || {
     echo "ERROR: --preflight-only requires --qualification-receipt <path>" >&2
@@ -592,6 +609,7 @@ if [ "$PREFLIGHT_ONLY" = 1 ]; then
   }
   [ "$LEGACY_HUB_BOOTSTRAP" = 0 ] \
     && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 0 ] \
+    && [ "$PREPARE_NETWORK_PREREQUISITES" = 0 ] \
     && [ -z "$HOLD_ADOPTIONS_SOURCE" ] \
     && [ "$SUCCESSOR_HOLD_REASON_SUPPLIED" = 0 ] || {
       echo "ERROR: --preflight-only cannot be combined with deployment or hold authority" >&2
@@ -5187,6 +5205,124 @@ prepare_openshell_storage_prerequisites() {
       return 1
     }
   done < "$selected_specs_file"
+}
+
+probe_remote_hub_tcp() {
+  local agent="$1" hub_url="$2" endpoint host port
+  local ssh_parts=() ssh_args=() ssh_target item last_index code
+  endpoint="$("$PYTHON_BIN" - "$hub_url" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+parsed = urlsplit(sys.argv[1])
+if (
+    parsed.scheme not in {"http", "https"}
+    or not parsed.hostname
+    or parsed.username is not None
+    or parsed.password is not None
+    or parsed.query
+    or parsed.fragment
+):
+    raise SystemExit("hub URL is not a secret-free HTTP endpoint")
+print(parsed.hostname)
+print(parsed.port or (443 if parsed.scheme == "https" else 80))
+PY
+)" || return 1
+  host="${endpoint%%$'\n'*}"
+  port="${endpoint##*$'\n'}"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  code='import socket,sys
+with socket.create_connection((sys.argv[1],int(sys.argv[2])),5): pass'
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    "${ssh_args[@]}" "$ssh_target" \
+    "python3 -c $(shell_quote "$code") $(shell_quote "$host") $(shell_quote "$port")" \
+    >/dev/null 2>&1
+}
+
+classify_network_prerequisites() {
+  local selected_specs_file="$1" spec fields=() agent hub_url provider install failed=0
+  echo "==> fleet: proving selected hub routes before typed mutation"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; hub_url="${fields[7]:-}"
+    provider="${fields[31]:-none}"; install="${fields[32]:-none}"
+    if probe_remote_hub_tcp "$agent" "$hub_url"; then
+      echo "==> ${agent}: hub route prerequisite ready"
+      continue
+    fi
+    echo "ERROR: ${agent}: hub route prerequisite is unreachable (provider=${provider}, install=${install})" >&2
+    failed=1
+  done < "$selected_specs_file"
+  if [ "$failed" = 1 ]; then
+    echo "ERROR: run this separate network prerequisite operation before cutover:" >&2
+    echo "  deploy/deploy-mac-fleet.sh --hub $(shell_quote "$HUB_SELECTOR") --prepare-network-prerequisites [agent ...]" >&2
+    return 1
+  fi
+}
+
+prepare_remote_tailscale_prerequisite() {
+  local agent="$1" fleet_name="$2" supervisor="$3" hostname_prefix="$4" credential="$5"
+  local remote_script ssh_parts=() ssh_args=() ssh_target item last_index command
+  remote_script="/tmp/mac-network-bootstrap-${agent}-${DEPLOY_CONTROLLER_NONCE}.sh"
+  pinned_remote_private_upload "$agent" "$ROOT/deploy/install-tailscale.sh" "$remote_script"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1)); ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  command="set -euo pipefail; _mac_network_script=$(shell_quote "$remote_script"); trap 'rm -f \"\$_mac_network_script\"' EXIT HUP INT TERM; IFS= read -r MAC_DEPLOY_TAILSCALE_AUTH_KEY; [ -n \"\$MAC_DEPLOY_TAILSCALE_AUTH_KEY\" ]; export MAC_DEPLOY_TAILSCALE_AUTH_KEY; AGENT=$(shell_quote "$agent") FLEET_NAME=$(shell_quote "$fleet_name") MAC_HOME=\"\$HOME/.mac\" ENV_FILE=\"\$HOME/.mac/mac.env\" TAILSCALE_SUPERVISOR=$(shell_quote "$supervisor") TAILSCALE_HOSTNAME_PREFIX=$(shell_quote "$hostname_prefix") bash \"\$_mac_network_script\""
+  printf '%s\n' "$credential" | ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+    "${ssh_args[@]}" "$ssh_target" "$command"
+}
+
+prepare_network_prerequisites() {
+  local selected_specs_file="$1" spec fields=() agent hub_url supervisor fleet_name
+  local provider install hostname_prefix auth_key_env credential blocked=0
+  echo "==> fleet: classifying every network prerequisite before repair"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; hub_url="${fields[7]:-}"; supervisor="${fields[14]:-auto}"
+    fleet_name="${fields[23]:-mac}"; provider="${fields[31]:-none}"
+    install="${fields[32]:-none}"; auth_key_env="${fields[34]:-MAC_DEPLOY_TAILSCALE_AUTH_KEY}"
+    probe_remote_hub_tcp "$agent" "$hub_url" && continue
+    if [ "$provider" != tailscale ] || [[ "$install" != auto && "$install" != true && "$install" != 1 ]]; then
+      echo "ERROR: ${agent}: network preparation cannot repair provider=${provider}, install=${install}" >&2
+      blocked=1
+      continue
+    fi
+    if ! [[ "$auth_key_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "ERROR: ${agent}: tailscale credential source name is invalid" >&2
+      blocked=1
+      continue
+    fi
+    credential="$(fleet_scoped_env "$auth_key_env" "$fleet_name")"
+    if [ -z "$credential" ] || [[ "$credential" == *$'\n'* || "$credential" == *$'\r'* ]]; then
+      echo "ERROR: ${agent}: tailscale credential source ${auth_key_env} is unavailable" >&2
+      blocked=1
+    fi
+  done < "$selected_specs_file"
+  [ "$blocked" = 0 ] || {
+    echo "ERROR: refusing every network mutation until all selected prerequisites are repairable" >&2
+    return 1
+  }
+
+  echo "==> fleet: joining unreachable tailscale nodes through pinned SSH routes"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; hub_url="${fields[7]:-}"; supervisor="${fields[14]:-auto}"
+    fleet_name="${fields[23]:-mac}"; hostname_prefix="${fields[33]:-}"
+    auth_key_env="${fields[34]:-MAC_DEPLOY_TAILSCALE_AUTH_KEY}"
+    probe_remote_hub_tcp "$agent" "$hub_url" && continue
+    credential="$(fleet_scoped_env "$auth_key_env" "$fleet_name")"
+    prepare_remote_tailscale_prerequisite \
+      "$agent" "$fleet_name" "$supervisor" "$hostname_prefix" "$credential"
+    echo "==> ${agent}: tailscale network prerequisite installed from ${auth_key_env}"
+  done < "$selected_specs_file"
+
+  echo "==> fleet: re-proving every selected hub route"
+  classify_network_prerequisites "$selected_specs_file"
 }
 
 node_prerequisite_bundle_file() {
@@ -13975,7 +14111,8 @@ main() {
   # This pass is deliberately before the first remote read/control-master.
   # One missing immutable OpenShell image rejects the entire frozen cohort
   # with zero remote mutations instead of stranding already-held workers.
-  if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ]; then
+  if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ] \
+      && [ "$PREPARE_NETWORK_PREREQUISITES" != 1 ]; then
     while IFS= read -r spec; do
       [ -n "$spec" ] || continue
       validate_openshell_runtime_image_spec "$spec"
@@ -13999,6 +14136,7 @@ PY
   # no multi-node transaction and retains the pre-existing hub hold.
   if [ "$LEGACY_HUB_BOOTSTRAP" != 1 ] \
       && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ] \
+      && [ "$PREPARE_NETWORK_PREREQUISITES" != 1 ] \
       && [ "$PREFLIGHT_ONLY" != 1 ]; then
     initialize_cohort_transaction \
       "$selected_specs_file" "$hub_agent" "$cohort_fleet_name"
@@ -14042,11 +14180,27 @@ PY
     return 0
   fi
 
+  if [ "$PREPARE_NETWORK_PREREQUISITES" = 1 ]; then
+    [ "$LEGACY_HUB_BOOTSTRAP" = 0 ] \
+      && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 0 ] \
+      && [ -z "$HOLD_ADOPTIONS_FILE" ] \
+      && [ "$SUCCESSOR_HOLD_REASON_SUPPLIED" = 0 ] || {
+        echo "ERROR: network prerequisite preparation cannot be combined with deployment or hold authority" >&2
+        return 2
+      }
+    prepare_network_prerequisites "$selected_specs_file"
+    echo "==> network prerequisites prepared; no cohort transaction was opened"
+    rm -rf "$TMPDIR_LOCAL"
+    return 0
+  fi
+
   if [ "$LEGACY_HUB_BOOTSTRAP" = 1 ]; then
     legacy_hub_bootstrap "$selected_specs_file" "$hub_agent" "$selected_count"
     rm -rf "$TMPDIR_LOCAL"
     return 0
   fi
+
+  classify_network_prerequisites "$selected_specs_file"
 
   github_review_key_b64="$(ensure_local_github_review_key)"
   if [ -z "$hub_tunnel_pubkey" ]; then

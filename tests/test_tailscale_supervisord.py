@@ -23,6 +23,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = (ROOT / "deploy" / "install-tailscale.sh").read_text(encoding="utf-8")
 
 
+def test_privileged_tailscale_install_is_non_interactive() -> None:
+    assert "sudo -n sh" in SCRIPT
+    assert "sudo -n supervisorctl" in SCRIPT
+    assert "sudo -n install" in SCRIPT
+    assert "sudo -n tee" in SCRIPT
+    assert "sudo -n mkdir" in SCRIPT
+    assert "sudo -n systemctl" in SCRIPT
+    assert "sudo -n launchctl" in SCRIPT
+    assert " sudo sh" not in SCRIPT
+    assert " sudo supervisorctl" not in SCRIPT
+
+
 # ---------------------------------------------------------------------------
 # Helper: extract a named bash function body from the script
 # ---------------------------------------------------------------------------
