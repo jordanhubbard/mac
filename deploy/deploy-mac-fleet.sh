@@ -2827,6 +2827,14 @@ def runtime_prefix(runtime):
     fail("Podman endpoint is not node-local")
 
 
+def launchd_absence_is_proved(rc, text):
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    not_found = [line for line in lines if "Could not find service" in line]
+    state = re.search(r"(?m)^\s*state\s*=", text)
+    pid = re.search(r"(?m)^\s*pid\s*=", text)
+    return rc == 113 and len(not_found) == 1 and state is None and pid is None
+
+
 def live_gateway_sample():
     supervisor = gateway_summary["supervisor"]
     identities = gateway_summary["identities"]
@@ -2941,8 +2949,7 @@ def live_gateway_sample():
             rc, text = run_bounded(
                 [launchctl, "print", domain + "/" + label], clean_env
             )
-            absent_lines = [line.strip() for line in text.splitlines() if line.strip()]
-            if rc == 113 and len(absent_lines) == 1 and "Could not find service" in absent_lines[0]:
+            if launchd_absence_is_proved(rc, text):
                 result[owner] = {"state": "absent", "pid": 0, "restarts": 0}
                 continue
             if rc != 0:

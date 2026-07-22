@@ -130,6 +130,19 @@ def _outer_run_bounded_python() -> str:
     return source.replace(command_wait, "process.wait(timeout=1.0)")
 
 
+def _outer_launchd_absence_python() -> str:
+    attestation = _between(
+        _fleet_text(),
+        "remote_daemon_quiescence_attestation() {",
+        "\nassert_phase1_attestation_matches_controller() {",
+    )
+    return _between(
+        attestation,
+        "def launchd_absence_is_proved(rc, text):",
+        "\n\ndef live_gateway_sample():",
+    )
+
+
 def _write_executable(path: Path, source: str) -> None:
     path.write_text(source, encoding="utf-8")
     path.chmod(0o700)
@@ -1009,6 +1022,22 @@ def test_outer_contract_binds_manifest_receipts_live_state_and_phase1() -> None:
     assert "assert_phase1_attestation_matches_controller" in source
     assert "evidence_digest = hashlib.sha256(" in epoch
     assert epoch.count("epoch_id.rsplit(\":\", 1)[-1] != evidence_digest") == 2
+
+
+def test_outer_launchd_absence_accepts_multiline_not_found_diagnostic() -> None:
+    namespace: dict[str, Any] = {"re": __import__("re")}
+    exec(_outer_launchd_absence_python(), namespace)
+    proved = namespace["launchd_absence_is_proved"]
+
+    actual_shape = (
+        "Bad request.\n"
+        "Could not find service com.mac.hermes-gateway in domain for user\n"
+    )
+    assert proved(113, actual_shape)
+    assert proved(113, actual_shape.splitlines()[1])
+    assert not proved(1, actual_shape)
+    assert not proved(113, actual_shape + "state = running\npid = 42\n")
+    assert not proved(113, actual_shape + actual_shape.splitlines()[1] + "\n")
 
 
 def test_outer_live_attestation_requires_absence_and_positive_process_ids() -> None:
