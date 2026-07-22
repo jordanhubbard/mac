@@ -780,6 +780,21 @@ def test_typed_machine_onboarding_receipt_pins_required_cli_paths():
     assert "parsed.query" in builder
 
 
+def test_typed_route_receipt_proves_hub_reachability_without_prior_mac_env():
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    builder = deploy.split("prepare_remote_prerequisite_bundle() {", 1)[1].split(
+        "\n}\n\nprerequisite_bundle_digests", 1
+    )[0]
+
+    assert 'hub_url="${fields[7]:-}"' in builder
+    assert "MAC_PREREQ_HUB_URL=" in builder
+    assert (
+        'service_check("route-hub", os.environ["MAC_PREREQ_HUB_URL"], True, mac_env)'
+        in builder
+    )
+    assert '"route-tunnel": [path_check("route-config", mac_env)]' not in builder
+
+
 def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")

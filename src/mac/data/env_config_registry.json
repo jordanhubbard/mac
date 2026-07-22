@@ -8657,6 +8657,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: prereq hub url.",
+    "family": "core",
+    "name": "MAC_PREREQ_HUB_URL",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: prereq identity.",
     "family": "core",
     "name": "MAC_PREREQ_IDENTITY",

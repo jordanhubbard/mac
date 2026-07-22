@@ -5374,13 +5374,14 @@ PY
 
 prepare_remote_prerequisite_bundle() {
   local spec="$1" fields=() agent supervisor os_kind qdrant_url qdrant_required
-  local firecrawl_url firecrawl_required webdav_url webdav_enabled openshell_required
+  local hub_url firecrawl_url firecrawl_required webdav_url webdav_enabled openshell_required
   local network_provider
   local deployment_id agent_id identity_sha remote_helper remote_root command
   local bundle expectations ssh_parts=() ssh_args=() ssh_target item last_index
   IFS='|' read -r -a fields <<<"$spec"
   agent="${fields[0]}"
   os_kind="${fields[2]}"
+  hub_url="${fields[7]:-}"
   qdrant_url="${fields[16]:-}"
   qdrant_required="${fields[18]:-0}"
   firecrawl_url="${fields[26]:-}"
@@ -5404,7 +5405,7 @@ prepare_remote_prerequisite_bundle() {
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   command="$(remote_deployment_fenced_exec "$deployment_id" 0 sh -c \
-    "set -e; umask 077; rm -rf $(shell_quote "$remote_root"); mkdir -m 0700 $(shell_quote "$remote_root"); MAC_PREREQ_AGENT=$(shell_quote "$agent") MAC_PREREQ_AGENT_ID=$(shell_quote "$agent_id") MAC_PREREQ_IDENTITY=$(shell_quote "$identity_sha") MAC_PREREQ_HELPER=$(shell_quote "$remote_helper") MAC_PREREQ_ROOT=$(shell_quote "$remote_root") MAC_PREREQ_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_PREREQ_QDRANT_REQUIRED=$(shell_quote "$qdrant_required") MAC_PREREQ_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_PREREQ_FIRECRAWL_REQUIRED=$(shell_quote "$firecrawl_required") MAC_PREREQ_WEBDAV_URL=$(shell_quote "$webdav_url") MAC_PREREQ_WEBDAV_ENABLED=$(shell_quote "$webdav_enabled") MAC_PREREQ_OPENSHELL_REQUIRED=$(shell_quote "$openshell_required") MAC_PREREQ_SUPERVISOR=$(shell_quote "$supervisor") MAC_PREREQ_OS=$(shell_quote "$os_kind") MAC_PREREQ_NETWORK_PROVIDER=$(shell_quote "$network_provider") MAC_PREREQ_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") python3 -")"
+    "set -e; umask 077; rm -rf $(shell_quote "$remote_root"); mkdir -m 0700 $(shell_quote "$remote_root"); MAC_PREREQ_AGENT=$(shell_quote "$agent") MAC_PREREQ_AGENT_ID=$(shell_quote "$agent_id") MAC_PREREQ_IDENTITY=$(shell_quote "$identity_sha") MAC_PREREQ_HELPER=$(shell_quote "$remote_helper") MAC_PREREQ_ROOT=$(shell_quote "$remote_root") MAC_PREREQ_HUB_URL=$(shell_quote "$hub_url") MAC_PREREQ_QDRANT_URL=$(shell_quote "$qdrant_url") MAC_PREREQ_QDRANT_REQUIRED=$(shell_quote "$qdrant_required") MAC_PREREQ_FIRECRAWL_URL=$(shell_quote "$firecrawl_url") MAC_PREREQ_FIRECRAWL_REQUIRED=$(shell_quote "$firecrawl_required") MAC_PREREQ_WEBDAV_URL=$(shell_quote "$webdav_url") MAC_PREREQ_WEBDAV_ENABLED=$(shell_quote "$webdav_enabled") MAC_PREREQ_OPENSHELL_REQUIRED=$(shell_quote "$openshell_required") MAC_PREREQ_SUPERVISOR=$(shell_quote "$supervisor") MAC_PREREQ_OS=$(shell_quote "$os_kind") MAC_PREREQ_NETWORK_PROVIDER=$(shell_quote "$network_provider") MAC_PREREQ_CODEGRAPH_VERSION=$(shell_quote "$MAC_REVIEWED_CODEGRAPH_VERSION") python3 -")"
   if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command" <<'PY'
 import hashlib
@@ -5609,7 +5610,13 @@ checks = {
         path_check("codegraph-cli", codegraph_bin, executable=True),
         path_check("codegraph-node", codegraph_node, executable=True),
     ],
-    "route-tunnel": [path_check("route-config", mac_env)],
+    # The controller reached this node through the route identity sealed into
+    # the contract. Prove the other half of the route by dialing the selected
+    # hub endpoint. Requiring mac.env here creates a first-deploy cycle because
+    # fleet-node-install.sh is the component that creates that file.
+    "route-tunnel": [
+        service_check("route-hub", os.environ["MAC_PREREQ_HUB_URL"], True, mac_env)
+    ],
     "openshell": openshell_checks,
     "qdrant": [service_check("qdrant", os.environ["MAC_PREREQ_QDRANT_URL"], os.environ["MAC_PREREQ_QDRANT_REQUIRED"], mac_env)],
     "firecrawl": [service_check("firecrawl", os.environ["MAC_PREREQ_FIRECRAWL_URL"], os.environ["MAC_PREREQ_FIRECRAWL_REQUIRED"], mac_env)],
