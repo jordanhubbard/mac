@@ -1544,10 +1544,31 @@ task leases and evidence always refer to canonical IDs.</p>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--labels<span class="w"> </span><span class="s1">&#39;{&quot;os&quot;:&quot;linux&quot;,&quot;arch&quot;:&quot;amd64&quot;,&quot;role&quot;:&quot;worker&quot;}&#39;</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>register<span class="w"> </span>machine_tutorial<span class="w"> </span>tutorial-worker<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>--agent-id<span class="w"> </span>agent_tutorial<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--capabilities<span class="w"> </span>python,docs<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>--resources<span class="w"> </span><span class="s1">&#39;{&quot;cpu&quot;:2,&quot;memory_mb&quot;:4096}&#39;</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>list
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--instance-kind<span class="w"> </span>static<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>--capabilities<span class="w"> </span>python,docs<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span>--resources<span class="w"> </span><span class="s1">&#39;{&quot;cpu&quot;:2,&quot;memory_mb&quot;:4096}&#39;</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>list
 </code></pre></div>
+<p><code>instance_kind</code> is a first-class lifecycle property:</p>
+<ul>
+<li><code>static</code> (the backward-compatible default) identifies a named installation
+  whose machine trust is durable, such as a hub or named workstation agent.</li>
+<li><code>fungible</code> identifies replaceable compute. A headless worker created through
+  a provider API or a helper such as <code>hgx create</code> belongs here; its loss is a
+  capacity event, not the loss of a static fleet identity.</li>
+</ul>
+<p>Operators can set the classification at registration or change it explicitly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>register<span class="w"> </span>machine_tutorial<span class="w"> </span>headless-worker<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--agent-id<span class="w"> </span>agent_headless<span class="w"> </span>--instance-kind<span class="w"> </span>fungible
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>update<span class="w"> </span>agent_headless<span class="w"> </span>--instance-kind<span class="w"> </span>static
+</code></pre></div>
+<p>Fungibility does not weaken trust checks. For example, <code>hgx list</code> establishes
+provider inventory, while a successful <code>hgx ssh &lt;session&gt;</code> proves that a listed
+session is actually reachable. A replacement host key must still be
+re-attested through the provider before its strict SSH pin is changed.</p>
+<p>Fungibility is also distinct from the legacy <code>resources.ephemeral</code> TTL flag. A
+fungible agent may retain a durable MAC identity across replacement compute;
+an ephemeral agent identity is tombstoned after its heartbeat TTL expires.</p>
 <p>Production agents authenticate with their own revocable worker credentials.
 They must never copy the hub administrator token. A heartbeat advertises current
 availability, while a lease grants authority over one task attempt for a bounded
