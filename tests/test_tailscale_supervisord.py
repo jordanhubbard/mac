@@ -35,6 +35,16 @@ def test_privileged_tailscale_install_is_non_interactive() -> None:
     assert " sudo supervisorctl" not in SCRIPT
 
 
+def test_supervisord_client_uses_privileged_socket_without_secret_output() -> None:
+    runner = _extract("run_tailscale")
+    assert 'if [ "$SUPERVISOR_KIND" = "supervisord" ]; then' in runner
+    assert 'sudo -n tailscale "$@"' in runner
+    assert SCRIPT.count("credential-bearing output suppressed") == 2
+    for marker in ('--auth-key="$TAILSCALE_AUTH_KEY"', '--auth-key="$HEADSCALE_PREAUTHKEY"'):
+        command = SCRIPT.split(marker, 1)[1].split("}", 1)[0]
+        assert ">/dev/null 2>&1" in command
+
+
 # ---------------------------------------------------------------------------
 # Helper: extract a named bash function body from the script
 # ---------------------------------------------------------------------------

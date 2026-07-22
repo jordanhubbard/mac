@@ -94,6 +94,17 @@ tailscale_socket_flag() {
   fi
 }
 
+run_tailscale() {
+  # supervisord owns a root-scoped fleet socket. Use non-interactive privilege
+  # for every client operation in that topology so a failed `up` cannot print
+  # an auth-bearing suggested command to the deploy log.
+  if [ "$SUPERVISOR_KIND" = "supervisord" ]; then
+    sudo -n tailscale "$@"
+  else
+    tailscale "$@"
+  fi
+}
+
 supervisord_conf_dir() {
   if [ -n "${MAC_DEPLOY_SUPERVISOR_CONF_DIR:-}" ]; then
     printf '%s\n' "$MAC_DEPLOY_SUPERVISOR_CONF_DIR"
@@ -117,7 +128,7 @@ run_supervisorctl() {
 tailscale_connected() {
   command -v tailscale >/dev/null 2>&1 || return 1
   # shellcheck disable=SC2046
-  tailscale $(tailscale_socket_flag) status --json 2>/dev/null \
+  run_tailscale $(tailscale_socket_flag) status --json 2>/dev/null \
     | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('BackendState')=='Running' else 1)" 2>/dev/null
 }
 
@@ -126,7 +137,7 @@ wait_for_tailscale_ip() {
   for i in $(seq 1 20); do
     local ip
     # shellcheck disable=SC2046
-    ip="$(tailscale $(tailscale_socket_flag) ip -4 2>/dev/null | head -1 || true)"
+    ip="$(run_tailscale $(tailscale_socket_flag) ip -4 2>/dev/null | head -1 || true)"
     if [ -n "$ip" ]; then
       printf '%s\n' "$ip"
       return 0
@@ -159,7 +170,7 @@ fi
 # supervisor detection, which avoids unnecessary socket/conf-dir probing.
 if tailscale_connected; then
   # shellcheck disable=SC2046
-  ts_ip="$(tailscale $(tailscale_socket_flag) ip -4 2>/dev/null | head -1 || true)"
+  ts_ip="$(run_tailscale $(tailscale_socket_flag) ip -4 2>/dev/null | head -1 || true)"
   echo "[tailscale] Already connected (IP: ${ts_ip:-unknown})"
   if [ -n "$ts_ip" ]; then
     set_env_key "$ENV_FILE" MAC_TAILSCALE_IP "$ts_ip"
@@ -231,7 +242,7 @@ esac
 # Wait for tailscaled socket to be ready
 for i in $(seq 1 10); do
   # shellcheck disable=SC2046
-  if tailscale $(tailscale_socket_flag) status >/dev/null 2>&1; then
+  if run_tailscale $(tailscale_socket_flag) status >/dev/null 2>&1; then
     break
   fi
   sleep 2
@@ -242,19 +253,25 @@ echo "[tailscale] Joining as hostname='${TAILSCALE_HOSTNAME}'"
 
 if [ "$control_mode" = "headscale" ]; then
   # shellcheck disable=SC2046
-  tailscale $(tailscale_socket_flag) up \
+  run_tailscale $(tailscale_socket_flag) up \
     --login-server="$HEADSCALE_URL" \
     --auth-key="$HEADSCALE_PREAUTHKEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
     --accept-routes \
-    --accept-dns=true
+    --accept-dns=true >/dev/null 2>&1 || {
+      echo "[tailscale] ERROR: headscale join failed (credential-bearing output suppressed)" >&2
+      exit 1
+    }
 else
   # shellcheck disable=SC2046
-  tailscale $(tailscale_socket_flag) up \
+  run_tailscale $(tailscale_socket_flag) up \
     --auth-key="$TAILSCALE_AUTH_KEY" \
     --hostname="$TAILSCALE_HOSTNAME" \
     --accept-routes \
-    --accept-dns=true
+    --accept-dns=true >/dev/null 2>&1 || {
+      echo "[tailscale] ERROR: tailscale join failed (credential-bearing output suppressed)" >&2
+      exit 1
+    }
 fi
 
 # -- Wait for Tailscale IP --
@@ -262,7 +279,7 @@ ts_ip="$(wait_for_tailscale_ip || true)"
 if [ -z "$ts_ip" ]; then
   echo "[tailscale] ERROR: did not get a Tailscale IP after joining" >&2
   # shellcheck disable=SC2046
-  tailscale $(tailscale_socket_flag) status >&2 || true
+  run_tailscale $(tailscale_socket_flag) status >&2 || true
   exit 1
 fi
 
