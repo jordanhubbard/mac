@@ -673,6 +673,12 @@ def migrate(
             "reviewed OpenShell gateway is not active before migration"
         )
     if initial["status"] == "proof_required":
+        # A prior attempt can commit the database rewrite, publish a newer
+        # gateway binary, and then fail before proving inventory.  The running
+        # process may still be the old inode.  Reload the exact managed binary
+        # before proof so crash-resume cannot repeatedly exercise stale code.
+        manager.stop()
+        manager.start()
         wait_for_gateway_endpoint()
         inventory_count = prove_inventory(home)
         completed = {

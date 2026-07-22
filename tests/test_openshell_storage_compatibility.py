@@ -183,10 +183,20 @@ def test_compatible_database_with_legacy_backup_requires_receipt_recovery(
 
     class Manager:
         kind = "systemd-user"
+        stopped = False
+        started = False
 
-        @staticmethod
-        def active() -> bool:
+        @classmethod
+        def active(cls) -> bool:
             return True
+
+        @classmethod
+        def stop(cls) -> None:
+            cls.stopped = True
+
+        @classmethod
+        def start(cls) -> None:
+            cls.started = True
 
     monkeypatch.setattr(module, "detect_gateway_manager", lambda *_: Manager())
     monkeypatch.setattr(module, "wait_for_gateway_endpoint", lambda: None)
@@ -196,6 +206,8 @@ def test_compatible_database_with_legacy_backup_requires_receipt_recovery(
 
     assert result["recovered_pending_proof"] is True
     assert result["migrated_count"] == 1
+    assert Manager.stopped is True
+    assert Manager.started is True
     receipt = module.receipt_path(home)
     assert receipt.stat().st_mode & 0o777 == 0o600
     assert module.preflight(home, database, "linux", "a" * 64)["status"] == "ready"
