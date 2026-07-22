@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 
 import pytest
@@ -1223,6 +1224,9 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
         encoding="utf-8"
     )
     managed_entrypoint = (managed / "entrypoint.sh").read_text(encoding="utf-8")
+    checkpoint_quiescer = (managed / "checkpoint-quiesce.sh").read_text(
+        encoding="utf-8"
+    )
     assert "sandbox create" in wrapper
     # GPU passthrough is self-detecting per host: --gpu on CUDA machines, a
     # no-op on GPU-less hosts (Apple Silicon). Scalar (not array) so an empty
@@ -1232,8 +1236,18 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "sandbox create $GPU_ARG" in wrapper
     assert "-- env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc /home/sandbox/.config/mac-openclaw/entrypoint.sh" in wrapper
     assert managed_entrypoint.startswith("#!/bin/bash\nset -euo pipefail\n")
+    assert "mac-openclaw-gateway.pid" in managed_entrypoint
+    assert "runtime_token" in managed_entrypoint
+    assert 'kill -TERM "$writer_pid"' in checkpoint_quiescer
+    assert '"/proc/$writer_pid/status"' in checkpoint_quiescer
+    assert '"/proc/$writer_pid/comm"' in checkpoint_quiescer
+    assert '"/proc/$entrypoint_pid/cmdline"' in checkpoint_quiescer
+    assert 'writer_name" = openclaw' in checkpoint_quiescer
     assert "sandbox delete" in stop_wrapper
     assert "sandbox download" in stop_wrapper
+    assert "fcntl.flock" in stop_wrapper
+    assert "PRAGMA quick_check" in stop_wrapper
+    assert "TAR_OPTIONS" not in stop_wrapper
     assert "sandbox_state" in stop_wrapper
     assert "wait_for_sandbox_absent" in stop_wrapper
     assert 'sandbox delete "$SANDBOX" >/dev/null 2>&1 || true' not in stop_wrapper
@@ -1244,8 +1258,10 @@ def test_prepare_renders_valid_secret_ref_config_without_log_leaks(tmp_path: Pat
     assert "stop_gateway" in wrapper
     assert '--upload "$WORKSPACE:/sandbox"' in wrapper
     assert '--upload "$STATE:/sandbox"' in wrapper
+    assert "checkpoint-quiesce.sh:/home/sandbox/.config/mac-openclaw/checkpoint-quiesce.sh" in wrapper
     subprocess.run(["bash", "-n", str(wrapper_path)], check=True, timeout=10)
     subprocess.run(["bash", "-n", str(stop_wrapper_path)], check=True, timeout=10)
+    subprocess.run(["bash", "-n", str(managed / "checkpoint-quiesce.sh")], check=True, timeout=10)
     assert "set -a; . /home/sandbox/.config/mac-openclaw/runtime.env; set +a" in (
         message_wrapper
     )
@@ -1281,6 +1297,13 @@ def _render_stop_wrapper_with_fake_openshell(
 printf '%s\n' "$*" >> "$MAC_TEST_OPEN_SHELL_CALLS"
 case "$1:$2" in
   sandbox:get)
+    if [ -n "${MAC_TEST_SANDBOX_STATE:-}" ] \
+        && [ "$(sed -n '1p' "$MAC_TEST_SANDBOX_STATE")" = absent ]; then
+      cat >&2 <<'DIAGNOSTIC'
+Error:   × code: 'Some requested entity was not found', message: "sandbox not found"
+DIAGNOSTIC
+      exit 1
+    fi
     case "${MAC_TEST_SANDBOX_MODE:-active}" in
       active|delete-failure|persistent) exit 0 ;;
       sleeping-inspection) sleep 30 ;;
@@ -1296,14 +1319,37 @@ DIAGNOSTIC
         ;;
     esac
     ;;
+  sandbox:exec)
+    exit 0
+    ;;
   sandbox:download)
+    if [ "${MAC_TEST_DOWNLOAD_FAILURE:-}" = "$4" ]; then
+      echo 'synthetic checkpoint download failure' >&2
+      exit 74
+    fi
+    sleep "${MAC_TEST_DOWNLOAD_SLEEP:-0}"
     mkdir -p "$5"
-    printf '%s\n' checkpoint-preserved > "$5/checkpoint.txt"
+    if [ -n "${MAC_TEST_CHECKPOINT_SOURCE:-}" ]; then
+      case "$4" in
+        /sandbox/workspace)
+          /bin/cp -Rf "$MAC_TEST_CHECKPOINT_SOURCE/workspace/." "$5/"
+          ;;
+        /sandbox/state)
+          /bin/cp -Rf "$MAC_TEST_CHECKPOINT_SOURCE/state/." "$5/"
+          ;;
+      esac
+    else
+      printf '%s\n' checkpoint-preserved > "$5/checkpoint.txt"
+    fi
     ;;
   sandbox:delete)
     if [ "${MAC_TEST_SANDBOX_MODE:-active}" = delete-failure ]; then
       echo 'synthetic delete rejection' >&2
       exit 9
+    fi
+    if [ "${MAC_TEST_SANDBOX_MODE:-active}" != persistent ] \
+        && [ -n "${MAC_TEST_SANDBOX_STATE:-}" ]; then
+      printf '%s\n' absent > "$MAC_TEST_SANDBOX_STATE"
     fi
     ;;
   *) echo "unexpected openshell invocation: $*" >&2; exit 99 ;;
@@ -1336,6 +1382,215 @@ esac
         timeout=20,
     )
     return mac_home / "bin" / "openclaw-gateway-stop", env, calls
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    if not root.is_dir():
+        return {}
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _seed_checkpoint_source(root: Path) -> tuple[Path, sqlite3.Connection]:
+    source = root / "checkpoint-source"
+    workspace = source / "workspace"
+    state = source / "state" / "state"
+    workspace.mkdir(parents=True)
+    state.mkdir(parents=True)
+    (workspace / "candidate.txt").write_text("candidate workspace\n", encoding="utf-8")
+    database = state / "openclaw.sqlite"
+    connection = sqlite3.connect(database)
+    assert connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    connection.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, body TEXT)")
+    connection.execute("INSERT INTO messages(body) VALUES ('from WAL')")
+    connection.commit()
+    assert Path(str(database) + "-wal").is_file()
+    return source, connection
+
+
+def test_stop_wrapper_quiesces_validates_and_promotes_wal_checkpoint(
+    tmp_path: Path,
+) -> None:
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
+        tmp_path
+    )
+    mac_home = Path(base_env["MAC_HOME"])
+    state_file = tmp_path / "sandbox-state"
+    state_file.write_text("active\n", encoding="utf-8")
+    source, connection = _seed_checkpoint_source(tmp_path)
+    try:
+        result = subprocess.run(
+            [str(stop_wrapper)],
+            env={
+                **base_env,
+                "MAC_TEST_SANDBOX_STATE": str(state_file),
+                "MAC_TEST_CHECKPOINT_SOURCE": str(source),
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    finally:
+        connection.close()
+
+    assert result.returncode == 0, result.stderr
+    calls = calls_path.read_text(encoding="utf-8").splitlines()
+    quiesce_index = next(
+        index for index, call in enumerate(calls) if "checkpoint-quiesce.sh" in call
+    )
+    download_indexes = [
+        index for index, call in enumerate(calls) if "sandbox download" in call
+    ]
+    delete_index = next(
+        index for index, call in enumerate(calls) if "sandbox delete" in call
+    )
+    assert quiesce_index < min(download_indexes) < max(download_indexes) < delete_index
+    assert state_file.read_text(encoding="utf-8").strip() == "absent"
+    promoted = mac_home / "openclaw" / "state" / "state" / "openclaw.sqlite"
+    with sqlite3.connect(promoted) as checked:
+        assert checked.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        assert checked.execute("SELECT body FROM messages").fetchone() == ("from WAL",)
+    assert (
+        mac_home / "openclaw" / "workspace" / "candidate.txt"
+    ).read_text(encoding="utf-8") == "candidate workspace\n"
+    archives = sorted((mac_home / "openclaw" / "archive").glob("checkpoint-*"))
+    assert len(archives) == 1
+    assert (archives[0] / "workspace" / "AGENTS.md").is_file()
+
+
+def test_stop_wrapper_rejects_malformed_sqlite_without_replacing_last_good(
+    tmp_path: Path,
+) -> None:
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
+        tmp_path
+    )
+    mac_home = Path(base_env["MAC_HOME"])
+    host_root = mac_home / "openclaw"
+    (host_root / "workspace" / "last-good.txt").write_text(
+        "last good workspace\n", encoding="utf-8"
+    )
+    (host_root / "state" / "last-good.txt").write_text(
+        "last good state\n", encoding="utf-8"
+    )
+    archive = host_root / "archive" / "checkpoint-existing"
+    archive.mkdir()
+    (archive / "marker").write_text("existing archive\n", encoding="utf-8")
+    before_workspace = _tree_bytes(host_root / "workspace")
+    before_state = _tree_bytes(host_root / "state")
+    before_archive = _tree_bytes(host_root / "archive")
+
+    source = tmp_path / "invalid-source"
+    (source / "workspace").mkdir(parents=True)
+    database = source / "state" / "state" / "openclaw.sqlite"
+    database.parent.mkdir(parents=True)
+    (source / "workspace" / "candidate.txt").write_text("invalid\n", encoding="utf-8")
+    database.write_bytes(b"SQLite format 3\x00" + b"not-a-database" * 32)
+    state_file = tmp_path / "sandbox-state"
+    state_file.write_text("active\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [str(stop_wrapper)],
+        env={
+            **base_env,
+            "MAC_TEST_SANDBOX_STATE": str(state_file),
+            "MAC_TEST_CHECKPOINT_SOURCE": str(source),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+
+    assert result.returncode != 0
+    assert "checkpoint validation failed" in result.stderr
+    assert "SQLite quick_check failed" in result.stderr
+    assert _tree_bytes(host_root / "workspace") == before_workspace
+    assert _tree_bytes(host_root / "state") == before_state
+    assert _tree_bytes(host_root / "archive") == before_archive
+    calls = calls_path.read_text(encoding="utf-8").splitlines()
+    assert any("checkpoint-quiesce.sh" in call for call in calls)
+    assert sum("sandbox download" in call for call in calls) == 2
+    assert not any("sandbox delete" in call for call in calls)
+    assert state_file.read_text(encoding="utf-8").strip() == "active"
+    assert not list(host_root.glob(".checkpoint-*"))
+
+
+@pytest.mark.parametrize(
+    ("failed_source", "diagnostic"),
+    (
+        ("/sandbox/workspace", "workspace checkpoint download failed"),
+        ("/sandbox/state", "state checkpoint download failed"),
+    ),
+)
+def test_stop_wrapper_download_failure_preserves_last_good(
+    tmp_path: Path, failed_source: str, diagnostic: str
+) -> None:
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
+        tmp_path
+    )
+    host_root = Path(base_env["MAC_HOME"]) / "openclaw"
+    (host_root / "workspace" / "last-good.txt").write_text("workspace\n", encoding="utf-8")
+    (host_root / "state" / "last-good.txt").write_text("state\n", encoding="utf-8")
+    before_workspace = _tree_bytes(host_root / "workspace")
+    before_state = _tree_bytes(host_root / "state")
+    before_archive = _tree_bytes(host_root / "archive")
+    state_file = tmp_path / "sandbox-state"
+    state_file.write_text("active\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [str(stop_wrapper)],
+        env={
+            **base_env,
+            "MAC_TEST_SANDBOX_STATE": str(state_file),
+            "MAC_TEST_DOWNLOAD_FAILURE": failed_source,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+
+    assert result.returncode != 0
+    assert diagnostic in result.stderr
+    assert _tree_bytes(host_root / "workspace") == before_workspace
+    assert _tree_bytes(host_root / "state") == before_state
+    assert _tree_bytes(host_root / "archive") == before_archive
+    calls = calls_path.read_text(encoding="utf-8").splitlines()
+    assert any("checkpoint-quiesce.sh" in call for call in calls)
+    assert not any("sandbox delete" in call for call in calls)
+    assert not list(host_root.glob(".checkpoint-*"))
+
+
+def test_stop_wrapper_serializes_concurrent_checkpoint_attempts(tmp_path: Path) -> None:
+    stop_wrapper, base_env, calls_path = _render_stop_wrapper_with_fake_openshell(
+        tmp_path
+    )
+    state_file = tmp_path / "sandbox-state"
+    state_file.write_text("active\n", encoding="utf-8")
+    env = {
+        **base_env,
+        "MAC_TEST_SANDBOX_STATE": str(state_file),
+        "MAC_TEST_DOWNLOAD_SLEEP": "0.2",
+    }
+    first = subprocess.Popen(
+        [str(stop_wrapper)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    second = subprocess.Popen(
+        [str(stop_wrapper)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    first_output = first.communicate(timeout=15)
+    second_output = second.communicate(timeout=15)
+
+    assert first.returncode == 0, first_output
+    assert second.returncode == 0, second_output
+    calls = calls_path.read_text(encoding="utf-8").splitlines()
+    assert sum("checkpoint-quiesce.sh" in call for call in calls) == 1
+    assert sum("sandbox download" in call for call in calls) == 2
+    assert sum("sandbox delete" in call for call in calls) == 1
 
 
 @pytest.mark.parametrize(

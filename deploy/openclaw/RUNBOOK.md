@@ -229,11 +229,14 @@ The gateway remains inside an OpenShell sandbox, and its container is still
 recreated from the cached image on each service start because OpenShell 0.0.72
 cannot safely reuse its forwarding/process boundary. The data is not
 disposable: the stop wrapper downloads `/sandbox/workspace` and
-`/sandbox/state`, atomically promotes both host checkpoints, then deletes the
-container. Startup uploads the complete host trees. This guarantees one channel
-consumer while retaining OpenClaw's own identity, sessions, outbox, plugin,
-cron, and memory state across recreation. Task-execution sandbox reuse is a
-separate policy.
+`/sandbox/state` only after the exact gateway writer has exited. It serializes
+checkpoint attempts, validates SQLite databases together with their WAL files,
+and promotes the workspace/state pair with rollback before deleting the
+container. Failed downloads or validation retain the last-good host pair and
+leave the sandbox available for diagnosis. Startup uploads the complete host
+trees. This guarantees one channel consumer while retaining OpenClaw's own
+identity, sessions, outbox, plugin, cron, and memory state across recreation.
+Task-execution sandbox reuse is a separate policy.
 
 ## Rollback
 

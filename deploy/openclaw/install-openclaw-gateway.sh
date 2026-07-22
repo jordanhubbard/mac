@@ -1321,17 +1321,32 @@ set -a
 . /home/sandbox/.config/mac-openclaw/runtime.env
 set +a
 child=0
+runtime_token=""
+pid_file=/tmp/mac-openclaw-gateway.pid
+stopped_file=/tmp/mac-openclaw-gateway.stopped
+rm -f "$pid_file" "$stopped_file"
+
+mark_stopped() {
+  rm -f "$pid_file"
+  [ -z "$runtime_token" ] \
+    || printf '%s\n' "$runtime_token" > "$stopped_file"
+}
+
 cleanup() {
   trap - EXIT INT TERM
   if [ "$child" -gt 0 ] && kill -0 "$child" >/dev/null 2>&1; then
     kill -TERM "$child" >/dev/null 2>&1 || true
     wait "$child" 2>/dev/null || true
   fi
+  child=0
+  mark_stopped
 }
 trap 'cleanup; exit 143' INT TERM
 trap cleanup EXIT
 /usr/local/bin/openclaw gateway run &
 child=$!
+runtime_token="$$-$child"
+printf '%s %s\n' "$child" "$runtime_token" > "$pid_file"
 for _attempt in $(seq 1 45); do
   /usr/local/bin/openclaw health --verbose --json >/dev/null 2>&1 && break
   kill -0 "$child" >/dev/null 2>&1 || wait "$child"
@@ -1342,9 +1357,99 @@ done
   /home/sandbox/.config/mac-openclaw/cron-plan.json
 if wait "$child"; then status=0; else status=$?; fi
 child=0
+mark_stopped
+trap - EXIT INT TERM
 exit "$status"
 EOF
   chmod 0700 "$MANAGED_DIR/entrypoint.sh"
+}
+
+write_checkpoint_quiescer() {
+  cat > "$MANAGED_DIR/checkpoint-quiesce.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+pid_file=/tmp/mac-openclaw-gateway.pid
+stopped_file=/tmp/mac-openclaw-gateway.stopped
+
+# The entrypoint publishes the exact gateway PID and a per-boot token.  Do not
+# guess with pgrep: a sandbox can contain other OpenClaw CLI processes, and a
+# checkpoint is safe only after the state-owning gateway writer has exited.
+for _attempt in $(seq 1 300); do
+  [ -r "$pid_file" ] && break
+  [ ! -r "$stopped_file" ] || exit 0
+  sleep 0.1
+done
+[ -r "$pid_file" ] || {
+  echo "OpenClaw gateway PID identity was not published" >&2
+  exit 1
+}
+
+read -r writer_pid runtime_token < "$pid_file"
+case "$writer_pid" in
+  ''|*[!0-9]*)
+    echo "OpenClaw gateway PID identity is malformed" >&2
+    exit 1
+    ;;
+esac
+[ -n "$runtime_token" ] || {
+  echo "OpenClaw gateway runtime token is missing" >&2
+  exit 1
+}
+entrypoint_pid="${runtime_token%%-*}"
+token_writer_pid="${runtime_token#*-}"
+case "$entrypoint_pid:$token_writer_pid" in
+  *[!0-9:]*|:*)
+    echo "OpenClaw gateway runtime token is malformed" >&2
+    exit 1
+    ;;
+esac
+[ "$token_writer_pid" = "$writer_pid" ] || {
+  echo "OpenClaw gateway runtime token names another writer" >&2
+  exit 1
+}
+
+if kill -0 "$writer_pid" >/dev/null 2>&1; then
+  [ -r "/proc/$writer_pid/status" ] \
+    && [ -r "/proc/$writer_pid/comm" ] \
+    && [ -r "/proc/$entrypoint_pid/cmdline" ] || {
+    echo "OpenClaw gateway process identity is unreadable" >&2
+    exit 1
+  }
+  writer_parent="$(sed -n 's/^PPid:[[:space:]]*//p' "/proc/$writer_pid/status")"
+  writer_name="$(sed -n '1p' "/proc/$writer_pid/comm")"
+  entrypoint_command="$(tr '\000' ' ' < "/proc/$entrypoint_pid/cmdline")"
+  [ "$writer_parent" = "$entrypoint_pid" ] \
+    && [ "$writer_name" = openclaw ] \
+    && [ "$entrypoint_command" = "/bin/bash --noprofile --norc /home/sandbox/.config/mac-openclaw/entrypoint.sh " ] || {
+      echo "OpenClaw gateway PID belongs to another process tree" >&2
+      exit 1
+    }
+  kill -TERM "$writer_pid"
+fi
+
+for _attempt in $(seq 1 1200); do
+  if ! kill -0 "$writer_pid" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+if kill -0 "$writer_pid" >/dev/null 2>&1; then
+  echo "OpenClaw gateway writer did not stop before checkpoint" >&2
+  exit 1
+fi
+
+# A graceful entrypoint writes the matching token after wait(2) has reaped the
+# writer.  A writer already absent after an unexpected exit is also quiescent;
+# the host-side SQLite validation remains the integrity gate for that case.
+if [ -r "$stopped_file" ]; then
+  stopped_token="$(sed -n '1p' "$stopped_file")"
+  [ "$stopped_token" = "$runtime_token" ] || {
+    echo "OpenClaw gateway stopped marker belongs to another runtime" >&2
+    exit 1
+  }
+fi
+EOF
+  chmod 0700 "$MANAGED_DIR/checkpoint-quiesce.sh"
 }
 
 write_workspace_context() {
@@ -1593,7 +1698,55 @@ SANDBOX=$(printf '%q' "$SANDBOX_NAME")
 HOST_ROOT=$(printf '%q' "$OPENCLAW_HOST_DIR")
 WORKSPACE=$(printf '%q' "$WORKSPACE_DIR")
 STATE=$(printf '%q' "$STATE_DIR")
+CHECKPOINT_LOCK=$(printf '%q' "$OPENCLAW_HOST_DIR/checkpoint.lock")
 SANDBOX_NOT_FOUND_DIAGNOSTIC=$(printf '%q' "$OPENSHELL_SANDBOX_NOT_FOUND_DIAGNOSTIC")
+
+# ExecStop, ExecStopPost, the host launcher's EXIT trap, and deployment
+# recovery may all converge on this program.  Keep one checkpoint owner across
+# macOS and Linux without depending on an external flock(1) binary.
+if [ "\${OPENCLAW_CHECKPOINT_LOCK_HELD_INTERNAL:-0}" != 1 ]; then
+  exec python3 - "\$CHECKPOINT_LOCK" "\$0" "\$@" <<'PY'
+import fcntl
+import os
+import stat
+import subprocess
+import sys
+import time
+
+lock_path, program, *arguments = sys.argv[1:]
+flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+try:
+    descriptor = os.open(lock_path, flags, 0o600)
+except OSError as exc:
+    print("openclaw-gateway-stop: checkpoint lock is unavailable: %s" % exc, file=sys.stderr)
+    raise SystemExit(1)
+try:
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+        print("openclaw-gateway-stop: checkpoint lock identity is unsafe", file=sys.stderr)
+        raise SystemExit(1)
+    os.fchmod(descriptor, 0o600)
+    deadline = time.monotonic() + 300.0
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                print("openclaw-gateway-stop: checkpoint lock timed out", file=sys.stderr)
+                raise SystemExit(1)
+            time.sleep(0.1)
+    environment = os.environ.copy()
+    environment["OPENCLAW_CHECKPOINT_LOCK_HELD_INTERNAL"] = "1"
+    raise SystemExit(
+        subprocess.call(
+            [program, *arguments], env=environment, stdin=subprocess.DEVNULL
+        )
+    )
+finally:
+    os.close(descriptor)
+PY
+fi
 
 subprocess_timeout() {
   local value="\${MAC_OPENCLAW_SUBPROCESS_TIMEOUT_SECONDS:-30}"
@@ -1768,31 +1921,163 @@ delete_sandbox_and_wait() {
   fi
 }
 
-sandbox_state_value="\$(sandbox_state)" || exit \$?
-[ "\$sandbox_state_value" = active ] || exit 0
-tmp="\$HOST_ROOT/.checkpoint-\$\$"
-rm -rf "\$tmp"
-mkdir -p "\$tmp"
-# OpenShell's remote tar can observe a concurrently-written memory file during
-# shutdown.  Preserve the rest of the checkpoint instead of failing the whole
-# service stop on that benign race.
-export TAR_OPTIONS="\${TAR_OPTIONS:-} --ignore-failed-read"
-if run_bounded "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
-      /sandbox/workspace "\$tmp/workspace" \
-    && run_bounded "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
-      /sandbox/state "\$tmp/state"; then
-  chmod -R go-rwx "\$tmp"
+quiesce_gateway_writer() {
+  local output="" rc=0
+  output="\$(run_bounded /usr/bin/env HOME=/tmp BASH_ENV=/dev/null \
+    "\$OPEN_SHELL" sandbox exec --name "\$SANDBOX" --no-tty -- \
+    env HOME=/tmp BASH_ENV=/dev/null /bin/bash --noprofile --norc \
+      /home/sandbox/.config/mac-openclaw/checkpoint-quiesce.sh 2>&1)" \
+    || rc=\$?
+  if [ "\$rc" -ne 0 ]; then
+    echo "openclaw-gateway-stop: gateway writer quiescence failed (exit \$rc): \$output" >&2
+    return "\$rc"
+  fi
+}
+
+validate_checkpoint_candidate() {
+  python3 - "\$1/workspace" "\$1/state" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+roots = [Path(value) for value in sys.argv[1:]]
+database_suffixes = {".db", ".sqlite", ".sqlite3"}
+databases = set()
+wal_files = []
+
+for root in roots:
+    if not root.is_dir():
+        raise SystemExit("checkpoint candidate is missing %s" % root.name)
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name.endswith("-wal"):
+            wal_files.append(path)
+            continue
+        if path.name.endswith(("-shm", "-journal")):
+            continue
+        header = b""
+        try:
+            with path.open("rb") as stream:
+                header = stream.read(16)
+        except OSError as exc:
+            raise SystemExit("checkpoint candidate is unreadable: %s: %s" % (path, exc))
+        if path.suffix.lower() in database_suffixes or header == b"SQLite format 3\x00":
+            databases.add(path)
+
+for wal in wal_files:
+    database = Path(str(wal)[:-4])
+    if not database.is_file():
+        raise SystemExit("checkpoint candidate has an orphan SQLite WAL: %s" % wal)
+    databases.add(database)
+
+for database in sorted(databases):
+    connection = None
+    try:
+        connection = sqlite3.connect(
+            database.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0
+        )
+        connection.execute("PRAGMA query_only=ON")
+        rows = [str(row[0]) for row in connection.execute("PRAGMA quick_check")]
+        if rows != ["ok"]:
+            raise RuntimeError("; ".join(rows) or "quick_check returned no result")
+    except (OSError, RuntimeError, sqlite3.DatabaseError) as exc:
+        raise SystemExit(
+            "SQLite quick_check failed for %s: %s" % (database, exc)
+        )
+    finally:
+        if connection is not None:
+            connection.close()
+
+print("validated %d SQLite database(s)" % len(databases))
+PY
+}
+
+promote_checkpoint_candidate() {
+  local candidate="\$1" stamp old_workspace=0 old_state=0
+  local new_workspace=0 new_state=0 rollback_failed=0
   stamp="\$HOST_ROOT/archive/checkpoint-\$(date -u +%Y%m%dT%H%M%SZ)-\$\$"
   mkdir -p "\$stamp"
-  [ ! -e "\$WORKSPACE" ] || mv -f "\$WORKSPACE" "\$stamp/workspace"
-  [ ! -e "\$STATE" ] || mv -f "\$STATE" "\$stamp/state"
-  mv -f "\$tmp/workspace" "\$WORKSPACE"
-  mv -f "\$tmp/state" "\$STATE"
+
+  if [ -e "\$WORKSPACE" ]; then
+    if ! mv -f "\$WORKSPACE" "\$stamp/workspace"; then
+      rmdir "\$stamp" 2>/dev/null || true
+      echo "openclaw-gateway-stop: could not archive the prior workspace" >&2
+      return 1
+    fi
+    old_workspace=1
+  fi
+  if [ -e "\$STATE" ]; then
+    if ! mv -f "\$STATE" "\$stamp/state"; then
+      [ "\$old_workspace" -ne 1 ] \
+        || mv -f "\$stamp/workspace" "\$WORKSPACE" \
+        || rollback_failed=1
+      rmdir "\$stamp" 2>/dev/null || true
+      echo "openclaw-gateway-stop: could not archive the prior state (rollback_failed=\$rollback_failed)" >&2
+      return 1
+    fi
+    old_state=1
+  fi
+
+  if mv -f "\$candidate/workspace" "\$WORKSPACE"; then
+    new_workspace=1
+  fi
+  if [ "\$new_workspace" -eq 1 ] \
+      && mv -f "\$candidate/state" "\$STATE"; then
+    new_state=1
+  fi
+  if [ "\$new_workspace" -ne 1 ] || [ "\$new_state" -ne 1 ]; then
+    [ "\$new_workspace" -ne 1 ] || rm -rf "\$WORKSPACE"
+    [ "\$new_state" -ne 1 ] || rm -rf "\$STATE"
+    [ "\$old_workspace" -ne 1 ] \
+      || mv -f "\$stamp/workspace" "\$WORKSPACE" \
+      || rollback_failed=1
+    [ "\$old_state" -ne 1 ] \
+      || mv -f "\$stamp/state" "\$STATE" \
+      || rollback_failed=1
+    rmdir "\$stamp" 2>/dev/null || true
+    echo "openclaw-gateway-stop: checkpoint pair promotion failed (rollback_failed=\$rollback_failed)" >&2
+    return 1
+  fi
+
+  rmdir "\$candidate" 2>/dev/null || true
+  if [ "\$old_workspace" -eq 0 ] && [ "\$old_state" -eq 0 ]; then
+    rmdir "\$stamp" 2>/dev/null || true
+  fi
   find "\$HOST_ROOT/archive" -mindepth 1 -maxdepth 1 -type d \
     -name 'checkpoint-*' -print | sort -r | sed -n '3,\$p' | \
     while IFS= read -r obsolete; do rm -rf "\$obsolete"; done
-fi
+}
+
+sandbox_state_value="\$(sandbox_state)" || exit \$?
+[ "\$sandbox_state_value" = active ] || exit 0
+quiesce_gateway_writer || exit \$?
+
+tmp="\$HOST_ROOT/.checkpoint-\$\$"
 rm -rf "\$tmp"
+mkdir -p "\$tmp"
+if ! run_bounded "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
+    /sandbox/workspace "\$tmp/workspace"; then
+  rm -rf "\$tmp"
+  echo "openclaw-gateway-stop: workspace checkpoint download failed; preserving last-good host state" >&2
+  exit 1
+fi
+if ! run_bounded "\$OPEN_SHELL" sandbox download "\$SANDBOX" \
+    /sandbox/state "\$tmp/state"; then
+  rm -rf "\$tmp"
+  echo "openclaw-gateway-stop: state checkpoint download failed; preserving last-good host state" >&2
+  exit 1
+fi
+chmod -R go-rwx "\$tmp"
+if ! validation="\$(validate_checkpoint_candidate "\$tmp" 2>&1)"; then
+  rm -rf "\$tmp"
+  echo "openclaw-gateway-stop: checkpoint validation failed; preserving last-good host state: \$validation" >&2
+  exit 1
+fi
+promote_checkpoint_candidate "\$tmp" || {
+  rm -rf "\$tmp"
+  exit 1
+}
 delete_sandbox_and_wait
 EOF
   chmod 0700 "$STOP_WRAPPER_PATH"
@@ -1815,12 +2100,17 @@ stop_gateway() {
 run_attached() {
   local child=0 status=0
   cleanup() {
+    local stop_status=0
     trap - EXIT INT TERM
+    # Keep the attached OpenShell command alive while the stopper asks the
+    # exact in-sandbox gateway writer to exit and validates its checkpoint.
+    # Killing the CLI first made application quiescence an unproved race.
+    stop_gateway || stop_status=\$?
     if [ "\$child" -gt 0 ] && kill -0 "\$child" >/dev/null 2>&1; then
       kill -TERM "\$child" >/dev/null 2>&1 || true
       wait "\$child" 2>/dev/null || true
     fi
-    stop_gateway
+    return "\$stop_status"
   }
   trap 'cleanup; exit 143' INT TERM
   trap cleanup EXIT
@@ -1860,6 +2150,7 @@ run_attached "\$OPEN_SHELL" sandbox create \$GPU_ARG \
   --upload "\$MANAGED/openclaw.json:/home/sandbox/.config/mac-openclaw/openclaw.json" \
   --upload "\$MANAGED/runtime.env:/home/sandbox/.config/mac-openclaw/runtime.env" \
   --upload "\$MANAGED/entrypoint.sh:/home/sandbox/.config/mac-openclaw/entrypoint.sh" \
+  --upload "\$MANAGED/checkpoint-quiesce.sh:/home/sandbox/.config/mac-openclaw/checkpoint-quiesce.sh" \
   --upload "\$MANAGED/cron-plan.json:/home/sandbox/.config/mac-openclaw/cron-plan.json" \
   --upload "\$WORKSPACE:/sandbox" \
   --upload "\$STATE:/sandbox" \
@@ -2284,6 +2575,7 @@ prepare() {
   write_runtime_env
   write_agent_config_summary
   write_managed_entrypoint
+  write_checkpoint_quiescer
   write_workspace_context
   migrate_continuity
   render_policy
