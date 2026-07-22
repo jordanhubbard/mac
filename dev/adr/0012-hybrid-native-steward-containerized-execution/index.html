@@ -10,29 +10,27 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/archive/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/adr/0012-hybrid-native-steward-containerized-execution/">
       
-      
-        <link rel="prev" href="../openshell-sandbox/">
       
       
       
         
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>Historical archive - MAC Documentation</title>
+        <title>ADR 0012 - Native node steward with containerized task execution - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -78,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#historical-archive" class="md-skip">
+        <a href="#adr-0012-native-node-steward-with-containerized-task-execution" class="md-skip">
           Skip to content
         </a>
       
@@ -98,7 +96,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -118,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Historical archive
+              ADR 0012 - Native node steward with containerized task execution
             
           </span>
         </div>
@@ -236,7 +234,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -266,7 +264,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -345,7 +343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/01-system/" class="md-nav__link">
+      <a href="../../book/01-system/" class="md-nav__link">
         
   
   
@@ -373,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/02-local-start/" class="md-nav__link">
+      <a href="../../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -401,7 +399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+      <a href="../../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -429,7 +427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+      <a href="../../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -457,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+      <a href="../../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -485,7 +483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+      <a href="../../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -513,7 +511,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/07-repository-contracts/" class="md-nav__link">
+      <a href="../../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -541,7 +539,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+      <a href="../../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -569,7 +567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+      <a href="../../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -597,7 +595,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+      <a href="../../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -625,7 +623,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+      <a href="../../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -653,7 +651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/12-operations/" class="md-nav__link">
+      <a href="../../book/12-operations/" class="md-nav__link">
         
   
   
@@ -681,7 +679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+      <a href="../../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -709,7 +707,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+      <a href="../../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -737,7 +735,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -765,7 +763,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+      <a href="../../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -793,7 +791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -821,7 +819,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../book/18-capstone/" class="md-nav__link">
+      <a href="../../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -908,7 +906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/cli/" class="md-nav__link">
+      <a href="../../reference/cli/" class="md-nav__link">
         
   
   
@@ -936,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/openapi/" class="md-nav__link">
+      <a href="../../reference/openapi/" class="md-nav__link">
         
   
   
@@ -964,7 +962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../env-config-reference/" class="md-nav__link">
+      <a href="../../env-config-reference/" class="md-nav__link">
         
   
   
@@ -992,7 +990,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-directives/" class="md-nav__link">
+      <a href="../../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1020,7 +1018,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../repository-runtime-contract/" class="md-nav__link">
+      <a href="../../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1048,7 +1046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-registry-schema/" class="md-nav__link">
+      <a href="../../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1076,7 +1074,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1163,7 +1161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../production-deployment/" class="md-nav__link">
+      <a href="../../production-deployment/" class="md-nav__link">
         
   
   
@@ -1191,7 +1189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
         
   
   
@@ -1219,7 +1217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
         
   
   
@@ -1247,7 +1245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hub-availability/" class="md-nav__link">
+      <a href="../../hub-availability/" class="md-nav__link">
         
   
   
@@ -1275,7 +1273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1307,8 +1305,6 @@
       
   
   
-    
-  
   
   
     
@@ -1321,11 +1317,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
           <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
@@ -1346,7 +1342,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1364,7 +1360,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../work-graph-control-plane/" class="md-nav__link">
+      <a href="../../work-graph-control-plane/" class="md-nav__link">
         
   
   
@@ -1392,7 +1388,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../hermes-boundary/" class="md-nav__link">
+      <a href="../../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1420,7 +1416,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../openshell-sandbox/" class="md-nav__link">
+      <a href="../../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1445,37 +1441,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Historical archive
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../archive/" class="md-nav__link">
         
   
   
@@ -1491,37 +1460,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#archived-records" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Archived records
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1561,10 +1499,154 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#archived-records" class="md-nav__link">
+  <a href="#context" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Archived records
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Decision">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#native-node-steward" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native node steward
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#containerized-execution-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Containerized execution plane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supervisor-and-platform-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supervisor and platform boundaries
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment-hold-and-measurement-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment hold and measurement phase
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#migration-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migration constraints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alternatives-considered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alternatives considered
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alternatives considered">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#containerize-every-agent-and-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Containerize every agent and service
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keep-every-agent-host-native" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keep every agent host-native
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hybrid-steward-and-execution-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hybrid steward and execution plane
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consequences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consequences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-prior-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to prior decisions
       
     </span>
   </a>
@@ -1588,7 +1670,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/archive/index.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/adr/0012-hybrid-native-steward-containerized-execution.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1596,58 +1678,185 @@
   
 
 
-<h1 id="historical-archive">Historical archive<a class="headerlink" href="#historical-archive" title="Permanent link">&para;</a></h1>
-<p>These field notes and architecture decisions explain how MAC reached its current
-contracts. They are evidence, not current instructions. Follow the numbered book
-and current runbooks for operational work. Old field-note URLs redirect here to
-their retained sources.</p>
-<h2 id="archived-records">Archived records<a class="headerlink" href="#archived-records" title="Permanent link">&para;</a></h2>
+<h1 id="adr-0012-native-node-steward-with-containerized-task-execution">ADR 0012 - Native node steward with containerized task execution<a class="headerlink" href="#adr-0012-native-node-steward-with-containerized-task-execution" title="Permanent link">&para;</a></h1>
 <ul>
-<li><a href="../adr/0001-unify-hermes-runtime-into-mac/">ADR 0001 — Unify the Hermes runtime into the <code>mac</code> monorepo</a> — <code>adr/0001-unify-hermes-runtime-into-mac.md</code></li>
-<li><a href="../adr/0002-memory-store-at-scale/">ADR 0002 — Memory store / vector tier at fleet scale (50–200 agents per hub)</a> — <code>adr/0002-memory-store-at-scale.md</code></li>
-<li><a href="../adr/0003-tokenhub-core-into-mac/">ADR 0003 — Optional in-mac model router + vault (revisiting TokenHub's boundary)</a> — <code>adr/0003-tokenhub-core-into-mac.md</code></li>
-<li><a href="../adr/0004-task-ledger-vs-hermes-kanban/">ADR 0004 — One task database: revert the Hermes kanban adoption, keep our own board</a> — <code>adr/0004-task-ledger-vs-hermes-kanban.md</code></li>
-<li><a href="../adr/0005-elastic-executor-tier-vs-static-fleet/">ADR 0005 — Elastic executor tier vs. the static fleet (and "every agent is a GitHub runner")</a> — <code>adr/0005-elastic-executor-tier-vs-static-fleet.md</code></li>
-<li><a href="../adr/0006-acp-support/">ADR 0006 — Agent Client Protocol (ACP) support</a> — <code>adr/0006-acp-support.md</code></li>
-<li><a href="../adr/0007-hermes-boundary-mood-nap-soul-memory/">ADR 0007 — Per-module ownership: mood_policy, nap_consolidator, soul_snapshot, memory_vetting</a> — <code>adr/0007-hermes-boundary-mood-nap-soul-memory.md</code></li>
-<li><a href="../adr/0008-openshell-docker-engine-runtime/">ADR 0008 - OpenShell uses Docker Engine/Moby as its only container runtime</a> — <code>adr/0008-openshell-docker-engine-runtime.md</code></li>
-<li><a href="../adr/0009-minimal-base-on-demand-layered-provisioning/">ADR 0009 - Minimal sandbox base + on-demand, layered, cached provisioning</a> — <code>adr/0009-minimal-base-on-demand-layered-provisioning.md</code></li>
-<li><a href="../adr/0010-fleet-ide-cutover-parity-matrix/">ADR 0010 — Fleet IDE Cut-over and Parity Matrix</a> — <code>adr/0010-fleet-ide-cutover-parity-matrix.md</code></li>
-<li><a href="../adr/0011-hub-review-verification-scope/">ADR 0011 - Hub review verification uses affected tests</a> — <code>adr/0011-hub-review-verification-scope.md</code></li>
-<li><a href="../adr/0012-hybrid-native-steward-containerized-execution/">ADR 0012 - Native node steward with containerized task execution</a> — <code>adr/0012-hybrid-native-steward-containerized-execution.md</code></li>
-<li><a href="field-notes/assessment-task-1b6783/">Assessment: task_1b67831356c347c3a91d782982f47d1c</a> — <code>archive/field-notes/assessment-task-1b6783.md</code></li>
-<li><a href="field-notes/assessment-task-7023d6/">Assessment: task_7023d6a7ef6e4bbf8f6c2da523a4320f</a> — <code>archive/field-notes/assessment-task-7023d6.md</code></li>
-<li><a href="field-notes/assessment-task-83f38e/">Assessment: task_83f38e9754f64908a316cccba0952329</a> — <code>archive/field-notes/assessment-task-83f38e.md</code></li>
-<li><a href="field-notes/assessment-task-8bf378/">Assessment: task_8bf37845abf445149d99fb4a1e3a41d5</a> — <code>archive/field-notes/assessment-task-8bf378.md</code></li>
-<li><a href="field-notes/assessment-task-97627e/">Resolution: task_97627e43b1034100831e726f8981e5e2</a> — <code>archive/field-notes/assessment-task-97627e.md</code></li>
-<li><a href="field-notes/assessment-task-a33145/">Assessment: task_a33145a37db34ffeb55a0db61797df5c</a> — <code>archive/field-notes/assessment-task-a33145.md</code></li>
-<li><a href="field-notes/assessment-task-a608f4/">Assessment: task_a608f4405b0446a3b28ed7a8beb4fd65</a> — <code>archive/field-notes/assessment-task-a608f4.md</code></li>
-<li><a href="field-notes/assessment-task-de3502/">Assessment: task_de35029099d34c94be186c8992ee706a</a> — <code>archive/field-notes/assessment-task-de3502.md</code></li>
-<li><a href="field-notes/assessment-task-f6a813/">Assessment: task_f6a813fede7841d28b154af3a544864a</a> — <code>archive/field-notes/assessment-task-f6a813.md</code></li>
-<li><a href="field-notes/assessment-task-f9cd72/">Assessment: task_f9cd72342aef4e7b8701b131b12d29ff</a> — <code>archive/field-notes/assessment-task-f9cd72.md</code></li>
-<li><a href="field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout/">Close-Out: dream finding <code>dreamrepair:3dc2cf317ea21e032952a355c3550f88</code> (openclaw_fleet_rollout deliverable)</a> — <code>archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md</code></li>
-<li><a href="field-notes/closeout-dreamrepair-5404b15-skill/">Close-Out: dream finding <code>dreamrepair:5404b15fffa355d739c21e138c5cc122</code> (skill subsystem)</a> — <code>archive/field-notes/closeout-dreamrepair-5404b15-skill.md</code></li>
-<li><a href="field-notes/disposition-task-46eb6c-skill-env-prereqs/">Disposition: skill environment-prerequisite finding — smallest repair applied</a> — <code>archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md</code></li>
-<li><a href="field-notes/dream-finding-3dc2cf/">Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88</a> — <code>archive/field-notes/dream-finding-3dc2cf.md</code></li>
-<li><a href="field-notes/dream-finding-6d1b5b/">Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119</a> — <code>archive/field-notes/dream-finding-6d1b5b.md</code></li>
-<li><a href="field-notes/dream-finding-805aed7/">Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce</a> — <code>archive/field-notes/dream-finding-805aed7.md</code></li>
-<li><a href="field-notes/findings-crash-591645a3-startup-selftest-timeout/">Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc)</a> — <code>archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md</code></li>
-<li><a href="field-notes/fleet-ide-workbench-plan/">Fleet Workbench — Clean-Slate IDE Plan</a> — <code>archive/field-notes/fleet-ide-workbench-plan.md</code></li>
-<li><a href="field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4/">Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task</a> — <code>archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md</code></li>
-<li><a href="field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6/">Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6</a> — <code>archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md</code></li>
-<li><a href="field-notes/investigation-dream-skill-tool_or_skill_name-actionability/">Investigation: dream <code>tool_or_skill_name</code> (skill) finding — actionability &amp; root signal</a> — <code>archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md</code></li>
-<li><a href="field-notes/investigation-dreamrepair-5404b15-skill/">Investigation: dream finding <code>dreamrepair:5404b15fffa355d739c21e138c5cc122</code> (skill subsystem)</a> — <code>archive/field-notes/investigation-dreamrepair-5404b15-skill.md</code></li>
-<li><a href="field-notes/investigation-predispatch-conflict-5a43ad/">Investigation: <code>predispatch_conflict.py</code> failure-pattern (dream finding)</a> — <code>archive/field-notes/investigation-predispatch-conflict-5a43ad.md</code></li>
-<li><a href="field-notes/investigation-task-2284f3-env-prerequisite-false-positive/">Investigation: mac environment-prerequisite finding is a classifier false positive</a> — <code>archive/field-notes/investigation-task-2284f3-env-prerequisite-false-positive.md</code></li>
-<li><a href="field-notes/investigation-task-b6ddd8-skill-env-prereqs/">Investigation: skills environment-prerequisite behavior vs. the finding</a> — <code>archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md</code></li>
-<li><a href="field-notes/k8s-native-rewrite-plan/">Kubernetes-native rewrite plan</a> — <code>archive/field-notes/k8s-native-rewrite-plan.md</code></li>
-<li><a href="field-notes/mac-task-bd-parity-audit/"><code>mac task</code> ↔ <code>bd</code> (beads) functional-parity audit</a> — <code>archive/field-notes/mac-task-bd-parity-audit.md</code></li>
-<li><a href="field-notes/metadata-sync-assessment/">Metadata sync assessment (post-bd-bridge)</a> — <code>archive/field-notes/metadata-sync-assessment.md</code></li>
-<li><a href="field-notes/prereq-task-403ed263/">Prerequisite Verification: task_403ed263ed7e45c6b7624345005a097c</a> — <code>archive/field-notes/prereq-task-403ed263.md</code></li>
-<li><a href="field-notes/prereq-task-e94f546c/">Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd</a> — <code>archive/field-notes/prereq-task-e94f546c.md</code></li>
-<li><a href="field-notes/prereq-task-fd2f34/">Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff</a> — <code>archive/field-notes/prereq-task-fd2f34.md</code></li>
-<li><a href="field-notes/quickstart-gap-analysis/">Quickstart Gap Analysis</a> — <code>archive/field-notes/quickstart-gap-analysis.md</code></li>
-<li><a href="field-notes/scaling-plan/">Scaling Plan</a> — <code>archive/field-notes/scaling-plan.md</code></li>
+<li>Status: <strong>Accepted; implementation deferred pending fleet measurement</strong></li>
+<li>Date: 2026-07-22</li>
+<li>Decision owner: MAC fleet owner</li>
+<li>Baseline commit: <code>5b5883adb595c9ac962a26c7e327f7f522fb94ae</code></li>
+</ul>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>MAC operates across heterogeneous machines rather than one uniform server
+class. The current fleet includes a macOS host managed by launchd, Linux hosts
+managed by systemd, and Kubernetes pods managed by supervisord. CPU
+architectures, available hardware, network routes, privilege boundaries, and
+container-runtime ownership also differ between nodes.</p>
+<p>Two deployment models are already present:</p>
+<ol>
+<li>The persistent MAC control and agent processes installed by fleet deploy run
+   directly under the node's native supervisor and use <code>~/.mac/venv</code> for the
+   main Python runtime.</li>
+<li>Coding and review work is executed in OpenShell sandboxes built from an
+   immutable OCI runtime image. Python in that image is installed under
+   <code>/opt/mac-venv</code>.</li>
+</ol>
+<p>Making every process run in a container initially appears to provide a single
+system image. It would improve dependency reproducibility and eliminate some
+host package drift, but it would not make the underlying machines homogeneous.
+The containerized process would still need host-specific access to Docker,
+launchd or systemd, GPUs, filesystems, credentials, mesh networking, and
+recovery controls. In particular, giving an ordinary agent a mounted Docker
+socket would give it effective control of the host while adding a second
+failure boundary.</p>
+<p>Recent fleet failures also have different causes. Immutable images can prevent
+client/runtime version skew and can provide native <code>linux/amd64</code> and
+<code>linux/arm64</code> artifacts. They do not repair supervisor-cohort coupling, DNS,
+SSH routing, credential delivery, Tailscale state, or a failed container
+daemon. A universal-container rule would therefore solve only part of the
+observed problem while making host recovery depend on more infrastructure.</p>
+<h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
+<p>MAC adopts a <strong>hybrid native-steward/containerized-execution architecture</strong>.</p>
+<p>The durable invariant is:</p>
+<blockquote>
+<p>Every task execution environment is immutable, architecture-matched,
+digest-attested, and isolated. Only the minimal host-integration steward may
+run natively.</p>
+</blockquote>
+<p>This replaces the proposed blanket invariant that every agent process must run
+in a container.</p>
+<h3 id="native-node-steward">Native node steward<a class="headerlink" href="#native-node-steward" title="Permanent link">&para;</a></h3>
+<p>Each fleet node may run a small native steward under its platform supervisor.
+The steward owns only operations that inherently cross the host boundary:</p>
+<ul>
+<li>node identity, registration, heartbeat, and capability reporting;</li>
+<li>launchd, systemd, supervisord, or Kubernetes lifecycle integration;</li>
+<li>container-runtime availability and image activation;</li>
+<li>hardware and architecture discovery;</li>
+<li>explicit workspace, device, and secret-mount preparation;</li>
+<li>fix-forward health reporting and recovery of the active generation.</li>
+</ul>
+<p>The steward must not become a general project runtime. It must not install
+repository toolchains, run agent-authored build commands, or accumulate the
+language dependencies of fleet projects. Its dependency surface must remain
+small enough to diagnose and repair when the task runtime is broken.</p>
+<p>An implementation may retain a small standard-library recovery helper outside
+the task virtual environment, or replace it with a static binary. Such a helper
+is part of the steward boundary, not a task executor.</p>
+<h3 id="containerized-execution-plane">Containerized execution plane<a class="headerlink" href="#containerized-execution-plane" title="Permanent link">&para;</a></h3>
+<p>Coding agents, reviewers, integration workers, repository commands, and other
+dependency-heavy or agent-directed workloads run in OpenShell-managed
+containers. Ordinary task containers must not receive the host Docker socket
+or unrestricted supervisor control.</p>
+<p>Python task images use a dedicated in-image environment, conventionally
+<code>/opt/mac-venv</code>. The virtual environment provides a deterministic dependency
+path; the container and OpenShell policy provide the security boundary. A
+Python virtual environment alone is not treated as isolation.</p>
+<p>Runtime images must be:</p>
+<ul>
+<li>published by immutable digest;</li>
+<li>qualified against a recorded runtime-input identity;</li>
+<li>built for each admitted production architecture, initially <code>linux/amd64</code> and
+  <code>linux/arm64</code>;</li>
+<li>smoke-tested on the architecture on which they will run;</li>
+<li>activated through the existing fix-forward generation protocol.</li>
+</ul>
+<p>Architecture emulation is not an acceptable silent fallback for production
+workers. A node whose native image is absent remains unavailable for task work
+and reports the missing platform explicitly.</p>
+<h3 id="supervisor-and-platform-boundaries">Supervisor and platform boundaries<a class="headerlink" href="#supervisor-and-platform-boundaries" title="Permanent link">&para;</a></h3>
+<p>The fleet continues to use supervisor-homogeneous rollout lanes. launchd,
+systemd, and supervisord/Kubernetes remain platform adapters for the same
+logical deployment contract; they are not required to have identical
+implementation details or failure modes.</p>
+<p>Containerization does not permit a failing platform lane to block an already
+proved independent lane. All lanes converge on the same reviewed source and
+runtime identities, but readiness and fix-forward recovery are evaluated per
+lane.</p>
+<h2 id="deployment-hold-and-measurement-phase">Deployment hold and measurement phase<a class="headerlink" href="#deployment-hold-and-measurement-phase" title="Permanent link">&para;</a></h2>
+<p>This ADR records architectural direction only. <strong>It does not activate a fleet
+topology migration and must not block the rollout in progress on 2026-07-22.</strong></p>
+<p>Specifically, accepting this ADR:</p>
+<ul>
+<li>adds no new deploy precondition;</li>
+<li>adds no containerization conformance gate;</li>
+<li>changes no service unit, plist, supervisord program, image, or fleet record;</li>
+<li>does not drain, restart, or disqualify an existing agent;</li>
+<li>does not classify the current host-supervised agents as rollout failures.</li>
+</ul>
+<p>Phase 0 is to return the current fleet to service and collect an operational
+baseline without a significant topology perturbation. The baseline must retain
+per-agent and per-platform dimensions and include:</p>
+<ul>
+<li>availability and restart/recovery frequency;</li>
+<li>claim latency, start latency, and end-to-end task duration;</li>
+<li>task completion, review acceptance, rework, and substantive-publication
+  rates;</li>
+<li>sandbox startup and image-pull time;</li>
+<li>failures classified as source/runtime drift, architecture, supervisor,
+  container runtime, network, credentials, repository, tests, or model work;</li>
+<li>operator intervention and time to recovery;</li>
+<li>resource use sufficient to identify container or VM overhead.</li>
+</ul>
+<p>No fixed calendar duration is encoded here. The fleet owner will decide when
+the sample contains enough meaningful work across the heterogeneous lanes.
+Implementation requires a separate reviewed change that cites this baseline
+and defines its canary and reversal criteria.</p>
+<h2 id="migration-constraints">Migration constraints<a class="headerlink" href="#migration-constraints" title="Permanent link">&para;</a></h2>
+<p>If the measured evidence supports further containerization, migration proceeds
+incrementally:</p>
+<ol>
+<li>Preserve the native steward boundary and current task-container contract.</li>
+<li>Prove multi-architecture image publication and attestation independently of
+   service relocation.</li>
+<li>Canary any thinner steward or containerized persistent worker on one Linux
+   node before expanding its supervisor lane.</li>
+<li>Evaluate macOS separately because Docker runs through a Linux VM and cannot
+   replace native launchd and host-integration responsibilities.</li>
+<li>Compare the canary against the Phase-0 baseline. Promote only when it
+   improves reproducibility or recovery without degrading useful task output,
+   availability, or operator burden.</li>
+</ol>
+<p>There is no big-bang fleet conversion. A later implementation that cannot
+preserve per-lane fix-forward recovery or requires ordinary task containers to
+control the host container daemon must return for a new architectural decision.</p>
+<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<h3 id="containerize-every-agent-and-service">Containerize every agent and service<a class="headerlink" href="#containerize-every-agent-and-service" title="Permanent link">&para;</a></h3>
+<p>Rejected as a fleet-wide invariant. It provides a uniform packaging surface
+but makes native host integration indirect, creates nested-runtime problems on
+Kubernetes, introduces a Linux VM dependency on macOS, and offers little
+security benefit to a process holding the Docker socket.</p>
+<h3 id="keep-every-agent-host-native">Keep every agent host-native<a class="headerlink" href="#keep-every-agent-host-native" title="Permanent link">&para;</a></h3>
+<p>Rejected for the execution plane. Host virtual environments do not adequately
+bound agent-authored commands or prevent repository toolchains from polluting
+one another. This also gives up the immutable image and architecture
+attestation benefits already provided by OpenShell.</p>
+<h3 id="hybrid-steward-and-execution-plane">Hybrid steward and execution plane<a class="headerlink" href="#hybrid-steward-and-execution-plane" title="Permanent link">&para;</a></h3>
+<p>Accepted. It puts the stable platform adapter at the host boundary and the
+variable, dependency-heavy, agent-directed work inside the strongest existing
+isolation and provenance boundary.</p>
+<h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Current fleet recovery can continue without waiting for an architecture
+  migration.</li>
+<li>Task environments retain one reproducible OCI and OpenShell contract across
+  host types.</li>
+<li>Native platform differences remain visible and testable instead of being
+  hidden behind an incomplete single-system-image abstraction.</li>
+<li>The native steward becomes a deliberately constrained trusted component and
+  needs its own small compatibility matrix.</li>
+<li>Image publication must remain multi-architecture and provenance-aware.</li>
+<li>A future topology change is evidence-gated by meaningful fleet work rather
+  than justified only by packaging uniformity.</li>
+</ul>
+<h2 id="relationship-to-prior-decisions">Relationship to prior decisions<a class="headerlink" href="#relationship-to-prior-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>ADR 0005 separates elastic executors from the static fleet; this ADR defines
+  the host boundary for those executors.</li>
+<li>ADR 0008 keeps Docker Engine/Moby as OpenShell's container runtime; this ADR
+  does not broaden Docker socket access.</li>
+<li>ADR 0009 keeps task images minimal and provisions project-specific layers on
+  demand; this ADR preserves that separation rather than moving project
+  dependencies into the native steward.</li>
 </ul>
 
 
@@ -1680,28 +1889,6 @@ their retained sources.</p>
         <footer class="md-footer">
   
     
-      
-      <nav class="md-footer__inner md-grid" aria-label="Footer" >
-        
-          
-          <a href="../openshell-sandbox/" class="md-footer__link md-footer__link--prev" aria-label="Previous: OpenShell sandbox">
-            <div class="md-footer__button md-icon">
-              
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
-            </div>
-            <div class="md-footer__title">
-              <span class="md-footer__direction">
-                Previous
-              </span>
-              <div class="md-ellipsis">
-                OpenShell sandbox
-              </div>
-            </div>
-          </a>
-        
-        
-      </nav>
-    
   
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
@@ -1727,10 +1914,10 @@ their retained sources.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
