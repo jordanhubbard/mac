@@ -2464,7 +2464,7 @@ for phase in required_phases:
     proof = proofs.get(phase)
     if (
         not isinstance(proof, dict)
-        or proof.get("stable_absence_observations") != 2
+        or proof.get("stable_inactive_observations") != 2
         or proof.get("container_runtimes") != runtimes
     ):
         fail("daemon receipt lacks a required phase")

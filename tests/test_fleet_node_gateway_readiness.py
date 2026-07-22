@@ -1003,6 +1003,7 @@ def test_outer_contract_binds_manifest_receipts_live_state_and_phase1() -> None:
     assert "phase1_digest != phase1_summary.get(\"sha256\")" in attest
     assert "hashlib.sha256(raw_gateway).hexdigest() != gateway_summary.get(\"sha256\")" in attest
     assert "media_supervisor.get(\"media_resources\") != media_resources" in attest
+    assert 'proof.get("stable_inactive_observations") != 2' in attest
     assert "live_gateway_sample()" in attest
     assert "selected gateway restarted during release attestation" in attest
     assert "assert_phase1_attestation_matches_controller" in source
