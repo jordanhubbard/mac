@@ -364,7 +364,10 @@ case "$command" in
     fi
     if [ "$unit" = "${FAKE_SYSTEMD_RESTARTING_UNIT:-}" ] \
         && [ ! -f "$state_file" ]; then
-      printf 'LoadState=loaded\nActiveState=activating\nSubState=auto-restart\nMainPID=0\n'
+      printf 'LoadState=loaded\nActiveState=%s\nSubState=%s\nMainPID=%s\n' \
+        "${FAKE_SYSTEMD_TRANSITION_ACTIVE:-activating}" \
+        "${FAKE_SYSTEMD_TRANSITION_SUB:-auto-restart}" \
+        "${FAKE_SYSTEMD_TRANSITION_PID:-0}"
       [ "$want_restarts" != 1 ] || printf 'NRestarts=17\n'
       exit 0
     fi
@@ -964,8 +967,19 @@ def test_systemd_records_exact_prior_state_and_final_quiescence(
     }
 
 
-def test_systemd_auto_restart_service_is_quiesced_and_restored(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("active_state", "sub_state", "pid"),
+    [
+        ("activating", "auto-restart", "0"),
+        ("activating", "start", "456"),
+        ("deactivating", "stop-sigterm", "456"),
+        ("reloading", "reload-signal", "456"),
+        ("refreshing", "refresh", "456"),
+        ("maintenance", "cleaning", "0"),
+    ],
+)
+def test_systemd_transitional_service_is_quiesced_and_restored(
+    tmp_path: Path, active_state: str, sub_state: str, pid: str
 ) -> None:
     env = _base_case(tmp_path, "systemd")
     state = tmp_path / "systemd-state"
@@ -974,6 +988,9 @@ def test_systemd_auto_restart_service_is_quiesced_and_restored(
         {
             "FAKE_SYSTEMD_STATE": str(state),
             "FAKE_SYSTEMD_RESTARTING_UNIT": "mac-openclaw-gateway.service",
+            "FAKE_SYSTEMD_TRANSITION_ACTIVE": active_state,
+            "FAKE_SYSTEMD_TRANSITION_SUB": sub_state,
+            "FAKE_SYSTEMD_TRANSITION_PID": pid,
         }
     )
     _install_systemctl(tmp_path / "bin")

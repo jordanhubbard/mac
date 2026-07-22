@@ -1282,18 +1282,18 @@ def systemd_snapshot(prefix: list[str], systemctl: str, unit: str) -> dict[str, 
         if pid != 0:
             raise QuiescenceFailure("systemd reported an inactive service with a live process")
         return {"state": "inactive", "pid": 0, "restarts": restarts}
-    # A service between failed attempts is still operationally active: systemd
-    # reports ``activating/auto-restart`` with no MainPID while its restart
-    # timer is pending.  Treat it as active so phase 1 stops the restart loop
-    # and journals that it must be started again on rollback.  Requiring a
-    # positive PID here made a real crash-looping gateway impossible to drain.
+    # Every bounded transition is operationally active for quiescence. A
+    # crash-looping unit can move through activating/auto-restart,
+    # activating/start and deactivating/stop-* between two adjacent show calls;
+    # choosing one transient tuple made a real drain depend on sampling luck.
+    # Stop the unit and prove an inactive snapshot instead. Stable running
+    # services retain the stricter positive-PID contract below.
     if (
-        values["LoadState"] == "loaded"
-        and values["ActiveState"] == "activating"
-        and values["SubState"] == "auto-restart"
-        and pid == 0
+        values["LoadState"] in {"loaded", "masked"}
+        and values["ActiveState"]
+        in {"activating", "deactivating", "reloading", "refreshing", "maintenance"}
     ):
-        return {"state": "active", "pid": 0, "restarts": restarts}
+        return {"state": "active", "pid": pid, "restarts": restarts}
     if (
         values["LoadState"] not in {"loaded", "masked"}
         or values["ActiveState"] != "active"
