@@ -950,7 +950,10 @@ def test_qdrant_empty_runtime_set_is_bash_32_nounset_safe() -> None:
 
 
 def _run_launchd_transaction(
-    tmp_path: Path, mode: str, execution_mode: str = "user"
+    tmp_path: Path,
+    mode: str,
+    execution_mode: str = "user",
+    recovery_policy: str = "rollback",
 ) -> subprocess.CompletedProcess[str]:
     case_dir = tmp_path / mode
     fake_bin = case_dir / "bin"
@@ -1108,6 +1111,7 @@ mac_launchd_transaction_commit
             "FAKE_SUDO_CONTROL_CALLS": str(sudo_control_calls),
             "FAKE_SUDO_ARTIFACT_CALLS": str(sudo_artifact_calls),
             "MAC_LAUNCHD_POLL_INTERVAL_SECONDS": "0.01",
+            "MAC_LAUNCHD_TX_RECOVERY_POLICY": recovery_policy,
         },
         check=False,
         capture_output=True,
@@ -1144,6 +1148,22 @@ def test_launchd_transaction_compensates_before_commit(
     assert (case_dir / "state").read_text(encoding="utf-8") == "active\n"
     if expected_generation == "old":
         assert "restored prior launchd generation" in result.stderr
+
+
+def test_launchd_transaction_retains_failed_generation_for_forward_repair(
+    tmp_path: Path,
+) -> None:
+    result = _run_launchd_transaction(
+        tmp_path, "health-fail", recovery_policy="retain-forward"
+    )
+    case_dir = tmp_path / "health-fail"
+
+    assert result.returncode == 1, result.stderr
+    assert (case_dir / "service.plist").read_text(encoding="utf-8") == "new plist\n"
+    assert (case_dir / "service-run").read_text(encoding="utf-8") == "new wrapper\n"
+    assert (case_dir / "state").read_text(encoding="utf-8") == "active\n"
+    assert "retaining failed launchd generation for forward repair" in result.stderr
+    assert "restored prior launchd generation" not in result.stderr
 
 
 @pytest.mark.parametrize(

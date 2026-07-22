@@ -8,17 +8,23 @@
 
 The fleet deployer uses a three-phase epoch: hold and drain the complete
 selected cohort, deploy and prove every new generation, then atomically hand
-the deployment holds to one successor hold in the hub transaction. No selected
-worker becomes dispatchable between deployment and synchronized-pipeline
-activation. A worker that cannot join the epoch remains held; the deployer
-never degrades an exact cut-over into a partial transition.
+the deployment holds to one successor hold in the hub transaction. A cohort is
+a failure domain, not a synonym for the whole fleet. Production rollouts select
+one supervisor family per cohort: systemd, launchd, or supervisord. Every lane
+converges to the same reviewed source and image identities, but a launchd fault
+cannot prevent a proved systemd or supervisord lane from committing. No
+selected worker becomes dispatchable between deployment and synchronized-
+pipeline activation. A worker that cannot join its lane remains held; the
+deployer never degrades an exact lane cut-over into a partial transition.
 
 Synchronization here is a logical barrier, not a claim that heterogeneous
 hosts share a wall-clock start time. Each node may reach a barrier at its own
 speed, but no member may enter the next mutation or ownership phase until the
-controller has exact, generation-bound evidence from the entire selected set.
+controller has exact, generation-bound evidence from the entire selected lane.
 Monotonic deadlines bound local waiting without making clock agreement part of
-the safety proof.
+the safety proof. A deliberately fleet-atomic change may still select a mixed
+cohort, but normal software rollout must use supervisor-homogeneous lanes so an
+implementation-specific fault stays inside its own failure domain.
 
 ## Architecture and acceptance invariants
 

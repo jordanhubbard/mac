@@ -3164,7 +3164,8 @@
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py"
     ],
     "type": "bool"
   },
@@ -3413,7 +3414,8 @@
     "name": "MAC_DEPLOY_RECOVERY_POLICY",
     "retired": false,
     "sources": [
-      "deploy/deploy-mac-fleet.sh"
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
     ],
     "type": "str"
   },
@@ -6005,6 +6007,18 @@
     "name": "MAC_LAUNCHD_TX_PATHS",
     "retired": false,
     "sources": [
+      "deploy/lib/launchd-lifecycle.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: launchd tx recovery policy.",
+    "family": "core",
+    "name": "MAC_LAUNCHD_TX_RECOVERY_POLICY",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/lib/launchd-lifecycle.sh"
     ],
     "type": "str"

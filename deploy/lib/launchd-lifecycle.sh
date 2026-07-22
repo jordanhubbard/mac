@@ -1662,7 +1662,13 @@ mac_launchd_transaction_on_exit() {
   local saved_exit_trap="$MAC_LAUNCHD_TX_SAVED_EXIT_TRAP"
   trap - EXIT HUP INT TERM
   if [ "$MAC_LAUNCHD_TX_ACTIVE" -eq 1 ]; then
-    mac_launchd_transaction_rollback || rollback_rc=$?
+    if [ "${MAC_LAUNCHD_TX_RECOVERY_POLICY:-rollback}" = retain-forward ]; then
+      printf '%s\n' \
+        "${MAC_LAUNCHD_LOG_PREFIX:-[launchd]} retaining failed launchd generation for forward repair: $MAC_LAUNCHD_TX_LABEL" >&2
+      mac_launchd_transaction_commit || rollback_rc=$?
+    else
+      mac_launchd_transaction_rollback || rollback_rc=$?
+    fi
     if [ "$original_rc" -eq 0 ] || [ "$rollback_rc" -ne 0 ]; then
       original_rc=1
     fi

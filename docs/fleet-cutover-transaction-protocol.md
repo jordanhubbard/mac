@@ -8,7 +8,7 @@ transaction authorities.
 
 ## Objective
 
-A cut-over of a selected heterogeneous fleet must converge to exactly one of
+A cut-over of a selected failure-domain cohort must converge to exactly one of
 two outcomes:
 
 1. the exact prior, authenticating node generations remain held; or
@@ -19,6 +19,12 @@ two outcomes:
 No crash, timeout, target swap, replay, or partial participant failure may
 produce an untracked hybrid. Synchronization is a logical barrier. It does not
 require equal node speed or synchronized wall clocks.
+
+Normal rollouts partition the heterogeneous fleet by supervisor family. The
+systemd, launchd, and supervisord cohorts commit independently against the same
+reviewed release identity, so a manager-specific failure blocks only that
+manager's lane. Mixed-supervisor cohorts are reserved for changes whose safety
+really requires one fleet-wide atomic outcome.
 
 ## Ownership rule
 

@@ -20,6 +20,18 @@ case "$NODE_ACTION" in
     exit 64
     ;;
 esac
+RECOVERY_POLICY="${MAC_DEPLOY_RECOVERY_POLICY:-retain-forward}"
+case "$RECOVERY_POLICY" in
+  retain-forward|rollback) ;;
+  *)
+    printf '%s\n' \
+      "MAC_DEPLOY_RECOVERY_POLICY must be retain-forward or rollback" >&2
+    exit 64
+    ;;
+esac
+readonly RECOVERY_POLICY
+MAC_LAUNCHD_TX_RECOVERY_POLICY="$RECOVERY_POLICY"
+export MAC_LAUNCHD_TX_RECOVERY_POLICY
 
 # The outer controller acquires this fence before it copies or mutates any
 # managed state.  Re-check it in-band before this transaction's first write,
@@ -115,21 +127,25 @@ deployment_exit_handler() {
     && [ "${DEPLOY_ROLLBACK_ARMED:-0}" = 1 ] \
     && [ "${DEPLOY_COMPLETED:-0}" != 1 ] \
     && [ "${DEPLOY_ROLLBACK_IN_PROGRESS:-0}" != 1 ]; then
-    DEPLOY_ROLLBACK_IN_PROGRESS=1
-    if deployment_lock_assert_and_renew; then
-      echo "deployment failed after phase-2 mutation; restoring the prior generation" >&2
-      if [ -x "${ROLLBACK_SCRIPT:-}" ] && [ ! -L "${ROLLBACK_SCRIPT:-}" ]; then
-        "${ROLLBACK_SCRIPT}" || rollback_rc=$?
+    if [ "$RECOVERY_POLICY" = retain-forward ]; then
+      echo "deployment failed after phase-2 mutation; retaining the failed successor for in-place diagnosis and forward repair" >&2
+    else
+      DEPLOY_ROLLBACK_IN_PROGRESS=1
+      if deployment_lock_assert_and_renew; then
+        echo "deployment failed after phase-2 mutation; restoring the prior generation" >&2
+        if [ -x "${ROLLBACK_SCRIPT:-}" ] && [ ! -L "${ROLLBACK_SCRIPT:-}" ]; then
+          "${ROLLBACK_SCRIPT}" || rollback_rc=$?
+        else
+          echo "automatic rollback failed: rollback program is unavailable" >&2
+          rollback_rc=1
+        fi
       else
-        echo "automatic rollback failed: rollback program is unavailable" >&2
+        echo "automatic rollback refused: deployment fence is no longer owned" >&2
         rollback_rc=1
       fi
-    else
-      echo "automatic rollback refused: deployment fence is no longer owned" >&2
-      rollback_rc=1
-    fi
-    if [ "$rollback_rc" -ne 0 ]; then
-      echo "automatic rollback did not restore the prior generation" >&2
+      if [ "$rollback_rc" -ne 0 ]; then
+        echo "automatic rollback did not restore the prior generation" >&2
+      fi
     fi
   fi
   stop_deployment_lock_renewer
@@ -573,7 +589,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION RECOVERY_POLICY NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -10491,6 +10507,18 @@ withdraw_openclaw_gateway() {
     "$installer" withdraw
 }
 
+handle_failed_openclaw_successor() {
+  local context="$1"
+  if [ "$RECOVERY_POLICY" = retain-forward ]; then
+    log "ERROR: ${context}; retaining the failed OpenClaw successor for in-place diagnosis and forward repair"
+    return 0
+  fi
+  log "ERROR: ${context}; withdrawing the successor before generation rollback"
+  if ! withdraw_openclaw_gateway; then
+    log "ERROR: OpenClaw withdrawal failed; generation rollback remains armed and deployment stays blocked"
+  fi
+}
+
 install_linux_service() {
   local unit="/etc/systemd/system/${MAC_SERVICE_NAME}" restart_since
   local unit_staging="$LOG_DIR/${MAC_SERVICE_NAME}.${DEPLOY_TS}.$$.stage"
@@ -10612,20 +10640,14 @@ PY
   run_journalctl -u "$OPENCLAW_SERVICE_NAME" --since "$restart_since" --no-pager \
     > "$LOG_DIR/openclaw-gateway-journal.txt" || true
   if ! verify_openclaw_gateway; then
-    log "ERROR: stock OpenClaw verification failed; withdrawing the successor before generation rollback"
-    if ! withdraw_openclaw_gateway; then
-      log "ERROR: OpenClaw withdrawal failed; generation rollback remains armed and deployment stays blocked"
-    fi
+    handle_failed_openclaw_successor "stock OpenClaw verification failed"
     return 1
   fi
   disable_systemd_service_if_present "$HERMES_SERVICE_NAME"
   run_systemctl reset-failed "$HERMES_SERVICE_NAME" 2>/dev/null || true
   disable_systemd_service_if_present "$NEMOCLAW_SERVICE_NAME"
   if ! finalize_openclaw_gateway; then
-    log "ERROR: OpenClaw exclusivity proof failed; withdrawing the successor before generation rollback"
-    if ! withdraw_openclaw_gateway; then
-      log "ERROR: OpenClaw withdrawal failed; generation rollback remains armed and deployment stays blocked"
-    fi
+    handle_failed_openclaw_successor "OpenClaw exclusivity proof failed"
     return 1
   fi
   log "stock OpenClaw verified as exclusive gateway; Hermes retained only for rollback"
@@ -11725,18 +11747,14 @@ EOF
   fi
   if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
     if ! verify_openclaw_gateway; then
-      log "ERROR: stock OpenClaw verification failed under supervisord; withdrawing the successor before generation rollback"
-      if ! withdraw_openclaw_gateway; then
-        log "ERROR: OpenClaw withdrawal failed under supervisord; generation rollback stays armed"
-      fi
+      handle_failed_openclaw_successor \
+        "stock OpenClaw verification failed under supervisord"
       return 1
     fi
     stop_supervisord_program_if_present "$HERMES_SUPERVISORD_PROG"
     if ! finalize_openclaw_gateway; then
-      log "ERROR: OpenClaw exclusivity proof failed under supervisord; withdrawing the successor before generation rollback"
-      if ! withdraw_openclaw_gateway; then
-        log "ERROR: OpenClaw withdrawal failed under supervisord; generation rollback stays armed"
-      fi
+      handle_failed_openclaw_successor \
+        "OpenClaw exclusivity proof failed under supervisord"
       return 1
     fi
   fi
@@ -12105,8 +12123,15 @@ EOF
     "$OPENCLAW_LAUNCHD_LABEL" user
   if ! verify_openclaw_gateway; then
     log "ERROR: stock OpenClaw verification failed under launchd"
-    mac_launchd_transaction_rollback \
-      || die "OpenClaw transaction compensation failed under launchd"
+    if [ "$RECOVERY_POLICY" = retain-forward ]; then
+      log "ERROR: retaining failed launchd successor for in-place diagnosis and forward repair"
+      mac_launchd_transaction_commit \
+        || die "failed launchd successor was retained but transaction cleanup failed"
+      darwin_clear_auxiliary_restore
+    else
+      mac_launchd_transaction_rollback \
+        || die "OpenClaw transaction compensation failed under launchd"
+    fi
     return 1
   fi
   stop_gui_launchd_job_if_present "$uid" "$HERMES_LAUNCHD_LABEL"
@@ -12115,8 +12140,15 @@ EOF
   darwin_disable_job "gui/$uid/$NEMOCLAW_LAUNCHD_LABEL" "$NEMOCLAW_LAUNCHD_LABEL" user
   if ! finalize_openclaw_gateway; then
     log "ERROR: OpenClaw exclusivity proof failed under launchd"
-    mac_launchd_transaction_rollback \
-      || die "OpenClaw transaction compensation failed under launchd"
+    if [ "$RECOVERY_POLICY" = retain-forward ]; then
+      log "ERROR: retaining failed launchd successor for in-place diagnosis and forward repair"
+      mac_launchd_transaction_commit \
+        || die "failed launchd successor was retained but transaction cleanup failed"
+      darwin_clear_auxiliary_restore
+    else
+      mac_launchd_transaction_rollback \
+        || die "OpenClaw transaction compensation failed under launchd"
+    fi
     return 1
   fi
   verify_selected_gateway_supervisor_health
@@ -12909,13 +12941,17 @@ verify_selected_gateway_supervisor_health
 # health checks or coexist with the selected post-deploy implementation.
 if ! assert_legacy_nemoclaw_containers_inactive post_install; then
   if [ "${HERMES_GATEWAY_IMPL:-hermes}" = openclaw ]; then
-    log "ERROR: post-install daemon-resource proof failed; withdrawing OpenClaw ownership"
-    if ! withdraw_openclaw_gateway; then
-      log "ERROR: OpenClaw withdrawal failed after daemon-resource proof failure; generation rollback stays armed"
+    if [ "$RECOVERY_POLICY" = retain-forward ]; then
+      log "ERROR: post-install daemon-resource proof failed; retaining OpenClaw ownership for in-place diagnosis and forward repair"
+    else
+      log "ERROR: post-install daemon-resource proof failed; withdrawing OpenClaw ownership"
+      if ! withdraw_openclaw_gateway; then
+        log "ERROR: OpenClaw withdrawal failed after daemon-resource proof failure; generation rollback stays armed"
+      fi
+      rm -f \
+        "$MAC_HOME/openclaw/service-advertisement.json" \
+        "$MAC_HOME/openclaw/verification-pending.json"
     fi
-    rm -f \
-      "$MAC_HOME/openclaw/service-advertisement.json" \
-      "$MAC_HOME/openclaw/verification-pending.json"
   fi
   exit 1
 fi

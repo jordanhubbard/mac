@@ -500,6 +500,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_LAUNCHD_TX_OBSERVED_STATE` | str | consumer-defined | core | Core setting: launchd tx observed state. |
 | `MAC_LAUNCHD_TX_OLD_STATE` | str | consumer-defined | core | Core setting: launchd tx old state. |
 | `MAC_LAUNCHD_TX_PATHS` | str | consumer-defined | core | Core setting: launchd tx paths. |
+| `MAC_LAUNCHD_TX_RECOVERY_POLICY` | str | consumer-defined | core | Core setting: launchd tx recovery policy. |
 | `MAC_LAUNCHD_TX_ROLLBACK_HOOK` | str | consumer-defined | core | Core setting: launchd tx rollback hook. |
 | `MAC_LAUNCHD_TX_SAVED_EXIT_TRAP` | str | consumer-defined | core | Core setting: launchd tx saved exit trap. |
 | `MAC_LAUNCHD_TX_SAVED_HUP_TRAP` | str | consumer-defined | core | Core setting: launchd tx saved hup trap. |

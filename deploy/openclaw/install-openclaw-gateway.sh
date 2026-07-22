@@ -63,6 +63,13 @@ MAC_LAUNCHD_LOG_PREFIX="[install-openclaw-gateway]"
 . "$SCRIPT_DIR/../lib/launchd-lifecycle.sh"
 
 find_openshell() {
+  # The phase-1 prerequisite receipt attests this exact path.  Ambient PATH or
+  # a preserved MAC_OPENSHELL_BIN may name an older uv/cargo installation with
+  # a protobuf schema incompatible with the reviewed gateway.
+  if [ -x "$MAC_HOME/bin/openshell" ]; then
+    printf '%s\n' "$MAC_HOME/bin/openshell"
+    return
+  fi
   if [ -n "${MAC_OPENSHELL_BIN:-}" ] && [ -x "$MAC_OPENSHELL_BIN" ]; then
     printf '%s\n' "$MAC_OPENSHELL_BIN"
     return

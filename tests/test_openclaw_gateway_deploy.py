@@ -1666,6 +1666,38 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "User=__MAC_USER__" in unit
 
 
+def test_openclaw_prefers_reviewed_cli_over_stale_configured_runtime(
+    tmp_path: Path,
+) -> None:
+    mac_home = tmp_path / ".mac"
+    reviewed = mac_home / "bin" / "openshell"
+    stale = tmp_path / ".local" / "bin" / "openshell"
+    reviewed.parent.mkdir(parents=True)
+    stale.parent.mkdir(parents=True)
+    reviewed.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    stale.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    reviewed.chmod(0o700)
+    stale.chmod(0o700)
+    source = INSTALLER.read_text(encoding="utf-8")
+    function = "find_openshell() {" + source.split("find_openshell() {", 1)[1].split(
+        "\n}\n\nopenclaw_subprocess_timeout()", 1
+    )[0] + "\n}\n"
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", function + "\nfind_openshell"],
+        env={
+            **os.environ,
+            "MAC_HOME": str(mac_home),
+            "MAC_OPENSHELL_BIN": str(stale),
+        },
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == str(reviewed)
+
+
 def test_openclaw_verification_probes_then_advertises_after_exclusive_cutover() -> None:
     installer = INSTALLER.read_text(encoding="utf-8")
     assert "validate-openclaw-channel-status.py" in installer

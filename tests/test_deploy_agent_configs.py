@@ -1257,6 +1257,34 @@ def test_first_deploy_validators_honor_allow_degraded_services_flag():
     assert "MAC_DEPLOY_ALLOW_DEGRADED_SERVICES" not in typed
 
 
+def test_retain_forward_policy_reaches_each_supervisor_failure_domain():
+    controller = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(
+        encoding="utf-8"
+    )
+    node = deploy_script_text()
+    exit_handler = node.split("deployment_exit_handler() {", 1)[1].split(
+        "\n}\ntrap 'deployment_exit_handler", 1
+    )[0]
+    systemd = node.split("install_linux_openclaw_service() {", 1)[1].split(
+        "\n}\ninstall_linux_nemoclaw_service", 1
+    )[0]
+    supervisord = node.split("install_supervisord_service() {", 1)[1].split(
+        "\n}\ninstall_darwin_service", 1
+    )[0]
+    launchd = node.split("install_darwin_openclaw_service() {", 1)[1].split(
+        "\n}\ninstall_darwin_hermes_service", 1
+    )[0]
+
+    assert 'add_remote_env MAC_DEPLOY_RECOVERY_POLICY "$RECOVERY_POLICY"' in controller
+    assert '[ "$RECOVERY_POLICY" = retain-forward ]' in exit_handler
+    assert "retaining the failed successor" in exit_handler
+    assert "handle_failed_openclaw_successor" in systemd
+    assert "handle_failed_openclaw_successor" in supervisord
+    assert '[ "$RECOVERY_POLICY" = retain-forward ]' in launchd
+    assert "mac_launchd_transaction_commit" in launchd
+    assert "mac_launchd_transaction_rollback" in launchd
+
+
 def _run_env_writer(
     tmp_path,
     *,

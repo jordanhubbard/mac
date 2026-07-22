@@ -7554,6 +7554,10 @@ PY
   add_remote_env MAC_DEPLOY_DRAIN_MODE "${MAC_DEPLOY_DRAIN_MODE:-}"
   add_remote_env MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS "${MAC_DEPLOY_DRAIN_TIMEOUT_SECONDS:-}"
   add_remote_env MAC_DEPLOY_DRAIN_POLL_SECONDS "${MAC_DEPLOY_DRAIN_POLL_SECONDS:-}"
+  # Keep the node participant's compensation behavior identical to the durable
+  # cohort journal.  Without this propagation a retain-forward controller can
+  # preserve holds while the node silently restores the prior generation.
+  add_remote_env MAC_DEPLOY_RECOVERY_POLICY "$RECOVERY_POLICY"
   # The remote installer independently rechecks the exact receipt clock at
   # both arm and apply; the controller additionally reserves a phase budget
   # before staging and an immediate guard just before apply.

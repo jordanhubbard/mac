@@ -1085,6 +1085,20 @@ def build_mac_env(
         values.pop("MAC_WORKER_DEPLOY_GENERATION", None)
         values.pop("MAC_WORKER_DEPLOY_BARRIER_FILE", None)
     openshell_explicitly_disabled = _apply_openshell_deploy_config(values, env)
+    openshell_active = any(
+        (
+            _enabled(str(env.get("MAC_DEPLOY_OPENSHELL_ENABLED") or "")),
+            _enabled(str(env.get("MAC_DEPLOY_OPENSHELL") or "")),
+            _enabled(str(env.get("MAC_DEPLOY_OPENSHELL_REQUIRED") or "")),
+            _enabled(str(values.get("MAC_OPENSHELL_REQUIRED") or "")),
+            values.get("MAC_CHAT_GATEWAY_IMPL") == "openclaw",
+        )
+    )
+    if not openshell_explicitly_disabled and openshell_active:
+        # Phase 1 attests this owner-controlled executable. Never preserve an
+        # ambient ~/.local/uv/cargo path that can drift independently from the
+        # gateway and speak an incompatible protobuf schema.
+        values["MAC_OPENSHELL_BIN"] = str(cfg.paths.mac_home / "bin" / "openshell")
     if cfg.identity.is_hub:
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "prune")
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS", "86400")

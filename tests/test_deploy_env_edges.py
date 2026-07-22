@@ -401,7 +401,12 @@ def test_required_worker_cannot_be_weakened_by_explicit_openshell_disable(tmp_pa
     )
 
     assert values["MAC_OPENSHELL_REQUIRED"] == "true"
+    assert values["MAC_OPENSHELL_BIN"] == str(
+        tmp_path / ".mac" / "bin" / "openshell"
+    )
     for name, expected in stale.items():
+        if name == "MAC_OPENSHELL_BIN":
+            continue
         assert values[name] == expected
 
 
@@ -477,6 +482,43 @@ def test_deploy_generation_is_projected_to_exact_worker_barrier(tmp_path):
     cleared = deploy_env.build_mac_env(values, cfg, environ={})
     assert "MAC_WORKER_DEPLOY_GENERATION" not in cleared
     assert "MAC_WORKER_DEPLOY_BARRIER_FILE" not in cleared
+
+
+@pytest.mark.parametrize(
+    "environ",
+    (
+        {"MAC_DEPLOY_OPENSHELL_ENABLED": "1"},
+        {"MAC_DEPLOY_OPENSHELL_REQUIRED": "true"},
+        {"HERMES_GATEWAY_IMPL": "openclaw"},
+    ),
+)
+def test_active_openshell_rebinds_stale_runtime_cli_to_reviewed_path(
+    tmp_path, environ
+):
+    cfg = _cfg(tmp_path)
+    values = deploy_env.build_mac_env(
+        {"MAC_OPENSHELL_BIN": str(tmp_path / ".local/bin/openshell")},
+        cfg,
+        environ=environ,
+    )
+
+    assert values["MAC_OPENSHELL_BIN"] == str(
+        cfg.paths.mac_home / "bin" / "openshell"
+    )
+
+
+def test_explicit_openshell_teardown_clears_stale_runtime_cli(tmp_path):
+    values = deploy_env.build_mac_env(
+        {"MAC_OPENSHELL_BIN": str(tmp_path / ".local/bin/openshell")},
+        _cfg(tmp_path),
+        environ={
+            "MAC_DEPLOY_OPENSHELL": "0",
+            "MAC_DEPLOY_OPENSHELL_ENABLED": "0",
+            "HERMES_GATEWAY_IMPL": "hermes",
+        },
+    )
+
+    assert "MAC_OPENSHELL_BIN" not in values
 
 
 def test_legacy_argument_arity_defaults_and_main(monkeypatch, tmp_path) -> None:
