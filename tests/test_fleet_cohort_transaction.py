@@ -1093,6 +1093,25 @@ def test_proved_not_committed_receipt_is_required_before_commit_can_roll_back(
     assert scenario.journal["state"] == "aborted"
 
 
+def test_exact_abort_receipt_resolves_durable_prove_intent(tmp_path: Path) -> None:
+    scenario = Scenario(tmp_path)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    scenario.quiesce()
+    scenario.arm_phase2()
+    scenario.deploy()
+    scenario.call("hub-prove-start", prove_plan=scenario.hub_prove_plan())
+
+    receipt = scenario.hub_receipt("aborted")
+    scenario.call("hub-aborted", evidence_file=receipt)
+    scenario.call("hub-aborted", evidence_file=receipt)
+
+    assert scenario.journal["hub_state"] == "aborted"
+    assert scenario.journal["state"] == "aborting"
+    assert scenario.journal["hub_abort_evidence"] is not None
+
+
 def test_quiesce_and_phase2_start_intents_close_both_mutation_kill_windows(
     tmp_path: Path,
 ) -> None:

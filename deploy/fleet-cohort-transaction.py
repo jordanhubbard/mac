@@ -1074,10 +1074,9 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
             and opened is not None
             and committed is None
             and hub_aborted is not None
-            and (
-                (prove_plan is None and proved is None)
-                or (prove_plan is not None and proved is not None)
-            )
+            # An exact abort receipt can resolve an interrupted prove intent,
+            # so the durable prove plan may exist without proved evidence.
+            and (proved is None or prove_plan is not None)
         )
     else:
         valid_hub = (
@@ -3148,7 +3147,11 @@ def command_hub_aborted(
                 "invalid_transition",
                 "hub abort requires an exact proved not-applied receipt",
             )
-        if journal["hub_state"] not in {"open", "proved"}:
+        # A controller can durably record prove intent, receive an exact abort
+        # receipt while resolving hub truth, and crash before journaling that
+        # receipt.  The receipt is the abort proof; prove_intent must therefore
+        # be recoverable just like its open/proved neighbours.
+        if journal["hub_state"] not in {"open", "prove_intent", "proved"}:
             raise JournalError(
                 "invalid_transition", "hub participant has no abort intent"
             )
