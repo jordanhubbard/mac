@@ -5480,7 +5480,7 @@ def path_check(name, raw, *, executable=False):
     }
 
 
-def service_check(name, url, required, fallback):
+def service_check(name, url, required, state_root):
     parsed = urllib.parse.urlsplit(url or "")
     if truthy(required):
         hostname = parsed.hostname or ""
@@ -5513,12 +5513,14 @@ def service_check(name, url, required, fallback):
             "timeout_seconds": 3,
             "network_scope": "loopback" if local else "managed_mesh",
         }
-    return path_check(name + "-config", fallback)
+    # A disabled optional participant has no live endpoint or installed config
+    # to prove. Seal the existing MAC state root instead; requiring mac.env here
+    # would recreate the first-deploy cycle because the installer writes it.
+    return path_check(name + "-disabled-state", state_root)
 
 
 home = Path.home()
 mac_home = home / ".mac"
-mac_env = mac_home / "mac.env"
 mac_bin = (home / ".local" / "bin" / "mac").resolve(strict=True)
 github_cli = next(
     (
@@ -5600,7 +5602,7 @@ if openshell_required and docker_cli is None:
 openshell_checks = (
     [path_check("openshell-container-cli", docker_cli, executable=True)]
     if openshell_required
-    else [path_check("openshell-config", mac_env)]
+    else [path_check("openshell-disabled-state", mac_home)]
 )
 
 checks = {
@@ -5615,12 +5617,12 @@ checks = {
     # hub endpoint. Requiring mac.env here creates a first-deploy cycle because
     # fleet-node-install.sh is the component that creates that file.
     "route-tunnel": [
-        service_check("route-hub", os.environ["MAC_PREREQ_HUB_URL"], True, mac_env)
+        service_check("route-hub", os.environ["MAC_PREREQ_HUB_URL"], True, mac_home)
     ],
     "openshell": openshell_checks,
-    "qdrant": [service_check("qdrant", os.environ["MAC_PREREQ_QDRANT_URL"], os.environ["MAC_PREREQ_QDRANT_REQUIRED"], mac_env)],
-    "firecrawl": [service_check("firecrawl", os.environ["MAC_PREREQ_FIRECRAWL_URL"], os.environ["MAC_PREREQ_FIRECRAWL_REQUIRED"], mac_env)],
-    "webdav": [service_check("webdav", os.environ["MAC_PREREQ_WEBDAV_URL"], os.environ["MAC_PREREQ_WEBDAV_ENABLED"], mac_env)],
+    "qdrant": [service_check("qdrant", os.environ["MAC_PREREQ_QDRANT_URL"], os.environ["MAC_PREREQ_QDRANT_REQUIRED"], mac_home)],
+    "firecrawl": [service_check("firecrawl", os.environ["MAC_PREREQ_FIRECRAWL_URL"], os.environ["MAC_PREREQ_FIRECRAWL_REQUIRED"], mac_home)],
+    "webdav": [service_check("webdav", os.environ["MAC_PREREQ_WEBDAV_URL"], os.environ["MAC_PREREQ_WEBDAV_ENABLED"], mac_home)],
     "hermes": [path_check("hermes-runtime", hermes_root), path_check("python-runtime", python_bin, executable=True)],
     "service-topology": [path_check("supervisor", supervisor_bin, executable=True)],
 }
