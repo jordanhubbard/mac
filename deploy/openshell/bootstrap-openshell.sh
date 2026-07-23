@@ -1446,8 +1446,38 @@ ensure_docker_engine() {
   fi
 }
 
+ensure_docker_buildx() {
+  local package=""
+  if "$OSH_DOCKER_BIN" buildx version >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "Docker Buildx is required for repository contract tests, but this host has no supported package installer." >&2
+    exit 1
+  fi
+
+  log "installing the Docker Buildx CLI plugin required by repository contract tests"
+  sudo apt-get update
+  for candidate in docker-buildx docker-buildx-plugin; do
+    if apt-cache show "$candidate" >/dev/null 2>&1; then
+      package="$candidate"
+      break
+    fi
+  done
+  if [ -z "$package" ]; then
+    echo "Docker is installed but neither docker-buildx nor docker-buildx-plugin is available from configured apt repositories." >&2
+    exit 1
+  fi
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$package"
+  if ! "$OSH_DOCKER_BIN" buildx version >/dev/null 2>&1; then
+    echo "Installed '$package', but '$OSH_DOCKER_BIN buildx version' still fails." >&2
+    exit 1
+  fi
+}
+
 ensure_docker_engine
-log "arch=$ARCH gpu=$OSH_GPU driver=docker-engine version=$OPENSHELL_VERSION docker=$("$OSH_DOCKER_BIN" --version 2>&1 | head -1)"
+ensure_docker_buildx
+log "arch=$ARCH gpu=$OSH_GPU driver=docker-engine version=$OPENSHELL_VERSION docker=$("$OSH_DOCKER_BIN" --version 2>&1 | head -1) buildx=$("$OSH_DOCKER_BIN" buildx version 2>&1 | head -1)"
 
 ensure_openshell_docker_bridge() {
   local network_name="openshell-docker" network_id="" network_driver="" bridge_iface=""

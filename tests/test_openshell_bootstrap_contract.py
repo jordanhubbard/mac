@@ -298,6 +298,18 @@ def test_openshell_bootstrap_is_docker_engine_only():
     assert all("--env" not in line and " -- " not in line for line in create_arg_lines)
 
 
+def test_linux_bootstrap_installs_and_verifies_docker_buildx():
+    script = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ensure_docker_buildx()" in script
+    assert "for candidate in docker-buildx docker-buildx-plugin" in script
+    assert 'apt-get install -y "$package"' in script
+    assert '"$OSH_DOCKER_BIN" buildx version' in script
+    assert "ensure_docker_engine\nensure_docker_buildx" in script
+
+
 def test_openshell_image_docs_do_not_advertise_podman_builds():
     containerfile = (
         ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
