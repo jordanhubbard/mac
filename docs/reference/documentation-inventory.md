@@ -48,6 +48,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md` | Investigation: dream `tool_or_skill_name` (skill) finding — actionability & root signal |
 | historical archive | `archive/field-notes/investigation-dreamrepair-5404b15-skill.md` | Investigation: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
 | historical archive | `archive/field-notes/investigation-predispatch-conflict-5a43ad.md` | Investigation: `predispatch_conflict.py` failure-pattern (dream finding) |
+| historical archive | `archive/field-notes/investigation-review-finalize-verify-prerequisite.md` | Investigation: dream-finding review finalize/verify prerequisite ground truth |
 | historical archive | `archive/field-notes/investigation-task-2284f3-env-prerequisite-false-positive.md` | Investigation: mac environment-prerequisite finding is a classifier false positive |
 | historical archive | `archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md` | Investigation: skills environment-prerequisite behavior vs. the finding |
 | historical archive | `archive/field-notes/k8s-native-rewrite-plan.md` | Kubernetes-native rewrite plan |
