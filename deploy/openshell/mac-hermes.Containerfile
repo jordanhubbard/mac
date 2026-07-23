@@ -32,6 +32,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # bash >=5.2: the explicit task-runtime shell contract.  Do not rely on the
 # base image carrying Bash transitively; executor and verification commands
 # invoke /bin/bash and deployment fails if its version/features are unsuitable.
+# procps: repository contracts inspect child/process lifecycle with `ps`.
+#   Debian-slim does not ship it; without this baseline tool otherwise-valid
+#   contract tests fail in the sandbox with FileNotFoundError before assertions
+#   can run.
 # make/node/npm/java/pnpm/lein: common repository contracts. The executor can
 # still provision missing tools into a task-local .mac-toolchain, but the base
 # image should cover ordinary polyglot repos without mutating the host fleet.
@@ -69,8 +73,9 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
     && apt-get install -y --no-install-recommends bash ca-certificates curl tar xz-utils \
     && chmod 0755 /usr/local/bin/mac-verify-bash-contract \
     && /usr/local/bin/mac-verify-bash-contract \
-    && apt-get install -y --no-install-recommends iproute2 iptables git make build-essential libssl-dev openjdk-17-jre-headless clang llvm lld \
+    && apt-get install -y --no-install-recommends iproute2 iptables git procps make build-essential libssl-dev openjdk-17-jre-headless clang llvm lld \
     && apt-get install -y --no-install-recommends -t bookworm-backports qemu-system-misc \
+    && command -v ps >/dev/null \
     && command -v clang >/dev/null \
     && command -v llvm-objcopy >/dev/null \
     && command -v ld.lld >/dev/null \

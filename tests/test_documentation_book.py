@@ -44,6 +44,29 @@ def test_all_book_shell_examples_execute_hermetically():
     assert '"chapter_count": 18' in result.stdout
 
 
+def test_docs_repository_fixture_has_reachable_secret_free_origin(tmp_path):
+    module = _module()
+    module._prepare_repository_fixture(tmp_path)
+    repository = tmp_path / "sample-repo"
+    expected_remote = (tmp_path / "sample-origin.git").resolve()
+
+    origin = subprocess.run(
+        ["git", "-C", str(repository), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert origin.returncode == 0, origin.stderr
+    assert Path(origin.stdout.strip()).resolve() == expected_remote
+    probe = subprocess.run(
+        ["git", "-C", str(repository), "ls-remote", "--heads", "origin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr
+
+
 def test_generated_documentation_reference_is_current():
     result = subprocess.run(
         [sys.executable, "scripts/generate-docs-reference.py", "--check"],

@@ -248,12 +248,37 @@ def _chapter_script(chapter: Chapter) -> str:
     return "\n\n".join(sections) + "\n"
 
 
+def _prepare_repository_fixture(workspace: Path) -> None:
+    """Create the book's secret-free repository and reachable local origin."""
+
+    repository = workspace / "sample-repo"
+    remote = workspace / "sample-origin.git"
+    for argv in (
+        ["git", "init", "--bare", "--initial-branch=main", str(remote)],
+        ["git", "init", "--initial-branch=main", str(repository)],
+        ["git", "-C", str(repository), "remote", "add", "origin", str(remote)],
+    ):
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise DocumentationError(
+                "could not prepare hermetic repository fixture: "
+                f"{result.stderr.strip() or result.stdout.strip() or 'git failed'}"
+            )
+
+
 def execute_chapter(chapter: Chapter, *, verbose: bool = False) -> dict[str, Any]:
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"mac-docs-{chapter.number:02d}-") as temporary:
         workspace = Path(temporary)
-        for relative in ("home", "tmp", "work", "sample-repo"):
+        for relative in ("home", "tmp", "work"):
             (workspace / relative).mkdir(parents=True, exist_ok=True)
+        _prepare_repository_fixture(workspace)
         script = _chapter_script(chapter)
         result = subprocess.run(
             ["bash", "--noprofile", "--norc"],

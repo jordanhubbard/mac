@@ -17,6 +17,8 @@ def _run_with_fake_python(
     coverage: str | None = None,
     disable_groups: str | None = None,
     select_base: str | None = None,
+    nested_pytest: bool = False,
+    pytest_status: int = 0,
     combine_output: str = "Combined data file .coverage.fake",
     combine_status: int = 0,
     json_status: int = 0,
@@ -43,6 +45,10 @@ fi
 case "$*" in
     "-m coverage json -o "*) exit "$FAKE_JSON_STATUS" ;;
 esac
+case "$*" in
+    *"--version"*) ;;
+    *"-m pytest"*) exit "$FAKE_PYTEST_STATUS" ;;
+esac
 exit 0
 """,
         encoding="utf-8",
@@ -55,11 +61,19 @@ exit 0
         "FAKE_COMBINE_OUTPUT": combine_output,
         "FAKE_COMBINE_STATUS": str(combine_status),
         "FAKE_JSON_STATUS": str(json_status),
+        "FAKE_PYTEST_STATUS": str(pytest_status),
         # Deterministic answer to the runner's headroom-default cpu probe.
         "FAKE_DEFAULT_JOBS": "6",
         # This must never leak into either pytest phase.
         "PYTEST_ADDOPTS": "-n auto",
     }
+    for marker in (
+        "PYTEST_CURRENT_TEST",
+        "PYTEST_XDIST_WORKER",
+        "PYTEST_XDIST_WORKER_COUNT",
+        "PYTEST_XDIST_TESTRUNUID",
+    ):
+        env.pop(marker, None)
     if jobs is not None:
         env["MAC_TEST_JOBS"] = jobs
     if coverage is not None:
@@ -68,6 +82,13 @@ exit 0
         env["MAC_TEST_DISABLE_GROUPS"] = disable_groups
     if select_base is not None:
         env["MAC_TEST_SELECT_BASE"] = select_base
+    if nested_pytest:
+        env["PYTEST_CURRENT_TEST"] = (
+            "tests/test_contract_test_runner.py::test_nested (call)"
+        )
+        env["PYTEST_XDIST_WORKER"] = "gw0"
+        env["PYTEST_XDIST_WORKER_COUNT"] = "6"
+        env["PYTEST_XDIST_TESTRUNUID"] = "outer-run"
     completed = subprocess.run(
         [str(RUNNER)],
         cwd=tmp_path,
@@ -161,6 +182,24 @@ def test_contract_runner_preserves_explicit_worker_override(tmp_path):
     assert completed.returncode == 0, completed.stdout + completed.stderr
     bulk = next(line for line in calls if "-m coverage run -m pytest -n" in line)
     assert "-n 3 --dist loadscope" in bulk
+
+
+def test_contract_runner_disables_nested_xdist_and_preserves_hard_failure(tmp_path):
+    completed, calls = _run_with_fake_python(
+        tmp_path,
+        jobs="3",
+        nested_pytest=True,
+        pytest_status=19,
+    )
+
+    assert completed.returncode == 19, completed.stdout + completed.stderr
+    assert "nested pytest detected; disabling xdist fan-out" in completed.stderr
+    pytest_calls = [
+        line for line in calls if "-m coverage run -m pytest" in line
+    ]
+    assert len(pytest_calls) == 1
+    assert "-n " not in pytest_calls[0]
+    assert "PYTEST_ADDOPTS=<unset>" in pytest_calls[0]
 
 
 def test_contract_runner_isolates_coverage_state_per_invocation(tmp_path):

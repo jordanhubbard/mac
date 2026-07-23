@@ -19,7 +19,7 @@ Status is hub-owned; local audit is diagnostic and never invents completion.
 
 ```bash
 mac --db "$DOCS_DB" init
-mac --db "$DOCS_DB" repo refs audit --repo "$DOCS_ROOT" --grace-days 7 >/dev/null
+mac --db "$DOCS_DB" repo refs audit --repo "$DOCS_REPO" --grace-days 7 >/dev/null
 mac repo refs status --help >/dev/null
 mac review auto-land --help >/dev/null
 mac publish --help >/dev/null

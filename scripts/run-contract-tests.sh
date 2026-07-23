@@ -10,6 +10,19 @@ _MAC_TEST_PORTFOLIO_REQUESTED="${MAC_TEST_PORTFOLIO:-0}"
 # still win: MAC_TEST_JOBS=auto (one per reported core), MAC_TEST_JOBS=<N>
 # (pin), MAC_TEST_JOBS=0 (serial, for memory- or core-constrained hosts).
 _MAC_TEST_JOBS_REQUESTED="${MAC_TEST_JOBS:-}"
+# Contract-runner tests invoke this script from an already-running pytest
+# process.  Starting another xdist controller from inside an xdist worker is
+# unsupported in the confined OpenShell executor: the nested controller can
+# fan out a second worker pool that collects zero items and exits 5 even though
+# the same tests pass directly.  Remember the outer-runner markers before the
+# hermetic environment sweep, then force the child gate serial.  This changes
+# scheduling only; the serial pytest exit status remains a hard gate failure.
+_MAC_TEST_NESTED_PYTEST=0
+if [ -n "${PYTEST_CURRENT_TEST:-}" ] \
+    || [ -n "${PYTEST_XDIST_WORKER:-}" ] \
+    || [ -n "${PYTEST_XDIST_TESTRUNUID:-}" ]; then
+    _MAC_TEST_NESTED_PYTEST=1
+fi
 # Coverage is the repository's merge-gate safety rail (statement/branch floors),
 # but it also dominates full-suite wall-clock. Rollout VERIFICATION and local
 # dev loops only need pass/fail, so MAC_TEST_COVERAGE=0 runs the same suite with
@@ -63,7 +76,8 @@ unset GH_TOKEN GITHUB_TOKEN GITEA_TOKEN GIT_TOKEN
 # passed to this runner.  In particular, an inherited ``-n auto`` must not make
 # the protected process/container phase concurrent after the runner separates
 # it from the xdist-safe bulk phase.
-unset PYTEST_ADDOPTS
+unset PYTEST_ADDOPTS PYTEST_CURRENT_TEST PYTEST_XDIST_WORKER
+unset PYTEST_XDIST_WORKER_COUNT PYTEST_XDIST_TESTRUNUID
 unset COVERAGE_FILE COVERAGE_PROCESS_START
 
 # Coding-agent route detection (coding_agent._route_fields) fingerprints each
@@ -212,6 +226,10 @@ if [ "$#" -eq 0 ]; then
             fi
             ;;
     esac
+    if [ "$_MAC_TEST_NESTED_PYTEST" = "1" ] && [ "$_MAC_TEST_JOBS" != "0" ]; then
+        echo "run-contract-tests.sh: nested pytest detected; disabling xdist fan-out" >&2
+        _MAC_TEST_JOBS=0
+    fi
     # Tests marked process_e2e/postgres/container bind real ports and spawn real
     # processes, so concurrent scheduling would collide. They run SERIALLY in a
     # second invocation; the xdist-safe bulk slice runs first under --dist

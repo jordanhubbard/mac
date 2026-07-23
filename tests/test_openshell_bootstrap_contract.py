@@ -392,6 +392,21 @@ def test_openshell_image_proves_the_riscv_validation_floor() -> None:
         assert device in containerfile
 
 
+def test_openshell_image_provides_process_inspection_baseline() -> None:
+    """Contract tests may inspect child lifecycle; Debian-slim must not omit ps."""
+    containerfile = (
+        ROOT / "deploy" / "openshell" / "mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+
+    package_install = " ".join(
+        line.strip()
+        for line in containerfile.splitlines()
+        if "apt-get install -y --no-install-recommends" in line
+    )
+    assert "procps" in package_install.split()
+    assert "command -v ps >/dev/null" in containerfile
+
+
 def test_openshell_image_installs_codegraph_baseline():
     bootstrap = (ROOT / "deploy" / "openshell" / "bootstrap-openshell.sh").read_text(
         encoding="utf-8"
