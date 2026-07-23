@@ -1553,6 +1553,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#re-verification-2026-07-23-checkout-sync-invariant-is-the-parent-blocker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Re-verification (2026-07-23): checkout-sync invariant is the parent blocker
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1659,6 +1670,47 @@ contract the prerequisite depends on.</p>
   <em>does-not-reproduce</em>; retain this note as provenance. No source or test edit
   is warranted.</li>
 </ul>
+<h2 id="re-verification-2026-07-23-checkout-sync-invariant-is-the-parent-blocker">Re-verification (2026-07-23): checkout-sync invariant is the parent blocker<a class="headerlink" href="#re-verification-2026-07-23-checkout-sync-invariant-is-the-parent-blocker" title="Permanent link">&para;</a></h2>
+<p>A follow-up audit re-confirmed the finding above and pinpointed the exact
+parent blocker as a checkout/sync invariant owned by the host finalizer, not a
+code or evidence defect in the reviewed sources.</p>
+<p><code>run_deterministic_review_verdict</code> (<code>src/mac/executor_finalizer.py:1309</code>) gates
+a <em>repository</em> review verdict on the exact executor commit before it will run
+bootstrap/tests/CodeGraph:</p>
+<ul>
+<li>It resolves <code>exec_head</code> from the executor evidence
+  (<code>metadata.verification.repo.head_sha</code>) and treats the review as a repo
+  review when that head is present.</li>
+<li>It runs <code>git cat-file -e &lt;exec_head&gt;^{commit}</code> in <code>MAC_TASK_REPO_WORKTREE</code>
+  and reads <code>git rev-parse HEAD</code>. When the commit object is absent it sets the
+  independent problem to <code>executor commit is not present in the review
+  checkout</code>; when <code>HEAD != exec_head</code> it sets <code>review checkout HEAD does not
+  match the executor commit</code>; either way the verdict is <code>rejected</code>.</li>
+<li>Only when both hold does it proceed to bootstrap, the contract test command,
+  CodeGraph, and the cooperative integration check.</li>
+</ul>
+<p>Those two invariants are satisfied by the host finalizer's canonical
+fetch/rebase/checkout, which is outside the worker boundary. So a parent
+failure here reflects a review checkout that lacks (or is not sitting at) the
+exact executor commit — an environment/sync condition — rather than a defect in
+<code>review_finalizer.py</code>, <code>task_executor.py</code>, <code>dream_scanner.py</code>, or
+<code>evidence_validators.py</code>.</p>
+<p>Reviewed-source spot checks: <code>src/mac/review_finalizer.py</code> and
+<code>src/mac/task_executor.py</code> are thin re-export/bridge shims with no verdict logic
+of their own; <code>src/mac/dream_scanner.py</code> and <code>src/mac/evidence_validators.py</code>
+contain the scan/validation helpers with no coupling to the checkout invariant.</p>
+<p>Verification on the current tree:</p>
+<ul>
+<li>Named contract tests
+  (<code>tests/test_review_finalizer.py tests/test_dream_scanner.py
+  tests/test_review_service_edges.py</code>) → <code>43 passed</code>.</li>
+<li>Full canonical gate <code>scripts/run-contract-tests.sh</code> → <code>8667 passed,
+  4 skipped</code> with coverage floors met (statements 90.87% ≥ 90.00%; branches
+  80.25% ≥ 80.00%).</li>
+</ul>
+<p><strong>Disposition unchanged</strong>: no defect found in the reviewed sources; substantive
+repair (if any) belongs to the dependent task and is a host-owned checkout-sync
+condition, not a code change.</p>
 
 
 
