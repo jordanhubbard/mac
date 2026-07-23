@@ -109,6 +109,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `memory-tier-schema.md` | MAC vector memory tier — schema, collections, model, TTLs |
 | supplemental reference | `memory-tier-verification.md` | Memory tier — end-to-end verification |
 | supplemental reference | `notifier-configuration-guide.md` | Notifier Configuration Guide |
+| supplemental reference | `oneshot-isolation-gate-verification.md` | Oneshot isolation — contract gate verification |
 | supplemental reference | `openclaw-identities.md` | OpenClaw public identities and fleet representation |
 | supplemental reference | `openshell-nemo-relay-e2e.md` | OpenShell + NeMo Relay: container-contract verification |
 | supplemental reference | `openshell-nemo-relay-integration.md` | OpenShell + NeMo Relay integration |
