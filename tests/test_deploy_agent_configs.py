@@ -4177,7 +4177,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
     )
     start = installer.index("bootstrap_enabled_openshell() {")
     end = installer.index(
-        "\n}\n\nverify_managed_openshell_runtime", start
+        "\n}\n\nresolve_reviewed_openshell_supervisor", start
     ) + len("\n}\n")
     helper = installer[start:end]
 
@@ -4297,6 +4297,101 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
         check=False,
     )
     assert failed_bootstrap.returncode == 42
+
+
+def test_node_openshell_supervisor_attestation_resolves_reviewed_index(tmp_path):
+    installer = (ROOT / "deploy" / "fleet-node-install.sh").read_text(
+        encoding="utf-8"
+    )
+    start = installer.index("resolve_reviewed_openshell_supervisor() {")
+    end = installer.index(
+        "\n}\n\nverify_managed_openshell_runtime", start
+    ) + len("\n}\n")
+    helper = installer[start:end]
+
+    mac_home = tmp_path / "mac-home"
+    (mac_home / "openshell").mkdir(parents=True)
+    index_digest = "8" * 64
+    image_digest = "e" * 64
+    reviewed_ref = "ghcr.io/nvidia/openshell/supervisor@sha256:" + index_digest
+    (mac_home / "openshell" / "gateway.toml").write_text(
+        f'supervisor_image = "{reviewed_ref}"\n', encoding="utf-8"
+    )
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/bash\n"
+        "set -eu\n"
+        "[ \"$1 $2 $3\" = \"image inspect --format\" ]\n"
+        "case \"$4\" in\n"
+        "  '{{.Id}}') printf '%s\\n' \"$MAC_TEST_IMAGE_ID\";;\n"
+        "  '{{range .RepoDigests}}{{println .}}{{end}}') "
+        "printf '%s\\n' \"$MAC_TEST_REPO_DIGEST\";;\n"
+        "  *) exit 2;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    snippet = (
+        "set -euo pipefail\n"
+        "die() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+        + helper
+        + f"\nresolve_reviewed_openshell_supervisor {docker}\n"
+    )
+    env = {
+        **os.environ,
+        "PY": sys.executable,
+        "MAC_HOME": str(mac_home),
+        "MAC_TEST_IMAGE_ID": "sha256:" + image_digest,
+        "MAC_TEST_REPO_DIGEST": reviewed_ref,
+    }
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().split("\t") == [
+        reviewed_ref,
+        index_digest,
+        image_digest,
+    ]
+
+    env["MAC_TEST_REPO_DIGEST"] = "ghcr.io/example/wrong@sha256:" + "f" * 64
+    mismatch = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert mismatch.returncode != 0
+    assert "lacks the reviewed repository digest" in mismatch.stderr
+
+    env["MAC_TEST_REPO_DIGEST"] = reviewed_ref
+    env["MAC_TEST_IMAGE_ID"] = "sha256:not-an-image-id"
+    malformed = subprocess.run(
+        ["/bin/bash", "-c", snippet],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert malformed.returncode != 0
+    assert "invalid image ID" in malformed.stderr
+
+    runtime = installer.split("verify_managed_openshell_runtime() {", 1)[1].split(
+        "\n}\n\nremove_openshell_firewall_chain", 1
+    )[0]
+    assert 'sha256-"$supervisor_cache_digest"/openshell-sandbox' in runtime
+    assert 'sha256-"$supervisor_digest"/openshell-sandbox' not in runtime
+    assert '"supervisor_image_digest": "sha256:" + supervisor_digest' in runtime
+    assert (
+        '"supervisor_resolved_image_id": "sha256:" + supervisor_image_id'
+        in runtime
+    )
 
 
 def _startup_self_test_source() -> str:

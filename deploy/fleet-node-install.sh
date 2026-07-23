@@ -1284,12 +1284,60 @@ PY
   OPENSHELL_BOOTSTRAPPED=1
 }
 
+resolve_reviewed_openshell_supervisor() {
+  local docker_bin="$1" supervisor_ref supervisor_digest supervisor_image_id
+  local supervisor_cache_digest supervisor_repo_digest reviewed_ref_found=0
+
+  supervisor_ref="$($PY - "$MAC_HOME/openshell/gateway.toml" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(
+    r'^supervisor_image\s*=\s*"([^"\n]+@sha256:([0-9a-f]{64}))"$',
+    text,
+    re.MULTILINE,
+)
+if not match:
+    raise SystemExit("OpenShell gateway config lacks an immutable supervisor image")
+print(match.group(1))
+PY
+)" || die "could not verify the configured OpenShell supervisor digest"
+  supervisor_digest="${supervisor_ref##*@sha256:}"
+
+  # A reviewed multi-platform index digest resolves to a platform-specific
+  # Docker image ID. OpenShell keys its extracted supervisor cache by that
+  # image ID, not by the parent index digest. Prove both sides of that mapping:
+  # the local image retains the exact reviewed RepoDigest, and its immutable
+  # image ID is the cache identity accepted below.
+  supervisor_image_id="$("$docker_bin" image inspect --format '{{.Id}}' \
+    "$supervisor_ref")" \
+    || die "could not resolve the reviewed OpenShell supervisor image"
+  if [[ ! "$supervisor_image_id" =~ ^sha256:([0-9a-f]{64})$ ]]; then
+    die "reviewed OpenShell supervisor resolved to an invalid image ID"
+  fi
+  supervisor_cache_digest="${BASH_REMATCH[1]}"
+  while IFS= read -r supervisor_repo_digest; do
+    if [ "$supervisor_repo_digest" = "$supervisor_ref" ]; then
+      reviewed_ref_found=1
+    fi
+  done < <("$docker_bin" image inspect --format \
+    '{{range .RepoDigests}}{{println .}}{{end}}' "$supervisor_ref")
+  [ "$reviewed_ref_found" = 1 ] \
+    || die "resolved OpenShell supervisor lacks the reviewed repository digest"
+
+  printf '%s\t%s\t%s\n' \
+    "$supervisor_ref" "$supervisor_digest" "$supervisor_cache_digest"
+}
+
 verify_managed_openshell_runtime() {
   [ "$OPENSHELL_BOOTSTRAPPED" = 1 ] || return 0
 
   local cli="$MAC_HOME/bin/openshell" docker_bin inventory containers report
   local cli_version_text cli_version expected_supervisor container_id sandbox_name
-  local supervisor_path supervisor_version supervisor_digest expected_openclaw="" managed_count=0
+  local supervisor_path supervisor_version supervisor_ref supervisor_identity
+  local supervisor_digest supervisor_cache_digest expected_openclaw="" managed_count=0
   [ -x "$cli" ] || die "reviewed OpenShell CLI is absent after bootstrap"
   docker_bin="$(command -v docker || true)"
   if [ -z "$docker_bin" ] && [ "$OS_KIND" = darwin ]; then
@@ -1320,18 +1368,9 @@ PY
     die "could not derive the reviewed OpenShell CLI version"
   fi
   expected_supervisor="openshell-sandbox $cli_version"
-  supervisor_digest="$($PY - "$MAC_HOME/openshell/gateway.toml" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r'^supervisor_image\s*=\s*"[^"\n]+@sha256:([0-9a-f]{64})"$', text, re.MULTILINE)
-if not match:
-    raise SystemExit("OpenShell gateway config lacks an immutable supervisor image")
-print(match.group(1))
-PY
-)" || die "could not verify the configured OpenShell supervisor digest"
+  supervisor_identity="$(resolve_reviewed_openshell_supervisor "$docker_bin")"
+  IFS=$'\t' read -r supervisor_ref supervisor_digest supervisor_cache_digest \
+    <<<"$supervisor_identity"
   containers="$(mktemp "${TMPDIR:-/tmp}/mac-openshell-conformance.XXXXXX")"
   while IFS= read -r container_id; do
     [ -n "$container_id" ] || continue
@@ -1350,7 +1389,7 @@ PY
       die "managed sandbox $sandbox_name lacks a readable supervisor bind"
     }
     case "$supervisor_path" in
-      */docker-supervisor/sha256-"$supervisor_digest"/openshell-sandbox) ;;
+      */docker-supervisor/sha256-"$supervisor_cache_digest"/openshell-sandbox) ;;
       *)
         rm -f "$containers"
         die "managed sandbox $sandbox_name is bound to an unreviewed supervisor digest"
@@ -1368,8 +1407,9 @@ PY
         die "managed sandbox $sandbox_name uses '$supervisor_version', expected '$expected_supervisor'"
       }
     fi
-    printf '%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\n' \
       "$container_id" "$sandbox_name" "$supervisor_version" "$supervisor_digest" \
+      "$supervisor_cache_digest" \
       >> "$containers"
   done < <("$docker_bin" ps -a \
     --filter label=openshell.ai/managed-by=openshell --format '{{.ID}}')
@@ -1421,11 +1461,12 @@ rows = []
 for line in Path(rows_path).read_text(encoding="utf-8").splitlines():
     if not line:
         continue
-    container_id, sandbox, supervisor, supervisor_digest = line.split("\t")
+    container_id, sandbox, supervisor, supervisor_digest, supervisor_image_id = line.split("\t")
     rows.append({
         "container_id": container_id,
         "sandbox": sandbox,
         "supervisor_image_digest": "sha256:" + supervisor_digest,
+        "supervisor_resolved_image_id": "sha256:" + supervisor_image_id,
         "supervisor_version": supervisor,
     })
 Path(report_path).write_text(json.dumps({
