@@ -51,6 +51,29 @@ In either fleet form, `agents` may be a mapping keyed by agent name or a list
 whose entries contain `name`. When a mapping entry also contains `name`, it
 must agree with the mapping key.
 
+## Static and fungible instances
+
+`instance_kind` is a first-class agent lifecycle property. It defaults to
+`static` for named, durable machines such as conversational fleet members.
+Set it to `fungible` only for a replaceable instance created dynamically by a
+provider API or CLI such as `hgx create`.
+
+```yaml
+agents:
+  worker-4:
+    instance_kind: fungible
+    target: operator@current-provider-route
+    os: linux
+    supervisor: supervisord
+```
+
+The explicit `--prepare-fungible-onboarding` operation requires this value and
+binds the live SSH host key plus machine identity before mutation. It will not
+convert an existing static hub record. The phase-zero placeholder is registered
+atomically as `instance_kind=fungible`, `status=draining`, and
+`health_status=degraded`; it remains nondispatchable until the subsequent
+normal typed deployment proves and commits the worker generation.
+
 ## Route-only versus deployable entries
 
 A compact registry used only for login or SSH routing may omit deployment

@@ -2914,7 +2914,7 @@ def test_pure_worker_deploy_requires_openshell_and_github_credentials(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().split("|")[-2:] == ["1", "1"]
+    assert result.stdout.strip().split("|")[-3:] == ["1", "1", "static"]
 
     deploy = (ROOT / "deploy" / "deploy-mac-fleet.sh").read_text(encoding="utf-8")
     assert 'add_remote_env MAC_DEPLOY_OPENSHELL_REQUIRED "$openshell_required"' in deploy

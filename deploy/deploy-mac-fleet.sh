@@ -123,6 +123,7 @@ chmod 0700 "$TMPDIR_LOCAL"
 ARCHIVE="${TMPDIR_LOCAL}/mac.tar.gz"
 SANITIZED_FLEET_REGISTRY="${TMPDIR_LOCAL}/fleets.yaml"
 PHASE1_QUIESCE_HELPER="$ROOT/deploy/fleet-node-phase1-quiesce.sh"
+MACHINE_ONBOARDING_HELPER="$ROOT/deploy/fleet-node-machine-onboard.py"
 COHORT_JOURNAL_HELPER="$ROOT/deploy/fleet-cohort-transaction.py"
 ENDPOINT_IDENTITY_HELPER="$ROOT/deploy/fleet-endpoint-identity.py"
 HUB_EPOCH_CLIENT="$ROOT/deploy/fleet-release-epoch-client.py"
@@ -185,6 +186,7 @@ REQUESTED_AGENTS=()
 LEGACY_HUB_BOOTSTRAP=0
 PREPARE_REVIEWED_OPENSHELL_CLI=0
 PREPARE_NETWORK_PREREQUISITES=0
+PREPARE_FUNGIBLE_ONBOARDING=0
 PREFLIGHT_ONLY=0
 QUALIFICATION_RECEIPT=""
 
@@ -245,6 +247,7 @@ Usage:
   deploy/deploy-mac-fleet.sh --hub <hub-node> --legacy-hub-bootstrap <hub-node>
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-reviewed-openshell-cli [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-network-prerequisites [agent ...]
+  deploy/deploy-mac-fleet.sh --hub <hub-node> --prepare-fungible-onboarding [agent ...]
   deploy/deploy-mac-fleet.sh --hub <hub-node> --preflight-only
                             --qualification-receipt <owner-only-json> [agent ...]
   deploy/deploy-mac-fleet.sh --new-hub <hub-node> --target user@host[:port] [--ssh-port <port>]
@@ -307,6 +310,14 @@ normal typed deployment separately afterward.
 classifies every selected hub route before mutation, joins only unreachable
 tailscale/auto nodes using the configured secret source over SSH stdin, and
 re-proves hub TCP reachability. Run the normal typed deployment separately.
+
+--prepare-fungible-onboarding is an explicit phase-zero machine preparation
+operation for fleet records whose instance_kind is fungible. It binds the live
+SSH-machine route, accepts only a pristine or failed-prephase node with source
+and venv absent and no deployed revision or MAC services, installs the exact
+reviewed uv/Python/CodeGraph baseline plus the frozen source archive, registers
+the agent atomically as draining/degraded/fungible, and starts no services. Run
+the normal typed deployment separately afterward.
 
 --preflight-only performs bounded, read-only qualification against the same
 frozen selection and pinned live endpoints used by deployment. It creates no
@@ -403,6 +414,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --prepare-network-prerequisites)
       PREPARE_NETWORK_PREREQUISITES=1
+      shift
+      ;;
+    --prepare-fungible-onboarding)
+      PREPARE_FUNGIBLE_ONBOARDING=1
       shift
       ;;
     --preflight-only)
@@ -596,8 +611,14 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 1 ] \
-    && [ "$PREPARE_NETWORK_PREREQUISITES" = 1 ]; then
+preparation_mode_count=$(
+  (
+    [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 1 ] && printf '1\n'
+    [ "$PREPARE_NETWORK_PREREQUISITES" = 1 ] && printf '1\n'
+    [ "$PREPARE_FUNGIBLE_ONBOARDING" = 1 ] && printf '1\n'
+  ) | wc -l | tr -d '[:space:]'
+)
+if [ "$preparation_mode_count" -gt 1 ]; then
   echo "ERROR: prerequisite preparation modes must run separately" >&2
   exit 2
 fi
@@ -610,6 +631,7 @@ if [ "$PREFLIGHT_ONLY" = 1 ]; then
   [ "$LEGACY_HUB_BOOTSTRAP" = 0 ] \
     && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 0 ] \
     && [ "$PREPARE_NETWORK_PREREQUISITES" = 0 ] \
+    && [ "$PREPARE_FUNGIBLE_ONBOARDING" = 0 ] \
     && [ -z "$HOLD_ADOPTIONS_SOURCE" ] \
     && [ "$SUCCESSOR_HOLD_REASON_SUPPLIED" = 0 ] || {
       echo "ERROR: --preflight-only cannot be combined with deployment or hold authority" >&2
@@ -1334,6 +1356,7 @@ for name in selected:
             worker.get("github_credentials_required"),
             text_field(hermes.get("gateway_impl") or "hermes") == "none",
         ),
+        text_field(agent.get("instance_kind") or "static"),
     ]
     require_no_pipe(fields)
     print("|".join(fields))
@@ -1701,6 +1724,78 @@ finally:
     < "$source"
 }
 
+pinned_remote_verified_upload() {
+  # Stream an immutable, potentially large phase-zero payload over the already
+  # pinned SSH master. Unlike fenced_remote_upload this operation intentionally
+  # precedes a cohort lock, so the remote target is a unique /tmp relay path and
+  # is verified by size+digest before its one atomic publication.
+  local agent="$1" source="$2" destination="$3"
+  local identity expected_size expected_sha256
+  local ssh_parts=() ssh_args=() ssh_target item last_index upload_code
+  identity="$("$PYTHON_BIN" - "$source" <<'PY'
+import hashlib,os,stat,sys
+path=sys.argv[1]
+fd=os.open(path,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0))
+try:
+    before=os.fstat(fd)
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink!=1 or before.st_size<1:
+        raise SystemExit("phase-zero upload source is unsafe")
+    digest=hashlib.sha256()
+    while True:
+        chunk=os.read(fd,1024*1024)
+        if not chunk: break
+        digest.update(chunk)
+    after=os.fstat(fd)
+    if (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns):
+        raise SystemExit("phase-zero upload source changed while reading")
+finally:
+    os.close(fd)
+print("%d %s"%(before.st_size,digest.hexdigest()))
+PY
+)"
+  read -r expected_size expected_sha256 <<<"$identity"
+  case "$destination" in
+    /tmp/mac-*) ;;
+    *) echo "ERROR: phase-zero upload destination is outside /tmp/mac-*" >&2; return 1 ;;
+  esac
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"
+  ssh_args=("${ssh_parts[@]:0:$last_index}")
+  upload_code='import hashlib,os,re,sys,tempfile
+target=os.path.abspath(sys.argv[1]); size=int(sys.argv[2]); expected=sys.argv[3]
+if not target.startswith("/tmp/mac-") or "/../" in target or size<1 or size>16*1024*1024*1024 or re.fullmatch(r"[0-9a-f]{64}",expected) is None:
+    raise SystemExit("phase-zero upload contract is invalid")
+if os.path.lexists(target):
+    raise SystemExit("phase-zero upload target already exists")
+fd,tmp=tempfile.mkstemp(prefix="."+os.path.basename(target)+".",dir="/tmp")
+published=False
+try:
+    os.fchmod(fd,0o600)
+    with os.fdopen(fd,"wb") as stream:
+        digest=hashlib.sha256(); remaining=size
+        while remaining:
+            block=sys.stdin.buffer.read(min(65536,remaining))
+            if not block: raise SystemExit("phase-zero upload was truncated")
+            stream.write(block); digest.update(block); remaining-=len(block)
+        if sys.stdin.buffer.read(1): raise SystemExit("phase-zero upload exceeded declared size")
+        if digest.hexdigest()!=expected: raise SystemExit("phase-zero upload digest differs")
+        stream.flush(); os.fsync(stream.fileno())
+    os.link(tmp,target); os.unlink(tmp); published=True
+    directory=os.open("/tmp",os.O_RDONLY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+finally:
+    if not published:
+        try: os.unlink(tmp)
+        except FileNotFoundError: pass'
+  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+    "${ssh_args[@]}" "$ssh_target" \
+    "python3 -c $(shell_quote "$upload_code") $(shell_quote "$destination") $(shell_quote "$expected_size") $(shell_quote "$expected_sha256")" \
+    < "$source"
+}
+
 fenced_remote_upload() {
   local agent="$1" deployment_id="$2" source_file="$3" destination="$4"
   local ssh_parts=() ssh_args=() ssh_target item last_index remote_cmd upload_code
@@ -1909,6 +2004,7 @@ assert_frozen_deployment_source() {
     deploy/deploy-mac-fleet.sh \
     deploy/fleet-cohort-transaction.py \
     deploy/fleet-node-install.sh \
+    deploy/fleet-node-machine-onboard.py \
     deploy/fleet-node-phase1-quiesce.sh \
     deploy/fleet-node-rollback-supervisor.py \
     deploy/lib/launchd-lifecycle.sh \
@@ -4810,6 +4906,82 @@ PY
   done < "$selected_specs_file"
 }
 
+bind_precohort_routes() {
+  # Preparation modes do not own a release epoch, but phase-zero onboarding
+  # still has to prove exactly which hub and SSH-machine endpoints it is about
+  # to mutate. Persist one owner-private local receipt and bind each remote
+  # onboarding stage/placeholder to the corresponding node identity digest.
+  local selected_specs_file="$1" hub_agent="$2"
+  local authority_file="$TMPDIR_LOCAL/precohort-hub-authority.json"
+  local hub_identity="$TMPDIR_LOCAL/precohort-hub-route-identity.json"
+  local receipt="$TMPDIR_LOCAL/precohort-route-binding.json"
+  local authority_id spec fields=() agent agent_id node_identity
+  hub_epoch_client_read "$hub_agent" "$authority_file" authority
+  authority_id="$("$PYTHON_BIN" - "$authority_file" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+if value.get("schema")!="mac.fleet_release_hub_authority.v1":
+    raise SystemExit("hub authority response is invalid")
+print(value["hub_authority_id"])
+PY
+)"
+  write_live_endpoint_identity "$hub_agent" "$hub_identity" "$authority_id"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"
+    agent_id="$(stable_worker_agent_id "$agent")"
+    node_identity="$TMPDIR_LOCAL/node-route-identity-${agent_id}.json"
+    write_live_endpoint_identity "$agent" "$node_identity"
+  done < "$selected_specs_file"
+  assert_unique_selected_endpoint_identities "$selected_specs_file"
+  "$PYTHON_BIN" - "$selected_specs_file" "$hub_identity" "$TMPDIR_LOCAL" \
+    "$receipt" "$GIT_REV" "$DEPLOY_CONTROLLER_NONCE" <<'PY'
+import hashlib,json,os,sys,tempfile
+from pathlib import Path
+
+selected,hub_raw,root_raw,output_raw,revision,nonce=sys.argv[1:]
+root=Path(root_raw)
+hub=json.load(open(hub_raw,encoding="utf-8"))
+nodes=[]
+for line in Path(selected).read_text(encoding="utf-8").splitlines():
+    if not line.strip(): continue
+    fields=line.split("|"); name=fields[0]
+    safe=__import__("re").sub(r"[^A-Za-z0-9_.-]+","_",name.lower()).strip("_") or "default"
+    identity_path=root/("node-route-identity-agent_%s.json"%safe)
+    raw=identity_path.read_bytes()
+    identity=json.loads(raw)
+    nodes.append({
+        "agent":name,
+        "agent_id":"agent_"+safe,
+        "identity_sha256":hashlib.sha256(
+            (json.dumps(identity,sort_keys=True,separators=(",",":"))+"\n").encode()
+        ).hexdigest(),
+    })
+payload={
+    "schema":"mac.fleet_precohort_route_binding.v1",
+    "status":"bound",
+    "source_revision":revision,
+    "controller_nonce":nonce,
+    "hub_identity":hub,
+    "nodes":nodes,
+}
+output=Path(output_raw)
+fd,raw=tempfile.mkstemp(prefix=output.name+".",dir=output.parent); tmp=Path(raw)
+try:
+    os.fchmod(fd,0o600)
+    with os.fdopen(fd,"w",encoding="utf-8") as stream:
+        json.dump(payload,stream,sort_keys=True,separators=(",",":"))
+        stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
+    os.replace(tmp,output)
+    directory=os.open(output.parent,os.O_RDONLY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+finally:
+    tmp.unlink(missing_ok=True)
+PY
+}
+
 assert_unique_selected_endpoint_identities() {
   local selected_specs_file="$1"
   "$PYTHON_BIN" - "$selected_specs_file" "$TMPDIR_LOCAL" <<'PY'
@@ -5410,6 +5582,352 @@ prepare_network_prerequisites() {
 
   echo "==> fleet: re-proving every selected hub route"
   classify_network_prerequisites "$selected_specs_file"
+}
+
+classify_fungible_machine_onboarding() {
+  local selected_specs_file="$1" spec fields=() agent supervisor instance_kind
+  local ssh_parts=() ssh_args=() ssh_target item last_index command output
+  local failed=0
+  [ -r "$MACHINE_ONBOARDING_HELPER" ] || {
+    echo "ERROR: phase-zero machine onboarding helper is missing" >&2
+    return 1
+  }
+  echo "==> fleet: classifying every fungible machine before phase-zero mutation"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"; supervisor="${fields[14]:-auto}"
+    instance_kind="${fields[55]:-static}"
+    if [ "$instance_kind" != fungible ]; then
+      echo "ERROR: ${agent}: phase-zero onboarding requires instance_kind=fungible in the fleet registry" >&2
+      failed=1
+      continue
+    fi
+    ssh_parts=(); ssh_args=()
+    while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+    last_index=$((${#ssh_parts[@]} - 1))
+    ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+    command="python3 - inspect --supervisor $(shell_quote "$supervisor")"
+    output="$TMPDIR_LOCAL/machine-onboarding-inspect-$(stable_worker_agent_id "$agent").json"
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
+      -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
+      "${ssh_args[@]}" "$ssh_target" "$command" \
+      < "$MACHINE_ONBOARDING_HELPER" > "$output"; then
+      echo "ERROR: ${agent}: node is not eligible for phase-zero onboarding" >&2
+      failed=1
+      continue
+    fi
+    chmod 0600 "$output"
+    if ! "$PYTHON_BIN" - "$output" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+checks=value.get("checks")
+if (
+    value.get("schema")!="mac.fleet_machine_onboarding_status.v1"
+    or value.get("status")!="eligible"
+    or value.get("instance_kind")!="fungible"
+    or not isinstance(checks,dict)
+    or not checks
+    or any(item is not True for item in checks.values())
+):
+    raise SystemExit("phase-zero eligibility status is invalid")
+PY
+    then
+      echo "ERROR: ${agent}: phase-zero eligibility proof is malformed" >&2
+      failed=1
+    fi
+  done < "$selected_specs_file"
+  [ "$failed" = 0 ] || {
+    echo "ERROR: refusing all phase-zero mutations until every selected fungible node is eligible" >&2
+    return 1
+  }
+}
+
+register_fungible_onboarding_placeholder() (
+  set -euo pipefail
+  umask 077
+  local agent="$1" hub_agent="$2" fleet_name="$3" capabilities="$4"
+  local generation="$5" route_sha256="$6"
+  local agent_id request output remote_request command
+  local hub_ssh_parts=() hub_ssh_args=() hub_ssh_target item last_index
+  agent_id="$(stable_worker_agent_id "$agent")"
+  request="$TMPDIR_LOCAL/machine-onboarding-register-${agent_id}.json"
+  output="$TMPDIR_LOCAL/machine-onboarding-placeholder-${agent_id}.json"
+  remote_request="/tmp/mac-machine-onboarding-register-${agent_id}-${DEPLOY_CONTROLLER_NONCE}.json"
+  "$PYTHON_BIN" - "$request" "$agent" "$agent_id" "$fleet_name" \
+    "$capabilities" "$generation" "$GIT_REV" "$route_sha256" <<'PY'
+import json,os,re,sys,tempfile
+from pathlib import Path
+output_raw,agent,agent_id,fleet,capabilities,generation,revision,route=sys.argv[1:]
+safe=re.sub(r"[^A-Za-z0-9_.-]+","_",agent.lower()).strip("_") or "default"
+resource={
+    "schema":"mac.fleet_machine_onboarding_resource.v1",
+    "status":"prepared",
+    "generation":generation,
+    "source_revision":revision,
+    "route_identity_sha256":route,
+    "instance_kind":"fungible",
+}
+payload={
+    "schema":"mac.fleet_machine_onboarding_registration_request.v1",
+    "machine":{
+        "hostname":agent,
+        "machine_id":"machine_"+safe,
+        "labels":{
+            "registered_by":"fleet-machine-onboarding",
+            "instance_kind":"fungible",
+            "fleet":fleet,
+        },
+        "resources":{"machine_onboarding":resource},
+        "trusted":True,
+    },
+    "agent":{
+        "machine_id":"machine_"+safe,
+        "name":agent,
+        "agent_id":agent_id,
+        "capabilities":[item for item in capabilities.split(",") if item],
+        "resources":{"machine_onboarding":resource},
+        "actor":"fleet-machine-onboarding",
+        "status":"draining",
+        "health_status":"degraded",
+        "instance_kind":"fungible",
+    },
+}
+output=Path(output_raw); fd,raw=tempfile.mkstemp(prefix=output.name+".",dir=output.parent); tmp=Path(raw)
+try:
+    os.fchmod(fd,0o600)
+    with os.fdopen(fd,"w",encoding="utf-8") as stream:
+        json.dump(payload,stream,sort_keys=True,separators=(",",":")); stream.write("\n")
+        stream.flush(); os.fsync(stream.fileno())
+    os.replace(tmp,output)
+finally:
+    tmp.unlink(missing_ok=True)
+PY
+  while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  last_index=$((${#hub_ssh_parts[@]} - 1))
+  hub_ssh_target="${hub_ssh_parts[$last_index]}"
+  hub_ssh_args=("${hub_ssh_parts[@]:0:$last_index}")
+  pinned_remote_private_upload "$hub_agent" "$request" "$remote_request"
+  cleanup_placeholder_request() {
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${hub_ssh_args[@]}" "$hub_ssh_target" \
+      "python3 -c $(shell_quote 'import os,sys; os.unlink(sys.argv[1])') $(shell_quote "$remote_request")" \
+      >/dev/null 2>&1 || true
+  }
+  trap cleanup_placeholder_request EXIT
+  command='set -euo pipefail; set -a; . "$HOME/.mac/mac.env"; set +a; "$HOME/.mac/venv/bin/python" -'
+  command+=" $(shell_quote "$remote_request")"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=2 \
+    "${hub_ssh_args[@]}" "$hub_ssh_target" "$command" > "$output" <<'PY'
+import json,os,sys,urllib.request
+
+path=sys.argv[1]
+request_value=json.load(open(path,encoding="utf-8"))
+machine_body=request_value["machine"]; agent_body=request_value["agent"]
+base=str(os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL") or os.environ.get("MAC_API_URL") or "").rstrip("/")
+token=str(os.environ.get("MAC_API_TOKEN") or "")
+if not base or not token:
+    raise SystemExit("hub URL/token are unavailable")
+headers={"Authorization":"Bearer "+token,"Content-Type":"application/json","Accept":"application/json"}
+def call(method,route,body=None):
+    raw=None if body is None else json.dumps(body,sort_keys=True,separators=(",",":")).encode()
+    request=urllib.request.Request(base+route,data=raw,method=method,headers=headers)
+    with urllib.request.urlopen(request,timeout=30) as response:
+        value=json.load(response)
+    return value
+
+rows=call("GET","/agents")
+if not isinstance(rows,list):
+    raise SystemExit("hub agent registry response is invalid")
+same_name=[row for row in rows if isinstance(row,dict) and row.get("name")==agent_body["name"]]
+same_id=[row for row in rows if isinstance(row,dict) and row.get("id")==agent_body["agent_id"]]
+for row in same_name+same_id:
+    if (
+        row.get("id")!=agent_body["agent_id"]
+        or row.get("name")!=agent_body["name"]
+        or row.get("instance_kind")!="fungible"
+        or row.get("status")!="draining"
+        or row.get("health_status")!="degraded"
+        or row.get("current_task_id") is not None
+        or row.get("deleted_at") is not None
+    ):
+        raise SystemExit("existing agent identity is not the exact failed-prephase fungible placeholder")
+machine=call("POST","/machines",machine_body)
+if not isinstance(machine,dict) or machine.get("id")!=machine_body["machine_id"]:
+    raise SystemExit("machine placeholder registration differs")
+agent=call("POST","/agents",agent_body)
+if (
+    not isinstance(agent,dict)
+    or agent.get("id")!=agent_body["agent_id"]
+    or agent.get("machine_id")!=machine_body["machine_id"]
+    or agent.get("name")!=agent_body["name"]
+    or agent.get("instance_kind")!="fungible"
+    or agent.get("status")!="draining"
+    or agent.get("health_status")!="degraded"
+    or agent.get("current_task_id") is not None
+    or agent.get("deleted_at") is not None
+):
+    raise SystemExit("fungible placeholder did not register behind its barrier")
+resource=(agent.get("resources") or {}).get("machine_onboarding")
+if resource!=agent_body["resources"]["machine_onboarding"]:
+    raise SystemExit("fungible placeholder lost its onboarding binding")
+binding=agent_body["resources"]["machine_onboarding"]
+print(json.dumps({
+    "schema":"mac.fleet_machine_onboarding_placeholder.v1",
+    "agent":agent_body["name"],
+    "agent_id":agent_body["agent_id"],
+    "machine_id":machine_body["machine_id"],
+    "generation":binding["generation"],
+    "source_revision":binding["source_revision"],
+    "route_identity_sha256":binding["route_identity_sha256"],
+    "instance_kind":"fungible",
+    "status":"draining",
+    "health_status":"degraded",
+},sort_keys=True,separators=(",",":")))
+PY
+  chmod 0600 "$output"
+  "$PYTHON_BIN" - "$output" "$agent" "$agent_id" "$generation" \
+    "$GIT_REV" "$route_sha256" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+expected={
+    "schema":"mac.fleet_machine_onboarding_placeholder.v1",
+    "agent":sys.argv[2],
+    "agent_id":sys.argv[3],
+    "generation":sys.argv[4],
+    "source_revision":sys.argv[5],
+    "route_identity_sha256":sys.argv[6],
+    "instance_kind":"fungible",
+    "status":"draining",
+    "health_status":"degraded",
+}
+different=[key for key,wanted in expected.items() if value.get(key)!=wanted]
+if different:
+    raise SystemExit("placeholder receipt differs at: "+",".join(different))
+PY
+  cleanup_placeholder_request
+  trap - EXIT
+  printf '%s\n' "$output"
+)
+
+prepare_fungible_machine_onboarding_worker() (
+  set -euo pipefail
+  umask 077
+  local spec="$1" hub_agent="$2" fields=() agent agent_id supervisor fleet_name
+  local capabilities generation route_identity route_sha256 placeholder
+  local archive_sha256
+  local remote_prefix remote_helper remote_archive remote_assets remote_identity
+  local remote_placeholder ssh_parts=() ssh_args=() ssh_target item last_index
+  local prepare_command commit_command prepare_receipt commit_receipt
+  IFS='|' read -r -a fields <<<"$spec"
+  agent="${fields[0]}"; agent_id="$(stable_worker_agent_id "$agent")"
+  supervisor="${fields[14]:-auto}"; fleet_name="${fields[23]:-mac}"
+  capabilities="${fields[10]:-}"
+  [ "${fields[55]:-static}" = fungible ] || {
+    echo "ERROR: ${agent}: phase-zero onboarding refuses a static fleet record" >&2
+    return 1
+  }
+  generation="$(worker_generation_for_agent "$agent")"
+  route_identity="$(node_route_identity_file "$agent")"
+  route_sha256="$("$PYTHON_BIN" - "$route_identity" <<'PY'
+import hashlib,json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+print(hashlib.sha256((json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode()).hexdigest())
+PY
+)"
+  archive_sha256="$(sha256_file "$ARCHIVE")"
+  remote_prefix="/tmp/mac-machine-onboarding-${agent_id}-${DEPLOY_CONTROLLER_NONCE}"
+  remote_helper="${remote_prefix}.py"
+  remote_archive="${remote_prefix}.tar.gz"
+  remote_assets="${remote_prefix}-reviewed-assets.sh"
+  remote_identity="${remote_prefix}-route.json"
+  remote_placeholder="${remote_prefix}-placeholder.json"
+  prepare_receipt="$TMPDIR_LOCAL/machine-onboarding-stage-${agent_id}.json"
+  commit_receipt="$TMPDIR_LOCAL/machine-onboarding-receipt-${agent_id}.json"
+  while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
+  last_index=$((${#ssh_parts[@]} - 1))
+  ssh_target="${ssh_parts[$last_index]}"; ssh_args=("${ssh_parts[@]:0:$last_index}")
+  cleanup_remote_onboarding_relay() {
+    local code
+    code='import os,sys
+for path in sys.argv[1:]:
+    if not path.startswith("/tmp/mac-machine-onboarding-"): raise SystemExit("invalid cleanup path")
+    try: os.unlink(path)
+    except FileNotFoundError: pass'
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+      "${ssh_args[@]}" "$ssh_target" \
+      "python3 -c $(shell_quote "$code") $(shell_quote "$remote_helper") $(shell_quote "$remote_archive") $(shell_quote "$remote_assets") $(shell_quote "$remote_identity") $(shell_quote "$remote_placeholder")" \
+      >/dev/null 2>&1 || true
+  }
+  trap cleanup_remote_onboarding_relay EXIT
+  pinned_remote_private_upload "$agent" "$MACHINE_ONBOARDING_HELPER" "$remote_helper"
+  pinned_remote_verified_upload "$agent" "$ARCHIVE" "$remote_archive"
+  pinned_remote_private_upload "$agent" "$REVIEWED_TOOL_ASSETS_SOURCE" "$remote_assets"
+  pinned_remote_private_upload "$agent" "$route_identity" "$remote_identity"
+  prepare_command="python3 $(shell_quote "$remote_helper") prepare --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$GIT_REV") --supervisor $(shell_quote "$supervisor") --archive $(shell_quote "$remote_archive") --reviewed-assets $(shell_quote "$remote_assets") --route-identity $(shell_quote "$remote_identity")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+    "${ssh_args[@]}" "$ssh_target" "$prepare_command" > "$prepare_receipt"
+  chmod 0600 "$prepare_receipt"
+  "$PYTHON_BIN" - "$prepare_receipt" "$agent" "$generation" "$GIT_REV" \
+    "$route_sha256" "$archive_sha256" <<'PY'
+import json,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+if (
+    value.get("schema")!="mac.fleet_machine_onboarding_stage.v1"
+    or value.get("status")!="prepared"
+    or value.get("agent")!=sys.argv[2]
+    or value.get("generation")!=sys.argv[3]
+    or value.get("source_revision")!=sys.argv[4]
+    or value.get("route_identity_sha256")!=sys.argv[5]
+    or value.get("source_archive_sha256")!=sys.argv[6]
+    or value.get("instance_kind")!="fungible"
+    or value.get("versions")!={"uv":"0.8.22","python":"3.12.11","codegraph":"v1.1.6"}
+):
+    raise SystemExit("remote phase-zero stage receipt is invalid")
+PY
+  placeholder="$(register_fungible_onboarding_placeholder \
+    "$agent" "$hub_agent" "$fleet_name" "$capabilities" "$generation" "$route_sha256")"
+  pinned_remote_private_upload "$agent" "$placeholder" "$remote_placeholder"
+  commit_command="python3 $(shell_quote "$remote_helper") commit --agent $(shell_quote "$agent") --generation $(shell_quote "$generation") --source-revision $(shell_quote "$GIT_REV") --supervisor $(shell_quote "$supervisor") --placeholder $(shell_quote "$remote_placeholder")"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
+    "${ssh_args[@]}" "$ssh_target" "$commit_command" > "$commit_receipt"
+  chmod 0600 "$commit_receipt"
+  "$PYTHON_BIN" - "$commit_receipt" "$agent" "$generation" "$GIT_REV" \
+    "$route_sha256" <<'PY'
+import json,os,stat,sys
+path=sys.argv[1]; metadata=os.lstat(path); value=json.load(open(path,encoding="utf-8"))
+if (
+    not stat.S_ISREG(metadata.st_mode)
+    or stat.S_IMODE(metadata.st_mode)!=0o600
+    or value.get("schema")!="mac.fleet_machine_onboarding_receipt.v1"
+    or value.get("status")!="published"
+    or value.get("agent")!=sys.argv[2]
+    or value.get("generation")!=sys.argv[3]
+    or value.get("source_revision")!=sys.argv[4]
+    or value.get("route_identity_sha256")!=sys.argv[5]
+    or value.get("instance_kind")!="fungible"
+    or value.get("barrier")!={"status":"draining","health_status":"degraded"}
+    or value.get("services_started") is not False
+):
+    raise SystemExit("remote phase-zero commit receipt is invalid")
+PY
+  cleanup_remote_onboarding_relay
+  trap - EXIT
+  echo "==> ${agent}: phase-zero rollback baseline published; placeholder remains draining"
+)
+
+prepare_fungible_machine_onboarding() {
+  local selected_specs_file="$1" hub_agent="$2" spec
+  classify_fungible_machine_onboarding "$selected_specs_file"
+  bind_precohort_routes "$selected_specs_file" "$hub_agent"
+  echo "==> fleet: preparing fungible rollback baselines without starting services"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    prepare_fungible_machine_onboarding_worker "$spec" "$hub_agent"
+  done < "$selected_specs_file"
 }
 
 node_prerequisite_bundle_file() {
@@ -14289,13 +14807,17 @@ main() {
   # is durably waiting on an operation that the old API cannot complete. The
   # bootstrap leaves that journal untouched; the next normal typed invocation
   # reconciles it against the upgraded hub before creating a successor epoch.
-  if [ "$PREFLIGHT_ONLY" != 1 ] && [ "$LEGACY_HUB_BOOTSTRAP" != 1 ]; then
+  if [ "$PREFLIGHT_ONLY" != 1 ] \
+      && [ "$LEGACY_HUB_BOOTSTRAP" != 1 ] \
+      && [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ]; then
     recover_incomplete_cohort_transaction_before_deploy
   fi
   assert_frozen_deployment_source
   if [ "$PREFLIGHT_ONLY" != 1 ]; then
     make_archive
-    prepare_phase1_quiescence_assets
+    if [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ]; then
+      prepare_phase1_quiescence_assets
+    fi
   fi
   local spec agent agent_id adoption_reason hub_agent hub_token hub_token_key hub_target_str hub_tunnel_pubkey github_review_key_b64 local_target fleet_name_field network_provider_field hub_url_field direct_mesh_hub deployed_count ide_handoff_file supervisor_field worker_capabilities_field report_executor_required
   local cohort_fleet_name runtime_generation journal_evidence
@@ -14319,7 +14841,8 @@ main() {
   # One missing immutable OpenShell image rejects the entire frozen cohort
   # with zero remote mutations instead of stranding already-held workers.
   if [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ] \
-      && [ "$PREPARE_NETWORK_PREREQUISITES" != 1 ]; then
+      && [ "$PREPARE_NETWORK_PREREQUISITES" != 1 ] \
+      && [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ]; then
     while IFS= read -r spec; do
       [ -n "$spec" ] || continue
       validate_openshell_runtime_image_spec "$spec"
@@ -14344,6 +14867,7 @@ PY
   if [ "$LEGACY_HUB_BOOTSTRAP" != 1 ] \
       && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" != 1 ] \
       && [ "$PREPARE_NETWORK_PREREQUISITES" != 1 ] \
+      && [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ] \
       && [ "$PREFLIGHT_ONLY" != 1 ]; then
     initialize_cohort_transaction \
       "$selected_specs_file" "$hub_agent" "$cohort_fleet_name"
@@ -14409,6 +14933,21 @@ PY
     MAC_URL="$hub_url_field" MAC_API_TOKEN="$hub_token" \
       prepare_network_prerequisites "$selected_specs_file"
     echo "==> network prerequisites prepared; no cohort transaction was opened"
+    rm -rf "$TMPDIR_LOCAL"
+    return 0
+  fi
+
+  if [ "$PREPARE_FUNGIBLE_ONBOARDING" = 1 ]; then
+    [ "$LEGACY_HUB_BOOTSTRAP" = 0 ] \
+      && [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 0 ] \
+      && [ "$PREPARE_NETWORK_PREREQUISITES" = 0 ] \
+      && [ -z "$HOLD_ADOPTIONS_FILE" ] \
+      && [ "$SUCCESSOR_HOLD_REASON_SUPPLIED" = 0 ] || {
+        echo "ERROR: fungible onboarding cannot be combined with deployment or hold authority" >&2
+        return 2
+      }
+    prepare_fungible_machine_onboarding "$selected_specs_file" "$hub_agent"
+    echo "==> fungible phase-zero onboarding complete; no services started and no cohort transaction was opened"
     rm -rf "$TMPDIR_LOCAL"
     return 0
   fi

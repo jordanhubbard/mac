@@ -12479,6 +12479,7 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh",
+      "deploy/fleet-node-machine-onboard.py",
       "deploy/fleet-node-phase1-quiesce.sh",
       "src/mac/deploy_env.py",
       "src/mac/worker.py"
