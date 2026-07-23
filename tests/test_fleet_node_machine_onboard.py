@@ -127,6 +127,27 @@ def test_pristine_gate_rejects_service_configuration_and_process(
     assert "service_process" in str(error.value)
 
 
+def test_service_configuration_allows_network_prerequisite(monkeypatch):
+    module = _load_helper()
+    paths = {
+        Path("/etc/supervisor/conf.d/mac-tailscaled.conf"),
+        Path("/etc/supervisor/conf.d/mac-agent.conf"),
+    }
+
+    monkeypatch.setattr(
+        module.Path,
+        "glob",
+        lambda self, pattern: list(paths)
+        if self == Path("/etc/supervisor/conf.d") and pattern == "mac*.conf"
+        else [],
+    )
+    monkeypatch.setattr(module, "_path_exists", lambda path: path in paths)
+
+    assert module._service_configuration_paths(
+        module.Layout.for_home(Path("/home/test"))
+    ) == [Path("/etc/supervisor/conf.d/mac-agent.conf")]
+
+
 def test_prepare_is_generation_scoped_and_does_not_publish(
     module, tmp_path, monkeypatch
 ):

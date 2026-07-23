@@ -275,7 +275,21 @@ def _service_configuration_paths(layout: Layout) -> list[Path]:
             found.extend(root.glob(pattern))
         except OSError:
             continue
-    return sorted({item for item in found if _path_exists(item)})
+    return sorted(
+        {
+            item
+            for item in found
+            if _path_exists(item)
+            # Phase-zero runs after the separately authorized network
+            # prerequisite operation. Its fleet-scoped tailscaled program is
+            # route infrastructure, not a MAC application generation, and
+            # must remain live so the typed deploy can reach the node.
+            and not (
+                item.parent == Path("/etc/supervisor/conf.d")
+                and item.name.endswith("-tailscaled.conf")
+            )
+        }
+    )
 
 
 def _service_processes(supervisor: str) -> list[str]:
