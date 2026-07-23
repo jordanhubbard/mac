@@ -551,7 +551,12 @@ install_fleet_registry() {
 
 python_bin() {
   local candidate
-  for candidate in "${MAC_PYTHON:-}" "$VENV/bin/python" /opt/homebrew/bin/python3 /usr/local/bin/python3 python3.13 python3.12 python3.11 python3.10 python3 python; do
+  for candidate in \
+    "${MAC_PYTHON:-}" \
+    "$MAC_HOME/lib/python"/cpython-"$MAC_REVIEWED_PYTHON_VERSION"-*/bin/python3.12 \
+    "$VENV/bin/python" \
+    /opt/homebrew/bin/python3 /usr/local/bin/python3 \
+    python3.13 python3.12 python3.11 python3.10 python3 python; do
     [ -n "$candidate" ] || continue
     if ! command -v "$candidate" >/dev/null 2>&1; then
       continue
@@ -565,6 +570,9 @@ import sys
 raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
 PY
     then
+      candidate="$("$candidate" -c \
+        'import os,sys; print(os.path.realpath(sys.executable))')" || continue
+      [ -x "$candidate" ] || continue
       printf '%s\n' "$candidate"
       return
     fi

@@ -432,11 +432,17 @@ def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
         + text.split("python_bin() {", 1)[1].split("\n}\n\nhermes_python_bin()", 1)[0]
         + "\n}"
     )
-    venv = tmp_path / "venv"
-    managed = venv / "bin" / "python"
+    mac_home = tmp_path / ".mac"
+    managed = (
+        mac_home
+        / "lib"
+        / "python"
+        / "cpython-3.12.11-test"
+        / "bin"
+        / "python3.12"
+    )
     managed.parent.mkdir(parents=True)
-    managed.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    managed.chmod(0o755)
+    managed.symlink_to(Path(sys.executable))
     system_bin = tmp_path / "system-bin"
     system_bin.mkdir()
     system_python = system_bin / "python3"
@@ -449,15 +455,17 @@ def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
             "-c",
             (
                 "set -euo pipefail\n"
-                'VENV="$1"\n'
+                'MAC_HOME="$1"\n'
+                'VENV="$MAC_HOME/venv"\n'
                 'PATH="$2:/usr/bin:/bin"\n'
                 "MAC_PYTHON=\n"
+                "MAC_REVIEWED_PYTHON_VERSION=3.12.11\n"
                 "log() { :; }\n"
                 f"{function}\n"
                 "python_bin\n"
             ),
             "managed-python",
-            str(venv),
+            str(mac_home),
             str(system_bin),
         ],
         text=True,
@@ -465,4 +473,4 @@ def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == str(managed)
+    assert result.stdout.strip() == str(Path(sys.executable).resolve())
