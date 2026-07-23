@@ -59,6 +59,7 @@ ARG CODEGRAPH_VERSION="v1.1.6"
 ARG NODE_VERSION="22.23.1"
 ARG PNPM_VERSION="11.13.1"
 ARG CODEX_VERSION="0.140.0"
+ARG BUILDX_VERSION="0.30.1"
 ARG TARGETARCH
 COPY .mac-openshell-build-assets /tmp/mac-openshell-build-assets
 COPY deploy/verify-bash-contract.sh /usr/local/bin/mac-verify-bash-contract
@@ -88,6 +89,10 @@ RUN printf '%s\n' 'deb http://deb.debian.org/debian bookworm-backports main' > /
          arm64) asset_arch=arm64; gh_arch=arm64; codegraph_arch=arm64 ;; \
          *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 2 ;; \
        esac \
+    && install -d -m0755 /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins \
+    && install -m0755 "/tmp/mac-openshell-build-assets/buildx-${asset_arch}" /usr/local/lib/docker/cli-plugins/docker-buildx \
+    && ln -s /usr/local/lib/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx \
+    && /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F "v${BUILDX_VERSION}" \
     && tar -xJf "/tmp/mac-openshell-build-assets/node-${asset_arch}.tar.xz" -C /usr/local --strip-components=1 \
     && test "$(node --version)" = "v${NODE_VERSION}" \
     && tar -xzf "/tmp/mac-openshell-build-assets/gh-${asset_arch}.tgz" -C /tmp \

@@ -63,6 +63,7 @@ IMAGE_SPECS = {
         ),
         "trees": ("src",),
         "build_args": {
+            "BUILDX_VERSION": "0.30.1",
             "CODEGRAPH_VERSION": "v1.1.6",
             "CODEX_VERSION": "0.140.0",
             "GH_VERSION": "2.95.0",
@@ -606,6 +607,7 @@ def _smoke_argv(kind: str, docker: str, reference: str, platform: str) -> list[s
         "clang --print-targets | grep -F riscv64; llvm-objcopy --version; "
         "ld.lld --version; qemu-system-riscv64 --version; "
         "qemu-system-riscv64 -machine help | grep -F virt; python3 --version; "
+        "/usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F 'v0.30.1'; "
         "getent passwd sandbox; test -x /opt/mac-venv/bin/mac-git-askpass"
     )
     return [

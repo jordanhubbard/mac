@@ -207,6 +207,31 @@ def test_runtime_plan_requires_the_complete_reviewed_arg_set(tmp_path: Path) -> 
         module.build_plan(root, "openshell-runtime", "b" * 40, values[:-1])
 
 
+def test_runtime_image_carries_checksum_locked_buildx_for_both_architectures() -> None:
+    containerfile = (
+        ROOT / "deploy/openshell/mac-hermes.Containerfile"
+    ).read_text(encoding="utf-8")
+    preparer = (
+        ROOT / "deploy/openshell/prepare-runtime-image-assets.sh"
+    ).read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    identity = (ROOT / "scripts/image-publication-identity.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'ARG BUILDX_VERSION="0.30.1"' in containerfile
+    assert "buildx-${asset_arch}" in containerfile
+    assert "/usr/local/lib/docker/cli-plugins/docker-buildx version" in containerfile
+    assert "buildx-amd64" in preparer
+    assert "c37114fcd034025ec68e224657c8a5a850df472ded3ddcbca75ad3a7ebb9710d" in preparer
+    assert "buildx-arm64" in preparer
+    assert "31d012d52d6df68aef4b55db62330967b562811f0de30cdfaa4505f314797c76" in preparer
+    assert "--build-arg BUILDX_VERSION=0.30.1" in workflow
+    assert "BUILDX_VERSION=0.30.1" in workflow
+    assert '"BUILDX_VERSION": "0.30.1"' in identity
+    assert "/usr/local/lib/docker/cli-plugins/docker-buildx version" in identity
+
+
 def test_publication_receipt_separates_requested_and_original_build_revision(
     tmp_path: Path,
 ) -> None:

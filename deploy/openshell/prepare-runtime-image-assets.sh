@@ -15,6 +15,7 @@ CODEGRAPH_VERSION="${CODEGRAPH_VERSION:-$MAC_REVIEWED_CODEGRAPH_VERSION}"
 NODE_VERSION="${NODE_VERSION:-22.23.1}"
 PNPM_VERSION="${PNPM_VERSION:-11.13.1}"
 CODEX_VERSION="${CODEX_VERSION:-0.140.0}"
+BUILDX_VERSION="${BUILDX_VERSION:-0.30.1}"
 LEIN_COMMIT="40227328d4a9c8945362d6d626d19c2449175df6"
 
 while [ "$#" -gt 0 ]; do
@@ -33,7 +34,8 @@ done
   && [ "$CODEGRAPH_VERSION" = "v1.1.6" ] \
   && [ "$NODE_VERSION" = "22.23.1" ] \
   && [ "$PNPM_VERSION" = "11.13.1" ] \
-  && [ "$CODEX_VERSION" = "0.140.0" ] || {
+  && [ "$CODEX_VERSION" = "0.140.0" ] \
+  && [ "$BUILDX_VERSION" = "0.30.1" ] || {
     echo "ERROR: runtime tool version is unreviewed; update versions and exact hashes together" >&2
     exit 2
   }
@@ -88,10 +90,16 @@ read -r _cg_arm64_name _cg_arm64_sha _cg_arm64_url _cg_arm64_root < <(
 )
 fetch codegraph-amd64.tgz "$_cg_amd64_sha" "$_cg_amd64_url"
 fetch codegraph-arm64.tgz "$_cg_arm64_sha" "$_cg_arm64_url"
+fetch buildx-amd64 \
+  c37114fcd034025ec68e224657c8a5a850df472ded3ddcbca75ad3a7ebb9710d \
+  "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-amd64"
+fetch buildx-arm64 \
+  31d012d52d6df68aef4b55db62330967b562811f0de30cdfaa4505f314797c76 \
+  "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-arm64"
 fetch lein \
   f8e1266c0c78c08bd4af6e111889ecc316c9dd56d1e8645bbee6c1703d351bc3 \
   "https://raw.githubusercontent.com/technomancy/leiningen/${LEIN_COMMIT}/bin/lein"
-chmod 0755 "$TEMP/lein"
+chmod 0755 "$TEMP/lein" "$TEMP/buildx-amd64" "$TEMP/buildx-arm64"
 chmod 0644 "$TEMP/SHA256SUMS" "$TEMP"/*.tgz "$TEMP"/*.tar.xz
 
 rm -rf "$OUTPUT"
