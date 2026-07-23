@@ -138,6 +138,11 @@ StatusUpdateSink = Callable[[JsonDict], JsonDict]
 SAFE_GIT_REF_RE = r"^[A-Za-z0-9][A-Za-z0-9._/\-]{0,127}$"
 SAFE_SYSTEMD_SERVICE_RE = r"^[A-Za-z0-9][A-Za-z0-9_.@:\-]{0,126}\.service$"
 VERIFICATION_SCHEMA = "mac.worker_evidence.v1"
+# EX_TEMPFAIL from sysexits.h. main() returns this so the supervising
+# service manager (systemd/launchd wrapper) restarts the worker after a
+# self-update swaps the code on disk, instead of treating the exit as a
+# hard failure. Mirrors _hermes.gateway.restart.GATEWAY_SERVICE_RESTART_EXIT_CODE.
+SELF_UPDATE_RESTART_EXIT_CODE = 75
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DEFAULT_COMMAND_INVENTORY_NAMES = (
     "bash",
@@ -8034,12 +8039,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             results = worker.run_forever(max_iterations=args.max_iterations)
             print(json.dumps([{**startup_info, **r.to_dict()} for r in results], indent=2, sort_keys=True))
             if any(result.status == "self_update_restart" for result in results):
-                return 75
+                return SELF_UPDATE_RESTART_EXIT_CODE
         else:
             result = worker.run_once()
             print(json.dumps({**startup_info, **result.to_dict()}, indent=2, sort_keys=True))
             if result.status == "self_update_restart":
-                return 75
+                return SELF_UPDATE_RESTART_EXIT_CODE
     except MacApiError as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, indent=2, sort_keys=True))
         return 1

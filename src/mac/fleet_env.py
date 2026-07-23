@@ -34,6 +34,7 @@ _DEPRECATION_SEEN: set = set()
 # things like MAC_DB or MAC_SECRET_KEY that should stay shared.
 FLEET_SCOPED_VARS = frozenset(
     {
+        "MAC_TOKEN",
         "MAC_API_TOKEN",
         "MAC_API_TOKENS",
         "MAC_DEPLOY_HUB_TOKEN",
@@ -255,8 +256,13 @@ def resolve_first(
     """Resolve the first env var in ``base_names`` that has a value.
 
     Each base name is looked up via :func:`resolve` (fleet-scoped first,
-    then legacy fallback). Useful for chains like
-    ``MAC_TOKEN > MAC_WORKER_TOKEN > MAC_API_TOKEN``.
+    then legacy fallback). Precedence follows the *argument order*, so the
+    worker's chain
+    ``MAC_WORKER_TOKEN > MAC_TOKEN > MAC_API_TOKEN`` resolves the scoped or
+    legacy ``MAC_WORKER_TOKEN`` before falling through to ``MAC_TOKEN`` and
+    then ``MAC_API_TOKEN``. Every name in a credential chain should also be
+    listed in :data:`FLEET_SCOPED_VARS` so its flat form is migrated and
+    warned about consistently.
     """
     for name in base_names:
         value = resolve(name, fleet=fleet, env=env)

@@ -140,3 +140,43 @@ def test_two_fleets_in_one_env_file_do_not_collide(tmp_path: Path):
     # And resolve picks the right one per fleet.
     assert fleet_env.resolve("MAC_API_TOKEN", fleet="rocky", env=parsed) == "rocky-token"
     assert fleet_env.resolve("MAC_API_TOKEN", fleet="jordanh-hub", env=parsed) == "jh-token"
+
+
+def test_mac_token_is_fleet_scoped():
+    """mac-g55y audit: MAC_TOKEN sits in the worker credential chain, so it
+    must be scoped/migrated/warned about like the other fleet tokens."""
+    assert "MAC_TOKEN" in fleet_env.FLEET_SCOPED_VARS
+
+
+def test_resolve_mac_token_prefers_scoped_form():
+    env = {
+        "MAC_TOKEN": "legacy-flat",
+        "MAC_TOKEN__ROCKY": "rocky-scoped",
+    }
+    assert fleet_env.resolve("MAC_TOKEN", fleet="rocky", env=env) == "rocky-scoped"
+
+
+def test_worker_chain_prefers_worker_token_then_mac_token():
+    """The worker resolves ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"].
+    Argument order — not the FLEET_SCOPED_VARS ordering — decides precedence."""
+    chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"]
+    env = {"MAC_WORKER_TOKEN__ROCKY": "worker", "MAC_TOKEN__ROCKY": "tok"}
+    assert fleet_env.resolve_first(chain, fleet="rocky", env=env) == "worker"
+    env2 = {"MAC_TOKEN__ROCKY": "tok", "MAC_API_TOKEN__ROCKY": "api"}
+    assert fleet_env.resolve_first(chain, fleet="rocky", env=env2) == "tok"
+
+
+def test_migrate_env_file_scopes_mac_token(tmp_path: Path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("MAC_TOKEN=worker-token\n")
+    added, kept = fleet_env.migrate_env_file(env_path, "rocky")
+    assert added["MAC_TOKEN__ROCKY"] == "worker-token"
+    assert kept["MAC_TOKEN"] == "worker-token"
+
+
+def test_legacy_mac_token_emits_deprecation_warning(caplog):
+    fleet_env._DEPRECATION_SEEN.clear()
+    env = {"MAC_TOKEN": "legacy-only"}
+    with caplog.at_level("WARNING", logger="mac.fleet_env"):
+        assert fleet_env.resolve("MAC_TOKEN", fleet="rocky", env=env) == "legacy-only"
+    assert any("legacy flat env var MAC_TOKEN" in r.getMessage() for r in caplog.records)

@@ -435,3 +435,17 @@ def test_startup_import_self_check_disabled(worker_main, monkeypatch, capsys):
     assert worker.main(_register_args()) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["import_self_check"] is None
+
+
+def test_self_update_restart_exit_code_is_ex_tempfail():
+    """Audit: the self-update restart exit code is the self-documenting
+    EX_TEMPFAIL (75) constant so the service manager restarts the worker."""
+    assert worker.SELF_UPDATE_RESTART_EXIT_CODE == 75
+
+
+def test_self_update_restart_uses_the_named_constant(worker_main, capsys):
+    FakeWorker.run_status = "self_update_restart"
+    assert worker.main(["--agent-id", "agent_test", "--executor", "runner"]) == (
+        worker.SELF_UPDATE_RESTART_EXIT_CODE
+    )
+    assert json.loads(capsys.readouterr().out)["status"] == "self_update_restart"
