@@ -3,10 +3,12 @@ import hashlib
 import json
 import os
 import re
+import signal
 import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -3119,9 +3121,80 @@ def test_launchd_worker_wrapper_marks_agent_offline_on_controlled_shutdown():
     )[0]
 
     assert "mark_worker_offline()" in wrapper
+    assert "stop_worker_wrapper()" in wrapper
     assert "stable_agent_id()" in wrapper
-    assert 'trap mark_worker_offline TERM INT' in wrapper
+    assert 'trap stop_worker_wrapper TERM INT' in wrapper
+    assert "trap - TERM INT" in wrapper
+    assert "exit 143" in wrapper
     assert '{"status":"offline","health_status":"degraded"}' in wrapper
+
+
+def test_worker_wrapper_latches_stop_during_startup_self_test(tmp_path):
+    script = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    function = script.split("install_mac_agent_wrapper() {", 1)[1].split(
+        "install_mac_hermes_task_executor() {", 1
+    )[0]
+    match = re.search(r'cat > "\$wrapper" <<\'EOF\'\n(?P<body>.*?)\nEOF', function, re.DOTALL)
+    assert match is not None
+
+    mac_home = tmp_path / ".mac"
+    bin_dir = mac_home / "bin"
+    venv_bin = mac_home / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    venv_bin.mkdir(parents=True)
+    wrapper_path = bin_dir / "mac-agent-service"
+    wrapper_path.write_text(match.group("body") + "\n", encoding="utf-8")
+    wrapper_path.chmod(0o700)
+    (mac_home / "mac.env").write_text(
+        "MAC_HUB_URL=http://127.0.0.1:9\n"
+        "MAC_WORKER_TOKEN=test-token\n"
+        "MAC_WORKER_AGENT_ID=agent_test\n",
+        encoding="utf-8",
+    )
+    ready = tmp_path / "selftest-ready"
+    agent_started = tmp_path / "agent-started"
+    selftest = bin_dir / "mac-agent-startup-self-test"
+    selftest.write_text(
+        "#!/usr/bin/env bash\n"
+        f": > {shlex.quote(str(ready))}\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    selftest.chmod(0o700)
+    agent = venv_bin / "mac-agent"
+    agent.write_text(
+        "#!/usr/bin/env bash\n"
+        f": > {shlex.quote(str(agent_started))}\n",
+        encoding="utf-8",
+    )
+    agent.chmod(0o700)
+    (venv_bin / "python").symlink_to(sys.executable)
+    curl = bin_dir / "curl"
+    curl.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    curl.chmod(0o700)
+
+    process = subprocess.Popen(
+        [str(wrapper_path)],
+        env={**os.environ, "HOME": str(tmp_path)},
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            assert process.poll() is None
+            time.sleep(0.02)
+        assert ready.exists()
+        os.killpg(process.pid, signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=5)
+        assert process.returncode == 143, (stdout, stderr)
+        assert not agent_started.exists()
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
 
 
 def test_worker_wrapper_runs_agent_side_startup_self_test(tmp_path):

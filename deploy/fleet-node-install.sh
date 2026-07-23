@@ -10986,7 +10986,18 @@ mark_worker_offline() {
 header = "Authorization: Bearer $MAC_WORKER_TOKEN"
 CURL
 }
-trap mark_worker_offline TERM INT
+
+stop_worker_wrapper() {
+  # The wrapper can still be running its startup self-test when the supervisor
+  # asks it to stop. Merely recording the offline heartbeat and returning from
+  # the trap lets the shell continue into exec(mac-agent), losing the one-shot
+  # termination signal and leaving systemd/launchd stuck until its hard stop
+  # timeout. Latch the stop by exiting before the worker can be exec'd.
+  trap - TERM INT
+  mark_worker_offline
+  exit 143
+}
+trap stop_worker_wrapper TERM INT
 
 if [ "${MAC_AGENT_STARTUP_SELF_TEST:-1}" != "0" ]; then
   # The self-test declares its verdict through its exit code: 0 = passed or

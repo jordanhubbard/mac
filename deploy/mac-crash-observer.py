@@ -363,15 +363,30 @@ def observe(supervisor: str, command: Iterable[str]) -> int:
         intentional_stop["value"] = True
         if child is not None and child.poll() is None:
             try:
-                child.send_signal(signum)
-            except OSError:
-                pass
+                os.killpg(child.pid, signum)
+            except (AttributeError, ProcessLookupError, OSError):
+                try:
+                    child.send_signal(signum)
+                except OSError:
+                    pass
 
     prior = {}
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         prior[signum] = signal.signal(signum, forward)
     try:
-        child = subprocess.Popen(argv, env=env, stderr=subprocess.PIPE)
+        # The service wrapper performs a startup self-test before exec'ing the
+        # long-running worker. Give that whole transient tree its own process
+        # group so a supervisor stop reaches both the wrapper and whichever
+        # preflight child it is currently waiting for. Signalling only the
+        # wrapper can be consumed by its shell trap while the self-test keeps
+        # running, after which the wrapper would otherwise exec a fresh worker
+        # that never saw the one-shot stop request.
+        child = subprocess.Popen(
+            argv,
+            env=env,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
         assert child.stderr is not None
         tee = _StderrTee(child.stderr)
         tee.start()
@@ -382,7 +397,9 @@ def observe(supervisor: str, command: Iterable[str]) -> int:
             signal.signal(signum, handler)
 
     if returncode == 0 or intentional_stop["value"]:
-        return 0 if returncode == 0 else 128 + abs(returncode)
+        if returncode >= 0:
+            return returncode
+        return 128 + abs(returncode)
 
     exit_code, signal_number, reason = _reason(returncode)
     repo = Path(env.get("MAC_SELF_UPDATE_REPO") or (mac_home / "src" / "mac")).expanduser()

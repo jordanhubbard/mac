@@ -190,6 +190,51 @@ while True:
                 pass
 
 
+def test_observer_stop_reaches_wrapper_preflight_process_group(tmp_path):
+    ready = tmp_path / "preflight-ready"
+    continued = tmp_path / "wrapper-continued"
+    wrapper = tmp_path / "synthetic-worker-wrapper"
+    wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        "stop_wrapper() { trap - TERM INT; exit 143; }\n"
+        "trap stop_wrapper TERM INT\n"
+        f": > {str(ready)!r}\n"
+        "sleep 30\n"
+        f": > {str(continued)!r}\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+    observer = subprocess.Popen(
+        [
+            sys.executable,
+            str(OBSERVER_PATH),
+            "--supervisor",
+            "systemd",
+            "--",
+            str(wrapper),
+        ],
+        env={**os.environ, "MAC_HOME": str(tmp_path / "mac-home")},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            assert observer.poll() is None
+            time.sleep(0.02)
+        assert ready.exists()
+        observer.send_signal(signal.SIGTERM)
+        stdout, stderr = observer.communicate(timeout=5)
+        assert observer.returncode == 143, (stdout, stderr)
+        assert not continued.exists()
+    finally:
+        if observer.poll() is None:
+            observer.kill()
+            observer.wait(timeout=5)
+
+
 def test_filesystem_core_is_retained_with_bounded_permissions(tmp_path):
     observer = _load_observer()
     source = tmp_path / "core.99"
