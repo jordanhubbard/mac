@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -913,11 +914,210 @@ def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     assert "expected_startup_timestamp" in approval
     assert "agent_has_read_only_report_repository_executor" in approval
     assert "deployment report executor approval failed or drifted" in approval
+    assert 'deployment_id="${4:-$(deployment_id_for_agent "$agent")}"' in approval
 
     assert "report_executor_required" in (
         ROOT / "deploy" / "fleet-cohort-transaction.py"
     ).read_text(encoding="utf-8")
-    assert "reconcile_report_repository_executor_approval" in recovery
+    assert (
+        'reconcile_report_repository_executor_approval \\\n'
+        '      "$agent" "$hub_agent" 1 "$deployment_id"'
+    ) in recovery
+
+
+def test_committed_recovery_uses_journal_deployment_id_for_report_approval(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery = (
+        "recover_committed_cohort_node() {"
+        + deploy.split("recover_committed_cohort_node() {", 1)[1].split(
+            "\n}\n\ndiscard_unopened_epoch_pending_credentials", 1
+        )[0]
+        + "\n}"
+    )
+    journal_deployment_id = (
+        "b865bea02e2c316e1e0e715bd0d8e273d0ad7973:"
+        "rocky:20260723T005315Z:cc58437dd600b350da0f7907ff1957f7"
+    )
+    candidate = {
+        "agent_name": "rocky",
+        "stable_id": "agent_rocky",
+        "generation": journal_deployment_id,
+        "deployment_id": journal_deployment_id,
+        "deploy_ts": "20260723T005315Z",
+        "source_commit": "b865bea02e2c316e1e0e715bd0d8e273d0ad7973",
+        "fleet": "mac",
+        "finalizer_sha256": "a" * 64,
+        "state": "finalizing",
+        "report_executor_required": True,
+    }
+    encoded = base64.b64encode(json.dumps(candidate).encode()).decode()
+    events = tmp_path / "events"
+    snippet = f"""set -euo pipefail
+PYTHON_BIN={shlex.quote(sys.executable)}
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+COHORT_JOURNAL_REVISION=34
+acquire_remote_deployment_lock() {{ printf 'lock:%s\n' "$2" >> {shlex.quote(str(events))}; }}
+reconcile_report_repository_executor_approval() {{ printf 'approval:%s\n' "$4" >> {shlex.quote(str(events))}; }}
+cohort_journal_mutate() {{ return 0; }}
+run_remote_node_finalizer() {{ printf '{{"status":"fixture"}}\n' > "$7"; }}
+validate_finalize_evidence() {{ return 0; }}
+finalize_remote_deployment_release() {{ return 0; }}
+{recovery}
+recover_committed_cohort_node epoch adopted-owner rocky {shlex.quote(encoded)}
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        f"lock:{journal_deployment_id}",
+        f"approval:{journal_deployment_id}",
+    ]
+
+
+def test_immutable_node_finalizer_executes_exact_verified_bytes(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    function = deploy.split("run_remote_node_finalizer() {", 1)[1].split(
+        "\n}\n\nprepare_remote_prerequisite_bundle", 1
+    )[0]
+    wrapper = function.split("code=\"$(command cat <<'PY'\n", 1)[1].split(
+        "\nPY\n)\"", 1
+    )[0]
+    capability = tmp_path / ".mac" / "fleet-finalizers" / "fixture-finalizer"
+    capability.parent.mkdir(parents=True)
+    capability.write_text(
+        """import argparse
+import json
+parser = argparse.ArgumentParser()
+parser.add_argument("--mac-home")
+parser.add_argument("--agent")
+parser.add_argument("--fleet")
+parser.add_argument("--generation")
+parser.add_argument("--revision")
+parser.add_argument("--deploy-ts")
+args = parser.parse_args()
+print(json.dumps({
+    "schema": "mac.fleet_node_finalize.v1",
+    "status": "finalized",
+    "agent": args.agent,
+    "generation": args.generation,
+    "file": __file__,
+    "module": __name__,
+}, sort_keys=True))
+""",
+        encoding="utf-8",
+    )
+    capability.chmod(0o700)
+    expected = hashlib.sha256(capability.read_bytes()).hexdigest()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            wrapper,
+            capability.name,
+            expected,
+            "rocky",
+            "mac",
+            "generation-1",
+            "a" * 40,
+            "20260723T005315Z",
+        ],
+        env={**os.environ, "HOME": str(tmp_path)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "agent": "rocky",
+        "file": str(capability),
+        "generation": "generation-1",
+        "module": "__main__",
+        "schema": "mac.fleet_node_finalize.v1",
+        "status": "finalized",
+    }
+    assert '[sys.executable, "/dev/fd/' not in function
+
+
+def test_node_finalizer_failure_is_not_swallowed_in_conditional_context(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    function = (
+        "run_remote_node_finalizer() {"
+        + deploy.split("run_remote_node_finalizer() {", 1)[1].split(
+            "\n}\n\nprepare_remote_prerequisite_bundle", 1
+        )[0]
+        + "\n}"
+    )
+
+    for mode in ("transport-failure", "empty-success"):
+        case = tmp_path / mode
+        case.mkdir()
+        output = case / "receipt.json"
+        output.write_text("preserved\n", encoding="utf-8")
+        snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(case))}
+RUNNER_MODE={shlex.quote(mode)}
+node_finalizer_capability_name_for_generation() {{ printf '%s\n' fixture-finalizer; }}
+run_fenced_remote_python() {{ [ "$RUNNER_MODE" != transport-failure ] || return 9; return 0; }}
+validate_finalize_evidence() {{ [ -s "$1" ]; }}
+{function}
+if run_remote_node_finalizer rocky mac generation-1 {'a' * 40} 20260723T005315Z {'b' * 64} {shlex.quote(str(output))} journal-deployment; then
+  printf 'rc=0\n'
+else
+  printf 'rc=%s\n' "$?"
+fi
+"""
+        result = subprocess.run(
+            ["bash", "-c", snippet], text=True, capture_output=True, check=False
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() != "rc=0"
+        assert output.read_text(encoding="utf-8") == "preserved\n"
+        assert not list(case.glob("node-finalize.*"))
+
+
+def test_verified_python_rollback_contract_executes_exact_bytes(tmp_path):
+    node = NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    function = node.split("verified_contract_call() {", 1)[1].split(
+        "\n}\n\nverified_lifecycle_call", 1
+    )[0]
+    verifier = function.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    helper = tmp_path / "rollback-supervisor.py"
+    helper.write_text(
+        """import json
+import sys
+print(json.dumps({
+    "argv": sys.argv,
+    "file": __file__,
+    "module": __name__,
+}, sort_keys=True))
+""",
+        encoding="utf-8",
+    )
+    helper.chmod(0o600)
+    expected = hashlib.sha256(helper.read_bytes()).hexdigest()
+
+    result = subprocess.run(
+        [sys.executable, "-", "python", str(helper), expected, "quiesce"],
+        input=verifier + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "argv": [str(helper), "quiesce"],
+        "file": str(helper),
+        "module": "__main__",
+    }
+    assert "argv = [sys.executable, descriptor_path" not in function
 
 
 def test_hub_epoch_client_writes_receipts_in_owner_private_remote_directory():

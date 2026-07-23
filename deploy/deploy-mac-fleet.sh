@@ -5545,7 +5545,6 @@ run_remote_node_finalizer() {
 import hashlib
 import os
 import stat
-import subprocess
 import sys
 from pathlib import Path
 
@@ -5569,26 +5568,50 @@ try:
         raw.extend(chunk)
     if hashlib.sha256(raw).hexdigest() != expected:
         raise SystemExit("installed finalizer differs from the journal")
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    result = subprocess.run(
-        [sys.executable, "/dev/fd/%d" % descriptor,
-         "--mac-home", str(Path.home() / ".mac"),
-         "--agent", agent, "--fleet", fleet,
-         "--generation", generation, "--revision", revision,
-         "--deploy-ts", deploy_ts],
-        pass_fds=(descriptor,), stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=None, check=False,
-    )
-    if result.returncode != 0: raise SystemExit(result.returncode)
-    os.write(1, result.stdout)
+    # Execute the exact bytes already read from the verified descriptor.
+    # CPython on Darwin can consume a /dev/fd script without executing it
+    # because its internal re-open shares the descriptor offset.
+    sys.argv = [
+        str(path),
+        "--mac-home", str(Path.home() / ".mac"),
+        "--agent", agent, "--fleet", fleet,
+        "--generation", generation, "--revision", revision,
+        "--deploy-ts", deploy_ts,
+    ]
+    namespace = {
+        "__name__": "__main__",
+        "__file__": str(path),
+        "__package__": None,
+        "__cached__": None,
+    }
+    exec(compile(bytes(raw), str(path), "exec"), namespace, namespace)
 finally:
     os.close(descriptor)
 PY
 )"
-  run_fenced_remote_python "$agent" "$deployment_id" "$code" \
+  local output_tmp=""
+  if ! output_tmp="$(mktemp "$TMPDIR_LOCAL/node-finalize.XXXXXX")"; then
+    return 1
+  fi
+  if ! chmod 0600 "$output_tmp"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! run_fenced_remote_python "$agent" "$deployment_id" "$code" \
     "$name" "$expected_sha" "$agent" "$fleet_name" "$generation" \
-    "$revision" "$deploy_ts" > "$output"
-  chmod 0600 "$output"
+    "$revision" "$deploy_ts" > "$output_tmp"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! validate_finalize_evidence "$output_tmp" "$agent" "$generation"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! mv -f -- "$output_tmp" "$output"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  return 0
 }
 
 prepare_remote_prerequisite_bundle() {
@@ -10596,7 +10619,7 @@ reconcile_report_repository_executor_approval() (
   local agent="$1" hub_agent="$2" required="$3"
   local deployment_id agent_id hub_ssh_parts=() hub_ssh_args=() hub_ssh_target
   local item last_index
-  deployment_id="$(deployment_id_for_agent "$agent")"
+  deployment_id="${4:-$(deployment_id_for_agent "$agent")}"
   agent_id="$(stable_worker_agent_id "$agent")"
   assert_remote_deployment_lock "$agent" "$deployment_id"
   while IFS= read -r -d '' item; do hub_ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
@@ -11328,9 +11351,20 @@ collect_finalize_evidence() {
 validate_finalize_evidence() {
   local output="$1" agent="$2" generation="$3"
   "$PYTHON_BIN" - "$output" "$agent" "$generation" <<'PY'
-import json,sys
-value=json.load(open(sys.argv[1],encoding="utf-8"))
-if value.get("schema") != "mac.fleet_node_finalize.v1" or value.get("status") != "finalized" or value.get("agent") != sys.argv[2] or value.get("generation") != sys.argv[3]:
+import json,os,stat,sys
+metadata=os.lstat(sys.argv[1])
+if (
+    not stat.S_ISREG(metadata.st_mode)
+    or stat.S_ISLNK(metadata.st_mode)
+    or metadata.st_uid != os.getuid()
+    or metadata.st_nlink != 1
+    or stat.S_IMODE(metadata.st_mode) != 0o600
+    or not 2 <= metadata.st_size <= 1024 * 1024
+):
+    raise SystemExit("node finalize receipt is not a bounded owner-private file")
+with open(sys.argv[1],encoding="utf-8") as stream:
+    value=json.load(stream)
+if not isinstance(value,dict) or value.get("schema") != "mac.fleet_node_finalize.v1" or value.get("status") != "finalized" or value.get("agent") != sys.argv[2] or value.get("generation") != sys.argv[3]:
     raise SystemExit("node finalize receipt differs from selected generation")
 PY
 }
@@ -12813,7 +12847,8 @@ PY
     return 1
   fi
   if [ "$report_required" = True ] || [ "$report_required" = true ] || [ "$report_required" = 1 ]; then
-    if ! reconcile_report_repository_executor_approval "$agent" "$hub_agent" 1; then
+    if ! reconcile_report_repository_executor_approval \
+      "$agent" "$hub_agent" 1 "$deployment_id"; then
       return 1
     fi
   fi

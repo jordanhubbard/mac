@@ -4388,10 +4388,11 @@ fi
 # generation.  Every external operation below is independently bounded.
 trap '' HUP INT TERM
 
-# Open with O_NOFOLLOW, bind owner/mode/size/hash to the generation, rewind the
-# same descriptor, then exec the interpreter against /dev/fd/N.  For the shell
-# lifecycle contract the exec'd Bash sources that exact descriptor and invokes
-# one named function; there is no check/path-open race.
+# Open with O_NOFOLLOW and bind owner/mode/size/hash to the generation. Python
+# contracts execute the exact verified bytes in-process because CPython cannot
+# reliably execute a rewound /dev/fd script on Darwin. For the shell lifecycle
+# contract the exec'd Bash sources the verified descriptor and invokes one
+# named function; there is no check/path-open race.
 verified_contract_call() {
   local kind="\$1" path="\$2" expected_sha256="\$3"
   shift 3
@@ -4421,12 +4422,14 @@ try:
     ):
         raise SystemExit("rollback contract owner, mode, or size is invalid")
     digest = hashlib.sha256()
+    raw = bytearray()
     remaining = before.st_size
     while remaining:
         chunk = os.read(descriptor, min(remaining, 64 * 1024))
         if not chunk:
             raise SystemExit("rollback contract was truncated")
         digest.update(chunk)
+        raw.extend(chunk)
         remaining -= len(chunk)
     if os.read(descriptor, 1):
         raise SystemExit("rollback contract grew during verification")
@@ -4437,12 +4440,19 @@ try:
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
     ):
         raise SystemExit("rollback contract hash or identity changed")
+    if kind == "python":
+        sys.argv = [path, *arguments]
+        namespace = {
+            "__name__": "__main__",
+            "__file__": path,
+            "__package__": None,
+            "__cached__": None,
+        }
+        exec(compile(bytes(raw), path, "exec"), namespace, namespace)
+        raise SystemExit(0)
     os.lseek(descriptor, 0, os.SEEK_SET)
     os.set_inheritable(descriptor, True)
     descriptor_path = "/dev/fd/%d" % descriptor
-    if kind == "python":
-        argv = [sys.executable, descriptor_path, *arguments]
-        os.execve(sys.executable, argv, os.environ.copy())
     command = (
         'contract="\$1"; function="\$2"; shift 2; '
         '. "\$contract"; "\$function" "\$@"'
