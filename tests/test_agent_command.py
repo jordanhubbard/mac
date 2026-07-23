@@ -172,6 +172,8 @@ def test_shutdown_watchdog_bounds_wedged_interpreter_exit(tmp_path: Path) -> Non
 
 
 def test_codex_prompt_uses_stdin_marker(monkeypatch) -> None:
+    for name in ("MAC_CODEX_TOKEN", "CODEX_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     seen = {}
 
     def fake_run(argv, **kwargs):
@@ -184,3 +186,40 @@ def test_codex_prompt_uses_stdin_marker(monkeypatch) -> None:
     ) == 0
     assert seen["argv"] == ["codex", "exec", "-"]
     assert seen["input"] == "private prompt"
+    assert "env" not in seen
+
+
+def test_codex_bearer_route_uses_ephemeral_home(monkeypatch, tmp_path: Path) -> None:
+    stale_home = tmp_path / "copied-codex-home"
+    stale_home.mkdir()
+    (stale_home / "auth.json").write_text(
+        '{"auth_mode":"chatgpt","tokens":{"refresh_token":"stale"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "router-token")
+    monkeypatch.setenv("CODEX_HOME", str(stale_home))
+    seen: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        child_env = kwargs["env"]
+        isolated_home = Path(child_env["CODEX_HOME"])
+        seen.update(
+            argv=list(argv),
+            input=kwargs["input"],
+            isolated_home=isolated_home,
+            isolated_home_existed=isolated_home.is_dir(),
+        )
+        assert isolated_home != stale_home
+        assert not (isolated_home / "auth.json").exists()
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr(agent_command.subprocess, "run", fake_run)
+
+    assert agent_command._run_external_with_stdin(
+        ["codex", "exec", agent_command.PROMPT_SENTINEL], "private prompt"
+    ) == 0
+    assert seen["argv"] == ["codex", "exec", "-"]
+    assert seen["input"] == "private prompt"
+    assert seen["isolated_home_existed"] is True
+    assert not Path(seen["isolated_home"]).exists()
+    assert (stale_home / "auth.json").exists()

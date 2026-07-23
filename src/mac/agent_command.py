@@ -8,6 +8,7 @@ import os
 import runpy
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Sequence
@@ -92,15 +93,44 @@ def _run_hermes_in_process(argv: list[str], prompt: str) -> int:
 def _run_external_with_stdin(argv: list[str], prompt: str) -> int:
     sentinel_index = argv.index(PROMPT_SENTINEL)
     executable = Path(argv[0]).name.lower()
-    if executable in {"codex", "codex.exe"} or (
+    is_codex = executable in {"codex", "codex.exe"} or (
         len(argv) > 1 and argv[1] == "exec"
-    ):
+    )
+    if is_codex:
         argv[sentinel_index] = "-"
     else:
         # Claude, Cursor, and explicit command overrides consume the prompt on
         # stdin. This is the only supported override contract because appending
         # prompt text to argv exposes it for the lifetime of the child process.
         del argv[sentinel_index]
+
+    # Codex's persisted ChatGPT session takes precedence over an environment
+    # API key even when the invocation selects a custom provider whose env_key
+    # names that credential. Fleet credential sync can therefore leave a copied
+    # rotating refresh token stale on one host and make an otherwise verified
+    # OPENAI_API_KEY route fail with "refresh token was already used".
+    #
+    # Environment-backed fleet routes do not need any persisted Codex state:
+    # all provider, endpoint, wire API, model, and credential-source settings
+    # are supplied per invocation. Give those runs a fresh private CODEX_HOME
+    # so interactive user state can neither shadow nor be mutated by a worker.
+    bearer_env = any(
+        str(os.environ.get(name) or "").strip()
+        for name in ("MAC_CODEX_TOKEN", "CODEX_API_KEY", "OPENAI_API_KEY")
+    )
+    if is_codex and bearer_env:
+        with tempfile.TemporaryDirectory(prefix="mac-codex-home-") as codex_home:
+            child_env = dict(os.environ)
+            child_env["CODEX_HOME"] = codex_home
+            completed = subprocess.run(
+                argv,
+                input=prompt,
+                text=True,
+                check=False,
+                env=child_env,
+            )
+            return int(completed.returncode)
+
     completed = subprocess.run(argv, input=prompt, text=True, check=False)
     return int(completed.returncode)
 
