@@ -853,6 +853,25 @@ def test_fleet_deploy_does_not_print_worker_token_in_systemd_status():
     assert "-p MainPID" in agent_service
 
 
+def test_agent_services_allow_full_openshell_task_withdrawal():
+    script = deploy_script_text()
+    linux = script.split("install_linux_agent_service() {", 1)[1].split(
+        "install_supervisord_service() {", 1
+    )[0]
+    darwin = script.split("install_darwin_agent_service() {", 1)[1].split(
+        "classify_gateway_logs() {", 1
+    )[0]
+
+    assert "SuccessExitStatus=143 SIGTERM" in linux
+    assert "KillMode=mixed" in linux
+    assert "KillSignal=SIGTERM" in linux
+    assert "TimeoutStopSec=600" in linux
+    assert "TimeoutStopSec=30" not in linux
+    assert "<key>ExitTimeOut</key><integer>600</integer>" in darwin
+    assert "<key>ExitTimeOut</key><integer>30</integer>" not in darwin
+    assert "<key>AbandonProcessGroup</key><false/>" in darwin
+
+
 def test_darwin_service_wrappers_raise_file_descriptor_limit():
     script = deploy_script_text()
     gateway_wrapper = script.split("install_hermes_gateway_wrapper() {", 1)[1].split(

@@ -11737,7 +11737,12 @@ EnvironmentFile=$ENV_FILE
 ExecStart=$MAC_HOME/bin/mac-crash-observer --supervisor systemd -- $MAC_HOME/bin/mac-agent-service
 Restart=always
 RestartSec=5
-TimeoutStopSec=30
+SuccessExitStatus=143 SIGTERM
+KillMode=mixed
+KillSignal=SIGTERM
+# A worker may need to withdraw an OpenShell task sandbox and publish its
+# terminal evidence before the supervisor escalates to SIGKILL.
+TimeoutStopSec=600
 LimitNOFILE=65536
 LimitCORE=infinity
 StandardOutput=journal
@@ -12485,7 +12490,9 @@ install_darwin_agent_service() {
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>ExitTimeOut</key><integer>30</integer>
+  <!-- Allow the worker to withdraw its OpenShell task sandbox and publish
+       terminal evidence before launchd escalates the stop. -->
+  <key>ExitTimeOut</key><integer>600</integer>
   <key>AbandonProcessGroup</key><false/>
   <key>WorkingDirectory</key><string>$MAC_HOME</string>
   <key>SoftResourceLimits</key>
