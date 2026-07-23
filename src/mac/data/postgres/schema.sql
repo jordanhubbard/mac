@@ -733,6 +733,17 @@ CREATE TABLE IF NOT EXISTS agentbus_consumer_cursors (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (agent_id, topic)
 );
+
+-- Durable resume cursors for the bounded work-package pipeline controller and
+-- the repository ref reconciler (opaque, bounded client-defined JSON keyed by
+-- a stable scope/name), so a hub restart resumes instead of rescanning.
+CREATE TABLE IF NOT EXISTS pipeline_cursors (
+    scope TEXT NOT NULL,
+    name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (scope, name)
+);
 CREATE INDEX IF NOT EXISTS idx_agentbus_streams_sender_status
     ON agentbus_streams (sender_agent_id, status, updated_at);
 

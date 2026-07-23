@@ -17,6 +17,12 @@ from typing import (
 )
 
 
+def _utcnow_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
 class StoreError(Exception):
     """Backend-neutral persistence error.
 
@@ -187,6 +193,57 @@ class SQLiteStore:
     def query_all(self, sql: str, params: Sequence[Any] = ()) -> list:
         with self._lock:
             return self._conn.execute(sql, params).fetchall()
+
+    # Durable pipeline resume cursors (task_repair_d771f872). Opaque,
+    # bounded JSON documents keyed by a stable (scope, name). Used by the
+    # work-package pipeline controller and the repository ref reconciler so a
+    # hub restart resumes from its last bookmark instead of rescanning.
+    PIPELINE_CURSOR_MAX_BYTES = 65536
+
+    def set_pipeline_cursor(self, scope: str, name: str, value: Any) -> None:
+        import json as _json
+
+        scope_value = str(scope or "").strip()
+        name_value = str(name or "").strip()
+        if not scope_value or not name_value:
+            raise ValueError("pipeline cursor scope and name are required")
+        encoded = _json.dumps(value, sort_keys=True, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > self.PIPELINE_CURSOR_MAX_BYTES:
+            raise ValueError(
+                "pipeline cursor value exceeds %d bytes"
+                % self.PIPELINE_CURSOR_MAX_BYTES
+            )
+        now = _utcnow_iso()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO pipeline_cursors (scope, name, value, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(scope, name) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (scope_value, name_value, encoded, now),
+            )
+
+    def get_pipeline_cursor(self, scope: str, name: str, default: Any = None) -> Any:
+        import json as _json
+
+        scope_value = str(scope or "").strip()
+        name_value = str(name or "").strip()
+        if not scope_value or not name_value:
+            return default
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM pipeline_cursors WHERE scope = ? AND name = ?",
+                (scope_value, name_value),
+            ).fetchone()
+        if row is None:
+            return default
+        try:
+            return _json.loads(row["value"])
+        except (TypeError, ValueError):
+            return default
 
     def _migrate_execution_cohort_route_contract(self) -> None:
         """Upgrade the preliminary cohort route CHECK without losing receipts.
@@ -6113,6 +6170,24 @@ class SQLiteStore:
                 position TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (agent_id, topic)
+            );
+            """
+        )
+        # task_repair_d771f872: durable resume cursors for the bounded
+        # work-package pipeline controller and the repository ref reconciler.
+        # Both keep a restart-losable scan bookmark / last-report in process
+        # memory; persisting an opaque, bounded document under a stable
+        # (scope, name) key lets a hub restart resume where it left off instead
+        # of rescanning the whole catalog. The value is client-defined JSON,
+        # opaque to the store (mirrors agentbus_consumer_cursors).
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS pipeline_cursors (
+                scope TEXT NOT NULL,
+                name TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (scope, name)
             );
             """
         )

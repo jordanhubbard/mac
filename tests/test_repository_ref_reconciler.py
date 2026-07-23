@@ -650,3 +650,62 @@ def test_failed_protected_ref_delete_is_durable_and_retryable(monkeypatch, tmp_p
     assert failed["failed_count"] == 1
     assert retried["deleted_count"] == 1
     assert [value[1]["outcome"] for value in recorded] == ["failed", "deleted"]
+
+
+class _StorePlane(_Plane):
+    """Control-plane double that also exposes a durable store, as the live
+    ControlPlane does, so cursor persistence is exercised."""
+
+    def __init__(self, store, repositories=()):
+        super().__init__(repositories)
+        self.store = store
+
+
+def test_last_report_is_persisted_to_the_store(tmp_path, monkeypatch):
+    from mac.store import SQLiteStore
+
+    path = tmp_path / "repo"
+    path.mkdir()
+    store = SQLiteStore(":memory:")
+    plane = _StorePlane(store, [_repo(path)])
+    _install_success_fakes(monkeypatch)
+    reconciler = RepositoryRefReconciler(
+        plane,
+        RepositoryRefReconcilerConfig(mode="audit"),
+    )
+
+    report = reconciler.run_once(trigger="test")
+
+    persisted = store.get_pipeline_cursor(
+        "repository_ref_reconciler", "last_report", None
+    )
+    assert persisted is not None
+    assert persisted["run_id"] == report["run_id"]
+
+
+def test_status_resumes_last_report_from_store_on_restart(tmp_path, monkeypatch):
+    from mac.store import SQLiteStore
+
+    path = tmp_path / "repo"
+    path.mkdir()
+    store = SQLiteStore(":memory:")
+    plane = _StorePlane(store, [_repo(path)])
+    _install_success_fakes(monkeypatch)
+
+    first = RepositoryRefReconciler(plane, RepositoryRefReconcilerConfig(mode="audit"))
+    report = first.run_once(trigger="test")
+
+    # A fresh reconciler sharing the same durable store (a hub restart) reports
+    # the last known result immediately, before any new pass runs.
+    resumed = RepositoryRefReconciler(plane, RepositoryRefReconcilerConfig(mode="audit"))
+    assert resumed.status()["last_report"] is not None
+    assert resumed.status()["last_report"]["run_id"] == report["run_id"]
+
+
+def test_reconciler_without_store_starts_with_no_last_report(tmp_path):
+    plane = _Plane([])
+    reconciler = RepositoryRefReconciler(
+        plane,
+        RepositoryRefReconcilerConfig(mode="audit"),
+    )
+    assert reconciler.status()["last_report"] is None

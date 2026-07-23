@@ -849,6 +849,9 @@ def build_work_package_pipeline_runtime(
         # process-wide label would let two hub replicas both observe themselves
         # as the live owner and execute the same external certifier job.
         owner=new_id("work-package-pipeline"),
+        # Durable resume bookmark: a hub restart resumes the bounded scan from
+        # its last position instead of rewinding to an empty after-key.
+        cursor_store=control_plane.store,
     )
     return WorkPackagePipelineRuntime(
         controller=controller,

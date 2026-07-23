@@ -35,6 +35,27 @@ WORK_PACKAGE_PIPELINE_SCHEMA = "mac.work_package.pipeline.v1"
 WORK_PACKAGE_PIPELINE_RUN_SCHEMA = "mac.work_package.pipeline_run.v1"
 WORK_PACKAGE_PIPELINE_OUTCOME_SCHEMA = "mac.work_package.pipeline_outcome.v1"
 
+# Durable resume-cursor coordinates for the bounded controller. The scan
+# bookmark (``after_key``) is otherwise restart-losable: a hub restart would
+# rewind to an empty key and rescan the whole catalog. Persisting it under a
+# stable (scope, name) lets the controller resume where it stopped.
+WORK_PACKAGE_PIPELINE_CURSOR_SCOPE = "work_package_pipeline"
+WORK_PACKAGE_PIPELINE_AFTER_KEY_CURSOR = "after_key"
+
+
+class PipelineCursorStore(Protocol):
+    """Minimal durable key/value seam for the controller's resume cursor.
+
+    Satisfied by :class:`mac.store.SQLiteStore` (and the Postgres port) via
+    ``get_pipeline_cursor`` / ``set_pipeline_cursor``; injected so the
+    controller has no direct dependency on a concrete store.
+    """
+
+    def get_pipeline_cursor(self, scope: str, name: str, default: Any = ...) -> Any: ...
+
+    def set_pipeline_cursor(self, scope: str, name: str, value: Any) -> None: ...
+
+
 _ACTIONABLE_BATCH_STATES = frozenset(
     {"queued", "assembling", "verifying", "certified", "rejected", "published"}
 )
@@ -494,6 +515,7 @@ class WorkPackagePipelineController:
         observer: Optional[PipelineObserver] = None,
         owner: Optional[str] = None,
         now: Optional[Callable[[], datetime]] = None,
+        cursor_store: Optional[PipelineCursorStore] = None,
     ) -> None:
         self.inventory = inventory
         self.release_gates = release_gates
@@ -515,7 +537,44 @@ class WorkPackagePipelineController:
         self._wake_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_report: Optional[Dict[str, Any]] = None
-        self._after_key = ""
+        self._cursor_store = cursor_store
+        self._after_key = self._load_after_key()
+
+    def _load_after_key(self) -> str:
+        """Read the durable scan bookmark, defaulting to empty on any error."""
+
+        store = self._cursor_store
+        if store is None:
+            return ""
+        try:
+            value = store.get_pipeline_cursor(
+                WORK_PACKAGE_PIPELINE_CURSOR_SCOPE,
+                WORK_PACKAGE_PIPELINE_AFTER_KEY_CURSOR,
+                "",
+            )
+        except Exception:  # noqa: BLE001 - a cursor read must never crash boot.
+            _log.warning("failed to load work-package pipeline cursor", exc_info=True)
+            return ""
+        return str(value or "")
+
+    def _persist_after_key(self, after_key: str) -> None:
+        """Best-effort durable write of the scan bookmark.
+
+        Persistence failures are logged and swallowed: losing a bookmark write
+        only costs a re-scan on the next restart, so it must never abort a run.
+        """
+
+        store = self._cursor_store
+        if store is None:
+            return
+        try:
+            store.set_pipeline_cursor(
+                WORK_PACKAGE_PIPELINE_CURSOR_SCOPE,
+                WORK_PACKAGE_PIPELINE_AFTER_KEY_CURSOR,
+                str(after_key or ""),
+            )
+        except Exception:  # noqa: BLE001 - never fail a run on a cursor write.
+            _log.warning("failed to persist work-package pipeline cursor", exc_info=True)
 
     def start(self) -> bool:
         """Start a stoppable daemon; disabled configurations fail closed."""
@@ -635,6 +694,7 @@ class WorkPackagePipelineController:
                 scanned += 1
                 with self._state_lock:
                     self._after_key = snapshot.key
+                self._persist_after_key(snapshot.key)
                 action_started = self._now_utc()
                 outcome = self._advance(snapshot)
                 action_completed = self._now_utc()

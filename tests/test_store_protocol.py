@@ -183,3 +183,41 @@ def test_sqlite_existing_open_refuses_to_create_database(tmp_path) -> None:
         SQLiteStore(str(database), initialize_schema=False)
 
     assert not database.exists()
+
+
+def test_pipeline_cursor_roundtrip_and_default() -> None:
+    store = SQLiteStore(":memory:")
+    try:
+        assert store.get_pipeline_cursor("scope", "name", "fallback") == "fallback"
+        store.set_pipeline_cursor("scope", "name", "cursor-a")
+        assert store.get_pipeline_cursor("scope", "name") == "cursor-a"
+        # Upsert overwrites in place.
+        store.set_pipeline_cursor("scope", "name", "cursor-b")
+        assert store.get_pipeline_cursor("scope", "name") == "cursor-b"
+        # JSON documents survive the roundtrip.
+        store.set_pipeline_cursor("scope", "doc", {"a": 1, "b": [1, 2]})
+        assert store.get_pipeline_cursor("scope", "doc") == {"a": 1, "b": [1, 2]}
+    finally:
+        store.close()
+
+
+def test_pipeline_cursor_requires_scope_and_name() -> None:
+    store = SQLiteStore(":memory:")
+    try:
+        with pytest.raises(ValueError):
+            store.set_pipeline_cursor("", "name", "x")
+        with pytest.raises(ValueError):
+            store.set_pipeline_cursor("scope", "", "x")
+        assert store.get_pipeline_cursor("", "name", "d") == "d"
+    finally:
+        store.close()
+
+
+def test_pipeline_cursor_rejects_oversized_value() -> None:
+    store = SQLiteStore(":memory:")
+    try:
+        oversized = "x" * (store.PIPELINE_CURSOR_MAX_BYTES + 1)
+        with pytest.raises(ValueError, match="exceeds"):
+            store.set_pipeline_cursor("scope", "name", oversized)
+    finally:
+        store.close()

@@ -32,6 +32,13 @@ from mac.repository_hygiene import (
 
 
 REPOSITORY_REF_RECONCILER_SCHEMA = "mac.repository_ref_reconciler.v1"
+
+# Durable resume-cursor coordinates for the reconciler's last report. Without
+# persistence the summary is restart-losable: a hub restart blanks ``status()``
+# until the next reconcile pass completes. Persisting it under a stable
+# (scope, name) lets ``status()`` report the last known result immediately.
+REPOSITORY_REF_RECONCILER_CURSOR_SCOPE = "repository_ref_reconciler"
+REPOSITORY_REF_RECONCILER_LAST_REPORT_CURSOR = "last_report"
 RECONCILER_MODES = frozenset({"off", "audit", "prune"})
 MIN_INTERVAL_SECONDS = 60.0
 MAX_INTERVAL_SECONDS = 7 * 24 * 60 * 60.0
@@ -191,7 +198,7 @@ class RepositoryRefReconciler:
         self._run_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
-        self._last_report: Optional[Dict[str, Any]] = None
+        self._last_report: Optional[Dict[str, Any]] = self._load_last_report()
 
     def start(self) -> bool:
         if not self.config.enabled:
@@ -1051,9 +1058,51 @@ class RepositoryRefReconciler:
             report["error"] = error
         return report
 
+    def _cursor_store(self) -> Any:
+        return getattr(self.control_plane, "store", None)
+
+    def _load_last_report(self) -> Optional[Dict[str, Any]]:
+        """Read the durable last report, defaulting to None on any error."""
+
+        store = self._cursor_store()
+        if store is None or not hasattr(store, "get_pipeline_cursor"):
+            return None
+        try:
+            value = store.get_pipeline_cursor(
+                REPOSITORY_REF_RECONCILER_CURSOR_SCOPE,
+                REPOSITORY_REF_RECONCILER_LAST_REPORT_CURSOR,
+                None,
+            )
+        except Exception:  # noqa: BLE001 - a cursor read must never crash boot.
+            _log.warning("failed to load repository ref reconciler cursor", exc_info=True)
+            return None
+        return value if isinstance(value, dict) else None
+
+    def _persist_last_report(self, report: Dict[str, Any]) -> None:
+        """Best-effort durable write of the last report.
+
+        Persistence failures are logged and swallowed: a missed write only
+        blanks ``status()`` until the next pass, so it must never abort a run.
+        """
+
+        store = self._cursor_store()
+        if store is None or not hasattr(store, "set_pipeline_cursor"):
+            return
+        try:
+            store.set_pipeline_cursor(
+                REPOSITORY_REF_RECONCILER_CURSOR_SCOPE,
+                REPOSITORY_REF_RECONCILER_LAST_REPORT_CURSOR,
+                report,
+            )
+        except Exception:  # noqa: BLE001 - never fail a run on a cursor write.
+            _log.warning(
+                "failed to persist repository ref reconciler cursor", exc_info=True
+            )
+
     def _finish(self, report: Dict[str, Any]) -> None:
         with self._state_lock:
             self._last_report = copy.deepcopy(report)
+        self._persist_last_report(report)
         level = (
             "warning"
             if report.get("status")

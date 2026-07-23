@@ -1000,3 +1000,83 @@ def test_control_plane_observer_records_one_bounded_service_event() -> None:
     assert calls[0][0] == ("work_package.pipeline.run",)
     assert calls[0][1]["level"] == "warning"
     assert calls[0][1]["source"] == "work-package-pipeline"
+
+
+def _controller_with_cursor(
+    tmp_path: Path,
+    inventory: _Inventory,
+    cursor_store: SQLiteStore,
+    *,
+    max_actions: int = 8,
+    max_items: int = 16,
+) -> WorkPackagePipelineController:
+    bundle = tmp_path / "candidate.bundle"
+    bundle.write_bytes(b"exact bundle")
+    calls: list[str] = []
+    return WorkPackagePipelineController(
+        inventory=inventory,
+        release_gates=_Gates(),
+        bundles=_Bundles(bundle),
+        integration=_Integration(calls),
+        certification=_Certification(calls),
+        landing=_Landing(calls),
+        finalization=_Finalization(calls),
+        rejection=_Rejection(calls),
+        config=WorkPackagePipelineConfig(
+            enabled=False,
+            interval_seconds=60,
+            initial_delay_seconds=5.0,
+            max_actions_per_run=max_actions,
+            max_items_per_run=max_items,
+        ),
+        observer=None,
+        owner="pipeline-cursor-test",
+        cursor_store=cursor_store,
+    )
+
+
+def test_after_key_cursor_is_persisted_across_scanned_items(tmp_path: Path) -> None:
+    store = SQLiteStore(":memory:")
+    controller = _controller_with_cursor(
+        tmp_path,
+        _Inventory([[_snapshot(key="a", package="a"), _snapshot(key="b", package="b")]]),
+        store,
+    )
+
+    controller.run_once()
+
+    assert (
+        store.get_pipeline_cursor("work_package_pipeline", "after_key", "") == "b"
+    )
+
+
+def test_controller_resumes_from_persisted_after_key_on_restart(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(":memory:")
+
+    # First lifecycle scans through "a" and "b", persisting the bookmark.
+    first = _controller_with_cursor(
+        tmp_path,
+        _Inventory([[_snapshot(key="a", package="a"), _snapshot(key="b", package="b")]]),
+        store,
+    )
+    first.run_once()
+    assert first.status()["next_after_key"] == "b"
+
+    # A fresh controller (simulating a hub restart) sharing the same durable
+    # store must resume from the persisted bookmark, not an empty key.
+    resumed_inventory = _Inventory([[_snapshot(key="c", package="c")]])
+    resumed = _controller_with_cursor(tmp_path, resumed_inventory, store)
+    assert resumed.status()["next_after_key"] == "b"
+
+    resumed.run_once()
+
+    # The resumed scan queried the inventory starting at the persisted bookmark.
+    assert resumed_inventory.calls[0][0] == "b"
+    assert store.get_pipeline_cursor("work_package_pipeline", "after_key", "") == "c"
+
+
+def test_controller_without_cursor_store_starts_empty(tmp_path: Path) -> None:
+    controller, _calls = _controller(tmp_path, _Inventory([[]]))
+    assert controller.status()["next_after_key"] == ""
