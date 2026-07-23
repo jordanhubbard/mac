@@ -3774,3 +3774,46 @@ printf '%s\n' "$result"
         "upload:/fixture/helper",
         "release:fixture:exact-generation",
     ]
+
+
+def test_phase1_quiesce_remote_failure_stays_failed_in_conditional_context(tmp_path):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    quiesce = (
+        "quiesce_remote_agent_for_cohort() {"
+        + deploy.split("quiesce_remote_agent_for_cohort() {", 1)[1].split(
+            "\n}\n\nprepare_remote_mac_agent_deployment", 1
+        )[0]
+        + "\n}"
+    )
+    events = tmp_path / "events"
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+DEPLOY_CONTROLLER_NONCE=controller
+PHASE1_QUIESCE_HELPER=/fixture/helper
+PHASE1_DAEMON_FUNCTIONS=/fixture/functions
+OPENSHELL_REVIEWED_CLI_VERSION=fixture-version
+GIT_REV=fixture-revision
+PYTHON_BIN={shlex.quote(sys.executable)}
+stable_worker_agent_id() {{ printf '%s\n' agent_fixture; }}
+phase1_restore_contract_digest_for_agent() {{ printf '%s\n' restore-sha; }}
+reviewed_openshell_cli_status_value() {{ printf '%s\n' "$2-sha"; }}
+fenced_remote_upload() {{ printf '%s\n' "upload:$3" >> {shlex.quote(str(events))}; }}
+ssh_target_args() {{ printf '%s\\0' fixture-target; }}
+remote_deployment_fenced_exec() {{ printf '%s\n' fixture-fence; }}
+shell_quote() {{ printf '%q' "$1"; }}
+ssh() {{ printf '%s\n' ssh >> {shlex.quote(str(events))}; return 23; }}
+{quiesce}
+set +e
+if quiesce_remote_agent_for_cohort fixture exact-generation systemd mac linux; then result=0; else result=$?; fi
+printf '%s\n' "$result"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "1"
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "upload:/fixture/helper",
+        "upload:/fixture/functions",
+        "ssh",
+    ]

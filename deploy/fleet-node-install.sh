@@ -7529,21 +7529,32 @@ def inspect_running_managed_openshell(runtime):
 
 
 def prove_managed_openshell_inactive(runtimes):
-    for observation in range(2):
+    deadline = min(gate_deadline, time.monotonic() + quiescence_timeout)
+    inactive_observations = 0
+    while inactive_observations < 2:
         active = [
             item
             for runtime in runtimes
             for item in inspect_running_managed_openshell(runtime)
         ]
         if active:
+            inactive_observations = 0
+        else:
+            inactive_observations += 1
+        if inactive_observations >= 2:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             raise QuiescenceFailure(
                 "running OpenShell-managed sandbox survived phase-1 quiescence"
             )
-        if observation == 0:
-            sleep_for_poll()
+        if poll_seconds:
+            time.sleep(min(poll_seconds, remaining, remaining_time()))
+        else:
+            remaining_time()
     return {
         "final_state": "inactive",
-        "stable_inactive_observations": 2,
+        "stable_inactive_observations": inactive_observations,
         "container_runtimes": runtime_identities(runtimes),
     }
 

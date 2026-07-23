@@ -1986,7 +1986,8 @@ reconcile_remote_deploy() {
   # function contract/log context and can no longer redirect reconciliation.
   local ssh_parts=() ssh_args=() ssh_target item last_index deployment_id fence_exec
   deployment_id="$(deployment_id_for_agent "$agent")"
-  fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 bash -s)"
+  fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 bash -s)" \
+    || return 1
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
@@ -2288,7 +2289,8 @@ remote_daemon_quiescence_attestation() {
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
-  fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)"
+  fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)" \
+    || return 1
   ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
@@ -6580,18 +6582,26 @@ quiesce_remote_agent_for_cohort() {
   local agent_id local_proof restore_contract_sha256 openshell_asset_sha openshell_cli_sha openshell_receipt_sha
   agent_id="$(stable_worker_agent_id "$agent")"
   local_proof="$TMPDIR_LOCAL/phase1-ready-${agent_id}.json"
-  restore_contract_sha256="$(phase1_restore_contract_digest_for_agent "$agent")"
-  openshell_asset_sha="$(reviewed_openshell_cli_status_value "$agent" asset_sha256)"
-  openshell_cli_sha="$(reviewed_openshell_cli_status_value "$agent" cli_sha256)"
-  openshell_receipt_sha="$(reviewed_openshell_cli_status_value "$agent" receipt_sha256)"
-  fenced_remote_upload "$agent" "$deployment_id" "$PHASE1_QUIESCE_HELPER" "$remote_helper"
-  fenced_remote_upload "$agent" "$deployment_id" "$PHASE1_DAEMON_FUNCTIONS" "$remote_functions"
+  restore_contract_sha256="$(phase1_restore_contract_digest_for_agent "$agent")" \
+    || return 1
+  openshell_asset_sha="$(reviewed_openshell_cli_status_value "$agent" asset_sha256)" \
+    || return 1
+  openshell_cli_sha="$(reviewed_openshell_cli_status_value "$agent" cli_sha256)" \
+    || return 1
+  openshell_receipt_sha="$(reviewed_openshell_cli_status_value "$agent" receipt_sha256)" \
+    || return 1
+  fenced_remote_upload \
+    "$agent" "$deployment_id" "$PHASE1_QUIESCE_HELPER" "$remote_helper" \
+    || return 1
+  fenced_remote_upload \
+    "$agent" "$deployment_id" "$PHASE1_DAEMON_FUNCTIONS" "$remote_functions" \
+    || return 1
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$agent")
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 bash -s)"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
     "${ssh_args[@]}" "$ssh_target" \
     "MAC_PHASE1_AGENT=$(shell_quote "$agent") MAC_PHASE1_FLEET=$(shell_quote "$fleet_name") MAC_PHASE1_OS=$(shell_quote "$os_kind") MAC_PHASE1_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_SUPERVISOR=$(shell_quote "$supervisor") MAC_PHASE1_HELPER=$(shell_quote "$remote_helper") MAC_PHASE1_FUNCTIONS=$(shell_quote "$remote_functions") MAC_PHASE1_RESTORE_SHA256=$(shell_quote "$restore_contract_sha256") MAC_PHASE1_OSH_VERSION=$(shell_quote "$OPENSHELL_REVIEWED_CLI_VERSION") MAC_PHASE1_OSH_ASSET_SHA=$(shell_quote "$openshell_asset_sha") MAC_PHASE1_OSH_CLI_SHA=$(shell_quote "$openshell_cli_sha") MAC_PHASE1_OSH_RECEIPT_SHA=$(shell_quote "$openshell_receipt_sha") $fence_exec" <<'REMOTE_PHASE1'
@@ -6640,8 +6650,11 @@ MAC_DEPLOY_REVIEWED_OPENSHELL_CLI_SHA256="${MAC_PHASE1_OSH_CLI_SHA:-}" \
 MAC_DEPLOY_REVIEWED_OPENSHELL_RECEIPT_SHA256="${MAC_PHASE1_OSH_RECEIPT_SHA:-}" \
   bash "$helper" quiesce
 REMOTE_PHASE1
+  then
+    return 1
+  fi
   fence_exec="$(remote_deployment_fenced_exec "$deployment_id" 0 python3 -)"
-  proof="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
+  if ! proof="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" \
     "MAC_PHASE1_EXPECT_AGENT=$(shell_quote "$agent") MAC_PHASE1_EXPECT_REV=$(shell_quote "$GIT_REV") MAC_PHASE1_EXPECT_GENERATION=$(shell_quote "$deployment_id") MAC_PHASE1_EXPECT_RESTORE_SHA256=$(shell_quote "$restore_contract_sha256") $fence_exec" <<'PY'
 import hashlib
@@ -6688,8 +6701,10 @@ print(
     )
 )
 PY
-)"
-  "$PYTHON_BIN" - "$local_proof" "$proof" <<'PY'
+)"; then
+    return 1
+  fi
+  if ! "$PYTHON_BIN" - "$local_proof" "$proof" <<'PY'
 import json
 import os
 import tempfile
@@ -6711,6 +6726,9 @@ try:
 finally:
     tmp.unlink(missing_ok=True)
 PY
+  then
+    return 1
+  fi
   echo "==> ${agent}: phase-1 supervisor and daemon resources proved quiescent"
 }
 

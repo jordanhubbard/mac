@@ -252,6 +252,9 @@ if args and args[0] == "ps":
         raise SystemExit(72)
     state["ps_count"] = state.get("ps_count", 0) + 1
     containers = list(state.get("containers", []))
+    if mode == "openshell-retire" and state["ps_count"] >= 3:
+        containers = []
+        state["containers"] = containers
     if mode == "post-reappear" and state["ps_count"] >= 5:
         containers = list(state.get("reappear_template", []))
         state["containers"] = containers
@@ -980,6 +983,24 @@ def test_running_openshell_managed_container_fails_before_receipt(
     assert "running OpenShell-managed sandbox survived" in run.result.stderr
     assert not any(" rm " in f" {line} " for line in _call_lines(run))
     _assert_no_secret(run)
+
+
+def test_retiring_openshell_task_container_is_awaited_before_receipt(
+    tmp_path: Path,
+) -> None:
+    container_id = "r" * 64
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        docker=[_openshell_container(container_id, running=True)],
+        docker_mode="openshell-retire",
+    )
+    receipt = _assert_success_marker(run)
+    assert receipt["openshell_managed"]["final_state"] == "inactive"
+    state = json.loads(run.docker_state.read_text(encoding="utf-8"))
+    assert state["containers"] == []
+    assert state["ps_count"] >= 4
+    assert not any(" rm " in f" {line} " for line in _call_lines(run))
 
 
 def test_stopped_openshell_managed_container_is_compatible_and_proved(
