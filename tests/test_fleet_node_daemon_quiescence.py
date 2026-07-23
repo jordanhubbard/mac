@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import stat
 import subprocess
 import sys
@@ -916,6 +917,8 @@ def test_stop_wrapper_failure_blocks_delete_and_receipt(
 
 
 def test_timeout_kills_descendant_that_ignores_term(tmp_path: Path) -> None:
+    if shutil.which("ps") is None:
+        pytest.skip("ps(1) is required to observe descendant termination state")
     run = _run_quiescence(
         tmp_path,
         wrapper_mode="child-timeout",

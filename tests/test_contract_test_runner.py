@@ -57,6 +57,14 @@ exit 0
     env = {
         **os.environ,
         "PATH": f"{bin_dir}:/usr/bin:/bin",
+        # Keep the runner's interpreter resolution hermetic: point the pre-baked
+        # runtime-venv override at a path that cannot exist so the ONLY resolvable
+        # interpreter is the fake python3 staged on PATH above. Without this, a
+        # host that actually ships /opt/mac-venv (the OpenShell task sandbox and
+        # CI images do) would resolve the real interpreter and run the whole
+        # suite instead of the fake, so every assertion here would observe the
+        # real gate rather than the runner's own dispatch decisions.
+        "MAC_CONTRACT_RUNTIME_VENV": str(tmp_path / "nonexistent-runtime-venv"),
         "FAKE_PY_LOG": str(log_path),
         "FAKE_COMBINE_OUTPUT": combine_output,
         "FAKE_COMBINE_STATUS": str(combine_status),

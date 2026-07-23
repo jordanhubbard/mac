@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import pytest
+import shutil
 import shlex
 import subprocess
 import sys
@@ -2223,7 +2225,7 @@ fi
     truncated = tmp_path / "truncated"
     snippet = f"""set -euo pipefail
 PYTHON_BIN={sys.executable!s}
-PATH={shlex.quote(str(fake_bin))}:/usr/bin:/bin
+PATH={shlex.quote(str(fake_bin))}:{shlex.quote(str(Path(sys.executable).parent))}:/usr/bin:/bin
 ssh_target_args() {{ printf '%s\\0' fake-target; }}
 {shell_quote}
 {helpers}
@@ -2576,6 +2578,8 @@ def test_reverse_tunnel_manager_mutation_holds_the_exact_hub_fence():
 
 
 def test_reverse_tunnel_definitions_adopt_only_exact_legacy_mac_shape(tmp_path):
+    if shutil.which("ssh") is None:
+        pytest.skip("ssh(1) is required to render the reverse-tunnel command line")
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     hub_script = deploy.split("<<'HUBSCRIPT'\n", 1)[1].split("\nHUBSCRIPT", 1)[0]
     helpers = (
@@ -2933,6 +2937,8 @@ false
 
 
 def test_launchd_interrupted_adoption_is_exact_and_retryable(tmp_path):
+    if shutil.which("ssh") is None:
+        pytest.skip("ssh(1) is required to render the launchd tunnel command line")
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     hub_script = deploy.split("<<'HUBSCRIPT'\n", 1)[1].split("\nHUBSCRIPT", 1)[0]
     state_function = (

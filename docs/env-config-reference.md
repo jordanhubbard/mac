@@ -103,6 +103,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CONFIG_FILE` | str | consumer-defined | core | Core setting: config file. |
 | `MAC_CONTRACT_DESCRIPTION` | str | consumer-defined | core | Core setting: contract description. |
 | `MAC_CONTRACT_MARKER` | str | consumer-defined | core | Core setting: contract marker. |
+| `MAC_CONTRACT_RUNTIME_VENV` | str | consumer-defined | core | Core setting: contract runtime venv. |
 | `MAC_CONTRACT_SNAPSHOT` | str | consumer-defined | core | Core setting: contract snapshot. |
 | `MAC_CONTRACT_SOURCE` | str | consumer-defined | core | Core setting: contract source. |
 | `MAC_CONTROLLER_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: controller interval seconds. |

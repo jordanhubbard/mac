@@ -1218,6 +1218,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: contract runtime venv.",
+    "family": "core",
+    "name": "MAC_CONTRACT_RUNTIME_VENV",
+    "retired": false,
+    "sources": [
+      "scripts/run-contract-tests.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: contract snapshot.",
     "family": "core",
     "name": "MAC_CONTRACT_SNAPSHOT",

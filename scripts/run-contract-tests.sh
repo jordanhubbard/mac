@@ -55,6 +55,12 @@ _MAC_TEST_SELECT_BASE_REQUESTED="${MAC_TEST_SELECT_BASE:-}"
 # Scheduled full run: after a passing portfolio gate, rebuild the committed
 # test-impact map from the fresh per-test coverage so selection stays fresh.
 _MAC_TEST_REBUILD_MAP_REQUESTED="${MAC_TEST_REBUILD_MAP:-0}"
+# Pre-baked runtime venv location for interpreter resolution, captured here
+# because the hermetic MAC_* sweep below unsets every MAC_-prefixed var. Tests
+# point this at a nonexistent path so their staged fake python3 (on PATH) is
+# the interpreter that resolves, instead of a real host /opt/mac-venv silently
+# winning and running the whole suite. Empty/unset => the /opt/mac-venv default.
+_MAC_CONTRACT_RUNTIME_VENV_REQUESTED="${MAC_CONTRACT_RUNTIME_VENV:-}"
 _MAC_COVERAGE_DIR=""
 
 # Fleet executors inherit deployment/task environment. Keep repository tests
@@ -154,15 +160,29 @@ fi
 # in-sandbox verification). pytest's pythonpath=["src"] (pyproject) makes the
 # checked-out worktree shadow any installed mac, so tests exercise the
 # worktree's code regardless of which interpreter runs them.
+#
+# The pre-baked runtime venv location is overridable via MAC_CONTRACT_RUNTIME_VENV
+# (default /opt/mac-venv). This keeps production behavior byte-identical while
+# letting the runner's own contract tests stay hermetic on hosts that DO ship a
+# real /opt/mac-venv: a test can point the override at a nonexistent path so the
+# fake python3 it places on PATH is the one that gets resolved, instead of the
+# host's real interpreter silently winning and running the whole suite.
+# The default is the pre-baked runtime interpreter /opt/mac-venv/bin/python; an
+# override supplies the venv ROOT (its bin/python is appended below).
+if [ -n "$_MAC_CONTRACT_RUNTIME_VENV_REQUESTED" ]; then
+    _MAC_CONTRACT_RUNTIME_PYTHON="$_MAC_CONTRACT_RUNTIME_VENV_REQUESTED/bin/python"
+else
+    _MAC_CONTRACT_RUNTIME_PYTHON="/opt/mac-venv/bin/python"
+fi
 if [ -x ".venv/bin/python" ]; then
     PY=".venv/bin/python"
-elif [ -x "/opt/mac-venv/bin/python" ]; then
-    PY="/opt/mac-venv/bin/python"
+elif [ -x "$_MAC_CONTRACT_RUNTIME_PYTHON" ]; then
+    PY="$_MAC_CONTRACT_RUNTIME_PYTHON"
 else
     PY="$(command -v python3 || command -v python || true)"
 fi
 if [ -z "${PY}" ]; then
-    echo "run-contract-tests.sh: no python interpreter found (.venv, /opt/mac-venv, or PATH)" >&2
+    echo "run-contract-tests.sh: no python interpreter found (.venv, $_MAC_CONTRACT_RUNTIME_PYTHON, or PATH)" >&2
     exit 1
 fi
 
