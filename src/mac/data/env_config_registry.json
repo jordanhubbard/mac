@@ -7853,6 +7853,17 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell reap orphans.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_REAP_ORPHANS",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell rebuild on source update.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE",

@@ -431,6 +431,9 @@ def _write_agent_command_bundle(
 #   MAC_OPENSHELL_GC              truthy -> delete old orphaned MAC sandboxes
 #                                 before creating a new task sandbox
 #   MAC_OPENSHELL_STALE_AFTER_SECONDS minimum age for automatic GC (default 86400)
+#   MAC_OPENSHELL_REAP_ORPHANS   default-on; fail-closed reap of MAC-owned task
+#                                 sandboxes with mac.keep=false + a dead recorded
+#                                 mac.pid (no age wait). Set 0 to disable.
 #   MAC_OPENSHELL_CREATE_ARGS     extra `sandbox create` args (shell-split), e.g.
 #                                 "--from my-image" or "--upload /src:/src" used to
 #                                 make the Hermes runtime + workspace available
@@ -748,6 +751,60 @@ def _sandbox_gc_best_effort() -> None:
             )
     except Exception as exc:  # noqa: BLE001 - cleanup must not block guarded execution
         sys.stderr.write("[executor] WARNING: OpenShell sandbox GC failed: %s\n" % exc)
+
+
+def _reap_orphaned_task_sandboxes_best_effort(audit_id: Any = None) -> None:
+    """Fail-closed reap of orphaned MAC-owned task sandboxes with a dead PID.
+
+    Every executor sandbox lifecycle begins here, so completion, timeout,
+    cancellation, reviewer handoff, agent restart, and abrupt executor-exit all
+    converge on this sweep the next time *any* executor runs: a sandbox whose
+    owning executor exited (dead recorded ``mac.pid``) and which is not marked
+    ``mac.keep=true`` is reaped immediately, with no age wait. Unlike the
+    age-gated stale GC this runs by default because it is fail-closed — it only
+    ever deletes exact MAC-owned sandboxes it can prove are orphaned. Set
+    ``MAC_OPENSHELL_REAP_ORPHANS=0`` to disable.
+
+    Best-effort: classification and deletion failures are logged and never block
+    the guarded run that follows.
+    """
+
+    if not env_bool("MAC_OPENSHELL_REAP_ORPHANS", True):
+        return
+    try:
+        from .openshell_sandbox_gc import reap_orphaned_task_sandboxes
+
+        report = reap_orphaned_task_sandboxes(
+            openshell_bin=_openshell_bin(),
+            apply=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - cleanup must not block guarded execution
+        sys.stderr.write(
+            "[executor] WARNING: orphaned task sandbox reap failed: %s\n" % exc
+        )
+        return
+
+    if report["candidates"]:
+        emit_telemetry(
+            "sandbox_orphan_reaped",
+            task_id=str(audit_id) if audit_id else None,
+            level="info" if not report["failures"] else "warning",
+            scanned=report["scanned"],
+            protected=report["protected"],
+            reaped=len(report["deleted"]),
+            failed=len(report["failures"]),
+            names=[str(row["name"]) for row in report["candidates"]],
+        )
+    if report["deleted"]:
+        sys.stderr.write(
+            "[executor] reaped %d orphaned OpenShell task sandbox(es) with a dead PID\n"
+            % len(report["deleted"])
+        )
+    if report["failures"]:
+        sys.stderr.write(
+            "[executor] WARNING: failed to reap %d orphaned OpenShell task sandbox(es)\n"
+            % len(report["failures"])
+        )
 
 
 def _workspace_basename(workspace: Path) -> str:
@@ -3182,6 +3239,7 @@ def _run_sandboxed(
     _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
     _ensure_landlock_or_fail()
     _sandbox_gc_best_effort()
+    _reap_orphaned_task_sandboxes_best_effort(audit_id)
     task = opts.get("task")
     task_metadata = task.get("metadata") if isinstance(task, dict) else None
     read_only_report = metadata_declares_read_only_report_repository(task_metadata)

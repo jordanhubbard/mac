@@ -483,14 +483,17 @@ options:
 ```console
 $ mac openshell --help
 usage: mac openshell [-h]
-                     {reconcile,sandbox-gc,render-policy,policy,status} ...
+                     {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}
+                     ...
 
 positional arguments:
-  {reconcile,sandbox-gc,render-policy,policy,status}
+  {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}
     reconcile           reconcile fleet OpenShell required/policy/deployment
                         status after host validation
     sandbox-gc          list or delete old orphaned MAC-owned OpenShell
                         sandboxes
+    reap-orphans        fail-closed reap of MAC-owned task sandboxes with
+                        mac.keep=false and a dead recorded PID (no age wait)
     render-policy       render the OpenShell guardrail policy from the
                         operator template for this fleet
     policy              MAC-managed OpenShell policies

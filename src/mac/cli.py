@@ -3277,6 +3277,17 @@ def cmd_openshell_sandbox_gc(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_openshell_reap_orphans(args: argparse.Namespace) -> None:
+    from mac.openshell_sandbox_gc import reap_orphaned_task_sandboxes
+
+    _print(
+        reap_orphaned_task_sandboxes(
+            openshell_bin=args.openshell_bin,
+            apply=args.apply,
+        )
+    )
+
+
 def _soul_snapshot_setup(args):
     """Resolve (fleet_name, agents, transport) for the soul pull/push commands."""
     import yaml as _yaml
@@ -6274,6 +6285,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("MAC_OPENSHELL_BIN") or "openshell",
     )
     _set(cmd_openshell_sandbox_gc, osh_gc)
+
+    osh_reap = openshell.add_parser(
+        "reap-orphans",
+        help="fail-closed reap of MAC-owned task sandboxes with mac.keep=false "
+        "and a dead recorded PID (no age wait)",
+    )
+    osh_reap.add_argument(
+        "--apply",
+        action="store_true",
+        help="delete reap-eligible orphaned sandboxes; default is a dry-run",
+    )
+    osh_reap.add_argument(
+        "--openshell-bin",
+        default=os.environ.get("MAC_OPENSHELL_BIN") or "openshell",
+    )
+    _set(cmd_openshell_reap_orphans, osh_reap)
 
     osh_render = openshell.add_parser(
         "render-policy",

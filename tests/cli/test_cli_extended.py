@@ -131,6 +131,42 @@ def test_openshell_sandbox_gc_dry_run(tmp_path, monkeypatch):
     assert [row["name"] for row in report["candidates"]] == ["mac-task-old"]
 
 
+def test_openshell_reap_orphans_dry_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "mac.openshell_sandbox_gc._pid_is_alive",
+        lambda _pid: False,
+    )
+    monkeypatch.setattr(
+        "mac.openshell_sandbox_gc.subprocess.run",
+        lambda _argv, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {
+                        "name": "mac-task-dead",
+                        "phase": "Ready",
+                        "labels": {
+                            "mac.owner": "mac",
+                            "mac.kind": "task",
+                            "mac.keep": "false",
+                            "mac.pid": "424242",
+                        },
+                    }
+                ]
+            ),
+            stderr="",
+        ),
+    )
+
+    rc, report = _run(tmp_path, "openshell", "reap-orphans")
+
+    assert rc == 0
+    assert report["schema"] == "mac.openshell.sandbox_orphan_reap.v1"
+    assert report["dry_run"] is True
+    assert [row["name"] for row in report["candidates"]] == ["mac-task-dead"]
+    assert report["deleted"] == []
+
+
 # ===========================================================================
 # diagnostics
 # ===========================================================================

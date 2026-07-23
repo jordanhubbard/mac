@@ -58,3 +58,63 @@ def test_workspace_paths_map_only_children_into_the_sandbox(tmp_path: Path) -> N
         )
         is None
     )
+
+
+def test_reap_orphans_best_effort_applies_by_default(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    import mac.openshell_sandbox_gc as gc
+
+    calls = {}
+
+    def fake_reap(*, openshell_bin, apply):
+        calls["openshell_bin"] = openshell_bin
+        calls["apply"] = apply
+        return {
+            "schema": "mac.openshell.sandbox_orphan_reap.v1",
+            "dry_run": not apply,
+            "scanned": 1,
+            "protected": 0,
+            "candidates": [{"name": "mac-task-dead"}],
+            "deleted": ["mac-task-dead"],
+            "failures": [],
+        }
+
+    monkeypatch.setattr(gc, "reap_orphaned_task_sandboxes", fake_reap)
+    monkeypatch.delenv("MAC_OPENSHELL_REAP_ORPHANS", raising=False)
+    monkeypatch.setattr(sandbox, "emit_telemetry", lambda *a, **k: None)
+
+    sandbox._reap_orphaned_task_sandboxes_best_effort("task_1")
+
+    assert calls["apply"] is True
+
+
+def test_reap_orphans_best_effort_can_be_disabled(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    import mac.openshell_sandbox_gc as gc
+
+    called = {"count": 0}
+
+    def fake_reap(**_kwargs):
+        called["count"] += 1
+        return {"candidates": [], "deleted": [], "failures": [], "scanned": 0, "protected": 0}
+
+    monkeypatch.setattr(gc, "reap_orphaned_task_sandboxes", fake_reap)
+    monkeypatch.setenv("MAC_OPENSHELL_REAP_ORPHANS", "0")
+
+    sandbox._reap_orphaned_task_sandboxes_best_effort()
+
+    assert called["count"] == 0
+
+
+def test_reap_orphans_best_effort_swallows_errors(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    import mac.openshell_sandbox_gc as gc
+
+    def boom(**_kwargs):
+        raise RuntimeError("openshell exploded")
+
+    monkeypatch.setattr(gc, "reap_orphaned_task_sandboxes", boom)
+    monkeypatch.delenv("MAC_OPENSHELL_REAP_ORPHANS", raising=False)
+
+    # Best-effort: a reap failure must never propagate into the guarded run.
+    sandbox._reap_orphaned_task_sandboxes_best_effort()
