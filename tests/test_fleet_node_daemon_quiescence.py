@@ -252,7 +252,7 @@ if args and args[0] == "ps":
         raise SystemExit(72)
     state["ps_count"] = state.get("ps_count", 0) + 1
     containers = list(state.get("containers", []))
-    if mode == "post-reappear" and state["ps_count"] >= 3:
+    if mode == "post-reappear" and state["ps_count"] >= 5:
         containers = list(state.get("reappear_template", []))
         state["containers"] = containers
     if mode == "reappear" and state.get("delete_seen"):
@@ -338,6 +338,27 @@ def _container(
     elif omit_labels:
         container["Config"].pop("Labels")
     return container
+
+
+def _openshell_container(
+    container_id: str,
+    *,
+    sandbox: str = "mac-task-stale-fixture",
+    running: bool,
+) -> dict[str, Any]:
+    return {
+        "Id": container_id,
+        "Name": "/openshell-" + sandbox,
+        "State": {"Running": running},
+        "Config": {
+            "Image": "localhost/mac-hermes:net",
+            "Cmd": ["sleep", "infinity"],
+            "Labels": {
+                "openshell.ai/managed-by": "openshell",
+                "openshell.ai/sandbox-name": sandbox,
+            },
+        },
+    }
 
 
 @dataclass
@@ -944,6 +965,42 @@ def test_stopped_docker_and_podman_nemoclaw_containers_are_retained_inactive(
     assert str(tmp_path / "bin" / "podman") in serialized
 
 
+def test_running_openshell_managed_container_fails_before_receipt(
+    tmp_path: Path,
+) -> None:
+    container_id = "a" * 64
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_present=False,
+        docker=[_openshell_container(container_id, running=True)],
+        seed_marker=True,
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    assert "running OpenShell-managed sandbox survived" in run.result.stderr
+    assert not any(" rm " in f" {line} " for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_stopped_openshell_managed_container_is_compatible_and_proved(
+    tmp_path: Path,
+) -> None:
+    container_id = "b" * 64
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        docker=[_openshell_container(container_id, running=False)],
+    )
+    receipt = _assert_success_marker(run)
+    assert receipt["openshell_managed"] == {
+        "final_state": "inactive",
+        "stable_inactive_observations": 2,
+        "container_runtimes": receipt["container_runtimes"],
+    }
+    state = json.loads(run.docker_state.read_text(encoding="utf-8"))
+    assert [item["Id"] for item in state["containers"]] == [container_id]
+
+
 def test_all_local_docker_context_endpoints_are_certified(tmp_path: Path) -> None:
     run = _run_quiescence(
         tmp_path,
@@ -1098,7 +1155,7 @@ def test_linux_podman_docker_symlink_is_classified_as_one_native_podman_store(
     calls = _call_lines(run)
     assert not any("context" in line for line in calls)
     assert sum(line.startswith("podman:system connection list") for line in calls) == 1
-    assert sum(line.startswith("podman:ps ") for line in calls) == 2
+    assert sum(line.startswith("podman:ps ") for line in calls) == 4
 
 
 @pytest.mark.parametrize(

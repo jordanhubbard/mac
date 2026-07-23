@@ -2591,8 +2591,16 @@ def daemon_quiescence_summary(stage, mac_home):
     ):
         raise SystemExit("daemon quiescence receipt belongs to another release")
     runtimes = receipt.get("container_runtimes")
+    openshell_managed = receipt.get("openshell_managed")
     proofs = receipt.get("proofs")
-    if not isinstance(runtimes, list) or not isinstance(proofs, dict):
+    if (
+        not isinstance(runtimes, list)
+        or not isinstance(proofs, dict)
+        or not isinstance(openshell_managed, dict)
+        or openshell_managed.get("final_state") != "inactive"
+        or openshell_managed.get("stable_inactive_observations") != 2
+        or openshell_managed.get("container_runtimes") != runtimes
+    ):
         raise SystemExit("daemon quiescence receipt lacks runtime or phase evidence")
     for runtime in runtimes:
         if (
@@ -7388,6 +7396,105 @@ def discover_working_runtimes():
 
 
 safe_container_id = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+managed_sandbox_name = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+
+
+def inspect_running_managed_openshell(runtime):
+    listed = runtime_result(
+        runtime,
+        "ps",
+        "--filter",
+        "label=openshell.ai/managed-by=openshell",
+        "--format",
+        "{{.ID}}",
+    )
+    if listed.timed_out:
+        raise QuiescenceFailure("OpenShell-managed container inventory timed out")
+    if listed.returncode != 0:
+        raise QuiescenceFailure("OpenShell-managed container inventory failed")
+    identifiers = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    if len(identifiers) != len(set(identifiers)):
+        raise QuiescenceFailure(
+            "OpenShell-managed container inventory returned duplicate identities"
+        )
+    active = []
+    for identifier in identifiers:
+        if not safe_container_id.fullmatch(identifier):
+            raise QuiescenceFailure(
+                "OpenShell-managed container inventory returned an invalid identity"
+            )
+        inspected = runtime_result(runtime, "inspect", identifier)
+        if inspected.timed_out:
+            raise QuiescenceFailure("OpenShell-managed container inspection timed out")
+        if inspected.returncode != 0:
+            raise QuiescenceFailure("OpenShell-managed container inspection failed")
+        try:
+            payload = json.loads(inspected.stdout)
+        except (TypeError, ValueError):
+            raise QuiescenceFailure(
+                "OpenShell-managed container inspection is malformed"
+            )
+        if not isinstance(payload, list) or len(payload) != 1:
+            raise QuiescenceFailure(
+                "OpenShell-managed container inspection is ambiguous"
+            )
+        container = payload[0]
+        if not isinstance(container, dict):
+            raise QuiescenceFailure(
+                "OpenShell-managed container inspection has an invalid entry"
+            )
+        config = container.get("Config")
+        state = container.get("State")
+        if not isinstance(config, dict) or not isinstance(state, dict):
+            raise QuiescenceFailure(
+                "OpenShell-managed container inspection lacks configuration or state"
+            )
+        labels = config.get("Labels")
+        if labels is None:
+            labels = {}
+        if not isinstance(labels, dict):
+            raise QuiescenceFailure("OpenShell-managed container labels are malformed")
+        if labels.get("openshell.ai/managed-by") != "openshell":
+            continue
+        running = state.get("Running")
+        if not isinstance(running, bool):
+            raise QuiescenceFailure("OpenShell-managed container state is malformed")
+        if not running:
+            continue
+        sandbox = labels.get("openshell.ai/sandbox-name")
+        if not isinstance(sandbox, str) or not managed_sandbox_name.fullmatch(sandbox):
+            raise QuiescenceFailure(
+                "running OpenShell-managed container lacks a safe sandbox identity"
+            )
+        active.append(
+            {
+                "runtime": runtime["kind"],
+                "endpoint": runtime["endpoint"],
+                "container_id": identifier,
+                "sandbox": sandbox,
+            }
+        )
+    return active
+
+
+def prove_managed_openshell_inactive(runtimes):
+    for observation in range(2):
+        active = [
+            item
+            for runtime in runtimes
+            for item in inspect_running_managed_openshell(runtime)
+        ]
+        if active:
+            raise QuiescenceFailure(
+                "running OpenShell-managed sandbox survived phase-1 quiescence"
+            )
+        if observation == 0:
+            sleep_for_poll()
+    return {
+        "final_state": "inactive",
+        "stable_inactive_observations": 2,
+        "container_runtimes": runtime_identities(runtimes),
+    }
 
 
 def compose_path_corroborates(labels):
@@ -7625,7 +7732,9 @@ def atomic_write_certificate(path, payload):
             pass
 
 
-def write_pre_source_certificate(path, sandbox, runtimes, retained):
+def write_pre_source_certificate(
+    path, sandbox, runtimes, retained, openshell_managed
+):
     identities = runtime_identities(runtimes)
     timestamp = recorded_at()
     payload = {
@@ -7635,6 +7744,7 @@ def write_pre_source_certificate(path, sandbox, runtimes, retained):
         "recorded_at": timestamp,
         "openclaw": sandbox,
         "container_runtimes": identities,
+        "openshell_managed": openshell_managed,
         "legacy_nemoclaw": {
             "retained_stopped": retained,
             "final_state": "inactive",
@@ -7665,10 +7775,21 @@ def load_certificate(path):
     if not isinstance(payload.get("container_runtimes"), list):
         raise QuiescenceFailure("daemon quiescence receipt lacks runtime identities")
     openclaw = payload.get("openclaw")
+    openshell_managed = payload.get("openshell_managed")
     legacy = payload.get("legacy_nemoclaw")
     proofs = payload.get("proofs")
     if not isinstance(openclaw, dict) or openclaw.get("final_state") != "absent":
         raise QuiescenceFailure("daemon quiescence receipt lacks OpenClaw absence")
+    if (
+        not isinstance(openshell_managed, dict)
+        or openshell_managed.get("final_state") != "inactive"
+        or openshell_managed.get("stable_inactive_observations") != 2
+        or openshell_managed.get("container_runtimes")
+        != payload["container_runtimes"]
+    ):
+        raise QuiescenceFailure(
+            "daemon quiescence receipt lacks OpenShell-managed inactivity"
+        )
     if not isinstance(legacy, dict) or legacy.get("final_state") != "inactive":
         raise QuiescenceFailure("daemon quiescence receipt lacks Nemo inactivity")
     if not isinstance(proofs, dict) or not isinstance(proofs.get("pre_source"), dict):
@@ -7866,7 +7987,10 @@ try:
         runtimes = discover_working_runtimes()
         retained = prove_legacy_nemoclaw_inactive(runtimes)
         sandbox = quiesce_openclaw_sandbox()
-        write_pre_source_certificate(certificate, sandbox, runtimes, retained)
+        openshell_managed = prove_managed_openshell_inactive(runtimes)
+        write_pre_source_certificate(
+            certificate, sandbox, runtimes, retained, openshell_managed
+        )
     else:
         receipt = load_certificate(certificate)
         clear_phase_proof(certificate, receipt, proof_phase)
