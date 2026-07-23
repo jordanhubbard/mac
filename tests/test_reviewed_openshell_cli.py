@@ -256,6 +256,48 @@ def test_linux_preflight_rejects_schema_incompatible_gateway_binary(
     assert ready["gateway_sha256"] == hashlib.sha256(gateway.read_bytes()).hexdigest()
 
 
+def test_linux_untrusted_managed_identity_retains_reviewed_gateway_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module()
+    monkeypatch.setattr(module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(module.platform, "machine", lambda: "x86_64")
+    mac_home = tmp_path / ".mac"
+    managed = mac_home / "openclaw" / "managed"
+    managed.mkdir(parents=True, mode=0o700)
+    runtime = managed / "runtime.env"
+    runtime.write_text("MAC_OPENCLAW_SANDBOX=\n", encoding="utf-8")
+    runtime.chmod(0o600)
+    args = argparse.Namespace(
+        action="preflight",
+        mac_home=str(mac_home),
+        expected_os="linux",
+        version="0.0.72",
+        base_url="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72",
+        asset_spec=[
+            "linux:x86_64:openshell-x86_64-test.tar.gz:"
+            + "a" * 64
+            + ":"
+            + "b" * 64
+        ],
+        gateway_asset_spec=[
+            "linux:x86_64:openshell-gateway-x86_64-test.tar.gz:"
+            + "c" * 64
+            + ":"
+            + "d" * 64
+        ],
+        archive=None,
+        required=True,
+    )
+
+    result = module.preflight(args)
+
+    assert result["status"] == "migration_required"
+    assert result["reason"] == "managed_openclaw_identity_untrusted"
+    assert result["gateway_asset"] == "openshell-gateway-x86_64-test.tar.gz"
+    assert result["gateway_asset_sha256"] == "c" * 64
+
+
 def test_helper_installs_only_exact_reviewed_archive_and_rechecks(tmp_path: Path) -> None:
     mac_home = _managed_legacy_home(tmp_path)
     archive, digest, cli_digest = _reviewed_archive(tmp_path)
@@ -501,6 +543,23 @@ def test_controller_rejects_shape_valid_target_selected_cli_identity(
 
 def test_controller_accepts_only_exact_reviewed_cli_identity(tmp_path: Path) -> None:
     result = _run_controller_status_validator(tmp_path, _ready_controller_status())
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_controller_accepts_bound_untrusted_managed_identity_classification(
+    tmp_path: Path,
+) -> None:
+    status = _ready_controller_status()
+    status.update(
+        status="migration_required",
+        reason="managed_openclaw_identity_untrusted",
+    )
+    status.pop("cli_sha256")
+    status.pop("gateway_sha256")
+    status.pop("receipt_sha256")
+
+    result = _run_controller_status_validator(tmp_path, status)
 
     assert result.returncode == 0, result.stderr
 

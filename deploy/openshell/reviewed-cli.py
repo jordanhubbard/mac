@@ -161,22 +161,6 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
         asset, asset_sha, expected_cli_sha = specs[(os_kind, arch)]
     except KeyError as exc:
         raise ValueError("target has no reviewed OpenShell CLI asset") from exc
-    try:
-        managed = managed_openclaw(mac_home)
-    except (OSError, UnicodeError, ValueError):
-        return {
-            "schema": PREFLIGHT_SCHEMA,
-            "expected_os": os_kind,
-            "arch": arch,
-            "version": args.version,
-            "asset": asset,
-            "asset_sha256": asset_sha,
-            "managed_openclaw": True,
-            "required": True,
-            "status": "migration_required",
-            "reason": "managed_openclaw_identity_untrusted",
-        }
-    required = bool(args.required) or managed
     base: dict[str, object] = {
         "schema": PREFLIGHT_SCHEMA,
         "expected_os": os_kind,
@@ -184,8 +168,6 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
         "version": args.version,
         "asset": asset,
         "asset_sha256": asset_sha,
-        "managed_openclaw": managed,
-        "required": required,
     }
     gateway = gateway_spec(args, os_kind, arch)
     if gateway is not None:
@@ -194,6 +176,18 @@ def preflight(args: argparse.Namespace) -> dict[str, object]:
             gateway_asset=gateway_asset,
             gateway_asset_sha256=gateway_asset_sha,
         )
+    try:
+        managed = managed_openclaw(mac_home)
+    except (OSError, UnicodeError, ValueError):
+        return {
+            **base,
+            "managed_openclaw": True,
+            "required": True,
+            "status": "migration_required",
+            "reason": "managed_openclaw_identity_untrusted",
+        }
+    required = bool(args.required) or managed
+    base.update(managed_openclaw=managed, required=required)
     if not required:
         return {**base, "status": "ready", "reason": "openclaw_not_managed"}
 
