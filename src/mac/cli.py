@@ -392,9 +392,10 @@ def _one_liner(value: Any) -> str:
             if held
             else ("▶ " + str(cur)) if cur else "idle"
         )
-        return "%-16s %-9s %-28s %s" % (
+        return "%-16s %-9s %-8s %-28s %s" % (
             d.get("name") or ident,
             status,
+            str(d.get("instance_kind") or "static"),
             _agent_hw_summary(d),
             activity,
         )

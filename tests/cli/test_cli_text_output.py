@@ -179,9 +179,33 @@ def test_empty_list_is_none():
 
 
 def test_agent_one_liner():
-    out = cli._render_text([{"name": "rocky", "status": "idle", "capabilities": ["review"]}])
+    out = cli._render_text(
+        [
+            {
+                "name": "rocky",
+                "status": "idle",
+                "instance_kind": "static",
+                "capabilities": ["review"],
+            }
+        ]
+    )
     assert out.startswith("rocky")
     assert "idle" in out
+    assert "static" in out
+
+
+def test_agent_one_liner_shows_fungible_instance_kind():
+    out = cli._render_text(
+        [
+            {
+                "name": "worker-one",
+                "status": "idle",
+                "instance_kind": "fungible",
+                "capabilities": ["python"],
+            }
+        ]
+    )
+    assert "fungible" in out
 
 
 def test_agent_one_liner_shows_measured_hardware():
