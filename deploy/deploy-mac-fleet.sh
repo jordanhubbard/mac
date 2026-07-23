@@ -12748,7 +12748,11 @@ import base64,json,sys
 status=json.load(open(sys.argv[1],encoding="utf-8")); recovery=json.load(open(sys.argv[2],encoding="utf-8"))
 journal=status["journal"]; records=[]
 hub=recovery.get("hub_recovery") or {}; direction=recovery.get("direction")
-if hub.get("action") != "none" or direction == "resolve_commit":
+if hub.get("action") != "none" or direction in {
+    "resolve_commit",
+    "rollback",
+    "retain_forward",
+}:
     records.append(("hub",hub.get("agent_name"),hub.get("route_identity")))
 for key in ("candidates","finalization_candidates"):
     for item in recovery.get(key) or []:

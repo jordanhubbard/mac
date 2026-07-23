@@ -3462,9 +3462,22 @@ def test_recovery_route_accepts_endpoint_helper_comparison_envelope(tmp_path):
         },
         "observation": {},
     }
+    hub_identity = {
+        "schema": "mac.fleet_endpoint_identity.v1",
+        "adapter": "ssh-hub",
+        "authority": {
+            "ssh_host_key_sha256": digest,
+            "instance_id_kind": "ioplatformuuid",
+            "instance_id_sha256": digest,
+            "durable_store_uuid_sha256": digest,
+        },
+        "observation": {},
+    }
     status = tmp_path / "status.json"
     recovery = tmp_path / "recovery.json"
     observed = tmp_path / "observed.json"
+    hub_observed = tmp_path / "hub-observed.json"
+    control_masters = tmp_path / "control-masters"
     diagnostics = tmp_path / "diagnostics"
     status.write_text(
         json.dumps(
@@ -3481,7 +3494,11 @@ def test_recovery_route_accepts_endpoint_helper_comparison_envelope(tmp_path):
         json.dumps(
             {
                 "direction": "rollback",
-                "hub_recovery": {"action": "none"},
+                "hub_recovery": {
+                    "action": "none",
+                    "agent_name": "rocky",
+                    "route_identity": hub_identity,
+                },
                 "candidates": [
                     {"agent_name": "natasha", "route_identity": identity}
                 ],
@@ -3491,14 +3508,27 @@ def test_recovery_route_accepts_endpoint_helper_comparison_envelope(tmp_path):
     )
     observed.write_text(json.dumps(identity), encoding="utf-8")
     observed.chmod(0o600)
+    hub_observed.write_text(json.dumps(hub_identity), encoding="utf-8")
+    hub_observed.chmod(0o600)
     snippet = f"""set -u
 TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
 PYTHON_BIN={shlex.quote(sys.executable)}
 ENDPOINT_IDENTITY_HELPER={shlex.quote(str(ROOT / 'deploy' / 'fleet-endpoint-identity.py'))}
 OBSERVED_IDENTITY={shlex.quote(str(observed))}
+HUB_OBSERVED_IDENTITY={shlex.quote(str(hub_observed))}
 SSH_CONTROL_REQUIRED=0
-start_ssh_control_master() {{ return 0; }}
-write_live_endpoint_identity() {{ cp -f "$OBSERVED_IDENTITY" "$2"; chmod 0600 "$2"; }}
+start_ssh_control_master() {{ printf '%s\\n' "$1" >> {shlex.quote(str(control_masters))}; }}
+write_live_endpoint_identity() {{
+  if [ "$1" = rocky ]; then
+    cp -f "$HUB_OBSERVED_IDENTITY" "$2"
+  else
+    cp -f "$OBSERVED_IDENTITY" "$2"
+  fi
+  chmod 0600 "$2"
+}}
+hub_epoch_client_read() {{
+  printf '%s\\n' '{{"hub_authority_id":"fixture-authority"}}' > "$2"
+}}
 persist_cohort_recovery_route_mismatch() {{ printf '%s\n' "$*" >> {shlex.quote(str(diagnostics))}; }}
 {verify}
 set +e
@@ -3512,6 +3542,12 @@ printf '%s|%s|%s\n' "$first" "$second" "$SSH_CONTROL_REQUIRED"
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "0|0|1", result.stderr
     assert not diagnostics.exists()
+    assert control_masters.read_text(encoding="utf-8").splitlines() == [
+        "rocky",
+        "natasha",
+        "rocky",
+        "natasha",
+    ]
 
 
 def test_recovery_route_mismatch_persists_wrapped_helper_comparison(tmp_path):
