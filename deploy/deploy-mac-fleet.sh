@@ -611,13 +611,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-preparation_mode_count=$(
-  (
-    [ "$PREPARE_REVIEWED_OPENSHELL_CLI" = 1 ] && printf '1\n'
-    [ "$PREPARE_NETWORK_PREREQUISITES" = 1 ] && printf '1\n'
-    [ "$PREPARE_FUNGIBLE_ONBOARDING" = 1 ] && printf '1\n'
-  ) | wc -l | tr -d '[:space:]'
-)
+preparation_mode_count=$((
+  PREPARE_REVIEWED_OPENSHELL_CLI
+  + PREPARE_NETWORK_PREREQUISITES
+  + PREPARE_FUNGIBLE_ONBOARDING
+))
 if [ "$preparation_mode_count" -gt 1 ]; then
   echo "ERROR: prerequisite preparation modes must run separately" >&2
   exit 2

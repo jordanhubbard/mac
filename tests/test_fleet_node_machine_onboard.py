@@ -380,3 +380,32 @@ def test_controller_exposes_precohort_mode_without_weakening_typed_deploy():
         '&& [ "$PREPARE_FUNGIBLE_ONBOARDING" != 1 ]; then\n'
         "    recover_incomplete_cohort_transaction_before_deploy"
     ) in text
+
+
+def test_controller_counts_zero_preparation_modes_without_pipefail_exit():
+    text = DEPLOY.read_text(encoding="utf-8")
+    counter = text.split("preparation_mode_count=$((", 1)[1].split("))", 1)[0]
+    assert "PREPARE_REVIEWED_OPENSHELL_CLI" in counter
+    assert "PREPARE_NETWORK_PREREQUISITES" in counter
+    assert "PREPARE_FUNGIBLE_ONBOARDING" in counter
+    assert "wc -l" not in counter
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                "set -euo pipefail\n"
+                "PREPARE_REVIEWED_OPENSHELL_CLI=0\n"
+                "PREPARE_NETWORK_PREREQUISITES=0\n"
+                "PREPARE_FUNGIBLE_ONBOARDING=0\n"
+                f"preparation_mode_count=$(({counter}))\n"
+                'printf "%s\\n" "$preparation_mode_count"\n'
+            ),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "0\n"
