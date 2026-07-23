@@ -2987,6 +2987,8 @@ def live_gateway_sample():
                 lowered = text.lower()
                 if rc != 0 and (
                     "no such file" in lowered or "connection refused" in lowered
+                    or "permission denied" in lowered
+                    or "permissionerror" in lowered
                 ):
                     unavailable = True
                     break
