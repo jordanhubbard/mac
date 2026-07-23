@@ -32,6 +32,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/assessment-task-97627e.md` | Resolution: task_97627e43b1034100831e726f8981e5e2 |
 | historical archive | `archive/field-notes/assessment-task-a33145.md` | Assessment: task_a33145a37db34ffeb55a0db61797df5c |
 | historical archive | `archive/field-notes/assessment-task-a608f4.md` | Assessment: task_a608f4405b0446a3b28ed7a8beb4fd65 |
+| historical archive | `archive/field-notes/assessment-task-b07fbf.md` | Assessment: task_b07fbff6994e41a39ce24157f1832ad5 |
 | historical archive | `archive/field-notes/assessment-task-de3502.md` | Assessment: task_de35029099d34c94be186c8992ee706a |
 | historical archive | `archive/field-notes/assessment-task-f6a813.md` | Assessment: task_f6a813fede7841d28b154af3a544864a |
 | historical archive | `archive/field-notes/assessment-task-f9cd72.md` | Assessment: task_f9cd72342aef4e7b8701b131b12d29ff |
