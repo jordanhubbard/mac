@@ -88,3 +88,49 @@ contract the prerequisite depends on.
 - **Recommended follow-up**: close the dream-finding review as
   *does-not-reproduce*; retain this note as provenance. No source or test edit
   is warranted.
+
+## Re-verification (2026-07-23): checkout-sync invariant is the parent blocker
+
+A follow-up audit re-confirmed the finding above and pinpointed the exact
+parent blocker as a checkout/sync invariant owned by the host finalizer, not a
+code or evidence defect in the reviewed sources.
+
+`run_deterministic_review_verdict` (`src/mac/executor_finalizer.py:1309`) gates
+a *repository* review verdict on the exact executor commit before it will run
+bootstrap/tests/CodeGraph:
+
+- It resolves `exec_head` from the executor evidence
+  (`metadata.verification.repo.head_sha`) and treats the review as a repo
+  review when that head is present.
+- It runs `git cat-file -e <exec_head>^{commit}` in `MAC_TASK_REPO_WORKTREE`
+  and reads `git rev-parse HEAD`. When the commit object is absent it sets the
+  independent problem to `executor commit is not present in the review
+  checkout`; when `HEAD != exec_head` it sets `review checkout HEAD does not
+  match the executor commit`; either way the verdict is `rejected`.
+- Only when both hold does it proceed to bootstrap, the contract test command,
+  CodeGraph, and the cooperative integration check.
+
+Those two invariants are satisfied by the host finalizer's canonical
+fetch/rebase/checkout, which is outside the worker boundary. So a parent
+failure here reflects a review checkout that lacks (or is not sitting at) the
+exact executor commit — an environment/sync condition — rather than a defect in
+`review_finalizer.py`, `task_executor.py`, `dream_scanner.py`, or
+`evidence_validators.py`.
+
+Reviewed-source spot checks: `src/mac/review_finalizer.py` and
+`src/mac/task_executor.py` are thin re-export/bridge shims with no verdict logic
+of their own; `src/mac/dream_scanner.py` and `src/mac/evidence_validators.py`
+contain the scan/validation helpers with no coupling to the checkout invariant.
+
+Verification on the current tree:
+
+- Named contract tests
+  (`tests/test_review_finalizer.py tests/test_dream_scanner.py
+  tests/test_review_service_edges.py`) → `43 passed`.
+- Full canonical gate `scripts/run-contract-tests.sh` → `8667 passed,
+  4 skipped` with coverage floors met (statements 90.87% ≥ 90.00%; branches
+  80.25% ≥ 80.00%).
+
+**Disposition unchanged**: no defect found in the reviewed sources; substantive
+repair (if any) belongs to the dependent task and is a host-owned checkout-sync
+condition, not a code change.
