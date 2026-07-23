@@ -937,6 +937,133 @@ def test_hub_epoch_client_writes_receipts_in_owner_private_remote_directory():
         assert r"_mac_output=\$(mktemp)" not in function
 
 
+def _run_hub_epoch_client_harness(
+    tmp_path, *, helper, ssh_rc, ssh_output, existing_output=None
+):
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    validator = (
+        "validate_hub_epoch_client_output() {"
+        + deploy.split("validate_hub_epoch_client_output() {", 1)[1].split(
+            "\n}\n\nhub_epoch_client_read", 1
+        )[0]
+        + "\n}"
+    )
+    read = (
+        "hub_epoch_client_read() {"
+        + deploy.split("hub_epoch_client_read() {", 1)[1].split(
+            "\n}\n\nhub_epoch_client_request", 1
+        )[0]
+        + "\n}"
+    )
+    request = (
+        "hub_epoch_client_request() {"
+        + deploy.split("hub_epoch_client_request() {", 1)[1].split(
+            "\n}\n\nhub_epoch_recovery_request_name", 1
+        )[0]
+        + "\n}"
+    )
+    client = tmp_path / "hub-client.py"
+    client.write_text("# synthetic client\n", encoding="utf-8")
+    request_file = tmp_path / "request.json"
+    request_file.write_text("{}\n", encoding="utf-8")
+    output = tmp_path / "receipt.json"
+    if existing_output is not None:
+        output.write_text(existing_output, encoding="utf-8")
+        output.chmod(0o600)
+
+    if helper == "read":
+        invocation = f'hub_epoch_client_read rocky {shlex.quote(str(output))} status'
+    elif helper == "request":
+        invocation = (
+            f'hub_epoch_client_request rocky {shlex.quote(str(request_file))} '
+            f'{shlex.quote(str(output))} commit'
+        )
+    else:
+        raise AssertionError(f"unexpected helper: {helper}")
+
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+HUB_EPOCH_CLIENT={shlex.quote(str(client))}
+PYTHON_BIN={shlex.quote(sys.executable)}
+ssh_target_args() {{ printf 'synthetic-hub\\0'; }}
+shell_quote() {{ printf "'%s'" "$1"; }}
+pinned_remote_private_upload() {{ return 0; }}
+ssh() {{ printf '%s' "$FAKE_SSH_OUTPUT"; return "$FAKE_SSH_RC"; }}
+{validator}
+{read}
+{request}
+status=0
+if ! {invocation}; then
+  status=1
+fi
+printf 'status=%s\\n' "$status"
+"""
+    return subprocess.run(
+        ["bash", "-c", snippet],
+        env={
+            **os.environ,
+            "FAKE_SSH_RC": str(ssh_rc),
+            "FAKE_SSH_OUTPUT": ssh_output,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    ), output
+
+
+def test_hub_epoch_clients_preserve_destination_on_transport_failure_under_if(tmp_path):
+    prior = '{"prior":true}\n'
+    for helper in ("read", "request"):
+        case = tmp_path / helper
+        case.mkdir()
+        result, output = _run_hub_epoch_client_harness(
+            case,
+            helper=helper,
+            ssh_rc=55,
+            ssh_output="",
+            existing_output=prior,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "status=1\n"
+        assert output.read_text(encoding="utf-8") == prior
+
+
+def test_hub_epoch_clients_reject_empty_or_invalid_success_output(tmp_path):
+    for helper in ("read", "request"):
+        for label, response in (("empty", ""), ("array", "[]\n")):
+            case = tmp_path / helper / label
+            case.mkdir(parents=True)
+            result, output = _run_hub_epoch_client_harness(
+                case,
+                helper=helper,
+                ssh_rc=0,
+                ssh_output=response,
+            )
+
+            assert result.returncode == 0, result.stderr
+            assert result.stdout == "status=1\n"
+            assert not output.exists()
+
+
+def test_hub_epoch_clients_atomically_promote_valid_private_json(tmp_path):
+    response = '{"schema":"synthetic.receipt.v1"}\n'
+    for helper in ("read", "request"):
+        case = tmp_path / helper
+        case.mkdir()
+        result, output = _run_hub_epoch_client_harness(
+            case,
+            helper=helper,
+            ssh_rc=0,
+            ssh_output=response,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "status=0\n"
+        assert output.read_text(encoding="utf-8") == response
+        assert output.stat().st_mode & 0o777 == 0o600
+
+
 def test_same_host_attestation_recovery_keeps_distinct_hub_and_worker_copies():
     deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     recovery = deploy.split("reconcile_bound_worker_attestation_key() (", 1)[1].split(

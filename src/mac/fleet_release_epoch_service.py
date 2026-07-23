@@ -39,8 +39,10 @@ from mac.models import (
     json_loads,
     parse_time,
     read_only_report_repository_executor_approval,
+    read_only_report_repository_executor_resource,
     utcnow,
     valid_read_only_report_repository_executor_attestation,
+    valid_read_only_report_repository_executor_approval,
 )
 from mac.worker_credentials import (
     MODE_COMPATIBILITY,
@@ -207,6 +209,62 @@ class FleetReleaseEpochService:
                 REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY
             ),
         }
+
+    def _validate_report_authority_projection(
+        self, participant: Any, resources: Mapping[str, Any]
+    ) -> None:
+        """Require the open-time report CAS or one safe derived-marker loss.
+
+        Worker registration always re-derives the controller-owned marker. A
+        deployment that changes the worker attestation can therefore remove an
+        old marker after epoch open while preserving its exact approval. That
+        is a monotonic loss of authority, not a competing authority mutation,
+        and staged approve/revoke actions may safely finish it at commit.
+        """
+
+        projection = self._report_resource_projection(resources)
+        prior_sha256 = str(participant["prior_report_executor_projection_sha256"])
+        if hmac.compare_digest(_sha256_json(projection), prior_sha256):
+            return
+        if str(participant["report_executor_action"]) == "preserve":
+            raise ValidationError(
+                "report executor authority changed after fleet release open"
+            )
+        approval = projection.get(REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY)
+        if (
+            projection.get(REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY) is not None
+            or not valid_read_only_report_repository_executor_approval(approval)
+        ):
+            raise ValidationError(
+                "report executor authority changed after fleet release open"
+            )
+        marker_arguments = {
+            key: str(approval[key])
+            for key in (
+                "runtime_image_ref",
+                "policy_sha256",
+                "openshell_bin_path",
+                "openshell_bin_sha256",
+                "executor_path",
+                "executor_sha256",
+                "platform",
+                "isolation_posture",
+                "python_path",
+                "python_sha256",
+                "executor_script_path",
+                "executor_script_sha256",
+                "source_root",
+                "source_bundle_sha256",
+            )
+        }
+        reconstructed = dict(projection)
+        reconstructed[REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY] = (
+            read_only_report_repository_executor_resource(**marker_arguments)
+        )
+        if not hmac.compare_digest(_sha256_json(reconstructed), prior_sha256):
+            raise ValidationError(
+                "report executor authority changed after fleet release open"
+            )
 
     @staticmethod
     def _expected_live_principals(participant: Any) -> List[str]:
@@ -1187,6 +1245,7 @@ class FleetReleaseEpochService:
                         "fleet release lost epoch-owned hold for %s" % agent_id
                     )
                 resources = self._validate_node_readiness(conn, agent_row, participant)
+                self._validate_report_authority_projection(participant, resources)
                 proof = proof_by_agent[agent_id]
                 receipt = proof.get("install_receipt")
                 if not isinstance(receipt, Mapping):
@@ -1315,13 +1374,7 @@ class FleetReleaseEpochService:
             raise ValidationError(
                 "attestation authority changed after fleet release open"
             )
-        if (
-            _sha256_json(self._report_resource_projection(resources))
-            != participant["prior_report_executor_projection_sha256"]
-        ):
-            raise ValidationError(
-                "report executor authority changed after fleet release open"
-            )
+        self._validate_report_authority_projection(participant, resources)
         receipt = ensure_json_object(json_loads(participant["install_receipt"], {}))
         if _sha256_json(receipt) != participant["install_receipt_sha256"]:
             raise TransitionError("staged worker install receipt is corrupt")

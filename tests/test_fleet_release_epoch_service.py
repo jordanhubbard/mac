@@ -21,7 +21,9 @@ from mac.models import (
     TransitionError,
     ValidationError,
     agent_has_read_only_report_repository_executor,
+    read_only_report_repository_executor_approval,
     read_only_report_repository_executor_attestation,
+    read_only_report_repository_executor_resource,
     utcnow,
 )
 from mac.services import ControlPlane, sign_verification_manifest
@@ -175,6 +177,36 @@ def _report_resources(agent_id: str, attestation: dict, timestamp: str) -> dict:
             },
             "report_repository_executor_attestation": attestation,
         },
+    }
+
+
+def _approved_report_projection(attestation: dict) -> dict:
+    arguments = {
+        key: attestation[key]
+        for key in (
+            "runtime_image_ref",
+            "policy_sha256",
+            "openshell_bin_path",
+            "openshell_bin_sha256",
+            "executor_path",
+            "executor_sha256",
+            "platform",
+            "isolation_posture",
+            "python_path",
+            "python_sha256",
+            "executor_script_path",
+            "executor_script_sha256",
+            "source_root",
+            "source_bundle_sha256",
+        )
+    }
+    return {
+        REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY: (
+            read_only_report_repository_executor_approval(**arguments)
+        ),
+        REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY: (
+            read_only_report_repository_executor_resource(**arguments)
+        ),
     }
 
 
@@ -970,6 +1002,199 @@ def test_report_executor_revoke_is_staged_until_commit(tmp_path: Path) -> None:
     resources = cp.get_agent("agent_alpha").resources
     assert REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY not in resources
     assert REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY not in resources
+
+
+@pytest.mark.parametrize("report_action", ["revoke", "approve"])
+def test_staged_report_action_accepts_only_derived_marker_loss(
+    tmp_path: Path, report_action: str
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    old_attestation = _report_attestation()
+    old_projection = _approved_report_projection(old_attestation)
+    cp.store.execute(
+        "UPDATE agents SET resources = ? WHERE id = 'agent_alpha'",
+        (
+            json.dumps(
+                {
+                    **_report_resources(
+                        "agent_alpha",
+                        old_attestation,
+                        "2099-01-01T00:00:00+00:00",
+                    ),
+                    **old_projection,
+                }
+            ),
+        ),
+    )
+    pending = _issue(cp, "agent_alpha")
+    generation = "generation-marker-loss"
+    epoch_id = "epoch-marker-loss-%s" % report_action
+    new_attestation = dict(old_attestation)
+    new_attestation["source_bundle_sha256"] = "sha256:" + ("d" * 64)
+    report_timestamp = "2100-01-01T00:00:01+00:00"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation=generation,
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+                report_action=report_action,
+                report_attestation=(
+                    new_attestation if report_action == "approve" else None
+                ),
+            )
+        ],
+    )
+    current_resources = {
+        **_report_resources("agent_alpha", new_attestation, report_timestamp),
+        REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY: old_projection[
+            REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY
+        ],
+    }
+    receipt = _apply_pending(
+        cp,
+        pending,
+        tmp_path,
+        generation=generation,
+        extra_resources=current_resources,
+    )
+    proof = _proof_item(
+        pending,
+        receipt,
+        candidate_key=None,
+        epoch_id=epoch_id,
+        generation=generation,
+        report_timestamp=(report_timestamp if report_action == "approve" else None),
+    )
+
+    assert (
+        cp.fleet_release_epochs.prove(epoch_id, opened["identity_sha256"], [proof])[
+            "status"
+        ]
+        == "proved"
+    )
+    assert (
+        cp.fleet_release_epochs.commit(epoch_id, opened["identity_sha256"])[
+            "status"
+        ]
+        == "committed"
+    )
+    resources = cp.get_agent("agent_alpha").resources
+    if report_action == "revoke":
+        assert REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY not in resources
+        assert REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY not in resources
+    else:
+        assert agent_has_read_only_report_repository_executor(resources)
+        assert (
+            resources[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY][
+                "source_bundle_sha256"
+            ]
+            == new_attestation["source_bundle_sha256"]
+        )
+
+
+def test_staged_report_action_rejects_approval_change_after_marker_loss(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    old_attestation = _report_attestation()
+    old_projection = _approved_report_projection(old_attestation)
+    cp.store.execute(
+        "UPDATE agents SET resources = ? WHERE id = 'agent_alpha'",
+        (json.dumps(old_projection),),
+    )
+    pending = _issue(cp, "agent_alpha")
+    generation = "generation-approval-drift"
+    epoch_id = "epoch-approval-drift"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation=generation,
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+                report_action="revoke",
+            )
+        ],
+    )
+    changed_approval = dict(
+        old_projection[REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY]
+    )
+    changed_approval["source_bundle_sha256"] = "sha256:" + ("e" * 64)
+    receipt = _apply_pending(
+        cp,
+        pending,
+        tmp_path,
+        generation=generation,
+        extra_resources={
+            REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY: changed_approval,
+        },
+    )
+    proof = _proof_item(
+        pending,
+        receipt,
+        candidate_key=None,
+        epoch_id=epoch_id,
+        generation=generation,
+    )
+
+    with pytest.raises(ValidationError, match="report executor authority changed"):
+        cp.fleet_release_epochs.prove(
+            epoch_id, opened["identity_sha256"], [proof]
+        )
+
+
+def test_report_preserve_rejects_derived_marker_loss(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    attestation = _report_attestation()
+    prior_projection = _approved_report_projection(attestation)
+    cp.store.execute(
+        "UPDATE agents SET resources = ? WHERE id = 'agent_alpha'",
+        (json.dumps(prior_projection),),
+    )
+    pending = _issue(cp, "agent_alpha")
+    generation = "generation-preserve-marker-loss"
+    epoch_id = "epoch-preserve-marker-loss"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation=generation,
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    receipt = _apply_pending(
+        cp,
+        pending,
+        tmp_path,
+        generation=generation,
+        extra_resources={
+            REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY: prior_projection[
+                REPORT_REPOSITORY_EXECUTOR_APPROVAL_KEY
+            ]
+        },
+    )
+    proof = _proof_item(
+        pending,
+        receipt,
+        candidate_key=None,
+        epoch_id=epoch_id,
+        generation=generation,
+    )
+
+    with pytest.raises(ValidationError, match="report executor authority changed"):
+        cp.fleet_release_epochs.prove(
+            epoch_id, opened["identity_sha256"], [proof]
+        )
 
 
 def test_commit_rejects_new_service_claim_without_partial_promotion(

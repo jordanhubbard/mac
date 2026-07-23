@@ -4236,8 +4236,11 @@ import os
 import sys
 
 path, agent, revision = sys.argv[1:]
-with open(path, encoding="utf-8") as stream:
-    value = json.load(stream)
+try:
+    with open(path, encoding="utf-8") as stream:
+        value = json.load(stream)
+except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    raise SystemExit("hub epoch client output is not valid JSON") from error
 prerequisites = value.get("prerequisites")
 artifacts = value.get("artifacts")
 if (
@@ -4415,41 +4418,97 @@ PY
   echo "==> ${agent}: typed hub epoch API installed; dispatch hold intentionally retained"
 }
 
+validate_hub_epoch_client_output() {
+  local path="$1"
+  "$PYTHON_BIN" - "$path" <<'PY'
+import json
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+metadata = os.lstat(path)
+if (
+    not stat.S_ISREG(metadata.st_mode)
+    or stat.S_ISLNK(metadata.st_mode)
+    or metadata.st_uid != os.getuid()
+    or metadata.st_nlink != 1
+    or stat.S_IMODE(metadata.st_mode) != 0o600
+    or not 2 <= metadata.st_size <= 1024 * 1024
+):
+    raise SystemExit("hub epoch client output is not a bounded owner-private file")
+with open(path, encoding="utf-8") as stream:
+    value = json.load(stream)
+if not isinstance(value, dict):
+    raise SystemExit("hub epoch client output is not a JSON object")
+PY
+}
+
 hub_epoch_client_read() {
   # Execute the reviewed client from stdin on the pinned hub route. The bearer
   # is copied from mac.env into an unnamed owner-private temporary file and is
   # never placed in argv, the environment, stdout, or the controller journal.
   local hub_agent="$1" output="$2"
   shift 2
-  local ssh_parts=() ssh_args=() ssh_target item last_index remote_args="" arg output_tmp
+  local ssh_parts=() ssh_args=() ssh_target item last_index remote_args="" arg output_tmp=""
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  if [ "${#ssh_parts[@]}" -lt 1 ]; then
+    echo "ERROR: ${hub_agent}: hub epoch client route is empty" >&2
+    return 1
+  fi
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
   for arg in "$@"; do
     remote_args+=" $(shell_quote "$arg")"
   done
-  output_tmp="$(mktemp "$TMPDIR_LOCAL/hub-read.XXXXXX")"; chmod 0600 "$output_tmp"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 \
+  if ! output_tmp="$(mktemp "$TMPDIR_LOCAL/hub-read.XXXXXX")"; then
+    return 1
+  fi
+  if ! chmod 0600 "$output_tmp"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" \
     "set -e; umask 077; _mac_tmp=\$(mktemp -d \"\$HOME/.mac/.fleet-epoch-client.XXXXXX\"); chmod 700 \"\$_mac_tmp\"; _mac_token=\"\$_mac_tmp/token\"; _mac_output=\"\$_mac_tmp/output.json\"; trap 'rm -rf \"\$_mac_tmp\"' EXIT HUP INT TERM; : > \"\$_mac_token\"; chmod 600 \"\$_mac_token\"; set -a; . \"\$HOME/.mac/mac.env\"; set +a; [ -n \"\${MAC_API_TOKEN:-}\" ]; printf '%s' \"\$MAC_API_TOKEN\" > \"\$_mac_token\"; python3 - --token-file \"\$_mac_token\"${remote_args} --output \"\$_mac_output\" >/dev/null; cat \"\$_mac_output\"" \
-    < "$HUB_EPOCH_CLIENT" > "$output_tmp"
-  mv -f "$output_tmp" "$output"
-  chmod 0600 "$output"
+    < "$HUB_EPOCH_CLIENT" > "$output_tmp"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! validate_hub_epoch_client_output "$output_tmp"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! mv -f -- "$output_tmp" "$output"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  return 0
 }
 
 hub_epoch_client_request() {
   local hub_agent="$1" request_file="$2" output="$3"
   shift 3
-  local request_nonce remote_client remote_request remote_output output_tmp
+  local request_nonce remote_client remote_request remote_output output_tmp=""
   local ssh_parts=() ssh_args=() ssh_target item last_index remote_args="" arg command
-  request_nonce="$($PYTHON_BIN -c 'import secrets; print(secrets.token_hex(16))')"
+  if ! request_nonce="$($PYTHON_BIN -c 'import secrets; print(secrets.token_hex(16))')"; then
+    return 1
+  fi
   remote_client="/tmp/mac-fleet-epoch-client-${request_nonce}.py"
   remote_request="/tmp/mac-fleet-epoch-request-${request_nonce}.json"
   remote_output="/tmp/mac-fleet-epoch-receipt-${request_nonce}.json"
-  pinned_remote_private_upload "$hub_agent" "$HUB_EPOCH_CLIENT" "$remote_client"
-  pinned_remote_private_upload "$hub_agent" "$request_file" "$remote_request"
+  if ! pinned_remote_private_upload "$hub_agent" "$HUB_EPOCH_CLIENT" "$remote_client"; then
+    return 1
+  fi
+  if ! pinned_remote_private_upload "$hub_agent" "$request_file" "$remote_request"; then
+    return 1
+  fi
   while IFS= read -r -d '' item; do ssh_parts+=("$item"); done < <(ssh_target_args "$hub_agent")
+  if [ "${#ssh_parts[@]}" -lt 1 ]; then
+    echo "ERROR: ${hub_agent}: hub epoch client route is empty" >&2
+    return 1
+  fi
   last_index=$((${#ssh_parts[@]} - 1))
   ssh_target="${ssh_parts[$last_index]}"
   ssh_args=("${ssh_parts[@]:0:$last_index}")
@@ -4457,11 +4516,28 @@ hub_epoch_client_request() {
     remote_args+=" $(shell_quote "$arg")"
   done
   command="set -e; umask 077; _mac_tmp=\$(mktemp -d \"\$HOME/.mac/.fleet-epoch-client.XXXXXX\"); chmod 700 \"\$_mac_tmp\"; _mac_token=\"\$_mac_tmp/token\"; _mac_output=\"\$_mac_tmp/output.json\"; trap 'rm -rf \"\$_mac_tmp\"; rm -f $(shell_quote "$remote_client") $(shell_quote "$remote_request")' EXIT HUP INT TERM; : > \"\$_mac_token\"; chmod 600 \"\$_mac_token\"; set -a; . \"\$HOME/.mac/mac.env\"; set +a; [ -n \"\${MAC_API_TOKEN:-}\" ]; printf '%s' \"\$MAC_API_TOKEN\" > \"\$_mac_token\"; python3 $(shell_quote "$remote_client") --token-file \"\$_mac_token\"${remote_args} --request-file $(shell_quote "$remote_request") --output \"\$_mac_output\" >/dev/null; cat \"\$_mac_output\""
-  output_tmp="$(mktemp "$TMPDIR_LOCAL/hub-request.XXXXXX")"; chmod 0600 "$output_tmp"
-  ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+  if ! output_tmp="$(mktemp "$TMPDIR_LOCAL/hub-request.XXXXXX")"; then
+    return 1
+  fi
+  if ! chmod 0600 "$output_tmp"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
     "${ssh_args[@]}" "$ssh_target" "$command" > "$output_tmp"
-  mv -f "$output_tmp" "$output"
-  chmod 0600 "$output"
+  then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! validate_hub_epoch_client_output "$output_tmp"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  if ! mv -f -- "$output_tmp" "$output"; then
+    rm -f -- "$output_tmp"
+    return 1
+  fi
+  return 0
 }
 
 hub_epoch_recovery_request_name() {
