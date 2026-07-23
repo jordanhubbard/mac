@@ -1353,7 +1353,7 @@ EOF
     if openshell_local_gateway "$OSH_CLI" sandbox create --no-auto-providers --policy "$MAC_HOME/openshell-policy.yaml" --name "$sm" \
         --label mac.owner=mac --label mac.kind=runtime-smoke --label "mac.pid=$$" --label mac.keep=false \
         --from "$OSH_IMAGE_TAG" --env HOME=/tmp \
-        -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; command -v codegraph; command -v python3; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
+        -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; command -v codegraph; command -v python3; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' >"$OSH_DIR/runtime-image-smoke.log" 2>&1; then
       openshell_local_gateway "$OSH_CLI" sandbox delete "$sm" >/dev/null 2>&1 || true
       log "runtime image smoke: Bash >=5.2 plus gh/codegraph/python visible through OpenShell on Docker Desktop"
     else
@@ -1565,10 +1565,10 @@ validate_openshell_runtime_image() {
       --from "$OSH_IMAGE_TAG" \
       "${gpu_flag[@]}" \
       --env HOME=/tmp \
-      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v codegraph; codegraph --version; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
+      -- /bin/bash -c 'set -euo pipefail; /usr/local/bin/mac-verify-bash-contract; command -v gh; gh --version | head -1; command -v codex; codex --version; command -v codegraph; codegraph --version; /usr/local/lib/docker/cli-plugins/docker-buildx version | grep -F v0.30.1; /opt/mac-venv/bin/python -c "import mac.agent_command"' \
       > "$smoke_log" 2>&1; then
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true
-    log "runtime image smoke: Bash >=5.2 plus gh/codex/codegraph visible through OpenShell"
+    log "runtime image smoke: Bash >=5.2 plus gh/codex/codegraph/buildx visible through OpenShell"
   else
     rc=$?
     openshell_local_gateway "$BIN/openshell" sandbox delete "$smoke_name" >/dev/null 2>&1 || true

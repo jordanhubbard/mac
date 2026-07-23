@@ -226,8 +226,15 @@ def test_openshell_bootstrap_is_docker_engine_only():
     )
     assert "podman load" in script
     assert (
-        "runtime image smoke: Bash >=5.2 plus gh/codex/codegraph visible through OpenShell"
+        "runtime image smoke: Bash >=5.2 plus gh/codex/codegraph/buildx visible through OpenShell"
         in script
+    )
+    assert (
+        script.count(
+            "/usr/local/lib/docker/cli-plugins/docker-buildx version "
+            "| grep -F v0.30.1"
+        )
+        >= 2
     )
     assert "run_live_confinement_probe" in script
     assert "live-confinement-probe.sh" in script
