@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+set -E
 
 AGENT="${MAC_DEPLOY_AGENT:?}"
 FLEET_NAME="${MAC_DEPLOY_FLEET_NAME:-mac}"
@@ -20,6 +21,20 @@ case "$NODE_ACTION" in
     exit 64
     ;;
 esac
+
+# The typed controller captures this process's output, but failures before the
+# normal deploy logger is initialized otherwise produce only an unexplained
+# status 1.  Report structural context only: never the failed command, its
+# arguments, or environment values, because those may contain credentials.
+deploy_structural_error() {
+  local status=$? function_name="${FUNCNAME[1]:-top-level}"
+  local source_line="${BASH_LINENO[0]:-${LINENO}}"
+  printf 'ERROR: fleet node install failed: action=%s function=%s line=%s status=%s\n' \
+    "$NODE_ACTION" "$function_name" "$source_line" "$status" >&2
+  return "$status"
+}
+trap deploy_structural_error ERR
+
 RECOVERY_POLICY="${MAC_DEPLOY_RECOVERY_POLICY:-retain-forward}"
 case "$RECOVERY_POLICY" in
   retain-forward|rollback) ;;
@@ -536,7 +551,7 @@ install_fleet_registry() {
 
 python_bin() {
   local candidate
-  for candidate in "${MAC_PYTHON:-}" /opt/homebrew/bin/python3 /usr/local/bin/python3 python3.13 python3.12 python3.11 python3.10 python3 python; do
+  for candidate in "${MAC_PYTHON:-}" "$VENV/bin/python" /opt/homebrew/bin/python3 /usr/local/bin/python3 python3.13 python3.12 python3.11 python3.10 python3 python; do
     [ -n "$candidate" ] || continue
     if ! command -v "$candidate" >/dev/null 2>&1; then
       continue

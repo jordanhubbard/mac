@@ -409,3 +409,60 @@ def test_controller_counts_zero_preparation_modes_without_pipefail_exit():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "0\n"
+
+
+def test_node_installer_reports_only_structural_error_context():
+    text = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    prefix = text.split('RECOVERY_POLICY="${MAC_DEPLOY_RECOVERY_POLICY', 1)[0]
+    assert "set -euo pipefail" in prefix
+    assert "set -E" in prefix
+    assert "trap deploy_structural_error ERR" in prefix
+    reporter = prefix.split("deploy_structural_error() {", 1)[1]
+    assert "NODE_ACTION" in reporter
+    assert "FUNCNAME[1]" in reporter
+    assert "BASH_LINENO[0]" in reporter
+    assert '"$BASH_COMMAND"' not in reporter
+    assert "env" not in reporter.lower()
+
+
+def test_node_installer_prefers_phase_zero_managed_python(tmp_path):
+    text = (ROOT / "deploy" / "fleet-node-install.sh").read_text(encoding="utf-8")
+    function = (
+        "python_bin() {"
+        + text.split("python_bin() {", 1)[1].split("\n}\n\nhermes_python_bin()", 1)[0]
+        + "\n}"
+    )
+    venv = tmp_path / "venv"
+    managed = venv / "bin" / "python"
+    managed.parent.mkdir(parents=True)
+    managed.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    managed.chmod(0o755)
+    system_bin = tmp_path / "system-bin"
+    system_bin.mkdir()
+    system_python = system_bin / "python3"
+    system_python.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    system_python.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                "set -euo pipefail\n"
+                'VENV="$1"\n'
+                'PATH="$2:/usr/bin:/bin"\n'
+                "MAC_PYTHON=\n"
+                "log() { :; }\n"
+                f"{function}\n"
+                "python_bin\n"
+            ),
+            "managed-python",
+            str(venv),
+            str(system_bin),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(managed)
