@@ -52,6 +52,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/investigation-review-finalize-verify-prerequisite.md` | Investigation: dream-finding review finalize/verify prerequisite ground truth |
 | historical archive | `archive/field-notes/investigation-task-2284f3-env-prerequisite-false-positive.md` | Investigation: mac environment-prerequisite finding is a classifier false positive |
 | historical archive | `archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md` | Investigation: skills environment-prerequisite behavior vs. the finding |
+| historical archive | `archive/field-notes/investigation-task-f869c0-new-file-staging-finalizer.md` | Investigation: new-file staging finalizer ground truth (task_f869c0) |
 | historical archive | `archive/field-notes/k8s-native-rewrite-plan.md` | Kubernetes-native rewrite plan |
 | historical archive | `archive/field-notes/mac-task-bd-parity-audit.md` | `mac task` ↔ `bd` (beads) functional-parity audit |
 | historical archive | `archive/field-notes/metadata-sync-assessment.md` | Metadata sync assessment (post-bd-bridge) |
