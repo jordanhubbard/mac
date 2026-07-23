@@ -57,16 +57,16 @@ def _run_launchd_stop_harness(tmp_path, functions, command, mode):
     launchctl.write_text(
         """#!/bin/sh
 set -eu
-mode=$(sed -n '1p' "$FAKE_LAUNCHCTL_STATE")
+IFS= read -r mode < "$FAKE_LAUNCHCTL_STATE"
 case "$1" in
   print)
-    value=$(sed -n '1p' "$FAKE_LAUNCHCTL_COUNT")
+    IFS= read -r value < "$FAKE_LAUNCHCTL_COUNT"
     value=$((value + 1))
     printf '%s\n' "$value" > "$FAKE_LAUNCHCTL_COUNT"
     case "$mode" in
       absent) echo 'Could not find service synthetic' >&2; exit 113 ;;
       delayed)
-        if [ "$value" -lt 4 ]; then
+        if [ "$value" -lt 3 ]; then
           exit 0
         fi
         echo 'Could not find service synthetic' >&2
@@ -133,7 +133,7 @@ exec "$@"
     # guard (never imports ``mac``). coverage.py's ``patch = ["subprocess"]`` would
     # trace every such child via COVERAGE_PROCESS_{START,CONFIG} + a site .pth,
     # adding ~5.6x interpreter-start overhead for ZERO src/mac coverage — enough to
-    # blow the 150ms aggregate bound (which needs ~4 bounded polls) once xdist
+    # blow the 150ms aggregate bound (which needs multiple bounded polls) once xdist
     # contention piles on, flaking the "delayed" case. Strip it so the wrapper runs
     # at native speed; the 150ms contract stays exact and coverage is unaffected.
     env.pop("COVERAGE_PROCESS_START", None)

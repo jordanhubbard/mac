@@ -45,7 +45,8 @@ source_marker = Path(os.environ["ROLLBACK_TEST_SRC"]) / "generation"
 venv_marker = Path(os.environ["ROLLBACK_TEST_VENV"]) / "generation"
 source_generation = source_marker.read_text() if source_marker.is_file() else "absent"
 venv_generation = venv_marker.read_text() if venv_marker.is_file() else "absent"
-config_generation = Path(os.environ["ROLLBACK_TEST_CONF"]).read_text()
+config_path = Path(os.environ["ROLLBACK_TEST_CONF"])
+config_generation = config_path.read_text() if config_path.is_file() else "absent"
 bin_generation = (Path(os.environ["ROLLBACK_TEST_BIN"]) / "generation").read_text()
 revision_generation = Path(os.environ["ROLLBACK_TEST_REVISION"]).read_text()
 openclaw_home = Path(os.environ["ROLLBACK_TEST_OPENCLAW_HOME"])
@@ -63,7 +64,7 @@ expected_venv = (
 expected_config = (
     os.environ.get("ROLLBACK_TEST_QUIESCE_CONFIG_STATE", expected)
     if action == "quiesce"
-    else expected
+    else os.environ.get("ROLLBACK_TEST_RESTORE_CONFIG_STATE", expected)
 )
 expected_bin = (
     os.environ.get("ROLLBACK_TEST_QUIESCE_BIN_STATE", expected)
@@ -237,7 +238,12 @@ def _shell_assignments(values: Mapping[str, str]) -> str:
     return "\n".join(f"{name}={shlex.quote(value)}" for name, value in values.items())
 
 
-def _generate_rollback(tmp_path: Path, *, control_active: bool) -> tuple[Path, dict[str, Path]]:
+def _generate_rollback(
+    tmp_path: Path,
+    *,
+    control_active: bool,
+    config_existed: bool = True,
+) -> tuple[Path, dict[str, Path]]:
     successor_generation = "successor-generation-rocky-001"
     prior_generation = "prior-generation-rocky-000"
     successor_revision = "c" * 40
@@ -304,8 +310,9 @@ def _generate_rollback(tmp_path: Path, *, control_active: bool) -> tuple[Path, d
     config_dir.mkdir()
     config = config_dir / "mac.conf"
     config_backup = backup_root / "mac.conf.old"
-    config.write_text("current", encoding="utf-8")
-    config_backup.write_text("restored", encoding="utf-8")
+    if config_existed:
+        config.write_text("restored", encoding="utf-8")
+        config_backup.write_text("restored", encoding="utf-8")
 
     helper = log_dir / "rollback-supervisor.py"
     helper.write_text(FAKE_SUPERVISOR_HELPER, encoding="utf-8")
@@ -336,10 +343,10 @@ def _generate_rollback(tmp_path: Path, *, control_active: bool) -> tuple[Path, d
         "BIN_BACKUP": str(bin_backup),
         "OPENCLAW_HOME_BACKUP": "",
         "OPENCLAW_HOME_EXISTED": "0",
-        "MAC_UNIT_BACKUP": str(config_backup),
+        "MAC_UNIT_BACKUP": "",
         "HERMES_UNIT_BACKUP": "",
         "MAC_AGENT_UNIT_BACKUP": "",
-        "MAC_UNIT_MUTATED": "1",
+        "MAC_UNIT_MUTATED": "0",
         "HERMES_UNIT_MUTATED": "0",
         "MAC_AGENT_UNIT_MUTATED": "0",
         "MAC_PLIST_BACKUP": "",
@@ -398,7 +405,7 @@ def _generate_rollback(tmp_path: Path, *, control_active: bool) -> tuple[Path, d
     generator.write_text(
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         + _shell_assignments(values)
-        + "\nROLLBACK_AUX_ARTIFACT_COUNT=2\n"
+        + "\nROLLBACK_AUX_ARTIFACT_COUNT=3\n"
         + f"ROLLBACK_AUX_ARTIFACT_PATHS=({shlex.quote(str(revision))})\n"
         + f"ROLLBACK_AUX_ARTIFACT_BACKUPS=({shlex.quote(str(revision_backup))})\n"
         + "ROLLBACK_AUX_ARTIFACT_EXISTED=(1)\n"
@@ -407,6 +414,10 @@ def _generate_rollback(tmp_path: Path, *, control_active: bool) -> tuple[Path, d
         + f"ROLLBACK_AUX_ARTIFACT_BACKUPS[1]={shlex.quote(str(env_backup))}\n"
         + "ROLLBACK_AUX_ARTIFACT_EXISTED[1]=1\n"
         + "ROLLBACK_AUX_ARTIFACT_MODES[1]=user\n"
+        + f"ROLLBACK_AUX_ARTIFACT_PATHS[2]={shlex.quote(str(config))}\n"
+        + f"ROLLBACK_AUX_ARTIFACT_BACKUPS[2]={shlex.quote(str(config_backup))}\n"
+        + f"ROLLBACK_AUX_ARTIFACT_EXISTED[2]={int(config_existed)}\n"
+        + "ROLLBACK_AUX_ARTIFACT_MODES[2]=system\n"
         + f". {shlex.quote(str(lifecycle))}\n"
         + "\ncontrol_plane_enabled() { "
         + ("return 0" if control_active else "return 1")
@@ -425,6 +436,7 @@ def _generate_rollback(tmp_path: Path, *, control_active: bool) -> tuple[Path, d
     )
     assert generated.returncode == 0, generated.stderr
     assert rollback.exists()
+    config.write_text("current", encoding="utf-8")
     rollback_intent.write_text(
         json.dumps(
             {
@@ -858,6 +870,26 @@ def test_installer_snapshots_complete_entrypoint_and_generation_metadata_before_
     assert '"$(supervisord_conf_dir)/$MAC_SUPERVISORD_CONF_NAME" system' in capture
 
 
+def test_typed_supervisord_install_uses_sealed_auxiliary_baseline_only() -> None:
+    source = NODE_INSTALL.read_text(encoding="utf-8")
+    install = source.split("install_supervisord_service() {", 1)[1].split(
+        "\n}\n\ninstall_darwin_service() {", 1
+    )[0]
+    armed, legacy = install.split(
+        'if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ]; then', 1
+    )[1].split("\n  else\n", 1)
+
+    assert "snapshot_rollback_file" not in armed
+    assert "MAC_UNIT_MUTATED" not in armed
+    assert 'snapshot_rollback_file "$conf" "$MAC_UNIT_BACKUP" system' in legacy
+    assert "MAC_UNIT_MUTATED=1" in legacy
+    assert "write_rollback_script" in legacy
+    assert (
+        "cannot mutate the supervisord configuration without a prior-generation backup"
+        not in install
+    )
+
+
 def test_installer_arms_rollback_only_after_mutable_snapshots_and_durable_regeneration() -> None:
     source = NODE_INSTALL.read_text(encoding="utf-8")
     arm_body = source.split("arm_phase2_rollback() {", 1)[1].split(
@@ -1218,6 +1250,35 @@ def test_generated_rollback_restores_artifacts_before_exact_prior_topology(
     assert not list(
         (tmp_path / "mac-home" / "backups").glob("rollback-current-file.*")
     )
+
+
+def test_generated_rollback_removes_supervisord_config_absent_from_prior_generation(
+    tmp_path: Path,
+) -> None:
+    rollback, paths = _generate_rollback(
+        tmp_path,
+        control_active=False,
+        config_existed=False,
+    )
+    env = _rollback_env(paths)
+    env["ROLLBACK_TEST_RESTORE_CONFIG_STATE"] = "absent"
+
+    result = subprocess.run(
+        ["/bin/bash", str(rollback)],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert [event["config"] for event in _events(paths["log"])] == [
+        "current",
+        "absent",
+    ]
+    assert not paths["config"].exists()
+    assert not paths["config_backup"].exists()
 
 
 def test_completed_generated_rollback_replay_returns_same_receipt_without_mutation(

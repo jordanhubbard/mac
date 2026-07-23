@@ -11895,16 +11895,19 @@ stdout_logfile=$LOG_DIR/mac-service.log
 stderr_logfile=$LOG_DIR/mac-service.log
 environment=HOME=\"$HOME\""
   fi
-  if sudo test -f "$conf"; then
-    MAC_UNIT_BACKUP="$MAC_HOME/backups/${MAC_SUPERVISORD_CONF_NAME}.${AGENT}.${DEPLOY_TS}"
-    snapshot_rollback_file "$conf" "$MAC_UNIT_BACKUP" system
+  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ]; then
+    # Typed phase 2 already sealed this exact path as an auxiliary artifact,
+    # including an explicit prior-absent state for fresh workers.
+    :
+  else
+    if sudo test -f "$conf"; then
+      MAC_UNIT_BACKUP="$MAC_HOME/backups/${MAC_SUPERVISORD_CONF_NAME}.${AGENT}.${DEPLOY_TS}"
+      snapshot_rollback_file "$conf" "$MAC_UNIT_BACKUP" system
+      write_rollback_script
+    fi
+    MAC_UNIT_MUTATED=1
     write_rollback_script
   fi
-  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$MAC_UNIT_BACKUP" ]; then
-    die "cannot mutate the supervisord configuration without a prior-generation backup"
-  fi
-  MAC_UNIT_MUTATED=1
-  write_rollback_script
   run_privileged_bounded \
     "${MAC_SUPERVISOR_COMMAND_TIMEOUT_SECONDS:-30}" \
     install -d -m 0755 "$conf_dir"
