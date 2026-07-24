@@ -96,6 +96,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `certifier-linux-openshell-gateway.md` | Linux OpenShell gateway for a Darwin certifier controller |
 | supplemental reference | `client-bootstrap-contract.md` | SSH Client Bootstrap Contracts |
 | supplemental reference | `coding-cli-credentials.md` | Coding-CLI Credentials and Model Selection |
+| supplemental reference | `contract-verify-environment-failure-finding.md` | Contract-verify environment failure investigation finding |
 | supplemental reference | `crash-diagnosis-and-repair.md` | Crash diagnosis and autonomous repair |
 | supplemental reference | `crash-incident-finding.md` | Crash incident investigation finding |
 | supplemental reference | `dashboard-connection.md` | Dashboard Connection Contract |
