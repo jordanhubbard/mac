@@ -5497,6 +5497,29 @@ def test_beads_repository_registration_requires_runtime_contract(cp, tmp_path):
         cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
 
 
+def test_project_unregister_does_not_leave_disabled_repository_as_derived_project(
+    cp, tmp_path
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_repository_contract(repo, project="retired-project")
+    project = cp.create_project("retired-project")
+    cp.register_project_repository(
+        "retired-repository",
+        str(repo),
+        source="repo-retired-project",
+        project=project.name,
+    )
+
+    cp.delete_project(project.id, force=True)
+
+    assert all(
+        summary["project"] != project.name for summary in cp.list_projects()
+    )
+    registration = cp.get_project_repository("retired-repository")
+    assert registration.enabled is False
+
+
 def test_beads_repository_registration_rejects_incomplete_runtime_contract(cp, tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

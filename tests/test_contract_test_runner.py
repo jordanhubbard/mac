@@ -522,6 +522,16 @@ def _stage_interpreter_repo(
             "done\n"
             + _GOOD_PY_BODY.split("\n", 1)[1],
         )
+    else:
+        # Shadow any host python3 (notably macOS /usr/bin/python3) with an
+        # unusable interpreter. The fixture is proving the no-builder path,
+        # so its result must not depend on what the host happens to install.
+        _write_exec(
+            path_bin / "python3",
+            "#!/bin/sh\n"
+            "case \"$*\" in *bootstrap-project.py*) exit 0 ;; esac\n"
+            "exit 1\n",
+        )
 
     env = {
         "PATH": f"{path_bin}:/usr/bin:/bin",

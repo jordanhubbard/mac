@@ -3176,6 +3176,11 @@ class ControlPlane:
                 "bridge_item_count"
             ] += 1
         for repository in repositories:
+            # Disabled registrations are durable tombstones retained for
+            # historical evidence. They must not recreate a deleted project
+            # as a record-less "derived" project after `project unregister`.
+            if repository.get("enabled") is False:
+                continue
             bucket(str(repository.get("project") or repository.get("name") or repository.get("source") or "unassigned"))[
                 "repository_count"
             ] += 1
