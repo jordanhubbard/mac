@@ -11319,6 +11319,21 @@ checks["openshell_executor_config"] = not any(
     for problem in problems
 )
 report_executor_attestation: dict[str, object] = {}
+# A loop worker's report-repository-executor attestation gap (probe exception or a
+# missing/mismatched hardened OpenShell attestation) is a soft, DEGRADED condition:
+# the attestation is healed at runtime by
+# mac.worker._resources_with_live_report_executor_attestation, so the self-test
+# must record the problem yet keep the service running.  These messages are tracked
+# here so they stay non-blocking, mirroring the transient/OpenClaw degraded plumbing
+# below, while every genuine misconfiguration remains blocking.
+report_executor_attestation_problems: list[str] = []
+
+
+def add_report_executor_attestation_problem(message: str) -> None:
+    problems.append(message)
+    report_executor_attestation_problems.append(message)
+
+
 if openshell_enabled and str(os.environ.get("MAC_WORKER_MODE") or "").strip() == "loop":
     try:
         from mac.worker import _read_only_report_executor_attestation
@@ -11328,12 +11343,12 @@ if openshell_enabled and str(os.environ.get("MAC_WORKER_MODE") or "").strip() ==
         )
     except Exception as exc:
         observed_report_attestation = None
-        problems.append(
+        add_report_executor_attestation_problem(
             "report repository executor attestation probe failed: "
             + safe_error(exc)
         )
     if not isinstance(observed_report_attestation, dict):
-        problems.append(
+        add_report_executor_attestation_problem(
             "report repository executor lacks the exact hardened OpenShell attestation"
         )
     else:
@@ -11535,6 +11550,12 @@ else:
 # A shared-service (or hub) probe that only ever timed out is a transient hub
 # blip after bounded retries, so it degrades the node instead of blocking start.
 for problem in transient_problems:
+    if problem not in non_blocking_problems:
+        non_blocking_problems.append(problem)
+# A loop worker's report-repository-executor attestation gap is healed at runtime by
+# mac.worker._resources_with_live_report_executor_attestation, so it degrades the
+# node instead of blocking startup.
+for problem in report_executor_attestation_problems:
     if problem not in non_blocking_problems:
         non_blocking_problems.append(problem)
 blocking_problems = [problem for problem in problems if problem not in non_blocking_problems]
