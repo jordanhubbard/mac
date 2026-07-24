@@ -17,9 +17,9 @@ caused the sync problems we moved away from. Issue tracking is the **mac task
 ledger** (`mac task`), a beads-equivalent durable ledger that avoids those
 problems. It is correct to say we do not use beads; it is **not** correct to say
 we do not use a durable task ledger — we use mac tasks. The legacy beads bridge
-is removed/gated off by default (`MAC_BEADS_BRIDGE_ENABLED`), `bd dolt push/pull`
-is disabled, and `.beads/` directories were removed. Do not run `bd`; use
-`mac task`.
+is removed (no runtime flag gates it — the code paths are gone), `bd dolt
+push/pull` is disabled, and `.beads/` directories were removed. Do not run `bd`;
+use `mac task`.
 
 ### Quick reference
 
