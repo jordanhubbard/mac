@@ -39,6 +39,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md` | Close-Out: dream finding `dreamrepair:3dc2cf317ea21e032952a355c3550f88` (openclaw_fleet_rollout deliverable) |
 | historical archive | `archive/field-notes/closeout-dreamrepair-5404b15-skill.md` | Close-Out: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
 | historical archive | `archive/field-notes/closeout-review-finalize-verify-prerequisite.md` | Close-Out: dream-finding review finalize/verify prerequisite |
+| historical archive | `archive/field-notes/closeout-task-9c83aa5b-skill.md` | Close-Out: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — CLOSE, NOT ACTIONABLE |
 | historical archive | `archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md` | Disposition: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem) |
 | historical archive | `archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md` | Disposition: skill environment-prerequisite finding — smallest repair applied |
 | historical archive | `archive/field-notes/disposition-task-9c83aa5b-skill.md` | Disposition: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — not actionable |
