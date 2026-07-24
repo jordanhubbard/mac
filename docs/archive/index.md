@@ -48,6 +48,7 @@ their retained sources.
 - [Investigation: dream-finding review finalize/verify prerequisite ground truth](../archive/field-notes/investigation-review-finalize-verify-prerequisite.md) — `archive/field-notes/investigation-review-finalize-verify-prerequisite.md`
 - [Investigation: mac environment-prerequisite finding is a classifier false positive](../archive/field-notes/investigation-task-2284f3-env-prerequisite-false-positive.md) — `archive/field-notes/investigation-task-2284f3-env-prerequisite-false-positive.md`
 - [Investigation: skills environment-prerequisite behavior vs. the finding](../archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md) — `archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md`
+- [Investigation: new-file staging finalizer ground truth (task_ed7b0b)](../archive/field-notes/investigation-task-ed7b0b-new-file-staging-finalizer.md) — `archive/field-notes/investigation-task-ed7b0b-new-file-staging-finalizer.md`
 - [Investigation: new-file staging finalizer ground truth (task_f869c0)](../archive/field-notes/investigation-task-f869c0-new-file-staging-finalizer.md) — `archive/field-notes/investigation-task-f869c0-new-file-staging-finalizer.md`
 - [Kubernetes-native rewrite plan](../archive/field-notes/k8s-native-rewrite-plan.md) — `archive/field-notes/k8s-native-rewrite-plan.md`
 - [`mac task` ↔ `bd` (beads) functional-parity audit](../archive/field-notes/mac-task-bd-parity-audit.md) — `archive/field-notes/mac-task-bd-parity-audit.md`
