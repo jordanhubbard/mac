@@ -40,6 +40,7 @@ their retained sources.
 - [Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce](../archive/field-notes/dream-finding-805aed7.md) — `archive/field-notes/dream-finding-805aed7.md`
 - [Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948)](../archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md) — `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md`
 - [Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc)](../archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md) — `archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md`
+- [Findings: mac-agent-service startup self-test crash (62021be0)](../archive/field-notes/findings-crash-mac-agent-service-62021be0.md) — `archive/field-notes/findings-crash-mac-agent-service-62021be0.md`
 - [Findings: crash_service "unknown" crash path (ground truth for parent P0 crash-repair)](../archive/field-notes/findings-crash-service-unknown-crash-path.md) — `archive/field-notes/findings-crash-service-unknown-crash-path.md`
 - [Fleet Workbench — Clean-Slate IDE Plan](../archive/field-notes/fleet-ide-workbench-plan.md) — `archive/field-notes/fleet-ide-workbench-plan.md`
 - [Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task](../archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md) — `archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md`
