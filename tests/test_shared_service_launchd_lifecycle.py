@@ -869,7 +869,10 @@ exit 113
         [
             "/bin/bash",
             "-c",
-            'set -euo pipefail; . "$1"; '
+            'set -Eeuo pipefail; '
+            'trap \'status=$?; printf "STRUCTURAL:%s\\n" "$status" >&2; '
+            'exit "$status"\' ERR; '
+            '. "$1"; '
             'mac_launchd_job_state "system/com.mac.synthetic" '
             '"com.mac.synthetic" system',
             "bash",
@@ -908,6 +911,7 @@ def test_system_job_state_uses_exact_bounded_sudo_argv(
     result, calls = _run_privileged_job_state(tmp_path, sudo_mode)
 
     assert (result.returncode == 0) is succeeds, result.stderr
+    assert ("STRUCTURAL:" not in result.stderr) is succeeds
     assert calls == ["-n launchctl print system/com.mac.synthetic"]
     if succeeds:
         assert result.stdout == "inactive\n"

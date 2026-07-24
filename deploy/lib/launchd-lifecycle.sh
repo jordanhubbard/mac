@@ -518,9 +518,17 @@ PY
 mac_launchd_job_state() {
   local target="$1" display_label="$2" mode="${3:-user}" output="" rc=0
   mac_launchd_validate_mode "$mode" || return $?
-  output="$(mac_launchd_run_control_bounded "$mode" \
-    "${MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS:-10}" \
-    print "$target" 2>&1)" || rc=$?
+  # macOS /bin/bash 3.2 inherits an ERR trap into command substitutions even
+  # when the assignment is guarded by `||`. The fleet installer deliberately
+  # has a structural ERR trap, so launchctl's normal absent status (113) fired
+  # that trap before this function could classify the result. Clear only the
+  # subshell's inherited trap; the caller's trap remains intact.
+  output="$(
+    trap - ERR
+    mac_launchd_run_control_bounded "$mode" \
+      "${MAC_LAUNCHD_COMMAND_TIMEOUT_SECONDS:-10}" \
+      print "$target" 2>&1
+  )" || rc=$?
   if [ "$rc" -eq 0 ]; then
     printf '%s\n' active
     return 0
