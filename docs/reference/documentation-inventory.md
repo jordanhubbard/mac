@@ -46,6 +46,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/dream-finding-805aed7.md` | Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce |
 | historical archive | `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md` | Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948) |
 | historical archive | `archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md` | Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc) |
+| historical archive | `archive/field-notes/findings-crash-mac-agent-service-62021be0.md` | Findings: mac-agent-service startup self-test crash (62021be0) |
 | historical archive | `archive/field-notes/findings-crash-service-unknown-crash-path.md` | Findings: crash_service "unknown" crash path (ground truth for parent P0 crash-repair) |
 | historical archive | `archive/field-notes/fleet-ide-workbench-plan.md` | Fleet Workbench — Clean-Slate IDE Plan |
 | historical archive | `archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md` | Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task |
