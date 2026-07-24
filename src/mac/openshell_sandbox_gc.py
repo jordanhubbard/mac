@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
@@ -626,4 +627,329 @@ def reconcile_task_sandboxes_from_lease_authority(
         "candidates": candidates,
         "deleted": deleted,
         "failures": failures,
+    }
+
+
+# --- Exact-identity single-sandbox delete ------------------------------------
+#
+# When a task completes, its executor owns exactly one sandbox: its own, whose
+# name it already knows. Cleaning that up is an *exact-identity* operation — the
+# caller names the sandbox and this helper deletes only that name. It never
+# lists, never scans by age, and never touches anything the caller did not name,
+# so it cannot race with or clobber another task's live sandbox.
+#
+# ``openshell sandbox delete`` is treated as idempotent: a delete that fails
+# because the sandbox is already gone is a success (nothing left to reap). Only
+# transient failures are retried, a small bounded number of times with linear
+# backoff. The returned record is secret-free: it carries the sandbox name, the
+# number of attempts, whether it is now deleted, and a truncated terminal error
+# tail only.
+
+DEFAULT_DELETE_ATTEMPTS = 3
+DEFAULT_DELETE_BACKOFF_SECONDS = 0.5
+
+_ALREADY_GONE_MARKERS = ("not found", "no such", "does not exist", "notfound")
+
+
+def _looks_already_gone(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _ALREADY_GONE_MARKERS)
+
+
+def delete_named_sandbox(
+    name: str,
+    *,
+    openshell_bin: str = "openshell",
+    attempts: int = DEFAULT_DELETE_ATTEMPTS,
+    backoff_seconds: float = DEFAULT_DELETE_BACKOFF_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    runner: Optional[Callable[..., "subprocess.CompletedProcess[str]"]] = None,
+) -> Dict[str, Any]:
+    """Delete exactly one named sandbox, with bounded retry on transient failure.
+
+    Only the sandbox named by the caller is deleted (``openshell sandbox delete
+    <name>``); nothing is listed and nothing is age-scanned. A delete that
+    reports the sandbox is already gone counts as success. Other failures are
+    retried up to ``attempts`` times with linear backoff. Returns a secret-free
+    record: ``name``, ``attempts`` made, ``deleted`` (bool), and a truncated
+    terminal ``error`` tail (empty on success).
+    """
+
+    clean_name = str(name or "").strip()
+    max_attempts = max(1, int(attempts))
+    record: Dict[str, Any] = {
+        "schema": "mac.openshell.sandbox_delete.v1",
+        "name": clean_name,
+        "attempts": 0,
+        "deleted": False,
+        "error": "",
+    }
+    if not clean_name:
+        record["error"] = "sandbox name is empty"
+        return record
+    run = runner if runner is not None else subprocess.run
+    delay = max(0.0, float(backoff_seconds))
+    last_error = ""
+    for attempt in range(1, max_attempts + 1):
+        record["attempts"] = attempt
+        try:
+            proc = run(
+                [openshell_bin, "sandbox", "delete", clean_name],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - retry on transient runner failure
+            last_error = str(exc)
+        else:
+            if proc.returncode == 0:
+                record["deleted"] = True
+                record["error"] = ""
+                return record
+            last_error = (proc.stderr or proc.stdout or "").strip()
+            if _looks_already_gone(last_error):
+                record["deleted"] = True
+                record["error"] = ""
+                return record
+        if attempt < max_attempts and delay > 0:
+            sleep(delay * attempt)
+
+    record["error"] = last_error[-1000:]
+    return record
+
+
+# --- Low-cadence positively-identified leftover reconciler -------------------
+#
+# The dead-PID reaper and the lease-authority reconciler above each prove
+# orphanhood from one signal. A slow background sweep wants the *intersection*:
+# a sandbox reaped here must satisfy BOTH the fail-closed dead-PID ownership
+# proof (exact name, mac.owner==mac, mac.kind in MANAGED_KINDS, mac.keep
+# explicitly falsey, dead mac.pid) AND the lease-authority proof (task terminal,
+# unleased, superseded, or expired). Requiring both keeps this the most
+# conservative path: anything either guard would preserve is preserved here.
+#
+# The candidate set is deterministic and idempotent. Classification depends only
+# on the input payload and the injected task lookup, results are sorted by name,
+# and duplicate names collapse to one record — so repeated runs over the same
+# input reap the same names, and a re-run after deletion (the names are gone
+# from the payload) is a no-op.
+
+
+def classify_leftover_task_sandbox(
+    sandbox: Mapping[str, Any],
+    task: Optional[Mapping[str, Any]],
+    *,
+    now: datetime,
+    pid_is_alive: Callable[[int], bool] = _pid_is_alive,
+) -> Dict[str, Any]:
+    """Classify a leftover using BOTH the dead-PID and lease-authority proofs.
+
+    A sandbox is reaped only when ``classify_orphan_task_sandbox`` (dead-PID
+    ownership proof) AND ``classify_lease_orphan_sandbox`` (lease authority)
+    independently agree it is reap-eligible. Returns a secret-free record with
+    ``reap`` (bool), the ownership signals, and both underlying reasons.
+    """
+
+    pid_record = classify_orphan_task_sandbox(sandbox, pid_is_alive=pid_is_alive)
+    lease_record = classify_lease_orphan_sandbox(sandbox, task, now=now)
+
+    record: Dict[str, Any] = {
+        "name": pid_record["name"],
+        "phase": pid_record["phase"],
+        "owner": pid_record["owner"],
+        "kind": pid_record["kind"],
+        "keep": pid_record["keep"],
+        "pid": pid_record["pid"],
+        "task_id": lease_record["task_id"],
+        "lease_id": lease_record["lease_id"],
+        "reap": False,
+        "pid_reason": pid_record["reason"],
+        "lease_reason": lease_record["reason"],
+        "reason": "",
+    }
+
+    if not pid_record["reap"]:
+        record["reason"] = "dead-PID proof withheld: %s" % pid_record["reason"]
+        return record
+    if not lease_record["reap"]:
+        record["reason"] = "lease-authority proof withheld: %s" % lease_record["reason"]
+        return record
+
+    record["reap"] = True
+    record["reason"] = "dead-PID and lease-authority proofs both confirm leftover"
+    return record
+
+
+def leftover_task_sandbox_candidates(
+    sandboxes: Iterable[Mapping[str, Any]],
+    lookup_task: Callable[[str], Optional[Mapping[str, Any]]],
+    *,
+    now: Optional[datetime] = None,
+    pid_is_alive: Callable[[int], bool] = _pid_is_alive,
+) -> List[Dict[str, Any]]:
+    """Return a deterministic, idempotent set of positively-identified leftovers.
+
+    A sandbox is included only when both the dead-PID ownership proof and the
+    lease-authority proof agree it is reap-eligible. The result is sorted by name
+    and de-duplicated by name, so repeated runs over the same input reap the same
+    names and a re-run after deletion is a no-op. ``lookup_task`` failures fail
+    closed (the sandbox is preserved).
+    """
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for raw in sandboxes:
+        if not isinstance(raw, Mapping):
+            continue
+        labels_value = raw.get("labels")
+        labels = dict(labels_value) if isinstance(labels_value, Mapping) else {}
+        task_id = str(labels.get("mac.task.id") or "").strip()
+        task: Optional[Mapping[str, Any]] = None
+        lookup_error = ""
+        if task_id:
+            try:
+                task = lookup_task(task_id)
+            except Exception as exc:  # noqa: BLE001 - fail closed on lookup failure
+                lookup_error = str(exc)
+                task = None
+        record = classify_leftover_task_sandbox(
+            raw, task, now=current, pid_is_alive=pid_is_alive
+        )
+        if lookup_error and not record["reap"]:
+            record["lease_reason"] = "task lookup failed: %s" % lookup_error[-200:]
+            record["reason"] = "lease-authority proof withheld: %s" % record["lease_reason"]
+        if record["reap"] and record["name"] not in by_name:
+            by_name[record["name"]] = record
+    return [by_name[name] for name in sorted(by_name)]
+
+
+def reconcile_leftover_task_sandboxes(
+    lookup_task: Callable[[str], Optional[Mapping[str, Any]]],
+    *,
+    openshell_bin: str = "openshell",
+    apply: bool = False,
+    now: Optional[datetime] = None,
+    pid_is_alive: Callable[[int], bool] = _pid_is_alive,
+) -> Dict[str, Any]:
+    """Low-cadence sweep reaping only leftovers proven by BOTH guards.
+
+    Lists sandboxes once and reaps only those that both the dead-PID ownership
+    proof and the lease-authority proof agree are leftovers. The candidate set is
+    deterministic and idempotent (sorted, de-duplicated by name); re-running
+    after deletion is a no-op. Returned evidence is secret-free.
+    """
+
+    listed = subprocess.run(
+        [
+            openshell_bin,
+            "sandbox",
+            "list",
+            "--limit",
+            "1000",
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if listed.returncode != 0:
+        detail = (listed.stderr or listed.stdout or "").strip()
+        raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
+    try:
+        payload = json.loads(listed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
+    if not isinstance(payload, list):
+        raise RuntimeError("OpenShell sandbox list JSON is not an array")
+
+    candidates = leftover_task_sandbox_candidates(
+        payload, lookup_task, now=now, pid_is_alive=pid_is_alive
+    )
+    protected = sum(1 for row in payload if isinstance(row, Mapping)) - len(candidates)
+
+    deleted: List[str] = []
+    failures: List[Dict[str, str]] = []
+    if apply:
+        for record in candidates:
+            result = delete_named_sandbox(
+                str(record["name"]), openshell_bin=openshell_bin
+            )
+            if result["deleted"]:
+                deleted.append(result["name"])
+            else:
+                failures.append(
+                    {"name": result["name"], "error": result["error"]}
+                )
+
+    return {
+        "schema": "mac.openshell.sandbox_leftover_reconcile.v1",
+        "dry_run": not apply,
+        "scanned": len(payload),
+        "protected": max(0, protected),
+        "candidates": candidates,
+        "deleted": deleted,
+        "failures": failures,
+    }
+
+
+# --- Inventory summary for diagnostics ---------------------------------------
+
+
+def sandbox_inventory_summary(
+    sandboxes: Iterable[Mapping[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+    pid_is_alive: Callable[[int], bool] = _pid_is_alive,
+) -> Dict[str, Any]:
+    """Summarize a listed sandbox payload for diagnostics reuse.
+
+    Returns secret-free counts: total ``scanned`` rows, ``managed`` (exact
+    MAC-owned by name + mac.owner==mac), ``reap_eligible`` (managed with the
+    dead-PID ownership proof satisfied) and ``protected`` (managed but preserved
+    by a fail-closed guard). ``oldest_managed_age_seconds`` is the age in seconds
+    of the oldest managed sandbox with a parseable ``created_at`` (``None`` when
+    none have one). No label values beyond ownership signals are recorded.
+    """
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    scanned = 0
+    managed = 0
+    reap_eligible = 0
+    oldest_age: Optional[int] = None
+    for raw in sandboxes:
+        if not isinstance(raw, Mapping):
+            continue
+        scanned += 1
+        name = str(raw.get("name") or "").strip()
+        labels_value = raw.get("labels")
+        labels = dict(labels_value) if isinstance(labels_value, Mapping) else {}
+        owner = str(labels.get("mac.owner") or "").strip().lower()
+        if not MANAGED_NAME_RE.fullmatch(name) or owner != "mac":
+            continue
+        managed += 1
+        record = classify_orphan_task_sandbox(raw, pid_is_alive=pid_is_alive)
+        if record["reap"]:
+            reap_eligible += 1
+        created = _created_at(raw.get("created_at"))
+        if created is not None:
+            age = int(max(0.0, (current - created).total_seconds()))
+            if oldest_age is None or age > oldest_age:
+                oldest_age = age
+
+    return {
+        "schema": "mac.openshell.sandbox_inventory.v1",
+        "scanned": scanned,
+        "managed": managed,
+        "reap_eligible": reap_eligible,
+        "protected": managed - reap_eligible,
+        "oldest_managed_age_seconds": oldest_age,
     }
