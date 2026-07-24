@@ -126,6 +126,7 @@ from mac.models import (
     agent_has_read_only_report_repository_executor,
     metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
+    report_repository_context_execution_contract,
     read_only_report_repository_executor_approval,
     read_only_report_repository_executor_resource,
     report_repository_executor_approval_matches_attestation,
@@ -5267,6 +5268,13 @@ class ControlPlane:
                 normalized,
                 project,
             )
+        # A plain report deliverable (report/answer/analysis/... without the
+        # read-only-repo opt-in) stays a non-repository operator_result task even
+        # when the project has a registered repository contract.  We must not let
+        # it fall through to the repo-coupled branches below, which would force a
+        # fabricated diff + pushed branch + canonical integration for a read-only
+        # report.
+        report_deliverable = metadata_declares_report_deliverable(normalized)
         origin = normalized.get("origin")
         origin_dict = dict(origin) if isinstance(origin, dict) else {}
         existing_contract = normalized.get("execution_contract")
@@ -5277,6 +5285,18 @@ class ControlPlane:
                 or existing_contract.get("repository_required") is True
                 or isinstance(existing_contract.get("repository_contract"), dict)
             )
+            if repo_like and report_deliverable:
+                # A report task cannot be silently upgraded to repo_change via
+                # metadata.execution_contract.type='repository'.  Preserve the
+                # registered repository context but keep an operator_result-shaped
+                # contract, and never raise the missing-registered-contract error.
+                normalized["execution_contract"] = self._report_context_execution_contract(
+                    normalized,
+                    project,
+                    required_capabilities,
+                    existing_contract=existing_contract,
+                )
+                return normalized
             if repo_like:
                 merged_contract = dict(existing_contract)
                 merged_contract.setdefault("schema", "mac.task_execution_contract.v1")
@@ -5338,6 +5358,15 @@ class ControlPlane:
             }
             return normalized
         repo = self._repository_for_project(project)
+        if repo is not None and report_deliverable:
+            # Registered repository exists, but the declared report deliverable
+            # keeps its operator_result contract; only repository context is
+            # recorded, never a repo_change coupling.
+            normalized["execution_contract"] = self._report_context_execution_contract(
+                normalized,
+                project,
+            )
+            return normalized
         if repo is not None:
             contract = repo.metadata.get("repository_contract")
             if not isinstance(contract, dict) or not contract.get("schema"):
@@ -5396,6 +5425,95 @@ class ControlPlane:
             "reason": "no_registered_repository_or_task_repository_contract",
         }
         return normalized
+
+    def _report_context_execution_contract(
+        self,
+        normalized: Dict[str, Any],
+        project: Optional[str],
+        required_capabilities: Optional[List[str]] = None,
+        *,
+        existing_contract: Optional[Dict[str, Any]] = None,
+    ) -> JsonDict:
+        """Build the non-repository contract for a project-scoped report task.
+
+        Records the registered repository's identity in ``origin`` /
+        ``acc_metadata`` for reviewer reproducibility, then returns an
+        ``operator_result``-shaped execution contract.  It never attaches a
+        ``repository_contract`` and never raises the missing-registered-contract
+        error, so a declared report stays off the repo_change path even when the
+        project has a registered repository contract.
+        """
+
+        origin = normalized.get("origin")
+        origin_dict = dict(origin) if isinstance(origin, dict) else {}
+        repo = self._repository_for_project(project)
+        contract: Optional[Dict[str, Any]] = None
+        if repo is not None:
+            contract = repo.metadata.get("repository_contract")
+            if not isinstance(contract, dict) or not contract.get("schema"):
+                contract = self._repository_contract_for_repo(repo)
+            origin_dict.setdefault("type", "direct_task")
+            origin_dict.setdefault("repository_id", repo.id)
+            origin_dict.setdefault("repository_name", repo.name)
+            origin_dict.setdefault("repository_path", repo.path)
+            origin_dict.setdefault("source", repo.source)
+            normalized["origin"] = origin_dict
+
+        acc_metadata = (
+            dict(normalized.get("acc_metadata"))
+            if isinstance(normalized.get("acc_metadata"), dict)
+            else {}
+        )
+        acc_metadata.setdefault("workflow_role", "work")
+        if isinstance(contract, dict) and contract.get("schema"):
+            acc_metadata.setdefault("repository_contract_schema", contract["schema"])
+        if isinstance(contract, dict) and contract.get("project"):
+            acc_metadata.setdefault("repository_contract_project", contract["project"])
+        normalized["acc_metadata"] = acc_metadata
+
+        evidence_type = self._report_evidence_type(normalized, existing_contract)
+        return report_repository_context_execution_contract(
+            evidence_type=evidence_type,
+            repository_id=getattr(repo, "id", None) if repo is not None else None,
+            repository_name=getattr(repo, "name", None) if repo is not None else None,
+            repository_path=getattr(repo, "path", None) if repo is not None else None,
+            repository_contract_schema=acc_metadata.get("repository_contract_schema"),
+            repository_contract_project=acc_metadata.get("repository_contract_project"),
+            workflow_role=acc_metadata.get("workflow_role"),
+            required_capabilities=required_capabilities or [],
+        )
+
+    def _report_evidence_type(
+        self,
+        normalized: Dict[str, Any],
+        existing_contract: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Resolve the report evidence type, honoring an explicit report kind.
+
+        Mirrors the no-repository report path: prefer an explicitly declared
+        report evidence type (e.g. ``investigation``) when already set, else fall
+        back to ``operator_result``.  A repo-coupled ``repo_change`` value that
+        leaked in via ``metadata.execution_contract`` is ignored so a report is
+        never upgraded to repo_change through it.
+        """
+
+        policy = (
+            normalized.get("policy")
+            if isinstance(normalized.get("policy"), dict)
+            else {}
+        )
+        candidates = [
+            normalized.get("evidence_type"),
+            policy.get("evidence_type"),
+            policy.get("expected_evidence_type"),
+        ]
+        if isinstance(existing_contract, dict):
+            candidates.insert(0, existing_contract.get("evidence_type"))
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if text and text != "repo_change":
+                return text
+        return "operator_result"
 
     def _project_repository_url(self, project: Optional[str]) -> Optional[str]:
         return self.project_repositories.project_repository_url(project)

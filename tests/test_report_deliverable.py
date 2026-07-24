@@ -164,6 +164,116 @@ def test_services_repo_coupled_and_operator_result_enforcement_honor_report():
         cp._enforce_repo_coupled_evidence_type(code, md_op)
 
 
+def _register_repo(cp, tmp_path):
+    repo_path = tmp_path / "proj-src"
+    contract_dir = repo_path / ".mac"
+    contract_dir.mkdir(parents=True)
+    (contract_dir / "project.yaml").write_text(
+        (
+            "schema: mac.repository_contract.v1\n"
+            "project: proj\n"
+            "platforms:\n"
+            "  - darwin\n"
+            "  - linux\n"
+            "  - wsl2\n"
+            "toolchain:\n"
+            "  required_commands:\n"
+            "    - python3\n"
+            "bootstrap:\n"
+            "  command: python3 scripts/bootstrap-project.py\n"
+            "  creates:\n"
+            "    - .venv/bin/python\n"
+            "test:\n"
+            "  command: make test\n"
+            "evidence:\n"
+            "  required:\n"
+            "    - tests\n"
+        ),
+        encoding="utf-8",
+    )
+    return cp.register_project_repository(
+        "proj",
+        str(repo_path),
+        project="proj",
+    )
+
+
+def test_project_report_keeps_operator_result_contract(tmp_path):
+    from mac.services import ControlPlane
+
+    cp = ControlPlane.in_memory()
+    _register_repo(cp, tmp_path)
+
+    contract = cp._normalize_task_execution_contract(
+        {"deliverable": "report"}, "proj", []
+    )["execution_contract"]
+
+    assert contract["type"] == "operator_directive"
+    assert contract["evidence_type"] == "operator_result"
+    assert contract["repository_required"] is False
+    # Repository context preserved for reproducibility, but no repo_change coupling.
+    assert "repository_contract" not in contract
+    ctx = contract["repository_context"]
+    assert ctx["repository_name"] == "proj"
+    assert ctx["repository_contract_project"] == "proj"
+
+
+def test_project_code_task_still_repo_change(tmp_path):
+    from mac.services import ControlPlane
+
+    cp = ControlPlane.in_memory()
+    _register_repo(cp, tmp_path)
+
+    for md in ({}, {"execution_contract": {"type": "repository"}}):
+        contract = cp._normalize_task_execution_contract(md, "proj", [])[
+            "execution_contract"
+        ]
+        assert contract["type"] == "repository"
+        assert contract["evidence_type"] == "repo_change"
+
+
+def test_project_report_not_upgraded_via_metadata_execution_contract(tmp_path):
+    from mac.services import ControlPlane
+
+    cp = ControlPlane.in_memory()
+    _register_repo(cp, tmp_path)
+
+    contract = cp._normalize_task_execution_contract(
+        {
+            "deliverable": "investigation",
+            "evidence_type": "investigation",
+            "execution_contract": {"type": "repository", "evidence_type": "repo_change"},
+        },
+        "proj",
+        [],
+    )["execution_contract"]
+
+    # A report cannot be silently upgraded to repo_change through metadata.
+    assert contract["type"] == "operator_directive"
+    assert contract["repository_required"] is False
+    assert "repository_contract" not in contract
+    # Explicit report evidence type is honored; leaked repo_change is ignored.
+    assert contract["evidence_type"] == "investigation"
+
+
+def test_project_report_no_missing_contract_error(tmp_path):
+    from mac.services import ControlPlane
+
+    cp = ControlPlane.in_memory()
+    # No registered repository; a report must not raise the missing-contract error.
+    contract = cp._normalize_task_execution_contract(
+        {
+            "deliverable": "report",
+            "execution_contract": {"type": "repository"},
+            "origin": {"repository_url": "https://example.invalid/repo.git"},
+        },
+        "proj",
+        [],
+    )["execution_contract"]
+    assert contract["type"] == "operator_directive"
+    assert contract["evidence_type"] == "operator_result"
+
+
 def _git(cwd, *args):
     result = subprocess.run(
         ["git", *args],

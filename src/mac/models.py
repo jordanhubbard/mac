@@ -496,6 +496,57 @@ def metadata_declares_read_only_report_repository(metadata: Any) -> bool:
     )
 
 
+def report_repository_context_execution_contract(
+    *,
+    evidence_type: str,
+    repository_id: Any = None,
+    repository_name: Any = None,
+    repository_path: Any = None,
+    repository_contract_schema: Any = None,
+    repository_contract_project: Any = None,
+    workflow_role: Any = None,
+    required_capabilities: Any = None,
+) -> JsonDict:
+    """Build the non-repository execution contract for a project-scoped report.
+
+    A declared report deliverable that is NOT a read-only-repo report must keep
+    its ``operator_result`` (or explicit report) evidence type and stay off the
+    repo-coupled path, even when the project has a registered repository
+    contract.  We still stamp the registered repository's identity into a
+    ``repository_context`` block so a reviewer can reproduce the inspection,
+    but we deliberately omit any ``repository_contract`` / ``repository_required``
+    signal that would flip downstream repo-coupling checks back to repo_change.
+    """
+
+    contract: JsonDict = {
+        "schema": "mac.task_execution_contract.v1",
+        "type": "operator_directive",
+        "quality": "weak",
+        "source": "task_crud",
+        "repository_required": False,
+        "evidence_type": str(evidence_type or "operator_result").strip()
+        or "operator_result",
+        "required_capabilities": list(required_capabilities or []),
+        "reason": "report_deliverable_no_repository_mutation",
+    }
+    repository_context: JsonDict = {}
+    if repository_id is not None:
+        repository_context["repository_id"] = repository_id
+    if repository_name is not None:
+        repository_context["repository_name"] = repository_name
+    if repository_path is not None:
+        repository_context["repository_path"] = repository_path
+    if repository_contract_schema is not None:
+        repository_context["repository_contract_schema"] = repository_contract_schema
+    if repository_contract_project is not None:
+        repository_context["repository_contract_project"] = repository_contract_project
+    if workflow_role is not None:
+        repository_context["workflow_role"] = workflow_role
+    if repository_context:
+        contract["repository_context"] = repository_context
+    return contract
+
+
 TASK_TRANSITIONS = {
     TaskState.OPEN.value: {
         TaskState.WAITING.value,
