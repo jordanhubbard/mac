@@ -10,27 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/changeset-adoption-core-spec/">
       
       
+        <link rel="prev" href="../work-graph-control-plane/">
+      
+      
+        <link rel="next" href="../hermes-boundary/">
       
       
         
       
       
-      <link rel="icon" href="../../../assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>Forensics task a32a35e90ab0434e8c7766057b268bc6 - MAC Documentation</title>
+        <title>Changeset-adoption core spec - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +53,9 @@
       
     
     
-      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#root-cause-report-silent-executor-insta-block-for-task_a32a35e90ab0434e8c7766057b268bc6" class="md-skip">
+        <a href="#controller-changeset-adoption-core-spec" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +100,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Forensics task a32a35e90ab0434e8c7766057b268bc6
+              Changeset-adoption core spec
             
           </span>
         </div>
@@ -234,7 +238,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -264,7 +268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -343,7 +347,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/01-system/" class="md-nav__link">
+      <a href="../book/01-system/" class="md-nav__link">
         
   
   
@@ -371,7 +375,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/02-local-start/" class="md-nav__link">
+      <a href="../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -399,7 +403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/03-projects-and-tasks/" class="md-nav__link">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -427,7 +431,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/04-machines-and-agents/" class="md-nav__link">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -455,7 +459,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/05-evidence-review-completion/" class="md-nav__link">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -483,7 +487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/06-hermes-and-ide/" class="md-nav__link">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -511,7 +515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/07-repository-contracts/" class="md-nav__link">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -539,7 +543,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/08-plans-and-dags/" class="md-nav__link">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -567,7 +571,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/09-fleet-onboarding/" class="md-nav__link">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -595,7 +599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/10-identity-and-secrets/" class="md-nav__link">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -623,7 +627,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/11-publication-and-refs/" class="md-nav__link">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -651,7 +655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/12-operations/" class="md-nav__link">
+      <a href="../book/12-operations/" class="md-nav__link">
         
   
   
@@ -679,7 +683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/13-deployment-topologies/" class="md-nav__link">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -707,7 +711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/14-images-and-cutover/" class="md-nav__link">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -735,7 +739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -763,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/16-apis-and-integrations/" class="md-nav__link">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -791,7 +795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -819,7 +823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/18-capstone/" class="md-nav__link">
+      <a href="../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -906,7 +910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -934,7 +938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/openapi/" class="md-nav__link">
+      <a href="../reference/openapi/" class="md-nav__link">
         
   
   
@@ -962,7 +966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../env-config-reference/" class="md-nav__link">
+      <a href="../env-config-reference/" class="md-nav__link">
         
   
   
@@ -990,7 +994,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../fleet-directives/" class="md-nav__link">
+      <a href="../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1018,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../repository-runtime-contract/" class="md-nav__link">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1046,7 +1050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../repository-cicd-monitor/" class="md-nav__link">
+      <a href="../repository-cicd-monitor/" class="md-nav__link">
         
   
   
@@ -1074,7 +1078,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../fleet-registry-schema/" class="md-nav__link">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1102,7 +1106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1189,7 +1193,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../production-deployment/" class="md-nav__link">
+      <a href="../production-deployment/" class="md-nav__link">
         
   
   
@@ -1217,7 +1221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../fleet-node-onboarding-checklist/" class="md-nav__link">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
         
   
   
@@ -1245,7 +1249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../synchronized-fleet-cutover/" class="md-nav__link">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
         
   
   
@@ -1273,7 +1277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../hub-availability/" class="md-nav__link">
+      <a href="../hub-availability/" class="md-nav__link">
         
   
   
@@ -1301,7 +1305,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1333,8 +1337,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -1345,11 +1351,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
           <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
@@ -1370,7 +1376,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1388,7 +1394,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../work-graph-control-plane/" class="md-nav__link">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
         
   
   
@@ -1413,10 +1419,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../changeset-adoption-core-spec/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changeset-adoption core spec
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1432,6 +1465,103 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#ground-truth-captured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ground truth captured
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-core-sits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where the core sits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#binding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binding
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attestation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attestation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#controller-entry-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Controller entry point
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#files-to-create-or-modify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Files to create or modify
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exact-test-set-that-proves-the-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exact test set that proves the core
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1444,7 +1574,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../hermes-boundary/" class="md-nav__link">
+      <a href="../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1472,7 +1602,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../openshell-sandbox/" class="md-nav__link">
+      <a href="../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1500,7 +1630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../" class="md-nav__link">
+      <a href="../archive/" class="md-nav__link">
         
   
   
@@ -1555,10 +1685,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#ground-truth-captured" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Summary
+        Ground truth captured
       
     </span>
   </a>
@@ -1566,10 +1696,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#timeline-of-key-events" class="md-nav__link">
+  <a href="#where-the-core-sits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Timeline of Key Events
+        Where the core sits
       
     </span>
   </a>
@@ -1577,10 +1707,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#earliest-pre-diagnosis-failure" class="md-nav__link">
+  <a href="#binding" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Earliest Pre-Diagnosis Failure
+        Binding
       
     </span>
   </a>
@@ -1588,10 +1718,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#affected-startup-path" class="md-nav__link">
+  <a href="#attestation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Affected Startup Path
+        Attestation
       
     </span>
   </a>
@@ -1599,10 +1729,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#root-cause" class="md-nav__link">
+  <a href="#controller-entry-point" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Root Cause
+        Controller entry point
       
     </span>
   </a>
@@ -1610,10 +1740,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#secondary-observations" class="md-nav__link">
+  <a href="#files-to-create-or-modify" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Secondary Observations
+        Files to create or modify
       
     </span>
   </a>
@@ -1621,41 +1751,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#sensitive-values" class="md-nav__link">
+  <a href="#exact-test-set-that-proves-the-core" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Sensitive Values
+        Exact test set that proves the core
       
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verification-relevant-task_history-events" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Verification: Relevant task_history events
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Verification: Relevant task_history events">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#sanitized-stderr-tail-via-action-events-observability" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sanitized stderr tail (via action-events observability)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1676,7 +1778,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/changeset-adoption-core-spec.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1684,255 +1786,141 @@
   
 
 
-<div class="admonition warning">
-<p class="admonition-title">Historical field note</p>
-<p>This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.</p>
-</div>
-<h1 id="root-cause-report-silent-executor-insta-block-for-task_a32a35e90ab0434e8c7766057b268bc6">Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6<a class="headerlink" href="#root-cause-report-silent-executor-insta-block-for-task_a32a35e90ab0434e8c7766057b268bc6" title="Permanent link">&para;</a></h1>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p><strong>Agent:</strong> agent_jordanh-worker1
-<strong>Host:</strong> jordanh-worker1 (machine_jordanh-worker1)
-<strong>Lease:</strong> lease_49ed4a5300224f25aaa5813c1bf19991
-<strong>Task state:</strong> blocked (waiting on 6 children; lease was released at children_added time)</p>
-<hr />
-<h2 id="timeline-of-key-events">Timeline of Key Events<a class="headerlink" href="#timeline-of-key-events" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>08:45:34  [info]    task.created (open)
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>08:45:35  [info]    task.claimed by agent_jordanh-worker1
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>08:45:36  [info]    task.transitioned claimed -&gt; running
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>08:45:37  [info]    executor.started (sandboxed=true, recalled_lessons=5)
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>08:45:38  [info]    executor.scope_estimated size=large (signals: desc_chars:1075,
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                    repo_required_cmds:3, long_title:118, + 5 prior decompositions)
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>08:45:39  [info]    executor.planning_phase_started
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>08:46:08  [info]    executor.runner_selected runner=codex
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                    (claude: no ANTHROPIC_API_KEY; codex: authed via ~/.codex/auth.json)
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>08:46:11  [info]    executor.sandbox_started sandbox=mac-task-5b1b0d607d54
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>08:46:11  [info]    command.started /home/horde/.local/bin/openshell (lease_id=null)
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>08:46:37  [info]    task.lease_renewed x4 (worker keepalive loop, ~60s intervals)
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>          *** EARLIEST FAILURE ***
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>08:49:47  [info]    task.children_added by human
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>                    from_state=running -&gt; to_state=blocked
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>                    released_lease_id=lease_49ed4a5300224f25aaa5813c1bf19991
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>                    (6 child tasks posted by the codex agent inside the sandbox)
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>08:50:25  [warning] executor.sandbox_observation_unavailable state=unknown
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>08:50:25  [info]    executor.sandbox_agent_completed returncode=0
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>08:50:26  [warning] executor.sandbox_verification_completed passed=False
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>08:50:33  [info]    executor.sandbox_harvested harvested=True, runner_completed=True
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>08:50:33  [info]    executor.sandbox_deleted
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>08:50:36  [info]    executor.agent_completed returncode=0 duration_ms=296494
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>08:50:36  [info]    executor.planning_phase_completed
-<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>08:50:36  [info]    executor.finalized evidence_type=plan_decomposed outcome=success
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>                    signals: {checks_pass:null, files_changed:null, pushed:null, tests:null}
-<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>08:50:41  [warn]    worker.execution.stale_result
-<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>                    reason=&quot;assignment no longer current after executor completed&quot;
-</code></pre></div>
-<hr />
-<h2 id="earliest-pre-diagnosis-failure">Earliest Pre-Diagnosis Failure<a class="headerlink" href="#earliest-pre-diagnosis-failure" title="Permanent link">&para;</a></h2>
-<p>The codex agent inside the sandbox called <code>POST /tasks/{id}/children</code> at ~08:49:47
-(during the 4-minute planning window). The hub's <code>add_children</code> endpoint in
-<code>services.py</code> lines 4358-4383 atomically:</p>
+<h1 id="controller-changeset-adoption-core-spec">Controller Changeset-Adoption Core Spec<a class="headerlink" href="#controller-changeset-adoption-core-spec" title="Permanent link">&para;</a></h1>
+<p>Status: specification only. No feature code is implemented by this document.
+It establishes ground truth for the parent implementation task
+"Implement controller changeset-adoption core: binding + attestation" so the
+follow-up change is scoped, testable, and consistent with the existing
+work-graph control plane.</p>
+<h2 id="ground-truth-captured">Ground truth captured<a class="headerlink" href="#ground-truth-captured" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The contract gate <code>scripts/run-contract-tests.sh</code> collects cleanly on the
+  task base: <code>.venv/bin/python -m pytest --collect-only -q</code> reports
+  <code>9019 tests collected</code> with zero collection errors. The parent feature does
+  not break collection; it simply does not exist yet.</li>
+<li>No <code>changeset-adoption</code> module, schema, or test exists anywhere in the repo
+  (a case-insensitive scan for <code>changeset.adoption</code> / <code>adopt_changeset</code> /
+  <code>adopted_changeset</code> across <code>*.py</code> and <code>*.md</code> returns nothing).</li>
+<li>The publication pipeline already models the surrounding records in
+  <code>src/mac/models.py</code>: <code>WorkPackageIntegrationBatch</code> (exact candidate identity),
+  <code>WorkPackageCertification</code> (exact-candidate verification), and the fenced
+  landing records <code>WorkPackageLandingStream</code> / <code>WorkPackageLandingIntent</code> /
+  <code>WorkPackageLandingAttempt</code> / <code>WorkPackageLandingReceipt</code>. Landing itself is
+  implemented in <code>src/mac/landing_service.py</code>.</li>
+<li>Signed proofs are produced by <code>sign_verification_manifest</code> /
+  <code>verify_verification_manifest_signature</code> in <code>src/mac/services.py</code> (HMAC-SHA256,
+  <code>v1:</code> base64url tag over a canonicalized manifest). Deployment-side attestation
+  precedent lives in <code>src/mac/deployment_attestation.py</code>.</li>
+</ul>
+<h2 id="where-the-core-sits">Where the core sits<a class="headerlink" href="#where-the-core-sits" title="Permanent link">&para;</a></h2>
+<p>An "adopted changeset" is an exact candidate SHA that has been landed on a
+controller-owned target ref and proven by a <code>WorkPackageLandingReceipt</code>
+(<code>recovered</code>/<code>observed_sha</code> prove the remote compare-and-swap outcome). The
+changeset-adoption core is the deterministic controller step that runs after a
+receipt is recorded and before the package advances: it durably <strong>binds</strong> that
+adopted changeset to controller-owned target state, and emits a signed
+<strong>attestation</strong> of the adoption so downstream consumers can trust the binding
+without re-reading the remote.</p>
+<p>This core actuates; it does not decide. It refuses (fails closed) unless an
+exact landing receipt, certification, and stream fence already authorize the
+adoption. It never pushes, never mutates the remote, and never invents a second
+queue.</p>
+<h2 id="binding">Binding<a class="headerlink" href="#binding" title="Permanent link">&para;</a></h2>
+<p>Binding associates one adopted changeset to the controller-owned target and
+advances that target's durable adoption state exactly once.</p>
+<ul>
+<li>New durable record <code>WorkPackageAdoptionBinding</code> (dataclass in
+  <code>src/mac/models.py</code>) with schema constant
+  <code>WORK_PACKAGE_ADOPTION_BINDING_SCHEMA = "mac.work_package.adoption_binding.v1"</code>.
+  Fields: <code>id</code>, <code>package_id</code>, <code>plan_version</code>, <code>epoch</code>, <code>repository_id</code>,
+  <code>target_ref</code>, <code>candidate_sha</code>, <code>batch_id</code>, <code>certification_id</code>, <code>intent_id</code>,
+  <code>receipt_id</code>, <code>landing_base_sha</code>, <code>adopted_sha</code> (== the receipt <code>observed_sha</code>),
+  <code>stream_fence</code>, <code>binding_digest</code>, <code>bound_by</code>, <code>created_at</code>.</li>
+<li>The binding is append-only and idempotent per
+  <code>(repository_id, target_ref, candidate_sha, stream_fence)</code>. Re-adopting the
+  same receipt returns the existing binding; a stale stream fence is rejected.</li>
+<li>Store surface: <code>record_work_package_adoption_binding(...)</code> and
+  <code>get_work_package_adoption_binding(...)</code> on <code>Store</code> (and both backends), plus
+  a <code>work_package_adoption_bindings</code> table/DDL mirroring the landing-record
+  migrations.</li>
+</ul>
+<h2 id="attestation">Attestation<a class="headerlink" href="#attestation" title="Permanent link">&para;</a></h2>
+<p>Attestation is the signed, verifiable proof that a specific changeset was
+adopted and bound.</p>
+<ul>
+<li>New module <code>src/mac/changeset_adoption.py</code> exposing:</li>
+<li><code>ADOPTION_ATTESTATION_SCHEMA = "mac.work_package.adoption_attestation.v1"</code>.</li>
+<li><code>build_adoption_attestation(binding, *, receipt, certification) -&gt; dict</code>
+    that assembles the canonical attestation manifest (schema, package identity,
+    repository/target, <code>candidate_sha</code>, <code>adopted_sha</code>, <code>landing_base_sha</code>,
+    <code>certification_id</code>, <code>receipt_id</code>, <code>binding_digest</code>, <code>bound_by</code>, timestamp).</li>
+<li><code>sign_adoption_attestation(key, manifest) -&gt; str</code> delegating to
+    <code>sign_verification_manifest</code>.</li>
+<li><code>verify_adoption_attestation(key, manifest, signature) -&gt; bool</code> delegating to
+    <code>verify_verification_manifest_signature</code>.</li>
+<li><code>AdoptionAttestationError</code> for fail-closed contract violations
+    (missing receipt, fence mismatch, candidate/observed SHA disagreement).</li>
+<li>New durable record <code>WorkPackageAdoptionAttestation</code> in <code>src/mac/models.py</code>
+  (<code>id</code>, <code>binding_id</code>, <code>package_id</code>, <code>repository_id</code>, <code>target_ref</code>,
+  <code>candidate_sha</code>, <code>attestation_digest</code>, <code>signature</code>, <code>signed_by</code>, <code>created_at</code>)
+  with store surface <code>record_work_package_adoption_attestation(...)</code> /
+  <code>get_work_package_adoption_attestation(...)</code>.</li>
+</ul>
+<h2 id="controller-entry-point">Controller entry point<a class="headerlink" href="#controller-entry-point" title="Permanent link">&para;</a></h2>
+<p>Add <code>adopt_changeset(...)</code> to the changeset-adoption core (a small service class
+<code>ChangesetAdoptionController</code> in <code>src/mac/changeset_adoption.py</code>, disabled by
+default like landing). Given a recorded <code>WorkPackageLandingReceipt</code> it:</p>
 <ol>
-<li>Inserts the 6 child task rows</li>
-<li>Releases the parent lease: <code>UPDATE leases SET status='released' WHERE id=?</code></li>
-<li>Nulls out <code>owner_agent_id</code> and <code>lease_id</code> on the parent task row</li>
-<li>Transitions parent state from <code>running</code> to <code>blocked</code></li>
-<li>Emits <code>task.children_added</code> with <code>released_lease_id</code> recorded</li>
+<li>Loads the receipt, its intent, attempt, certification, and stream; verifies
+   the stream fence is still held and <code>observed_sha == candidate_sha</code> for a
+   successful landing (or the receipt's recovery outcome for a recovered one).</li>
+<li>Records the <code>WorkPackageAdoptionBinding</code> idempotently.</li>
+<li>Builds, signs, and records the <code>WorkPackageAdoptionAttestation</code>.</li>
+<li>Returns <code>(binding, attestation)</code>; raises <code>AdoptionAttestationError</code> /
+   <code>LandingLeaseLostError</code> on any fence or identity mismatch without side effects.</li>
 </ol>
-<p>This happened while <code>_run_sandboxed()</code> was still executing (the openshell
-process had not yet returned). The executor had no knowledge that the lease
-was released mid-run.</p>
-<hr />
-<h2 id="affected-startup-path">Affected Startup Path<a class="headerlink" href="#affected-startup-path" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>MacWorker._work_one_task()
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  MacWorker._execute_with_lease_renewal(task, lease, task_dir)
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    task_executor.run_task_executor()
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>      [scope_estimate.size == &quot;large&quot; -&gt; is_planning_phase() == True]
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>      _run_sandboxed()
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>        openshell sandbox: codex agent runs planning prompt
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>          Agent: POST /tasks/{id}/children  &lt;- hub releases lease HERE (08:49:47)
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        openshell exits rc=0
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        _SandboxProgressMonitor.stop() -&gt; ready=False -&gt; sandbox_observation_unavailable
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        _sandbox_run_repository_verification() -&gt; passed=False (planning-phase, no code)
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>      &lt;- _run_sandboxed() returns result rc=0
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    is_plan_decomposed_evidence() -&gt; True
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>    executor.planning_phase_completed emitted
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    record_plan_outcome() called (deployment learning memories written)
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    write_fallback_evidence_manifest()
-<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    executor exits rc=0
-<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>  worker.py ~line 756:
-<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    _assignment_is_current(task_id, lease_49ed4a53...)
-<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>      GET /tasks/{id} -&gt; {owner_agent_id:null, lease_id:null, state:&quot;blocked&quot;}
-<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>      -&gt; returns False
-<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>    _stale_result() called
-<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>      -&gt; emits worker.execution.stale_result [WARNING]
-<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>      -&gt; WorkerRunResult(status=&quot;stale_result&quot;)
-</code></pre></div>
-<hr />
-<h2 id="root-cause">Root Cause<a class="headerlink" href="#root-cause" title="Permanent link">&para;</a></h2>
-<p><strong>The <code>add_children</code> hub endpoint releases the parent lease and transitions the
-task to <code>blocked</code> as an atomic side-effect when the planning-phase agent posts
-child tasks, while the executor process (outside the sandbox) is still running.
-By the time the executor's outer <code>_assignment_is_current()</code> check runs, the lease
-no longer exists, so the entire planning run is silently discarded as stale — even
-though the plan was correct, all six children were posted successfully, and the
-executor itself returned rc=0.</strong></p>
-<p>The task is currently <code>blocked</code> (correctly) waiting on its 6 children. It was
-never retried because stale_result is not a failure state that triggers auto-reopen.
-The parent task (task_a32a35e90ab0434e8c7766057b268bc6) will unblock when all
-children complete. No data was lost; the plan succeeded.</p>
-<hr />
-<h2 id="secondary-observations">Secondary Observations<a class="headerlink" href="#secondary-observations" title="Permanent link">&para;</a></h2>
+<h2 id="files-to-create-or-modify">Files to create or modify<a class="headerlink" href="#files-to-create-or-modify" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Create <code>src/mac/changeset_adoption.py</code> (core + controller + attestation).</li>
+<li>Modify <code>src/mac/models.py</code> (two dataclasses + two schema constants).</li>
+<li>Modify <code>src/mac/store.py</code> (record/get methods + table DDL + migration) and the
+  SQLite/Postgres backends behind it.</li>
+<li>Create <code>tests/test_changeset_adoption.py</code> (the proof set below).</li>
+<li>Modify <code>mkdocs.yml</code> nav (this spec) and regenerate
+  <code>docs/reference/documentation-inventory.md</code> via
+  <code>scripts/generate-docs-reference.py --write</code>.</li>
+</ul>
+<h2 id="exact-test-set-that-proves-the-core">Exact test set that proves the core<a class="headerlink" href="#exact-test-set-that-proves-the-core" title="Permanent link">&para;</a></h2>
+<p><code>tests/test_changeset_adoption.py</code> must contain:</p>
 <ol>
-<li>
-<p><strong>sandbox_observation_unavailable [warning]:</strong> <code>_SandboxProgressMonitor</code> never
-   observed the sandbox's "ready" state because planning-phase runs do not mutate
-   the git worktree (no file changes). <code>progress.ready</code> was never set. Cosmetic
-   warning only; does not affect the outcome.</p>
-</li>
-<li>
-<p><strong>sandbox_verification_completed passed=False [warning]:</strong> Repository verification
-   (<code>_sandbox_run_repository_verification</code>) ran contract tests in a planning-phase
-   workspace that had no code changes, causing the test suite to fail (nothing to
-   verify). This is a false alarm for planning-phase runs and is non-blocking.</p>
-</li>
-<li>
-<p><strong>executor.finalized signals all null:</strong> <code>checks_pass</code>, <code>files_changed</code>, <code>pushed</code>,
-   and <code>tests</code> are null because <code>evidence_type=plan_decomposed</code> takes the early-return
-   path in the executor that skips the git finalizer. This is by design.</p>
-</li>
-<li>
-<p><strong>Insta-block appearance:</strong> From the observer's perspective the task appeared to
-   "immediately" block because: (a) the planning phase ran quickly (4 minutes),
-   (b) the hub transition happened inside the sandbox before the executor
-   outer loop ran its post-execution checks, and (c) no error or failure event
-   was emitted — only a stale_result warning after the fact.</p>
-</li>
+<li><code>test_adopt_changeset_binds_receipt_to_target</code> — a successful receipt yields
+   a binding with <code>adopted_sha == observed_sha == candidate_sha</code>.</li>
+<li><code>test_adopt_changeset_is_idempotent_per_stream_fence</code> — re-adopting the same
+   receipt returns the identical binding id (no duplicate row).</li>
+<li><code>test_adopt_changeset_rejects_stale_stream_fence</code> — a superseded stream fence
+   raises <code>LandingLeaseLostError</code> and writes nothing.</li>
+<li><code>test_adopt_changeset_rejects_candidate_sha_mismatch</code> — receipt/candidate SHA
+   disagreement raises <code>AdoptionAttestationError</code>.</li>
+<li><code>test_adopt_changeset_disabled_by_default</code> — the controller fails closed
+   unless explicitly enabled.</li>
+<li><code>test_build_adoption_attestation_manifest_shape</code> — manifest carries the schema
+   constant and every required identity field.</li>
+<li><code>test_sign_and_verify_adoption_attestation_roundtrip</code> — a signed attestation
+   verifies under the same key.</li>
+<li><code>test_verify_adoption_attestation_rejects_tampered_manifest</code> — mutating any
+   manifest field fails verification.</li>
+<li><code>test_verify_adoption_attestation_rejects_wrong_key</code> — a different key fails
+   verification.</li>
+<li><code>test_binding_digest_is_content_addressed</code> — <code>binding_digest</code> is a stable
+    function of the bound identity fields.</li>
+<li><code>test_store_roundtrips_binding_and_attestation</code> — records persist and reload
+    equal across the store backend.</li>
+<li><code>test_recovered_receipt_binds_recovery_outcome</code> — a <code>recovered=True</code> receipt
+    binds the recovered <code>observed_sha</code> rather than failing closed.</li>
 </ol>
-<hr />
-<h2 id="sensitive-values">Sensitive Values<a class="headerlink" href="#sensitive-values" title="Permanent link">&para;</a></h2>
-<p>All credential-bearing fields (<code>repository_canonical_remote</code>,
-<code>repository_origin_remote</code>) appear in task.json as <code>&lt;redacted&gt;</code>.
-No tokens, secrets, or credentials were observed in any log, event, or field
-inspected during this investigation.</p>
-<hr />
-<h2 id="verification-relevant-task_history-events">Verification: Relevant task_history events<a class="headerlink" href="#verification-relevant-task_history-events" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>hist_id (prefix)</th>
-<th>actor</th>
-<th>event_type</th>
-<th>from_state</th>
-<th>to_state</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>hist_5b0c4186</td>
-<td>human</td>
-<td>task.created</td>
-<td>null</td>
-<td>open</td>
-</tr>
-<tr>
-<td>hist_74be9037</td>
-<td>agent_jordanh-worker1</td>
-<td>task.claimed</td>
-<td>open</td>
-<td>claimed</td>
-</tr>
-<tr>
-<td>hist_ff9f8a88</td>
-<td>agent_jordanh-worker1</td>
-<td>task.transitioned</td>
-<td>claimed</td>
-<td>running</td>
-</tr>
-<tr>
-<td>hist_4c765544</td>
-<td>human</td>
-<td>task.updated</td>
-<td>running</td>
-<td>running</td>
-</tr>
-<tr>
-<td>hist_bccc67af</td>
-<td>agent_jordanh-worker1</td>
-<td>task.lease_renewed</td>
-<td>—</td>
-<td>—</td>
-</tr>
-<tr>
-<td>hist_af50b6ec</td>
-<td>agent_jordanh-worker1</td>
-<td>task.lease_renewed</td>
-<td>—</td>
-<td>—</td>
-</tr>
-<tr>
-<td>hist_e0f588e3</td>
-<td>agent_jordanh-worker1</td>
-<td>task.lease_renewed</td>
-<td>—</td>
-<td>—</td>
-</tr>
-<tr>
-<td>hist_a40ca06b</td>
-<td>agent_jordanh-worker1</td>
-<td>task.lease_renewed</td>
-<td>—</td>
-<td>—</td>
-</tr>
-<tr>
-<td><strong>hist_ef484777</strong></td>
-<td><strong>human</strong></td>
-<td><strong>task.children_added</strong></td>
-<td>running</td>
-<td><strong>blocked</strong></td>
-</tr>
-<tr>
-<td></td>
-<td>released_lease_id=lease_49ed4a53...</td>
-<td>6 children</td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td>hist_d57dbb99</td>
-<td>mac-hermes-task-executor</td>
-<td>task.memory_recorded</td>
-<td>—</td>
-<td>—</td>
-</tr>
-<tr>
-<td>hist_2984df7c</td>
-<td>mac-hermes-task-executor</td>
-<td>task.memory_recorded</td>
-<td>—</td>
-<td>—</td>
-</tr>
-</tbody>
-</table>
-<p>Command audit record <code>cmda_be009a3fb204ac5</code>:
-- argv: <code>/home/horde/.mac/bin/mac-hermes-task-executor</code>
-- cwd: <code>/home/horde/.mac/agent-workspaces/task_a32a35e90ab0434e8c7766057b268bc6</code>
-- started_at: 2026-07-06T08:45:37, completed_at: 2026-07-06T08:50:40
-- duration_ms: 303317 (~5 min), returncode: 0
-- stderr_bytes: 1442855 (~1.4 MB, on host jordanh-worker1)
-- stdout_bytes: 612</p>
-<p>Executor stdout (sanitized): <code>Created sandbox: mac-task-5b1b0d607d54</code></p>
-<h3 id="sanitized-stderr-tail-via-action-events-observability">Sanitized stderr tail (via action-events observability)<a class="headerlink" href="#sanitized-stderr-tail-via-action-events-observability" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>[WARNING] executor.sandbox_observation_unavailable  sandbox=mac-task-5b1b0d607d54 state=unknown
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>[INFO]    executor.sandbox_agent_completed           sandbox=mac-task-5b1b0d607d54 returncode=0
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>[WARNING] executor.sandbox_verification_completed   sandbox=mac-task-5b1b0d607d54 passed=False
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>[INFO]    executor.sandbox_harvested                 harvested=True runner_completed=True
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>[INFO]    executor.sandbox_deleted
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>[INFO]    executor.agent_completed                   returncode=0 duration_ms=296494
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>[INFO]    executor.planning_phase_completed
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>[INFO]    executor.finalized                         evidence_type=plan_decomposed outcome=success
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>                                                     signals={checks_pass:null, files_changed:null, pushed:null, tests:null}
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>[WARN]    worker.execution.stale_result              reason=&quot;assignment no longer current after executor completed&quot;
-</code></pre></div>
-<p>No panics, crashes, authentication errors, or credential exposure in any observable field.</p>
+<p>These twelve tests, all passing on top of the existing 9019-test gate with zero
+new collection errors, are the completion proof for the parent implementation
+task.</p>
 
 
 
@@ -1964,6 +1952,44 @@ inspected during this investigation.</p>
         <footer class="md-footer">
   
     
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../work-graph-control-plane/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Work-graph control plane">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Work-graph control plane
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../hermes-boundary/" class="md-footer__link md-footer__link--next" aria-label="Next: Hermes boundary">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Hermes boundary
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
   
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
@@ -1989,10 +2015,10 @@ inspected during this investigation.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
