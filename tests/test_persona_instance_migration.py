@@ -15,9 +15,10 @@ import pytest
 
 from mac.identity_service import IdentityService
 from mac.models import HermesInstance, PersonaInstance
-from mac.store import SQLiteStore
+from mac.store import SQLiteStore, StoreError
 
 PERSONA_MIGRATION_VERSION = "mac.persona_instance_identity.v1"
+PERSONA_REPAIR_VERSION = "mac.persona_instance_identity_fk_repair.v1"
 
 
 def _build_old_schema_db(path: str) -> None:
@@ -87,6 +88,51 @@ def _build_old_schema_db(path: str) -> None:
     conn.close()
 
 
+def _apply_broken_v1_migration(path: str) -> None:
+    """Reproduce the released migration that stranded the binding FK."""
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.executescript(
+        """
+        ALTER TABLE hermes_instances RENAME TO persona_instances;
+        ALTER TABLE platform_bindings
+            RENAME COLUMN hermes_instance_id TO persona_instance_id;
+        DROP INDEX idx_hermes_instances_tenant;
+        CREATE INDEX idx_persona_instances_tenant
+            ON persona_instances (tenant_id);
+        DROP INDEX idx_platform_bindings_instance;
+        CREATE INDEX idx_platform_bindings_instance
+            ON platform_bindings (persona_instance_id);
+        CREATE TABLE schema_migration_receipts (
+            version TEXT PRIMARY KEY,
+            component TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '{}',
+            applied_at TEXT NOT NULL
+        );
+        CREATE TRIGGER trg_schema_migration_receipt_immutable
+        BEFORE UPDATE ON schema_migration_receipts
+        BEGIN
+            SELECT RAISE(ABORT, 'schema migration receipts are immutable');
+        END;
+        CREATE TRIGGER trg_schema_migration_receipt_no_delete
+        BEFORE DELETE ON schema_migration_receipts
+        BEGIN
+            SELECT RAISE(ABORT, 'schema migration receipts are append-only');
+        END;
+        INSERT INTO schema_migration_receipts
+            (version, component, detail, applied_at)
+        VALUES (
+            'mac.persona_instance_identity.v1',
+            'persona_instances',
+            '{"schema":"mac.schema_migration.v1","origin":"broken-test"}',
+            'now'
+        );
+        """
+    )
+    conn.close()
+
+
 def test_migration_renames_tables_and_columns(tmp_path):
     path = str(tmp_path / "legacy.db")
     _build_old_schema_db(path)
@@ -119,6 +165,14 @@ def test_migration_renames_tables_and_columns(tmp_path):
         assert "idx_persona_instances_tenant" in indexes
         assert "idx_hermes_instances_tenant" not in indexes
         assert "idx_platform_bindings_instance" in indexes
+
+        instance_foreign_key = next(
+            row
+            for row in conn.execute("PRAGMA foreign_key_list(platform_bindings)")
+            if row["from"] == "persona_instance_id"
+        )
+        assert instance_foreign_key["table"] == "persona_instances"
+        assert list(conn.execute("PRAGMA foreign_key_check")) == []
     finally:
         store.close()
 
@@ -220,6 +274,85 @@ def test_migration_is_idempotent(tmp_path):
         assert instance_count == 2
     finally:
         second.close()
+
+
+def test_false_v1_receipt_repairs_stranded_foreign_key(tmp_path):
+    path = str(tmp_path / "false-receipt.db")
+    _build_old_schema_db(path)
+    _apply_broken_v1_migration(path)
+
+    before = sqlite3.connect(path)
+    try:
+        broken_fk = next(
+            row
+            for row in before.execute("PRAGMA foreign_key_list(platform_bindings)")
+            if row[3] == "persona_instance_id"
+        )
+        assert broken_fk[2] == "hermes_instances"
+    finally:
+        before.close()
+
+    store = SQLiteStore(path)
+    try:
+        conn = store._conn
+        repaired_fk = next(
+            row
+            for row in conn.execute("PRAGMA foreign_key_list(platform_bindings)")
+            if row["from"] == "persona_instance_id"
+        )
+        assert repaired_fk["table"] == "persona_instances"
+        assert list(conn.execute("PRAGMA foreign_key_check")) == []
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM persona_instances"
+        ).fetchone()[0] == 2
+        assert conn.execute(
+            "SELECT COUNT(*) FROM platform_bindings"
+        ).fetchone()[0] == 2
+
+        repair = conn.execute(
+            "SELECT * FROM schema_migration_receipts WHERE version = ?",
+            (PERSONA_REPAIR_VERSION,),
+        ).fetchone()
+        assert repair is not None
+        assert '"repair":"legacy-rename-foreign-key"' in repair["detail"]
+    finally:
+        store.close()
+
+
+def test_failed_foreign_key_check_does_not_record_success(tmp_path):
+    path = str(tmp_path / "orphaned-binding.db")
+    _build_old_schema_db(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            "UPDATE platform_bindings SET hermes_instance_id = 'missing' "
+            "WHERE id = 'b1'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(StoreError, match="foreign_key_check failed"):
+        SQLiteStore(path)
+
+    conn = sqlite3.connect(path)
+    try:
+        receipt = conn.execute(
+            "SELECT 1 FROM schema_migration_receipts WHERE version = ?",
+            (PERSONA_MIGRATION_VERSION,),
+        ).fetchone()
+        assert receipt is None
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'hermes_instances'"
+        ).fetchone() is not None
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'persona_instances'"
+        ).fetchone() is None
+    finally:
+        conn.close()
 
 
 def test_fresh_database_records_receipt_and_uses_new_names(tmp_path):

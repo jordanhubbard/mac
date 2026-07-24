@@ -580,7 +580,133 @@ class SQLiteStore:
             self._conn.execute("PRAGMA legacy_alter_table = OFF")
             self._conn.execute("PRAGMA foreign_keys = ON")
 
-    def _migrate_persona_instance_identity(self) -> None:
+    def _persona_instance_identity_violations(self) -> list[str]:
+        """Return structural violations in the persona-instance schema."""
+
+        tables = {
+            str(row["name"])
+            for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        violations: list[str] = []
+        if "hermes_instances" in tables:
+            violations.append("legacy hermes_instances table is still present")
+        if "persona_instances" not in tables:
+            violations.append("persona_instances table is missing")
+        if "platform_bindings" not in tables:
+            violations.append("platform_bindings table is missing")
+            return violations
+
+        binding_columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(platform_bindings)")
+        }
+        if "hermes_instance_id" in binding_columns:
+            violations.append(
+                "legacy platform_bindings.hermes_instance_id column is still present"
+            )
+        if "persona_instance_id" not in binding_columns:
+            violations.append(
+                "platform_bindings.persona_instance_id column is missing"
+            )
+
+        instance_foreign_keys = [
+            row
+            for row in self._conn.execute("PRAGMA foreign_key_list(platform_bindings)")
+            if str(row["from"]) in {
+                "hermes_instance_id",
+                "persona_instance_id",
+            }
+        ]
+        if len(instance_foreign_keys) != 1:
+            violations.append(
+                "platform_bindings must have exactly one persona-instance foreign key"
+            )
+        elif (
+            str(instance_foreign_keys[0]["from"]) != "persona_instance_id"
+            or str(instance_foreign_keys[0]["table"]) != "persona_instances"
+        ):
+            violations.append(
+                "platform_bindings persona-instance foreign key does not reference "
+                "persona_instances(id)"
+            )
+
+        legacy_schema_objects = [
+            str(row["name"])
+            for row in self._conn.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE sql IS NOT NULL
+                  AND lower(sql) LIKE '%hermes_instances%'
+                ORDER BY name
+                """
+            )
+        ]
+        if legacy_schema_objects:
+            violations.append(
+                "legacy hermes_instances references remain in schema objects: %s"
+                % ", ".join(legacy_schema_objects)
+            )
+        return violations
+
+    def _verify_persona_instance_identity(self) -> None:
+        """Fail closed unless the migrated schema and database are sound."""
+
+        violations = self._persona_instance_identity_violations()
+        if violations:
+            raise StoreError(
+                "persona-instance schema verification failed: %s"
+                % "; ".join(violations)
+            )
+
+        integrity_rows = [
+            str(row[0]) for row in self._conn.execute("PRAGMA integrity_check")
+        ]
+        if integrity_rows != ["ok"]:
+            raise StoreError(
+                "SQLite integrity_check failed during persona-instance migration: %s"
+                % "; ".join(integrity_rows)
+            )
+
+        foreign_key_rows = list(self._conn.execute("PRAGMA foreign_key_check"))
+        if foreign_key_rows:
+            first = foreign_key_rows[0]
+            raise StoreError(
+                "SQLite foreign_key_check failed during persona-instance migration: "
+                "table=%s rowid=%s parent=%s fk=%s"
+                % tuple(first)
+            )
+
+    def _record_persona_instance_identity_receipt(
+        self,
+        *,
+        version: str,
+        origin: str,
+        repair: bool = False,
+    ) -> None:
+        detail = (
+            '{"schema":"mac.schema_migration.v1",'
+            '"rename":"hermes_instances->persona_instances",'
+            '"column_rename":"platform_bindings.hermes_instance_id'
+            '->persona_instance_id","origin":"%s"%s}'
+            % (
+                origin,
+                ',"repair":"legacy-rename-foreign-key"' if repair else "",
+            )
+        )
+        self._conn.execute(
+            """
+            INSERT OR IGNORE INTO schema_migration_receipts (
+                version, component, detail, applied_at
+            ) VALUES (?, 'persona_instances', ?,
+                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            """,
+            (version, detail),
+        )
+
+    def _migrate_persona_instance_identity(self) -> bool:
         """Rename the live-Hermes identity tables to the persona-neutral name.
 
         ``hermes_instances`` became ``persona_instances`` and the
@@ -627,12 +753,11 @@ class SQLiteStore:
         )
 
         version = "mac.persona_instance_identity.v1"
+        repair_version = "mac.persona_instance_identity_fk_repair.v1"
         already = self._conn.execute(
             "SELECT 1 FROM schema_migration_receipts WHERE version = ?",
             (version,),
         ).fetchone()
-        if already is not None:
-            return
 
         has_old_instances = (
             self._conn.execute(
@@ -649,26 +774,47 @@ class SQLiteStore:
             is not None
         )
         if not has_old_instances and not has_new_instances:
-            # Fresh database: the idempotent schema below creates the new
-            # tables directly. Record the receipt so we never rescan.
-            self._conn.execute(
-                """
-                INSERT INTO schema_migration_receipts (
-                    version, component, detail, applied_at
-                ) VALUES (?, 'persona_instances', ?,
-                          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-                """,
-                (
-                    version,
-                    '{"schema":"mac.schema_migration.v1",'
-                    '"rename":"hermes_instances->persona_instances",'
-                    '"origin":"fresh-schema"}',
-                ),
+            # The main idempotent schema below creates both new tables. Defer
+            # verification and the receipt until that schema actually exists.
+            return True
+        if has_old_instances and has_new_instances:
+            raise StoreError(
+                "persona-instance schema is ambiguous: hermes_instances and "
+                "persona_instances both exist"
             )
-            return
 
+        violations = (
+            self._persona_instance_identity_violations()
+            if has_new_instances
+            else ["legacy hermes_instances table is still present"]
+        )
+        if not violations:
+            if already is None:
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    self._verify_persona_instance_identity()
+                    self._record_persona_instance_identity_receipt(
+                        version=version,
+                        origin="existing-new-schema",
+                    )
+                    self._conn.execute("COMMIT")
+                except BaseException:
+                    if self._conn.in_transaction:
+                        self._conn.execute("ROLLBACK")
+                    raise
+            return False
+
+        foreign_keys = int(
+            self._conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        )
+        legacy_alter_table = int(
+            self._conn.execute("PRAGMA legacy_alter_table").fetchone()[0]
+        )
         self._conn.execute("PRAGMA foreign_keys = OFF")
-        self._conn.execute("PRAGMA legacy_alter_table = ON")
+        # SQLite 3.26+ rewrites dependent foreign keys during table renames
+        # only with legacy_alter_table disabled. The previous ON setting was
+        # the root cause of references being stranded on hermes_instances.
+        self._conn.execute("PRAGMA legacy_alter_table = OFF")
         try:
             self._conn.execute("BEGIN IMMEDIATE")
             if has_old_instances and not has_new_instances:
@@ -681,6 +827,18 @@ class SQLiteStore:
                 self._conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_persona_instances_tenant "
                     "ON persona_instances (tenant_id)"
+                )
+            elif has_new_instances:
+                # Repair the released v1 migration, whose immutable receipt
+                # could claim success while platform_bindings still referenced
+                # the vanished hermes_instances table. Renaming through the
+                # exact legacy name makes modern SQLite rewrite every dependent
+                # reference before restoring the persona-neutral name.
+                self._conn.execute(
+                    "ALTER TABLE persona_instances RENAME TO hermes_instances"
+                )
+                self._conn.execute(
+                    "ALTER TABLE hermes_instances RENAME TO persona_instances"
                 )
 
             binding_columns = {
@@ -706,36 +864,47 @@ class SQLiteStore:
                     "ON platform_bindings (persona_instance_id)"
                 )
 
+            self._conn.execute("DROP INDEX IF EXISTS idx_hermes_instances_tenant")
             self._conn.execute(
-                """
-                INSERT INTO schema_migration_receipts (
-                    version, component, detail, applied_at
-                ) VALUES (?, 'persona_instances', ?,
-                          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-                """,
-                (
-                    version,
-                    '{"schema":"mac.schema_migration.v1",'
-                    '"rename":"hermes_instances->persona_instances",'
-                    '"column_rename":"platform_bindings.hermes_instance_id'
-                    '->persona_instance_id","origin":"old-schema"}',
-                ),
+                "CREATE INDEX IF NOT EXISTS idx_persona_instances_tenant "
+                "ON persona_instances (tenant_id)"
             )
+            self._conn.execute("DROP INDEX IF EXISTS idx_platform_bindings_instance")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_platform_bindings_instance "
+                "ON platform_bindings (persona_instance_id)"
+            )
+
+            self._verify_persona_instance_identity()
+            if already is None:
+                self._record_persona_instance_identity_receipt(
+                    version=version,
+                    origin="old-schema",
+                )
+            else:
+                self._record_persona_instance_identity_receipt(
+                    version=repair_version,
+                    origin="false-v1-receipt",
+                    repair=True,
+                )
             self._conn.execute("COMMIT")
         except BaseException:
             if self._conn.in_transaction:
                 self._conn.execute("ROLLBACK")
             raise
         finally:
-            self._conn.execute("PRAGMA legacy_alter_table = OFF")
-            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.execute(
+                "PRAGMA legacy_alter_table = %s" % legacy_alter_table
+            )
+            self._conn.execute("PRAGMA foreign_keys = %s" % foreign_keys)
+        return False
 
     def _initialize(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._migrate_execution_cohort_route_contract()
             self._migrate_station_controller_contract()
-            self._migrate_persona_instance_identity()
+            fresh_persona_identity = self._migrate_persona_instance_identity()
             self._conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS tenants (
@@ -6196,6 +6365,24 @@ class SQLiteStore:
                     ON human_groups (group_name);
                 """
             )
+            if fresh_persona_identity:
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    self._verify_persona_instance_identity()
+                    self._record_persona_instance_identity_receipt(
+                        version="mac.persona_instance_identity.v1",
+                        origin="fresh-schema",
+                    )
+                    self._conn.execute("COMMIT")
+                except BaseException:
+                    if self._conn.in_transaction:
+                        self._conn.execute("ROLLBACK")
+                    raise
+            elif self._persona_instance_identity_violations():
+                raise StoreError(
+                    "persona-instance schema became invalid during initialization: %s"
+                    % "; ".join(self._persona_instance_identity_violations())
+                )
             self._repair_preliminary_package_cohorts()
             self._migrate()
             self._conn.commit()
