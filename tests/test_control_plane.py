@@ -51,6 +51,7 @@ from mac.migration import migrate_acc_sqlite
 from mac.services import ControlPlane
 from mac.store import SQLiteStore
 from mac.work_package_service import RepositoryBaseAttestation
+from mac.work_package_assignment import WorkPackageTaskRank
 from mac.work_plan_admission import CanonicalRepositoryBase
 
 
@@ -4574,6 +4575,181 @@ def test_ready_tasks_consume_page_prefix_rotation(cp):
         flood[1].id,
         flood[2].id,
     ]
+
+
+def _rank_for(task, order_signal):
+    """Build a WorkPackageTaskRank keyed to *task* with the given order signal."""
+    return WorkPackageTaskRank(
+        package_id="pkg-%s" % task.id,
+        plan_version=1,
+        epoch=1,
+        node_key="node-%s" % task.id,
+        critical_path_rank=1.0,
+        order_signal=order_signal,
+    )
+
+
+def test_dispatch_task_sort_key_orders_priority_then_signal_then_age(cp):
+    now = services.utcnow()
+    high = cp.create_task("high", priority=100, required_capabilities=["python"])
+    low = cp.create_task("low", priority=10, required_capabilities=["python"])
+
+    high_key = cp._dispatch_task_sort_key(high, now)
+    low_key = cp._dispatch_task_sort_key(low, now)
+
+    # The sort key negates effective priority so ascending sort surfaces the
+    # higher-priority task first, and the tuple carries (priority, signal, age,
+    # id) in that precedence.
+    assert high_key < low_key
+    assert high_key[0] == -100
+    assert low_key[0] == -10
+    # With no work-package rank the order signal component is a neutral zero.
+    assert high_key[1] == 0.0
+    assert high_key[2] == high.created_at
+    assert high_key[3] == high.id
+
+
+def test_dispatch_task_sort_key_breaks_priority_ties_on_order_signal(cp):
+    now = services.utcnow()
+    task_a = cp.create_task("wp-a", priority=5, required_capabilities=["python"])
+    task_b = cp.create_task("wp-b", priority=5, required_capabilities=["python"])
+    ranks = {
+        task_a.id: _rank_for(task_a, 0.9),
+        task_b.id: _rank_for(task_b, 0.1),
+    }
+
+    key_a = cp._dispatch_task_sort_key(task_a, now, task_ranks=ranks)
+    key_b = cp._dispatch_task_sort_key(task_b, now, task_ranks=ranks)
+
+    # Equal priority: the higher critical-path order signal wins the tie, ahead
+    # of the created_at/id fallbacks.
+    assert key_a[0] == key_b[0] == -5
+    assert key_a[1] == -0.9
+    assert key_b[1] == -0.1
+    assert key_a < key_b
+
+
+def test_dispatch_task_sort_key_age_bonus_lifts_effective_priority(cp):
+    now = services.utcnow()
+    aged = cp.create_task("aged", priority=0, required_capabilities=["python"])
+    aged_created = (
+        services.parse_time(now) - timedelta(days=2)
+    ).isoformat(timespec="microseconds")
+    aged = dataclasses.replace(aged, created_at=aged_created)
+    fresh_high = cp.create_task(
+        "fresh-high", priority=1, required_capabilities=["python"]
+    )
+
+    aged_key = cp._dispatch_task_sort_key(aged, now)
+    fresh_key = cp._dispatch_task_sort_key(fresh_high, now)
+
+    # Two aging steps push the aged zero-priority task's effective priority to 2,
+    # so it sorts ahead of a fresh priority-1 task instead of starving behind it.
+    assert aged_key[0] == -2
+    assert fresh_key[0] == -1
+    assert aged_key < fresh_key
+
+
+def test_dispatch_priority_age_bonus_counts_whole_aging_steps(cp):
+    now = services.utcnow()
+    fresh = cp.create_task("fresh", priority=0, required_capabilities=["python"])
+    fresh = dataclasses.replace(fresh, created_at=now)
+    # Just under one aging period yields no bonus; exactly one period yields 1.
+    almost = (
+        services.parse_time(now)
+        - timedelta(seconds=cp._DISPATCH_PRIORITY_AGING_SECONDS - 1)
+    ).isoformat(timespec="microseconds")
+    exactly_two = (
+        services.parse_time(now)
+        - timedelta(seconds=2 * cp._DISPATCH_PRIORITY_AGING_SECONDS)
+    ).isoformat(timespec="microseconds")
+
+    assert cp._dispatch_priority_age_bonus(fresh, now) == 0
+    assert (
+        cp._dispatch_priority_age_bonus(
+            dataclasses.replace(fresh, created_at=almost), now
+        )
+        == 0
+    )
+    assert (
+        cp._dispatch_priority_age_bonus(
+            dataclasses.replace(fresh, created_at=exactly_two), now
+        )
+        == 2
+    )
+
+
+def test_dispatch_priority_age_bonus_env_override_shrinks_step(cp, monkeypatch):
+    now = services.utcnow()
+    task = cp.create_task("aging", priority=0, required_capabilities=["python"])
+    created = (
+        services.parse_time(now) - timedelta(seconds=600)
+    ).isoformat(timespec="microseconds")
+    task = dataclasses.replace(task, created_at=created)
+
+    # A 60-second aging step turns 600 seconds of age into ten priority points.
+    monkeypatch.setenv("MAC_DISPATCH_PRIORITY_AGING_SECONDS", "60")
+    assert cp._dispatch_priority_age_bonus(task, now) == 10
+
+    # A below-floor override (< 60s) can never DISABLE the aging cap: it falls
+    # back to the safe 24h default step, so 600s of age earns no bonus.
+    monkeypatch.setenv("MAC_DISPATCH_PRIORITY_AGING_SECONDS", "1")
+    assert cp._dispatch_priority_age_bonus(task, now) == 0
+
+    # An unparseable override likewise falls back to the 24h default step.
+    monkeypatch.setenv("MAC_DISPATCH_PRIORITY_AGING_SECONDS", "not-an-int")
+    assert cp._dispatch_priority_age_bonus(task, now) == 0
+
+
+def test_dispatch_priority_age_bonus_tolerates_corrupt_timestamp(cp):
+    now = services.utcnow()
+    task = cp.create_task("corrupt", priority=0, required_capabilities=["python"])
+    task = dataclasses.replace(task, created_at="not-a-timestamp")
+
+    # A corrupt created_at must not raise or starve dispatch; it simply earns no
+    # aging bonus.
+    assert cp._dispatch_priority_age_bonus(task, now) == 0
+    assert cp._dispatch_task_sort_key(task, now)[0] == 0
+
+
+def test_dispatch_candidate_tasks_unions_priority_and_oldest_windows(cp, monkeypatch):
+    # Shrink the scan window so the priority window alone cannot surface the
+    # ancient low-priority task; only the oldest-window union can.
+    monkeypatch.setattr(cp, "_DISPATCH_TASK_WINDOW", 2, raising=False)
+    now = services.utcnow()
+    ancient = cp.create_task("ancient", priority=0, required_capabilities=["python"])
+    ancient_created = (
+        services.parse_time(now) - timedelta(days=30)
+    ).isoformat(timespec="microseconds")
+    cp.store.execute(
+        "UPDATE tasks SET created_at = ? WHERE id = ?",
+        (ancient_created, ancient.id),
+    )
+    hot = [
+        cp.create_task("hot-%d" % index, priority=100, required_capabilities=["python"])
+        for index in range(2)
+    ]
+
+    candidates = cp._dispatch_candidate_tasks()
+    candidate_ids = {task.id for task in candidates}
+
+    # The priority window keeps the hot tasks visible while the oldest window
+    # rescues the ancient task, and the union is de-duplicated (no repeats).
+    assert candidate_ids == {ancient.id, hot[0].id, hot[1].id}
+    assert len(candidates) == len(candidate_ids)
+
+
+def test_dispatch_candidate_tasks_scopes_to_requested_project(cp):
+    keep = cp.create_task(
+        "keep", project="wanted", priority=5, required_capabilities=["python"]
+    )
+    cp.create_task(
+        "drop", project="other", priority=5, required_capabilities=["python"]
+    )
+
+    candidates = cp._dispatch_candidate_tasks(project="wanted")
+
+    assert [task.id for task in candidates] == [keep.id]
 
 
 def test_claim_next_records_per_task_agent_skip_reason(cp, monkeypatch):
