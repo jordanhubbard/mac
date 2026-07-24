@@ -90,6 +90,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `coding-cli-credentials.md` | Coding-CLI Credentials and Model Selection |
 | supplemental reference | `crash-diagnosis-and-repair.md` | Crash diagnosis and autonomous repair |
 | supplemental reference | `dashboard-connection.md` | Dashboard Connection Contract |
+| supplemental reference | `deploy-prerequisite-vs-phase1-audit.md` | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
 | supplemental reference | `env-config-reference.md` | MAC environment configuration reference |
 | runbook | `fleet-cutover-transaction-protocol.md` | Fleet Cut-over Transaction Protocol |
 | supplemental reference | `fleet-directives.md` | Fleet directives |
