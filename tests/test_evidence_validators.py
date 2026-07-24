@@ -242,6 +242,100 @@ def test_operator_result_rejects_empty_or_malformed_nested_content(nested):
     ]
 
 
+def test_operator_result_live_host_requires_check_and_reviewable_anchor():
+    # A live-host operator_result (ops/deployment run against a real host) must
+    # carry independently reviewable anchors, not a substantive summary alone.
+    substantive = "Deployed the new agent build to the host and confirmed it."
+
+    # Substantive summary but no passing check and no anchor -> both problems.
+    bare = validate_evidence_type(
+        "operator_result",
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "live_host": True,
+            "summary": substantive,
+        },
+        passed_check_count=_passed_check_count,
+    )
+    assert any("at least one passing check" in p for p in bare)
+    assert any("reviewable anchor" in p for p in bare)
+
+    # Passing check but no reviewable anchor -> only the anchor problem.
+    no_anchor = validate_evidence_type(
+        "operator_result",
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "live_host": True,
+            "summary": substantive,
+            "checks": [{"name": "health", "returncode": 0}],
+        },
+        passed_check_count=_passed_check_count,
+    )
+    assert no_anchor == [
+        "live-host operator_result evidence requires an independently "
+        "reviewable anchor (artifact/target/host identifier or artifact "
+        "digest), not a summary alone"
+    ]
+
+    # Reviewable anchor but no passing check -> only the check problem.
+    no_check = validate_evidence_type(
+        "operator_result",
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "operator_result": {
+                "live_host": "true",
+                "summary": substantive,
+                "artifact_digest": "sha256:abc",
+            },
+        },
+        passed_check_count=_passed_check_count,
+    )
+    assert no_check == [
+        "live-host operator_result evidence requires at least one passing "
+        "check verifying the work on the host"
+    ]
+
+    # Passing check plus a verifiable target -> accepted.
+    anchored = validate_evidence_type(
+        "operator_result",
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "live_host": True,
+            "summary": substantive,
+            "targets": ["rocky-01.example"],
+            "checks": [{"name": "health", "returncode": 0}],
+        },
+        passed_check_count=_passed_check_count,
+    )
+    assert anchored == []
+
+
+def test_non_live_operator_result_keeps_substance_only_gate():
+    # Planning/answer/report operator_result (no live-host marker) is unchanged:
+    # a substantive summary alone still passes, with no check/anchor demand.
+    assert (
+        validate_evidence_type(
+            "operator_result",
+            {
+                "schema": "mac.worker_evidence.v1",
+                "status": "complete",
+                "evidence_type": "operator_result",
+                "summary": "Mapped the milestones and owners across the plan.",
+            },
+            passed_check_count=_passed_check_count,
+        )
+        == []
+    )
+
+
 def test_repo_change_requires_tests_only_when_contract_demands():
     # mac-wjy3: tests:null is rejected only when the contract requires tests.
     base = _repo_manifest()  # has a passing check, no tests list

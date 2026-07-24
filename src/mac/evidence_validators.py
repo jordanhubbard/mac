@@ -381,7 +381,12 @@ class OperatorResultValidator(EvidenceValidator):
                 "provide repo_change/test/no_change evidence with a pushed repo anchor "
                 "(repo.head_sha, repo.pushed=true, repo.remote_ref)"
             ]
-        return operator_result_validation_problems(manifest.raw)
+        problems = operator_result_validation_problems(manifest.raw)
+        if problems:
+            return problems
+        return operator_result_live_host_review_problems(
+            manifest.raw, self.passed_checks(manifest, context)
+        )
 
 
 VALIDATORS: Dict[str, EvidenceValidator] = {
@@ -461,6 +466,18 @@ def _operator_result_is_substantive(text: str) -> bool:
     return len(tokens) >= _OPERATOR_RESULT_MIN_DISTINCT_TOKENS
 
 
+def _operator_result_sources(raw: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    """Canonical nested report plus the legacy flat envelope, as one logical
+    result. Executors write the report under ``operator_result``; older
+    producers wrote its fields directly on the envelope."""
+    nested = raw.get("operator_result")
+    sources: List[Mapping[str, Any]] = []
+    if isinstance(nested, Mapping):
+        sources.append(nested)
+    sources.append(raw)
+    return sources
+
+
 def operator_result_validation_problems(raw: Mapping[str, Any]) -> List[str]:
     """Validate both canonical nested and legacy flat operator results.
 
@@ -469,11 +486,7 @@ def operator_result_validation_problems(raw: Mapping[str, Any]) -> List[str]:
     fields directly on the envelope.  Treat both locations as one logical
     result so worker preflight and server validation cannot disagree.
     """
-    nested = raw.get("operator_result")
-    sources: List[Mapping[str, Any]] = []
-    if isinstance(nested, Mapping):
-        sources.append(nested)
-    sources.append(raw)
+    sources = _operator_result_sources(raw)
 
     if any(
         _manifest_list(source.get("artifacts"))
@@ -500,3 +513,76 @@ def operator_result_validation_problems(raw: Mapping[str, Any]) -> List[str]:
             "structured findings/artifacts"
         ]
     return []
+
+
+# mem-11 follow-up: a live-host operator_result (an ops/deployment task run
+# against a real host, not a repo change) is accepted on its report alone by
+# the substance gate above. That lets a live-host rollout claim success with
+# free text and no independently reviewable anchor. When the manifest declares
+# it acted on a live host, require the same class of anchor the deployment path
+# demands: at least one passing check plus a verifiable artifact/target/host
+# identifier (or artifact digest) a reviewer can check. Non-live operator_result
+# (planning/answer/report work) keeps the substance-only gate.
+_OPERATOR_RESULT_LIVE_HOST_KEYS = ("live_host", "live-host")
+_OPERATOR_RESULT_HOST_ANCHOR_KEYS = (
+    "host",
+    "hosts",
+    "target",
+    "targets",
+    "service",
+    "services",
+    "artifact",
+    "artifacts",
+    "artifact_digest",
+    "image_digest",
+)
+
+
+def _operator_result_field(sources: List[Mapping[str, Any]], key: str) -> Any:
+    for source in sources:
+        if key in source:
+            return source.get(key)
+    return None
+
+
+def _operator_result_is_live_host(sources: List[Mapping[str, Any]]) -> bool:
+    for key in _OPERATOR_RESULT_LIVE_HOST_KEYS:
+        value = _operator_result_field(sources, key)
+        if value is True or str(value or "").strip().lower() in {"true", "1", "yes"}:
+            return True
+    return False
+
+
+def _operator_result_has_reviewable_anchor(sources: List[Mapping[str, Any]]) -> bool:
+    for key in _OPERATOR_RESULT_HOST_ANCHOR_KEYS:
+        value = _operator_result_field(sources, key)
+        if isinstance(value, (list, tuple)):
+            if any(str(item or "").strip() for item in value):
+                return True
+        elif str(value or "").strip():
+            return True
+    return False
+
+
+def operator_result_live_host_review_problems(
+    raw: Mapping[str, Any], passed_checks: int
+) -> List[str]:
+    """Require a live-host operator_result to carry independently reviewable
+    anchors (a passing check plus a verifiable artifact/target/host identifier),
+    not a substantive summary alone. Non-live results are unaffected."""
+    sources = _operator_result_sources(raw)
+    if not _operator_result_is_live_host(sources):
+        return []
+    problems: List[str] = []
+    if passed_checks < 1:
+        problems.append(
+            "live-host operator_result evidence requires at least one passing "
+            "check verifying the work on the host"
+        )
+    if not _operator_result_has_reviewable_anchor(sources):
+        problems.append(
+            "live-host operator_result evidence requires an independently "
+            "reviewable anchor (artifact/target/host identifier or artifact "
+            "digest), not a summary alone"
+        )
+    return problems
