@@ -48,6 +48,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/fleet-ide-workbench-plan.md` | Fleet Workbench — Clean-Slate IDE Plan |
 | historical archive | `archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md` | Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task |
 | historical archive | `archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md` | Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6 |
+| historical archive | `archive/field-notes/investigation-dream-skill-generic-area-bucket.md` | Investigation: dream finding with a generic `skill` affected label — placeholder area bucket, not a defect location |
 | historical archive | `archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md` | Investigation: dream `tool_or_skill_name` (skill) finding — actionability & root signal |
 | historical archive | `archive/field-notes/investigation-dreamrepair-5404b15-skill.md` | Investigation: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md` | Investigation: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem) |
