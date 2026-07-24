@@ -81,12 +81,41 @@ def resolve(
     """
     src = os.environ if env is None else env
     active_fleet = fleet or src.get("MAC_FLEET")
-    if active_fleet:
-        scoped = scoped_var(base_name, active_fleet)
-        value = src.get(scoped)
-        if value is not None:
-            return value
-    legacy = src.get(base_name)
+    scoped_value = _resolve_scoped(base_name, active_fleet, env=src)
+    if scoped_value is not None:
+        return scoped_value
+    return _resolve_legacy(base_name, active_fleet, env=src)
+
+
+def _resolve_scoped(
+    base_name: str,
+    active_fleet: Optional[str],
+    *,
+    env: Dict[str, str],
+) -> Optional[str]:
+    """Return the fleet-scoped value for ``base_name`` or ``None``.
+
+    Never falls back to the legacy flat form and never emits a warning, so
+    callers can prefer scoped values across an entire credential chain before
+    considering any legacy value (see :func:`resolve_first`).
+    """
+    if not active_fleet:
+        return None
+    return env.get(scoped_var(base_name, active_fleet))
+
+
+def _resolve_legacy(
+    base_name: str,
+    active_fleet: Optional[str],
+    *,
+    env: Dict[str, str],
+) -> Optional[str]:
+    """Return the legacy flat value for ``base_name`` or ``None``.
+
+    Emits the one-time mac-g55y deprecation warning when the flat form of a
+    fleet-scoped credential is used.
+    """
+    legacy = env.get(base_name)
     if legacy is not None and base_name in FLEET_SCOPED_VARS:
         key = (base_name, active_fleet or "")
         if key not in _DEPRECATION_SEEN:
@@ -255,17 +284,32 @@ def resolve_first(
 ) -> Optional[str]:
     """Resolve the first env var in ``base_names`` that has a value.
 
-    Each base name is looked up via :func:`resolve` (fleet-scoped first,
-    then legacy fallback). Precedence follows the *argument order*, so the
-    worker's chain
-    ``MAC_WORKER_TOKEN > MAC_TOKEN > MAC_API_TOKEN`` resolves the scoped or
-    legacy ``MAC_WORKER_TOKEN`` before falling through to ``MAC_TOKEN`` and
-    then ``MAC_API_TOKEN``. Every name in a credential chain should also be
-    listed in :data:`FLEET_SCOPED_VARS` so its flat form is migrated and
-    warned about consistently.
+    Resolution runs in two passes so a *fleet-scoped* value always outranks a
+    *legacy flat* value, regardless of where each sits in the chain:
+
+    1. Walk ``base_names`` in argument order and return the first name whose
+       fleet-scoped form (``NAME__<FLEET>``) is set.
+    2. Only if no scoped value exists anywhere in the chain, walk the names
+       again and return the first legacy flat value (emitting the mac-g55y
+       deprecation warning for it).
+
+    This prevents a stale legacy ``MAC_WORKER_TOKEN`` from shadowing the
+    correct scoped ``MAC_TOKEN__<FLEET>`` later in the worker's chain
+    ``MAC_WORKER_TOKEN > MAC_TOKEN > MAC_API_TOKEN`` (which manifested as a
+    startup-heartbeat 403). Within a single pass, precedence still follows the
+    *argument order*. Every name in a credential chain should also be listed in
+    :data:`FLEET_SCOPED_VARS` so its flat form is migrated and warned about
+    consistently.
     """
-    for name in base_names:
-        value = resolve(name, fleet=fleet, env=env)
+    src = os.environ if env is None else env
+    active_fleet = fleet or src.get("MAC_FLEET")
+    names = list(base_names)
+    for name in names:
+        value = _resolve_scoped(name, active_fleet, env=src)
+        if value:
+            return value
+    for name in names:
+        value = _resolve_legacy(name, active_fleet, env=src)
         if value:
             return value
     return None

@@ -180,3 +180,53 @@ def test_legacy_mac_token_emits_deprecation_warning(caplog):
     with caplog.at_level("WARNING", logger="mac.fleet_env"):
         assert fleet_env.resolve("MAC_TOKEN", fleet="rocky", env=env) == "legacy-only"
     assert any("legacy flat env var MAC_TOKEN" in r.getMessage() for r in caplog.records)
+
+
+def test_resolve_first_scoped_form_outranks_earlier_legacy_flat():
+    """mac-g55y regression: a stale legacy flat token for an *earlier* name in
+    the chain must not shadow a correct fleet-scoped value for a *later* name.
+
+    This was the startup-heartbeat 403: MAC_WORKER_TOKEN (legacy flat, stale)
+    beat MAC_TOKEN__<FLEET> (scoped, correct) because argument order was applied
+    before the scoped-vs-legacy distinction.
+    """
+    chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"]
+    env = {"MAC_WORKER_TOKEN": "stale-legacy", "MAC_TOKEN__ROCKY": "correct-scoped"}
+    assert fleet_env.resolve_first(chain, fleet="rocky", env=env) == "correct-scoped"
+
+
+def test_resolve_first_prefers_any_scoped_over_any_legacy():
+    """Every scoped value in the chain outranks every legacy flat value,
+    regardless of position; within each pass argument order still decides."""
+    chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"]
+    env = {
+        "MAC_WORKER_TOKEN": "legacy-worker",
+        "MAC_TOKEN": "legacy-tok",
+        "MAC_API_TOKEN__ROCKY": "scoped-api",
+    }
+    assert fleet_env.resolve_first(chain, fleet="rocky", env=env) == "scoped-api"
+
+
+def test_resolve_first_scoped_pass_respects_argument_order():
+    chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"]
+    env = {"MAC_TOKEN__ROCKY": "tok", "MAC_API_TOKEN__ROCKY": "api"}
+    assert fleet_env.resolve_first(chain, fleet="rocky", env=env) == "tok"
+
+
+def test_resolve_first_falls_back_to_legacy_when_no_scoped():
+    chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"]
+    env = {"MAC_TOKEN": "legacy-tok", "MAC_API_TOKEN": "legacy-api"}
+    assert fleet_env.resolve_first(chain, fleet="rocky", env=env) == "legacy-tok"
+
+
+def test_resolve_first_accepts_one_shot_iterable():
+    """base_names may be a generator; the two-pass resolver must not exhaust it
+    after the scoped pass."""
+    env = {"MAC_API_TOKEN": "legacy-api"}
+    names = (n for n in ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"])
+    assert fleet_env.resolve_first(names, fleet="rocky", env=env) == "legacy-api"
+
+
+def test_resolve_first_returns_none_when_nothing_set():
+    chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"]
+    assert fleet_env.resolve_first(chain, fleet="rocky", env={}) is None
