@@ -2135,3 +2135,109 @@ def test_daemon_function_block_must_not_be_a_symlink(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "not a readable regular file" in result.stderr
     assert "daemon" not in Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
+
+
+def test_identify_reports_python_and_github_cli_prerequisites(
+    tmp_path: Path,
+) -> None:
+    # The identify prerequisite report is consumed by the deploy lifecycle gate,
+    # so it must surface the running interpreter and a github CLI resolved only
+    # from the trusted command path, independent of the caller's PATH.
+    env = _base_case(tmp_path, "systemd")
+    mac_home = Path(env["MAC_HOME"])
+    (mac_home / "bin").mkdir()
+    trusted_gh = mac_home / "bin" / "gh"
+    _write_executable(trusted_gh, "#!/bin/sh\nexit 0\n")
+    # A gh on the ordinary PATH must never be reported: discovery is limited to
+    # the trusted command path, so this decoy stays out of the prerequisite.
+    decoy_gh = tmp_path / "bin" / "gh"
+    _write_executable(decoy_gh, "#!/bin/sh\nexit 0\n")
+
+    result = _run_action(env, "identify")
+
+    assert result.returncode == 0, result.stderr
+    identity = json.loads(result.stdout)
+    prerequisites = identity["prerequisites"]
+    assert prerequisites["python"] == env["PY"]
+    assert prerequisites["github_cli"] == str(trusted_gh)
+    assert prerequisites["github_cli"] != str(decoy_gh)
+
+
+def test_identify_reports_tampered_codegraph_as_absent(tmp_path: Path) -> None:
+    # A codegraph bundle whose pinned binary is a symlink is untrusted: the
+    # prerequisite report must degrade the codegraph capability to absent while
+    # still reporting the genuine python prerequisite.
+    env = _base_case(tmp_path, "systemd")
+    mac_home = Path(env["MAC_HOME"])
+    (mac_home / "bin").mkdir()
+    bundle = mac_home / "lib" / "codegraph" / "versions" / "v1.2.0"
+    (bundle / "bin").mkdir(parents=True)
+    real_binary = bundle / "bin" / "codegraph.real"
+    _write_executable(real_binary, "#!/bin/sh\nprintf '1.2.0\\n'\n")
+    # Tamper: the pinned binary is a symlink rather than a regular executable.
+    (bundle / "bin" / "codegraph").symlink_to(real_binary)
+    _write_executable(bundle / "node", "#!/bin/sh\nexit 0\n")
+    (mac_home / "bin" / "codegraph").symlink_to(bundle / "bin" / "codegraph")
+    env["MAC_PHASE1_CODEGRAPH_VERSION"] = "v1.2.0"
+
+    result = _run_action(env, "identify")
+
+    assert result.returncode == 0, result.stderr
+    prerequisites = json.loads(result.stdout)["prerequisites"]
+    assert prerequisites["codegraph"] is None
+    assert prerequisites["python"] == env["PY"]
+
+
+def test_identify_read_only_reports_rollback_incapable_new_node(
+    tmp_path: Path,
+) -> None:
+    # A freshly provisioned node without a prior virtualenv cannot roll back;
+    # identify must report that read-only fact without mutating the filesystem.
+    env = _base_case(tmp_path, "systemd")
+    (Path(env["MAC_HOME"]) / "venv").rmdir()
+    before = {
+        path.relative_to(tmp_path): (path.stat().st_mode, path.read_bytes())
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    result = _run_action(env, "identify")
+
+    assert result.returncode == 0, result.stderr
+    identity = json.loads(result.stdout)
+    assert identity["rollback_capable"] is False
+    assert identity["artifacts"]["source"]["regular_directory"] is True
+    assert identity["artifacts"]["venv"]["regular_directory"] is False
+    after = {
+        path.relative_to(tmp_path): (path.stat().st_mode, path.read_bytes())
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_quiesce_refuses_world_writable_daemon_block_before_mutation(
+    tmp_path: Path,
+) -> None:
+    # The retained daemon function block is sourced with privilege, so a
+    # world-writable block is untrusted. Quiesce must fail closed before any
+    # supervisor mutation and must not publish a quiescence receipt.
+    env = _base_case(tmp_path, "systemd")
+    state = tmp_path / "systemd-state"
+    state.mkdir()
+    env["FAKE_SYSTEMD_STATE"] = str(state)
+    _install_systemctl(tmp_path / "bin")
+    block = Path(env["MAC_PHASE1_DAEMON_FUNCTIONS_FILE"])
+    block.chmod(0o666)
+
+    result = _run(env)
+
+    assert result.returncode != 0
+    assert "daemon function block is not trusted" in result.stderr
+    events = Path(env["FAKE_PHASE1_EVENTS"]).read_text(encoding="utf-8")
+    assert "systemd:" not in events
+    assert "daemon" not in events
+    assert not (
+        Path(env["MAC_HOME"])
+        / ("phase1-cohort-quiescence-%s.json" % env["DEPLOY_GENERATION"])
+    ).exists()
