@@ -196,6 +196,50 @@ def cleanup_path_strings(home: Path, mac_home: Path) -> List[str]:
     ]
 
 
+def phase_failure_evidence_dir(mac_home: Path) -> Path:
+    """Directory where secret-safe fleet phase-failure evidence is preserved.
+
+    Records produced by
+    ``mac.fleet_node_install.capture_phase_failure_evidence`` are persisted
+    here so a failed install can be diagnosed after the fact. This directory is
+    deliberately excluded from the deploy cleanup sweep (see
+    :func:`preserved_cleanup_paths` and :func:`is_cleanup_protected_path`) —
+    unlike generated logs/backups, failure evidence must survive cleanup.
+    """
+    return Path(mac_home) / "phase-failure-evidence"
+
+
+def preserved_cleanup_paths(home: Path, mac_home: Path) -> List[Path]:
+    """Paths that the deploy cleanup sweep must never delete.
+
+    Currently the sole entry is the phase-failure evidence directory, but the
+    helper returns a list so future preserve-through-cleanup artifacts can be
+    added without changing the cleanup call sites.
+    """
+    return [phase_failure_evidence_dir(mac_home)]
+
+
+def is_cleanup_protected_path(
+    candidate: Path, home: Path, mac_home: Path
+) -> bool:
+    """Return ``True`` if *candidate* is a preserved path or lives under one.
+
+    Cleanup callers consult this before deleting a candidate path so that
+    secret-safe failure evidence (and any other preserved artifact) is never
+    swept away, even when a broader retention entry would otherwise cover it.
+    """
+    candidate = Path(candidate)
+    for protected in preserved_cleanup_paths(home, mac_home):
+        if candidate == protected:
+            return True
+        try:
+            candidate.relative_to(protected)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
 def shell_words(items: Iterable[str]) -> str:
     return " ".join(items)
 

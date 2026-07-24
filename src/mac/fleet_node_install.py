@@ -10,10 +10,18 @@ whole module is unit-testable without touching the network, SSH, or
 subprocesses.
 
 Phase status values: planned, active, succeeded, failed, skipped
+
+When a phase fails the executor captures a secret-safe
+:class:`PhaseFailureEvidence` record (command + redacted output) via
+:func:`capture_phase_failure_evidence`, so a failed install can be
+diagnosed later without leaking credentials. Callers persist those
+records under the deploy phase-failure evidence directory, which
+``fleet_deploy`` explicitly preserves through cleanup.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -25,6 +33,76 @@ NODE_INSTALL_PLAN_SCHEMA = "mac.fleet_node_install.v1"
 
 # Allowed lifecycle states for a single install phase.
 PHASE_STATUSES = ("planned", "active", "succeeded", "failed", "skipped")
+
+# Exported schema identifier for a single secret-safe phase-failure evidence
+# record. Follows the same ``mac.<module>.vN`` convention as the plan schema so
+# consumers can pin evidence compatibility independently of the plan version.
+PHASE_FAILURE_EVIDENCE_SCHEMA = "mac.fleet_node_install.phase_failure.v1"
+
+# Placeholder substituted for any redacted secret value. Kept identical to the
+# fleet_setup ``<set>`` convention family so redacted evidence reads uniformly
+# across the fleet tooling.
+REDACTED_PLACEHOLDER = "<redacted>"
+
+# Substrings that mark an assignment key (or URL credential field) as
+# secret-bearing. Mirrors ``fleet_setup._looks_secret`` so redaction stays
+# consistent with the rest of the deploy tooling.
+_SECRET_KEY_PARTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL")
+
+# ``NAME=value`` / ``NAME: value`` assignments whose key looks secret. The value
+# (everything up to whitespace) is replaced with the placeholder.
+_ASSIGNMENT_RE = re.compile(
+    r"(?P<key>[A-Za-z0-9_.-]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Za-z0-9_.-]*)"
+    r"(?P<sep>\s*[=:]\s*)"
+    r"(?P<val>\S+)",
+    re.IGNORECASE,
+)
+
+# ``Authorization: Bearer <token>`` / ``Bearer <token>`` / ``token <token>``
+# style header credentials.
+_BEARER_RE = re.compile(
+    r"(?P<scheme>\b(?:bearer|token)\s+)(?P<val>[A-Za-z0-9._~+/=-]{8,})",
+    re.IGNORECASE,
+)
+
+# Credentials embedded in an authenticated URL (``https://user:pass@host`` and
+# the common ``https://x-access-token:<token>@host`` GitHub form).
+_URL_CRED_RE = re.compile(
+    r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*://)(?P<userinfo>[^/@\s]+)@",
+)
+
+
+def redact_secret_text(text: str) -> str:
+    """Return *text* with secret-bearing values replaced by a placeholder.
+
+    Redacts three families of secrets that routinely leak into command output:
+    ``NAME=secret``/``NAME: secret`` assignments whose key looks secret,
+    ``Bearer``/``token`` header credentials, and credentials embedded in an
+    authenticated URL (``scheme://userinfo@host``). The surrounding structure
+    (keys, schemes, hosts) is preserved so the evidence stays diagnostic while
+    the secret material itself never survives.
+    """
+
+    if not text:
+        return text
+
+    def _assign(match: "re.Match[str]") -> str:
+        return "%s%s%s" % (match.group("key"), match.group("sep"), REDACTED_PLACEHOLDER)
+
+    def _bearer(match: "re.Match[str]") -> str:
+        return "%s%s" % (match.group("scheme"), REDACTED_PLACEHOLDER)
+
+    def _url(match: "re.Match[str]") -> str:
+        return "%s%s@" % (match.group("scheme"), REDACTED_PLACEHOLDER)
+
+    # URL credentials first: a ``scheme://user:token@host`` userinfo field can
+    # otherwise be mis-consumed by the greedy assignment rule (whose value runs
+    # to the next whitespace), which would swallow the host too. Redacting the
+    # userinfo first keeps the diagnostic host/scheme visible.
+    redacted = _URL_CRED_RE.sub(_url, text)
+    redacted = _ASSIGNMENT_RE.sub(_assign, redacted)
+    redacted = _BEARER_RE.sub(_bearer, redacted)
+    return redacted
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +167,35 @@ class NodeInstallPlan:
         return [p for p in self.ordered_phases if p.status == "succeeded"]
 
 
+@dataclass(frozen=True)
+class PhaseFailureEvidence:
+    """Secret-safe record of why a single install phase failed.
+
+    Every text field is redacted through :func:`redact_secret_text` at
+    construction time via :func:`capture_phase_failure_evidence`, so an
+    instance can be persisted or logged without leaking credentials. The
+    record is intentionally minimal and diagnostic: which phase failed, its
+    order, the (redacted) command metadata, and the (redacted) captured
+    output lines.
+    """
+
+    phase: str
+    order: int
+    command: Optional[str] = None
+    detail: List[str] = field(default_factory=list)
+    schema: str = PHASE_FAILURE_EVIDENCE_SCHEMA
+
+    def to_dict(self) -> Dict[str, object]:
+        """Return a JSON-serialisable mapping of the redacted evidence."""
+        return {
+            "schema": self.schema,
+            "phase": self.phase,
+            "order": self.order,
+            "command": self.command,
+            "detail": list(self.detail),
+        }
+
+
 @dataclass
 class NodeInstallResult:
     """Summary of a completed (or halted) node installation run."""
@@ -97,6 +204,7 @@ class NodeInstallResult:
     succeeded: List[str] = field(default_factory=list)
     failed: List[str] = field(default_factory=list)
     skipped: List[str] = field(default_factory=list)
+    failure_evidence: List[PhaseFailureEvidence] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -196,10 +304,39 @@ def build_node_install_plan(
 # ---------------------------------------------------------------------------
 
 
+def capture_phase_failure_evidence(
+    phase: "InstallPhase",
+    output: Optional[str] = None,
+) -> PhaseFailureEvidence:
+    """Build a secret-safe :class:`PhaseFailureEvidence` for a failed *phase*.
+
+    The phase command and each line of *output* are passed through
+    :func:`redact_secret_text` so no credential material survives into the
+    returned record. Blank output lines are dropped; the record is safe to
+    persist next to (and preserve through) deploy cleanup.
+    """
+
+    command = redact_secret_text(phase.command) if phase.command else None
+    detail: List[str] = []
+    if output:
+        for line in output.splitlines():
+            stripped = line.rstrip()
+            if not stripped.strip():
+                continue
+            detail.append(redact_secret_text(stripped))
+    return PhaseFailureEvidence(
+        phase=phase.name,
+        order=phase.order,
+        command=command,
+        detail=detail,
+    )
+
+
 def execute_node_install(
     plan: NodeInstallPlan,
     *,
     run_fn: Optional[Callable[[InstallPhase], bool]] = None,
+    output_fn: Optional[Callable[[InstallPhase], Optional[str]]] = None,
     simulate: bool = False,
 ) -> NodeInstallResult:
     """Execute (or simulate) *plan* phase-by-phase in order.
@@ -214,6 +351,12 @@ def execute_node_install(
         plan: The plan returned by :func:`build_node_install_plan`.
         run_fn: Callable invoked with each :class:`InstallPhase`, returning
             ``True`` on success. Required unless *simulate* is ``True``.
+        output_fn: Optional callable invoked with a failed
+            :class:`InstallPhase` to retrieve its raw captured output. The
+            output is redacted into secret-safe
+            :class:`PhaseFailureEvidence` and appended to
+            ``result.failure_evidence``. When omitted, evidence is still
+            recorded (command only, no output detail).
         simulate: When ``True`` every runnable phase is marked
             ``"succeeded"`` without calling *run_fn*.
 
@@ -259,6 +402,10 @@ def execute_node_install(
         else:
             phase.status = "failed"
             result.failed.append(phase.name)
+            output = output_fn(phase) if output_fn is not None else None
+            result.failure_evidence.append(
+                capture_phase_failure_evidence(phase, output)
+            )
             halted = True
 
     return result

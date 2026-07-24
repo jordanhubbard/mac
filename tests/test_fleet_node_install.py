@@ -15,12 +15,17 @@ import pytest
 
 from mac.fleet_node_install import (
     NODE_INSTALL_PLAN_SCHEMA,
+    PHASE_FAILURE_EVIDENCE_SCHEMA,
     PHASE_STATUSES,
+    REDACTED_PLACEHOLDER,
     InstallPhase,
     NodeInstallPlan,
     NodeInstallResult,
+    PhaseFailureEvidence,
     build_node_install_plan,
+    capture_phase_failure_evidence,
     execute_node_install,
+    redact_secret_text,
 )
 
 
@@ -254,3 +259,179 @@ def test_execute_runs_dependent_phase_when_dependency_succeeds() -> None:
     result = execute_node_install(plan, run_fn=_always_ok)
     assert result.succeeded == ["a", "b"]
     assert result.ok is True
+
+
+# ---------------------------------------------------------------------------
+# redact_secret_text()
+# ---------------------------------------------------------------------------
+
+
+def test_redact_secret_text_empty_is_unchanged() -> None:
+    assert redact_secret_text("") == ""
+
+
+def test_redact_secret_text_leaves_plain_text_alone() -> None:
+    text = "installing package foo bar baz version 1.2.3"
+    assert redact_secret_text(text) == text
+
+
+def test_redact_secret_text_redacts_secret_assignments() -> None:
+    out = redact_secret_text("GITHUB_TOKEN=ghp_supersecret123 remaining")
+    assert "ghp_supersecret123" not in out
+    assert out == "GITHUB_TOKEN=<redacted> remaining"
+
+
+def test_redact_secret_text_redacts_various_secret_keys() -> None:
+    for key in ("API_KEY", "AUTH_TOKEN", "MAC_SECRET_KEY", "DB_PASSWORD"):
+        out = redact_secret_text(f"{key}=leakvalue999")
+        assert "leakvalue999" not in out
+        assert out == f"{key}=<redacted>"
+
+
+def test_redact_secret_text_ignores_non_secret_assignment() -> None:
+    text = "HOSTNAME=node-01"
+    assert redact_secret_text(text) == text
+
+
+def test_redact_secret_text_redacts_colon_assignment() -> None:
+    out = redact_secret_text("password: hunter2secret")
+    assert "hunter2secret" not in out
+    assert out == "password: <redacted>"
+
+
+def test_redact_secret_text_redacts_bearer_header() -> None:
+    out = redact_secret_text("Authorization: Bearer abcDEF123456ghi")
+    assert "abcDEF123456ghi" not in out
+    assert out.endswith("Bearer <redacted>")
+
+
+def test_redact_secret_text_redacts_url_userinfo_but_keeps_host() -> None:
+    out = redact_secret_text(
+        "cloning https://x-access-token:tok_secret999@github.com/org/repo.git"
+    )
+    assert "tok_secret999" not in out
+    assert out == "cloning https://<redacted>@github.com/org/repo.git"
+
+
+def test_redact_secret_text_redacts_basic_url_credentials() -> None:
+    out = redact_secret_text("https://user:passw0rd@example.com/path")
+    assert "passw0rd" not in out
+    assert out == "https://<redacted>@example.com/path"
+
+
+# ---------------------------------------------------------------------------
+# PhaseFailureEvidence / capture_phase_failure_evidence()
+# ---------------------------------------------------------------------------
+
+
+def test_phase_failure_evidence_schema_constant() -> None:
+    assert PHASE_FAILURE_EVIDENCE_SCHEMA == "mac.fleet_node_install.phase_failure.v1"
+    assert REDACTED_PLACEHOLDER == "<redacted>"
+
+
+def test_phase_failure_evidence_direct_construction_defaults() -> None:
+    ev = PhaseFailureEvidence(phase="p", order=1)
+    assert ev.command is None
+    assert ev.detail == []
+    assert ev.schema == PHASE_FAILURE_EVIDENCE_SCHEMA
+    assert ev.to_dict()["phase"] == "p"
+
+
+def test_capture_phase_failure_evidence_records_phase_and_order() -> None:
+    phase = InstallPhase(name="bootstrap", order=3)
+    ev = capture_phase_failure_evidence(phase)
+    assert ev.phase == "bootstrap"
+    assert ev.order == 3
+    assert ev.command is None
+    assert ev.detail == []
+    assert ev.schema == PHASE_FAILURE_EVIDENCE_SCHEMA
+
+
+def test_capture_phase_failure_evidence_redacts_command() -> None:
+    phase = InstallPhase(
+        name="auth", order=1, command="deploy --token=abc_secret_token123"
+    )
+    ev = capture_phase_failure_evidence(phase)
+    assert ev.command is not None
+    assert "abc_secret_token123" not in ev.command
+    assert "<redacted>" in ev.command
+
+
+def test_capture_phase_failure_evidence_redacts_and_filters_output() -> None:
+    output = "MAC_API_TOKEN=leak_me_now999\n\n   \nplain diagnostic line\n"
+    phase = InstallPhase(name="net", order=2)
+    ev = capture_phase_failure_evidence(phase, output)
+    # Blank / whitespace-only lines dropped; secret redacted; plain line kept.
+    assert ev.detail == ["MAC_API_TOKEN=<redacted>", "plain diagnostic line"]
+    assert "leak_me_now999" not in "".join(ev.detail)
+
+
+def test_phase_failure_evidence_to_dict_is_serialisable() -> None:
+    import json
+
+    phase = InstallPhase(name="net", order=2, command="run")
+    ev = capture_phase_failure_evidence(phase, "line one")
+    doc = ev.to_dict()
+    assert doc["schema"] == PHASE_FAILURE_EVIDENCE_SCHEMA
+    assert doc["phase"] == "net"
+    assert doc["order"] == 2
+    assert doc["detail"] == ["line one"]
+    # Round-trips cleanly as JSON (no non-serialisable objects leaked in).
+    assert json.loads(json.dumps(doc)) == doc
+
+
+def test_phase_failure_evidence_is_frozen() -> None:
+    ev = capture_phase_failure_evidence(InstallPhase(name="x", order=1))
+    with pytest.raises(Exception):
+        ev.phase = "y"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# execute_node_install() failure-evidence wiring
+# ---------------------------------------------------------------------------
+
+
+def test_execute_records_failure_evidence_with_redacted_output() -> None:
+    plan = build_node_install_plan("1", [_phase("a", 1), _phase("b", 2)])
+    outputs = {"a": "GITHUB_TOKEN=ghp_leak12345\nboom failed"}
+
+    def runner(phase: InstallPhase) -> bool:
+        return phase.name != "a"
+
+    result = execute_node_install(
+        plan, run_fn=runner, output_fn=lambda p: outputs.get(p.name)
+    )
+    assert result.failed == ["a"]
+    assert result.skipped == ["b"]
+    assert len(result.failure_evidence) == 1
+    ev = result.failure_evidence[0]
+    assert ev.phase == "a"
+    assert ev.order == 1
+    assert "ghp_leak12345" not in "".join(ev.detail)
+    assert ev.detail == ["GITHUB_TOKEN=<redacted>", "boom failed"]
+
+
+def test_execute_records_evidence_without_output_fn() -> None:
+    plan = build_node_install_plan("1", [_phase("a", 1)])
+    result = execute_node_install(plan, run_fn=_always_fail)
+    assert len(result.failure_evidence) == 1
+    assert result.failure_evidence[0].phase == "a"
+    assert result.failure_evidence[0].detail == []
+
+
+def test_execute_success_has_no_failure_evidence() -> None:
+    plan = build_node_install_plan("1", [_phase("a", 1), _phase("b", 2)])
+    result = execute_node_install(plan, run_fn=_always_ok)
+    assert result.failure_evidence == []
+
+
+def test_execute_evidence_covers_only_the_failed_phase() -> None:
+    plan = build_node_install_plan(
+        "1", [_phase("a", 1), _phase("b", 2), _phase("c", 3)]
+    )
+
+    def runner(phase: InstallPhase) -> bool:
+        return phase.name != "b"
+
+    result = execute_node_install(plan, run_fn=runner)
+    assert [e.phase for e in result.failure_evidence] == ["b"]

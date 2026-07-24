@@ -21,7 +21,10 @@ from mac.fleet_deploy import (
     cleanup_path_strings,
     cleanup_retention_plan,
     ensure_owner_only_directory,
+    is_cleanup_protected_path,
     parse_ssh_target,
+    phase_failure_evidence_dir,
+    preserved_cleanup_paths,
     shell_words,
     write_owner_only_file,
 )
@@ -243,3 +246,79 @@ def test_cleanup_path_strings_count_matches_retention_plan(tmp_path: Path) -> No
         f"cleanup_path_strings returned {len(strings)} entries but "
         f"cleanup_retention_plan has {len(plan)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# phase-failure evidence preservation through cleanup
+# ---------------------------------------------------------------------------
+
+
+def test_phase_failure_evidence_dir_lives_under_mac_home(tmp_path: Path) -> None:
+    _, mac_home = _make_paths(tmp_path)
+    evidence_dir = phase_failure_evidence_dir(mac_home)
+    assert evidence_dir == mac_home / "phase-failure-evidence"
+    assert evidence_dir.parent == mac_home
+
+
+def test_preserved_cleanup_paths_includes_evidence_dir(tmp_path: Path) -> None:
+    home, mac_home = _make_paths(tmp_path)
+    preserved = preserved_cleanup_paths(home, mac_home)
+    assert phase_failure_evidence_dir(mac_home) in preserved
+
+
+def test_evidence_dir_is_not_in_cleanup_retention_plan(tmp_path: Path) -> None:
+    home, mac_home = _make_paths(tmp_path)
+    plan_paths = {str(item.path) for item in cleanup_retention_plan(home, mac_home)}
+    assert str(phase_failure_evidence_dir(mac_home)) not in plan_paths
+
+
+def test_is_cleanup_protected_path_matches_evidence_dir(tmp_path: Path) -> None:
+    home, mac_home = _make_paths(tmp_path)
+    evidence_dir = phase_failure_evidence_dir(mac_home)
+    assert is_cleanup_protected_path(evidence_dir, home, mac_home)
+
+
+def test_is_cleanup_protected_path_matches_nested_evidence_file(tmp_path: Path) -> None:
+    home, mac_home = _make_paths(tmp_path)
+    evidence_file = phase_failure_evidence_dir(mac_home) / "node-01.json"
+    assert is_cleanup_protected_path(evidence_file, home, mac_home)
+
+
+def test_is_cleanup_protected_path_rejects_unrelated_path(tmp_path: Path) -> None:
+    home, mac_home = _make_paths(tmp_path)
+    assert not is_cleanup_protected_path(mac_home / "logs", home, mac_home)
+    assert not is_cleanup_protected_path(home / ".acc" / "deploy", home, mac_home)
+
+
+def test_protection_guard_wins_even_when_a_retention_root_covers_evidence(
+    tmp_path: Path,
+) -> None:
+    # Root mac_home directly under a swept cleanup root (/tmp) so a retention
+    # entry would otherwise cover the evidence dir. The protection guard must
+    # still shield it — that is the whole point of preserving failure evidence
+    # through cleanup.
+    mac_home = tmp_path / ".mac"
+    home = tmp_path
+    evidence_dir = phase_failure_evidence_dir(mac_home)
+    covering_roots = [
+        item.path
+        for item in cleanup_retention_plan(home, mac_home)
+        if _is_under(evidence_dir, item.path)
+    ]
+    # Regardless of whether any retention root happens to cover it, the guard
+    # protects the evidence dir and its contents.
+    assert is_cleanup_protected_path(evidence_dir, home, mac_home)
+    assert is_cleanup_protected_path(evidence_dir / "node.json", home, mac_home)
+    # And a sibling generated dir under the same covering root is NOT protected.
+    for root in covering_roots:
+        sibling = root / "some-generated-artifact"
+        if sibling != evidence_dir and not _is_under(sibling, evidence_dir):
+            assert not is_cleanup_protected_path(sibling, home, mac_home)
+
+
+def _is_under(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return False
+    return True
