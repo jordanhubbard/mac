@@ -179,7 +179,7 @@ tasks in the hub ledger. The operator flow is:
 ```console
 # Repository-backed project: let MAC clone/analyze the repo and create the
 # onboarding task that authors .mac/project.yaml.
-uv run mac --db mac.db project onboard git@github.com:ORG/REPO.git --project my-project
+uv run mac --db mac.db project register git@github.com:ORG/REPO.git#main --project my-project
 
 # After onboarding, register the hub-visible checkout that contains the contract.
 uv run mac --db mac.db bridge repository register my-project /srv/repos/my-project --project my-project

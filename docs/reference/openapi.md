@@ -269,6 +269,7 @@ request and response definitions.
 | `POST` | `/platform-bindings` | Register Platform Binding |
 | `GET` | `/projects` | List Projects |
 | `POST` | `/projects` | Create Project |
+| `POST` | `/projects/register` | Register Project |
 | `DELETE` | `/projects/{project}` | Delete Project |
 | `GET` | `/projects/{project}` | Get Project |
 | `PUT` | `/projects/{project}` | Update Project |
@@ -279,7 +280,6 @@ request and response definitions.
 | `POST` | `/provisioning/requests/{request_id}/cancel` | Cancel Provisioning Request |
 | `POST` | `/provisioning/requests/{request_id}/fulfill` | Fulfill Provisioning Request |
 | `POST` | `/publications` | Publish |
-| `POST` | `/repositories/onboard` | Onboard Repository |
 | `POST` | `/repository-refs/reconcile` | Reconcile Repository Refs |
 | `GET` | `/repository-refs/reconciler` | Repository Ref Reconciler Status |
 | `GET` | `/review-experiments/{experiment_id}` | Review Experiment Report |

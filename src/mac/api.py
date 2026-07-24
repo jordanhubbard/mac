@@ -443,7 +443,7 @@ class TaskCreate(BaseModel):
         return values
 
 
-class RepositoryOnboard(BaseModel):
+class ProjectRegister(BaseModel):
     repository_url: str
     project: Optional[str] = None
     default_branch: Optional[str] = None
@@ -698,6 +698,8 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     status: Optional[str] = None
+    repository_registration: Optional[str] = None
+    default_branch: Optional[str] = None
     actor: str = "human"
 
 
@@ -5155,18 +5157,6 @@ def create_app(
         result["publication_route"] = route
         return result
 
-    @app.post("/repositories/onboard")
-    def onboard_repository(
-        body: RepositoryOnboard,
-        principal: TokenPrincipal = Depends(_get_principal),
-    ) -> Dict[str, Any]:
-        """Onboard a git repository: create the contract-backed onboarding task
-        (clone a worktree -> analyze -> author .mac/project.yaml). Returns the
-        created task."""
-        data = _data(body)
-        actor = data.pop("actor", "human")
-        return cp.onboard_repository(actor=actor, **data).to_dict()
-
     @app.get("/tasks")
     def list_tasks(
         state: Optional[str] = Query(default=None),
@@ -5897,6 +5887,20 @@ def create_app(
             metadata["origin"] = origin
             data["metadata"] = metadata
         return cp.create_project(actor=actor, **data).to_dict()
+
+    @app.post("/projects/register")
+    def register_project(
+        body: ProjectRegister,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Register ``GIT_URL[#BRANCH]`` and create its contract task.
+
+        The canonical registration always includes a branch; ``main`` is used
+        when the URL has no fragment.
+        """
+        data = _data(body)
+        actor = data.pop("actor", "human")
+        return cp.register_project(actor=actor, **data).to_dict()
 
     @app.post("/projects/{project}/dispatch")
     def set_project_dispatch(project: str, body: ProjectDispatch) -> Dict[str, Any]:

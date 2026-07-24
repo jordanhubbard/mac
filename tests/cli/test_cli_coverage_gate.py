@@ -260,7 +260,6 @@ KNOWN_UNTESTED: frozenset[tuple[str, str]] = frozenset(
         ("persona", "register"),
         # project sub-commands
         ("project", "activate"),
-        ("project", "onboard"),
         ("project", "pause"),
         ("project", "show"),
         # publish top-level (no subcommand)

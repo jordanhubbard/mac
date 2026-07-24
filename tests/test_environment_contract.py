@@ -489,7 +489,7 @@ def test_onboarding_description_mentions_environment_contract():
     from mac.services import ControlPlane
 
     cp = ControlPlane.in_memory()
-    task = cp.onboard_repository("https://github.com/o/widget.git")
+    task = cp.register_project("https://github.com/o/widget.git")
     desc = task.description
 
     assert "environment_contract" in desc, "description must reference mac.environment_contract"
@@ -507,7 +507,7 @@ def test_onboarding_description_still_includes_project_yaml():
     from mac.services import ControlPlane
 
     cp = ControlPlane.in_memory()
-    task = cp.onboard_repository("https://github.com/o/widget.git")
+    task = cp.register_project("https://github.com/o/widget.git")
     assert ".mac/project.yaml" in task.description
     assert "$MAC_TASK_REPO_WORKTREE" in task.description
     assert "codegraph init" in task.description

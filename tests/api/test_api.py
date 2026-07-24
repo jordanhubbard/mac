@@ -542,10 +542,10 @@ def test_evidence_artifact_content_requires_secret_scope():
     assert base64.b64decode(allowed.json()["content_base64"]) == b"sensitive output\n"
 
 
-def test_repositories_onboard_creates_contract_backed_task():
+def test_projects_register_creates_contract_backed_task():
     client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
     resp = client.post(
-        "/repositories/onboard",
+        "/projects/register",
         json={"repository_url": "https://github.com/NVIDIA-dev/taskbrain.git"},
     )
     assert resp.status_code == 200
@@ -556,8 +556,52 @@ def test_repositories_onboard_creates_contract_backed_task():
     assert origin["repository_url"] == "https://github.com/NVIDIA-dev/taskbrain.git"
     assert origin["onboarding"] is True
     # A malformed URL is a client error (400), never a 500.
-    bad = client.post("/repositories/onboard", json={"repository_url": "not-a-url"})
+    bad = client.post("/projects/register", json={"repository_url": "not-a-url"})
     assert bad.status_code == 400
+
+
+def test_projects_api_enforces_branch_qualified_registration_identity():
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+    main = client.post(
+        "/projects/register",
+        json={
+            "repository_url": "https://github.com/example/widget.git",
+            "project": "widget-main",
+        },
+    )
+    assert main.status_code == 200
+
+    duplicate = client.post(
+        "/projects/register",
+        json={
+            "repository_url": "https://github.com/example/widget.git#main",
+            "project": "widget-duplicate",
+        },
+    )
+    assert duplicate.status_code == 400
+    assert "already owned by project widget-main" in duplicate.json()["detail"]
+
+    branch = client.post(
+        "/projects/register",
+        json={
+            "repository_url": "https://github.com/example/widget.git#feature/one",
+            "project": "widget-feature",
+        },
+    )
+    assert branch.status_code == 200
+
+    updated = client.put(
+        "/projects/widget-feature",
+        json={"default_branch": "release/next"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["metadata"]["repository_registration"] == (
+        "https://github.com/example/widget.git#release/next"
+    )
+
+    deleted = client.delete("/projects/widget-feature?force=true")
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] == "widget-feature"
 
 
 def test_bridge_repositories_registers_and_lists_contract_backed_repo(tmp_path):

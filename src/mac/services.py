@@ -809,6 +809,7 @@ def _repository_contract_root(repo_path: Path) -> Path:
 
 
 _ONBOARDING_REMOTE_URL_RE = re.compile(r"^(https://|git@|ssh://|git://)\S+$")
+DEFAULT_PROJECT_BRANCH = "main"
 
 
 def _normalize_onboarding_remote_url(value: str) -> str:
@@ -826,6 +827,48 @@ def _normalize_onboarding_remote_url(value: str) -> str:
     return url
 
 
+def _normalize_repository_registration(
+    value: str,
+    *,
+    default_branch: Optional[str] = None,
+) -> Tuple[str, str, str]:
+    """Normalize ``GIT_URL[#BRANCH]`` into URL, branch, and canonical form.
+
+    A fragment is a registration selector, not part of the Git transport URL.
+    ``main`` is deliberately the boring default so project registration has one
+    deterministic identity without probing a remote.
+    """
+
+    registration = str(value or "").strip()
+    url_value = registration
+    fragment_branch: Optional[str] = None
+    if "#" in registration:
+        url_value, fragment_branch = registration.rsplit("#", 1)
+        url_value = url_value.strip()
+        fragment_branch = fragment_branch.strip()
+        if not fragment_branch:
+            raise ValidationError("repository registration branch after # is required")
+
+    explicit_branch = str(default_branch or "").strip() or None
+    if (
+        fragment_branch is not None
+        and explicit_branch is not None
+        and fragment_branch != explicit_branch
+    ):
+        raise ValidationError(
+            "repository registration branch %r conflicts with default_branch %r"
+            % (fragment_branch, explicit_branch)
+        )
+    branch = fragment_branch or explicit_branch or DEFAULT_PROJECT_BRANCH
+    try:
+        branch = validate_git_ref(branch)
+    except ValueError as exc:
+        raise ValidationError("repository registration branch is invalid: %s" % exc) from exc
+
+    url = _normalize_onboarding_remote_url(url_value)
+    return url, branch, "%s#%s" % (url, branch)
+
+
 def _repository_name_from_url(url: str) -> str:
     """Derive a short project/repo name from a git remote URL.
 
@@ -839,6 +882,20 @@ def _repository_name_from_url(url: str) -> str:
         tail = tail[:-4]
     name = "".join(ch if (ch.isalnum() or ch in "-_.") else "-" for ch in tail).strip("-._")
     return name or "project"
+
+
+def _project_registration_from_metadata(
+    metadata: Mapping[str, Any],
+) -> Optional[Tuple[str, str, str]]:
+    repository_url = str(metadata.get("repository_url") or "").strip()
+    registration = str(metadata.get("repository_registration") or "").strip()
+    if not registration and not repository_url:
+        return None
+    branch = str(metadata.get("default_branch") or "").strip() or None
+    return _normalize_repository_registration(
+        registration or repository_url,
+        default_branch=branch,
+    )
 
 
 def _build_onboarding_description(url: str, repo_name: str) -> str:
@@ -3000,6 +3057,8 @@ class ControlPlane:
                     "bridge_item_count": 0,
                     "repository_count": 0,
                     "repository_url": "",
+                    "default_branch": "",
+                    "repository_registration": "",
                     "description": "",
                     "status": "derived",
                     "metadata": {},
@@ -3023,6 +3082,14 @@ class ControlPlane:
             )
             if isinstance(metadata, dict) and metadata.get("repository_url"):
                 item["repository_url"] = str(metadata.get("repository_url"))
+                item["default_branch"] = str(
+                    metadata.get("default_branch") or DEFAULT_PROJECT_BRANCH
+                )
+                item["repository_registration"] = str(
+                    metadata.get("repository_registration")
+                    or "%s#%s"
+                    % (item["repository_url"], item["default_branch"])
+                )
 
         for task in tasks:
             project = self._hermes_task_project_key(task)
@@ -4856,7 +4923,7 @@ class ControlPlane:
             )
         return self.get_task(task_id)
 
-    def onboard_repository(
+    def register_project(
         self,
         repository_url: str,
         *,
@@ -4867,7 +4934,7 @@ class ControlPlane:
         required_capabilities: Optional[Iterable[str]] = None,
         actor: str = "human",
     ) -> Task:
-        """Onboard a git repository as a contract-backed project.
+        """Register a Git-backed project and create its contract-authoring task.
 
         Creates one read-only *onboarding* task whose ``metadata.origin`` carries
         the remote URL + ``type=direct_task`` — enough for a worker to clone a
@@ -4877,20 +4944,28 @@ class ControlPlane:
         every later task on the project is fully contract-backed
         (``_normalize_task_execution_contract`` attaches it automatically).
 
-        This is the missing "take a git URL and onboard it" entry point: the
+        This is the "take a Git URL and register a project" entry point: the
         contract is the onboarding task's *output*, not a precondition.
         """
-        url = _normalize_onboarding_remote_url(repository_url)
+        url, branch, registration = _normalize_repository_registration(
+            repository_url,
+            default_branch=default_branch,
+        )
         repo_name = _repository_name_from_url(url)
-        project = (project or repo_name).strip() or repo_name
+        default_project = (
+            repo_name
+            if branch == DEFAULT_PROJECT_BRANCH
+            else "%s@%s" % (repo_name, branch)
+        )
+        project = (project or default_project).strip() or default_project
         origin: JsonDict = {
             "type": "direct_task",
             "repository_url": url,
+            "repository_registration": registration,
             "repository_name": repo_name,
+            "default_branch": branch,
             "onboarding": True,
         }
-        if default_branch:
-            origin["default_branch"] = str(default_branch).strip()
         metadata: JsonDict = {
             "origin": origin,
             # Drives the weak execution-contract's evidence_type so the
@@ -4900,11 +4975,15 @@ class ControlPlane:
         # Register a first-class project record so onboard and create converge:
         # the repo URL becomes durable project state (surfaced by `project
         # list`/`show`), not just task metadata. Idempotent by project name.
-        self._ensure_onboarded_project_record(
-            project, url, default_branch=default_branch, actor=actor
+        self._ensure_registered_project_record(
+            project,
+            registration,
+            actor=actor,
         )
         resolved_title = (
-            title or "Onboard %s: analyze, summarize, and author the repository contract" % repo_name
+            title
+            or "Register %s: analyze, summarize, and author the repository contract"
+            % repo_name
         ).strip()
         return self.create_task(
             resolved_title,
@@ -4916,15 +4995,48 @@ class ControlPlane:
             actor=actor,
         )
 
-    def _ensure_onboarded_project_record(
+    def _assert_project_registration_available(
+        self,
+        repository_url: str,
+        branch: str,
+        *,
+        exclude_project_id: Optional[str] = None,
+    ) -> None:
+        try:
+            requested_remote = canonical_git_remote_identity(repository_url)
+        except ValueError as exc:
+            raise ValidationError(
+                "repository registration URL is invalid: %s" % exc
+            ) from exc
+        for record in self.list_project_records():
+            if exclude_project_id and record.id == exclude_project_id:
+                continue
+            identity = _project_registration_from_metadata(
+                ensure_json_object(record.metadata)
+            )
+            if identity is None:
+                continue
+            existing_url, existing_branch, existing_registration = identity
+            try:
+                same_remote = canonical_git_remote_identity(existing_url) == (
+                    requested_remote
+                )
+            except ValueError:
+                continue
+            if same_remote and existing_branch == branch:
+                raise ValidationError(
+                    "repository registration %s is already owned by project %s"
+                    % (existing_registration, record.name)
+                )
+
+    def _ensure_registered_project_record(
         self,
         project: str,
-        repository_url: str,
+        repository_registration: str,
         *,
-        default_branch: Optional[str] = None,
         actor: str = "human",
     ) -> ProjectRecord:
-        """Create or augment the ``projects`` record for an onboarded repo.
+        """Create or augment the ``projects`` record for a Git registration.
 
         New records carry ``repository_url`` (+ optional ``default_branch``) in
         metadata and are left ACTIVE on purpose: onboarding creates a single
@@ -4934,15 +5046,25 @@ class ControlPlane:
         missing repository_url/default_branch and never touch its dispatch
         state, so re-onboarding is idempotent and operator intent is preserved.
         """
-        branch = str(default_branch).strip() if default_branch else None
+        repository_url, branch, registration = _normalize_repository_registration(
+            repository_registration
+        )
         try:
             existing = self.get_project_record(project)
         except NotFoundError:
             existing = None
+        self._assert_project_registration_available(
+            repository_url,
+            branch,
+            exclude_project_id=existing.id if existing is not None else None,
+        )
         if existing is None:
-            metadata: JsonDict = {"repository_url": repository_url, "onboarding": True}
-            if branch:
-                metadata["default_branch"] = branch
+            metadata: JsonDict = {
+                "repository_url": repository_url,
+                "default_branch": branch,
+                "repository_registration": registration,
+                "onboarding": True,
+            }
             return self.create_project(
                 project,
                 metadata=metadata,
@@ -4950,13 +5072,40 @@ class ControlPlane:
                 dispatch_paused=False,
             )
         md = ensure_json_object(existing.metadata)
-        changed = False
-        if not md.get("repository_url"):
-            md["repository_url"] = repository_url
-            changed = True
-        if branch and not md.get("default_branch"):
-            md["default_branch"] = branch
-            changed = True
+        current_url = str(md.get("repository_url") or "").strip()
+        current_branch = str(
+            md.get("default_branch") or DEFAULT_PROJECT_BRANCH
+        ).strip()
+        if current_url:
+            current_url, current_branch, _ = _normalize_repository_registration(
+                str(md.get("repository_registration") or current_url),
+                default_branch=current_branch,
+            )
+            try:
+                same_remote = canonical_git_remote_identity(current_url) == (
+                    canonical_git_remote_identity(repository_url)
+                )
+            except ValueError as exc:
+                raise ValidationError(
+                    "existing project repository URL is invalid: %s" % exc
+                ) from exc
+            if not same_remote or current_branch != branch:
+                raise ValidationError(
+                    "project %s is already registered as %s#%s; use a distinct "
+                    "project name for the internal fork %s"
+                    % (project, current_url, current_branch, registration)
+                )
+        changed = any(
+            md.get(key) != value
+            for key, value in (
+                ("repository_url", repository_url),
+                ("default_branch", branch),
+                ("repository_registration", registration),
+            )
+        )
+        md["repository_url"] = repository_url
+        md["default_branch"] = branch
+        md["repository_registration"] = registration
         if not changed:
             return existing
         return self.update_project(existing.id, metadata=md, actor=actor)
@@ -6641,8 +6790,8 @@ class ControlPlane:
             # Point the caller at the URL-only onboarding path instead.
             raise ValidationError(
                 "project name looks like a git URL (%r); to register a project "
-                "from a repository URL use `mac project onboard %s` "
-                "(POST /repositories/onboard), which clones the repo and reads "
+                "from a repository URL use `mac project register %s` "
+                "(POST /projects/register), which clones the repo and reads "
                 "its README/AGENTS/PLAN to build the project."
                 % (project_name, project_name)
             )
@@ -6761,9 +6910,44 @@ class ControlPlane:
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         status: Optional[str] = None,
+        repository_registration: Optional[str] = None,
+        default_branch: Optional[str] = None,
         actor: str = "human",
     ) -> ProjectRecord:
         project = self.get_project_record(name_or_id)
+        registration_changed = (
+            repository_registration is not None or default_branch is not None
+        )
+        normalized_registration: Optional[Tuple[str, str, str]] = None
+        if registration_changed:
+            project_metadata = ensure_json_object(
+                metadata if metadata is not None else project.metadata
+            )
+            current_identity = _project_registration_from_metadata(
+                ensure_json_object(project.metadata)
+            )
+            registration_value = str(repository_registration or "").strip()
+            if not registration_value:
+                if current_identity is None:
+                    raise ValidationError(
+                        "project has no repository registration; provide "
+                        "GIT_URL#BRANCH"
+                    )
+                registration_value = current_identity[0]
+            normalized_registration = _normalize_repository_registration(
+                registration_value,
+                default_branch=default_branch,
+            )
+            repository_url, branch, registration = normalized_registration
+            self._assert_project_registration_available(
+                repository_url,
+                branch,
+                exclude_project_id=project.id,
+            )
+            project_metadata["repository_url"] = repository_url
+            project_metadata["default_branch"] = branch
+            project_metadata["repository_registration"] = registration
+            metadata = project_metadata
         updates: List[str] = []
         params: List[Any] = []
         new_name = project.name
@@ -6813,6 +6997,67 @@ class ControlPlane:
             if new_name != project.name:
                 conn.execute("UPDATE tasks SET project = ?, updated_at = ? WHERE project = ?", (new_name, now, project.name))
                 conn.execute("UPDATE project_repositories SET project = ?, updated_at = ? WHERE project = ?", (new_name, now, project.name))
+            if new_name != project.name or normalized_registration is not None:
+                repository_url = (
+                    normalized_registration[0]
+                    if normalized_registration is not None
+                    else None
+                )
+                branch = (
+                    normalized_registration[1]
+                    if normalized_registration is not None
+                    else None
+                )
+                rows = conn.execute(
+                    "SELECT id, metadata FROM project_repositories WHERE project = ?",
+                    (new_name,),
+                ).fetchall()
+                for row in rows:
+                    repository_metadata = ensure_json_object(
+                        json_loads(row["metadata"], {})
+                    )
+                    contract = ensure_json_object(
+                        repository_metadata.get("repository_contract")
+                    )
+                    if repository_url is not None:
+                        contract_remote = str(
+                            contract.get("canonical_remote_url") or ""
+                        ).strip()
+                        if contract_remote:
+                            try:
+                                same_remote = canonical_git_remote_identity(
+                                    contract_remote
+                                ) == canonical_git_remote_identity(repository_url)
+                            except ValueError as exc:
+                                raise ValidationError(
+                                    "registered repository URL is invalid: %s"
+                                    % exc
+                                ) from exc
+                            if not same_remote:
+                                raise ValidationError(
+                                    "cannot retarget project %s from %s to %s "
+                                    "while a checkout is registered; unregister "
+                                    "and register the new repository instead"
+                                    % (
+                                        new_name,
+                                        contract_remote,
+                                        repository_url,
+                                    )
+                                )
+                        contract["canonical_remote_url"] = repository_url
+                        contract["default_branch"] = branch
+                    if contract:
+                        contract["project"] = new_name
+                        repository_metadata["repository_contract"] = contract
+                        conn.execute(
+                            "UPDATE project_repositories SET metadata = ?, "
+                            "updated_at = ? WHERE id = ?",
+                            (
+                                json_dumps(repository_metadata),
+                                now,
+                                row["id"],
+                            ),
+                        )
             self._record_project_event(
                 conn,
                 project.id,
@@ -6871,7 +7116,7 @@ class ControlPlane:
             if tasks:
                 blockers.append("%d task(s)" % len(tasks))
             if repo_rows:
-                blockers.append("%d Beads repositorie(s)" % len(repo_rows))
+                blockers.append("%d repository registration(s)" % len(repo_rows))
             raise ValidationError("project has linked records: %s" % ", ".join(blockers))
         now = utcnow()
         with self.store.transaction() as conn:

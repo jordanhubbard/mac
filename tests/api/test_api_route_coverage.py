@@ -1621,7 +1621,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "detail": {"window_days": 0},
             "actor": "route-coverage",
         },
-        ("POST", "/repositories/onboard"): {
+        ("POST", "/projects/register"): {
             "repository_url": "https://github.com/example/route-coverage.git",
             "required_capabilities": ["python"],
         },

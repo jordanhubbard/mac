@@ -2096,15 +2096,10 @@ def cmd_project_create(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_project_onboard(args: argparse.Namespace) -> None:
-    # URL-only onboarding: derive the project name from the repo, clone a
-    # task-owned worktree, and create one onboarding task that instructs a
-    # worker to read the repo's own README.md / AGENTS.md / PLAN.md (+ manifests)
-    # and author the .mac/project.yaml contract. Everything except the URL
-    # defaults — this is the "sane-defaults, just give me a repo URL" path.
+def cmd_project_register(args: argparse.Namespace) -> None:
     capabilities = list(_csv(args.required_capabilities)) or None
     _print(
-        _plane(args).onboard_repository(
+        _plane(args).register_project(
             args.repository_url,
             project=args.project,
             default_branch=args.default_branch,
@@ -2112,8 +2107,48 @@ def cmd_project_onboard(args: argparse.Namespace) -> None:
             priority=args.priority,
             required_capabilities=capabilities,
             actor=args.actor,
-        ).to_dict()
+        )
     )
+
+
+def cmd_project_update(args: argparse.Namespace) -> None:
+    if not any(
+        value is not None
+        for value in (
+            args.name,
+            args.description,
+            args.metadata,
+            args.status,
+            args.repository_registration,
+            args.default_branch,
+        )
+    ):
+        raise MACError("project update requires at least one changed field")
+    _print(
+        _plane(args).update_project(
+            args.project,
+            name=args.name,
+            description=args.description,
+            metadata=(
+                _json_arg(args.metadata, {})
+                if args.metadata is not None
+                else None
+            ),
+            status=args.status,
+            repository_registration=args.repository_registration,
+            default_branch=args.default_branch,
+            actor=args.actor,
+        )
+    )
+
+
+def cmd_project_unregister(args: argparse.Namespace) -> None:
+    result = _plane(args).delete_project(
+        args.project,
+        force=args.force,
+        actor=args.actor,
+    )
+    _print(result or {"deleted": args.project})
 
 
 def cmd_project_pause(args: argparse.Namespace) -> None:
@@ -5822,33 +5857,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="open the project to autonomous dispatch immediately",
     )
     _set(cmd_project_create, project_create)
-    project_onboard = project.add_parser(
-        "onboard",
-        help="create a contract-authoring task from just a git repo URL: clone "
-        "a worktree and task a worker to read the repo's own README/AGENTS/PLAN "
-        "(+ manifests), then author .mac/project.yaml",
+    project_register = project.add_parser(
+        "register",
+        help="register GIT_URL[#BRANCH] as a project and create its "
+        "contract-authoring task (#main is implied)",
     )
-    project_onboard.add_argument(
+    project_register.add_argument(
         "repository_url",
-        metavar="repo-url",
-        help="https://, git@, ssh:// or git:// remote (e.g. https://github.com/org/repo.git)",
+        metavar="GIT_URL[#BRANCH]",
+        help="git remote plus optional working branch, for example "
+        "git@github.com:org/repo.git#feature-x",
     )
-    project_onboard.add_argument(
+    project_register.add_argument(
         "--project",
-        help="project name to file the onboarding task under (default: derived from the repo URL)",
+        help="project name (default: repo name for main, repo@branch otherwise)",
     )
-    project_onboard.add_argument(
+    project_register.add_argument(
+        "--branch",
         "--default-branch",
-        help="branch to clone for analysis (default: the remote's default branch)",
+        dest="default_branch",
+        help="working branch when the URL has no #BRANCH suffix (default: main)",
     )
-    project_onboard.add_argument("--title", help="override the onboarding task title")
-    project_onboard.add_argument("--priority", type=int, default=0)
-    project_onboard.add_argument(
+    project_register.add_argument(
+        "--title", help="override the contract-authoring task title"
+    )
+    project_register.add_argument("--priority", type=int, default=0)
+    project_register.add_argument(
         "--required-capabilities",
         help="comma-separated capabilities required to claim the onboarding task",
     )
-    project_onboard.add_argument("--actor", default="human")
-    _set(cmd_project_onboard, project_onboard)
+    project_register.add_argument("--actor", default="human")
+    _set(cmd_project_register, project_register)
     project_pause = project.add_parser(
         "pause", help="hold a project's tickets from autonomous dispatch"
     )
@@ -5866,6 +5905,41 @@ def build_parser() -> argparse.ArgumentParser:
     project_show = project.add_parser("show")
     project_show.add_argument("project")
     _set(cmd_project_show, project_show)
+    project_update = project.add_parser(
+        "update",
+        help="update project fields or its branch-qualified repository registration",
+    )
+    project_update.add_argument("project")
+    project_update.add_argument("--name")
+    project_update.add_argument("--description")
+    project_update.add_argument("--metadata")
+    project_update.add_argument(
+        "--status",
+        choices=("active", "inactive", "archived"),
+    )
+    project_update.add_argument(
+        "--registration",
+        dest="repository_registration",
+        metavar="GIT_URL[#BRANCH]",
+        help="replace the canonical repository registration",
+    )
+    project_update.add_argument(
+        "--branch",
+        "--default-branch",
+        dest="default_branch",
+        help="change the working branch while keeping the current Git URL",
+    )
+    project_update.add_argument("--actor", default="human")
+    _set(cmd_project_update, project_update)
+    project_unregister = project.add_parser(
+        "unregister",
+        help="remove a project; --force detaches historical tasks and disables "
+        "linked checkout registrations",
+    )
+    project_unregister.add_argument("project")
+    project_unregister.add_argument("--force", action="store_true")
+    project_unregister.add_argument("--actor", default="human")
+    _set(cmd_project_unregister, project_unregister)
 
     work_package = sub.add_parser(
         "work-package",

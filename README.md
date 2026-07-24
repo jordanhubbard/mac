@@ -447,7 +447,7 @@ operator flow is below. Use `--db` for local mode, or omit it when your CLI is
 already pointed at a hub through `--hub-url`, environment, or `~/.mac/fleets.yaml`.
 
 ```bash
-mac --db mac.db project onboard git@github.com:ORG/REPO.git --project my-project
+mac --db mac.db project register git@github.com:ORG/REPO.git#main --project my-project
 # After the onboarding task has produced .mac/project.yaml and that contract
 # exists in a hub-visible checkout:
 mac --db mac.db bridge repository register my-project /srv/repos/my-project --project my-project
@@ -464,6 +464,25 @@ mac --db mac.db task release task_...            # if the task was created with 
 mac --db mac.db dispatch tick --limit 10         # assign ready work now
 ```
 
+The canonical project registration is `GIT_URL#BRANCH`; omitting the fragment
+means `#main`. The same Git URL can therefore have independent MAC projects for
+different branches, while registering the same URL and branch twice is rejected.
+When `--project` is omitted, a non-main branch is named `REPO@BRANCH`.
+
+Project records have a complete operator surface:
+
+```bash
+mac project list
+mac project show my-project
+mac project update my-project --branch release/next
+mac project update my-project --registration git@github.com:ORG/REPO.git#other
+mac project unregister my-project --force
+```
+
+`unregister` refuses projects with linked tasks or internal checkout attachments unless `--force` is
+given; forced removal detaches historical tasks and disables linked checkout
+attachments rather than deleting their history.
+
 Loop-mode agents claim matching work from `mac task ready`. For explicit manual
 assignment, use `mac task claim <task_id> <agent_id>` followed by
 `mac task start <task_id> <agent_id>` with the same transport flags.
@@ -472,8 +491,8 @@ assignment, use `mac task claim <task_id> <agent_id>` followed by
 
 For repository-backed work, the production path is:
 
-1. A project's git repository is registered — e.g. via `mac project onboard
-   <repo-url>`, which creates the contract-authoring onboarding task, followed
+1. A project's git repository is registered — e.g. via `mac project register
+   <git-url>[#branch]`, which creates the contract-authoring onboarding task, followed
    by `mac bridge repository register <name> <path> --project <project>` once
    `.mac/project.yaml` exists in a hub-visible checkout. The mac task ledger is
    canonical; ready work is `mac task ready`.

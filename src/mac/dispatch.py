@@ -160,7 +160,7 @@ class LocalDispatch:
             "finalize_work_package_publication",
             "ingest_work_package_certification_result",
             "land_work_package",
-            "onboard_repository",
+            "register_project",
             "prepare_work_package_certification_job",
             "replan_work_package",
             "reject_failed_work_package_certification",
@@ -761,6 +761,19 @@ class RemoteDispatch:
     def get_project(self, project: str) -> _Dictish:
         return _Dictish(self._get("/projects/%s" % quote(project, safe="")))
 
+    def delete_project(
+        self,
+        name_or_id: str,
+        *,
+        force: bool = False,
+        actor: str = "human",
+    ) -> _Dictish:
+        path = "/projects/%s%s" % (
+            quote(name_or_id, safe=""),
+            _query({"force": bool(force), "actor": actor}),
+        )
+        return _Dictish(self._delete(path))
+
     # -- Work-package surface -----------------------------------------------
 
     def list_work_packages(
@@ -1135,16 +1148,22 @@ class RemoteDispatch:
         self,
         name_or_id: str,
         *,
+        name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         description: Optional[str] = None,
         status: Optional[str] = None,
+        repository_registration: Optional[str] = None,
+        default_branch: Optional[str] = None,
         actor: Optional[str] = None,
     ) -> _Dictish:
         body = _drop_none(
             {
+                "name": name,
                 "metadata": metadata,
                 "description": description,
                 "status": status,
+                "repository_registration": repository_registration,
+                "default_branch": default_branch,
                 "actor": actor,
             }
         )
@@ -1322,7 +1341,7 @@ class RemoteDispatch:
     def model_selection_promote(self) -> _Dictish:
         return _Dictish(self._post("/model-selection/promote", {}))
 
-    def onboard_repository(
+    def register_project(
         self,
         repository_url: str,
         *,
@@ -1344,7 +1363,7 @@ class RemoteDispatch:
                 "actor": actor,
             }
         )
-        return _Dictish(self._post("/repositories/onboard", body))
+        return _Dictish(self._post("/projects/register", body))
 
     def register_project_repository(
         self,
@@ -2902,8 +2921,8 @@ def _task_producing_cli_operation(args: Any) -> Optional[str]:
     command = getattr(args, "command", None)
     if command == "interaction" and getattr(args, "interaction_command", None) == "task":
         return "interaction task creation"
-    if command == "project" and getattr(args, "project_command", None) == "onboard":
-        return "project onboarding"
+    if command == "project" and getattr(args, "project_command", None) == "register":
+        return "project registration"
     if command == "bridge" and getattr(args, "bridge_command", None) == "import":
         return "bridge task import"
     if command == "workflow" and getattr(args, "workflow_command", None) == "start":

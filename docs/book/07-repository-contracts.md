@@ -27,7 +27,8 @@ mac --db "$DOCS_DB" bridge repository register mac "$DOCS_ROOT" \
 mac --db "$DOCS_DB" bridge repository repos
 ```
 
-For a new repository, use `mac project onboard` first. Its contract-authoring
+For a new Git-backed project, use `mac project register GIT_URL[#BRANCH]`
+first. Its contract-authoring
 task should inspect the real build rather than guessing from filenames. Register
 the checkout only after the contract exists.
 

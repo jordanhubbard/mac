@@ -206,6 +206,44 @@ def test_remote_dispatch_repository_ref_reconciler_calls():
     ]
 
 
+def test_remote_dispatch_project_crud_and_registration_calls():
+    client = _FakeHttpClient()
+    dispatch = RemoteDispatch(client)  # type: ignore[arg-type]
+
+    dispatch.register_project(
+        "git@github.com:org/repo.git#feature/one",
+        project="repo-feature",
+    )
+    dispatch.update_project(
+        "repo-feature",
+        default_branch="release/next",
+        actor="operator",
+    )
+    dispatch.delete_project("repo-feature", force=True, actor="operator")
+
+    assert client.calls == [
+        (
+            "POST",
+            "/projects/register",
+            {
+                "repository_url": "git@github.com:org/repo.git#feature/one",
+                "project": "repo-feature",
+                "priority": 0,
+            },
+        ),
+        (
+            "PUT",
+            "/projects/repo-feature",
+            {"default_branch": "release/next", "actor": "operator"},
+        ),
+        (
+            "DELETE",
+            "/projects/repo-feature?force=true&actor=operator",
+            None,
+        ),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # resolve_dispatch — argument resolution and the no-silent-fallback rule
 # ---------------------------------------------------------------------------
@@ -221,7 +259,7 @@ def _ns(**kwargs: Any) -> argparse.Namespace:
     ("values", "expected"),
     [
         ({"command": "interaction", "interaction_command": "task"}, "interaction task creation"),
-        ({"command": "project", "project_command": "onboard"}, "project onboarding"),
+        ({"command": "project", "project_command": "register"}, "project registration"),
         ({"command": "bridge", "bridge_command": "import"}, "bridge task import"),
         ({"command": "workflow", "workflow_command": "start"}, "workflow start"),
         ({"command": "rollout", "rollout_command": "health"}, "rollout health"),

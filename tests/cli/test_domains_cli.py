@@ -458,8 +458,46 @@ def test_task_force_complete(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# project pause / activate / show
+# project register / update / unregister / pause / activate / show
 # ---------------------------------------------------------------------------
+
+
+def test_project_branch_qualified_registration_crud(tmp_path):
+    registration = "https://github.com/example/widget.git#feature/one"
+    rc, task = _run(
+        tmp_path,
+        "project",
+        "register",
+        registration,
+        "--project",
+        "widget-feature",
+    )
+    assert rc == 0
+    assert task["project"] == "widget-feature"
+    assert task["metadata"]["origin"]["repository_registration"] == registration
+
+    rc, updated = _run(
+        tmp_path,
+        "project",
+        "update",
+        "widget-feature",
+        "--branch",
+        "release/next",
+    )
+    assert rc == 0
+    assert updated["metadata"]["repository_registration"].endswith(
+        "#release/next"
+    )
+
+    rc, deleted = _run(
+        tmp_path,
+        "project",
+        "unregister",
+        "widget-feature",
+        "--force",
+    )
+    assert rc == 0
+    assert deleted["deleted"] == "widget-feature"
 
 
 def test_project_pause_and_activate(tmp_path):

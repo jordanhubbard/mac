@@ -382,16 +382,20 @@ options:
 
 ```console
 $ mac project --help
-usage: mac project [-h] {create,onboard,pause,activate,list,show} ...
+usage: mac project [-h]
+                   {create,register,pause,activate,list,show,update,unregister}
+                   ...
 
 positional arguments:
-  {create,onboard,pause,activate,list,show}
-    onboard             create a contract-authoring task from just a git repo
-                        URL: clone a worktree and task a worker to read the
-                        repo's own README/AGENTS/PLAN (+ manifests), then
-                        author .mac/project.yaml
+  {create,register,pause,activate,list,show,update,unregister}
+    register            register GIT_URL[#BRANCH] as a project and create its
+                        contract-authoring task (#main is implied)
     pause               hold a project's tickets from autonomous dispatch
     activate            open a project to autonomous dispatch
+    update              update project fields or its branch-qualified
+                        repository registration
+    unregister          remove a project; --force detaches historical tasks
+                        and disables linked checkout registrations
 
 options:
   -h, --help            show this help message and exit
