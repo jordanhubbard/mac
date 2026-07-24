@@ -52,6 +52,7 @@ plugins:
         dream-finding-6d1b5b.md: archive/field-notes/dream-finding-6d1b5b.md
         dream-finding-805aed7.md: archive/field-notes/dream-finding-805aed7.md
         findings-crash-591645a3-startup-selftest-timeout.md: archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md
+        findings-crash-service-unknown-crash-path.md: archive/field-notes/findings-crash-service-unknown-crash-path.md
         fleet-ide-workbench-plan.md: archive/field-notes/fleet-ide-workbench-plan.md
         forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md: archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md
         forensics-task-a32a35e90ab0434e8c7766057b268bc6.md: archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md
