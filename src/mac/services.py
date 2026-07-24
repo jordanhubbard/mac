@@ -22330,6 +22330,16 @@ class ControlPlane:
     _DISPATCH_TASK_WINDOW = 500
     _DISPATCH_PRIORITY_AGING_SECONDS = 24 * 60 * 60
     _DISPATCH_SKIP_LOG_LIMIT = 25
+    # mac page-prefix fairness: within a single (tenant, project) group, a burst
+    # of candidates sharing a common id / page-cursor prefix can otherwise fill
+    # the whole scan window and starve later prefixes indefinitely. Bucketing by
+    # the leading *N* characters of the page-prefix key and round-robining across
+    # buckets gives every prefix a claim slot each cycle while preserving each
+    # bucket's internal (priority, age) order. Width 2 is a safe default; a
+    # single bucket (all keys share the prefix, or the width covers the whole
+    # key) leaves ordering unchanged. Overridable via env for operators who need
+    # coarser/finer rotation, but never below a floor of 1 character.
+    _DISPATCH_PAGE_PREFIX_WIDTH = 2
 
 
     def _dispatch_ordered_tasks(self, *, project: Optional[str] = None) -> List[Task]:
@@ -22402,6 +22412,71 @@ class ControlPlane:
             for name in project_order:
                 if projects[name]:
                     ordered.append(projects[name].pop(0))
+        return ordered
+
+    @staticmethod
+    def _page_prefix_key(task: Task, width: int) -> str:
+        """Derive the page-prefix bucket key for *task*.
+
+        The key is the leading *width* characters of the task's page cursor
+        (when present) or its id, mirroring how paginated scans group work by
+        id/page-cursor prefix. Pure and side-effect free so both the dispatch
+        and review paths can reuse the same bucketing.
+        """
+        source = getattr(task, "page_cursor", None) or task.id or ""
+        return source[:width]
+
+    def _rotate_by_page_prefix(
+        self,
+        tasks: List[Task],
+        now: str,
+        *,
+        task_ranks: Optional[Mapping[str, WorkPackageTaskRank]] = None,
+        width: Optional[int] = None,
+    ) -> List[Task]:
+        """Round-robin an ordered candidate list across page-prefix buckets.
+
+        Candidates sharing a common id / page-cursor prefix can otherwise
+        monopolize the scan window while later prefixes never get serviced.
+        Bucketing by the leading *width* characters of the page-prefix key and
+        round-robining across buckets gives every prefix a claim slot each
+        cycle; within a bucket the (priority, age) order is preserved.
+
+        The helper is pure and side-effect free (it never mutates *tasks*) so
+        both the dispatch and review paths can reuse it. When only one prefix
+        bucket exists the output order is identical to the sorted input, so the
+        rotation is a no-op for single-prefix groups.
+        """
+        prefix_width = width if width is not None else _int_env(
+            "MAC_DISPATCH_PAGE_PREFIX_WIDTH",
+            self._DISPATCH_PAGE_PREFIX_WIDTH,
+            minimum=1,
+        )
+        buckets: Dict[str, List[Task]] = {}
+        for task in tasks:
+            buckets.setdefault(
+                self._page_prefix_key(task, prefix_width), []
+            ).append(task)
+        for bucket_tasks in buckets.values():
+            bucket_tasks.sort(
+                key=lambda item: self._dispatch_task_sort_key(
+                    item, now, task_ranks=task_ranks
+                )
+            )
+        bucket_order = sorted(
+            buckets,
+            key=lambda prefix: (
+                *self._dispatch_task_sort_key(
+                    buckets[prefix][0], now, task_ranks=task_ranks
+                ),
+                prefix,
+            ),
+        )
+        ordered: List[Task] = []
+        while any(buckets.values()):
+            for prefix in bucket_order:
+                if buckets[prefix]:
+                    ordered.append(buckets[prefix].pop(0))
         return ordered
 
     def _dispatch_candidate_tasks(self, *, project: Optional[str] = None) -> List[Task]:

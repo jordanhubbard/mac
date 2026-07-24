@@ -1,4 +1,5 @@
 import base64
+import dataclasses
 import hashlib
 import json
 import os
@@ -4379,6 +4380,134 @@ def test_dispatch_priority_aging_prevents_low_priority_starvation(cp):
 
     assert claimed is not None
     assert claimed["task"]["id"] == old_default.id
+
+
+def _prefix_task(cp, task_id, *, priority=0, project="rot", created_at=None):
+    """Build a detached Task with a controlled id/prefix for helper tests.
+
+    The page-prefix helper only reads (id, priority, created_at), so a
+    dataclasses.replace clone avoids fighting the tasks-table FK constraints
+    that a raw ``UPDATE tasks SET id`` would trip.
+    """
+    seed = cp.create_task(
+        "seed-%s" % task_id,
+        project=project,
+        priority=priority,
+        required_capabilities=["python"],
+    )
+    return dataclasses.replace(
+        seed,
+        id=task_id,
+        created_at=created_at or seed.created_at,
+    )
+
+
+def test_rotate_by_page_prefix_round_robins_across_prefix_buckets(cp):
+    now = services.utcnow()
+    # Two prefix buckets ("aa" and "bb"); the "aa" bucket floods the window.
+    tasks = [
+        _prefix_task(cp, "aa00"),
+        _prefix_task(cp, "aa01"),
+        _prefix_task(cp, "aa02"),
+        _prefix_task(cp, "bb00"),
+    ]
+
+    rotated = cp._rotate_by_page_prefix(tasks, now, width=2)
+
+    # The late "bb" prefix gets the second claim slot instead of queueing behind
+    # every candidate sharing the "aa" prefix.
+    assert [task.id for task in rotated] == ["aa00", "bb00", "aa01", "aa02"]
+
+
+def test_rotate_by_page_prefix_is_noop_for_single_bucket(cp):
+    now = services.utcnow()
+    tasks = [
+        _prefix_task(cp, "pp-low", priority=10),
+        _prefix_task(cp, "pp-high", priority=100),
+    ]
+
+    rotated = cp._rotate_by_page_prefix(tasks, now, width=2)
+
+    # A single "pp" bucket preserves the sorted (priority, age) order unchanged.
+    assert [task.id for task in rotated] == ["pp-high", "pp-low"]
+
+
+def test_rotate_by_page_prefix_preserves_priority_within_bucket(cp):
+    now = services.utcnow()
+    tasks = [
+        _prefix_task(cp, "aa-low", priority=10),
+        _prefix_task(cp, "aa-high", priority=100),
+        _prefix_task(cp, "bb-mid", priority=50),
+    ]
+
+    rotated = cp._rotate_by_page_prefix(tasks, now, width=2)
+
+    order = [task.id for task in rotated]
+    # Within the "aa" bucket the higher priority still precedes the lower.
+    assert order.index("aa-high") < order.index("aa-low")
+    # Both prefixes are serviced; the "aa" head leads on priority.
+    assert order[0] == "aa-high"
+    assert order[1] == "bb-mid"
+
+
+def test_rotate_by_page_prefix_does_not_mutate_input(cp):
+    now = services.utcnow()
+    tasks = [_prefix_task(cp, "aa-one"), _prefix_task(cp, "bb-two")]
+    original_ids = [task.id for task in tasks]
+
+    cp._rotate_by_page_prefix(tasks, now, width=2)
+
+    # The helper is pure: the caller's list is left untouched.
+    assert [task.id for task in tasks] == original_ids
+
+
+def test_rotate_by_page_prefix_width_env_gated(cp, monkeypatch):
+    now = services.utcnow()
+    tasks = [_prefix_task(cp, task_id) for task_id in ("abx", "aby", "acz")]
+
+    # Width 1 collapses everything into the single "a" bucket -> no rotation.
+    monkeypatch.setenv("MAC_DISPATCH_PAGE_PREFIX_WIDTH", "1")
+    width_one = [task.id for task in cp._rotate_by_page_prefix(tasks, now)]
+    assert width_one == ["abx", "aby", "acz"]
+
+    # Width 2 splits into "ab" and "ac" buckets and round-robins across them.
+    monkeypatch.setenv("MAC_DISPATCH_PAGE_PREFIX_WIDTH", "2")
+    width_two = [task.id for task in cp._rotate_by_page_prefix(tasks, now)]
+    assert width_two == ["abx", "acz", "aby"]
+
+    # An invalid override falls back to the safe default width (2).
+    monkeypatch.setenv("MAC_DISPATCH_PAGE_PREFIX_WIDTH", "not-an-int")
+    fallback = [task.id for task in cp._rotate_by_page_prefix(tasks, now)]
+    assert fallback == width_two
+
+
+def test_dispatch_ordered_tasks_unchanged_by_page_prefix_helper(cp):
+    # The shared helper is exposed but NOT wired into dispatch yet, so the
+    # existing project round-robin ordering must be preserved verbatim.
+    flood = [
+        cp.create_task(
+            "flood-%d" % index,
+            project="flood",
+            priority=100,
+            required_capabilities=["python"],
+        )
+        for index in range(3)
+    ]
+    starved = cp.create_task(
+        "starved",
+        project="starved",
+        priority=10,
+        required_capabilities=["python"],
+    )
+
+    ordered = cp._dispatch_ordered_tasks()
+
+    assert [task.id for task in ordered] == [
+        flood[0].id,
+        starved.id,
+        flood[1].id,
+        flood[2].id,
+    ]
 
 
 def test_claim_next_records_per_task_agent_skip_reason(cp, monkeypatch):
