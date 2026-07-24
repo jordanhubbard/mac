@@ -14627,6 +14627,71 @@ typed_finalize_worker() {
   finalize_remote_deployment_release "$agent" "$(deployment_id_for_agent "$agent")" || return 1
 }
 
+assert_cohort_prerequisites_proven() {
+  # Fail-closed pre-mutation gate. Before the first phase-1 service quiescence
+  # mutates ANY selected worker, prove that EVERY deploy prerequisite is already
+  # proven for EVERY node in the cohort:
+  #   1. the phase-1 restore contract produced by the fleet-node-phase1-quiesce.sh
+  #      prepare/identify steps exists and its digest is intact, and
+  #   2. the fleet-prerequisite-receipts.py bundle still validates against its
+  #      expectations for the node identity, within the remaining phase budget.
+  # Both budgets are honored so headroom is guaranteed for this phase and the
+  # later immutable apply: MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS gates the
+  # current pre-quiescence work and MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS
+  # reserves lifetime for phase-2 apply. Any unproven prerequisite aborts the
+  # deployment before a single worker is quiesced. Python helper stderr and
+  # tracebacks are deliberately surfaced (never redirected to /dev/null) so an
+  # operator can diagnose which prerequisite is unproven.
+  local selected_specs_file="$1"
+  local spec fields=() agent identity_sha bundle expectations
+  local phase_budget apply_guard
+  phase_budget="${MAC_DEPLOY_PREREQUISITE_PHASE_BUDGET_SECONDS:-2400}"
+  apply_guard="${MAC_DEPLOY_PREREQUISITE_APPLY_GUARD_SECONDS:-120}"
+  echo "==> fleet: proving every deploy prerequisite before any phase-1 mutation"
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    IFS='|' read -r -a fields <<<"$spec"
+    agent="${fields[0]}"
+    # Prove the phase-1 restore contract from prepare/identify is present and its
+    # digest is intact for this node. A failure here surfaces the helper stderr.
+    if ! phase1_restore_contract_digest_for_agent "$agent" >/dev/null; then
+      echo "ERROR: ${agent}: phase-1 restore contract is unproven before phase-1 mutation" >&2
+      return 1
+    fi
+    bundle="$(node_prerequisite_bundle_file "$agent")"
+    expectations="$(node_prerequisite_expectations_file "$agent")"
+    if [ ! -s "$bundle" ] || [ ! -s "$expectations" ]; then
+      echo "ERROR: ${agent}: prerequisite bundle is unproven before phase-1 mutation" >&2
+      return 1
+    fi
+    identity_sha="$(node_route_identity_sha256 "$agent")"
+    if [ -z "$identity_sha" ]; then
+      echo "ERROR: ${agent}: node route identity is unproven before phase-1 mutation" >&2
+      return 1
+    fi
+    # Re-validate the prerequisite bundle against its expectations. validate-bundle
+    # writes its own diagnostic to stderr on failure; do not swallow it.
+    if ! "$PYTHON_BIN" "$PREREQUISITE_RECEIPT_HELPER" validate-bundle \
+      --bundle "$bundle" --expectations "$expectations" \
+      --agent-id "$agent" --node-identity-sha256 "$identity_sha" \
+      --max-age-seconds 3600 >/dev/null; then
+      echo "ERROR: ${agent}: prerequisite bundle re-validation failed before phase-1 mutation" >&2
+      return 1
+    fi
+    # Prove enough bundle lifetime remains for both the current pre-mutation phase
+    # and the later immutable phase-2 apply guard.
+    if ! assert_prerequisite_remaining_budget "$agent" "$phase_budget"; then
+      echo "ERROR: ${agent}: prerequisite bundle lacks the phase budget before phase-1 mutation" >&2
+      return 1
+    fi
+    if ! assert_prerequisite_remaining_budget "$agent" "$apply_guard"; then
+      echo "ERROR: ${agent}: prerequisite bundle lacks the apply guard before phase-1 mutation" >&2
+      return 1
+    fi
+    echo "==> ${agent}: all deploy prerequisites proven before phase-1 mutation"
+  done < "$selected_specs_file"
+}
+
 run_typed_cohort() {
   local selected_specs_file="$1" hub_agent="$2" hub_token="$3"
   local hub_tunnel_pubkey="$4" github_review_key_b64="$5" hold_adoption_plan="$6"
@@ -14682,6 +14747,10 @@ run_typed_cohort() {
     typed_staging_worker || return 1
 
   build_and_open_hub_epoch "$selected_specs_file" "$hub_agent"
+
+  # Fail closed: prove every deploy prerequisite for every selected node
+  # before the first phase-1 service quiescence mutates any worker.
+  assert_cohort_prerequisites_proven "$selected_specs_file" || return 1
 
   echo "==> fleet: quiescing the exact cohort under hub epoch ownership"
   # The journal deliberately makes quiescence a cohort-ordered handoff: each
