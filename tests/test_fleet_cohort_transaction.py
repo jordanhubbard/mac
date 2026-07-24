@@ -572,7 +572,10 @@ def advance_one_node_to(scenario: Scenario, checkpoint: str) -> None:
         "required",
     ),
     [
-        ("init", "retain_forward", "none", None, 0, True),
+        # A freshly created journal has bound no route and mutated nothing, so
+        # recovery classifies it for a route-free abort of the unmutated
+        # pre-route transaction rather than a rollback/retain-forward.
+        ("init", "abort_unmutated", "none", None, 0, True),
         ("hub-route-bound", "retain_forward", "none", None, 0, True),
         ("route-bound", "retain_forward", "none", None, 0, True),
         ("phase1-prepare-start", "retain_forward", "none", "retain_forward", 0, True),
@@ -1428,3 +1431,125 @@ def test_directory_must_be_owner_private(tmp_path: Path) -> None:
         check=False,
     )
     assert rejected["error"]["code"] == "insecure_directory"
+
+
+# The deploy controller's recovery route gate (verify_cohort_recovery_routes in
+# deploy/deploy-mac-fleet.sh) extracts one route record per recovering hub/node
+# and raises when a record lacks a journal-bound endpoint identity.  This is a
+# faithful transcription of that gate so the classifier contract can be tested
+# without a live fleet.
+def _recovery_route_records(recovery: dict[str, Any]) -> list[tuple[str, Any, Any]]:
+    hub = recovery.get("hub_recovery") or {}
+    direction = recovery.get("direction")
+    records: list[tuple[str, Any, Any]] = []
+    if hub.get("action") != "none" or direction in {
+        "resolve_commit",
+        "rollback",
+        "retain_forward",
+    }:
+        records.append(("hub", hub.get("agent_name"), hub.get("route_identity")))
+    for key in ("candidates", "finalization_candidates"):
+        for item in recovery.get(key) or []:
+            records.append(("node", item.get("agent_name"), item.get("route_identity")))
+    return records
+
+
+def _gate_requires_bound_identities(recovery: dict[str, Any]) -> list[tuple[str, str]]:
+    seen: set[tuple[str, Any]] = set()
+    verified: list[tuple[str, str]] = []
+    for role, agent, identity in _recovery_route_records(recovery):
+        key = (role, agent)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not agent or not isinstance(identity, dict):
+            raise SystemExit(
+                "recovery mutation lacks a journal-bound endpoint identity"
+            )
+        verified.append((role, agent))
+    return verified
+
+
+def test_hub_unreachable_immediately_after_journal_creation_self_recovers(
+    tmp_path: Path,
+) -> None:
+    # A fresh fungible deploy opens the journal, then the very first hub-route
+    # reachability check fails before an endpoint identity is bound.  The
+    # journal is preparing/routing, the hub epoch is unopened, and every node
+    # is still planned -- nothing was mutated.
+    scenario = Scenario(tmp_path, node_count=2)
+    assert scenario.journal["state"] == "preparing"
+    assert scenario.journal["hub_state"] == "unopened"
+    assert scenario.journal["hub_route_identity"] is None
+    assert all(node["state"] == "planned" for node in scenario.journal["cohort"])
+
+    plan = recovery(scenario)
+    # Recovery classifies the provably unmutated pre-route transaction for a
+    # route-free abort instead of demanding an endpoint identity that was never
+    # journalled.
+    assert plan["direction"] == "abort_unmutated"
+    assert plan["hub_recovery"]["action"] == "none"
+    assert plan["hub_recovery"]["route_identity"] is None
+    assert plan["candidates"] == []
+
+    # The controller's route gate produces no records to attest and therefore
+    # does not raise "recovery mutation lacks a journal-bound endpoint
+    # identity".
+    assert _gate_requires_bound_identities(plan) == []
+
+    # The classification remains route-free regardless of recovery policy.
+    assert recovery(scenario, policy="rollback")["direction"] == "abort_unmutated"
+
+    # The abort transition completes directly and durably.
+    scenario.call("abort")
+    assert scenario.journal["state"] == "aborted"
+    assert recovery(scenario)["recovery_required"] is False
+
+
+def test_mutated_transaction_still_fails_closed_without_bound_identity(
+    tmp_path: Path,
+) -> None:
+    # Contrast: the moment any node/hub mutation occurs, the journal leaves the
+    # unmutated pre-route window and recovery must re-arm the exact
+    # endpoint-identity requirement.
+    scenario = Scenario(tmp_path)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+
+    plan = recovery(scenario)
+    assert plan["direction"] != "abort_unmutated"
+    assert plan["direction"] == "retain_forward"
+    # A route was bound before the mutation, so the gate has a real identity to
+    # attest against and does not short-circuit.
+    assert plan["hub_recovery"]["route_identity"] is not None
+    verified = _gate_requires_bound_identities(plan)
+    verified_roles = {role for role, _agent in verified}
+    assert "hub" in verified_roles
+    assert "node" in verified_roles
+
+    # If a mutated journal is ever missing its exact endpoint identity, the
+    # controller gate fails closed with the historical error rather than
+    # silently recovering.
+    stripped = json.loads(json.dumps(plan))
+    stripped["hub_recovery"]["route_identity"] = None
+    for candidate in stripped["candidates"]:
+        candidate["route_identity"] = None
+    with pytest.raises(SystemExit) as excinfo:
+        _gate_requires_bound_identities(stripped)
+    assert "recovery mutation lacks a journal-bound endpoint identity" in str(
+        excinfo.value
+    )
+
+
+def test_pre_route_classifier_rejects_any_hub_or_node_mutation(
+    journal_module: Any, tmp_path: Path
+) -> None:
+    # Direct unit coverage of the classifier predicate: it must be true only in
+    # the unmutated pre-route window and false after any recorded mutation.
+    scenario = Scenario(tmp_path)
+    fresh = scenario.journal
+    assert journal_module._is_unmutated_pre_route(fresh) is True
+
+    scenario.bind_routes()
+    routed = scenario.journal
+    assert journal_module._is_unmutated_pre_route(routed) is False

@@ -2490,6 +2490,65 @@ def _finalization_candidates(journal: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+PRE_ROUTE_STATES = frozenset({"preparing", "routing"})
+
+_NODE_MUTATION_EVIDENCE_KEYS = (
+    "route_identity",
+    "restore_contract_sha256",
+    "phase1_arm_evidence",
+    "quiescence_evidence",
+    "rollback_intent_sha256",
+    "finalizer_sha256",
+    "phase2_arm_evidence",
+    "prepared_evidence",
+    "abort_evidence",
+    "finalize_evidence",
+)
+
+
+def _is_unmutated_pre_route(journal: dict[str, Any]) -> bool:
+    """Prove a cohort transaction never bound a route or mutated any endpoint.
+
+    True only when the hub epoch was never opened, no route identity was ever
+    durably journalled, and every cohort node is still merely ``planned`` with
+    no recovery or mutation evidence.  This is the exact window in which the
+    first hub-route reachability check can fail before an authenticated
+    endpoint identity is bound: nothing on the hub or any node has changed, so
+    the transaction can be aborted without route attestation.  Any node or hub
+    mutation moves the journal out of this window and re-arms the exact
+    endpoint-identity requirement.
+    """
+
+    if journal["state"] not in PRE_ROUTE_STATES:
+        return False
+    if journal["hub_state"] != "unopened":
+        return False
+    if journal["hub_route_identity"] is not None:
+        return False
+    if any(
+        journal[key] is not None
+        for key in (
+            "hub_open_plan",
+            "hub_open_evidence",
+            "hub_prove_plan",
+            "hub_proved_evidence",
+            "hub_commit_evidence",
+            "hub_abort_evidence",
+            "release_plan",
+            "commit_not_applied_evidence",
+        )
+    ):
+        return False
+    for node in journal["cohort"]:
+        if node["state"] != "planned":
+            return False
+        if node["abort_kind"] is not None or node["abort_from_state"] is not None:
+            return False
+        if any(node[key] is not None for key in _NODE_MUTATION_EVIDENCE_KEYS):
+            return False
+    return True
+
+
 def _summary(journal: dict[str, Any]) -> dict[str, Any]:
     return {
         "epoch_id": journal["epoch_id"],
@@ -3504,6 +3563,12 @@ def command_recovery(
         direction = "finalize"
     elif journal["state"] in TERMINAL_STATES:
         direction = "none"
+    elif _is_unmutated_pre_route(journal):
+        # The transaction never bound a route identity and never mutated the
+        # hub or any node -- the exact window in which the first hub-route
+        # reachability check can fail.  Classify it for a route-free abort
+        # instead of demanding an endpoint identity that was never journalled.
+        direction = "abort_unmutated"
     else:
         direction = (
             "retain_forward"

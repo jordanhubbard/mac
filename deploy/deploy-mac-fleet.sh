@@ -13504,6 +13504,23 @@ recover_active_cohort_transaction_v2() {
     COHORT_JOURNAL_ACTIVE=0
     return 0
   fi
+  if [ "$direction" = abort_unmutated ]; then
+    # The journal classifier proved the transaction never bound a route
+    # identity and never mutated the hub or any node (e.g. the first hub-route
+    # reachability check failed before an endpoint identity was journalled).
+    # There is nothing to reach, so abort directly without route attestation;
+    # the journal abort transition still fences any node/hub mutation.
+    if ! cohort_journal_mutate abort "$epoch_id" "$COHORT_JOURNAL_REVISION" \
+      abort-unmutated-recovered "$owner_nonce" >/dev/null; then
+      return 1
+    fi
+    if ! confirm_cohort_journal_terminal "$epoch_id" aborted; then
+      return 1
+    fi
+    COHORT_JOURNAL_ACTIVE=0
+    echo "==> fleet: unmutated pre-route cohort transaction was safely aborted"
+    return 0
+  fi
   if ! verify_cohort_recovery_routes "$status_file" "$recovery_file"; then
     return 1
   fi

@@ -3859,3 +3859,54 @@ printf '%s\n' "$result"
         "upload:/fixture/functions",
         "ssh",
     ]
+
+
+def test_recovery_aborts_unmutated_pre_route_without_route_attestation(tmp_path):
+    # The journal classifier can report direction=abort_unmutated for a
+    # transaction that never bound a route identity or mutated the hub/nodes
+    # (e.g. the first hub-route reachability check failed just after journal
+    # creation).  The controller must abort it directly, never invoking the
+    # route attestation gate that would otherwise raise "recovery mutation
+    # lacks a journal-bound endpoint identity".
+    deploy = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery = (
+        "recover_active_cohort_transaction_v2() {"
+        + deploy.split("recover_active_cohort_transaction_v2() {", 1)[1].split(
+            "\n}\n\nrecover_incomplete_cohort_transaction_before_deploy", 1
+        )[0]
+        + "\n}"
+    )
+    events = tmp_path / "events"
+    snippet = f"""set -u
+TMPDIR_LOCAL={shlex.quote(str(tmp_path))}
+PYTHON_BIN={shlex.quote(sys.executable)}
+DEPLOY_CONTROLLER_NONCE=controller
+COHORT_JOURNAL_ACTIVE=1
+COHORT_JOURNAL_REVISION=0
+RECOVERY_POLICY=retain-forward
+cohort_journal() {{
+  case "$1" in
+    status) printf '%s\\n' '{{"journal":{{"revision":0,"fleet":"mac"}}}}' ;;
+    recovery) printf '%s\\n' '{{"direction":"abort_unmutated","hub_recovery":{{"action":"none"}},"candidates":[]}}' ;;
+  esac
+}}
+verify_cohort_recovery_routes() {{ printf '%s\\n' verify >> {shlex.quote(str(events))}; return 1; }}
+cohort_journal_mutate() {{ printf '%s\\n' "mutate:$1" >> {shlex.quote(str(events))}; return 0; }}
+confirm_cohort_journal_terminal() {{ printf '%s\\n' "confirm:$2" >> {shlex.quote(str(events))}; return 0; }}
+{recovery}
+set +e
+if recover_active_cohort_transaction_v2 epoch controller; then result=0; else result=$?; fi
+printf '%s|%s\\n' "$result" "$COHORT_JOURNAL_ACTIVE"
+"""
+    result = subprocess.run(
+        ["bash", "-c", snippet], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == "0|0"
+    assert "unmutated pre-route cohort transaction was safely aborted" in result.stdout
+    recorded = events.read_text(encoding="utf-8").splitlines()
+    # Route attestation is never invoked for the provably unmutated case.
+    assert "verify" not in recorded
+    # The journal is aborted directly and confirmed terminal as aborted.
+    assert "mutate:abort" in recorded
+    assert "confirm:aborted" in recorded
