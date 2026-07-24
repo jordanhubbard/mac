@@ -318,6 +318,35 @@ def test_operator_result_live_host_requires_check_and_reviewable_anchor():
     assert anchored == []
 
 
+@pytest.mark.parametrize(
+    ("anchor_key", "anchor_value"),
+    [
+        ("target", "rocky-01.example"),
+        ("host", "rocky-01.example"),
+        ("artifact", "agent-build-42.tgz"),
+        ("artifact_digest", "sha256:abc"),
+        ("image_digest", "sha256:def"),
+    ],
+)
+def test_operator_result_live_host_accepts_each_reviewable_anchor(anchor_key, anchor_value):
+    # A passing check plus any one of the independently reviewable anchor keys
+    # (target/host/artifact/artifact_digest/image_digest) satisfies the gate.
+    accepted = validate_evidence_type(
+        "operator_result",
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "operator_result",
+            "live_host": True,
+            "summary": "Deployed the new agent build to the host and confirmed it.",
+            anchor_key: anchor_value,
+            "checks": [{"name": "health", "returncode": 0}],
+        },
+        passed_check_count=_passed_check_count,
+    )
+    assert accepted == []
+
+
 def test_non_live_operator_result_keeps_substance_only_gate():
     # Planning/answer/report operator_result (no live-host marker) is unchanged:
     # a substantive summary alone still passes, with no check/anchor demand.
