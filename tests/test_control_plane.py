@@ -5510,12 +5510,30 @@ def test_project_unregister_does_not_leave_disabled_repository_as_derived_projec
         source="repo-retired-project",
         project=project.name,
     )
+    task = cp.create_task(
+        "historical repository task",
+        project=project.name,
+        metadata={
+            "repository": "repo-retired-project",
+            "origin": {
+                "repository": "repo-retired-project",
+                "source": "repo-retired-project",
+            },
+        },
+    )
 
     cp.delete_project(project.id, force=True)
 
+    summaries = cp.list_projects()
+    assert all(summary["project"] != project.name for summary in summaries)
     assert all(
-        summary["project"] != project.name for summary in cp.list_projects()
+        summary["project"] != "repo-retired-project" for summary in summaries
     )
+    assert cp.get_task(task.id).project is None
+    unassigned = next(
+        summary for summary in summaries if summary["project"] == "unassigned"
+    )
+    assert unassigned["task_count"] == 1
     registration = cp.get_project_repository("retired-repository")
     assert registration.enabled is False
 

@@ -2987,19 +2987,11 @@ class ControlPlane:
 
     def _hermes_task_project_key(self, task: Task) -> str:
         project = str(task.project or "").strip()
-        if project:
-            return project
-        for key in ("project", "repository", "repo"):
-            value = str(task.metadata.get(key) or "").strip()
-            if value:
-                return value
-        origin = task.metadata.get("origin")
-        if isinstance(origin, dict):
-            for key in ("project", "repository", "repo", "source"):
-                value = str(origin.get(key) or "").strip()
-                if value:
-                    return value
-        return "unassigned"
+        # ``tasks.project`` is the first-class ownership field. Historical
+        # repository/origin metadata is forensic context, not a replacement
+        # project registration: inferring from it recreated deleted projects
+        # after force-unregister detached their tasks.
+        return project or "unassigned"
 
     def _hermes_task_context(self, task: Task) -> JsonDict:
         origin = task.metadata.get("origin")
