@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -362,3 +363,161 @@ def test_contract_runner_select_base_falls_through_to_full_gate_when_unresolved(
     pytest_calls = [line for line in calls if "-m coverage run -m pytest" in line]
     assert len(pytest_calls) == 2
     assert "not (process_e2e or postgres or container_contract or docker_e2e)" in pytest_calls[0]
+
+
+# --- Environment-prerequisite bootstrap-on-demand (interpreter resolution) ---
+#
+# The runner resolves a usable interpreter and, when the resolved one cannot run
+# the suite (missing coverage/pytest/project deps), bootstraps the hermetic
+# .venv the execution contract promises. A missing .venv was the original
+# rc-127 that blocked in-sandbox verification; a PRE-EXISTING but BROKEN .venv
+# (stale deps / half-written interpreter) is the residual gap — bootstrap only
+# rebuilds a venv whose bin/python is absent, so the runner must discard the
+# unusable .venv itself before bootstrapping or the gate dead-ends at exit 1.
+
+_GOOD_PY_BODY = """#!/bin/sh
+# A "healthy" interpreter: satisfies the runner's _py_can_run_suite probe
+# (coverage --version, pytest --version, import cryptography/fastapi/yaml) and
+# answers the cpu-count and pytest phases so the gate can complete.
+case "$*" in
+    *os.cpu_count*) printf '2\\n'; exit 0 ;;
+    *"--version"*) exit 0 ;;
+    *"import cryptography"*) exit 0 ;;
+    "-m coverage combine") printf 'Combined data file .coverage.fake\\n'; exit 0 ;;
+    "-m coverage json -o "*) exit 0 ;;
+    *"-m pytest"*) exit 0 ;;
+esac
+exit 0
+"""
+
+_BROKEN_PY_BODY = """#!/bin/sh
+# A pre-existing but unusable interpreter: every suite probe fails, so the
+# runner must not accept it and must not leave it in place.
+case "$*" in
+    *"--version"*) exit 1 ;;
+    *"import cryptography"*) exit 1 ;;
+esac
+exit 0
+"""
+
+
+def _write_exec(path: Path, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _stage_interpreter_repo(
+    tmp_path: Path, *, broken_venv: bool, provide_builder: bool
+) -> tuple[Path, dict[str, str]]:
+    """Stage a throwaway repo that runs the REAL runner through its interpreter
+    resolution. A fake bootstrap-project.py writes a healthy .venv/bin/python
+    (mirroring the real --venv-only build) so a successful bootstrap yields a
+    runnable gate; ``provide_builder`` toggles whether any non-.venv interpreter
+    is available to perform that bootstrap."""
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text("[project]\nname='fake'\n", encoding="utf-8")
+    (repo / "scripts" / "run-contract-tests.sh").write_text(
+        RUNNER.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (repo / "scripts" / "run-contract-tests.sh").chmod(0o755)
+    # bootstrap-project.py builds a healthy .venv when invoked by the runner.
+    (repo / "scripts" / "bootstrap-project.py").write_text(
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "root = Path(__file__).resolve().parents[1]\n"
+        "py = root / '.venv' / 'bin' / 'python'\n"
+        "py.parent.mkdir(parents=True, exist_ok=True)\n"
+        "py.write_text(%r)\n"
+        "os.chmod(py, 0o755)\n"
+        "print('bootstrap-project.py built .venv', file=sys.stderr)\n"
+        % _GOOD_PY_BODY,
+        encoding="utf-8",
+    )
+    if broken_venv:
+        _write_exec(repo / ".venv" / "bin" / "python", _BROKEN_PY_BODY)
+
+    path_bin = tmp_path / "pathbin"
+    path_bin.mkdir()
+    if provide_builder:
+        # A working python3 on PATH: it both passes the probe and, crucially,
+        # actually executes bootstrap-project.py (which builds the healthy
+        # .venv). A plain "exit 0" stub would swallow the bootstrap, so this
+        # builder dispatches the bootstrap script to a real interpreter.
+        _write_exec(
+            path_bin / "python3",
+            "#!/bin/sh\n"
+            "for a in \"$@\"; do\n"
+            "  case \"$a\" in *bootstrap-project.py)\n"
+            "    exec \"$REAL_PY\" \"$@\" ;;\n"
+            "  esac\n"
+            "done\n"
+            + _GOOD_PY_BODY.split("\n", 1)[1],
+        )
+
+    env = {
+        "PATH": f"{path_bin}:/usr/bin:/bin",
+        "HOME": str(tmp_path / "home"),
+        # Force interpreter resolution to ignore any real /opt/mac-venv.
+        "MAC_CONTRACT_RUNTIME_VENV": str(tmp_path / "nonexistent-runtime-venv"),
+        # A real interpreter the fake PATH builder execs to run bootstrap; kept
+        # off PATH so it never resolves as the runner's own interpreter.
+        "REAL_PY": sys.executable,
+    }
+    (tmp_path / "home").mkdir()
+    for marker in (
+        "PYTEST_CURRENT_TEST",
+        "PYTEST_XDIST_WORKER",
+        "PYTEST_XDIST_WORKER_COUNT",
+        "PYTEST_XDIST_TESTRUNUID",
+    ):
+        env.pop(marker, None)
+    return repo, env
+
+
+def test_contract_runner_rebuilds_a_broken_preexisting_venv(tmp_path):
+    """A pre-existing .venv/bin/python that cannot run the suite must be
+    discarded and re-bootstrapped, not treated as a fatal dead end. Before the
+    repair the runner skipped bootstrap whenever .venv/bin/python existed and
+    exited 1; now it rebuilds the unusable venv and the gate proceeds."""
+    repo, env = _stage_interpreter_repo(
+        tmp_path, broken_venv=True, provide_builder=True
+    )
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / "run-contract-tests.sh")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "bootstrapping .venv" in completed.stderr
+    assert "bootstrap-project.py built .venv" in completed.stderr
+    # The rebuilt .venv is the healthy one that ran the gate.
+    assert (repo / ".venv" / "bin" / "python").exists()
+    assert "no interpreter can run the suite" not in completed.stderr
+
+
+def test_contract_runner_reports_when_no_interpreter_can_run_the_suite(tmp_path):
+    """With a broken .venv and no non-.venv interpreter available to bootstrap
+    with, the runner must fail closed with the diagnostic (exit 1) rather than
+    silently running a gate it cannot measure."""
+    repo, env = _stage_interpreter_repo(
+        tmp_path, broken_venv=True, provide_builder=False
+    )
+
+    completed = subprocess.run(
+        [str(repo / "scripts" / "run-contract-tests.sh")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    assert "no interpreter can run the suite" in completed.stderr

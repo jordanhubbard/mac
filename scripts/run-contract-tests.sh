@@ -200,7 +200,27 @@ _py_can_run_suite() {
         && "$1" -c "import cryptography, fastapi, yaml" >/dev/null 2>&1
 }
 if ! _py_can_run_suite "$PY"; then
-    if [ ! -x ".venv/bin/python" ] && [ -f "scripts/bootstrap-project.py" ]; then
+    # A pre-existing but broken .venv (stale deps, a half-written interpreter,
+    # or one built against removed system libs) is resolved as $PY above yet
+    # still fails the probe. bootstrap-project.py only rebuilds a venv whose
+    # bin/python is MISSING, so it would leave this one untouched and the gate
+    # would exit 1 without ever repairing it — the same environment-prerequisite
+    # dead end the on-demand bootstrap exists to prevent. Discard the unusable
+    # .venv first so bootstrap builds a clean one.
+    if [ -x ".venv/bin/python" ] && ! _py_can_run_suite ".venv/bin/python"; then
+        rm -rf .venv
+        # $PY may have resolved to the .venv interpreter just removed; fall back
+        # to the runtime venv or a PATH python so bootstrap has a real builder.
+        if [ ! -x "$PY" ]; then
+            if [ -x "$_MAC_CONTRACT_RUNTIME_PYTHON" ]; then
+                PY="$_MAC_CONTRACT_RUNTIME_PYTHON"
+            else
+                PY="$(command -v python3 || command -v python || true)"
+            fi
+        fi
+    fi
+    if [ ! -x ".venv/bin/python" ] && [ -n "$PY" ] && [ -x "$PY" ] \
+        && [ -f "scripts/bootstrap-project.py" ]; then
         echo "run-contract-tests.sh: $PY cannot run the suite; bootstrapping .venv" >&2
         "$PY" scripts/bootstrap-project.py --venv-only >&2
     fi
