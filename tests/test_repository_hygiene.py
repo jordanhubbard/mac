@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,7 +15,9 @@ from mac.repository_hygiene import (
     ManagedRepositoryRef,
     RepositoryHygieneError,
     RepositoryRefAudit,
+    RepositoryRefAuditResult,
     audit_repository_refs,
+    audit_repository_refs_result,
     cleanup_evidence_metadata,
     list_managed_remote_refs,
     normalize_cancellation_detail,
@@ -827,3 +830,332 @@ def test_cleanup_metadata_is_secret_safe_and_complete():
     assert metadata["sha"] == SHA
     assert metadata["replacement_task_id"] == REPLACEMENT_ID
     assert "password" not in metadata["error"]
+
+
+# ---------------------------------------------------------------------------
+# Bounded / batched audit regression coverage.
+#
+# These exercise the bounded, observable audit exposed by
+# ``audit_repository_refs_result``: a slow or stalled hub task_loader must never
+# exceed the overall deadline or hang, every ref is still audited, timed-out or
+# unavailable tasks fail closed (never ``eligible=True``), task-detail reads are
+# deduped/cached (at most one loader call per task_id), and a KeyboardInterrupt
+# yields a clean partial report. Fake loaders use ``threading.Event``/sleep and
+# call counters instead of real HTTP, and a deterministic monotonic clock hook
+# keeps the deadline logic hermetic.
+# ---------------------------------------------------------------------------
+
+
+def _fake_clock(start=0.0):
+    """Deterministic ``monotonic`` hook whose value only advances on demand."""
+
+    state = {"t": float(start)}
+
+    def clock():
+        return state["t"]
+
+    def advance(delta):
+        state["t"] += float(delta)
+
+    return clock, advance
+
+
+def _multi_ref(task_id, *, branch_suffix, sha=None):
+    suffix = str(branch_suffix)
+    branch = "mac/agent_worker/%s-%s" % (task_id, suffix)
+    return ManagedRepositoryRef(
+        remote="origin",
+        branch=branch,
+        ref="refs/heads/%s" % branch,
+        sha=sha or SHA,
+        task_id=task_id,
+        lease_id=LEASE_ID,
+    )
+
+
+def _stall_event():
+    """A threading.Event that a fake loader can block on until released."""
+
+    return threading.Event()
+
+
+def test_slow_hub_stays_within_deadline_and_reports_timeout():
+    # A task_loader that sleeps longer than the per-task timeout must not push
+    # the audit past its overall deadline; the audit still returns audits for
+    # every ref plus a warning and the timed-out task IDs.
+    release = _stall_event()
+
+    def slow_loader(task_id):
+        # Block far longer than the per-task timeout; the bounded loader must
+        # cancel/abandon this lookup instead of waiting the full sleep.
+        release.wait(timeout=5.0)
+        return _detail("completed")
+
+    clock, _advance = _fake_clock()
+    try:
+        result = audit_repository_refs_result(
+            Path("."),
+            [_ref()],
+            slow_loader,
+            now=NOW,
+            open_pull_requests={},
+            per_task_timeout_seconds=0.05,
+            audit_deadline_seconds=1.0,
+            monotonic=clock,
+        )
+    finally:
+        release.set()
+
+    assert isinstance(result, RepositoryRefAuditResult)
+    assert len(result.audits) == 1
+    audit = result.audits[0]
+    assert audit.eligible is False
+    assert TASK_ID in result.timed_out_task_ids
+    assert result.warning
+    assert "timed out" in audit.reason
+
+
+def test_one_stalled_task_does_not_block_other_refs():
+    # With multiple refs where exactly one task_loader call stalls, the other
+    # refs audit normally and the stalled ref is reported ineligible with a
+    # clear unavailable/timed-out reason.
+    stalled_task = "task_" + "e" * 32
+    healthy_task = "task_" + "f" * 32
+    release = _stall_event()
+
+    def loader(task_id):
+        if task_id == stalled_task:
+            release.wait(timeout=5.0)
+            return _detail("completed")
+        return _detail("open")
+
+    def merged(_repo, argv, timeout):
+        return _cp(argv)
+
+    refs = [
+        _multi_ref(healthy_task, branch_suffix="h"),
+        _multi_ref(stalled_task, branch_suffix="s"),
+    ]
+    clock, _advance = _fake_clock()
+    try:
+        result = audit_repository_refs_result(
+            Path("."),
+            refs,
+            loader,
+            now=NOW,
+            open_pull_requests={},
+            runner=merged,
+            per_task_timeout_seconds=0.05,
+            audit_deadline_seconds=1.0,
+            monotonic=clock,
+        )
+    finally:
+        release.set()
+
+    by_task = {audit.task_id: audit for audit in result.audits}
+    assert set(by_task) == {healthy_task, stalled_task}
+
+    healthy = by_task[healthy_task]
+    assert healthy.task_state == "open"
+    assert healthy.classification != "unknown"
+
+    stalled = by_task[stalled_task]
+    assert stalled.eligible is False
+    assert stalled_task in result.timed_out_task_ids
+    assert "timed out" in stalled.reason
+
+
+def test_partial_result_structure_is_complete_and_does_not_hang():
+    # The returned structure includes audits for every ref plus the timed-out
+    # task IDs and a warning, instead of raising or hanging.
+    stalled_task = "task_" + "e" * 32
+    ok_task = "task_" + "f" * 32
+    release = _stall_event()
+
+    def loader(task_id):
+        if task_id == stalled_task:
+            release.wait(timeout=5.0)
+        return _detail("open")
+
+    refs = [
+        _multi_ref(ok_task, branch_suffix="ok"),
+        _multi_ref(stalled_task, branch_suffix="stall"),
+    ]
+    clock, _advance = _fake_clock()
+    try:
+        result = audit_repository_refs_result(
+            Path("."),
+            refs,
+            loader,
+            now=NOW,
+            open_pull_requests={},
+            per_task_timeout_seconds=0.05,
+            audit_deadline_seconds=1.0,
+            monotonic=clock,
+        )
+    finally:
+        release.set()
+
+    assert isinstance(result, RepositoryRefAuditResult)
+    assert len(result.audits) == len(refs)
+    assert {audit.task_id for audit in result.audits} == {ok_task, stalled_task}
+    assert stalled_task in result.timed_out_task_ids
+    assert ok_task not in result.timed_out_task_ids
+    assert result.warning
+    # Serializable partial report (never raised / hung).
+    payload = result.to_dict()
+    assert len(payload["audits"]) == len(refs)
+    assert payload["timed_out_task_ids"] == list(result.timed_out_task_ids)
+    assert payload["warning"] == result.warning
+
+
+def test_task_detail_lookups_are_deduped_and_cached():
+    # A task_id referenced by multiple refs (and via replacement task_ids)
+    # triggers at most one task_loader call, and cached unavailability is
+    # reused rather than re-fetched.
+    calls = {}
+    stalled_task = "task_" + "e" * 32
+    replacement = REPLACEMENT_ID
+    lifecycle = {
+        "disposition": "superseded",
+        "eligible_after": "2026-06-01T00:00:00+00:00",
+        "replacement_task_id": replacement,
+    }
+    release = _stall_event()
+
+    def loader(task_id):
+        calls[task_id] = calls.get(task_id, 0) + 1
+        if task_id == stalled_task:
+            release.wait(timeout=5.0)
+            return None
+        if task_id == replacement:
+            return _detail("completed")
+        return _detail("cancelled", lifecycle=lifecycle)
+
+    def merged(_repo, argv, timeout):
+        return _cp(argv)
+
+    # TASK_ID appears on three refs; stalled_task on two refs; both replacement
+    # chains point at the same replacement task id.
+    refs = [
+        _multi_ref(TASK_ID, branch_suffix="1"),
+        _multi_ref(TASK_ID, branch_suffix="2"),
+        _multi_ref(TASK_ID, branch_suffix="3"),
+        _multi_ref(stalled_task, branch_suffix="s1"),
+        _multi_ref(stalled_task, branch_suffix="s2"),
+    ]
+    clock, _advance = _fake_clock()
+    try:
+        result = audit_repository_refs_result(
+            Path("."),
+            refs,
+            loader,
+            now=NOW,
+            open_pull_requests={},
+            runner=merged,
+            per_task_timeout_seconds=0.05,
+            audit_deadline_seconds=1.0,
+            monotonic=clock,
+        )
+    finally:
+        release.set()
+
+    # Every task id fetched at most once despite repeated references.
+    assert calls.get(TASK_ID) == 1
+    assert calls.get(stalled_task) == 1
+    assert calls.get(replacement) == 1
+
+    by_branch = {audit.branch: audit for audit in result.audits}
+    assert len(by_branch) == len(refs)
+    # Cached unavailability reused: both stalled refs report timed-out.
+    stalled_refs = [a for a in result.audits if a.task_id == stalled_task]
+    assert len(stalled_refs) == 2
+    assert all(a.eligible is False for a in stalled_refs)
+    assert stalled_task in result.timed_out_task_ids
+
+
+def test_fail_closed_when_primary_or_replacement_detail_unavailable():
+    # A ref whose primary OR replacement task detail is unavailable/timed-out
+    # must never be eligible=True.
+    lifecycle = {
+        "disposition": "superseded",
+        "eligible_after": "2026-06-01T00:00:00+00:00",
+        "replacement_task_id": REPLACEMENT_ID,
+    }
+
+    def merged(_repo, argv, timeout):
+        return _cp(argv)
+
+    # 1) Primary detail unavailable (loader returns None sentinel).
+    def missing_primary(task_id):
+        return None
+
+    primary_result = audit_repository_refs_result(
+        Path("."),
+        [_ref()],
+        missing_primary,
+        now=NOW,
+        open_pull_requests={},
+        runner=merged,
+    )
+    assert primary_result.audits[0].eligible is False
+
+    # 2) Primary present + eligible-looking, but replacement unavailable.
+    def missing_replacement(task_id):
+        if task_id == REPLACEMENT_ID:
+            return None
+        return _detail("cancelled", lifecycle=lifecycle)
+
+    replacement_result = audit_repository_refs_result(
+        Path("."),
+        [_ref()],
+        missing_replacement,
+        now=NOW,
+        open_pull_requests={},
+        runner=merged,
+    )
+    audit = replacement_result.audits[0]
+    assert audit.eligible is False
+    assert "replacement" in audit.reason
+
+    # 3) Sanity: with a completed replacement it becomes eligible, proving the
+    # fail-closed cases above are driven by unavailability, not a blanket deny.
+    def complete_replacement(task_id):
+        if task_id == REPLACEMENT_ID:
+            return _detail("completed")
+        return _detail("cancelled", lifecycle=lifecycle)
+
+    ok_result = audit_repository_refs_result(
+        Path("."),
+        [_ref()],
+        complete_replacement,
+        now=NOW,
+        open_pull_requests={},
+        runner=merged,
+    )
+    assert ok_result.audits[0].eligible is True
+
+
+def test_keyboard_interrupt_yields_clean_partial_report():
+    # A task_loader raising KeyboardInterrupt must produce a clean partial
+    # report path: no hang, the interrupt is not swallowed into eligible=True,
+    # and a partial warning is surfaced.
+    def interrupting_loader(task_id):
+        raise KeyboardInterrupt()
+
+    result = audit_repository_refs_result(
+        Path("."),
+        [_ref()],
+        interrupting_loader,
+        now=NOW,
+        open_pull_requests={},
+        per_task_timeout_seconds=0.05,
+        audit_deadline_seconds=1.0,
+    )
+
+    assert isinstance(result, RepositoryRefAuditResult)
+    assert len(result.audits) == 1
+    assert result.audits[0].eligible is False
+    assert result.warning
+    assert "interrupted" in result.warning
+    assert TASK_ID in result.timed_out_task_ids
