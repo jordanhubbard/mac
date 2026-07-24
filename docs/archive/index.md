@@ -32,6 +32,7 @@ their retained sources.
 - [Assessment: task_f9cd72342aef4e7b8701b131b12d29ff](../archive/field-notes/assessment-task-f9cd72.md) — `archive/field-notes/assessment-task-f9cd72.md`
 - [Close-Out: dream finding `dreamrepair:3dc2cf317ea21e032952a355c3550f88` (openclaw_fleet_rollout deliverable)](../archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md) — `archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md`
 - [Close-Out: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem)](../archive/field-notes/closeout-dreamrepair-5404b15-skill.md) — `archive/field-notes/closeout-dreamrepair-5404b15-skill.md`
+- [Close-Out: dream-finding review finalize/verify prerequisite](../archive/field-notes/closeout-review-finalize-verify-prerequisite.md) — `archive/field-notes/closeout-review-finalize-verify-prerequisite.md`
 - [Disposition: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem)](../archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md) — `archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md`
 - [Disposition: skill environment-prerequisite finding — smallest repair applied](../archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md) — `archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md`
 - [Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88](../archive/field-notes/dream-finding-3dc2cf.md) — `archive/field-notes/dream-finding-3dc2cf.md`
