@@ -252,6 +252,11 @@ if args and args[0] == "ps":
         print(os.environ["FAKE_SECRET"], file=sys.stderr)
         raise SystemExit(72)
     state["ps_count"] = state.get("ps_count", 0) + 1
+    if (
+        mode == "inspect-vanish"
+        and "label=openshell.ai/managed-by=openshell" in args
+    ):
+        state["vanish_on_inspect"] = True
     containers = list(state.get("containers", []))
     if mode == "openshell-retire" and state["ps_count"] >= 3:
         containers = []
@@ -276,6 +281,12 @@ if args and args[0] == "inspect":
         print(os.environ["FAKE_SECRET"], file=sys.stderr)
         raise SystemExit(73)
     wanted = {{arg for arg in args[1:] if not arg.startswith("-")}}
+    if mode == "inspect-vanish" and state.pop("vanish_on_inspect", False):
+        state["containers"] = [
+            item for item in state.get("containers", []) if item["Id"] not in wanted
+        ]
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        raise SystemExit(1)
     containers = [
         item for item in state.get("containers", []) if item["Id"] in wanted
     ]
@@ -997,6 +1008,24 @@ def test_retiring_openshell_task_container_is_awaited_before_receipt(
         sandbox_source="none",
         docker=[_openshell_container(container_id, running=True)],
         docker_mode="openshell-retire",
+    )
+    receipt = _assert_success_marker(run)
+    assert receipt["openshell_managed"]["final_state"] == "inactive"
+    state = json.loads(run.docker_state.read_text(encoding="utf-8"))
+    assert state["containers"] == []
+    assert state["ps_count"] >= 4
+    assert not any(" rm " in f" {line} " for line in _call_lines(run))
+
+
+def test_openshell_container_vanishing_between_list_and_inspect_is_reproved(
+    tmp_path: Path,
+) -> None:
+    container_id = "v" * 64
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        docker=[_openshell_container(container_id, running=True)],
+        docker_mode="inspect-vanish",
     )
     receipt = _assert_success_marker(run)
     assert receipt["openshell_managed"]["final_state"] == "inactive"

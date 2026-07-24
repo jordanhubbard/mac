@@ -7473,7 +7473,7 @@ safe_container_id = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 managed_sandbox_name = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
-def inspect_running_managed_openshell(runtime):
+def list_managed_openshell_ids(runtime):
     listed = runtime_result(
         runtime,
         "ps",
@@ -7491,16 +7491,28 @@ def inspect_running_managed_openshell(runtime):
         raise QuiescenceFailure(
             "OpenShell-managed container inventory returned duplicate identities"
         )
-    active = []
     for identifier in identifiers:
         if not safe_container_id.fullmatch(identifier):
             raise QuiescenceFailure(
                 "OpenShell-managed container inventory returned an invalid identity"
             )
+    return identifiers
+
+
+def inspect_running_managed_openshell(runtime):
+    identifiers = list_managed_openshell_ids(runtime)
+    active = []
+    for identifier in identifiers:
         inspected = runtime_result(runtime, "inspect", identifier)
         if inspected.timed_out:
             raise QuiescenceFailure("OpenShell-managed container inspection timed out")
         if inspected.returncode != 0:
+            # OpenShell sandboxes can finish between the running inventory and
+            # the exact inspection. Re-prove that specific identity is no
+            # longer running before accepting the race; a still-listed
+            # identity or an unreadable runtime remains a hard failure.
+            if identifier not in list_managed_openshell_ids(runtime):
+                continue
             raise QuiescenceFailure("OpenShell-managed container inspection failed")
         try:
             payload = json.loads(inspected.stdout)
