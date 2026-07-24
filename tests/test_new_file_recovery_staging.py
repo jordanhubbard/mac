@@ -11,6 +11,8 @@ refusal-manifest JSON shapes the code reads:
 * every preserved new file (untracked, staged-but-uncommitted, and the sorted
   deduplicated union) is ``git add``-ed, produces a non-empty staged diff, and
   is committed with the ``mac.new_file_recovery.v1`` recovery trailer/kind;
+* only the preserved new files are staged — a coexisting gitignored artifact
+  never enters the recovery commit;
 * recovery fails closed (rather than silently succeeding) when the refusal left
   no new files to stage; and
 * ``_write_git_finalizer_refusal_manifest`` records the correct
@@ -261,6 +263,56 @@ def test_recovers_union_of_untracked_and_staged_new_files(tmp_path: Path):
     assert sorted(committed) == ["both.py", "only_staged.py", "only_untracked.py"]
     # untracked_files takes precedence in the manifest kind ordering.
     assert result["refusal_kind"] == FinalizerRefusalKind.untracked_new_files.value
+
+
+def test_recovery_stages_only_preserved_new_files_never_gitignored_artifacts(
+    tmp_path: Path,
+):
+    """Recovery commits the preserved new source files but no gitignored artifact.
+
+    The finalizer preserves only the intended new files (porcelain excludes
+    ignored paths), so a gitignored build artifact sitting beside them must
+    never enter the recovery commit even when it lives in the worktree.  This
+    locks the recovery path's ``git add -- <path>`` staging to the preserved
+    lists alone, mirroring the finalizer-staging over-staging guard.
+    """
+    workspace, worktree, _base, task = _staging_fixture(tmp_path)
+    # A tracked .gitignore committed on the branch, so ``build/`` and ``*.log``
+    # are genuinely ignored for the artifacts created below.
+    (worktree / ".gitignore").write_text("build/\n*.log\n", encoding="utf-8")
+    _git(worktree, "add", ".gitignore")
+    _git(worktree, "commit", "-m", "ignore generated artifacts")
+    # Intended new source file the agent handed off untracked.
+    (worktree / "feature.py").write_text("VALUE = 7\n", encoding="utf-8")
+    # Gitignored artifacts that coexist in the worktree but must stay out.
+    (worktree / "build").mkdir()
+    (worktree / "build" / "artifact.o").write_text("BINARY\n", encoding="utf-8")
+    (worktree / "run.log").write_text("noise\n", encoding="utf-8")
+    # The finalizer only ever preserves the non-ignored new file.
+    _write_refusal(
+        workspace,
+        worktree,
+        task,
+        untracked=["feature.py"],
+        staged=[],
+    )
+
+    def push_runner(target):
+        return _StubPublication(_git(worktree, "rev-parse", "HEAD"))
+
+    result = recover_from_new_file_refusal(workspace, task, push_runner=push_runner)
+
+    assert result["recovered_files"] == ["feature.py"]
+    committed = _git(worktree, "show", "--name-only", "--format=", "HEAD").split()
+    assert committed == ["feature.py"]
+    # Over-staging guard: the gitignored artifacts never entered the commit.
+    assert "build/artifact.o" not in committed
+    assert "run.log" not in committed
+    # The ignored artifacts still exist untracked-and-ignored; a plain porcelain
+    # status stays clean because ``git add`` honored .gitignore.
+    assert _git(worktree, "status", "--porcelain") == ""
+    assert (worktree / "build" / "artifact.o").exists()
+    assert (worktree / "run.log").exists()
 
 
 def test_recovery_records_error_when_no_new_files_to_stage(tmp_path: Path):
