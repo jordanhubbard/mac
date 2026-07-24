@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/book/04-machines-and-agents/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/repository-cicd-monitor/">
       
       
-        <link rel="prev" href="../03-projects-and-tasks/">
+        <link rel="prev" href="../repository-runtime-contract/">
       
       
-        <link rel="next" href="../05-evidence-review-completion/">
+        <link rel="next" href="../fleet-registry-schema/">
       
       
         
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>Machines and Agents - MAC Documentation</title>
+        <title>Repository CI/CD lifecycle - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,9 +53,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#machines-and-agents" class="md-skip">
+        <a href="#repository-cicd-lifecycle-monitoring" class="md-skip">
           Skip to content
         </a>
       
@@ -100,7 +100,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -120,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Machines and Agents
+              Repository CI/CD lifecycle
             
           </span>
         </div>
@@ -238,7 +238,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -268,7 +268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -292,8 +292,6 @@
       
   
   
-    
-  
   
   
     
@@ -306,11 +304,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
@@ -331,7 +329,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -349,7 +347,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../01-system/" class="md-nav__link">
+      <a href="../book/01-system/" class="md-nav__link">
         
   
   
@@ -377,7 +375,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../02-local-start/" class="md-nav__link">
+      <a href="../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -405,7 +403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../03-projects-and-tasks/" class="md-nav__link">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -430,19 +428,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -458,7 +447,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -471,7 +459,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../05-evidence-review-completion/" class="md-nav__link">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -499,7 +487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../06-hermes-and-ide/" class="md-nav__link">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -527,7 +515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../07-repository-contracts/" class="md-nav__link">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -555,7 +543,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../08-plans-and-dags/" class="md-nav__link">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -583,7 +571,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../09-fleet-onboarding/" class="md-nav__link">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -611,7 +599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../10-identity-and-secrets/" class="md-nav__link">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -639,7 +627,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../11-publication-and-refs/" class="md-nav__link">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -667,7 +655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../12-operations/" class="md-nav__link">
+      <a href="../book/12-operations/" class="md-nav__link">
         
   
   
@@ -695,7 +683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../13-deployment-topologies/" class="md-nav__link">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -723,7 +711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../14-images-and-cutover/" class="md-nav__link">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -751,7 +739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -779,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../16-apis-and-integrations/" class="md-nav__link">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -807,7 +795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -835,7 +823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../18-capstone/" class="md-nav__link">
+      <a href="../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -867,8 +855,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -879,11 +869,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
@@ -904,7 +894,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -922,7 +912,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -950,7 +940,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/openapi/" class="md-nav__link">
+      <a href="../reference/openapi/" class="md-nav__link">
         
   
   
@@ -978,7 +968,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../env-config-reference/" class="md-nav__link">
+      <a href="../env-config-reference/" class="md-nav__link">
         
   
   
@@ -1006,7 +996,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-directives/" class="md-nav__link">
+      <a href="../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1034,7 +1024,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../repository-runtime-contract/" class="md-nav__link">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1059,10 +1049,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../repository-cicd-monitor/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository CI/CD lifecycle
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1078,6 +1095,70 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this exists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cadence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cadence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-publication-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-publication checks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1090,7 +1171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-registry-schema/" class="md-nav__link">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1118,7 +1199,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1205,7 +1286,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../production-deployment/" class="md-nav__link">
+      <a href="../production-deployment/" class="md-nav__link">
         
   
   
@@ -1233,7 +1314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fleet-node-onboarding-checklist/" class="md-nav__link">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
         
   
   
@@ -1261,7 +1342,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../synchronized-fleet-cutover/" class="md-nav__link">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
         
   
   
@@ -1289,7 +1370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hub-availability/" class="md-nav__link">
+      <a href="../hub-availability/" class="md-nav__link">
         
   
   
@@ -1317,7 +1398,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1404,7 +1485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../work-graph-control-plane/" class="md-nav__link">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
         
   
   
@@ -1432,7 +1513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../hermes-boundary/" class="md-nav__link">
+      <a href="../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1460,7 +1541,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../openshell-sandbox/" class="md-nav__link">
+      <a href="../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1488,7 +1569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../archive/" class="md-nav__link">
+      <a href="../archive/" class="md-nav__link">
         
   
   
@@ -1536,6 +1617,58 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this exists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cadence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cadence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#post-publication-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Post-publication checks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1551,7 +1684,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/book/04-machines-and-agents.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/repository-cicd-monitor.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1559,61 +1692,109 @@
   
 
 
-<h1 id="machines-and-agents">Machines and Agents<a class="headerlink" href="#machines-and-agents" title="Permanent link">&para;</a></h1>
-<p>A machine describes a compute location. An agent is a process identity attached
-to a machine with capabilities and resource declarations. Keeping these objects
-separate lets one physical host run several roles and lets pod-style machines
-appear and disappear without losing agent history.</p>
-<p>Use stable explicit identifiers in automation. Human-friendly names can change;
-task leases and evidence always refer to canonical IDs.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>init
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>machine<span class="w"> </span>register<span class="w"> </span>tutorial-host<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--machine-id<span class="w"> </span>machine_tutorial<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--labels<span class="w"> </span><span class="s1">&#39;{&quot;os&quot;:&quot;linux&quot;,&quot;arch&quot;:&quot;amd64&quot;,&quot;role&quot;:&quot;worker&quot;}&#39;</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>register<span class="w"> </span>machine_tutorial<span class="w"> </span>tutorial-worker<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>--agent-id<span class="w"> </span>agent_tutorial<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--instance-kind<span class="w"> </span>static<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>--capabilities<span class="w"> </span>python,docs<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span>--resources<span class="w"> </span><span class="s1">&#39;{&quot;cpu&quot;:2,&quot;memory_mb&quot;:4096}&#39;</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>list
-</code></pre></div>
-<p><code>instance_kind</code> is a first-class lifecycle property:</p>
+<h1 id="repository-cicd-lifecycle-monitoring">Repository CI/CD lifecycle monitoring<a class="headerlink" href="#repository-cicd-lifecycle-monitoring" title="Permanent link">&para;</a></h1>
+<p>MAC treats CI/CD as a continuation of repository work. Publication still
+completes when reviewed work is integrated and remotely verified; CI health is
+checked afterward and can create linked maintenance work without rewriting the
+historical publication result or turning CI into a delivery gate.</p>
+<h2 id="why-this-exists">Why this exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
+<p>A read-only audit of the authenticated GitHub notification feed on 2026-07-24
+found 1,336 accumulated threads. Of those, 1,304 (97.6%) were CI activity and
+1,302 were still unread. The alerts spanned 15 repositories from 2026-05-09
+through 2026-07-24; 989 concerned a repository's main/default branch.</p>
+<p>The largest backlogs were:</p>
+<table>
+<thead>
+<tr>
+<th>Repository</th>
+<th style="text-align: right;">CI notifications</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>jordanhubbard/ACC</code></td>
+<td style="text-align: right;">616</td>
+</tr>
+<tr>
+<td><code>jordanhubbard/mac</code></td>
+<td style="text-align: right;">412</td>
+</tr>
+<tr>
+<td><code>NVIDIA-dev/Sim-Slim</code></td>
+<td style="text-align: right;">115</td>
+</tr>
+<tr>
+<td><code>jordanhubbard/nanolang</code></td>
+<td style="text-align: right;">73</td>
+</tr>
+<tr>
+<td><code>NVIDIA-dev/oss-tracker</code></td>
+<td style="text-align: right;">24</td>
+</tr>
+<tr>
+<td><code>jordanhubbard/Aviation</code></td>
+<td style="text-align: right;">13</td>
+</tr>
+</tbody>
+</table>
+<p>This is not merely old inbox noise. There were 19 new CI notifications in the
+last 24 hours. Representative failures included MAC's
+<a href="https://github.com/jordanhubbard/mac/actions/runs/30078995918">impact-selected coverage gate</a>,
+NanoLang's
+<a href="https://github.com/jordanhubbard/nanolang/actions/runs/30057187324">backend matrix</a>,
+and Aviation's
+<a href="https://github.com/jordanhubbard/Aviation/actions/runs/29937216960">application deployment workflow</a>.</p>
+<p>Notification read state is therefore not an execution ledger. The monitor keys
+checks to immutable repository, ref, and commit SHA identities and records the
+outcome in MAC.</p>
+<h2 id="cadence">Cadence<a class="headerlink" href="#cadence" title="Permanent link">&para;</a></h2>
+<p>The monitor intentionally uses only two coarse latency buckets:</p>
 <ul>
-<li><code>static</code> (the backward-compatible default) identifies a named installation
-  whose machine trust is durable, such as a hub or named workstation agent.</li>
-<li><code>fungible</code> identifies replaceable compute. A headless worker created through
-  a provider API or a helper such as <code>hgx create</code> belongs here; its loss is a
-  capacity event, not the loss of a static fleet identity.</li>
+<li>Recent average completed-run duration at or below two hours: check at least
+  every four hours.</li>
+<li>Recent average duration above two hours: check at least every eight hours.</li>
 </ul>
-<p>Operators can set the classification at registration or change it explicitly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>register<span class="w"> </span>machine_tutorial<span class="w"> </span>headless-worker<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--agent-id<span class="w"> </span>agent_headless<span class="w"> </span>--instance-kind<span class="w"> </span>fungible
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>agent<span class="w"> </span>update<span class="w"> </span>agent_headless<span class="w"> </span>--instance-kind<span class="w"> </span>static
+<p>This matches observed repositories without trying to predict every workflow:
+MAC and NanoLang generally finish in 10-20 minutes, while successful OrcaSlicer
+builds average about four hours and can approach six. A run that is still
+pending is re-polled; it is not treated as missing or failed.</p>
+<p>Repositories may override the defaults with project metadata under
+<code>cicd_monitor</code>. GitHub repositories are otherwise auto-detected, and
+repositories with no Actions/check/status data are quietly classified as
+having no CI.</p>
+<h2 id="post-publication-checks">Post-publication checks<a class="headerlink" href="#post-publication-checks" title="Permanent link">&para;</a></h2>
+<p>After a Git publication, MAC records a durable
+<code>cicd.followup.scheduled</code> observability event containing:</p>
+<ul>
+<li>the publication and source task IDs;</li>
+<li>the registered project and GitHub repository identity;</li>
+<li>the exact canonical SHA; and</li>
+<li>the first due time.</li>
+</ul>
+<p>It checks that exact canonical SHA after the settle delay, rechecks pending CI,
+and records the outcome. A terminal failure is ordinary maintenance input:
+MAC creates at most one unfinished, low-priority cleanup task per repository
+and coalesces later failures into the same cleanup pressure. That task may fix
+a bounded issue directly, classify a transient or intentionally accepted
+failure, or split out narrower work only when that is genuinely useful.</p>
+<p>The original repository task remains completed. A later CI failure is new,
+linked lifecycle work rather than a retroactive claim that publication did not
+happen. It does not hold dispatch, publication, deployment, or unrelated work.</p>
+<h2 id="operation">Operation<a class="headerlink" href="#operation" title="Permanent link">&para;</a></h2>
+<p>The authoritative hub enables the monitor by default. Operators can inspect or
+trigger it through:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>GET  /cicd-monitor/status
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>POST /cicd-monitor/run
 </code></pre></div>
-<p>Fungibility does not weaken trust checks. For example, <code>hgx list</code> establishes
-provider inventory, while a successful <code>hgx ssh &lt;session&gt;</code> proves that a listed
-session is actually reachable. A replacement host key must still be
-re-attested through the provider before its strict SSH pin is changed.</p>
-<p>Fungibility is also distinct from the legacy <code>resources.ephemeral</code> TTL flag. A
-fungible agent may retain a durable MAC identity across replacement compute;
-an ephemeral agent identity is tombstoned after its heartbeat TTL expires.</p>
-<p>Production agents authenticate with their own revocable worker credentials.
-They must never copy the hub administrator token. A heartbeat advertises current
-availability, while a lease grants authority over one task attempt for a bounded
-time. Stale processes cannot reuse an expired lease to write evidence.</p>
-<p>Fleet deployment generates and verifies the runtime identity projected onto
-each agent. Registration is necessary, but it is not proof that the node can
-clone repositories, invoke its coding CLI, or pass the sandbox contract; those
-are onboarding acceptance checks covered later.</p>
+<p>GitHub credentials are resolved through the existing secret-safe GitHub token
+provider. Reports and task metadata contain repository/run URLs and classified
+outcomes, never token values or authenticated URLs.</p>
 
 
 
 
 
 
-
-  
-  
 
 
 
@@ -1643,7 +1824,7 @@ are onboarding acceptance checks covered later.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../03-projects-and-tasks/" class="md-footer__link md-footer__link--prev" aria-label="Previous: 3. Projects and Tasks">
+          <a href="../repository-runtime-contract/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Repository contract">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1653,20 +1834,20 @@ are onboarding acceptance checks covered later.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                3. Projects and Tasks
+                Repository contract
               </div>
             </div>
           </a>
         
         
           
-          <a href="../05-evidence-review-completion/" class="md-footer__link md-footer__link--next" aria-label="Next: 5. Evidence, Review, and Completion">
+          <a href="../fleet-registry-schema/" class="md-footer__link md-footer__link--next" aria-label="Next: Fleet registry">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                5. Evidence, Review, and Completion
+                Fleet registry
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -1702,10 +1883,10 @@ are onboarding acceptance checks covered later.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
