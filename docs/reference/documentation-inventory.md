@@ -74,6 +74,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/quickstart-gap-analysis.md` | Quickstart Gap Analysis |
 | historical archive | `archive/field-notes/scaling-plan.md` | Scaling Plan |
 | historical archive | `archive/index.md` | Historical archive |
+| supplemental reference | `audit.md` | MAC Codebase Audit — Active Code, Duplication & Accretion |
 | book | `book/01-system.md` | MAC as a System |
 | book | `book/02-local-start.md` | Install and Start Locally |
 | book | `book/03-projects-and-tasks.md` | Projects and Tasks |
@@ -110,6 +111,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `fleet-operational-learning.md` | Fleet operational learning |
 | supplemental reference | `fleet-registry-schema.md` | Fleet registry schema |
 | supplemental reference | `getting-started.md` | MAC Quickstart |
+| supplemental reference | `haskell_migration.md` | A Notional Haskell Migration Plan for MAC |
 | supplemental reference | `hermes-boundary.md` | Hermes Boundary |
 | supplemental reference | `hermes-integration.md` | Hermes Integration |
 | runbook | `hub-availability.md` | Hub Availability |
