@@ -62,6 +62,7 @@ their retained sources.
 - [Kubernetes-native rewrite plan](../archive/field-notes/k8s-native-rewrite-plan.md) — `archive/field-notes/k8s-native-rewrite-plan.md`
 - [`mac task` ↔ `bd` (beads) functional-parity audit](../archive/field-notes/mac-task-bd-parity-audit.md) — `archive/field-notes/mac-task-bd-parity-audit.md`
 - [Metadata sync assessment (post-bd-bridge)](../archive/field-notes/metadata-sync-assessment.md) — `archive/field-notes/metadata-sync-assessment.md`
+- [Preflight: HGX auth path, fleet baseline, and standard-dind fungible reference](../archive/field-notes/prereq-task-029665.md) — `archive/field-notes/prereq-task-029665.md`
 - [Prerequisite Verification: task_403ed263ed7e45c6b7624345005a097c](../archive/field-notes/prereq-task-403ed263.md) — `archive/field-notes/prereq-task-403ed263.md`
 - [Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd](../archive/field-notes/prereq-task-e94f546c.md) — `archive/field-notes/prereq-task-e94f546c.md`
 - [Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff](../archive/field-notes/prereq-task-fd2f34.md) — `archive/field-notes/prereq-task-fd2f34.md`

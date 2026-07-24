@@ -68,6 +68,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/k8s-native-rewrite-plan.md` | Kubernetes-native rewrite plan |
 | historical archive | `archive/field-notes/mac-task-bd-parity-audit.md` | `mac task` ↔ `bd` (beads) functional-parity audit |
 | historical archive | `archive/field-notes/metadata-sync-assessment.md` | Metadata sync assessment (post-bd-bridge) |
+| historical archive | `archive/field-notes/prereq-task-029665.md` | Preflight: HGX auth path, fleet baseline, and standard-dind fungible reference |
 | historical archive | `archive/field-notes/prereq-task-403ed263.md` | Prerequisite Verification: task_403ed263ed7e45c6b7624345005a097c |
 | historical archive | `archive/field-notes/prereq-task-e94f546c.md` | Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd |
 | historical archive | `archive/field-notes/prereq-task-fd2f34.md` | Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff |
