@@ -1,0 +1,2193 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/haskell_migration/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>A Notional Haskell Migration Plan for MAC - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#a-notional-haskell-migration-plan-for-mac" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              A Notional Haskell Migration Plan for MAC
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-cicd-monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository CI/CD lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changeset-adoption-core-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changeset-adoption core spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-framing-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Framing &amp; scope
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Framing &amp; scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-would-be-migrated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What would be migrated
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-would-not-be-migrated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What would not be migrated
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-this-coupling-is-the-key-architectural-fact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this coupling is the key architectural fact
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-target-haskell-stack-library-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Target Haskell stack &amp; library mapping
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-per-area-difficulty-estimate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Per-area difficulty estimate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Per-area difficulty estimate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-servicespy-problem-dominates-everything" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The services.py problem dominates everything
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-cross-cutting-hard-problems" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Cross-cutting hard problems
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-test-corpus-problem-the-decisive-factor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The test-corpus problem (the decisive factor)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-effort-model-phasing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Effort model &amp; phasing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Effort model &amp; phasing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rough-magnitude" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rough magnitude
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommended-phasing-strangler-fig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended phasing (strangler-fig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-closing-verdict-is-haskells-rigor-worth-the-cost" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Closing verdict — is Haskell's rigor worth the cost?
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/haskell_migration.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="a-notional-haskell-migration-plan-for-mac">A Notional Haskell Migration Plan for MAC<a class="headerlink" href="#a-notional-haskell-migration-plan-for-mac" title="Permanent link">&para;</a></h1>
+<p><em>A purely theoretical exercise. Nothing here is a recommendation to actually rewrite the
+system; it is a comprehensive estimate of what such an effort would require and a reasoned
+verdict on whether it would pay off. It builds directly on <code>docs/audit.md</code>, which defines the
+active code that would be in scope. No source, test, or configuration file was modified in
+producing this document.</em></p>
+<hr />
+<h2 id="1-framing-scope">1. Framing &amp; scope<a class="headerlink" href="#1-framing-scope" title="Permanent link">&para;</a></h2>
+<h3 id="what-would-be-migrated">What would be migrated<a class="headerlink" href="#what-would-be-migrated" title="Permanent link">&para;</a></h3>
+<p>Per the companion audit, <strong>"active code" is the ~185K LOC of first-party <code>src/mac/</code> code
+(excluding the vendored <code>_hermes/</code> tree), minus the confirmed-dead residue.</strong> That is the
+target of this study.</p>
+<h3 id="what-would-not-be-migrated">What would <em>not</em> be migrated<a class="headerlink" href="#what-would-not-be-migrated" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The vendored Hermes runtime (<code>src/mac/_hermes/</code>, ~443K LOC).</strong> It is a pinned,
+  integrity-guarded snapshot of <code>NousResearch/hermes-agent</code>, kept faithful to upstream by a
+  patch stack and a tree digest. Its entire value is <em>staying in sync with upstream Python</em>.
+  Porting it to Haskell would fork it permanently off its own upstream and forfeit that value.
+  In a migrated world, Hermes <strong>stays a Python process</strong> that a Haskell MAC launches and talks
+  to across a process boundary — exactly the loose coupling the audit found already exists (a
+  single <code>hermes_cli</code> entry door via <code>hermes_gateway.py</code> / <code>hermes_config_surface.py</code>).</li>
+<li><strong>The Python test corpus</strong>, except insofar as its <em>intent</em> must be re-expressed in Haskell
+  (see §5 — this is the crux of the cost/benefit question).</li>
+</ul>
+<h3 id="why-this-coupling-is-the-key-architectural-fact">Why this coupling is the key architectural fact<a class="headerlink" href="#why-this-coupling-is-the-key-architectural-fact" title="Permanent link">&para;</a></h3>
+<p>Because MAC already shells into Hermes through one narrow door, the migration boundary is
+clean: a Haskell MAC would spawn <code>hermes</code> as a subprocess (or over its existing HTTP/socket
+gateway) and never need Haskell↔Python FFI. <strong>The hard integration problem is avoided by the
+existing architecture, not by anything the rewrite would add.</strong></p>
+<hr />
+<h2 id="2-target-haskell-stack-library-mapping">2. Target Haskell stack &amp; library mapping<a class="headerlink" href="#2-target-haskell-stack-library-mapping" title="Permanent link">&para;</a></h2>
+<p>The migration difficulty of each area is dominated by whether its Python dependencies have a
+mature Haskell counterpart. The current dependency set (<code>pyproject.toml:12-39</code>) maps as
+follows:</p>
+<table>
+<thead>
+<tr>
+<th>Python dependency</th>
+<th>Role</th>
+<th>Haskell counterpart</th>
+<th>Maturity / risk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fastapi</code></td>
+<td>HTTP API framework</td>
+<td><strong><code>servant</code></strong> (+ <code>servant-server</code>)</td>
+<td>Excellent — types-first routing is a <em>strength</em> here</td>
+</tr>
+<tr>
+<td><code>uvicorn[standard]</code></td>
+<td>ASGI server</td>
+<td><strong><code>warp</code></strong></td>
+<td>Excellent</td>
+</tr>
+<tr>
+<td><code>pydantic</code></td>
+<td>Validation / (de)serialization</td>
+<td><strong>records + <code>aeson</code></strong></td>
+<td>Good — types replace runtime validation</td>
+</tr>
+<tr>
+<td><code>httpx</code> / <code>requests</code></td>
+<td>HTTP client</td>
+<td><strong><code>http-client</code></strong> / <code>req</code></td>
+<td>Good</td>
+</tr>
+<tr>
+<td><code>openai</code> (2.24)</td>
+<td>LLM provider SDK</td>
+<td><strong>hand-rolled <code>aeson</code> client</strong></td>
+<td><strong>Weak</strong> — no maintained SDK; must build &amp; track API drift</td>
+</tr>
+<tr>
+<td><code>cryptography</code> / <code>PyJWT[crypto]</code></td>
+<td>Crypto / JWT / HMAC</td>
+<td><strong><code>crypton</code></strong> (ex-<code>cryptonite</code>) / <code>jose</code></td>
+<td>Good — HMAC/signing parity is achievable but must be bit-exact</td>
+</tr>
+<tr>
+<td><code>psycopg</code> + <code>psycopg_pool</code></td>
+<td>Postgres</td>
+<td><strong><code>hasql</code></strong> / <code>postgresql-simple</code></td>
+<td>Good</td>
+</tr>
+<tr>
+<td>SQLite (stdlib <code>sqlite3</code>)</td>
+<td>Local ledger store</td>
+<td><strong><code>direct-sqlite</code></strong> / <code>sqlite-simple</code></td>
+<td>Good — but transaction semantics must match (§4)</td>
+</tr>
+<tr>
+<td><code>numpy</code></td>
+<td>Numeric (agent compute)</td>
+<td><strong><code>hmatrix</code></strong> / <code>massiv</code></td>
+<td>Good, but a different idiom; usage here is light</td>
+</tr>
+<tr>
+<td><code>jinja2</code></td>
+<td>Templating</td>
+<td><strong><code>mustache</code> / <code>ede</code></strong></td>
+<td><strong>Weak</strong> — no drop-in Jinja2; templates need porting</td>
+</tr>
+<tr>
+<td><code>fire</code></td>
+<td>CLI arg parsing</td>
+<td><strong><code>optparse-applicative</code></strong></td>
+<td>Excellent (and safer)</td>
+</tr>
+<tr>
+<td><code>croniter</code></td>
+<td>Cron schedules</td>
+<td><strong><code>cron</code></strong></td>
+<td>Good</td>
+</tr>
+<tr>
+<td><code>psutil</code></td>
+<td>Process/host introspection</td>
+<td><strong><code>unix</code> / shelling out</strong></td>
+<td>Fair — platform-specific gaps</td>
+</tr>
+<tr>
+<td><code>kubernetes</code> (dev/k8s extra)</td>
+<td>K8s API client</td>
+<td><strong><code>kubernetes-client</code> (immature)</strong></td>
+<td><strong>Weak</strong> — likeliest to require hand-rolled REST + codegen</td>
+</tr>
+<tr>
+<td><code>prompt_toolkit</code> / <code>rich</code></td>
+<td>TUI / terminal UI</td>
+<td><strong><code>brick</code> / <code>haskeline</code></strong></td>
+<td>Fair — different model; only if TUI is in scope</td>
+</tr>
+<tr>
+<td><code>slack-sdk</code> / <code>slack_bolt</code></td>
+<td>Slack</td>
+<td><strong>hand-rolled</strong> or via the retained Hermes gateway</td>
+<td>Weak — but largely delegable to Hermes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Three dependencies are the difficulty multipliers:</strong> the <strong>OpenAI client</strong>, the
+<strong>Kubernetes client</strong>, and <strong>Jinja2 templating</strong> — each lacks a mature Haskell equivalent and
+would be built or hand-rolled.</p>
+<p>Target toolchain: <strong>GHC 9.x</strong>, Cabal or Stack, <code>servant</code>/<code>warp</code> for the hub, <code>hasql</code>/
+<code>direct-sqlite</code> for storage, <code>async</code>/<code>stm</code> for concurrency, <code>typed-process</code> for the extensive
+subprocess orchestration, <code>hspec</code> + <code>QuickCheck</code>/<code>hedgehog</code> for tests.</p>
+<hr />
+<h2 id="3-per-area-difficulty-estimate">3. Per-area difficulty estimate<a class="headerlink" href="#3-per-area-difficulty-estimate" title="Permanent link">&para;</a></h2>
+<p>Difficulty is a 1–5 scale: <strong>1</strong> = mechanical, <strong>3</strong> = substantial but well-supported,
+<strong>5</strong> = research-grade or ecosystem-gap risk. LOC are approximate first-party sizes from the
+audit.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">#</th>
+<th>Functional area</th>
+<th>Key modules</th>
+<th style="text-align: right;">~LOC</th>
+<th style="text-align: center;">Difficulty</th>
+<th>Dominant risk</th>
+<th>What Haskell buys</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">1</td>
+<td><strong>Evidence / crypto / signing</strong></td>
+<td><code>evidence_cli.py</code>, <code>git_askpass.py</code>, HMAC signers in <code>services.py</code></td>
+<td style="text-align: right;">~2K</td>
+<td style="text-align: center;"><strong>2</strong></td>
+<td>Byte-exact HMAC/attestation parity</td>
+<td>Compile-time guarantees on signing paths; strong crypto types</td>
+</tr>
+<tr>
+<td style="text-align: right;">2</td>
+<td><strong>CLI</strong></td>
+<td><code>cli.py</code></td>
+<td style="text-align: right;">~8.7K</td>
+<td style="text-align: center;"><strong>2</strong></td>
+<td>Large surface, but arg-parsing is mechanical</td>
+<td><code>optparse-applicative</code> eliminates a class of arg bugs</td>
+</tr>
+<tr>
+<td style="text-align: right;">3</td>
+<td><strong>Store / ledger</strong></td>
+<td><code>store.py</code>, <code>store_postgres.py</code>, <code>migration.py</code>, <code>work_package_store.py</code></td>
+<td style="text-align: right;">~10K</td>
+<td style="text-align: center;"><strong>3</strong></td>
+<td>SQLite + Postgres transaction/concurrency semantics parity</td>
+<td>Typed schema, no <code>None</code>-column surprises</td>
+</tr>
+<tr>
+<td style="text-align: right;">4</td>
+<td><strong>API / hub (HTTP surface)</strong></td>
+<td><code>api.py</code> (403 inline routes)</td>
+<td style="text-align: right;">~9.4K</td>
+<td style="text-align: center;"><strong>3</strong></td>
+<td>403 routes to restate; dynamic JSON at the boundary</td>
+<td><strong>Servant makes routes type-checked</strong> — a genuine strength</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td><strong>Worker / executor + sandbox</strong></td>
+<td><code>worker.py</code>, <code>executor_sandbox.py</code>, <code>task_executor.py</code></td>
+<td style="text-align: right;">~14K</td>
+<td style="text-align: center;"><strong>4</strong></td>
+<td>Heavy subprocess orchestration, sandboxing, credential handling</td>
+<td>Typed process lifecycles; <code>bracket</code> for cleanup</td>
+</tr>
+<tr>
+<td style="text-align: right;">6</td>
+<td><strong>Router / gateways</strong></td>
+<td><code>router_service.py</code>, <code>hermes_gateway.py</code>, <code>firecrawl_gateway.py</code></td>
+<td style="text-align: right;">~6K</td>
+<td style="text-align: center;"><strong>4</strong></td>
+<td>LLM streaming, no OpenAI SDK, provider drift</td>
+<td>Explicit stream types; but SDK gap is real cost</td>
+</tr>
+<tr>
+<td style="text-align: right;">7</td>
+<td><strong>K8s orchestrator</strong></td>
+<td><code>k8s/orchestrator.py</code>, <code>bootstrap.py</code>, <code>job_executor.py</code></td>
+<td style="text-align: right;">~3.5K</td>
+<td style="text-align: center;"><strong>4</strong></td>
+<td>Immature Haskell K8s client → hand-rolled REST</td>
+<td>Typed reconciliation loops</td>
+</tr>
+<tr>
+<td style="text-align: right;">8</td>
+<td><strong>A2A / ACP protocols</strong></td>
+<td><code>a2a/</code>, <code>acp/</code></td>
+<td style="text-align: right;">~4.2K</td>
+<td style="text-align: center;"><strong>3</strong></td>
+<td>WebSocket + protocol state machines</td>
+<td>Types shine on protocol state machines</td>
+</tr>
+<tr>
+<td style="text-align: right;">9</td>
+<td><strong>Activation probe</strong></td>
+<td><code>activation_probe/</code></td>
+<td style="text-align: right;">~0.4K</td>
+<td style="text-align: center;"><strong>2</strong></td>
+<td>Small, numeric</td>
+<td>Minor</td>
+</tr>
+<tr>
+<td style="text-align: right;">10</td>
+<td><strong><code>ControlPlane</code> domain core</strong></td>
+<td><code>services.py</code> (the un-extracted ~15K)</td>
+<td style="text-align: right;">~15–26K</td>
+<td style="text-align: center;"><strong>5</strong></td>
+<td>26,433-line, 719-method stateful god-class over live SQLite transactions</td>
+<td>The <strong>biggest prize <em>and</em> biggest risk</strong> — see below</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-servicespy-problem-dominates-everything">The <code>services.py</code> problem dominates everything<a class="headerlink" href="#the-servicespy-problem-dominates-everything" title="Permanent link">&para;</a></h3>
+<p>Area 10 is the crux. <code>ControlPlane</code> is a single 26,433-line class holding the task-lifecycle,
+lease, agent/attestation, dispatch, and default-review engines as mutually-referential methods
+over a live transactional store (audit §5.1, §8-P3). Porting it means simultaneously:
+(a) untangling the god-class into modules, (b) re-expressing its implicit state machine in
+Haskell's explicit-effect idiom (<code>ReaderT</code>/<code>StateT</code> or an effect system), and (c) preserving
+exact transactional semantics against SQLite/Postgres.</p>
+<p><strong>Strategic implication:</strong> the audit's recommended P3 decomposition (extract the five blocks
+into service classes) is a <strong>prerequisite that should happen in Python first.</strong> Migrating a
+decomposed <code>ControlPlane</code> is difficulty-4 work done five times; migrating the monolith as-is
+is a single difficulty-5 gamble. <em>The refactor the codebase already needs is also the thing
+that most de-risks a hypothetical port.</em></p>
+<hr />
+<h2 id="4-cross-cutting-hard-problems">4. Cross-cutting hard problems<a class="headerlink" href="#4-cross-cutting-hard-problems" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Subprocess orchestration everywhere.</strong> MAC is fundamentally a process-herding system
+   (workers spawn executors, git, codex runners; tests alone use subprocess in 137 files). A
+   Haskell port lives or dies on <code>typed-process</code> ergonomics and <code>bracket</code>-based cleanup. This
+   is <em>manageable</em> and arguably <em>safer</em> in Haskell, but it is pervasive.</li>
+<li><strong>Dynamic JSON at the hub boundary.</strong> Python passes loosely-typed dicts freely across the
+   HTTP boundary and the ledger. Haskell forces every shape to be named. This is the <strong>central
+   tax and the central benefit</strong> at once — more upfront modelling, far fewer shape-mismatch
+   bugs after.</li>
+<li><strong>SQLite/Postgres transaction semantics.</strong> The ledger's correctness rests on exact
+   transaction, locking, and outbox behaviour. Reproducing it in <code>hasql</code>/<code>direct-sqlite</code>
+   requires careful parity testing, not just a schema translation.</li>
+<li><strong>The vendored-Hermes bridge.</strong> Solved by architecture (subprocess boundary, §1), not FFI —
+   the single biggest de-risking fact of the whole exercise.</li>
+<li><strong>HMAC / attestation parity.</strong> Worker evidence signing must be byte-identical across the
+   Python↔Haskell boundary during any phased migration, or every worker breaks. Requires a
+   shared conformance vector suite before the first line is cut over.</li>
+<li><strong>Ecosystem gaps.</strong> OpenAI client, Kubernetes client, and Jinja2 templating have no mature
+   Haskell equivalent and would be hand-built and maintained.</li>
+</ol>
+<hr />
+<h2 id="5-the-test-corpus-problem-the-decisive-factor">5. The test-corpus problem (the decisive factor)<a class="headerlink" href="#5-the-test-corpus-problem-the-decisive-factor" title="Permanent link">&para;</a></h2>
+<p>This is where the exercise stops being about the 185K LOC of product code and becomes about
+the <strong>~200K LOC / 8,555-node test suite</strong> — which, per the audit, is <em>larger than the product
+it tests</em> and costs <strong>~34 minutes of serial CPU per change</strong> (roughly doubled under coverage).</p>
+<p>Three hard truths:</p>
+<ol>
+<li><strong>The tests are the real specification.</strong> Six thousand-plus test functions encode behaviour
+   that is <em>not</em> written down anywhere else. A rewrite cannot discard them; it must
+   re-establish equivalent guarantees, or it is flying blind.</li>
+<li><strong>Most of them cannot be mechanically translated.</strong> The suite is dominated by <em>integration</em>
+   behaviour — subprocess (137 files), real <code>TestClient</code> HTTP (45), threading (29), docker/
+   k8s/postgres. These test <em>system</em> behaviour, not pure functions, so they do not port by
+   syntax; they must be re-authored against the Haskell system.</li>
+<li><strong>But Haskell's type system would delete a large fraction of them outright.</strong> A great many
+   tests — especially the 37 <code>_edges</code> companion modules and the 326 single-case,
+   un-parametrized files the audit flagged — exist to chase the 90% statement / 80% branch
+   coverage floors on <em>shape</em> and <em>None-handling</em> and <em>enum-exhaustiveness</em> errors. <strong>Those are
+   exactly the errors Haskell's types make unrepresentable.</strong> In Haskell you do not write a
+   test to prove a field can't be <code>None</code> or a variant can't be unhandled — the compiler proves
+   it. Pair that with property-based testing (<code>QuickCheck</code>/<code>hedgehog</code>) for the genuine logic,
+   and the <em>remaining</em> test surface is materially smaller and faster than today's.</li>
+</ol>
+<p><strong>This is the strongest single argument in favour of the migration</strong>, and it is precisely the
+axis the user asked about: not "is Haskell nicer," but "would its rigor cut the test overhead
+that now dominates every change." The honest answer is <strong>yes for the coverage-floor tail, no
+for the integration core</strong> — types absorb the <code>_edges</code>-style tests but do nothing for the
+subprocess/e2e tests, which are the slow part of the ~34-minute gate.</p>
+<hr />
+<h2 id="6-effort-model-phasing">6. Effort model &amp; phasing<a class="headerlink" href="#6-effort-model-phasing" title="Permanent link">&para;</a></h2>
+<h3 id="rough-magnitude">Rough magnitude<a class="headerlink" href="#rough-magnitude" title="Permanent link">&para;</a></h3>
+<p>Translating ~185K LOC of stateful, I/O-heavy, subprocess-orchestrating code — <em>plus</em>
+re-establishing test equivalence, <em>plus</em> hand-building three missing library layers — is, at
+industry norms for a like-for-like rewrite in an unfamiliar-to-the-team paradigm:</p>
+<blockquote>
+<p><strong>Order of magnitude: 8–15 engineer-years</strong>, low confidence, wide error bars. The dominant
+line items are <code>services.py</code>/<code>ControlPlane</code> (area 10), the worker/executor sandbox (area 5),
+and re-establishing the integration-test corpus (§5) — not the mechanical CLI/store code.</p>
+</blockquote>
+<p>The band is wide because it hinges on team Haskell fluency (a paradigm shift, not a syntax
+one) and on how much of <code>services.py</code> is decomposed <em>before</em> the port begins.</p>
+<h3 id="recommended-phasing-strangler-fig">Recommended phasing (strangler-fig)<a class="headerlink" href="#recommended-phasing-strangler-fig" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Prerequisite (in Python):</strong> execute the audit's P3 — decompose <code>ControlPlane</code> into the
+   five service classes. This de-risks the port more than any other single action.</li>
+<li><strong>Leaf-first cutover:</strong> port the pure/leaf tools where Haskell is strongest and risk is
+   lowest — <code>evidence_cli</code>/signing (area 1), then the CLI (area 2), then the store layer
+   (area 3) behind a stable interface. Establish the HMAC conformance vectors here (§4.5).</li>
+<li><strong>Hub next:</strong> port the API surface onto Servant (area 4), running Haskell and Python hubs
+   behind a shared ledger during transition.</li>
+<li><strong>Domain core last:</strong> port the decomposed <code>ControlPlane</code> services (area 10) one at a time.</li>
+<li><strong>Never port:</strong> the vendored Hermes runtime (stays a Python subprocess), and — pragmatically
+   — the K8s client path unless the ecosystem gap closes.</li>
+</ol>
+<hr />
+<h2 id="7-closing-verdict-is-haskells-rigor-worth-the-cost">7. Closing verdict — is Haskell's rigor worth the cost?<a class="headerlink" href="#7-closing-verdict-is-haskells-rigor-worth-the-cost" title="Permanent link">&para;</a></h2>
+<p><strong>For this system, as a practical undertaking: no. As the user framed it — weighing rigor
+against the test overhead specifically — the answer is more interesting than a flat no, and
+worth stating precisely.</strong></p>
+<p><strong>The case <em>for</em> is real and it is exactly the one the user intuited.</strong> The defining pain of
+this codebase is not runtime crashes — it is that <strong>the test suite is larger than the product
+and costs ~34 minutes per change</strong>, much of it spent on coverage-floor companion tests
+(<code>_edges</code> modules, single-case files) that exist to police shape, null, and exhaustiveness
+errors. Haskell's type system makes that entire category of error <em>unrepresentable</em>, which
+would legitimately <strong>retire a large fraction of the test suite and shrink the per-change
+gate.</strong> That is a genuine, structural, long-term win — not a stylistic preference.</p>
+<p><strong>But three facts make the total cost outweigh even that substantial benefit:</strong></p>
+<ol>
+<li><strong>The overhead Haskell removes is the <em>fast</em> half of the suite; the overhead it doesn't
+   touch is the <em>slow</em> half.</strong> The ~34-minute cost is dominated by subprocess/e2e/integration
+   tests (137 subprocess files, real HTTP, docker, k8s). Types do nothing for those — they test
+   <em>system</em> behaviour, not shape. So the headline benefit (fewer tests) lands mostly on the
+   cheap tests, while the expensive tests survive the rewrite intact.</li>
+<li><strong>The rewrite risk is concentrated in the one place types help least.</strong> <code>services.py</code> is a
+   26K-line stateful transactional god-class. Porting it is difficulty-5, and its correctness
+   lives in <em>transaction ordering and effect sequencing</em> — properties Haskell expresses well
+   but does not verify for free. The 8–15 engineer-year cost buys a <em>possibly</em> more robust core
+   at the risk of subtly breaking the exact ledger semantics the whole fleet depends on.</li>
+<li><strong>The cheaper path to the same benefit already exists — in Python.</strong> The audit's P3
+   (decompose <code>ControlPlane</code>) + P4 (fold the <code>_edges</code> tests into parametrized cases, delete the
+   orphans) attack the <em>same</em> test-overhead problem for a fraction of the cost and risk, with no
+   ecosystem gaps and no team-retraining. Much of what makes the test suite expensive is the
+   god-class and the coverage-chasing companions — both fixable <em>without</em> changing language.</li>
+</ol>
+<p><strong>Where Haskell would genuinely win</strong> is in the parts already isolated and type-shaped: the
+Servant API surface, the evidence/signing layer, protocol state machines (A2A/ACP), and cron/
+schedule logic. If any greenfield MAC component were being written today, Haskell (or a
+strongly-typed language generally) would be a defensible choice for those. <strong>A wholesale port
+of a working, fleet-critical, subprocess-and-integration-heavy system that already has a
+$path to its main pain point in its own language is not.</strong></p>
+<p><strong>Recommendation:</strong> treat Haskell's rigor as a design <em>principle</em> to import, not a rewrite to
+execute. Capture ~80% of the described benefit by doing the audit's P3/P4 in Python — decompose
+the god-class, delete the accretion residue, and collapse the coverage-floor test tail — and
+reserve any actual Haskell for genuinely new, well-bounded components where the type system
+pays from line one and no working system is put at risk.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

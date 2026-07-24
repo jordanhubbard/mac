@@ -1,0 +1,2579 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Production handbook for operating trustworthy fleets of AI agents.">
+      
+      
+      
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/audit/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>MAC Codebase Audit — Active Code, Duplication & Accretion - MAC Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#mac-codebase-audit-active-code-duplication-accretion" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            MAC Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MAC Codebase Audit — Active Code, Duplication &amp; Accretion
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Use dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Use light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Use light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    MAC Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jordanhubbard/mac" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jordanhubbard/mac
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Book
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Book
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/01-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. MAC as a System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/02-local-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Install and Start Locally
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Projects and Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Machines and Agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. Evidence, Review, and Completion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Hermes and the Fleet IDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Repository Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Plans, DAGs, and the Fast Lane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. Heterogeneous Fleet Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Identity, Credentials, and Secrets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Review, Publication, and Ref Hygiene
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/12-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Operating the Fleet
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Deployment Topologies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Qualified Images and Synchronized Cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Sandboxed Agent Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. APIs, AgentBus, and Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Learning, Evals, and Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../book/18-capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. From Request to Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/openapi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-directives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet directives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../repository-cicd-monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repository CI/CD lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fleet node onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized cutover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hub-availability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub availability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Work-graph control plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changeset-adoption-core-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changeset-adoption core spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hermes-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hermes boundary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../openshell-sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShell sandbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Historical archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-executive-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Executive summary
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Executive summary">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#scale-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scale at a glance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verdict-by-axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verdict by axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-methodology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Methodology
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-active-code-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Active-code map
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Active-code map">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-entrypoints-runtime-roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Entrypoints → runtime roles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-sub-packages-srcmac" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Sub-packages (src/mac/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-vendored-runtime-srcmac_hermes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Vendored runtime — src/mac/_hermes/
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Vendored runtime — src/mac/_hermes/">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-first-party-code-touches-hermes-through-exactly-one-door" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 First-party code touches Hermes through exactly one door
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-active-through-one-door-vs-dormant-vendored-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Active-through-one-door vs. dormant vendored surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-duplication-overlapping-implementations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Duplication &amp; overlapping implementations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Duplication &amp; overlapping implementations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-servicespy-a-facade-layered-over-a-half-extracted-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 services.py — a facade layered over a half-extracted core
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-dispatch-means-three-different-things" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 "Dispatch" means three different things
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-two-http-route-registration-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 Two HTTP route-registration paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-ledger-and-ticketing-adjacent-sprawl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.4 Ledger- and ticketing-adjacent sprawl
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-dead-orphaned-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Dead / orphaned code
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Dead / orphaned code">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-orphaned-modules-verified-as-staged-capabilities-not-dead-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 "Orphaned" modules — verified as staged capabilities, NOT dead code
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-beads-removal-residue-mostly-a-live-mechanism-with-a-legacy-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Beads-removal residue — mostly a live mechanism with a legacy name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-zero-coverage-file-not-actually-dead" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Zero-coverage file (not actually dead)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-inline-legacy-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 Inline "legacy" handling
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-test-suite-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Test-suite health
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Test-suite health">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-size-and-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1 Size and shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#72-runtime-cost-measured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.2 Runtime cost (measured)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#73-test-duplication-real-and-costly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.3 Test duplication (real, and costly)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-prioritized-recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Prioritized recommendations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Prioritized recommendations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p1-documentation-tracking-hygiene-done-low-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1 — Documentation &amp; tracking hygiene (done / low risk)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p2-disambiguate-names-and-finish-stalled-decompositions-lowmedium-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2 — Disambiguate names and finish stalled decompositions (low–medium risk)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p3-extract-the-five-un-extracted-controlplane-blocks-high-value-medium-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3 — Extract the five un-extracted ControlPlane blocks (high value, medium risk)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p4-consolidate-the-test-suite-high-value-ongoing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P4 — Consolidate the test suite (high value, ongoing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-definition-of-active-code-carried-into-the-migration-study" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Definition of "active code" (carried into the migration study)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/audit.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="mac-codebase-audit-active-code-duplication-accretion">MAC Codebase Audit — Active Code, Duplication &amp; Accretion<a class="headerlink" href="#mac-codebase-audit-active-code-duplication-accretion" title="Permanent link">&para;</a></h1>
+<p><em>Read-only analysis. No source, test, or configuration file was modified in producing
+this document. All findings are evidenced with file paths and line references valid as of
+the audit date (2026-07-24, branch <code>main</code>).</em></p>
+<hr />
+<h2 id="1-executive-summary">1. Executive summary<a class="headerlink" href="#1-executive-summary" title="Permanent link">&para;</a></h2>
+<p>The <code>mac</code> repository is a <strong>trustworthy coordination layer for a fleet of AI agents</strong> — a
+hub/control-plane, a worker/executor, a Kubernetes orchestrator, a standalone LLM router,
+and a set of gateways, plus a large vendored agent runtime. After walking the import graph,
+the entrypoint table, the test suite, and the coverage database, the headline is:</p>
+<blockquote>
+<p><strong>The codebase is overwhelmingly <em>active</em>, not dead. Its debt is not abandoned files —
+it is architectural accretion: one 26,433-line god-class, several half-finished
+decompositions, and a test suite whose size and duplication now dominate the cost of
+every change.</strong></p>
+</blockquote>
+<p>Genuine dead code is small and mostly identifiable. The larger and more expensive problems
+are structural, and they are the ones worth acting on.</p>
+<h3 id="scale-at-a-glance">Scale at a glance<a class="headerlink" href="#scale-at-a-glance" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th style="text-align: right;">Files</th>
+<th style="text-align: right;">Lines of code</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>First-party MAC code (<code>src/mac/</code>, excl. <code>_hermes/</code>)</td>
+<td style="text-align: right;">~200 modules + 5 sub-packages</td>
+<td style="text-align: right;"><strong>~185,000</strong></td>
+<td>The code this repository owns and must maintain.</td>
+</tr>
+<tr>
+<td>Vendored runtime (<code>src/mac/_hermes/</code>)</td>
+<td style="text-align: right;">—</td>
+<td style="text-align: right;"><strong>~443,000</strong></td>
+<td>Pinned snapshot of <code>NousResearch/hermes-agent</code>; excluded from coverage.</td>
+</tr>
+<tr>
+<td>Tests (<code>tests/</code>)</td>
+<td style="text-align: right;">445</td>
+<td style="text-align: right;"><strong>~200,600</strong></td>
+<td>6,883 test functions → 8,555 collected nodes.</td>
+</tr>
+<tr>
+<td><strong>Total tracked (excl. <code>.venv</code>/<code>dist</code>/caches)</strong></td>
+<td style="text-align: right;"><strong>~1,329</strong></td>
+<td style="text-align: right;">—</td>
+<td>The 10,826 raw <code>.py</code> count is inflated by <code>.venv</code> and <code>__pycache__</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The <strong>first-party code and the test suite are almost the same size</strong> (185K vs 200K LOC).
+That ratio — more test code than product code — is the single most important fact for both
+this audit and the companion migration study: <strong>tests are now the dominant maintenance
+surface.</strong></p>
+<h3 id="verdict-by-axis">Verdict by axis<a class="headerlink" href="#verdict-by-axis" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Finding</th>
+<th>Severity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dead files</td>
+<td><strong>Near-zero.</strong> A verification pass (see §6) reclassified the apparent "orphans" as recently-staged, tested capabilities — not rot.</td>
+<td>Low / false-positive</td>
+</tr>
+<tr>
+<td>Duplication</td>
+<td>Moderate — naming collisions, two HTTP-route paths, ledger sprawl</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>God-class</td>
+<td><code>services.py</code> = one 26,433-line <code>ControlPlane</code> (719 methods)</td>
+<td><strong>High</strong></td>
+</tr>
+<tr>
+<td>Test debt</td>
+<td>37 <code>_edges</code> coverage-companion modules; only 25% of files parametrized</td>
+<td><strong>High</strong></td>
+</tr>
+<tr>
+<td>Vendored surface</td>
+<td>~443K LOC pinned; most of it dormant but correctly quarantined</td>
+<td>Low (by design)</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Verification note (added after the initial pass).</strong> Every dead-code candidate below was
+checked against the full reference graph <em>and git history</em> before any action. The result
+overturned most of the dead-code hypothesis: the "orphan" modules are recent, deliberate,
+tested-first additions (one landed in the current HEAD commit), and the "dead beads plumbing"
+is a live mechanism wearing a legacy name. <strong>The only change made as a result of this audit
+was a one-line documentation fix</strong> (a stale flag reference in <code>CLAUDE.md</code>). The real,
+actionable debt is structural (§5, §7), not deletable files.</p>
+</blockquote>
+<hr />
+<h2 id="2-methodology">2. Methodology<a class="headerlink" href="#2-methodology" title="Permanent link">&para;</a></h2>
+<p>"Active" was determined by combining four independent signals, so that no single
+blind spot (e.g. coverage under-counting subprocess entrypoints) drives a conclusion:</p>
+<ol>
+<li><strong>Static import graph</strong> — a module is reachable if some other first-party module
+   imports it (directly or through a package <code>__init__</code>).</li>
+<li><strong>Out-of-band invocation</strong> — entrypoints declared in <code>pyproject.toml</code> <code>[project.scripts]</code>,
+   modules run via <code>python -m mac.&lt;mod&gt;</code> from the <code>Makefile</code>/<code>deploy/</code>/<code>scripts/</code>, and app
+   factories mounted by the API server. These are "active" even when nothing imports them.</li>
+<li><strong>Runtime coverage</strong> — <code>coverage.json</code> (a real green gate run) shows which lines actually
+   executed under the test suite.</li>
+<li><strong>Vendoring metadata</strong> — <code>SNAPSHOT_PIN</code>, the <code>deploy/hermes/</code> patch stack, and the
+   <code>pyproject.toml</code> coverage <code>omit</code> rule classify the <code>_hermes/</code> tree.</li>
+</ol>
+<p><strong>Known limits of the method.</strong> Coverage under-attributes code that only runs in a <em>separate</em>
+process the tests spawn but do not trace (the clearest example is <code>git_askpass.py</code>, a git
+credential helper git invokes as a subprocess — it shows 0% yet is not dead). Dynamic dispatch
+(e.g. the vendored Hermes CLI dispatching into tools by name) is invisible to a static import
+graph. Both limits are called out where they affect a conclusion, and no module is labelled
+"dead" on a single signal alone.</p>
+<hr />
+<h2 id="3-active-code-map">3. Active-code map<a class="headerlink" href="#3-active-code-map" title="Permanent link">&para;</a></h2>
+<h3 id="31-entrypoints-runtime-roles">3.1 Entrypoints → runtime roles<a class="headerlink" href="#31-entrypoints-runtime-roles" title="Permanent link">&para;</a></h3>
+<p>All entrypoints are declared in <code>pyproject.toml:75-103</code> (there is no <code>setup.py</code>
+<code>console_scripts</code> fallback — this is the single source of truth). They collapse into
+<strong>four runtime roles</strong> plus supporting daemons:</p>
+<table>
+<thead>
+<tr>
+<th>Runtime role</th>
+<th>Entrypoint(s)</th>
+<th>Module</th>
+<th style="text-align: right;">Size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CLI</strong> (the one documented interface)</td>
+<td><code>mac</code></td>
+<td><code>cli.py::main</code></td>
+<td style="text-align: right;">8,678</td>
+</tr>
+<tr>
+<td><strong>API / hub</strong> (FastAPI)</td>
+<td>run via the <code>mac</code> serve path</td>
+<td><code>api.py::create_app</code> (line 3926)</td>
+<td style="text-align: right;">9,410</td>
+</tr>
+<tr>
+<td><strong>Worker / executor</strong></td>
+<td><code>mac-agent</code></td>
+<td><code>worker.py::main</code></td>
+<td style="text-align: right;">8,070</td>
+</tr>
+<tr>
+<td><strong>K8s orchestrator</strong></td>
+<td><code>mac-k8s-orchestrator</code> / <code>-bootstrap</code> / <code>mac-task-runner</code></td>
+<td><code>k8s/orchestrator.py</code>, <code>k8s/bootstrap.py</code>, <code>k8s/job_executor.py</code></td>
+<td style="text-align: right;">3,496 (pkg)</td>
+</tr>
+<tr>
+<td>Router / gateways</td>
+<td><code>mac-router</code>, <code>mac-hermes-gateway</code>, <code>mac-firecrawl-gateway</code></td>
+<td><code>router_service.py</code>, <code>hermes_gateway.py</code>, <code>firecrawl_gateway.py</code></td>
+<td style="text-align: right;">—</td>
+</tr>
+<tr>
+<td>Supporting daemons/CLIs</td>
+<td><code>mac-ledger-backup</code>, <code>mac-evidence</code>, <code>mac-git-askpass</code>, <code>mac-webdav-server</code>, <code>mac-openshell-supervisor</code>/<code>-collector</code></td>
+<td>various</td>
+<td style="text-align: right;">—</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>mac</code> CLI is <strong>hub-aware</strong>: it either talks to a hub over HTTP or opens a local SQLite
+ledger via <code>--db</code>. The domain brain behind the hub is a single class, <code>ControlPlane</code>
+(<code>services.py:1273</code>), instantiated by the API composition root and shared by every HTTP
+handler.</p>
+<h3 id="32-sub-packages-srcmac">3.2 Sub-packages (<code>src/mac/</code>)<a class="headerlink" href="#32-sub-packages-srcmac" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Package</th>
+<th style="text-align: right;">LOC</th>
+<th>Role</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>k8s/</code></td>
+<td style="text-align: right;">3,496</td>
+<td>K8s dispatcher, bootstrap, Job-pod runner</td>
+<td>Active</td>
+</tr>
+<tr>
+<td><code>acp/</code></td>
+<td style="text-align: right;">3,142</td>
+<td>Agent Coordination Protocol server</td>
+<td>Active</td>
+</tr>
+<tr>
+<td><code>a2a/</code></td>
+<td style="text-align: right;">1,077</td>
+<td>Agent-to-Agent protocol surface</td>
+<td>Active</td>
+</tr>
+<tr>
+<td><code>activation_probe/</code></td>
+<td style="text-align: right;">421</td>
+<td>Model activation probing</td>
+<td>Active (low coverage)</td>
+</tr>
+<tr>
+<td><code>http_routes/</code></td>
+<td style="text-align: right;">122</td>
+<td><em>Intended</em> domain-router extraction</td>
+<td><strong>Abandoned mid-migration</strong> (see §5.3)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4-vendored-runtime-srcmac_hermes">4. Vendored runtime — <code>src/mac/_hermes/</code><a class="headerlink" href="#4-vendored-runtime-srcmac_hermes" title="Permanent link">&para;</a></h2>
+<p><code>src/mac/_hermes/</code> is a <strong>vendored, integrity-pinned snapshot</strong> of
+<code>https://github.com/NousResearch/hermes-agent.git</code> (commit <code>b1a25404…</code>, vendored
+<code>2026-05-31</code>), per <code>src/mac/_hermes/SNAPSHOT_PIN</code> and ADR 0001
+(<code>docs/adr/0001-unify-hermes-runtime-into-mac.md</code>). It is ~443K LOC — <strong>more than twice the
+size of all first-party code</strong> — and is deliberately quarantined:</p>
+<ul>
+<li><strong>Excluded from coverage</strong> (<code>pyproject.toml:130-132</code>: "do not count vendored Hermes
+  internals against this repository's threshold").</li>
+<li><strong>Kept in sync by machinery, not hand-edits</strong> — a patch stack under <code>deploy/hermes/</code>
+  (<code>multi-slack-mvp.patch</code>, <code>post-snapshot-mac-fixes.patch</code>, and others) is re-applied on
+  every re-vendor, and a full-tree SHA256 digest (<code>deploy/hermes/HERMES_TREE_SHA256</code>,
+  enforced by <code>tests/test_hermes_vendor_integrity.py</code>) fails the build on any drift.</li>
+</ul>
+<h3 id="41-first-party-code-touches-hermes-through-exactly-one-door">4.1 First-party code touches Hermes through exactly one door<a class="headerlink" href="#41-first-party-code-touches-hermes-through-exactly-one-door" title="Permanent link">&para;</a></h3>
+<p>No first-party module imports <code>mac._hermes.*</code> directly. Instead
+<code>src/mac/hermes_vendor.py::ensure_on_path()</code> puts the tree on <code>sys.path</code>, after which the
+adapter layer imports Hermes' flat top-level <code>hermes_cli</code> package at just <strong>two</strong> sites:</p>
+<ul>
+<li><code>src/mac/hermes_gateway.py:146</code> — <code>from hermes_cli.main import main as _cli_main</code></li>
+<li><code>src/mac/hermes_config_surface.py:237</code> — <code>from hermes_cli import config as hermes_config</code></li>
+</ul>
+<p>Everything else in <code>_hermes</code> (<code>agent</code>, <code>gateway</code>, <code>tools</code>, <code>plugins</code>, <code>skills</code>,
+<code>providers</code>) is reachable <strong>only transitively at runtime</strong>, when <code>hermes_cli.main.main()</code>
+dispatches into it <em>and</em> the relevant feature is configured.</p>
+<h3 id="42-active-through-one-door-vs-dormant-vendored-surface">4.2 Active-through-one-door vs. dormant vendored surface<a class="headerlink" href="#42-active-through-one-door-vs-dormant-vendored-surface" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Submodule</th>
+<th style="text-align: right;">LOC</th>
+<th>Reachable from a MAC entrypoint?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hermes_cli</code></td>
+<td style="text-align: right;">110,926</td>
+<td><strong>Yes — the only direct entry.</strong></td>
+</tr>
+<tr>
+<td><code>gateway</code></td>
+<td style="text-align: right;">82,575</td>
+<td>Transitive; only Slack/Telegram paths wired by MAC config.</td>
+</tr>
+<tr>
+<td><code>tools</code></td>
+<td style="text-align: right;">73,400</td>
+<td>Transitive (agent tool dispatch).</td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td style="text-align: right;">68,043</td>
+<td>Transitive.</td>
+</tr>
+<tr>
+<td><code>plugins</code></td>
+<td style="text-align: right;">50,783</td>
+<td>Transitive; dashboards/dist pruned at vendor time.</td>
+</tr>
+<tr>
+<td><code>skills</code></td>
+<td style="text-align: right;">13,078</td>
+<td>Transitive.</td>
+</tr>
+<tr>
+<td><code>tui_gateway</code></td>
+<td style="text-align: right;">7,975</td>
+<td><strong>Dormant</strong> — no MAC reference.</td>
+</tr>
+<tr>
+<td><code>acp_adapter</code></td>
+<td style="text-align: right;">4,955</td>
+<td>Dormant (MAC has its own <code>acp/</code>).</td>
+</tr>
+<tr>
+<td><code>cron</code></td>
+<td style="text-align: right;">3,320</td>
+<td>Dormant.</td>
+</tr>
+<tr>
+<td><code>providers</code></td>
+<td style="text-align: right;">389</td>
+<td>Transitive (provider decision is MAC-patched).</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>gateway/platforms/</code> directory ships ~25 backends (feishu, yuanbao, wecom, weixin,
+dingtalk, matrix, signal, whatsapp, email, sms, qqbot, bluebubbles, homeassistant, …), but
+MAC's own config only ever enables <code>{hermes, slack, telegram}</code>
+(<code>notifier_service.py:53 SUPPORTED_CHANNEL_TYPES</code>; <code>k8s/config_loader.py:209</code>). The rest is
+<strong>dormant vendored surface carried for upstream fidelity, not MAC-reachable code.</strong></p>
+<blockquote>
+<p><strong>Audit stance on <code>_hermes</code>:</strong> this is <em>correctly managed</em> dead-ish surface. It is not
+repository rot — it is an intentional, integrity-pinned upstream mirror. It should <strong>not</strong>
+be hand-pruned (that breaks the digest guard and the re-vendor workflow); prune it upstream
+in the vendor script if at all. It is out of scope for the companion Haskell migration study
+for the same reason.</p>
+</blockquote>
+<hr />
+<h2 id="5-duplication-overlapping-implementations">5. Duplication &amp; overlapping implementations<a class="headerlink" href="#5-duplication-overlapping-implementations" title="Permanent link">&para;</a></h2>
+<p>This is where months of iteration show. None of these are outright forked "v1/v2"
+implementations — the repo is clean on that axis (no <code>_old</code>/<code>_v1</code>/<code>_deprecated</code>
+<strong>filenames</strong> exist). The duplication is subtler: <strong>half-finished decompositions and
+colliding vocabularies.</strong></p>
+<h3 id="51-servicespy-a-facade-layered-over-a-half-extracted-core">5.1 <code>services.py</code> — a facade layered over a half-extracted core<a class="headerlink" href="#51-servicespy-a-facade-layered-over-a-half-extracted-core" title="Permanent link">&para;</a></h3>
+<p><code>ControlPlane</code> (<code>services.py:1273</code>, the file's <strong>only</strong> class, <strong>719 methods</strong>,
+<strong>26,433 lines</strong>) simultaneously plays two roles:</p>
+<ul>
+<li><strong>A delegation facade</strong> over ~40 already-extracted service classes wired in <code>__init__</code>
+  (<code>services.py:1367-1405</code>): <code>TaskLedgerService</code>, <code>DispatchService</code>, <code>IdentityService</code>,
+  <code>HumansService</code>, <code>ObservabilityService</code>, <code>AgentBusService</code>, <code>WorkflowService</code>, and more
+  (imports at <code>services.py:162-245</code>). Hundreds of methods are one-line pass-throughs — e.g.
+  <code>register_tenant</code>/<code>get_tenant</code>/<code>list_tenants</code> (<code>services.py:1992-1999</code>) just call
+  <code>self.identity.*</code>.</li>
+<li><strong>A ~15K-line un-extracted core</strong> — the task-lifecycle, lease, agent/attestation, dispatch,
+  and default-review engines still live <em>inside</em> the class as methods (see §8, P3).</li>
+</ul>
+<p>So the same operation frequently exists in two places (facade method <strong>and</strong> service class).
+This is not harmful behavioural duplication, but it means the file is <em>mostly a delegation
+shim wrapped around a still-monolithic core</em>, and its <code>__init__</code> comment
+(<code>services.py:1367-1368</code>) explicitly states the intent: <em>"New domains should land here as
+their own service classes rather than as more methods on ControlPlane."</em> The decomposition is
+sanctioned and half-done.</p>
+<h3 id="52-dispatch-means-three-different-things">5.2 "Dispatch" means three different things<a class="headerlink" href="#52-dispatch-means-three-different-things" title="Permanent link">&para;</a></h3>
+<p>The word <em>dispatch</em> names three distinct concerns, a real readability hazard:</p>
+<ul>
+<li><strong>Authority</strong> — the real dispatch engine lives in <code>services.py</code>: <code>_dispatch_batch_impl</code>
+  (17546), <code>_claim_next_for_agent_impl</code> (17881), <code>dispatch_once</code> (17521),
+  <code>claim_next_for_agent</code> (17856).</li>
+<li><strong>Thin wrapper</strong> — <code>task_lifecycle.py:138 DispatchService</code> forwards <code>dispatch_once</code> /
+  <code>claim_next_for_agent</code> straight back to the <code>ControlPlane</code>.</li>
+<li><strong>Client transport</strong> — <code>dispatch.py</code> (3,253 lines) is an entirely different concern:
+  <code>LocalDispatch</code> (135), <code>RemoteDispatch</code> (276), <code>_RemoteStore</code> (252) — the <em>client-side</em> hub
+  transport. Same vocabulary, opposite side of the wire.</li>
+</ul>
+<h3 id="53-two-http-route-registration-paths">5.3 Two HTTP route-registration paths<a class="headerlink" href="#53-two-http-route-registration-paths" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Primary (monolith):</strong> <code>api.py::create_app</code> (line 3926) contains <strong>403 inline route
+  decorators</strong> (<code>@app.get/post/…</code>) defined as closures — dashboard, tenants, humans,
+  hermes-instances, and the inline A2A (<code>api.py:4352</code>) and ACP (<code>api.py:4382</code>) mounts.</li>
+<li><strong>Secondary (abandoned):</strong> the <code>http_routes/</code> package is the <em>start</em> of a domain-router
+  extraction that never progressed — it contains only <code>system.py</code> (121 lines,
+  <code>build_system_router</code> exposing <code>/health</code> and <code>/repository-refs/reconciler</code>), included once
+  at <code>api.py:4310</code>. Its <code>__init__.py</code> docstring ("Domain-oriented FastAPI router factories")
+  is a signpost to an intended-but-stalled migration.</li>
+</ul>
+<h3 id="54-ledger-and-ticketing-adjacent-sprawl">5.4 Ledger- and ticketing-adjacent sprawl<a class="headerlink" href="#54-ledger-and-ticketing-adjacent-sprawl" title="Permanent link">&para;</a></h3>
+<p>Not parallel implementations, but a fragmented surface around one concern worth consolidating:</p>
+<ul>
+<li><strong>Store/ledger:</strong> <code>store.py</code> (<code>Store</code> protocol + <code>SQLiteStore</code>) and <code>store_postgres.py</code>
+  (<code>PostgresStore</code>) are two clean backends behind one protocol. Around them accrete
+  <code>task_ledger_audit.py</code>, <code>ledger_backup.py</code>, <code>ledger_backup_scheduler.py</code>,
+  <code>local_ledger_migration.py</code>, <code>migration.py</code>, and <code>work_package_store.py</code>;
+  <code>TaskLedgerService</code> (<code>task_lifecycle.py:26</code>) adds yet another thin layer (outbox helpers).</li>
+<li><strong>Ticketing trio:</strong> <code>ticketing.py</code> (connector abstraction), <code>ticketing_service.py</code>
+  (<code>TicketingCoordinator</code>), and <code>tickets_mirror.py</code> (the <code>.tickets/&lt;id&gt;.md</code> emitter). This is
+  the intentional "ledger vs. local mirror" split from <code>CLAUDE.md</code>, but the boundary between
+  <code>ticketing.py</code> and <code>ticketing_service.py</code> is thin.</li>
+</ul>
+<hr />
+<h2 id="6-dead-orphaned-code">6. Dead / orphaned code<a class="headerlink" href="#6-dead-orphaned-code" title="Permanent link">&para;</a></h2>
+<p>Genuine dead code is <strong>small</strong> — and a verification pass shrank it almost to nothing. The
+initial static scan produced two dead-code hypotheses; both largely failed verification. They
+are recorded here honestly, <em>including the correction</em>, because the corrected version is the
+one that should guide any action.</p>
+<h3 id="61-orphaned-modules-verified-as-staged-capabilities-not-dead-code">6.1 "Orphaned" modules — verified as staged capabilities, NOT dead code<a class="headerlink" href="#61-orphaned-modules-verified-as-staged-capabilities-not-dead-code" title="Permanent link">&para;</a></h3>
+<p>Nine modules are imported by no <code>src/mac</code> module and are reachable, on a static import graph,
+only from their own test files: <code>dream_scanner.py</code>, <code>predispatch_conflict.py</code>,
+<code>investigation_artifacts.py</code>, <code>openclaw_checkpoint_gc.py</code>, <code>hgx_provision.py</code>,
+<code>skill_auto_repair.py</code>, <code>project_inception.py</code>, <code>harness_reflex.py</code>,
+<code>evidence_reuse_verifier.py</code>. The initial hypothesis was that these were accretion residue to
+remove. <strong>Checking each against the reference graph and git history overturned that:</strong></p>
+<ul>
+<li><strong><code>project_inception.py</code> is actively used</strong> — imported and invoked by
+  <code>scripts/prove-c26-inception.py</code> (<code>run_c26_project_inception_proof</code>). Not orphaned at all.</li>
+<li><strong><code>evidence_reuse_verifier.py</code>, <code>harness_reflex.py</code>, <code>investigation_artifacts.py</code>,
+  <code>dream_scanner.py</code> are referenced from other first-party modules</strong> — via docstrings/design
+  comments in <code>services.py:9476</code>, <code>models.py:2990/2998</code>, <code>harness_recovery.py:4</code>,
+  <code>dream_repair_tasks.py:22</code>, and via the test-impact map (<code>scripts/resolve-impacted-tests.py</code>).
+  They are part of the documented design surface, not stray files.</li>
+<li><strong>The remaining four are recent, deliberate additions, tested-first, integration pending:</strong>
+  <code>openclaw_checkpoint_gc.py</code> landed in the <strong>current HEAD commit (2026-07-24)</strong>,
+  <code>hgx_provision.py</code> (2026-07-23), <code>predispatch_conflict.py</code> (2026-07-16),
+  <code>skill_auto_repair.py</code> (2026-07-12). Deleting these would undo work committed this week.</li>
+</ul>
+<blockquote>
+<p><strong>Corrected conclusion:</strong> this is not dead code — it is a deliberate <strong>"land the capability
+with unit tests, wire it into the runtime later"</strong> pattern typical of an autonomous-fleet
+codebase. <strong>No deletion is warranted.</strong> The only legitimate follow-up is a <em>tracking</em> one:
+confirm each staged module has a real integration path on the roadmap, so a genuinely
+abandoned one doesn't hide among the merely-not-yet-wired. (Contrast <code>ide_launcher.py</code> /
+<code>hermes_chat_config.py</code>, un-imported yet invoked via <code>python -m mac.&lt;mod&gt;</code> — also not dead.)</p>
+</blockquote>
+<h3 id="62-beads-removal-residue-mostly-a-live-mechanism-with-a-legacy-name">6.2 Beads-removal residue — mostly a live mechanism with a legacy name<a class="headerlink" href="#62-beads-removal-residue-mostly-a-live-mechanism-with-a-legacy-name" title="Permanent link">&para;</a></h3>
+<p>The legacy beads <em>dolt-sync</em> bridge is genuinely gone (removal markers at <code>dispatch.py:2144</code>,
+<code>api.py:8745</code>). But two of the three "residue" items flagged initially turned out to be <strong>live
+code</strong>, not scar tissue:</p>
+<ul>
+<li><strong>Real and fixed:</strong> the flag <code>MAC_BEADS_BRIDGE_ENABLED</code> named in <code>CLAUDE.md</code> has <strong>zero code
+  references anywhere in the repo</strong> — it existed only in prose. This documentation staleness
+  was the one real, safe finding, and it has been corrected in <code>CLAUDE.md</code>.</li>
+<li><strong>NOT dead (correction):</strong> <code>sync_beads</code> is <strong>not</strong> disabled plumbing. It defaults to <code>True</code>
+  in <code>services.py</code> and gates a live call — <code>if sync_beads: self.drain_task_transition_outbox(...)</code>
+  at <code>services.py:10911</code>. The name is a legacy artifact, but the behaviour it controls
+  (synchronous draining of the task-transition outbox) is active, exercised by 70+ tests, and
+  part of the remote contract (<code>test_dispatch_remote_contract.py</code>). The <code>dispatch.py:588</code>
+  client only declines to <em>forward</em> it — remote claims are intentionally local-drain-only.
+  <strong>This is a rename opportunity (§8-P2), not a deletion.</strong></li>
+<li><strong>NOT dead (correction):</strong> <code>bridge_repository_register</code> is a <strong>live CLI command</strong> with a real
+  handler (<code>cmd_bridge_repository_register</code>, <code>cli.py:4319</code>). Only its default actor string
+  <code>"beads-bridge"</code> (<code>cli.py:7906</code>) is a cosmetic legacy label.</li>
+<li><strong>Legitimately retained:</strong> <code>beads_migrator.py</code> + <code>cmd_task_migrate_beads</code> /
+  <code>cmd_task_detect_beads</code> (<code>cli.py:1438-1465</code>) — the one-way import tool, correctly kept.</li>
+</ul>
+<h3 id="63-zero-coverage-file-not-actually-dead">6.3 Zero-coverage file (not actually dead)<a class="headerlink" href="#63-zero-coverage-file-not-actually-dead" title="Permanent link">&para;</a></h3>
+<p>Exactly <strong>one</strong> first-party file is at 0.00% coverage: <code>git_askpass.py</code> (29 statements). It
+is the <code>mac-git-askpass</code> credential helper that <strong>git</strong> runs as a subprocess; the tests that
+exercise it do so out-of-process, so coverage never attributes it. This is a
+coverage-attribution gap, <strong>not</strong> dead code — listed here only to preempt a false positive.</p>
+<h3 id="64-inline-legacy-handling">6.4 Inline "legacy" handling<a class="headerlink" href="#64-inline-legacy-handling" title="Permanent link">&para;</a></h3>
+<p>There are no legacy <em>files</em>, but there is inline legacy <em>logic</em>: e.g.
+<code>_reconcile_legacy_task_state_semantics</code> (<code>services.py:1613</code>), and ~49 "legacy"/"deprecated"
+markers in <code>services.py</code>, ~22 in <code>cli.py</code>, ~21 in <code>store.py</code>, ~18 each in <code>api.py</code> and
+<code>publication_lane.py</code>. These are compatibility shims to review opportunistically, not
+deletion targets on their own.</p>
+<hr />
+<h2 id="7-test-suite-health">7. Test-suite health<a class="headerlink" href="#7-test-suite-health" title="Permanent link">&para;</a></h2>
+<p>The test suite is the <strong>largest single maintenance cost in the repository</strong> and deserves
+first-class attention.</p>
+<h3 id="71-size-and-shape">7.1 Size and shape<a class="headerlink" href="#71-size-and-shape" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>445 files, ~200,600 LOC, 6,883 <code>def test_</code> functions → 8,555 collected nodes.</strong></li>
+<li>Organization is <strong>marker-based, not directory-based</strong>: <code>tests/conftest.py</code>
+  auto-applies markers by path (<code>api</code>, <code>cli</code>, <code>ui</code>) and by filename cluster (<code>fleet</code>,
+  <code>work_package</code>, <code>worker</code>, <code>heavy_e2e</code>), registered in <code>pyproject.toml:108-120</code>. An operator
+  can disable whole clusters via <code>MAC_TEST_DISABLE_GROUPS</code>.</li>
+<li><strong><code>scripts/run-contract-tests.sh</code> (506 lines) is <em>the</em> mandated quality gate</strong> (<code>CLAUDE.md</code>
+  "Session Completion"). It builds a hermetic env (unsetting all <code>MAC_*</code>/<code>HERMES_*</code>/<code>SLACK_*</code>
+  and provider keys), runs a two-phase xdist-parallel + serial split, merges coverage across
+  child processes, and enforces the floors in <code>test-policy.toml</code> (<strong>90% statement / 80%
+  branch</strong>) via <code>scripts/coverage-policy.py</code>.</li>
+</ul>
+<h3 id="72-runtime-cost-measured">7.2 Runtime cost (measured)<a class="headerlink" href="#72-runtime-cost-measured" title="Permanent link">&para;</a></h3>
+<p>From <code>.test-portfolio/timings.json</code> (a real green run, exit 0):</p>
+<ul>
+<li><strong>8,555 nodes, ~2,052 seconds (~34 minutes) of serial CPU time.</strong> xdist fans this out to a
+  fraction of wall-clock, but <strong>coverage tracing roughly halves throughput</strong>, so the
+  coverage-on gate is materially slower than the <code>MAC_TEST_COVERAGE=0</code> fast path.</li>
+<li>Overhead concentrates in real I/O: <strong>subprocess in 137 files</strong>, FastAPI <code>TestClient</code> in 45,
+  <code>threading.Thread</code> in 29, <code>time.sleep</code> in 22. Docker (17), Kubernetes (11), and Postgres (7)
+  tests are gated behind opt-in markers/<code>importorskip</code>, so the default run skips them.</li>
+<li>The slow tail is e2e/subprocess-heavy: <code>test_documentation_book.py</code> (42s),
+  <code>test_fleet_cohort_transaction.py</code> rollback tests (8–15s each), <code>test_worker_process_e2e.py</code>
+  (~8s).</li>
+</ul>
+<h3 id="73-test-duplication-real-and-costly">7.3 Test duplication (real, and costly)<a class="headerlink" href="#73-test-duplication-real-and-costly" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>37 <code>_edges.py</code> coverage-companion modules</strong>, 16 of them with a same-named base twin (both
+  <code>test_X.py</code> and <code>test_X_edges.py</code>) — e.g. <code>test_gitops</code>, <code>test_hermes_runtime</code>,
+  <code>test_k8s_bootstrap</code>, <code>test_workflow_service</code>. Their names advertise that they exist to hit
+  the 90/80 floors. Prime candidates to fold back into their base module and parametrize.</li>
+<li><strong>Under-parametrized:</strong> only <strong>111 of 445</strong> files use <code>@pytest.mark.parametrize</code>; <strong>326 have
+  none</strong>. 6,883 functions expand to only 8,555 nodes — most tests are single-case.</li>
+<li><strong>Monoliths:</strong> <code>test_control_plane.py</code> alone is <strong>14,278 LOC</strong> (7% of the entire test tree);
+  the top six files are ~34K LOC combined — the likeliest home of near-identical test bodies.</li>
+</ul>
+<blockquote>
+<p>This test structure is the direct downstream cost of the §5.1 god-class: because
+<code>ControlPlane</code> is one enormous stateful object, testing it drives the 14K-line
+<code>test_control_plane.py</code> monolith and the <code>_edges</code> companions that chase its branch coverage.
+<strong>Decomposing <code>services.py</code> and consolidating the tests are the same project viewed from two
+ends.</strong></p>
+</blockquote>
+<hr />
+<h2 id="8-prioritized-recommendations">8. Prioritized recommendations<a class="headerlink" href="#8-prioritized-recommendations" title="Permanent link">&para;</a></h2>
+<p>All recommendations are <em>written analysis only</em> — no changes were made. Each carries a risk
+note and a verification step. Ordered by value-to-risk.</p>
+<h3 id="p1-documentation-tracking-hygiene-done-low-risk">P1 — Documentation &amp; tracking hygiene <em>(done / low risk)</em><a class="headerlink" href="#p1-documentation-tracking-hygiene-done-low-risk" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Done:</strong> corrected <code>CLAUDE.md</code>'s reference to the nonexistent <code>MAC_BEADS_BRIDGE_ENABLED</code>
+  flag (§6.2). This was the only change the audit's dead-code line of inquiry actually
+  justified.</li>
+<li><strong>Do NOT delete the §6.1 modules</strong> — verification showed they are recent, tested, staged
+  capabilities (one in the current HEAD commit), and <code>project_inception.py</code> is in active use.
+  The correct follow-up is a <em>tracking</em> task: record the intended integration path for each
+  staged module so a truly-abandoned one can't hide among the not-yet-wired.</li>
+<li><strong>Verify:</strong> <code>CLAUDE.md</code> is prose-only; no test impact.</li>
+</ul>
+<h3 id="p2-disambiguate-names-and-finish-stalled-decompositions-lowmedium-risk">P2 — Disambiguate names and finish stalled decompositions <em>(low–medium risk)</em><a class="headerlink" href="#p2-disambiguate-names-and-finish-stalled-decompositions-lowmedium-risk" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Rename <code>sync_beads</code> → <code>drain_outbox</code></strong> (or similar). It is live, not dead (§6.2), so this
+  is a rename, not a removal — but it touches ~5 <code>services.py</code> signatures, the <code>dispatch.py</code>
+  client, and <strong>70+ test call sites</strong>, so it must run the full gate. Retire the cosmetic
+  <code>--actor default="beads-bridge"</code> (<code>cli.py:7906</code>) in the same pass.</li>
+<li>Rename the three "dispatch" layers (§5.2) to distinct names (e.g. <code>DispatchEngine</code> in
+  services, <code>DispatchFacade</code> in <code>task_lifecycle</code>, <code>DispatchClient</code>/<code>HubTransport</code> in
+  <code>dispatch.py</code>). Mechanical, high readability payoff, but wide blast radius.</li>
+<li><strong>Decide</strong> <code>http_routes/</code>: either complete the domain-router extraction from
+  <code>api.py::create_app</code>, or delete the stub and mount <code>system.py</code>'s routes inline. Leaving it
+  half-done is the worst state.</li>
+<li><strong>Verify:</strong> full <code>scripts/run-contract-tests.sh</code> green; route inventory unchanged
+  (<code>test_api_route_coverage.py</code>); no import cycles. These are mechanical but broad — they are
+  <em>scoped refactors that need the gate</em>, not unattended one-liners.</li>
+</ul>
+<h3 id="p3-extract-the-five-un-extracted-controlplane-blocks-high-value-medium-risk">P3 — Extract the five un-extracted <code>ControlPlane</code> blocks <em>(high value, medium risk)</em><a class="headerlink" href="#p3-extract-the-five-un-extracted-controlplane-blocks-high-value-medium-risk" title="Permanent link">&para;</a></h3>
+<p>Following the pattern the code already sanctions, extract into service classes:
+<strong>task-transition</strong> (~9720–10500), <strong>lease authority</strong> (~12688–14148),
+<strong>agent/attestation/dispatch-hold</strong> (~14547–16171), <strong>the dispatch engine</strong> (~17521–18188),
+and <strong>the default-review engine</strong> (~19159–20940, 23644–25868). Each is internally cohesive and
+mostly self-referential, keeping extraction risk moderate. Drop
+<code>_reconcile_legacy_task_state_semantics</code> (<code>services.py:1613</code>) and the <code>sync_beads</code> residue
+during this work.
+- <strong>Verify:</strong> behaviour-preserving refactor — <code>test_control_plane.py</code> and the <code>_edges</code>
+  companions pass unchanged before any test consolidation.</p>
+<h3 id="p4-consolidate-the-test-suite-high-value-ongoing">P4 — Consolidate the test suite <em>(high value, ongoing)</em><a class="headerlink" href="#p4-consolidate-the-test-suite-high-value-ongoing" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fold the 37 <code>_edges</code> companions into their base modules as parametrized cases (§7.3).</li>
+<li>Parametrize the 326 single-case files where scenarios repeat; break up the 14K-line
+  <code>test_control_plane.py</code> along the new §P3 service boundaries.</li>
+<li>Target: <strong>less total test LOC and less wall-clock at equal or better coverage</strong> — directly
+  cutting the ~34-minute-per-change gate cost.</li>
+<li><strong>Verify:</strong> coverage floors (<code>test-policy.toml</code>) hold; the <code>portfolio</code> guard confirms no
+  unique line/arc coverage is lost when a test is retired.</li>
+</ul>
+<hr />
+<h2 id="9-definition-of-active-code-carried-into-the-migration-study">9. Definition of "active code" (carried into the migration study)<a class="headerlink" href="#9-definition-of-active-code-carried-into-the-migration-study" title="Permanent link">&para;</a></h2>
+<p>For the companion <code>docs/haskell_migration.md</code>, <strong>"active code" = essentially the whole ~185K
+LOC of first-party <code>src/mac/</code> code excluding <code>_hermes/</code></strong> — the §6 verification found no
+material dead residue to subtract (only a stale doc reference, now fixed). The vendored
+Hermes runtime is <em>out of scope</em> for migration: it is a pinned upstream mirror whose whole
+value is staying faithfully in sync with <code>NousResearch/hermes-agent</code>, and porting it to
+another language would forfeit that. The migration study costs the active first-party surface
+and treats Hermes as a stable external runtime behind a process boundary.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright the MAC contributors. Documentation is versioned with the software.
+    </div>
+  
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
