@@ -274,6 +274,132 @@ def test_project_report_no_missing_contract_error(tmp_path):
     assert contract["evidence_type"] == "operator_result"
 
 
+# ---------------------------------------------------------------------------
+# Alias coverage: every report alias stays operator_result with AND without a
+# registered project, and code tasks stay repo_change (mac task_e2abc48b).
+# ---------------------------------------------------------------------------
+
+# The full set of report deliverable aliases the normalizer must exempt from
+# the repo_change path.  Mirrors ``_REPORT_DELIVERABLE_ALIASES`` in mac.models.
+REPORT_ALIASES = ("report", "analysis", "investigation", "answer", "question", "triage")
+
+
+@pytest.mark.parametrize("alias", REPORT_ALIASES)
+def test_project_report_alias_stays_operator_result_with_registered_project(alias, tmp_path):
+    """Each report alias created against a registered project keeps an
+    operator_result contract while preserving repository CONTEXT."""
+    from mac.services import ControlPlane
+
+    cp = ControlPlane.in_memory()
+    repo = _register_repo(cp, tmp_path)
+
+    normalized = cp._normalize_task_execution_contract({"deliverable": alias}, "proj", [])
+    contract = normalized["execution_contract"]
+
+    # Non-repository operator contract, never repo_change.
+    assert contract["type"] == "operator_directive"
+    assert contract["evidence_type"] == "operator_result"
+    assert contract["repository_required"] is False
+    assert contract.get("evidence_type") != "repo_change"
+    assert "repository_contract" not in contract
+
+    # Repository context preserved for reviewer reproducibility.
+    ctx = contract["repository_context"]
+    assert ctx["repository_id"] == repo.id
+    assert ctx["repository_name"] == repo.name
+    assert ctx["repository_path"] == repo.path
+    assert ctx["repository_contract_project"] == "proj"
+    assert ctx["repository_contract_schema"] == "mac.repository_contract.v1"
+
+    # The normalized origin / acc_metadata also carry the registered identity so
+    # a reviewer can reproduce the inspection without re-resolving the project.
+    origin = normalized["origin"]
+    assert origin["repository_id"] == repo.id
+    assert origin["repository_name"] == repo.name
+    assert origin["repository_path"] == repo.path
+    acc = normalized["acc_metadata"]
+    assert acc["repository_contract_project"] == "proj"
+    assert acc["repository_contract_schema"] == "mac.repository_contract.v1"
+
+
+@pytest.mark.parametrize("alias", REPORT_ALIASES)
+def test_project_report_alias_stays_operator_result_without_registered_project(alias):
+    """Each report alias created WITHOUT a registered project still normalizes
+    to a non-repository operator_result contract (no missing-contract error)."""
+    from mac.services import ControlPlane
+
+    cp = ControlPlane.in_memory()
+
+    normalized = cp._normalize_task_execution_contract({"deliverable": alias}, "proj", [])
+    contract = normalized["execution_contract"]
+
+    assert contract["type"] == "operator_directive"
+    assert contract["evidence_type"] == "operator_result"
+    assert contract["repository_required"] is False
+    assert "repository_contract" not in contract
+    # No registered project -> no repository context to preserve.
+    assert "repository_context" not in contract
+
+
+@pytest.mark.parametrize("alias", REPORT_ALIASES)
+def test_project_report_alias_not_upgraded_via_metadata_execution_contract(alias, tmp_path):
+    """A report alias cannot be smuggled onto the repo_change path via an
+    explicit metadata.execution_contract.type=repository."""
+    from mac.services import ControlPlane
+
+    cp = ControlPlane.in_memory()
+    _register_repo(cp, tmp_path)
+
+    contract = cp._normalize_task_execution_contract(
+        {
+            "deliverable": alias,
+            "execution_contract": {"type": "repository", "evidence_type": "repo_change"},
+        },
+        "proj",
+        [],
+    )["execution_contract"]
+
+    assert contract["type"] == "operator_directive"
+    assert contract["repository_required"] is False
+    assert contract["evidence_type"] == "operator_result"
+    assert "repository_contract" not in contract
+
+
+def test_project_code_task_with_registered_project_stays_repo_change(tmp_path):
+    """A default (code) task against a registered project remains a repository /
+    repo_change task carrying the registered contract."""
+    from mac.services import ControlPlane
+
+    cp = ControlPlane.in_memory()
+    repo = _register_repo(cp, tmp_path)
+
+    normalized = cp._normalize_task_execution_contract({}, "proj", [])
+    contract = normalized["execution_contract"]
+
+    assert contract["type"] == "repository"
+    assert contract["evidence_type"] == "repo_change"
+    assert contract["repository_id"] == repo.id
+    assert isinstance(contract["repository_contract"], dict)
+    assert contract["repository_contract"]["project"] == "proj"
+
+
+def test_code_task_for_repository_url_without_registered_contract_still_raises():
+    """A code task for a project advertising repository_url but no registered
+    repository contract keeps raising the existing ValidationError."""
+    from mac.services import ControlPlane
+    from mac.models import ValidationError
+
+    cp = ControlPlane.in_memory()
+    cp.create_project(
+        "widget",
+        metadata={"repository_url": "https://github.com/o/widget.git"},
+        dispatch_paused=False,
+    )
+
+    with pytest.raises(ValidationError, match="no registered repository contract"):
+        cp.create_task("Fix widget bug", project="widget", required_capabilities=["python"])
+
+
 def _git(cwd, *args):
     result = subprocess.run(
         ["git", *args],

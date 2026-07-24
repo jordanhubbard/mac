@@ -588,3 +588,112 @@ def test_task_create_kind_code_is_default_no_metadata(tmp_path):
 def test_task_create_rejects_unknown_kind(tmp_path):
     rc, _ = _run(tmp_path, "task", "create", "x", "--kind", "banana")
     assert rc != 0
+
+
+# ---------------------------------------------------------------------------
+# task create --project <p> --kind report/<alias> (mac task_e2abc48b)
+#
+# A report deliverable created against a registered project must persist an
+# operator_result execution contract, never a repo_change / repository one.
+# ---------------------------------------------------------------------------
+
+_PROJECT_CONTRACT_YAML = (
+    "schema: mac.repository_contract.v1\n"
+    "project: reportproj\n"
+    "platforms:\n"
+    "  - linux\n"
+    "toolchain:\n"
+    "  required_commands:\n"
+    "    - python3\n"
+    "bootstrap:\n"
+    "  command: python3 -m venv .venv\n"
+    "test:\n"
+    "  command: pytest\n"
+    "evidence:\n"
+    "  required:\n"
+    "    - tests\n"
+)
+
+
+def _register_project_repo(tmp_path, project="reportproj", name="report-repo"):
+    """Register a contract-backed project repository via the CLI bridge command."""
+    repo_path = tmp_path / "report-src"
+    contract_dir = repo_path / ".mac"
+    contract_dir.mkdir(parents=True)
+    (contract_dir / "project.yaml").write_text(_PROJECT_CONTRACT_YAML, encoding="utf-8")
+    rc, repo = _run(
+        tmp_path,
+        "bridge",
+        "repository",
+        "register",
+        name,
+        str(repo_path),
+        "--project",
+        project,
+    )
+    assert rc == 0, repo
+    return repo
+
+
+def test_task_create_kind_report_with_project_persists_operator_result(tmp_path):
+    _register_project_repo(tmp_path)
+    rc, task = _run(
+        tmp_path,
+        "task",
+        "create",
+        "investigate flakiness",
+        "--project",
+        "reportproj",
+        "--kind",
+        "report",
+    )
+    assert rc == 0, task
+    metadata = task.get("metadata", {})
+    assert metadata.get("deliverable") == "report"
+    contract = metadata["execution_contract"]
+    assert contract["type"] == "operator_directive"
+    assert contract["evidence_type"] == "operator_result"
+    assert contract["repository_required"] is False
+    assert "repository_contract" not in contract
+    # Repository context is preserved for reviewer reproducibility.
+    ctx = contract["repository_context"]
+    assert ctx["repository_name"] == "report-repo"
+    assert ctx["repository_contract_project"] == "reportproj"
+
+
+def test_task_create_kind_investigation_with_project_persists_operator_result(tmp_path):
+    _register_project_repo(tmp_path)
+    rc, task = _run(
+        tmp_path,
+        "task",
+        "create",
+        "triage the incident",
+        "--project",
+        "reportproj",
+        "--kind",
+        "investigation",
+    )
+    assert rc == 0, task
+    metadata = task.get("metadata", {})
+    # investigation alias normalizes to the report deliverable.
+    assert metadata.get("deliverable") == "report"
+    contract = metadata["execution_contract"]
+    assert contract["type"] == "operator_directive"
+    assert contract["evidence_type"] == "operator_result"
+    assert contract["repository_required"] is False
+    assert "repository_contract" not in contract
+
+
+def test_task_create_unknown_kind_with_project_still_errors(tmp_path):
+    _register_project_repo(tmp_path)
+    rc, _ = _run(
+        tmp_path,
+        "task",
+        "create",
+        "x",
+        "--project",
+        "reportproj",
+        "--kind",
+        "banana",
+    )
+    assert rc != 0

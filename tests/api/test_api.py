@@ -3939,3 +3939,49 @@ def test_agentbus_events_delivers_chunks_appended_after_request_starts(monkeypat
     lines = [line for line in events.text.splitlines() if line]
     assert len(lines) == 1
     assert json.loads(lines[0])["payload"] == {"seq": 1}
+
+
+def test_report_task_with_registered_project_stays_operator_result_via_api(tmp_path):
+    """A report deliverable created through the HTTP surface for a registered
+    project persists an operator_result contract, never repo_change."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write_repository_contract(repo, "report-route")
+    client = TestClient(create_app(control_plane=ControlPlane.in_memory()))
+
+    registered = client.post(
+        "/bridge/repositories",
+        json={
+            "name": "report-route-repo",
+            "path": str(repo),
+            "project": "report-route",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+
+    created = client.post(
+        "/tasks",
+        json={
+            "title": "investigate report-route",
+            "project": "report-route",
+            "metadata": {"deliverable": "report"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    contract = body["metadata"]["execution_contract"]
+    assert contract["type"] == "operator_directive"
+    assert contract["evidence_type"] == "operator_result"
+    assert contract["repository_required"] is False
+    assert "repository_contract" not in contract
+    # Repository context preserved for reviewer reproducibility.
+    ctx = contract["repository_context"]
+    assert ctx["repository_name"] == "report-route-repo"
+    assert ctx["repository_contract_project"] == "report-route"
+
+    # The persisted task detail keeps the same operator_result contract.
+    detail = client.get("/tasks/%s" % body["id"]).json()["task"]
+    persisted = detail["metadata"]["execution_contract"]
+    assert persisted["type"] == "operator_directive"
+    assert persisted["evidence_type"] == "operator_result"
+    assert persisted["repository_required"] is False
