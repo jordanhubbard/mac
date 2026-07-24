@@ -708,6 +708,30 @@ def _sandbox_name() -> str:
     return "mac-task-" + uuid.uuid4().hex[:12]
 
 
+def _sandbox_identity_labels() -> List[str]:
+    """Durable lease-authority identity labels for the current executor.
+
+    The recorded creator ``mac.pid`` only proves liveness on the *creating*
+    host, so a sandbox left Ready by an executor that exited (or that ran on a
+    now-unreachable host) cannot be reconciled from PID liveness alone. Stamping
+    the durable ``MAC_TASK_ID`` / ``MAC_LEASE_ID`` onto the sandbox lets the
+    reaper consult the authoritative lease store instead: a sandbox whose task
+    is terminal, unleased, lease-expired, or whose lease has been superseded is
+    provably orphaned regardless of where — or whether — its creator still runs.
+    Labels are emitted only when the corresponding value is present so
+    non-task sandboxes and older callers are unaffected.
+    """
+
+    labels: List[str] = []
+    task_id = (env_str("MAC_TASK_ID") or "").strip()
+    if task_id:
+        labels += ["--label", "mac.task.id=%s" % task_id]
+    lease_id = (env_str("MAC_LEASE_ID") or "").strip()
+    if lease_id:
+        labels += ["--label", "mac.lease.id=%s" % lease_id]
+    return labels
+
+
 def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
     return [
         "--label",
@@ -718,7 +742,7 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
         "mac.pid=%d" % os.getpid(),
         "--label",
         "mac.keep=%s" % ("true" if keep else "false"),
-    ]
+    ] + _sandbox_identity_labels()
 
 
 def _sandbox_gc_best_effort() -> None:
@@ -803,6 +827,84 @@ def _reap_orphaned_task_sandboxes_best_effort(audit_id: Any = None) -> None:
     if report["failures"]:
         sys.stderr.write(
             "[executor] WARNING: failed to reap %d orphaned OpenShell task sandbox(es)\n"
+            % len(report["failures"])
+        )
+
+
+def _reconcile_task_sandboxes_from_lease_authority_best_effort(
+    audit_id: Any = None,
+) -> None:
+    """Fail-closed reconcile of task sandboxes against durable lease authority.
+
+    The dead-PID reaper only proves orphanhood on the *creating* host. This
+    sweep additionally consults the authoritative lease store (the same source
+    of truth the k8s controller uses for stuck Jobs): a Ready task sandbox whose
+    ``mac.task.id`` maps to a terminal, unleased, lease-expired, or
+    lease-superseded task is reaped even when its recorded creator PID cannot be
+    proven dead. Sandboxes without identity labels, with an unresolvable task,
+    with ``mac.keep=true``, or with a live matching lease are always preserved.
+
+    Best-effort: requires hub access (``MAC_HUB_URL``/``MAC_URL`` + token) to
+    resolve tasks; a missing hub, lookup failures, and delete failures are logged
+    and never block the guarded run that follows. Set
+    ``MAC_OPENSHELL_RECONCILE_LEASES=0`` to disable.
+    """
+
+    if not env_bool("MAC_OPENSHELL_RECONCILE_LEASES", True):
+        return
+
+    from mac.executor_hub_io import _hub_env, _hub_get
+
+    base_url, token = _hub_env()
+    if not base_url or not token:
+        return
+
+    def _lookup_task(task_id: str) -> Optional[Mapping[str, Any]]:
+        if not task_id:
+            return None
+        result = _hub_get("/tasks/%s" % task_id)
+        if isinstance(result, Mapping):
+            inner = result.get("task")
+            if isinstance(inner, Mapping):
+                return inner
+            return result
+        return None
+
+    try:
+        from .openshell_sandbox_gc import (
+            reconcile_task_sandboxes_from_lease_authority,
+        )
+
+        report = reconcile_task_sandboxes_from_lease_authority(
+            _lookup_task,
+            openshell_bin=_openshell_bin(),
+            apply=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - cleanup must not block guarded execution
+        sys.stderr.write(
+            "[executor] WARNING: lease-authority sandbox reconcile failed: %s\n" % exc
+        )
+        return
+
+    if report["candidates"]:
+        emit_telemetry(
+            "sandbox_lease_reconciled",
+            task_id=str(audit_id) if audit_id else None,
+            level="info" if not report["failures"] else "warning",
+            scanned=report["scanned"],
+            protected=report["protected"],
+            reaped=len(report["deleted"]),
+            failed=len(report["failures"]),
+            names=[str(row["name"]) for row in report["candidates"]],
+        )
+    if report["deleted"]:
+        sys.stderr.write(
+            "[executor] reconciled %d orphaned OpenShell task sandbox(es) from lease authority\n"
+            % len(report["deleted"])
+        )
+    if report["failures"]:
+        sys.stderr.write(
+            "[executor] WARNING: failed to reconcile %d orphaned OpenShell task sandbox(es)\n"
             % len(report["failures"])
         )
 
@@ -3240,6 +3342,7 @@ def _run_sandboxed(
     _ensure_landlock_or_fail()
     _sandbox_gc_best_effort()
     _reap_orphaned_task_sandboxes_best_effort(audit_id)
+    _reconcile_task_sandboxes_from_lease_authority_best_effort(audit_id)
     task = opts.get("task")
     task_metadata = task.get("metadata") if isinstance(task, dict) else None
     read_only_report = metadata_declares_read_only_report_repository(task_metadata)

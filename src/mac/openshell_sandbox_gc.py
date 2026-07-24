@@ -390,3 +390,240 @@ def reap_orphaned_task_sandboxes(
         "deleted": deleted,
         "failures": failures,
     }
+
+
+# --- Durable lease-authority orphan reconciler -------------------------------
+#
+# The dead-PID reaper above proves orphanhood from the *local* creator process.
+# That signal is host-local: a Ready task sandbox left behind by an executor
+# that exited cleanly, crashed, or ran on a now-unreachable host has a recorded
+# ``mac.pid`` that is either dead-but-unprovable or belongs to an unrelated
+# process on the reaping host. The authoritative source of truth for whether a
+# task is still being worked is the durable lease store, exactly as the k8s
+# controller reconciles stuck Jobs (see ``mac.k8s.controller``).
+#
+# This reconciler stamps the same fail-closed discipline onto lease authority: a
+# task sandbox is reaped only when the lease store *positively* proves the work
+# is gone. A sandbox is reaped when, for its recorded ``mac.task.id``:
+#
+#   * the task is in a terminal state (completed / failed / cancelled), OR
+#   * the task has no active lease, OR
+#   * the task's active lease differs from the sandbox's ``mac.lease.id``
+#     (the lease was superseded by a newer claim), OR
+#   * the task's lease has expired (``leased_until`` is in the past).
+#
+# Anything that cannot be proven — a missing ``mac.task.id`` label, a task the
+# store cannot resolve, ``mac.keep`` truthy, or a live matching lease — is left
+# untouched. Task lookup is injected so this stays decoupled from any concrete
+# store/API and secret-free in its evidence.
+
+TERMINAL_TASK_STATES = frozenset({"completed", "failed", "cancelled", "canceled"})
+
+
+def _lease_expired(leased_until: Any, now: datetime) -> bool:
+    parsed = _created_at(leased_until)
+    if parsed is None:
+        return False
+    return parsed < now
+
+
+def classify_lease_orphan_sandbox(
+    sandbox: Mapping[str, Any],
+    task: Optional[Mapping[str, Any]],
+    *,
+    now: datetime,
+) -> Dict[str, Any]:
+    """Classify a single task sandbox against durable lease authority.
+
+    ``task`` is the authoritative task record (or ``None`` when the store could
+    not resolve the recorded ``mac.task.id``). Returns a secret-free record with
+    ``reap`` (bool), the ownership signals used, and a ``reason``. Label *values*
+    beyond the ownership/identity fields the decision is based on are never
+    recorded, so the result is safe to emit as evidence.
+    """
+
+    row = dict(sandbox)
+    name = str(row.get("name") or "").strip()
+    labels_value = row.get("labels")
+    labels = dict(labels_value) if isinstance(labels_value, Mapping) else {}
+
+    owner = str(labels.get("mac.owner") or "").strip().lower()
+    kind = str(labels.get("mac.kind") or "").strip().lower()
+    keep_raw = labels.get("mac.keep")
+    task_id = str(labels.get("mac.task.id") or "").strip()
+    lease_id = str(labels.get("mac.lease.id") or "").strip()
+    phase = str(row.get("phase") or "").strip()
+
+    record: Dict[str, Any] = {
+        "name": name,
+        "phase": phase,
+        "owner": owner,
+        "kind": kind,
+        "keep": str(keep_raw if keep_raw is not None else "").strip().lower(),
+        "task_id": task_id,
+        "lease_id": lease_id,
+        "reap": False,
+        "reason": "",
+    }
+
+    if not name or not MANAGED_NAME_RE.fullmatch(name):
+        record["reason"] = "name is not an exact MAC-managed sandbox"
+        return record
+    if owner != "mac":
+        record["reason"] = "mac.owner is not exactly 'mac'"
+        return record
+    if kind != "task":
+        record["reason"] = "mac.kind is not 'task'"
+        return record
+    if _truthy(keep_raw):
+        record["reason"] = "mac.keep is truthy (protected)"
+        return record
+    if not task_id:
+        record["reason"] = "mac.task.id label is missing"
+        return record
+    if task is None:
+        record["reason"] = "task could not be resolved from the lease store"
+        return record
+
+    state = str(task.get("state") or "").strip().lower()
+    if state in TERMINAL_TASK_STATES:
+        record["reap"] = True
+        record["reason"] = "task is in terminal state %r" % state
+        return record
+
+    active_lease_id = str(task.get("lease_id") or "").strip()
+    if not active_lease_id:
+        record["reap"] = True
+        record["reason"] = "task has no active lease"
+        return record
+    if lease_id and active_lease_id != lease_id:
+        record["reap"] = True
+        record["reason"] = "sandbox lease was superseded by a newer task lease"
+        return record
+    if _lease_expired(task.get("leased_until"), now):
+        record["reap"] = True
+        record["reason"] = "task lease has expired"
+        return record
+
+    record["reason"] = "task has a live matching lease"
+    return record
+
+
+def lease_orphan_task_sandbox_candidates(
+    sandboxes: Iterable[Mapping[str, Any]],
+    lookup_task: Callable[[str], Optional[Mapping[str, Any]]],
+    *,
+    now: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """Return reap-eligible records for task sandboxes orphaned per lease authority.
+
+    ``lookup_task`` resolves a ``mac.task.id`` to its authoritative task record
+    (or ``None`` when unknown). Lookup failures fail closed: the sandbox is kept
+    and its reason records the lookup error.
+    """
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    records: List[Dict[str, Any]] = []
+    for raw in sandboxes:
+        if not isinstance(raw, Mapping):
+            continue
+        labels_value = raw.get("labels")
+        labels = dict(labels_value) if isinstance(labels_value, Mapping) else {}
+        task_id = str(labels.get("mac.task.id") or "").strip()
+        task: Optional[Mapping[str, Any]] = None
+        lookup_error = ""
+        if task_id:
+            try:
+                task = lookup_task(task_id)
+            except Exception as exc:  # noqa: BLE001 - fail closed on lookup failure
+                lookup_error = str(exc)
+                task = None
+        record = classify_lease_orphan_sandbox(raw, task, now=current)
+        if lookup_error and not record["reap"]:
+            record["reason"] = "task lookup failed: %s" % lookup_error[-200:]
+        if record["reap"]:
+            records.append(record)
+    return records
+
+
+def reconcile_task_sandboxes_from_lease_authority(
+    lookup_task: Callable[[str], Optional[Mapping[str, Any]]],
+    *,
+    openshell_bin: str = "openshell",
+    apply: bool = False,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """List and optionally delete task sandboxes orphaned per durable lease authority.
+
+    A task sandbox is reaped only when the lease store proves the work is gone:
+    the task is terminal, unleased, its lease was superseded, or its lease has
+    expired. Missing identity labels, unresolvable tasks, ``mac.keep=true``, and
+    live matching leases are always preserved (fail-closed). ``lookup_task``
+    resolves ``mac.task.id`` to the authoritative task record; the returned
+    evidence is secret-free.
+    """
+
+    listed = subprocess.run(
+        [
+            openshell_bin,
+            "sandbox",
+            "list",
+            "--limit",
+            "1000",
+            "--output",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if listed.returncode != 0:
+        detail = (listed.stderr or listed.stdout or "").strip()
+        raise RuntimeError("OpenShell sandbox list failed: %s" % detail[-1000:])
+    try:
+        payload = json.loads(listed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("OpenShell sandbox list returned invalid JSON") from exc
+    if not isinstance(payload, list):
+        raise RuntimeError("OpenShell sandbox list JSON is not an array")
+
+    candidates = lease_orphan_task_sandbox_candidates(
+        payload, lookup_task, now=now
+    )
+    protected = sum(1 for row in payload if isinstance(row, Mapping)) - len(candidates)
+
+    deleted: List[str] = []
+    failures: List[Dict[str, str]] = []
+    if apply:
+        for record in candidates:
+            name = str(record["name"])
+            proc = subprocess.run(
+                [openshell_bin, "sandbox", "delete", name],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if proc.returncode == 0:
+                deleted.append(name)
+            else:
+                failures.append(
+                    {
+                        "name": name,
+                        "error": (proc.stderr or proc.stdout or "").strip()[-1000:],
+                    }
+                )
+
+    return {
+        "schema": "mac.openshell.sandbox_lease_reconcile.v1",
+        "dry_run": not apply,
+        "scanned": len(payload),
+        "protected": max(0, protected),
+        "candidates": candidates,
+        "deleted": deleted,
+        "failures": failures,
+    }

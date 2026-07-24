@@ -658,6 +658,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSHELL_PROGRESS_INTERVAL` | int | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell progress interval. |
 | `MAC_OPENSHELL_REAP_ORPHANS` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell reap orphans. |
 | `MAC_OPENSHELL_REBUILD_ON_SOURCE_UPDATE` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell rebuild on source update. |
+| `MAC_OPENSHELL_RECONCILE_LEASES` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell reconcile leases. |
 | `MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell repo requires coding agent. |
 | `MAC_OPENSHELL_REQUIRED` | bool | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell required. |
 | `MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE` | str | consumer-defined | openshell-sandbox | Openshell Sandbox setting: openshell runtime image ref file. |

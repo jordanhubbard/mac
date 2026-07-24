@@ -7875,6 +7875,17 @@
   },
   {
     "default": null,
+    "description": "Openshell Sandbox setting: openshell reconcile leases.",
+    "family": "openshell-sandbox",
+    "name": "MAC_OPENSHELL_RECONCILE_LEASES",
+    "retired": false,
+    "sources": [
+      "src/mac/executor_sandbox.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
     "description": "Openshell Sandbox setting: openshell repo requires coding agent.",
     "family": "openshell-sandbox",
     "name": "MAC_OPENSHELL_REPO_REQUIRES_CODING_AGENT",

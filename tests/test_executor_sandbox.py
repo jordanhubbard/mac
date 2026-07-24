@@ -118,3 +118,126 @@ def test_reap_orphans_best_effort_swallows_errors(monkeypatch) -> None:
 
     # Best-effort: a reap failure must never propagate into the guarded run.
     sandbox._reap_orphaned_task_sandboxes_best_effort()
+
+
+def test_sandbox_identity_labels_stamp_task_and_lease(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    monkeypatch.setenv("MAC_TASK_ID", "task_xyz")
+    monkeypatch.setenv("MAC_LEASE_ID", "lease_xyz")
+
+    argv = sandbox._sandbox_label_argv("task")
+
+    assert "mac.task.id=task_xyz" in argv
+    assert "mac.lease.id=lease_xyz" in argv
+    assert "mac.owner=mac" in argv
+
+
+def test_sandbox_identity_labels_omitted_when_absent(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    monkeypatch.delenv("MAC_TASK_ID", raising=False)
+    monkeypatch.delenv("MAC_LEASE_ID", raising=False)
+
+    argv = sandbox._sandbox_label_argv("task")
+
+    assert not any(a.startswith("mac.task.id=") for a in argv)
+    assert not any(a.startswith("mac.lease.id=") for a in argv)
+
+
+def test_lease_reconcile_best_effort_uses_hub_lookup(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    import mac.openshell_sandbox_gc as gc
+    import mac.executor_hub_io as hub_io
+
+    monkeypatch.delenv("MAC_OPENSHELL_RECONCILE_LEASES", raising=False)
+    monkeypatch.setattr(hub_io, "_hub_env", lambda: ("http://hub", "token"))
+    monkeypatch.setattr(
+        hub_io, "_hub_get", lambda path: {"task": {"state": "completed"}}
+    )
+    monkeypatch.setattr(sandbox, "emit_telemetry", lambda *a, **k: None)
+
+    seen = {}
+
+    def fake_reconcile(lookup_task, *, openshell_bin, apply):
+        seen["apply"] = apply
+        seen["task"] = lookup_task("task_done")
+        return {
+            "schema": "mac.openshell.sandbox_lease_reconcile.v1",
+            "dry_run": not apply,
+            "scanned": 1,
+            "protected": 0,
+            "candidates": [{"name": "mac-task-done"}],
+            "deleted": ["mac-task-done"],
+            "failures": [],
+        }
+
+    monkeypatch.setattr(
+        gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile
+    )
+
+    sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort("task_1")
+
+    assert seen["apply"] is True
+    assert seen["task"] == {"state": "completed"}
+
+
+def test_lease_reconcile_best_effort_skips_without_hub(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    import mac.openshell_sandbox_gc as gc
+    import mac.executor_hub_io as hub_io
+
+    monkeypatch.delenv("MAC_OPENSHELL_RECONCILE_LEASES", raising=False)
+    monkeypatch.setattr(hub_io, "_hub_env", lambda: ("", ""))
+
+    called = {"count": 0}
+
+    def fake_reconcile(*_a, **_k):
+        called["count"] += 1
+        return {"candidates": [], "deleted": [], "failures": [], "scanned": 0, "protected": 0}
+
+    monkeypatch.setattr(
+        gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile
+    )
+
+    sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
+
+    assert called["count"] == 0
+
+
+def test_lease_reconcile_best_effort_can_be_disabled(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    import mac.openshell_sandbox_gc as gc
+
+    called = {"count": 0}
+
+    def fake_reconcile(*_a, **_k):
+        called["count"] += 1
+        return {"candidates": [], "deleted": [], "failures": [], "scanned": 0, "protected": 0}
+
+    monkeypatch.setattr(
+        gc, "reconcile_task_sandboxes_from_lease_authority", fake_reconcile
+    )
+    monkeypatch.setenv("MAC_OPENSHELL_RECONCILE_LEASES", "0")
+
+    sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
+
+    assert called["count"] == 0
+
+
+def test_lease_reconcile_best_effort_swallows_errors(monkeypatch) -> None:
+    sandbox = importlib.import_module("mac.executor_sandbox")
+    import mac.openshell_sandbox_gc as gc
+    import mac.executor_hub_io as hub_io
+
+    monkeypatch.delenv("MAC_OPENSHELL_RECONCILE_LEASES", raising=False)
+    monkeypatch.setattr(hub_io, "_hub_env", lambda: ("http://hub", "token"))
+    monkeypatch.setattr(hub_io, "_hub_get", lambda path: None)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("openshell exploded")
+
+    monkeypatch.setattr(
+        gc, "reconcile_task_sandboxes_from_lease_authority", boom
+    )
+
+    # Best-effort: a reconcile failure must never propagate into the guarded run.
+    sandbox._reconcile_task_sandboxes_from_lease_authority_best_effort()
