@@ -707,6 +707,16 @@ COHORT_JOURNAL_ACTIVE=0
 COHORT_JOURNAL_REVISION=0
 COHORT_RECOVERY_RUNNING=0
 readonly COHORT_EPOCH_ID COHORT_JOURNAL_DIR COHORT_JOURNAL_HELPER
+# Durable, owner-only failure evidence for bounded node phases. The EXIT trap
+# removes TMPDIR_LOCAL wholesale after fix-forward recovery, which previously
+# erased the reported per-agent phase log. Sanitized failure artifacts are
+# written here instead so the diagnostic survives cleanup; the directory lives
+# outside TMPDIR_LOCAL and is never removed by the cleanup trap.
+BOUNDED_PHASE_FAILURE_EVIDENCE_DIR="${MAC_FLEET_PHASE_FAILURE_EVIDENCE_DIR:-$HOME/.mac/logs}"
+readonly BOUNDED_PHASE_FAILURE_EVIDENCE_DIR
+# Newline-separated durable artifact paths produced this run, surfaced in
+# cohort recovery evidence so recovery consumers can locate each diagnostic.
+BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS=""
 SSH_CONTROL_DIR="/tmp/mac-fleet-ssh-${UID:-0}-${DEPLOY_CONTROLLER_NONCE:0:12}"
 mkdir -p "$SSH_CONTROL_DIR"
 chmod 0700 "$SSH_CONTROL_DIR"
@@ -9897,6 +9907,132 @@ print("agent_%s" % safe)
 PY
 }
 
+persist_bounded_phase_failure_evidence() {
+  # Persist a durable, owner-only, secret-safe diagnostic for one failed bounded
+  # node phase. The per-agent phase log lives under TMPDIR_LOCAL, which the EXIT
+  # trap deletes after fix-forward recovery; without this the reported path is
+  # already gone by the time an operator looks. The sanitized log body (never
+  # node secret payloads, hub bearer material, or credential files) is copied
+  # into an owner-only 0600 JSON artifact bound to the source commit, cohort
+  # epoch, agent id, phase, exit status, and a SHA-256 digest of the sanitized
+  # body. On success the durable path is printed on stdout for the caller.
+  local phase="$1" agent="$2" agent_id="$3" status="$4" log_path="$5"
+  local evidence_dir="$BOUNDED_PHASE_FAILURE_EVIDENCE_DIR"
+  local output
+  output="$("$PYTHON_BIN" - \
+    "$evidence_dir" "$phase" "$agent" "$agent_id" "$status" "$log_path" \
+    "$GIT_REV" "$COHORT_EPOCH_ID" "$TS" <<'PY'
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+(
+    evidence_dir,
+    phase,
+    agent,
+    agent_id,
+    status,
+    log_path,
+    source_commit,
+    cohort_epoch,
+    deploy_ts,
+) = sys.argv[1:10]
+
+# Read whatever the failed child emitted. A missing/zero-byte log is itself the
+# diagnostic ("no lower-level message was emitted"), so record that explicitly
+# rather than aborting.
+try:
+    raw = Path(log_path).read_text(encoding="utf-8", errors="replace")
+except OSError:
+    raw = ""
+
+# Secret-safe sanitization. Redact bearer/authorization material, key=secret:
+# spoke provider references, base64 review-key blobs, and any assignment whose
+# key names a credential. Full temp-directory payloads and credential files are
+# never copied here in the first place; this is defense in depth over the log.
+SECRET_KEY = re.compile(
+    r"(?i)\b([A-Za-z0-9_]*"
+    r"(?:token|secret|password|passwd|credential|api[_-]?key|bearer|"
+    r"private[_-]?key|preauth|auth[_-]?key|review[_-]?key|pubkey|"
+    r"key_b64|key64)"
+    r"[A-Za-z0-9_]*)\s*([:=])\s*\S+"
+)
+# Redact the whole value following an Authorization/Bearer/Proxy-Authorization
+# header, not just the header token, so credential material never survives.
+AUTH_HEADER = re.compile(
+    r"(?i)\b((?:proxy-)?authorization|bearer)\b\s*[:=]?\s*\S.*$"
+)
+KEY_SECRET = re.compile(r"(?i)key=secret:[^\s\"']+")
+# Long base64/opaque blobs are almost always encoded key/credential material.
+# Anchor on a run of >=48 base64 chars regardless of surrounding punctuation.
+B64_BLOB = re.compile(r"[A-Za-z0-9+/]{48,}={0,2}")
+
+
+def scrub(line: str) -> str:
+    line = SECRET_KEY.sub(lambda m: "%s%s<redacted>" % (m.group(1), m.group(2)), line)
+    line = AUTH_HEADER.sub(lambda m: "%s <redacted>" % m.group(1), line)
+    line = KEY_SECRET.sub("key=secret:<redacted>", line)
+    line = B64_BLOB.sub("<redacted-blob>", line)
+    return line
+
+
+sanitized = "".join(scrub(line) for line in raw.splitlines(keepends=True))
+digest = hashlib.sha256(sanitized.encode("utf-8")).hexdigest()
+
+payload = {
+    "schema": "mac.fleet_bounded_phase_failure_evidence.v1",
+    "status": "bounded_phase_failed",
+    "phase": phase,
+    "agent": agent,
+    "stable_id": agent_id,
+    "exit_status": int(status) if re.fullmatch(r"\d+", status or "") else 125,
+    "source_commit": source_commit,
+    "cohort_epoch": cohort_epoch,
+    "deploy_ts": deploy_ts,
+    "log_bytes": len(raw.encode("utf-8")),
+    "log_present": bool(raw),
+    "sanitized_sha256": digest,
+    "sanitized_log": sanitized,
+    "observed_at": dt.datetime.now(dt.timezone.utc)
+    .isoformat()
+    .replace("+00:00", "Z"),
+}
+
+directory = Path(evidence_dir)
+directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+try:
+    os.chmod(directory, 0o700)
+except OSError:
+    pass
+
+name = "phase-failure-%s-%s-%s.json" % (deploy_ts, phase, agent_id)
+output = directory / name
+fd, raw_tmp = tempfile.mkstemp(prefix=output.name + ".", dir=str(directory))
+temporary = Path(raw_tmp)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, output)
+finally:
+    temporary.unlink(missing_ok=True)
+
+os.chmod(output, 0o600)
+print(str(output))
+PY
+)" || return 1
+  [ -n "$output" ] || return 1
+  printf '%s\n' "$output"
+}
+
 run_bounded_node_phase() {
   # Run one independent node operation per frozen spec with a bounded fan-out.
   # Every child gets a distinct log and the parent waits for every attempted
@@ -10009,13 +10145,24 @@ run_bounded_node_phase() {
   index=0
   while [ "$index" -lt "$total" ]; do
     agent="${phase_agents[index]}"
+    agent_id="$(stable_worker_agent_id "$agent")"
     log_path="${phase_logs[index]}"
     status="${phase_statuses[index]:-125}"
     if [ -s "$log_path" ]; then
       sed "s/^/[${phase}:${agent}] /" "$log_path"
     fi
     if [ "$status" -ne 0 ]; then
-      echo "ERROR: ${agent}: ${phase} failed with status ${status}; log=${log_path}" >&2
+      # Persist a durable, secret-safe artifact BEFORE the EXIT trap wipes
+      # TMPDIR_LOCAL so the reported diagnostic still exists after recovery.
+      local durable_evidence=""
+      if durable_evidence="$(persist_bounded_phase_failure_evidence \
+          "$phase" "$agent" "$agent_id" "$status" "$log_path")" \
+          && [ -n "$durable_evidence" ]; then
+        BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS="${BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS}${durable_evidence}\n"
+        echo "ERROR: ${agent}: ${phase} failed with status ${status}; log=${log_path}; failure_evidence=${durable_evidence}" >&2
+      else
+        echo "ERROR: ${agent}: ${phase} failed with status ${status}; log=${log_path}; failure_evidence=unavailable" >&2
+      fi
       failed=1
     else
       echo "==> ${agent}: ${phase} passed; log=${log_path}"
@@ -13469,6 +13616,23 @@ print(state)
   fi
 }
 
+emit_bounded_phase_failure_evidence_recovery_summary() {
+  # Print the durable failure-evidence paths collected this run so cohort
+  # recovery evidence records where each sanitized diagnostic survives.
+  local path printed=0
+  [ -n "$BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS" ] || return 0
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ "$printed" -eq 0 ]; then
+      echo "==> fleet: recovery references durable bounded-phase failure evidence"
+      printed=1
+    fi
+    echo "==> fleet: failure_evidence=${path}"
+  done <<EOF
+$(printf '%b' "$BOUNDED_PHASE_FAILURE_EVIDENCE_PATHS")
+EOF
+}
+
 recover_active_cohort_transaction_v2() {
   local epoch_id="$1" owner_nonce="${2:-$DEPLOY_CONTROLLER_NONCE}"
   local status_file="$TMPDIR_LOCAL/recovery-status.json" recovery_file="$TMPDIR_LOCAL/recovery-plan.json"
@@ -13476,6 +13640,11 @@ recover_active_cohort_transaction_v2() {
   local finalization_file="$TMPDIR_LOCAL/recovery-finalization-candidates.txt"
   local status recovery direction hub_action hub_agent identity receipt outcome candidate_b64 fleet_name
   umask 077
+  # Surface the durable, secret-safe bounded-phase failure artifacts that
+  # triggered (or accompany) this recovery. Their reported per-agent phase
+  # logs live in TMPDIR_LOCAL and are removed by the EXIT trap, so recovery
+  # evidence points at the surviving 0600 artifacts instead.
+  emit_bounded_phase_failure_evidence_recovery_summary
   if ! status="$(cohort_journal status --epoch "$epoch_id")"; then
     return 1
   fi

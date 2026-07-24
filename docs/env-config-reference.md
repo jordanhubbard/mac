@@ -420,6 +420,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_FLEETS_CONFIG` | str | consumer-defined | core | Core setting: fleets config. |
 | `MAC_FLEET_COHORT_JOURNAL_DIR` | str | consumer-defined | core | Core setting: fleet cohort journal dir. |
 | `MAC_FLEET_NAME` | str | consumer-defined | core | Core setting: fleet name. |
+| `MAC_FLEET_PHASE_FAILURE_EVIDENCE_DIR` | str | consumer-defined | core | Core setting: fleet phase failure evidence dir. |
 | `MAC_FLEET_TENANT_ID` | str | consumer-defined | core | Core setting: fleet tenant id. |
 | `MAC_FORCE_ACC_MIGRATION` | str | consumer-defined | core | Core setting: force acc migration. |
 | `MAC_GEN_AUDIO_SERVICE_NAME` | str | consumer-defined | core | Core setting: gen audio service name. |

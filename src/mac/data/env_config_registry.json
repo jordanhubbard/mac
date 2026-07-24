@@ -4954,6 +4954,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: fleet phase failure evidence dir.",
+    "family": "core",
+    "name": "MAC_FLEET_PHASE_FAILURE_EVIDENCE_DIR",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: fleet tenant id.",
     "family": "core",
     "name": "MAC_FLEET_TENANT_ID",
