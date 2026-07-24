@@ -7087,6 +7087,7 @@ def test_git_main_publication_requires_repository_path(cp):
 
 def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     from tests.conftest import submit_review_verdict
+    from mac.cicd_monitor import CICDMonitor, CICDMonitorConfig
 
     def git(repo, *args):
         return subprocess.run(
@@ -7125,8 +7126,18 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
 
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
+    project = cp.create_project(
+        "git-publication-ci",
+        metadata={"repository_url": "https://github.com/acme/widgets.git"},
+        dispatch_paused=False,
+    )
+    cp._cicd_monitor = CICDMonitor(
+        cp,
+        CICDMonitorConfig(enabled=True),
+    )
     task = cp.create_task(
         "publish parallel branch",
+        project=project.name,
         required_capabilities=["python"],
         metadata={
             "origin": {
@@ -7205,6 +7216,20 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
             "publication_mode": "merge_commit",
         }
     ]
+    ci_schedules = [
+        event
+        for event in cp.list_observability(limit=100)
+        if event.name == "cicd.followup.scheduled"
+        and event.subject_id == task.id
+    ]
+    assert len(ci_schedules) == 1
+    assert ci_schedules[0].detail["schema"] == "mac.cicd_followup_schedule.v1"
+    assert ci_schedules[0].detail["publication_id"] == publication.id
+    assert ci_schedules[0].detail["canonical_sha"] == final_head
+    assert ci_schedules[0].detail["repository"] == "acme/widgets"
+    assert ci_schedules[0].detail["schedule_key"] == (
+        "github-publication:%s:%s" % (publication.id, final_head)
+    )
 
 
 def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):

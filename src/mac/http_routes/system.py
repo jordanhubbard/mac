@@ -18,6 +18,7 @@ class RepositoryRefReconcileRequest(BaseModel):
 class SystemRouteServices:
     repository_ref_reconciler: Any
     github_ingestor: Any
+    cicd_monitor: Any
     backlog_groomer: Any
     nap_ticker: Any
     curiosity_reviewer: Any
@@ -69,6 +70,7 @@ def build_system_router(
             return controller.run_once(trigger="operator")
 
     controller_routes("github-ingest", services.github_ingestor)
+    controller_routes("cicd-monitor", services.cicd_monitor)
     controller_routes("backlog-groom", services.backlog_groomer)
     controller_routes("nap-tick", services.nap_ticker)
     controller_routes("curiosity-review", services.curiosity_reviewer)

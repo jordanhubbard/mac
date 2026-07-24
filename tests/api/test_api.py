@@ -69,6 +69,22 @@ def test_repository_ref_reconciler_follows_app_lifecycle(monkeypatch):
     assert reconciler.status()["thread_alive"] is False
 
 
+def test_cicd_monitor_follows_app_lifecycle(monkeypatch):
+    monkeypatch.setenv("MAC_CICD_MONITOR_ENABLED", "1")
+    monkeypatch.setenv("MAC_CICD_MONITOR_INTERVAL_SECONDS", "999")
+    monkeypatch.setenv("MAC_CICD_MONITOR_INITIAL_DELAY_SECONDS", "999")
+    app = create_app(control_plane=ControlPlane.in_memory())
+    monitor = app.state.cicd_monitor
+    assert monitor.status()["thread_alive"] is False
+
+    with TestClient(app) as client:
+        assert client.get("/cicd-monitor/status").status_code == 200
+        assert client.post("/cicd-monitor/run").status_code == 200
+        assert monitor.status()["thread_alive"] is True
+
+    assert monitor.status()["thread_alive"] is False
+
+
 def test_task_ledger_audit_route_is_static_and_covers_every_task():
     cp = ControlPlane.in_memory()
     first = cp.create_task("first audit task", project="demo")

@@ -1229,6 +1229,10 @@ class ControlPlane:
         # This is what makes multi-replica mac-api stateless — every
         # replica hits the shared CNPG cluster without any code change.
         self.store: Store = store or make_store_from_env()
+        # The API composition root attaches the hub-owned CI controller after
+        # both services exist. Embedded/test control planes intentionally leave
+        # this unset unless they are exercising post-publication CI follow-up.
+        self._cicd_monitor: Any = None
         # Lease authority is deliberately distinct from general event
         # timestamps. PostgreSQL-backed hubs read it from the shared database;
         # SQLite is a single-hub authority and samples this service clock only
@@ -19240,6 +19244,7 @@ class ControlPlane:
                 subject_id=publication.task_id,
                 detail={**git_publication, "publication_id": publication.id},
             )
+            self._schedule_cicd_check_after_publication(publication, git_publication)
         # publish_task transitions the underlying task to COMPLETED inside
         # its own transaction (bypassing transition_task), so we run the
         # workflow runtime hook here so workflow runs advance on publish.
@@ -19258,6 +19263,60 @@ class ControlPlane:
                     "workflow runtime failed to advance after publish_task"
                 )
         return publication
+
+    def _schedule_cicd_check_after_publication(
+        self,
+        publication: Publication,
+        git_publication: JsonDict,
+    ) -> None:
+        """Append the durable exact-SHA handoff for post-publication CI.
+
+        Publication remains complete once the reviewed change is remotely
+        integrated. CI is a linked lifecycle continuation: the background
+        monitor chooses the repository-specific delay, re-polls pending runs,
+        and coalesces terminal failures into low-priority maintenance.
+        """
+
+        final_sha = str(git_publication.get("final_sha") or "").strip()
+        if not _GIT_SHA_RE.match(final_sha):
+            return
+        monitor = getattr(self, "_cicd_monitor", None)
+        if monitor is None:
+            return
+        task = self.get_task(publication.task_id)
+        metadata = ensure_json_object(task.metadata)
+        origin = ensure_json_object(metadata.get("origin"))
+        repository_url = str(
+            origin.get("repository_url")
+            or git_publication.get("repository_url")
+            or ""
+        ).strip()
+        try:
+            monitor.schedule_publication_followup(
+                task_id=publication.task_id,
+                publication_id=publication.id,
+                project=str(task.project or ""),
+                canonical_sha=final_sha,
+                repository_url=repository_url,
+                published_at=publication.created_at,
+                actor=publication.created_by,
+            )
+        except Exception:  # noqa: BLE001 - publication is already durable.
+            try:
+                self.record_log(
+                    "cicd.followup.schedule_failed",
+                    layer="control_plane",
+                    source=publication.created_by,
+                    level="error",
+                    subject_type="task",
+                    subject_id=publication.task_id,
+                    detail={
+                        "publication_id": publication.id,
+                        "canonical_sha": final_sha,
+                    },
+                )
+            except Exception:
+                pass
 
     def _record_canonical_integration_proof(
         self,

@@ -1118,6 +1118,7 @@ def build_mac_env(
         )
     else:
         values.setdefault("MAC_REPOSITORY_REF_RECONCILER_MODE", "off")
+        values["MAC_CICD_MONITOR_ENABLED"] = "0"
         # Spokes never own controller integration/certification/landing. Clear
         # stale values rather than preserving an old hub configuration after a
         # role change or host swap.
@@ -1170,6 +1171,10 @@ def build_mac_env(
         # metadata["github_issue_ingest"], so enabling it by default is safe;
         # it needs GH_TOKEN/GITHUB_TOKEN in the hub environment to reach the API.
         values.setdefault("MAC_GITHUB_INGEST_ENABLED", "1")
+        # Reconcile CI for every registered GitHub repository and follow up
+        # exact SHAs after MAC publication.  Repositories without CI are
+        # detected and skipped, so this is safe to enable hub-wide.
+        values.setdefault("MAC_CICD_MONITOR_ENABLED", "1")
         # mac-backlog-groom: run the autonomous backlog groomer on the hub. It is
         # a no-op for every project that has not opted in via
         # metadata["backlog_grooming"], so enabling it by default is safe.

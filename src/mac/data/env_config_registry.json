@@ -931,6 +931,106 @@
   },
   {
     "default": null,
+    "description": "Core setting: cicd monitor absent recheck seconds.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_ABSENT_RECHECK_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: cicd monitor api timeout seconds.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_API_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: cicd monitor enabled.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py",
+      "src/mac/deploy_env.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: cicd monitor initial delay seconds.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: cicd monitor interval seconds.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: cicd monitor max checks per run.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_MAX_CHECKS_PER_RUN",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: cicd monitor max observations.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_MAX_OBSERVATIONS",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: cicd monitor pending retry seconds.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_PENDING_RETRY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: cicd monitor post publication delay hours.",
+    "family": "core",
+    "name": "MAC_CICD_MONITOR_POST_PUBLICATION_DELAY_HOURS",
+    "retired": false,
+    "sources": [
+      "src/mac/cicd_monitor.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: client credentials dir.",
     "family": "core",
     "name": "MAC_CLIENT_CREDENTIALS_DIR",

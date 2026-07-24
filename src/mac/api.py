@@ -54,6 +54,7 @@ from mac.relay_observability import create_agent_scope as _relay_agent_scope
 from mac.relay_observability import flush as _relay_flush
 from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
 from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
+from mac.cicd_monitor import CICDMonitor, CICDMonitorConfig
 from mac.ledger_backup_scheduler import LedgerBackupConfig, LedgerBackupScheduler
 from mac.nap_ticker import NapTicker, NapTickerConfig
 from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
@@ -4026,6 +4027,14 @@ def create_app(
     # for any project that has not set metadata["github_issue_ingest"], so
     # enabling it fleet-wide is safe.
     github_ingestor = GitHubIssueIngestor(cp, GitHubIngestConfig.from_env())
+    # CI is a repository lifecycle continuation, not part of the publication
+    # transaction.  The monitor periodically reconciles registered GitHub
+    # repositories and follows up exact SHAs after MAC lands them.
+    cicd_monitor = CICDMonitor(cp, CICDMonitorConfig.from_env())
+    # Publication is the only point that has both the durable publication id
+    # and the canonical integration SHA.  Give the service layer the running
+    # monitor so it can atomically hand that identity to the delayed checker.
+    cp._cicd_monitor = cicd_monitor
     # mac-backlog-groom: seed grooming tasks for opted-in repos going idle, so
     # the fleet manufactures its own backlog instead of starving when the
     # human/GitHub-issue queue drains. No-op until a project opts in via
@@ -4063,6 +4072,7 @@ def create_app(
     async def lifespan(_app: FastAPI):
         repository_ref_reconciler.start()
         github_ingestor.start()
+        cicd_monitor.start()
         backlog_groomer.start()
         model_selection_service.start()
         scientific_optimizer.start()
@@ -4082,6 +4092,7 @@ def create_app(
             scientific_optimizer.stop()
             repository_ref_reconciler.stop()
             github_ingestor.stop()
+            cicd_monitor.stop()
             backlog_groomer.stop()
             model_selection_service.stop()
 
@@ -4098,6 +4109,7 @@ def create_app(
     app.state.managed_work_plan_bridge = cp.managed_work_plans
     app.state.repository_ref_reconciler = repository_ref_reconciler
     app.state.github_ingestor = github_ingestor
+    app.state.cicd_monitor = cicd_monitor
     app.state.backlog_groomer = backlog_groomer
     app.state.model_selection_service = model_selection_service
     app.state.scientific_optimizer = scientific_optimizer
@@ -4298,6 +4310,7 @@ def create_app(
             SystemRouteServices(
                 repository_ref_reconciler=repository_ref_reconciler,
                 github_ingestor=github_ingestor,
+                cicd_monitor=cicd_monitor,
                 backlog_groomer=backlog_groomer,
                 nap_ticker=nap_ticker,
                 curiosity_reviewer=curiosity_reviewer,

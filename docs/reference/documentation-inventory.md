@@ -127,6 +127,7 @@ for provenance and is not a current operating contract.
 | generated reference | `reference/cli.md` | Command-line reference |
 | generated reference | `reference/documentation-inventory.md` | Documentation inventory |
 | generated reference | `reference/openapi.md` | HTTP API reference |
+| supplemental reference | `repository-cicd-monitor.md` | Repository CI/CD lifecycle monitoring |
 | supplemental reference | `repository-ref-hygiene.md` | Managed Repository Ref Hygiene |
 | supplemental reference | `repository-runtime-contract.md` | Repository Runtime Contract |
 | supplemental reference | `review-strategy-experiments.md` | Review-strategy experiments |

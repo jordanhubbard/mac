@@ -90,6 +90,8 @@ request and response definitions.
 | `POST` | `/bridge/items` | Import Project Item |
 | `GET` | `/bridge/repositories` | List Project Repositories |
 | `POST` | `/bridge/repositories` | Register Project Repository |
+| `POST` | `/cicd-monitor/run` | Cicd Monitor Run |
+| `GET` | `/cicd-monitor/status` | Cicd Monitor Status |
 | `GET` | `/command-audit` | List Command Audit |
 | `GET` | `/communication/accounts` | List Communication Accounts |
 | `POST` | `/communication/accounts` | Configure Communication Account |

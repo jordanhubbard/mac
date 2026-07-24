@@ -78,6 +78,15 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_CERTIFIER_STATUS_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier status command timeout seconds. |
 | `MAC_CERTIFIER_TUNNEL_HEALTH_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: certifier tunnel health timeout seconds. |
 | `MAC_CHAT_GATEWAY_IMPL` | str | consumer-defined | core | Core setting: chat gateway impl. |
+| `MAC_CICD_MONITOR_ABSENT_RECHECK_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor absent recheck seconds. |
+| `MAC_CICD_MONITOR_API_TIMEOUT_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor api timeout seconds. |
+| `MAC_CICD_MONITOR_ENABLED` | bool | consumer-defined | core | Core setting: cicd monitor enabled. |
+| `MAC_CICD_MONITOR_INITIAL_DELAY_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor initial delay seconds. |
+| `MAC_CICD_MONITOR_INTERVAL_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor interval seconds. |
+| `MAC_CICD_MONITOR_MAX_CHECKS_PER_RUN` | str | consumer-defined | core | Core setting: cicd monitor max checks per run. |
+| `MAC_CICD_MONITOR_MAX_OBSERVATIONS` | str | consumer-defined | core | Core setting: cicd monitor max observations. |
+| `MAC_CICD_MONITOR_PENDING_RETRY_SECONDS` | int | consumer-defined | core | Core setting: cicd monitor pending retry seconds. |
+| `MAC_CICD_MONITOR_POST_PUBLICATION_DELAY_HOURS` | str | consumer-defined | core | Core setting: cicd monitor post publication delay hours. |
 | `MAC_CLIENT_CREDENTIALS_DIR` | str | consumer-defined | core | Core setting: client credentials dir. |
 | `MAC_CLIENT_PRINCIPALS_AUDIT_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals audit file. |
 | `MAC_CLIENT_PRINCIPALS_FILE` | str | consumer-defined | client-auth | Client Auth setting: client principals file. |

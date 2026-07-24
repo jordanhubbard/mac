@@ -2125,6 +2125,7 @@ edges:
             "actor": "operator",
         },
         ("POST", "/github-ingest/run"): {},
+        ("POST", "/cicd-monitor/run"): {},
         ("POST", "/backlog-groom/run"): {},
         ("POST", "/nap-tick/run"): {},
         ("POST", "/curiosity-review/run"): {},
