@@ -110,7 +110,44 @@ CREATE TABLE IF NOT EXISTS personas (
 );
 CREATE INDEX IF NOT EXISTS idx_personas_tenant ON personas (tenant_id);
 
-CREATE TABLE IF NOT EXISTS hermes_instances (
+-- Persona identity data migration (runtime-neutral rename).
+-- ``hermes_instances`` -> ``persona_instances`` and the
+-- ``platform_bindings.hermes_instance_id`` FK -> ``persona_instance_id``.
+-- Idempotent: only renames when the old-schema object is still present, so a
+-- fresh database (created directly with the new names below) and an
+-- already-migrated database both no-op. Rows and FK relationships are
+-- preserved because RENAME operates in place. Temporary read migration for
+-- this release only; there is no long-term dual-name support.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'hermes_instances'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'persona_instances'
+    ) THEN
+        ALTER TABLE hermes_instances RENAME TO persona_instances;
+        ALTER INDEX IF EXISTS idx_hermes_instances_tenant
+            RENAME TO idx_persona_instances_tenant;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'platform_bindings'
+          AND column_name = 'hermes_instance_id'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'platform_bindings'
+          AND column_name = 'persona_instance_id'
+    ) THEN
+        ALTER TABLE platform_bindings
+            RENAME COLUMN hermes_instance_id TO persona_instance_id;
+    END IF;
+END
+$$;
+
+CREATE TABLE IF NOT EXISTS persona_instances (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -123,12 +160,12 @@ CREATE TABLE IF NOT EXISTS hermes_instances (
     last_seen_at TEXT NOT NULL,
     UNIQUE(tenant_id, name)
 );
-CREATE INDEX IF NOT EXISTS idx_hermes_instances_tenant ON hermes_instances (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_persona_instances_tenant ON persona_instances (tenant_id);
 
 CREATE TABLE IF NOT EXISTS platform_bindings (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    hermes_instance_id TEXT NOT NULL REFERENCES hermes_instances(id) ON DELETE CASCADE,
+    persona_instance_id TEXT NOT NULL REFERENCES persona_instances(id) ON DELETE CASCADE,
     platform TEXT NOT NULL,
     external_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
@@ -138,7 +175,7 @@ CREATE TABLE IF NOT EXISTS platform_bindings (
     updated_at TEXT NOT NULL,
     UNIQUE(tenant_id, platform, external_id)
 );
-CREATE INDEX IF NOT EXISTS idx_platform_bindings_instance ON platform_bindings (hermes_instance_id);
+CREATE INDEX IF NOT EXISTS idx_platform_bindings_instance ON platform_bindings (persona_instance_id);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -4622,6 +4659,28 @@ DROP TRIGGER IF EXISTS trg_telemetry_data_migration_append_only
 CREATE TRIGGER trg_telemetry_data_migration_append_only
     BEFORE UPDATE OR DELETE ON telemetry_data_migrations
     FOR EACH ROW EXECUTE FUNCTION trg_telemetry_data_migration_append_only();
+
+-- One-time, append-only schema-rename receipts. Startup records that a
+-- structural migration (e.g. hermes_instances -> persona_instances) has run so
+-- it never re-inspects the catalog. Mirrors SQLiteStore.schema_migration_receipts.
+CREATE TABLE IF NOT EXISTS schema_migration_receipts (
+    version TEXT PRIMARY KEY,
+    component TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '{}',
+    applied_at TEXT NOT NULL
+);
+
+CREATE OR REPLACE FUNCTION trg_schema_migration_receipt_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'schema migration receipts are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_schema_migration_receipt_append_only
+    ON schema_migration_receipts;
+CREATE TRIGGER trg_schema_migration_receipt_append_only
+    BEFORE UPDATE OR DELETE ON schema_migration_receipts
+    FOR EACH ROW EXECUTE FUNCTION trg_schema_migration_receipt_append_only();
 
 CREATE TABLE IF NOT EXISTS execution_cohort_configurations (
     rollout_revision INTEGER PRIMARY KEY CHECK (rollout_revision >= 1),

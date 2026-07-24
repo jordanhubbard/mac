@@ -580,11 +580,162 @@ class SQLiteStore:
             self._conn.execute("PRAGMA legacy_alter_table = OFF")
             self._conn.execute("PRAGMA foreign_keys = ON")
 
+    def _migrate_persona_instance_identity(self) -> None:
+        """Rename the live-Hermes identity tables to the persona-neutral name.
+
+        ``hermes_instances`` became ``persona_instances`` and the
+        ``platform_bindings.hermes_instance_id`` foreign key became
+        ``persona_instance_id`` as part of the runtime-neutral PersonaInstance
+        model. This runs once, before the idempotent ``CREATE TABLE IF NOT
+        EXISTS`` schema so an old-schema database is upgraded in place (rather
+        than leaving the old table orphaned beside a fresh empty one). Every
+        row and every foreign-key relationship is preserved.
+
+        The rename is recorded as an append-only, immutable receipt in
+        ``schema_migration_receipts`` so startup can prove the one-time
+        migration already ran without re-inspecting the catalog. This temporary
+        read migration exists for this release only; there is no long-term
+        dual-name support.
+        """
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migration_receipts (
+                version TEXT PRIMARY KEY,
+                component TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '{}',
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_schema_migration_receipt_immutable
+            BEFORE UPDATE ON schema_migration_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'schema migration receipts are immutable');
+            END
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_schema_migration_receipt_no_delete
+            BEFORE DELETE ON schema_migration_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'schema migration receipts are append-only');
+            END
+            """
+        )
+
+        version = "mac.persona_instance_identity.v1"
+        already = self._conn.execute(
+            "SELECT 1 FROM schema_migration_receipts WHERE version = ?",
+            (version,),
+        ).fetchone()
+        if already is not None:
+            return
+
+        has_old_instances = (
+            self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("hermes_instances",),
+            ).fetchone()
+            is not None
+        )
+        has_new_instances = (
+            self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("persona_instances",),
+            ).fetchone()
+            is not None
+        )
+        if not has_old_instances and not has_new_instances:
+            # Fresh database: the idempotent schema below creates the new
+            # tables directly. Record the receipt so we never rescan.
+            self._conn.execute(
+                """
+                INSERT INTO schema_migration_receipts (
+                    version, component, detail, applied_at
+                ) VALUES (?, 'persona_instances', ?,
+                          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                """,
+                (
+                    version,
+                    '{"schema":"mac.schema_migration.v1",'
+                    '"rename":"hermes_instances->persona_instances",'
+                    '"origin":"fresh-schema"}',
+                ),
+            )
+            return
+
+        self._conn.execute("PRAGMA foreign_keys = OFF")
+        self._conn.execute("PRAGMA legacy_alter_table = ON")
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            if has_old_instances and not has_new_instances:
+                self._conn.execute(
+                    "ALTER TABLE hermes_instances RENAME TO persona_instances"
+                )
+                self._conn.execute(
+                    "DROP INDEX IF EXISTS idx_hermes_instances_tenant"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_persona_instances_tenant "
+                    "ON persona_instances (tenant_id)"
+                )
+
+            binding_columns = {
+                row["name"]
+                for row in self._conn.execute(
+                    "PRAGMA table_info(platform_bindings)"
+                )
+            }
+            if (
+                binding_columns
+                and "hermes_instance_id" in binding_columns
+                and "persona_instance_id" not in binding_columns
+            ):
+                self._conn.execute(
+                    "ALTER TABLE platform_bindings "
+                    "RENAME COLUMN hermes_instance_id TO persona_instance_id"
+                )
+                self._conn.execute(
+                    "DROP INDEX IF EXISTS idx_platform_bindings_instance"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_platform_bindings_instance "
+                    "ON platform_bindings (persona_instance_id)"
+                )
+
+            self._conn.execute(
+                """
+                INSERT INTO schema_migration_receipts (
+                    version, component, detail, applied_at
+                ) VALUES (?, 'persona_instances', ?,
+                          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                """,
+                (
+                    version,
+                    '{"schema":"mac.schema_migration.v1",'
+                    '"rename":"hermes_instances->persona_instances",'
+                    '"column_rename":"platform_bindings.hermes_instance_id'
+                    '->persona_instance_id","origin":"old-schema"}',
+                ),
+            )
+            self._conn.execute("COMMIT")
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._conn.execute("PRAGMA legacy_alter_table = OFF")
+            self._conn.execute("PRAGMA foreign_keys = ON")
+
     def _initialize(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._migrate_execution_cohort_route_contract()
             self._migrate_station_controller_contract()
+            self._migrate_persona_instance_identity()
             self._conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS tenants (
@@ -622,7 +773,7 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_personas_tenant
                     ON personas (tenant_id);
 
-                CREATE TABLE IF NOT EXISTS hermes_instances (
+                CREATE TABLE IF NOT EXISTS persona_instances (
                     id TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
                     name TEXT NOT NULL,
@@ -635,13 +786,13 @@ class SQLiteStore:
                     last_seen_at TEXT NOT NULL,
                     UNIQUE(tenant_id, name)
                 );
-                CREATE INDEX IF NOT EXISTS idx_hermes_instances_tenant
-                    ON hermes_instances (tenant_id);
+                CREATE INDEX IF NOT EXISTS idx_persona_instances_tenant
+                    ON persona_instances (tenant_id);
 
                 CREATE TABLE IF NOT EXISTS platform_bindings (
                     id TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-                    hermes_instance_id TEXT NOT NULL REFERENCES hermes_instances(id) ON DELETE CASCADE,
+                    persona_instance_id TEXT NOT NULL REFERENCES persona_instances(id) ON DELETE CASCADE,
                     platform TEXT NOT NULL,
                     external_id TEXT NOT NULL,
                     display_name TEXT NOT NULL,
@@ -652,7 +803,7 @@ class SQLiteStore:
                     UNIQUE(tenant_id, platform, external_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_platform_bindings_instance
-                    ON platform_bindings (hermes_instance_id);
+                    ON platform_bindings (persona_instance_id);
 
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,

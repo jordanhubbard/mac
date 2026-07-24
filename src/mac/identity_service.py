@@ -1,6 +1,6 @@
 """Identity / Hermes-boundary service.
 
-Owns ``tenants``, ``users``, ``personas``, ``hermes_instances``, and
+Owns ``tenants``, ``users``, ``personas``, ``persona_instances``, and
 ``platform_bindings``. The Hermes context endpoint also lives here — it
 returns the operational provenance contract that mac records while leaving
 personality and user-memory authority with Hermes.
@@ -236,7 +236,7 @@ class IdentityService:
         if not name:
             raise ValidationError("hermes instance name is required")
         existing = self.store.query_one(
-            "SELECT id FROM hermes_instances WHERE tenant_id = ? AND name = ?",
+            "SELECT id FROM persona_instances WHERE tenant_id = ? AND name = ?",
             (tenant_id, name),
         )
         if existing is not None and instance_id is None:
@@ -248,10 +248,10 @@ class IdentityService:
             raise ValidationError("unsupported hermes instance status: %s" % status_value)
         now = utcnow()
         hid = instance_id or new_id("hermes")
-        metadata_json = self._resolved_json_column("hermes_instances", "metadata", hid, metadata)
+        metadata_json = self._resolved_json_column("persona_instances", "metadata", hid, metadata)
         self.store.execute(
             """
-            INSERT INTO hermes_instances (
+            INSERT INTO persona_instances (
                 id, tenant_id, name, persona_id, home_ref, status,
                 metadata, created_at, updated_at, last_seen_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -282,7 +282,7 @@ class IdentityService:
 
     def get_hermes_instance(self, instance_id: str) -> HermesInstance:
         row = self.store.query_one(
-            "SELECT * FROM hermes_instances WHERE id = ?", (instance_id,)
+            "SELECT * FROM persona_instances WHERE id = ?", (instance_id,)
         )
         if row is None:
             raise NotFoundError("hermes instance not found: %s" % instance_id)
@@ -291,12 +291,12 @@ class IdentityService:
     def list_hermes_instances(self, tenant_id: Optional[str] = None) -> List[HermesInstance]:
         if tenant_id:
             rows = self.store.query_all(
-                "SELECT * FROM hermes_instances WHERE tenant_id = ? ORDER BY name",
+                "SELECT * FROM persona_instances WHERE tenant_id = ? ORDER BY name",
                 (tenant_id,),
             )
         else:
             rows = self.store.query_all(
-                "SELECT * FROM hermes_instances ORDER BY tenant_id, name"
+                "SELECT * FROM persona_instances ORDER BY tenant_id, name"
             )
         return [self._hermes_instance_from_row(row) for row in rows]
 
@@ -334,12 +334,12 @@ class IdentityService:
         self.store.execute(
             """
             INSERT INTO platform_bindings (
-                id, tenant_id, hermes_instance_id, platform, external_id,
+                id, tenant_id, persona_instance_id, platform, external_id,
                 display_name, scopes, metadata, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 tenant_id = excluded.tenant_id,
-                hermes_instance_id = excluded.hermes_instance_id,
+                persona_instance_id = excluded.persona_instance_id,
                 platform = excluded.platform,
                 external_id = excluded.external_id,
                 display_name = excluded.display_name,
@@ -381,7 +381,7 @@ class IdentityService:
             clauses.append("tenant_id = ?")
             params.append(tenant_id)
         if hermes_instance_id:
-            clauses.append("hermes_instance_id = ?")
+            clauses.append("persona_instance_id = ?")
             params.append(hermes_instance_id)
         sql = "SELECT * FROM platform_bindings"
         if clauses:
@@ -492,7 +492,7 @@ class IdentityService:
         return PlatformBinding(
             row["id"],
             row["tenant_id"],
-            row["hermes_instance_id"],
+            row["persona_instance_id"],
             row["platform"],
             row["external_id"],
             row["display_name"],

@@ -1599,7 +1599,7 @@ def test_claim_rechecks_role_and_soul_in_locked_snapshot(
         )
     else:
         instance = cp.store.query_one(
-            "SELECT persona_id FROM hermes_instances WHERE id = ?",
+            "SELECT persona_id FROM persona_instances WHERE id = ?",
             (soul_id,),
         )
         cp.store.execute(

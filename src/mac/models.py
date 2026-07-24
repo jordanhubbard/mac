@@ -821,10 +821,17 @@ ROLLOUT_ACTIONS = {
 }
 
 
-class HermesInstanceStatus(StrEnum):
+class PersonaInstanceStatus(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
     RETIRED = "retired"
+
+
+# Backward-compatible alias. ``HermesInstanceStatus`` was the pre-persona name
+# for the runtime-neutral persona identity status. Higher layers (service/API/
+# CLI/IDE) still import the old name; keep it working so those call sites
+# compile while they are migrated in follow-up tasks.
+HermesInstanceStatus = PersonaInstanceStatus
 
 
 @dataclass
@@ -869,7 +876,7 @@ class Persona:
 
 
 @dataclass
-class HermesInstance:
+class PersonaInstance:
     id: str
     tenant_id: str
     name: str
@@ -885,11 +892,17 @@ class HermesInstance:
         return asdict(self)
 
 
+# Backward-compatible alias. ``HermesInstance`` was the live-runtime name for
+# the persona identity record; ``PersonaInstance`` is the runtime-neutral
+# replacement. Keep the old name importable until higher layers are migrated.
+HermesInstance = PersonaInstance
+
+
 @dataclass
 class PlatformBinding:
     id: str
     tenant_id: str
-    hermes_instance_id: str
+    persona_instance_id: str
     platform: str
     external_id: str
     display_name: str
@@ -900,6 +913,17 @@ class PlatformBinding:
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
+
+    @property
+    def hermes_instance_id(self) -> str:
+        """Backward-compatible accessor for the persona-instance FK.
+
+        The field was renamed ``hermes_instance_id`` -> ``persona_instance_id``
+        as part of the runtime-neutral PersonaInstance model. Higher-layer
+        readers still reference the old attribute; expose it as an alias so
+        those call sites keep working until they are migrated.
+        """
+        return self.persona_instance_id
 
 
 @dataclass

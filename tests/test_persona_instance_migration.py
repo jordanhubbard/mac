@@ -1,0 +1,259 @@
+"""Old-schema -> new-schema migration tests for the PersonaInstance rename.
+
+``hermes_instances`` -> ``persona_instances`` and the
+``platform_bindings.hermes_instance_id`` FK -> ``persona_instance_id`` are
+renamed in place by ``SQLiteStore._migrate_persona_instance_identity``. These
+tests assert the one-time migration preserves every row and relationship from a
+legacy database, records an immutable receipt, and is idempotent.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+
+from mac.identity_service import IdentityService
+from mac.models import HermesInstance, PersonaInstance
+from mac.store import SQLiteStore
+
+PERSONA_MIGRATION_VERSION = "mac.persona_instance_identity.v1"
+
+
+def _build_old_schema_db(path: str) -> None:
+    """Create a legacy database that still uses the pre-persona names."""
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE tenants (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+            metadata TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE personas (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL,
+            soul_ref TEXT NOT NULL, memory_scope TEXT NOT NULL, metadata TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE hermes_instances (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            persona_id TEXT REFERENCES personas(id) ON DELETE SET NULL,
+            home_ref TEXT NOT NULL, status TEXT NOT NULL, metadata TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+            UNIQUE(tenant_id, name)
+        );
+        CREATE INDEX idx_hermes_instances_tenant ON hermes_instances (tenant_id);
+        CREATE TABLE platform_bindings (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            hermes_instance_id TEXT NOT NULL
+                REFERENCES hermes_instances(id) ON DELETE CASCADE,
+            platform TEXT NOT NULL, external_id TEXT NOT NULL, display_name TEXT NOT NULL,
+            scopes TEXT NOT NULL, metadata TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            UNIQUE(tenant_id, platform, external_id)
+        );
+        CREATE INDEX idx_platform_bindings_instance
+            ON platform_bindings (hermes_instance_id);
+        """
+    )
+    conn.execute(
+        "INSERT INTO tenants VALUES ('t1', 'acme', '{}', 'now', 'now')"
+    )
+    conn.execute(
+        "INSERT INTO personas VALUES "
+        "('p1', 't1', 'concierge', 'soul://p1', 'scope://p1', '{}', 'now', 'now')"
+    )
+    conn.execute(
+        "INSERT INTO hermes_instances VALUES "
+        "('h1', 't1', 'bot', 'p1', 'ref://home', 'active', "
+        "'{\"k\":\"v\"}', 'now', 'now', 'now')"
+    )
+    conn.execute(
+        "INSERT INTO hermes_instances VALUES "
+        "('h2', 't1', 'bot2', NULL, 'ref://home2', 'paused', "
+        "'{}', 'now', 'now', 'now')"
+    )
+    conn.execute(
+        "INSERT INTO platform_bindings VALUES "
+        "('b1', 't1', 'h1', 'slack', 'U1', 'User One', '{}', '{}', 'now', 'now')"
+    )
+    conn.execute(
+        "INSERT INTO platform_bindings VALUES "
+        "('b2', 't1', 'h2', 'telegram', 'T2', 'User Two', '{}', '{}', 'now', 'now')"
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_migration_renames_tables_and_columns(tmp_path):
+    path = str(tmp_path / "legacy.db")
+    _build_old_schema_db(path)
+
+    store = SQLiteStore(path)
+    try:
+        conn = store._conn
+        tables = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "persona_instances" in tables
+        assert "hermes_instances" not in tables
+
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(platform_bindings)")
+        }
+        assert "persona_instance_id" in columns
+        assert "hermes_instance_id" not in columns
+
+        indexes = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        assert "idx_persona_instances_tenant" in indexes
+        assert "idx_hermes_instances_tenant" not in indexes
+        assert "idx_platform_bindings_instance" in indexes
+    finally:
+        store.close()
+
+
+def test_migration_preserves_rows_and_relationships(tmp_path):
+    path = str(tmp_path / "legacy.db")
+    _build_old_schema_db(path)
+
+    store = SQLiteStore(path)
+    try:
+        conn = store._conn
+        instances = {
+            row["id"]: row
+            for row in conn.execute("SELECT * FROM persona_instances")
+        }
+        assert set(instances) == {"h1", "h2"}
+        assert instances["h1"]["name"] == "bot"
+        assert instances["h1"]["persona_id"] == "p1"
+        assert instances["h1"]["status"] == "active"
+        assert instances["h1"]["metadata"] == '{"k":"v"}'
+        assert instances["h2"]["persona_id"] is None
+
+        bindings = {
+            row["id"]: row
+            for row in conn.execute("SELECT * FROM platform_bindings")
+        }
+        assert set(bindings) == {"b1", "b2"}
+        # Relationship survives the column rename.
+        assert bindings["b1"]["persona_instance_id"] == "h1"
+        assert bindings["b2"]["persona_instance_id"] == "h2"
+        assert bindings["b1"]["platform"] == "slack"
+
+        # Service layer reads the migrated data transparently.
+        identity = IdentityService(store)
+        instance = identity.get_hermes_instance("h1")
+        assert isinstance(instance, PersonaInstance)
+        assert instance.name == "bot"
+
+        listed = identity.list_platform_bindings(hermes_instance_id="h1")
+        assert [binding.id for binding in listed] == ["b1"]
+        assert listed[0].persona_instance_id == "h1"
+        # Backward-compatible accessor still resolves the FK.
+        assert listed[0].hermes_instance_id == "h1"
+    finally:
+        store.close()
+
+
+def test_migration_records_immutable_receipt(tmp_path):
+    path = str(tmp_path / "legacy.db")
+    _build_old_schema_db(path)
+
+    store = SQLiteStore(path)
+    try:
+        conn = store._conn
+        receipt = conn.execute(
+            "SELECT * FROM schema_migration_receipts WHERE version = ?",
+            (PERSONA_MIGRATION_VERSION,),
+        ).fetchone()
+        assert receipt is not None
+        assert receipt["component"] == "persona_instances"
+        assert "hermes_instances->persona_instances" in receipt["detail"]
+        assert receipt["applied_at"]
+
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "UPDATE schema_migration_receipts SET component = 'x' "
+                "WHERE version = ?",
+                (PERSONA_MIGRATION_VERSION,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "DELETE FROM schema_migration_receipts WHERE version = ?",
+                (PERSONA_MIGRATION_VERSION,),
+            )
+    finally:
+        store.close()
+
+
+def test_migration_is_idempotent(tmp_path):
+    path = str(tmp_path / "legacy.db")
+    _build_old_schema_db(path)
+
+    first = SQLiteStore(path)
+    first.close()
+
+    # Reopening an already-migrated database must not error or duplicate work.
+    second = SQLiteStore(path)
+    try:
+        conn = second._conn
+        count = conn.execute(
+            "SELECT COUNT(*) AS c FROM schema_migration_receipts WHERE version = ?",
+            (PERSONA_MIGRATION_VERSION,),
+        ).fetchone()["c"]
+        assert count == 1
+
+        instance_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM persona_instances"
+        ).fetchone()["c"]
+        assert instance_count == 2
+    finally:
+        second.close()
+
+
+def test_fresh_database_records_receipt_and_uses_new_names(tmp_path):
+    path = str(tmp_path / "fresh.db")
+    store = SQLiteStore(path)
+    try:
+        conn = store._conn
+        tables = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "persona_instances" in tables
+        assert "hermes_instances" not in tables
+
+        receipt = conn.execute(
+            "SELECT * FROM schema_migration_receipts WHERE version = ?",
+            (PERSONA_MIGRATION_VERSION,),
+        ).fetchone()
+        assert receipt is not None
+        assert '"origin":"fresh-schema"' in receipt["detail"]
+
+        # Round-trip through the identity service on the new schema.
+        identity = IdentityService(store)
+        tenant = identity.register_tenant("acme")
+        instance = identity.register_hermes_instance(tenant.id, "bot")
+        binding = identity.register_platform_binding(
+            tenant.id, instance.id, "slack", "U1"
+        )
+        assert binding.persona_instance_id == instance.id
+    finally:
+        store.close()
+
+
+def test_hermes_instance_is_persona_instance_alias():
+    assert HermesInstance is PersonaInstance

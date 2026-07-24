@@ -2977,7 +2977,7 @@ class ControlPlane:
         }
         self.store.execute(
             """
-            UPDATE hermes_instances
+            UPDATE persona_instances
             SET metadata = ?, updated_at = ?, last_seen_at = ?
             WHERE id = ?
             """,
@@ -23293,11 +23293,11 @@ class ControlPlane:
             if not agent.hermes_instance_id:
                 return "role_not_accepted_by_soul"
             conn.execute(
-                "UPDATE hermes_instances SET updated_at = updated_at WHERE id = ?",
+                "UPDATE persona_instances SET updated_at = updated_at WHERE id = ?",
                 (agent.hermes_instance_id,),
             )
             instance = conn.execute(
-                "SELECT persona_id FROM hermes_instances WHERE id = ?",
+                "SELECT persona_id FROM persona_instances WHERE id = ?",
                 (agent.hermes_instance_id,),
             ).fetchone()
             if instance is None or not instance["persona_id"]:
