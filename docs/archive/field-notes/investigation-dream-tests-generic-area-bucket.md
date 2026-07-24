@@ -147,3 +147,38 @@ python3 scripts/bootstrap-project.py
   tests/test_nap_consolidator.py -q
 # => 90 passed
 ```
+
+## Confirmation run (2026-07-24, re-verification)
+
+A second read-only re-verification against a freshly bootstrapped `.venv`
+reproduced the same ground truth and re-confirmed the NO-OP verdict. No
+production, test, skill, or tool code was changed.
+
+- Confidence gate reproduced directly:
+  `_confidence_for_records([r]) == ("low", 0.35)`,
+  `_confidence_for_records([r, r]) == ("medium", 0.65)`,
+  `_confidence_for_records([r, r, r]) == ("high", 0.9)` — a single supporting
+  record (support < 2) is **necessarily** low confidence.
+- Area bucket reproduced directly: the `tests` label is emitted by the bare
+  `\btests/\w+` pattern in `dream_cycle_classifier._REPO_AREA_PATTERNS`. It
+  matches a concrete path token like `tests/foo` but not the bare word `tests`,
+  confirming the label names the `tests/` tree area, not a concrete failing
+  test.
+- Implicated dream-subsystem suites pass under a hermetic scrubbed env
+  (`env -i` with only the `.venv` on `PATH`, mirroring the contract runner's
+  `unset MAC_*` sweep):
+
+```
+python3 scripts/bootstrap-project.py
+env -i PATH="$PWD/.venv/bin:/usr/bin:/bin" HOME="$HOME" \
+  .venv/bin/python -m pytest \
+  tests/test_dream_cycle_classifier.py tests/test_nap_consolidator.py \
+  tests/test_nap_consolidator_edges.py tests/test_dream_repair_tasks.py \
+  tests/test_dream_cycle_runner.py -q
+# => 111 passed
+```
+
+**Re-verified verdict:** NO-OP / green. `dreamrepair:173ce952` is a classifier
+false positive (generic `tests` area bucket + single-record low confidence).
+Recommendation for the repair child: **close as no-op / green**; no source or
+test change is warranted.
