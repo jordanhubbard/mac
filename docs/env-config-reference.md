@@ -161,6 +161,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_ATTEST_TS` | str | consumer-defined | deployment | Deployment setting: deploy attest ts. |
 | `MAC_DEPLOY_BARRIER_FILE` | str | consumer-defined | deployment | Deployment setting: deploy barrier file. |
 | `MAC_DEPLOY_CERTIFIER_OPENSHELL_GATEWAY_ENDPOINT` | str | consumer-defined | deployment | Deployment setting: deploy certifier openshell gateway endpoint. |
+| `MAC_DEPLOY_CHAT_GATEWAY_IMPL` | str | consumer-defined | deployment | Deployment setting: deploy chat gateway impl. |
 | `MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER` | str | consumer-defined | deployment | Deployment setting: deploy clear repo update blocker. |
 | `MAC_DEPLOY_CODEGRAPH_INIT_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy codegraph init timeout seconds. |
 | `MAC_DEPLOY_CONFIGURED_AGENT_IDS` | str | consumer-defined | deployment | Deployment setting: deploy configured agent ids. |
@@ -232,7 +233,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_HEADSCALE_PREAUTH_KEY_SOURCE` | str | consumer-defined | deployment | Deployment setting: deploy headscale preauth key source. |
 | `MAC_DEPLOY_HEADSCALE_PUBLIC_ADDR` | str | consumer-defined | deployment | Deployment setting: deploy headscale public addr. |
 | `MAC_DEPLOY_HERMES_GATEWAY_BASE_URL` | str | consumer-defined | deployment | Deployment setting: deploy hermes gateway base url. |
-| `MAC_DEPLOY_HERMES_GATEWAY_IMPL` | str | consumer-defined | deployment | Deployment setting: deploy hermes gateway impl. |
 | `MAC_DEPLOY_HERMES_GATEWAY_MODEL` | str | consumer-defined | deployment | Deployment setting: deploy hermes gateway model. |
 | `MAC_DEPLOY_HERMES_GATEWAY_PROVIDER` | str | consumer-defined | deployment | Deployment setting: deploy hermes gateway provider. |
 | `MAC_DEPLOY_HERMES_SLACK_HOME_CHANNEL_NAME` | str | consumer-defined | deployment | Deployment setting: deploy hermes slack home channel name. |

@@ -1903,7 +1903,7 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     deploy = DEPLOY.read_text(encoding="utf-8") + "\n" + NODE_INSTALL_SCRIPT.read_text(encoding="utf-8")
     unit = SYSTEMD_UNIT.read_text(encoding="utf-8")
     assert "gateway_impl: openclaw" in config
-    assert "openclaw)\n      install_linux_openclaw_service" in deploy
+    assert 'openclaw|"")\n      install_linux_openclaw_service' in deploy
     assert "install_darwin_openclaw_service" in deploy
     assert "OPENCLAW_SUPERVISORD_PROG" in deploy
     assert "verify_openclaw_gateway" in deploy
@@ -1923,7 +1923,7 @@ def test_fleet_deploy_selects_stock_openclaw_on_every_supervisor() -> None:
     assert "User=__MAC_USER__" in unit
 
     launchd = deploy.split("install_darwin_openclaw_service() {", 1)[1].split(
-        "install_darwin_hermes_service() {", 1
+        "install_darwin_agent_service() {", 1
     )[0]
     assert "<key>ExitTimeOut</key><integer>600</integer>" in launchd
     assert "<key>AbandonProcessGroup</key><false/>" in launchd

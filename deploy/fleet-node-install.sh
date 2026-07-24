@@ -179,24 +179,28 @@ HERMES_GATEWAY_PROVIDER="${MAC_DEPLOY_HERMES_GATEWAY_PROVIDER:-custom}"
 HERMES_GATEWAY_BASE_URL="${MAC_DEPLOY_HERMES_GATEWAY_BASE_URL:-}"
 HERMES_SURFACE_B64="${MAC_DEPLOY_HERMES_SURFACE_B64:-}"
 # gateway_impl: which chat-gateway service to install.
-#   openclaw — stock OpenClaw inside a MAC-authored OpenShell policy
-#   hermes   — vendored Hermes gateway (rollback path)
-#   nemoclaw — retained reference/compatibility path
-# Decoded from the hermes_surface_b64 payload; also injectable via env.
-HERMES_GATEWAY_IMPL="${MAC_DEPLOY_HERMES_GATEWAY_IMPL:-$(
+#   openclaw — stock OpenClaw inside a MAC-authored OpenShell policy (sole gateway)
+#   none     — pure worker with no chat gateway
+# Decoded from the hermes_surface_b64 payload; also injectable via env. Any
+# legacy or unrecognized value is normalized to the sole supported gateway.
+MAC_CHAT_GATEWAY_IMPL="${MAC_DEPLOY_CHAT_GATEWAY_IMPL:-$(
   if [ -n "${MAC_DEPLOY_HERMES_SURFACE_B64:-}" ]; then
     python3 -c "
 import base64, json, sys
 try:
     p = json.loads(base64.b64decode(sys.argv[1]))
-    print(p.get('runtime', {}).get('gateway_impl', 'hermes'))
+    print(p.get('runtime', {}).get('gateway_impl', 'openclaw'))
 except Exception:
-    print('hermes')
-" "${MAC_DEPLOY_HERMES_SURFACE_B64}" 2>/dev/null || echo "hermes"
+    print('openclaw')
+" "${MAC_DEPLOY_HERMES_SURFACE_B64}" 2>/dev/null || echo "openclaw"
   else
-    echo "hermes"
+    echo "openclaw"
   fi
 )}"
+case "$MAC_CHAT_GATEWAY_IMPL" in
+  none) : ;;
+  *) MAC_CHAT_GATEWAY_IMPL="openclaw" ;;
+esac
 openclaw_runtime_value() {
   local key="$1" fallback="${2:-}"
   if [ -z "${HERMES_SURFACE_B64:-}" ]; then
@@ -612,7 +616,7 @@ PY="$(python_bin)"
 PYTHON_BIN="$PY"
 HERMES_PY="$(hermes_python_bin "$PY")"
 SUPERVISOR_KIND=""
-export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL HERMES_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION RECOVERY_POLICY NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
+export AGENT FLEET_NAME OS_KIND DEPLOY_TS DEPLOY_REV DEPLOY_GENERATION DEPLOY_GIT_URL DEPLOY_GIT_BRANCH DEPLOY_STARTED_ISO HERMES_SLACK_HOME_CHANNEL_NAME HERMES_GATEWAY_MODEL HERMES_GATEWAY_PROVIDER HERMES_GATEWAY_BASE_URL MAC_CHAT_GATEWAY_IMPL HERMES_SURFACE_B64 OPENCLAW_PUBLIC_IDENTITY OPENCLAW_REPRESENTED_BY OPENCLAW_REPRESENTATION_MODE OPENCLAW_SLACK_ACCOUNT_ID OPENCLAW_TELEGRAM_ACCOUNT_ID HUB_URL HUB_TUNNEL_PUBKEY CONTROL_BIND_HOST WORKER_MODE WORKER_CAPABILITIES WORKER_ALLOWED_PROJECTS WORKER_REQUIRED_METADATA WORKER_REQUIRE_CANARY SUPERVISOR_REQUESTED SUPERVISOR_KIND SHARED_SERVICES_MANAGER_AGENT QDRANT_URL_CONFIGURED QDRANT_INSTALL QDRANT_REQUIRE QDRANT_BIND_ADDR_CONFIGURED QDRANT_PORT_CONFIGURED QDRANT_IMAGE_CONFIGURED QDRANT_MEMORY_LIMIT_CONFIGURED QDRANT_DATA_DIR_CONFIGURED FIRECRAWL_URL_CONFIGURED FIRECRAWL_INSTALL FIRECRAWL_REQUIRE FIRECRAWL_BIND_ADDR_CONFIGURED FIRECRAWL_PORT_CONFIGURED WEBDAV_ENABLED WEBDAV_URL_CONFIGURED WEBDAV_INSTALL WEBDAV_BIND_ADDR_CONFIGURED WEBDAV_PORT_CONFIGURED WEBDAV_ROOT_CONFIGURED WEBDAV_PUBLIC_PATH_CONFIGURED WEBDAV_MAX_UPLOAD_BYTES_CONFIGURED DRAIN_MODE DRAIN_TIMEOUT_SECONDS DRAIN_POLL_SECONDS CONFIGURED_AGENT_IDS OPENSHELL_DEPLOY_ENABLED OPENSHELL_EFFECTIVE_ARGS OPENSHELL_RUNTIME_IMAGE OPENSHELL_LOCAL_IMAGE_BUILD MAC_HOME MAC_PORT MAC_SERVICE_NAME HERMES_SERVICE_NAME OPENCLAW_SERVICE_NAME NEMOCLAW_SERVICE_NAME MAC_AGENT_SERVICE_NAME MAC_LAUNCHD_LABEL HERMES_LAUNCHD_LABEL OPENCLAW_LAUNCHD_LABEL NEMOCLAW_LAUNCHD_LABEL MAC_AGENT_LAUNCHD_LABEL MAC_SUPERVISORD_PROG HERMES_SUPERVISORD_PROG OPENCLAW_SUPERVISORD_PROG NEMOCLAW_SUPERVISORD_PROG AGENT_SUPERVISORD_PROG MAC_SUPERVISORD_CONF_NAME SRC_DIR VENV HERMES_DIR ENV_FILE LOG_DIR DEPLOY_LOG PY HERMES_PY PYTHON_BIN NODE_ACTION RECOVERY_POLICY NODE_IDENTITY_SHA256 PREREQUISITE_SUMMARY PREREQUISITE_BUNDLE_SHA256 PREREQUISITE_EXPECTATIONS_SHA256
 
 disk_hygiene_report() {
   local stage="$1" path="$2"
@@ -1284,7 +1288,7 @@ PY
   fi
 
   expected_openclaw=""
-  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = openclaw ]; then
+  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = openclaw ]; then
     suffix="$(printf '%s' "${MAC_AGENT_ID:-agent_$AGENT}" \
       | sed -E 's/^agent_//; s/[^A-Za-z0-9]+/-/g; s/^-+//; s/-+$//' \
       | tr '[:upper:]' '[:lower:]')"
@@ -1437,7 +1441,7 @@ PY
   done < <("$docker_bin" ps -a \
     --filter label=openshell.ai/managed-by=openshell --format '{{.ID}}')
 
-  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = openclaw ]; then
+  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = openclaw ]; then
     expected_openclaw="$($PY - "$MAC_HOME/openclaw/service-advertisement.json" <<'PY'
 import json
 import re
@@ -2609,7 +2613,7 @@ def rollback_contract_summary(stage):
 
 
 def daemon_quiescence_summary(stage, mac_home):
-    gateway_implementation = os.environ.get("HERMES_GATEWAY_IMPL") or "hermes"
+    gateway_implementation = os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "openclaw"
     required_phases = ["pre_source", "pre_install", "post_install"]
     if gateway_implementation == "openclaw":
         required_phases = [
@@ -2876,7 +2880,7 @@ def media_runtime_readiness_summary(stage, mac_home):
 
 
 def gateway_readiness_summary(stage):
-    implementation = os.environ.get("HERMES_GATEWAY_IMPL") or "hermes"
+    implementation = os.environ.get("MAC_CHAT_GATEWAY_IMPL") or "openclaw"
     supervisor = os.environ.get("SUPERVISOR_KIND") or (
         "launchd" if os.environ["OS_KIND"] == "darwin" else "systemd"
     )
@@ -8579,7 +8583,7 @@ fetch_slack_secrets_from_vault() {
       curl -fsS -m3 "${mac_vault_url%/}/health" >/dev/null 2>&1 && break
       sleep 2
     done
-    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+    if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then
       local openclaw_fetcher="$SRC_DIR/scripts/mac-fetch-openclaw-secrets.py"
       [ -f "$openclaw_fetcher" ] \
         || die "OpenClaw credential fetcher is missing: $openclaw_fetcher"
@@ -10558,12 +10562,12 @@ sync_messaging_config() {
   # secrets, identity, or home-channel data at all. Skip the whole Hermes/Slack
   # block — otherwise the home-channel sync fails on a gateway-less node and
   # aborts the worker deploy (the != "openclaw" guard wrongly included "none").
-  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "none" ]; then
+  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "none" ]; then
     log "gateway_impl=none: pure worker; skipping Hermes/Slack gateway setup"
   else
     fetch_slack_secrets_from_vault
     reload_mac_env
-    if [ "${HERMES_GATEWAY_IMPL:-hermes}" != "openclaw" ]; then
+    if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" != "openclaw" ]; then
       sync_hermes_slack_identity_env
       sync_hermes_home_channels
     fi
@@ -10759,7 +10763,6 @@ handle_failed_openclaw_successor() {
 install_linux_service() {
   local unit="/etc/systemd/system/${MAC_SERVICE_NAME}" restart_since
   local unit_staging="$LOG_DIR/${MAC_SERVICE_NAME}.${DEPLOY_TS}.$$.stage"
-  install_hermes_gateway_wrapper
   install_mac_agent_wrapper
   if sudo test -f "$unit"; then
     MAC_UNIT_BACKUP="$MAC_HOME/backups/${MAC_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}"
@@ -10824,20 +10827,15 @@ EOF
   else
     log "typed phase 2 retained the hub vault and Hermes credential projection"
   fi
-  # Route to the configured gateway implementation. Stock OpenClaw is the
-  # primary; Hermes remains the explicit rollback path; NemoClaw is reference
-  # compatibility only.
-  case "${HERMES_GATEWAY_IMPL:-hermes}" in
-    openclaw)
+  # Route to the configured gateway implementation. OpenClaw is the sole chat
+  # gateway; ``none`` is a pure worker with no chat gateway at all.
+  case "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" in
+    openclaw|"")
       install_linux_openclaw_service ;;
-    nemoclaw)
-      install_linux_nemoclaw_service ;;
-    hermes|"")
-      install_linux_hermes_service ;;
     none)
       install_linux_no_gateway_service ;;
     *)
-      die "unsupported Linux gateway implementation: ${HERMES_GATEWAY_IMPL}" ;;
+      die "unsupported Linux gateway implementation: ${MAC_CHAT_GATEWAY_IMPL}" ;;
   esac
 }
 
@@ -10887,7 +10885,7 @@ PY
     handle_failed_openclaw_successor "OpenClaw exclusivity proof failed"
     return 1
   fi
-  log "stock OpenClaw verified as exclusive gateway; Hermes retained only for rollback"
+  log "stock OpenClaw verified as exclusive gateway"
   install_linux_agent_service
 }
 
@@ -10920,44 +10918,6 @@ install_linux_nemoclaw_service() {
   run_systemctl reset-failed "$HERMES_SERVICE_NAME" 2>/dev/null || true
   log "hermes gateway stopped and disabled; NemoClaw gateway active"
   install_linux_agent_service
-}
-
-install_hermes_gateway_wrapper() {
-  # Worker/gateway decoupling: a pure worker (gateway_impl=none) runs no chat
-  # gateway at all — only the mac-agent worker. Skip installing the Hermes
-  # gateway wrapper so the node is a clean executor, not a conversational agent.
-  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "none" ]; then
-    log "gateway_impl=none: pure worker; skipping Hermes gateway wrapper install"
-    return 0
-  fi
-  local wrapper="${1:-$MAC_HOME/bin/hermes-gateway}"
-  mkdir -p "$(dirname "$wrapper")"
-  cat > "$wrapper" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true
-set -a
-set +u
-[ -f "$HOME/.hermes/.env" ] && . "$HOME/.hermes/.env"
-[ -f "$HOME/.mac/mac.env" ] && . "$HOME/.mac/mac.env"
-set -u
-set +a
-export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$PATH"
-export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-export HERMES_DISABLE_LAZY_INSTALLS=1
-export HERMES_REDACT_SECRETS=true
-if [ -z "${OPENAI_BASE_URL:-}" ] && [ -n "${CUSTOM_BASE_URL:-}" ]; then
-  export OPENAI_BASE_URL="$CUSTOM_BASE_URL"
-fi
-if [ -z "${ACC_HERMES_GATEWAY_API_KEY:-}" ] && [ -n "${MAC_HERMES_GATEWAY_API_KEY:-}" ]; then
-  export ACC_HERMES_GATEWAY_API_KEY="$MAC_HERMES_GATEWAY_API_KEY"
-fi
-# ADR 0001 hu-04: run the vendored Hermes gateway in-process from the mac venv
-# (mac-hermes-gateway -> hermes_cli.main "gateway run --replace"), instead of a
-# separate hermes-agent venv. Validated in fleet rollout 2026-05-31.
-exec "$HOME/.mac/venv/bin/python" -m mac.hermes_gateway
-EOF
-  chmod 700 "$wrapper"
 }
 
 install_mac_agent_wrapper() {
@@ -11718,71 +11678,6 @@ PY
   fi
 }
 
-install_linux_hermes_service() {
-  local unit="/etc/systemd/system/${HERMES_SERVICE_NAME}" restart_since control_after=""
-  local unit_staging="$LOG_DIR/${HERMES_SERVICE_NAME}.${DEPLOY_TS}.$$.stage"
-  disable_systemd_service_if_present "$OPENCLAW_SERVICE_NAME"
-  disable_systemd_service_if_present "$NEMOCLAW_SERVICE_NAME"
-  if control_plane_enabled; then
-    control_after="$MAC_SERVICE_NAME"
-  fi
-  log "installing systemd service $unit"
-  if sudo test -f "$unit"; then
-    HERMES_UNIT_BACKUP="$MAC_HOME/backups/${HERMES_SERVICE_NAME}.${AGENT}.${DEPLOY_TS}"
-    snapshot_rollback_file "$unit" "$HERMES_UNIT_BACKUP" system
-    write_rollback_script
-  fi
-  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$HERMES_UNIT_BACKUP" ]; then
-    die "cannot mutate the Hermes unit without a prior-generation backup"
-  fi
-  HERMES_UNIT_MUTATED=1
-  write_rollback_script
-  cat > "$unit_staging" <<EOF
-[Unit]
-Description=mac-managed Hermes gateway
-After=network-online.target $control_after
-Wants=network-online.target
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-User=$USER
-WorkingDirectory=$MAC_HOME
-EnvironmentFile=$ENV_FILE
-ExecStart=$MAC_HOME/bin/hermes-gateway
-Restart=always
-RestartSec=5
-RestartForceExitStatus=75
-SuccessExitStatus=75
-KillMode=mixed
-KillSignal=SIGTERM
-ExecReload=/bin/kill -USR1 \$MAINPID
-# Must exceed the gateway's restart_drain_timeout so systemd doesn't SIGKILL it
-# mid-drain. Mirrors hermes_cli/gateway.py: max(60, restart_drain_timeout) + 30
-# (=210 for the default drain of 180). A too-low value triggers the gateway's
-# "Stale systemd unit detected" startup warning. Bump if restart_drain_timeout
-# is raised above 180.
-TimeoutStopSec=210
-LimitNOFILE=65536
-LimitCORE=infinity
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  mac_launchd_atomic_replace "$unit_staging" "$unit" system 0644 0 0
-  run_systemctl daemon-reload
-  run_systemctl enable "$HERMES_SERVICE_NAME"
-  restart_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  run_systemctl restart "$HERMES_SERVICE_NAME"
-  run_systemctl --no-pager -l status "$HERMES_SERVICE_NAME" \
-    > "$LOG_DIR/hermes-gateway-status.txt" || true
-  run_journalctl -u "$HERMES_SERVICE_NAME" --since "$restart_since" --no-pager \
-    > "$LOG_DIR/hermes-gateway-journal.txt" || true
-  install_linux_agent_service
-}
-
 install_linux_agent_service() {
   local unit="/etc/systemd/system/${MAC_AGENT_SERVICE_NAME}" restart_since control_after=""
   local unit_staging="$LOG_DIR/${MAC_AGENT_SERVICE_NAME}.${DEPLOY_TS}.$$.stage"
@@ -11861,25 +11756,12 @@ install_supervisord_service() {
   conf="$conf_dir/$MAC_SUPERVISORD_CONF_NAME"
   conf_staging="$LOG_DIR/${MAC_SUPERVISORD_CONF_NAME}.${DEPLOY_TS}.$$.stage"
   log "installing supervisord programs in $conf"
-  install_hermes_gateway_wrapper
   install_mac_agent_wrapper
   install -m 0755 "$SRC_DIR/deploy/agent-resource-health.sh" "$MAC_HOME/bin/agent-resource-health"
-  case "${HERMES_GATEWAY_IMPL:-hermes}" in
-  openclaw)
+  case "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" in
+  openclaw|"")
     active_gateway_program="$OPENCLAW_SUPERVISORD_PROG"
-    gateway_program="[program:$HERMES_SUPERVISORD_PROG]
-command=$MAC_HOME/bin/hermes-gateway
-directory=$MAC_HOME
-user=$USER
-autostart=false
-autorestart=false
-startsecs=5
-stopwaitsecs=120
-stdout_logfile=$LOG_DIR/hermes-gateway.log
-stderr_logfile=$LOG_DIR/hermes-gateway.log
-environment=HOME=\"$HOME\"
-
-[program:$OPENCLAW_SUPERVISORD_PROG]
+    gateway_program="[program:$OPENCLAW_SUPERVISORD_PROG]
 command=$MAC_HOME/bin/openclaw-gateway
 directory=$MAC_HOME
 user=$USER
@@ -11892,27 +11774,13 @@ stderr_logfile=$LOG_DIR/openclaw-gateway.log
 environment=HOME=\"$HOME\""
     ;;
   none)
-    # A pure worker must not retain or start either chat-gateway program.  An
+    # A pure worker must not retain or start any chat-gateway program.  An
     # empty block also lets ``supervisorctl update`` remove stale gateway
     # programs from a node that was converted from a conversational role.
     active_gateway_program=""
     gateway_program=""
     ;;
-  hermes|"")
-    active_gateway_program="$HERMES_SUPERVISORD_PROG"
-    gateway_program="[program:$HERMES_SUPERVISORD_PROG]
-command=$MAC_HOME/bin/hermes-gateway
-directory=$MAC_HOME
-user=$USER
-autostart=true
-autorestart=true
-startsecs=5
-stopwaitsecs=120
-stdout_logfile=$LOG_DIR/hermes-gateway.log
-stderr_logfile=$LOG_DIR/hermes-gateway.log
-environment=HOME=\"$HOME\""
-    ;;
-  *) die "unsupported supervisord gateway implementation: ${HERMES_GATEWAY_IMPL}" ;;
+  *) die "unsupported supervisord gateway implementation: ${MAC_CHAT_GATEWAY_IMPL}" ;;
   esac
   if control_plane_enabled; then
     install_mac_control_wrapper
@@ -12001,8 +11869,8 @@ EOF
     : > "$LOG_DIR/mac-service-not-installed.txt"
   fi
   # Escrow the router upstream key + scrub spoke secrets + sync messaging BEFORE
-  # the gateway/agent start, mirroring the systemd (install_linux_hermes_service)
-  # and launchd paths. Without this the supervisord path left the hub vault empty,
+  # the gateway/agent start, mirroring the systemd and launchd paths. Without
+  # this the supervisord path left the hub vault empty,
   # so the router forwarded keyless (upstream 401) and the agent self-test failed.
   # Needs the control plane reachable, so wait briefly for it.
   if [ "$NODE_ACTION" = legacy-one-shot ] && control_plane_enabled; then
@@ -12015,14 +11883,14 @@ EOF
     log "typed phase 2 retained the hub vault and Hermes credential projection"
   fi
   if [ -n "$active_gateway_program" ]; then
-    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+    if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then
       prepare_openclaw_gateway
     fi
     start_supervisord_program "$active_gateway_program"
   else
     log "gateway_impl=none: pure worker; skipping gateway program install/restart"
   fi
-  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then
     if ! verify_openclaw_gateway; then
       handle_failed_openclaw_successor \
         "stock OpenClaw verification failed under supervisord"
@@ -12270,17 +12138,14 @@ EOF
   else
     log "typed phase 2 retained the hub vault and Hermes credential projection"
   fi
-  case "${HERMES_GATEWAY_IMPL:-hermes}" in
-  openclaw)
+  case "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" in
+  openclaw|"")
     install_darwin_openclaw_service "$uid"
-    ;;
-  hermes|"")
-    install_darwin_hermes_service "$uid"
     ;;
   none)
     install_darwin_no_gateway_service "$uid"
     ;;
-  *) die "unsupported launchd gateway implementation: ${HERMES_GATEWAY_IMPL}" ;;
+  *) die "unsupported launchd gateway implementation: ${MAC_CHAT_GATEWAY_IMPL}" ;;
   esac
   install_darwin_agent_service "$uid"
 }
@@ -12345,7 +12210,6 @@ install_darwin_openclaw_service() {
   local nemoclaw_plist="$HOME/Library/LaunchAgents/${NEMOCLAW_LAUNCHD_LABEL}.plist"
   local openclaw_wrapper="$MAC_HOME/bin/openclaw-gateway"
   local hermes_wrapper="$MAC_HOME/bin/hermes-gateway"
-  local hermes_wrapper_staging="$MAC_HOME/bin/.hermes-gateway.${DEPLOY_TS}.$$.stage"
   darwin_clear_auxiliary_restore
   mac_launchd_transaction_begin \
     "gui/$uid" "$plist" "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" \
@@ -12357,7 +12221,6 @@ install_darwin_openclaw_service() {
   mac_launchd_transaction_track_file "$hermes_plist"
   mac_launchd_transaction_track_file "$nemoclaw_plist"
   mac_launchd_transaction_track_temporary "$plist_staging"
-  mac_launchd_transaction_track_temporary "$hermes_wrapper_staging"
   if [ "$DARWIN_HERMES_LAUNCHD_ACTIVE" = 1 ]; then
     darwin_set_auxiliary_restore \
       "gui/$uid" "$hermes_plist" "gui/$uid/$HERMES_LAUNCHD_LABEL" \
@@ -12368,7 +12231,6 @@ install_darwin_openclaw_service() {
       "$NEMOCLAW_LAUNCHD_LABEL" user
   fi
   mac_launchd_transaction_set_rollback_hook withdraw_openclaw_gateway
-  install_hermes_gateway_wrapper "$hermes_wrapper_staging"
   cat > "$plist_staging" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -12389,12 +12251,9 @@ install_darwin_openclaw_service() {
 </plist>
 EOF
   plutil -lint "$plist_staging"
-  /bin/bash -n "$hermes_wrapper_staging"
   mac_launchd_transaction_mark_mutating
   prepare_openclaw_gateway
   stop_gui_launchd_job_if_present "$uid" "$OPENCLAW_LAUNCHD_LABEL"
-  mac_launchd_transaction_replace \
-    "$hermes_wrapper_staging" "$hermes_wrapper" 0700
   mac_launchd_transaction_replace "$plist_staging" "$plist" 0644
   : > "$LOG_DIR/openclaw-gateway.log"
   mac_launchd_bootstrap_job \
@@ -12433,83 +12292,7 @@ EOF
   verify_selected_gateway_supervisor_health
   mac_launchd_transaction_commit
   darwin_clear_auxiliary_restore
-  log "stock OpenClaw verified as exclusive launchd gateway; Hermes retained only for rollback"
-}
-
-install_darwin_hermes_service() {
-  local uid="$1" plist="$HOME/Library/LaunchAgents/${HERMES_LAUNCHD_LABEL}.plist"
-  local plist_staging="$HOME/Library/LaunchAgents/.${HERMES_LAUNCHD_LABEL}.${DEPLOY_TS}.$$.stage"
-  local wrapper="$MAC_HOME/bin/hermes-gateway"
-  local wrapper_staging="$MAC_HOME/bin/.hermes-gateway.${DEPLOY_TS}.$$.stage"
-  local openclaw_plist="$HOME/Library/LaunchAgents/${OPENCLAW_LAUNCHD_LABEL}.plist"
-  local nemoclaw_plist="$HOME/Library/LaunchAgents/${NEMOCLAW_LAUNCHD_LABEL}.plist"
-  if [ -f "$plist" ]; then
-    HERMES_PLIST_BACKUP="$MAC_HOME/backups/${HERMES_LAUNCHD_LABEL}.${AGENT}.${DEPLOY_TS}.plist"
-    snapshot_rollback_file "$plist" "$HERMES_PLIST_BACKUP" user
-    write_rollback_script
-  fi
-  if [ "$DEPLOY_ROLLBACK_ARMED" = 1 ] && [ -z "$HERMES_PLIST_BACKUP" ]; then
-    die "cannot mutate the Hermes launchd job without a prior plist backup"
-  fi
-  HERMES_PLIST_MUTATED=1
-  write_rollback_script
-  darwin_clear_auxiliary_restore
-  mac_launchd_transaction_begin \
-    "gui/$uid" "$plist" "gui/$uid/$HERMES_LAUNCHD_LABEL" \
-    "$HERMES_LAUNCHD_LABEL" user
-  mac_launchd_transaction_set_expected_prior_state \
-    "$(darwin_expected_prior_state "$DARWIN_HERMES_LAUNCHD_ACTIVE")"
-  mac_launchd_transaction_track_file "$wrapper"
-  mac_launchd_transaction_track_file "$openclaw_plist"
-  mac_launchd_transaction_track_file "$nemoclaw_plist"
-  mac_launchd_transaction_track_temporary "$wrapper_staging"
-  mac_launchd_transaction_track_temporary "$plist_staging"
-  if [ "$DARWIN_OPENCLAW_LAUNCHD_ACTIVE" = 1 ]; then
-    darwin_set_auxiliary_restore \
-      "gui/$uid" "$openclaw_plist" "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" \
-      "$OPENCLAW_LAUNCHD_LABEL" user
-  elif [ "$DARWIN_NEMOCLAW_LAUNCHD_ACTIVE" = 1 ]; then
-    darwin_set_auxiliary_restore \
-      "gui/$uid" "$nemoclaw_plist" "gui/$uid/$NEMOCLAW_LAUNCHD_LABEL" \
-      "$NEMOCLAW_LAUNCHD_LABEL" user
-  fi
-  install_hermes_gateway_wrapper "$wrapper_staging"
-  cat > "$plist_staging" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$HERMES_LAUNCHD_LABEL</string>
-  <key>ProgramArguments</key>
-  <array><string>$MAC_HOME/bin/hermes-gateway</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>WorkingDirectory</key><string>$MAC_HOME</string>
-  <key>StandardOutPath</key><string>$LOG_DIR/hermes-gateway.log</string>
-  <key>StandardErrorPath</key><string>$LOG_DIR/hermes-gateway.log</string>
-</dict>
-</plist>
-EOF
-  /bin/bash -n "$wrapper_staging"
-  if command -v plutil >/dev/null 2>&1; then
-    plutil -lint "$plist_staging"
-  fi
-  mac_launchd_transaction_mark_mutating
-  stop_gui_launchd_job_if_present "$uid" "$OPENCLAW_LAUNCHD_LABEL"
-  darwin_disable_job "gui/$uid/$OPENCLAW_LAUNCHD_LABEL" "$OPENCLAW_LAUNCHD_LABEL" user
-  stop_gui_launchd_job_if_present "$uid" "$NEMOCLAW_LAUNCHD_LABEL"
-  darwin_disable_job "gui/$uid/$NEMOCLAW_LAUNCHD_LABEL" "$NEMOCLAW_LAUNCHD_LABEL" user
-  stop_gui_launchd_job_if_present "$uid" "$HERMES_LAUNCHD_LABEL"
-  mac_launchd_transaction_replace "$wrapper_staging" "$wrapper" 0700
-  mac_launchd_transaction_replace "$plist_staging" "$plist" 0644
-  : > "$LOG_DIR/hermes-gateway.log"
-  mac_launchd_bootstrap_job \
-    "gui/$uid" "$plist" "gui/$uid/$HERMES_LAUNCHD_LABEL" \
-    "$HERMES_LAUNCHD_LABEL" user
-  verify_selected_gateway_supervisor_health
-  mac_launchd_transaction_commit
-  darwin_clear_auxiliary_restore
+  log "stock OpenClaw verified as exclusive launchd gateway"
 }
 
 install_darwin_agent_service() {
@@ -12835,7 +12618,7 @@ PY
 
 verify_selected_gateway_supervisor_health() {
   local output="$LOG_DIR/gateway-readiness.json"
-  "$PY" - "$SUPERVISOR_KIND" "${HERMES_GATEWAY_IMPL:-hermes}" "$FLEET_NAME" \
+  "$PY" - "$SUPERVISOR_KIND" "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" "$FLEET_NAME" \
     "$HERMES_SERVICE_NAME" "$OPENCLAW_SERVICE_NAME" "$NEMOCLAW_SERVICE_NAME" \
     "$HERMES_LAUNCHD_LABEL" "$OPENCLAW_LAUNCHD_LABEL" "$NEMOCLAW_LAUNCHD_LABEL" \
     "$HERMES_SUPERVISORD_PROG" "$OPENCLAW_SUPERVISORD_PROG" "$NEMOCLAW_SUPERVISORD_PROG" \
@@ -13221,7 +13004,7 @@ verify_selected_gateway_supervisor_health
 # pre-replacement proof.  Do not let that old gateway satisfy downstream
 # health checks or coexist with the selected post-deploy implementation.
 if ! assert_legacy_nemoclaw_containers_inactive post_install; then
-  if [ "${HERMES_GATEWAY_IMPL:-hermes}" = openclaw ]; then
+  if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = openclaw ]; then
     if [ "$RECOVERY_POLICY" = retain-forward ]; then
       log "ERROR: post-install daemon-resource proof failed; retaining OpenClaw ownership for in-place diagnosis and forward repair"
     else
@@ -13256,7 +13039,7 @@ else
   log "typed phase 2 deferred package-footprint reconciliation"
 fi
 
-if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then
+if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then
   if [ "$SUPERVISOR_KIND" = "systemd" ]; then
     classify_gateway_logs "$LOG_DIR/openclaw-gateway-journal.txt"
   else

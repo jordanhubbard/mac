@@ -805,7 +805,7 @@ def _call_gateway_summary(
     path.chmod(mode)
     environment = {
         "LOG_DIR": str(log_dir),
-        "HERMES_GATEWAY_IMPL": str(receipt["implementation"]),
+        "MAC_CHAT_GATEWAY_IMPL": str(receipt["implementation"]),
         "SUPERVISOR_KIND": str(receipt["supervisor"]),
         "OS_KIND": "darwin" if receipt["supervisor"] == "launchd" else "linux",
         "AGENT": AGENT,

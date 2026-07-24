@@ -874,18 +874,15 @@ def test_agent_services_allow_full_openshell_task_withdrawal():
     assert "<key>AbandonProcessGroup</key><false/>" in darwin
 
 
-def test_darwin_service_wrappers_raise_file_descriptor_limit():
+def test_agent_service_wrapper_raises_file_descriptor_limit_without_hermes_wrapper():
     script = deploy_script_text()
-    gateway_wrapper = script.split("install_hermes_gateway_wrapper() {", 1)[1].split(
-        "install_mac_agent_wrapper() {", 1
-    )[0]
     agent_wrapper = script.split("install_mac_agent_wrapper() {", 1)[1].split(
         "install_mac_hermes_task_executor() {", 1
     )[0]
 
     expected = 'ulimit -n "${MAC_SERVICE_NOFILE_LIMIT:-4096}" 2>/dev/null || true'
-    assert expected in gateway_wrapper
     assert expected in agent_wrapper
+    assert "install_hermes_gateway_wrapper() {" not in script
 
 
 def test_fleet_deploy_applies_hermes_patch_set():
@@ -1076,11 +1073,11 @@ def test_supervisord_pure_worker_has_no_gateway_program_or_restart():
         "install_darwin_service() {", 1
     )[0]
 
-    assert '  none)\n    # A pure worker must not retain or start either chat-gateway program.' in supervisor
+    assert '  none)\n    # A pure worker must not retain or start any chat-gateway program.' in supervisor
     assert '    active_gateway_program=""\n    gateway_program=""' in supervisor
     assert (
         '  if [ -n "$active_gateway_program" ]; then\n'
-        '    if [ "${HERMES_GATEWAY_IMPL:-hermes}" = "openclaw" ]; then\n'
+        '    if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = "openclaw" ]; then\n'
         '      prepare_openclaw_gateway\n'
         '    fi\n'
         '    start_supervisord_program "$active_gateway_program"'
@@ -1135,9 +1132,6 @@ def test_fleet_spokes_have_no_local_control_plane_or_database(tmp_path):
 def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     script = deploy_script_text()
     startup = (ROOT / "src" / "mac" / "hermes_startup.py").read_text(encoding="utf-8")
-    gateway_wrapper = script.split("install_hermes_gateway_wrapper() {", 1)[1].split(
-        "install_mac_agent_wrapper() {", 1
-    )[0]
     executor_wrapper = script.split('cat > "$executor" <<', 1)[1].split(
         'cat > "$executor_py" <<', 1
     )[0]
@@ -1152,7 +1146,7 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     assert (
         "    fetch_slack_secrets_from_vault\n"
         "    reload_mac_env\n"
-        '    if [ "${HERMES_GATEWAY_IMPL:-hermes}" != "openclaw" ]; then\n'
+        '    if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" != "openclaw" ]; then\n'
         "      sync_hermes_slack_identity_env\n"
         "      sync_hermes_home_channels"
     ) in script
@@ -1234,7 +1228,7 @@ def test_fleet_deploy_routes_provider_secrets_through_in_mac_router(tmp_path):
     # checkout. Verify the owned mechanism survives the TokenHub retirement.
     agent_provider = (ROOT / "src" / "mac" / "agent_provider.py").read_text(encoding="utf-8")
     assert "mac-gateway-explicit" in agent_provider
-    assert '[ -f "$HOME/.acc/.env" ]' not in gateway_wrapper
+    assert '[ -f "$HOME/.acc/.env" ]' not in script
     assert '[ -f "$HOME/.acc/.env" ]' not in executor_wrapper
     assert 'or os.environ.get("NVIDIA_API_KEY")' not in startup
     assert 'or os.environ.get("NVIDIA_API_BASE")' not in startup
@@ -1293,7 +1287,7 @@ def test_retain_forward_policy_reaches_each_supervisor_failure_domain():
         "\n}\ninstall_darwin_service", 1
     )[0]
     launchd = node.split("install_darwin_openclaw_service() {", 1)[1].split(
-        "\n}\ninstall_darwin_hermes_service", 1
+        "\n}\ninstall_darwin_agent_service", 1
     )[0]
 
     assert 'add_remote_env MAC_DEPLOY_RECOVERY_POLICY "$RECOVERY_POLICY"' in controller
@@ -3106,7 +3100,7 @@ def test_gateway_log_classifier_rejects_mismatched_or_tainted_cron_deferral(tmp_
 def test_darwin_openclaw_launchd_bootstrap_starts_gateway_once():
     script = deploy_script_text()
     installer = script.split("install_darwin_openclaw_service() {", 1)[1].split(
-        "install_darwin_hermes_service() {", 1
+        "install_darwin_agent_service() {", 1
     )[0]
 
     assert "<key>RunAtLoad</key><true/>" in installer
@@ -4321,7 +4315,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
             **base_env,
             "OPENSHELL_DEPLOY_ENABLED": "1",
             "OPENSHELL_EFFECTIVE_ARGS": "",
-            "HERMES_GATEWAY_IMPL": "hermes",
+            "MAC_CHAT_GATEWAY_IMPL": "none",
         },
         capture_output=True,
         text=True,
@@ -4344,7 +4338,7 @@ def test_node_openshell_bootstrap_uses_exact_runtime_and_reviewed_argument_vecto
             "MAC_DEPLOY_OPENSHELL_REQUIRED": "true",
             "OPENSHELL_DEPLOY_ENABLED": "0",
             "OPENSHELL_EFFECTIVE_ARGS": "",
-            "HERMES_GATEWAY_IMPL": "openclaw",
+            "MAC_CHAT_GATEWAY_IMPL": "openclaw",
         },
         capture_output=True,
         text=True,

@@ -558,16 +558,19 @@ def _chat_gateway_values(
 ) -> Dict[str, str]:
     """Point worker registration at verified chat-gateway service metadata.
 
-    The OpenClaw installer creates this file only after its liveness, readiness,
-    model, and channel probes pass.  A failed prepare therefore cannot advertise
-    desired state as live state, and rollback removes the file before restoring
-    Hermes.
+    OpenClaw is the sole chat gateway. The installer creates this file only
+    after its liveness, readiness, model, and channel probes pass, so a failed
+    prepare cannot advertise desired state as live state. The only supported
+    runtime selections are ``openclaw`` (a chat-gateway host) and ``none`` (a
+    pure worker); any other value is normalized to ``openclaw``.
     """
     implementation = (
-        env.get("HERMES_GATEWAY_IMPL")
-        or env.get("MAC_DEPLOY_HERMES_GATEWAY_IMPL")
-        or "hermes"
+        env.get("MAC_CHAT_GATEWAY_IMPL")
+        or env.get("MAC_DEPLOY_CHAT_GATEWAY_IMPL")
+        or "openclaw"
     ).strip().lower()
+    if implementation != "none":
+        implementation = "openclaw"
     values = {"MAC_CHAT_GATEWAY_IMPL": implementation}
     if implementation == "openclaw":
         public_identity = (

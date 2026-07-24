@@ -217,20 +217,23 @@ def test_openclaw_worker_advertisement_uses_verified_runtime_file(tmp_path) -> N
     openclaw = deploy_env.build_mac_env(
         {"MAC_WORKER_RESOURCES_FILE": stale},
         cfg,
-        environ={"HERMES_GATEWAY_IMPL": "openclaw"},
+        environ={"MAC_CHAT_GATEWAY_IMPL": "openclaw"},
     )
     assert openclaw["MAC_CHAT_GATEWAY_IMPL"] == "openclaw"
     assert openclaw["MAC_WORKER_RESOURCES_FILE"] == str(
         tmp_path / ".mac" / "openclaw" / "service-advertisement.json"
     )
 
-    rollback = deploy_env.build_mac_env(
+    # OpenClaw is the sole chat gateway; deselecting it means a pure worker
+    # (``none``), which withdraws the OpenClaw advertisement and reverts to the
+    # generic worker-resources file.
+    reverted = deploy_env.build_mac_env(
         openclaw,
         cfg,
-        environ={"HERMES_GATEWAY_IMPL": "hermes"},
+        environ={"MAC_CHAT_GATEWAY_IMPL": "none"},
     )
-    assert rollback["MAC_CHAT_GATEWAY_IMPL"] == "hermes"
-    assert rollback["MAC_WORKER_RESOURCES_FILE"] == str(
+    assert reverted["MAC_CHAT_GATEWAY_IMPL"] == "none"
+    assert reverted["MAC_WORKER_RESOURCES_FILE"] == str(
         tmp_path / ".mac" / "worker-resources.json"
     )
 
@@ -241,7 +244,7 @@ def test_gateway_impl_none_is_a_pure_worker_no_openclaw(tmp_path) -> None:
     # so its startup health verdict is present in first registration.
     cfg = _cfg(tmp_path)
     worker = deploy_env.build_mac_env(
-        {}, cfg, environ={"HERMES_GATEWAY_IMPL": "none"},
+        {}, cfg, environ={"MAC_CHAT_GATEWAY_IMPL": "none"},
     )
     assert worker["MAC_CHAT_GATEWAY_IMPL"] == "none"
     assert worker["MAC_WORKER_RESOURCES_FILE"] == str(
@@ -491,7 +494,7 @@ def test_deploy_generation_is_projected_to_exact_worker_barrier(tmp_path):
     (
         {"MAC_DEPLOY_OPENSHELL_ENABLED": "1"},
         {"MAC_DEPLOY_OPENSHELL_REQUIRED": "true"},
-        {"HERMES_GATEWAY_IMPL": "openclaw"},
+        {"MAC_CHAT_GATEWAY_IMPL": "openclaw"},
     ),
 )
 def test_active_openshell_rebinds_stale_runtime_cli_to_reviewed_path(
@@ -516,7 +519,7 @@ def test_explicit_openshell_teardown_clears_stale_runtime_cli(tmp_path):
         environ={
             "MAC_DEPLOY_OPENSHELL": "0",
             "MAC_DEPLOY_OPENSHELL_ENABLED": "0",
-            "HERMES_GATEWAY_IMPL": "hermes",
+            "MAC_CHAT_GATEWAY_IMPL": "none",
         },
     )
 

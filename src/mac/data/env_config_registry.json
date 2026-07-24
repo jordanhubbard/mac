@@ -1904,6 +1904,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy chat gateway impl.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_CHAT_GATEWAY_IMPL",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy clear repo update blocker.",
     "family": "deployment",
     "name": "MAC_DEPLOY_CLEAR_REPO_UPDATE_BLOCKER",
@@ -2738,18 +2750,6 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "deploy/fleet-node-install.sh"
-    ],
-    "type": "str"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy hermes gateway impl.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_HERMES_GATEWAY_IMPL",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py"
     ],
     "type": "str"
   },
@@ -5167,7 +5167,6 @@
     "name": "MAC_HERMES_GATEWAY_API_KEY",
     "retired": false,
     "sources": [
-      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/plugins/image_gen/mac-hub/__init__.py",
       "deploy/hermes/overlay/plugins/image_gen/mac-hub/plugin.yaml",
       "deploy/hermes/overlay/plugins/image_gen/nvidia/__init__.py",
