@@ -4471,6 +4471,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: dispatch page prefix width.",
+    "family": "core",
+    "name": "MAC_DISPATCH_PAGE_PREFIX_WIDTH",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: dispatch priority aging seconds.",
     "family": "core",
     "name": "MAC_DISPATCH_PRIORITY_AGING_SECONDS",
