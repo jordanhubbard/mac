@@ -2289,6 +2289,14 @@ def test_git_finalizer_uses_non_main_canonical_branch(tmp_path, monkeypatch):
 
 def test_git_finalizer_blocks_when_canonical_remote_is_missing(tmp_path, monkeypatch):
     """A named-origin guess cannot replace the prepared canonical target."""
+    # The base/remote resolvers consult MAC_TASK_* env vars before the task
+    # metadata (mirroring worker preparation). A bare pytest run on a fleet
+    # executor host inherits live MAC_TASK_CANONICAL_REMOTE / MAC_TASK_REPO_BASE_SHA
+    # values, which would satisfy the "no canonical remote / no prepared base"
+    # premise this test depends on and route the finalizer to a different gate.
+    # Clear them so the task metadata alone drives the fail-closed path.
+    monkeypatch.delenv("MAC_TASK_CANONICAL_REMOTE", raising=False)
+    monkeypatch.delenv("MAC_TASK_REPO_BASE_SHA", raising=False)
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "--bare", str(origin))
     work = tmp_path / "work"
