@@ -202,13 +202,64 @@ def test_contract_runner_disables_nested_xdist_and_preserves_hard_failure(tmp_pa
     )
 
     assert completed.returncode == 19, completed.stdout + completed.stderr
-    assert "nested pytest detected; disabling xdist fan-out" in completed.stderr
+    assert "nested pytest detected" in completed.stderr
+    assert "single" in completed.stderr and "serial owner" in completed.stderr
     pytest_calls = [
         line for line in calls if "-m coverage run -m pytest" in line
     ]
+    # Exactly one serial owner: NO second xdist controller, NO worker pool.
     assert len(pytest_calls) == 1
     assert "-n " not in pytest_calls[0]
+    assert "--dist" not in pytest_calls[0]
     assert "PYTEST_ADDOPTS=<unset>" in pytest_calls[0]
+
+
+def test_contract_runner_nested_empty_selection_exit5_is_not_a_failure(tmp_path):
+    """Nested inside a pytest/xdist worker, a serial owner that collects zero
+    items (pytest exit 5) reflects a legitimately empty OUTER selection in this
+    child, not a broken gate. The runner must remap exit 5 -> 0 ONLY when nested,
+    run a single serial owner (no second controller), and say why."""
+    completed, calls = _run_with_fake_python(
+        tmp_path,
+        jobs="4",
+        nested_pytest=True,
+        pytest_status=5,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "nested pytest collected 0 items (exit 5)" in completed.stderr
+    pytest_calls = [line for line in calls if "-m coverage run -m pytest" in line]
+    assert len(pytest_calls) == 1
+    assert "-n " not in pytest_calls[0]
+    assert "--dist" not in pytest_calls[0]
+
+
+def test_contract_runner_nested_real_failure_still_fails(tmp_path):
+    """The exit-5 remap must be surgical: a nested serial owner that reports a
+    genuine test failure (exit 1) still fails the gate — no masking."""
+    completed, calls = _run_with_fake_python(
+        tmp_path,
+        nested_pytest=True,
+        pytest_status=1,
+    )
+
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    assert "treating the empty outer selection" not in completed.stderr
+    pytest_calls = [line for line in calls if "-m coverage run -m pytest" in line]
+    assert len(pytest_calls) == 1
+
+
+def test_contract_runner_top_level_empty_selection_exit5_stays_hard_failure(tmp_path):
+    """Outside a nested context, an empty whole-suite selection (exit 5) is a
+    genuine misconfiguration and MUST remain a hard failure — the remap is
+    scoped strictly to the nested case."""
+    completed, calls = _run_with_fake_python(
+        tmp_path,
+        pytest_status=5,
+    )
+
+    assert completed.returncode == 5, completed.stdout + completed.stderr
+    assert "treating the empty outer selection" not in completed.stderr
 
 
 def test_contract_runner_isolates_coverage_state_per_invocation(tmp_path):

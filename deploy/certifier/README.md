@@ -21,6 +21,14 @@ It is intentionally separate from worker and hub images:
 - a trusted `sitecustomize` places the exact candidate `src/` first for the
   parent test process and its Python children.
 
+Both certifier pytest harnesses (`authoritative-contract-tests` and
+`supplemental-contract-tests`) launch pytest through `env -i` with an explicit,
+sanitized environment and never pass `-n`/`--dist`. They run a single serial
+pytest owner with no `PYTEST_XDIST_*` inheritance, so they cannot start a
+nested xdist controller or fan out a zero-collection worker pool; the
+`scripts/run-contract-tests.sh` single-owner and nested exit-5 handling is the
+only place that guard is needed.
+
 The controller appends the exact immutable `assembly_base_sha` as
 `--base-sha SHA`; repository contracts cannot provide or override it. The
 frozen selector proves that object exists in the bundle and is an ancestor of
