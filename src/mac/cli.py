@@ -17,7 +17,7 @@ from mac.repository_hygiene import (
     REPOSITORY_REF_CLEANUP_SCHEMA,
     RepositoryHygieneError,
     RepositoryRefAudit,
-    audit_repository_refs,
+    audit_repository_refs_result,
     cleanup_evidence_metadata,
     list_managed_remote_refs,
     prune_repository_refs,
@@ -1892,7 +1892,7 @@ def _repository_open_pull_requests(repo: Path) -> tuple[Optional[Dict[str, str]]
 
 def _repository_ref_audit(
     args: argparse.Namespace,
-) -> tuple[Any, list[RepositoryRefAudit], str]:
+) -> tuple[Any, list[RepositoryRefAudit], str, list[str]]:
     repo = Path(args.repo_path).expanduser().resolve()
     if not repo.is_dir():
         raise RepositoryHygieneError("repository path does not exist")
@@ -1902,7 +1902,7 @@ def _repository_ref_audit(
     if selected_tasks:
         refs = [item for item in refs if item.task_id in selected_tasks]
     open_prs, pr_warning = _repository_open_pull_requests(repo)
-    audits = audit_repository_refs(
+    result = audit_repository_refs_result(
         repo,
         refs,
         cp.task_detail,
@@ -1910,13 +1910,15 @@ def _repository_ref_audit(
         default_grace_seconds=int(max(0.0, float(args.grace_days)) * 24 * 60 * 60),
         open_pull_requests=open_prs,
     )
-    return cp, audits, pr_warning
+    warning = "; ".join(part for part in (pr_warning, result.warning) if part)
+    return cp, result.audits, warning, result.timed_out_task_ids
 
 
 def _repository_ref_report(
     audits: Iterable[RepositoryRefAudit],
     *,
     pr_warning: str = "",
+    timed_out_task_ids: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     items = [item.to_dict() for item in audits]
     counts: Dict[str, int] = {}
@@ -1932,16 +1934,23 @@ def _repository_ref_report(
     }
     if pr_warning:
         report["warning"] = pr_warning
+    timed_out = [str(tid) for tid in (timed_out_task_ids or []) if str(tid)]
+    if timed_out:
+        report["timed_out_task_ids"] = timed_out
     return report
 
 
 def cmd_repo_refs_audit(args: argparse.Namespace) -> None:
-    _cp, audits, warning = _repository_ref_audit(args)
-    _print(_repository_ref_report(audits, pr_warning=warning))
+    _cp, audits, warning, timed_out = _repository_ref_audit(args)
+    _print(
+        _repository_ref_report(
+            audits, pr_warning=warning, timed_out_task_ids=timed_out
+        )
+    )
 
 
 def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
-    cp, audits, warning = _repository_ref_audit(args)
+    cp, audits, warning, timed_out = _repository_ref_audit(args)
     if args.execute and warning:
         raise RepositoryHygieneError(
             "%s; refusing executable cleanup" % warning
@@ -1967,7 +1976,9 @@ def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
         execute=bool(args.execute),
         recorder=record if args.execute else None,
     )
-    result["audit"] = _repository_ref_report(audits, pr_warning=warning)
+    result["audit"] = _repository_ref_report(
+        audits, pr_warning=warning, timed_out_task_ids=timed_out
+    )
     _print(result)
 
 

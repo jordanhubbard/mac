@@ -18,7 +18,7 @@ from mac.repository_hygiene import (
     DEFAULT_CLEANUP_GRACE_SECONDS,
     RepositoryHygieneError,
     RepositoryRefAudit,
-    audit_repository_refs,
+    audit_repository_refs_result,
     cleanup_evidence_metadata,
     list_managed_remote_refs,
     prune_repository_refs,
@@ -410,7 +410,7 @@ class RepositoryRefReconciler:
         refresh_remote_base_ref(repo, remote, base_ref)
         refs = list_managed_remote_refs(repo, remote)
         open_pull_requests, pr_warning = query_open_pull_requests(repo)
-        audits = audit_repository_refs(
+        audit_result = audit_repository_refs_result(
             repo,
             refs,
             self.control_plane.task_detail,
@@ -418,6 +418,9 @@ class RepositoryRefReconciler:
             default_grace_seconds=self.config.default_grace_seconds,
             open_pull_requests=open_pull_requests,
         )
+        audits = audit_result.audits
+        audit_warning = audit_result.warning
+        timed_out_task_ids = list(audit_result.timed_out_task_ids)
         if mode == "prune" and pr_warning:
             raise RepositoryHygieneError("%s; refusing executable cleanup" % pr_warning)
 
@@ -455,6 +458,8 @@ class RepositoryRefReconciler:
                 "warning"
                 if (
                     pr_warning
+                    or audit_warning
+                    or timed_out_task_ids
                     or int(protected_cleanup.get("failed_count") or 0)
                     or int(protected_cleanup.get("audit_debt_count") or 0)
                 )
@@ -475,8 +480,13 @@ class RepositoryRefReconciler:
             "canonical_remote_verified": bool(canonical_remote),
             "protected_work_package_refs": protected_cleanup,
         }
-        if pr_warning:
-            result["warning"] = pr_warning
+        combined_warning = "; ".join(
+            part for part in (pr_warning, audit_warning) if part
+        )
+        if combined_warning:
+            result["warning"] = combined_warning
+        if timed_out_task_ids:
+            result["timed_out_task_ids"] = timed_out_task_ids
         return result
 
     def _reconcile_protected_work_package_refs(

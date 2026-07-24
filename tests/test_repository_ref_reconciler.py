@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from mac.repository_hygiene import RepositoryHygieneError, RepositoryRefAudit
+from mac.repository_hygiene import (
+    RepositoryHygieneError,
+    RepositoryRefAudit,
+    RepositoryRefAuditResult,
+)
 from mac import repository_ref_reconciler as rrr
 from mac.repository_ref_reconciler import (
     RepositoryRefReconciler,
@@ -107,8 +111,8 @@ def _install_success_fakes(monkeypatch, *, pr_warning=""):
     )
     monkeypatch.setattr(
         rrr,
-        "audit_repository_refs",
-        lambda *args, **kwargs: [_audit()],
+        "audit_repository_refs_result",
+        lambda *args, **kwargs: RepositoryRefAuditResult(audits=[_audit()]),
     )
 
     def prune(_repo, audits, *, execute, recorder):

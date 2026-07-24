@@ -10,6 +10,7 @@ import pytest
 
 from mac import cli
 from mac.cli import main
+from mac.repository_hygiene import RepositoryRefAuditResult
 
 
 def _git(repo, *args):
@@ -309,11 +310,11 @@ def test_repository_ref_audit_filters_tasks_and_reports_warning(tmp_path, monkey
     )
     monkeypatch.setattr(
         cli,
-        "audit_repository_refs",
+        "audit_repository_refs_result",
         lambda _repo, selected, _loader, **kwargs: captured.update(
             selected=list(selected), kwargs=kwargs
         )
-        or [],
+        or RepositoryRefAuditResult(),
     )
     args = SimpleNamespace(
         repo_path=str(tmp_path),
@@ -323,11 +324,12 @@ def test_repository_ref_audit_filters_tasks_and_reports_warning(tmp_path, monkey
         grace_days=2,
     )
 
-    returned_plane, audits, warning = cli._repository_ref_audit(args)
+    returned_plane, audits, warning, timed_out = cli._repository_ref_audit(args)
 
     assert returned_plane is plane
     assert audits == []
     assert warning == "PR state unavailable"
+    assert timed_out == []
     assert captured["selected"] == [refs[0]]
     assert captured["kwargs"]["base_ref"] == "origin/main"
     assert captured["kwargs"]["default_grace_seconds"] == 2 * 24 * 60 * 60

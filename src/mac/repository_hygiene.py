@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 import urllib.parse
-from dataclasses import asdict, dataclass
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
@@ -53,6 +55,14 @@ DISPATCHABLE_TASK_STATES = frozenset(
 
 _REPLACEMENT_CHAIN_DEPTH_LIMIT = 10
 
+# Bounded/observable audit defaults. A single hub task-detail read can block on
+# a 30s HTTP GET; without a ceiling a slow hub stalls the whole audit. The
+# overall deadline caps total wall time, the per-task timeout caps any single
+# lookup, and the concurrency bounds how many lookups run in parallel.
+DEFAULT_AUDIT_DEADLINE_SECONDS = 120.0
+DEFAULT_PER_TASK_TIMEOUT_SECONDS = 30.0
+DEFAULT_AUDIT_LOOKUP_CONCURRENCY = 8
+
 
 class RepositoryHygieneError(MACError):
     """Raised when repository-ref inspection or cleanup cannot proceed safely."""
@@ -90,6 +100,139 @@ class RepositoryRefAudit:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class RepositoryRefAuditResult:
+    """Bounded/observable outcome of :func:`audit_repository_refs`.
+
+    ``audits`` is always populated for every managed ref, even when task-detail
+    lookups time out or the overall deadline is hit. ``timed_out_task_ids``
+    lists the task IDs whose detail could not be read in time (treated as a
+    safe 'unavailable' sentinel by the audit), and ``warning`` carries an
+    operator-facing message when the audit could not fully verify every task.
+    """
+
+    audits: List["RepositoryRefAudit"] = field(default_factory=list)
+    timed_out_task_ids: List[str] = field(default_factory=list)
+    warning: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "audits": [item.to_dict() for item in self.audits],
+            "timed_out_task_ids": list(self.timed_out_task_ids),
+            "warning": self.warning,
+        }
+
+
+class _BoundedTaskLoader:
+    """Cache + bounded/concurrent wrapper around a task-detail ``task_loader``.
+
+    Wraps the ``task_loader`` Callable so slow, erroring, or timed-out lookups
+    resolve to a safe 'unavailable' sentinel (``None``) instead of blocking the
+    audit. Each task is fetched at most once and cached in ``loaded``; results
+    are looked up from the cache on subsequent calls. Lookups that exceed the
+    per-task timeout, that error, or that run past the overall audit deadline
+    are recorded in ``timed_out``/``unavailable`` and never block the caller.
+    """
+
+    def __init__(
+        self,
+        task_loader: Callable[[str], Any],
+        loaded: Dict[str, Any],
+        *,
+        deadline: Optional[float],
+        per_task_timeout: Optional[float],
+        concurrency: int,
+        monotonic: Callable[[], float],
+    ) -> None:
+        self._task_loader = task_loader
+        self.loaded = loaded
+        self._deadline = deadline
+        self._per_task_timeout = per_task_timeout
+        self._concurrency = max(1, int(concurrency))
+        self._monotonic = monotonic
+        self.timed_out: List[str] = []
+        self._timed_out_seen: set[str] = set()
+        self.interrupted = False
+
+    def _remaining(self) -> Optional[float]:
+        if self._deadline is None:
+            return None
+        return self._deadline - self._monotonic()
+
+    def _record_timeout(self, task_id: str) -> None:
+        if task_id and task_id not in self._timed_out_seen:
+            self._timed_out_seen.add(task_id)
+            self.timed_out.append(task_id)
+
+    def _lookup_timeout(self) -> Optional[float]:
+        # Effective per-lookup budget is the smaller of the per-task timeout
+        # and whatever remains of the overall audit deadline.
+        remaining = self._remaining()
+        candidates = [
+            value
+            for value in (self._per_task_timeout, remaining)
+            if value is not None
+        ]
+        if not candidates:
+            return None
+        return max(0.0, min(candidates))
+
+    def preload(self, task_ids: Iterable[str]) -> None:
+        """Fetch the given task IDs concurrently, caching each result once."""
+
+        pending = [
+            task_id
+            for task_id in dict.fromkeys(
+                str(task_id).strip() for task_id in task_ids if str(task_id).strip()
+            )
+            if task_id not in self.loaded
+        ]
+        if not pending:
+            return
+        if self.interrupted:
+            for task_id in pending:
+                self.loaded[task_id] = None
+                self._record_timeout(task_id)
+            return
+        executor = ThreadPoolExecutor(max_workers=self._concurrency)
+        try:
+            futures = {
+                executor.submit(self._task_loader, task_id): task_id
+                for task_id in pending
+            }
+            for future, task_id in futures.items():
+                timeout = self._lookup_timeout()
+                try:
+                    if timeout is not None and timeout <= 0.0:
+                        raise FutureTimeoutError()
+                    self.loaded[task_id] = future.result(timeout=timeout)
+                except FutureTimeoutError:
+                    future.cancel()
+                    self.loaded[task_id] = None
+                    self._record_timeout(task_id)
+                except KeyboardInterrupt:
+                    self.interrupted = True
+                    self.loaded[task_id] = None
+                    self._record_timeout(task_id)
+                    for other in futures.values():
+                        if other not in self.loaded:
+                            self.loaded[other] = None
+                            self._record_timeout(other)
+                    raise
+                except Exception:  # noqa: BLE001 - unavailable task is a safe classification.
+                    self.loaded[task_id] = None
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def load(self, task_id: str) -> Any:
+        key = str(task_id or "").strip()
+        if not key:
+            return None
+        if key not in self.loaded:
+            self.preload([key])
+        return self.loaded.get(key)
 
 
 def _redact(text: Any) -> str:
@@ -703,7 +846,7 @@ def _is_ancestor(
     return result.returncode == 0
 
 
-def audit_repository_refs(
+def audit_repository_refs_result(
     repo: Path,
     refs: Iterable[ManagedRepositoryRef],
     task_loader: Callable[[str], Any],
@@ -713,25 +856,80 @@ def audit_repository_refs(
     default_grace_seconds: int = DEFAULT_CLEANUP_GRACE_SECONDS,
     runner: Callable[..., subprocess.CompletedProcess[str]] = _run,
     open_pull_requests: Optional[Mapping[str, str]] = None,
-) -> List[RepositoryRefAudit]:
+    audit_deadline_seconds: Optional[float] = DEFAULT_AUDIT_DEADLINE_SECONDS,
+    per_task_timeout_seconds: Optional[float] = DEFAULT_PER_TASK_TIMEOUT_SECONDS,
+    lookup_concurrency: int = DEFAULT_AUDIT_LOOKUP_CONCURRENCY,
+    monotonic: Optional[Callable[[], float]] = None,
+) -> RepositoryRefAuditResult:
+    """Audit managed refs with bounded, observable task-detail lookups.
+
+    Every ref is always audited, even when a hub task-detail read times out or
+    the overall ``audit_deadline_seconds`` is hit: timed-out/unavailable tasks
+    fail closed (never ``eligible=True``) and their IDs are reported in the
+    returned :class:`RepositoryRefAuditResult`. Task lifecycle reads are deduped
+    and loaded through a bounded concurrent loader with per-lookup timeouts,
+    caching each result so a task is fetched at most once. A ``KeyboardInterrupt``
+    still yields a clean partial result rather than hanging.
+    """
+
     repo = Path(repo).expanduser().resolve()
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    clock = monotonic or time.monotonic
+    deadline = None if audit_deadline_seconds is None else clock() + max(0.0, float(audit_deadline_seconds))
     loaded: Dict[str, Any] = {}
     audits: List[RepositoryRefAudit] = []
     pull_request_check_complete = open_pull_requests is not None
     pull_requests = dict(open_pull_requests or {})
 
-    def load_task(task_id: str) -> Any:
-        if task_id not in loaded:
-            try:
-                loaded[task_id] = task_loader(task_id)
-            except Exception:  # noqa: BLE001 - unavailable task is a safe classification.
-                loaded[task_id] = None
-        return loaded[task_id]
+    refs = list(refs)
+    bounded = _BoundedTaskLoader(
+        task_loader,
+        loaded,
+        deadline=deadline,
+        per_task_timeout=(
+            None
+            if per_task_timeout_seconds is None
+            else max(0.0, float(per_task_timeout_seconds))
+        ),
+        concurrency=lookup_concurrency,
+        monotonic=clock,
+    )
 
+    def load_task(task_id: str) -> Any:
+        return bounded.load(task_id)
+
+    interrupted = False
+    # Dedupe and batch the primary refs' task IDs up front so a slow hub does
+    # not force serial 30s reads. Replacement task IDs are only known after the
+    # primary detail loads, so they are batched in a second bounded pass.
+    try:
+        bounded.preload(managed.task_id for managed in refs)
+        replacement_ids: List[str] = []
+        for managed in refs:
+            detail = load_task(managed.task_id)
+            task, _history = _task_parts(detail)
+            metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+            lifecycle = (
+                metadata.get("repository_ref_lifecycle")
+                if isinstance(metadata.get("repository_ref_lifecycle"), dict)
+                else {}
+            )
+            replacement = str(lifecycle.get("replacement_task_id") or "").strip()
+            if replacement:
+                replacement_ids.append(replacement)
+        bounded.preload(replacement_ids)
+    except KeyboardInterrupt:
+        interrupted = True
+
+    timed_out_ids = set(bounded.timed_out)
     for managed in refs:
-        detail = load_task(managed.task_id)
+        try:
+            detail = load_task(managed.task_id)
+        except KeyboardInterrupt:
+            interrupted = True
+            detail = None
         task, history = _task_parts(detail)
+        timed_out_ids.update(bounded.timed_out)
         if not task:
             audits.append(
                 RepositoryRefAudit(
@@ -741,7 +939,11 @@ def audit_repository_refs(
                     classification="unknown",
                     eligible=False,
                     eligible_after=None,
-                    reason="task record is unavailable",
+                    reason=(
+                        "task detail lookup timed out; refusing cleanup"
+                        if managed.task_id in timed_out_ids
+                        else "task record is unavailable"
+                    ),
                     replacement_task_id=None,
                     open_pull_request=pull_requests.get(managed.branch),
                 )
@@ -856,7 +1058,60 @@ def audit_repository_refs(
                 open_pull_request=open_pr,
             )
         )
-    return audits
+    timed_out_ids.update(bounded.timed_out)
+    interrupted = interrupted or bounded.interrupted
+    timed_out_list = [tid for tid in bounded.timed_out if tid in timed_out_ids]
+    warning = ""
+    if interrupted:
+        warning = "repository ref audit interrupted; results are partial"
+    elif timed_out_list:
+        warning = (
+            "task detail lookups timed out for %d task(s); "
+            "affected refs are held ineligible" % len(timed_out_list)
+        )
+    return RepositoryRefAuditResult(
+        audits=audits,
+        timed_out_task_ids=timed_out_list,
+        warning=warning,
+    )
+
+
+def audit_repository_refs(
+    repo: Path,
+    refs: Iterable[ManagedRepositoryRef],
+    task_loader: Callable[[str], Any],
+    *,
+    base_ref: str = "origin/main",
+    now: Optional[datetime] = None,
+    default_grace_seconds: int = DEFAULT_CLEANUP_GRACE_SECONDS,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = _run,
+    open_pull_requests: Optional[Mapping[str, str]] = None,
+    audit_deadline_seconds: Optional[float] = DEFAULT_AUDIT_DEADLINE_SECONDS,
+    per_task_timeout_seconds: Optional[float] = DEFAULT_PER_TASK_TIMEOUT_SECONDS,
+    lookup_concurrency: int = DEFAULT_AUDIT_LOOKUP_CONCURRENCY,
+    monotonic: Optional[Callable[[], float]] = None,
+) -> List[RepositoryRefAudit]:
+    """Backwards-compatible wrapper returning just the list of audits.
+
+    Prefer :func:`audit_repository_refs_result` when callers need the
+    timed-out task IDs and warning; this shim preserves the historical
+    return type (a list of :class:`RepositoryRefAudit`).
+    """
+
+    return audit_repository_refs_result(
+        repo,
+        refs,
+        task_loader,
+        base_ref=base_ref,
+        now=now,
+        default_grace_seconds=default_grace_seconds,
+        runner=runner,
+        open_pull_requests=open_pull_requests,
+        audit_deadline_seconds=audit_deadline_seconds,
+        per_task_timeout_seconds=per_task_timeout_seconds,
+        lookup_concurrency=lookup_concurrency,
+        monotonic=monotonic,
+    ).audits
 
 
 def cleanup_evidence_metadata(
