@@ -9114,21 +9114,45 @@ def create_app(
             return {**published, "status": "queued"}
         correlation_id = published["correlation_id"]
         persona_id = cp.OPERATOR_PERSONA_AGENT_ID
+        # A task-scoped directive is acknowledged over task.directive.ack.v1 by
+        # the active executor; an ordinary directive is answered over
+        # peer.reply.v1 by the agent's persona. Labeling the two distinctly
+        # (delivery_kind) is exactly what keeps a conversation mirror from
+        # implying a persona chat turn steered the task run (task_60be).
+        from mac.executor_directive import (
+            DELIVERY_KIND_EXECUTOR,
+            DELIVERY_KIND_PERSONA,
+            EXECUTOR_ACK_TOPIC,
+        )
+
+        reply_topics = ("peer.reply.v1", EXECUTOR_ACK_TOPIC)
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
             for stream in cp.list_agentbus_streams(agent_id=persona_id, limit=100):
                 if (
                     stream.recipient_agent_id == persona_id
-                    and stream.topic == "peer.reply.v1"
+                    and stream.topic in reply_topics
                     and str((stream.headers or {}).get("correlation_id") or "")
                     == correlation_id
                 ):
                     chunks = cp.read_agentbus_chunks(persona_id, stream.id, limit=100)
                     if chunks and isinstance(chunks[-1].payload, dict):
+                        reply = chunks[-1].payload
+                        delivery_kind = (
+                            DELIVERY_KIND_EXECUTOR
+                            if stream.topic == EXECUTOR_ACK_TOPIC
+                            else DELIVERY_KIND_PERSONA
+                        )
+                        status = (
+                            "acknowledged"
+                            if stream.topic == EXECUTOR_ACK_TOPIC
+                            else "replied"
+                        )
                         return {
                             **published,
-                            "status": "replied",
-                            "reply": chunks[-1].payload,
+                            "status": status,
+                            "delivery_kind": delivery_kind,
+                            "reply": reply,
                         }
             await asyncio.sleep(0.35)
         return {

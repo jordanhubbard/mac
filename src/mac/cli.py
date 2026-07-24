@@ -2746,6 +2746,8 @@ def cmd_agent_tell(args: argparse.Namespace) -> None:
         kwargs["issued_by"] = args.issued_by
     if args.wait:
         kwargs["wait_seconds"] = args.wait
+    if getattr(args, "task", None):
+        kwargs["task_id"] = args.task
     try:
         result = cp.publish_human_directive(**kwargs)
     except TypeError:
@@ -6505,6 +6507,12 @@ def build_parser() -> argparse.ArgumentParser:
     agent_tell.add_argument("agent", help="agent id or name")
     agent_tell.add_argument("message")
     agent_tell.add_argument("--issued-by", help="who is speaking (default: human)")
+    agent_tell.add_argument(
+        "--task",
+        help="bind this directive to a task the agent is actively executing; "
+        "the hub verifies the agent owns a current lease and routes the "
+        "directive to the active task executor (not a persona chat turn)",
+    )
     agent_tell.add_argument(
         "--wait", type=float, help="wait up to N seconds for the agent's reply"
     )

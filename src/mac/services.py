@@ -18297,6 +18297,42 @@ class ControlPlane:
             resources={"virtual": True, "operator_persona": True},
         )
 
+    def _task_scoped_directive_ownership(
+        self, task_id: str, target_agent_id: str
+    ) -> "TaskOwnershipVerdict":
+        """Evaluate whether *target* owns a current lease for *task_id*.
+
+        Pure decision (mac.executor_directive.task_ownership_verdict) fed from
+        the tasks row so the hub and the worker apply one contract. Fails
+        closed with a structured status for a missing task, a task with no
+        active executor lease, an agent/task mismatch, or an expired lease.
+        """
+        from mac.executor_directive import task_ownership_verdict
+
+        try:
+            task = self.get_task(task_id)
+            found = True
+            state = task.state
+            owner = task.owner_agent_id
+            lease_id = task.lease_id
+            leased_until = task.leased_until
+        except NotFoundError:
+            found = False
+            state = None
+            owner = None
+            lease_id = None
+            leased_until = None
+        return task_ownership_verdict(
+            task_id=task_id,
+            target_agent_id=target_agent_id,
+            task_found=found,
+            task_state=state,
+            owner_agent_id=owner,
+            lease_id=lease_id,
+            leased_until=leased_until,
+            now=datetime.now(timezone.utc),
+        )
+
     def publish_human_directive(
         self,
         target_agent_id: str,
@@ -18311,27 +18347,61 @@ class ControlPlane:
             HUMAN_DIRECTIVE_SCHEMA,
             HUMAN_DIRECTIVE_TOPIC,
         )
+        from mac.executor_directive import (
+            DELIVERY_TARGET_EXECUTOR,
+            DELIVERY_TARGET_HEADER,
+            DELIVERY_TARGET_PERSONA,
+            EXECUTOR_SCOPED_HEADER,
+        )
 
         body = str(message or "").strip()
         if not body:
             raise ValidationError("human directive message is required")
         target = self._require_live_agent(target_agent_id)
+
+        # Task-scoped path (task_60be): when a structured task id is supplied
+        # the hub validates that the target agent owns a CURRENT lease for that
+        # task before minting an executor-scoped directive. This fails closed
+        # (ValidationError) rather than publishing a directive the executor can
+        # never own — the exact silent-mis-delivery the incident describes.
+        ownership = None
+        resolved_task_id = None
+        if task_id:
+            ownership = self._task_scoped_directive_ownership(task_id, target.id)
+            if not ownership.deliverable:
+                raise ValidationError(
+                    "task-scoped directive not deliverable (%s): %s"
+                    % (ownership.status, ownership.reason or "")
+                )
+            resolved_task_id = ownership.task_id
+
         persona = self._ensure_operator_persona()
         corr = (correlation_id or "").strip() or new_id("corr")
+        headers = {"correlation_id": corr, "issued_by": issued_by}
+        payload = {
+            "schema": HUMAN_DIRECTIVE_SCHEMA,
+            "message": body[:16000],
+            "issued_by": issued_by,
+            "correlation_id": corr,
+            "to_agent_id": target.id,
+        }
+        if resolved_task_id:
+            headers[EXECUTOR_SCOPED_HEADER] = "true"
+            headers[DELIVERY_TARGET_HEADER] = DELIVERY_TARGET_EXECUTOR
+            payload[EXECUTOR_SCOPED_HEADER] = True
+            payload["task_id"] = resolved_task_id
+            payload["delivery_target"] = DELIVERY_TARGET_EXECUTOR
+        else:
+            headers[DELIVERY_TARGET_HEADER] = DELIVERY_TARGET_PERSONA
+            payload["delivery_target"] = DELIVERY_TARGET_PERSONA
         published = self.agentbus.publish(
             sender_agent_id=persona.id,
             recipient_agent_id=target.id,
             topic=HUMAN_DIRECTIVE_TOPIC,
             content_type=HUMAN_DIRECTIVE_CONTENT_TYPE,
-            headers={"correlation_id": corr, "issued_by": issued_by},
-            task_id=task_id,
-            payload={
-                "schema": HUMAN_DIRECTIVE_SCHEMA,
-                "message": body[:16000],
-                "issued_by": issued_by,
-                "correlation_id": corr,
-                "to_agent_id": target.id,
-            },
+            headers=headers,
+            task_id=resolved_task_id,
+            payload=payload,
         )
         self.record_log(
             "agentbus.human_directive.published",
@@ -18339,14 +18409,24 @@ class ControlPlane:
             source=issued_by,
             subject_type="agentbus_stream",
             subject_id=published["stream"]["id"],
-            detail={"target_agent_id": target.id, "issued_by": issued_by},
+            detail={
+                "target_agent_id": target.id,
+                "issued_by": issued_by,
+                "task_id": resolved_task_id,
+                "executor_scoped": bool(resolved_task_id),
+            },
         )
-        return {
+        result = {
             "schema": "mac.human.directive_publish.v1",
             "stream": published["stream"],
             "correlation_id": corr,
             "target_agent_id": target.id,
+            "executor_scoped": bool(resolved_task_id),
+            "task_id": resolved_task_id,
         }
+        if ownership is not None:
+            result["ownership"] = ownership.to_dict()
+        return result
 
     def verify_human_directive(self, stream_id: str) -> JsonDict:
         """Confirm a cited stream is a genuine operator-minted human directive.
@@ -18382,6 +18462,11 @@ class ControlPlane:
                 "verified": False,
                 "reason": "stream is not an operator-minted human directive",
             }
+        from mac.executor_directive import (
+            DELIVERY_TARGET_HEADER,
+            EXECUTOR_SCOPED_HEADER,
+        )
+
         payload = None
         chunks = self.read_agentbus_chunks(
             self.OPERATOR_PERSONA_AGENT_ID, stream_id, limit=1
@@ -18389,7 +18474,8 @@ class ControlPlane:
         if chunks and isinstance(chunks[0].payload, dict):
             payload = chunks[0].payload
         headers = stream.headers or {}
-        return {
+        executor_scoped = str(headers.get(EXECUTOR_SCOPED_HEADER) or "").lower() == "true"
+        result = {
             "schema": "mac.human.directive_verification.v1",
             "stream_id": stream_id,
             "verified": True,
@@ -18397,7 +18483,23 @@ class ControlPlane:
             "target_agent_id": stream.recipient_agent_id,
             "message": str((payload or {}).get("message") or ""),
             "created_at": stream.created_at,
+            "task_id": stream.task_id,
+            "executor_scoped": executor_scoped,
+            "delivery_target": str(
+                headers.get(DELIVERY_TARGET_HEADER)
+                or ("executor" if executor_scoped else "persona")
+            ),
         }
+        # For an executor-scoped directive, re-assert ownership at verify time
+        # so a lease that expired between publish and consume fails closed on
+        # the worker side too.
+        if executor_scoped and stream.task_id and stream.recipient_agent_id:
+            ownership = self._task_scoped_directive_ownership(
+                stream.task_id, stream.recipient_agent_id
+            )
+            result["ownership"] = ownership.to_dict()
+            result["deliverable_to_executor"] = ownership.deliverable
+        return result
 
     def set_agentbus_consumer_cursor(self, *args: Any, **kwargs: Any) -> JsonDict:
         return self.agentbus.set_consumer_cursor(*args, **kwargs)

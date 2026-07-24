@@ -40,6 +40,15 @@ from mac.agentbus_service import (
     HUMAN_DIRECTIVE_SCHEMA,
     HUMAN_DIRECTIVE_TOPIC,
 )
+from mac.executor_directive import (
+    EXECUTOR_ACK_CONTENT_TYPE,
+    EXECUTOR_ACK_TOPIC,
+    OPERATOR_PERSONA_AGENT_ID,
+    ExecutorDirectiveQueue,
+    ExecutorDirectiveRecord,
+    executor_ack_payload,
+)
+from mac.models import utcnow
 
 JsonDict = Dict[str, Any]
 
@@ -149,6 +158,15 @@ class DirectableMixin:
             if isinstance(candidate, str):
                 message = candidate
 
+        # Task-scoped path (task_60be): an executor-scoped directive must reach
+        # the ACTIVE task executor, never a persona chat turn. Route it to the
+        # durable executor-owned queue and emit a task-executor acknowledgement
+        # instead of running an OpenClaw persona turn.
+        if verification.get("executor_scoped") is True:
+            return self._handle_executor_scoped_directive(
+                stream, verification, message, correlation_id
+            )
+
         prompt = self._directable_directive_prompt(stream, message)
         reply_text = self._run_directable_turn(prompt, stream_id=stream_id, sender=sender)
         self._publish_peer_reply(
@@ -165,6 +183,258 @@ class DirectableMixin:
             },
         )
         return {"status": "completed", "summary": "directive handled", "stream_id": stream_id}
+
+    # ------------------------------------------------------------------ #
+    # Executor-scoped directive handling (task_60be)
+    # ------------------------------------------------------------------ #
+    def executor_directive_queue(self, task_id: str) -> ExecutorDirectiveQueue:
+        """Durable, executor-owned queue file for *task_id*.
+
+        Lives alongside the agentbus control state so it survives a worker
+        restart. The active task executor drains this queue; a persona/chat
+        turn has neither this path nor the lease, so it can never write here.
+        """
+        base = Path(self.agentbus_control_state_path).parent
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(task_id or "")).strip("-") or "task"
+        return ExecutorDirectiveQueue(base / ("executor-directives-%s.json" % safe))
+
+    def _publish_executor_ack(
+        self,
+        stream: JsonDict,
+        *,
+        task_id: str,
+        status: str,
+        reason: Optional[str] = None,
+        correlation_id: Optional[str] = None,
+        enqueued_at: Optional[str] = None,
+        consumed_at: Optional[str] = None,
+    ) -> None:
+        """Publish a task.directive.ack.v1 proving executor delivery/outcome.
+
+        A distinct topic/schema (never peer.reply.v1) so a conversation mirror
+        cannot mistake this for a persona chat turn.
+        """
+        sender = str(stream.get("sender_agent_id") or "")
+        if not sender:
+            return
+        stream_id = str(stream.get("id") or "")
+        payload = executor_ack_payload(
+            from_agent_id=self.agent_id,
+            to_agent_id=sender,
+            task_id=task_id,
+            stream_id=stream_id,
+            status=status,
+            reason=reason,
+            correlation_id=correlation_id,
+            enqueued_at=enqueued_at,
+            consumed_at=consumed_at,
+        )
+        try:
+            self.client.post(
+                "/agentbus",
+                {
+                    "sender_agent_id": self.agent_id,
+                    "recipient_agent_id": sender,
+                    "content_type": EXECUTOR_ACK_CONTENT_TYPE,
+                    "topic": EXECUTOR_ACK_TOPIC,
+                    "task_id": task_id or None,
+                    "payload": payload,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - ack publishing is best-effort.
+            self._observe_log(
+                "worker.agentbus.directive.ack_publish_failed",
+                level="warning",
+                detail={"stream_id": stream_id, "error": str(exc)},
+            )
+
+    def _handle_executor_scoped_directive(
+        self,
+        stream: JsonDict,
+        verification: JsonDict,
+        message: str,
+        correlation_id: str,
+    ) -> JsonDict:
+        """Route a verified executor-scoped directive to the active executor.
+
+        Fails closed (structured status ack, no persona turn) when this worker
+        is not the active executor for the cited task, the hub already found the
+        lease non-deliverable, or the runtime cannot host an executor queue.
+        """
+        stream_id = str(stream.get("id") or "")
+        task_id = str(verification.get("task_id") or stream.get("task_id") or "")
+
+        if not task_id:
+            self._publish_executor_ack(
+                stream,
+                task_id="",
+                status="no_task",
+                reason="executor-scoped directive missing task id",
+                correlation_id=correlation_id,
+            )
+            return {"status": "refused", "summary": "missing task id", "stream_id": stream_id}
+
+        # Honor the hub's fresh ownership re-check (a lease can expire between
+        # publish and consume). Fail closed with the hub's structured reason.
+        ownership = verification.get("ownership")
+        if isinstance(ownership, dict) and ownership.get("deliverable") is False:
+            status = str(ownership.get("status") or "lease_expired")
+            reason = str(ownership.get("reason") or "directive no longer deliverable")
+            self._publish_executor_ack(
+                stream,
+                task_id=task_id,
+                status=status,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+            self._observe_log(
+                "worker.agentbus.directive.executor_refused",
+                level="warning",
+                detail={"stream_id": stream_id, "task_id": task_id, "reason": reason},
+            )
+            return {"status": "refused", "summary": reason, "stream_id": stream_id}
+
+        # The active-executor gate: this worker must currently own the cited
+        # task. A persona sandbox (no lease, no worktree) fails this by
+        # construction — the exact task_60be mis-delivery.
+        active_task_id = self._active_task_id()
+        if active_task_id != task_id:
+            reason = (
+                "agent %s is not the active executor for task %s (active=%s)"
+                % (self.agent_id, task_id, active_task_id or "none")
+            )
+            self._publish_executor_ack(
+                stream,
+                task_id=task_id,
+                status="no_executor" if not active_task_id else "agent_task_mismatch",
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+            self._observe_log(
+                "worker.agentbus.directive.executor_refused",
+                level="warning",
+                detail={"stream_id": stream_id, "task_id": task_id, "reason": reason},
+            )
+            return {"status": "refused", "summary": reason, "stream_id": stream_id}
+
+        try:
+            queue = self.executor_directive_queue(task_id)
+            enqueued_at = utcnow()
+            record = ExecutorDirectiveRecord(
+                stream_id=stream_id,
+                task_id=task_id,
+                correlation_id=correlation_id,
+                message=message,
+                issued_by=str(verification.get("issued_by") or "operator"),
+                enqueued_at=enqueued_at,
+            )
+            newly = queue.enqueue(record)
+        except Exception as exc:  # noqa: BLE001 - a queue-write failure fails closed.
+            self._publish_executor_ack(
+                stream,
+                task_id=task_id,
+                status="unsupported_runtime",
+                reason="could not durably enqueue directive: %s" % exc,
+                correlation_id=correlation_id,
+            )
+            self._observe_log(
+                "worker.agentbus.directive.enqueue_failed",
+                level="warning",
+                detail={"stream_id": stream_id, "task_id": task_id, "error": str(exc)},
+            )
+            return {"status": "error", "summary": "enqueue failed", "stream_id": stream_id}
+
+        self._publish_executor_ack(
+            stream,
+            task_id=task_id,
+            status="delivered",
+            correlation_id=correlation_id,
+            enqueued_at=enqueued_at,
+        )
+        self._observe_log(
+            "worker.agentbus.directive.executor_delivered",
+            level="info",
+            detail={
+                "stream_id": stream_id,
+                "task_id": task_id,
+                "message_len": len(message),
+                "duplicate": not newly,
+            },
+        )
+        return {
+            "status": "delivered",
+            "summary": "routed to active executor queue",
+            "stream_id": stream_id,
+            "task_id": task_id,
+        }
+
+    def drain_executor_directives(self, task_id: str) -> list:
+        """Mark every pending directive for *task_id* consumed and ack each.
+
+        Called from the executor side once it has ingested the queue. Each
+        ``consumed`` ack carries the consume timestamp, so the operator learns
+        not just WHETHER but WHEN the active executor consumed the directive —
+        the durable-provenance half of task_60be. Never raises.
+        """
+        acknowledged: list = []
+        try:
+            queue = self.executor_directive_queue(task_id)
+            pending = queue.pending()
+        except Exception as exc:  # noqa: BLE001 - draining must not crash a run.
+            self._observe_log(
+                "worker.agentbus.directive.drain_failed",
+                level="warning",
+                detail={"task_id": task_id, "error": str(exc)},
+            )
+            return acknowledged
+        for record in pending:
+            consumed_at = utcnow()
+            try:
+                queue.mark_consumed(record.stream_id, consumed_at)
+            except Exception as exc:  # noqa: BLE001
+                self._observe_log(
+                    "worker.agentbus.directive.consume_mark_failed",
+                    level="warning",
+                    detail={"task_id": task_id, "stream_id": record.stream_id, "error": str(exc)},
+                )
+                continue
+            try:
+                self.client.post(
+                    "/agentbus",
+                    {
+                        "sender_agent_id": self.agent_id,
+                        "recipient_agent_id": OPERATOR_PERSONA_AGENT_ID,
+                        "content_type": EXECUTOR_ACK_CONTENT_TYPE,
+                        "topic": EXECUTOR_ACK_TOPIC,
+                        "task_id": task_id or None,
+                        "payload": executor_ack_payload(
+                            from_agent_id=self.agent_id,
+                            to_agent_id=OPERATOR_PERSONA_AGENT_ID,
+                            task_id=task_id,
+                            stream_id=record.stream_id,
+                            status="consumed",
+                            correlation_id=record.correlation_id,
+                            enqueued_at=record.enqueued_at,
+                            consumed_at=consumed_at,
+                        ),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - ack publish is best-effort.
+                self._observe_log(
+                    "worker.agentbus.directive.consumed_ack_failed",
+                    level="warning",
+                    detail={"task_id": task_id, "stream_id": record.stream_id, "error": str(exc)},
+                )
+            acknowledged.append(
+                {
+                    "stream_id": record.stream_id,
+                    "correlation_id": record.correlation_id,
+                    "message": record.message,
+                    "enqueued_at": record.enqueued_at,
+                    "consumed_at": consumed_at,
+                }
+            )
+        return acknowledged
 
     # ------------------------------------------------------------------ #
     # Prompt builders — text ported verbatim from the mac-continuity plugin
