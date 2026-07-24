@@ -491,6 +491,22 @@ def _stage_interpreter_repo(
 
     path_bin = tmp_path / "pathbin"
     path_bin.mkdir()
+    if not provide_builder:
+        # The runner's interpreter resolution falls back to ``command -v
+        # python3 || command -v python`` on PATH. With no builder staged the
+        # ambient host interpreter (a real /usr/bin/python3 on CI images) would
+        # otherwise resolve, pass the probe, and successfully bootstrap the
+        # .venv — defeating the "no interpreter can run the suite" scenario
+        # (the runner's PATH fallback is correct production behavior; the
+        # fixture just failed to isolate it). Shadow both names with the same
+        # unusable-interpreter stub as a broken .venv: it fails every
+        # _py_can_run_suite probe (so the runner rejects it) yet exits 0 for the
+        # bootstrap invocation without building a .venv (so the runner does not
+        # abort under ``set -e`` and instead reaches its fail-closed
+        # diagnostic). The gate then fails closed on every host, with or without
+        # an ambient interpreter.
+        _write_exec(path_bin / "python3", _BROKEN_PY_BODY)
+        _write_exec(path_bin / "python", _BROKEN_PY_BODY)
     if provide_builder:
         # A working python3 on PATH: it both passes the probe and, crucially,
         # actually executes bootstrap-project.py (which builds the healthy
