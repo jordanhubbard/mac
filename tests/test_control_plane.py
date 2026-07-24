@@ -4481,9 +4481,10 @@ def test_rotate_by_page_prefix_width_env_gated(cp, monkeypatch):
     assert fallback == width_two
 
 
-def test_dispatch_ordered_tasks_unchanged_by_page_prefix_helper(cp):
-    # The shared helper is exposed but NOT wired into dispatch yet, so the
-    # existing project round-robin ordering must be preserved verbatim.
+def test_dispatch_ordered_tasks_single_prefix_bucket_is_noop(cp):
+    # Auto-generated task ids share the same page prefix, so within each
+    # project only a single prefix bucket exists and the page-prefix rotation
+    # must leave the cross-project round-robin ordering unchanged.
     flood = [
         cp.create_task(
             "flood-%d" % index,
@@ -4503,6 +4504,71 @@ def test_dispatch_ordered_tasks_unchanged_by_page_prefix_helper(cp):
     ordered = cp._dispatch_ordered_tasks()
 
     assert [task.id for task in ordered] == [
+        flood[0].id,
+        starved.id,
+        flood[1].id,
+        flood[2].id,
+    ]
+
+
+def test_dispatch_ordered_tasks_rotates_page_prefixes_within_project(cp):
+    # A single project whose ready tasks split into two page-prefix buckets:
+    # the "aa" prefix floods the window while a late "bb" prefix would queue
+    # behind every "aa" candidate without prefix rotation.
+    flood = [
+        cp.create_task(
+            "flood-%d" % index,
+            project="rot",
+            priority=100,
+            required_capabilities=["python"],
+            _task_id="aa%02d" % index,
+        )
+        for index in range(3)
+    ]
+    starved = cp.create_task(
+        "starved",
+        project="rot",
+        priority=100,
+        required_capabilities=["python"],
+        _task_id="bb00",
+    )
+
+    ordered = cp._dispatch_ordered_tasks()
+
+    # The late "bb" prefix wins the second claim slot instead of trailing the
+    # whole "aa" flood; within the "aa" bucket the created order is preserved.
+    assert [task.id for task in ordered] == [
+        flood[0].id,
+        starved.id,
+        flood[1].id,
+        flood[2].id,
+    ]
+
+
+def test_ready_tasks_consume_page_prefix_rotation(cp):
+    # ready_tasks reads through _dispatch_ordered_tasks, so the rotated
+    # ordering must survive the readiness gates for open, ungated tasks.
+    flood = [
+        cp.create_task(
+            "flood-%d" % index,
+            project="rot",
+            priority=100,
+            required_capabilities=["python"],
+            _task_id="aa%02d" % index,
+        )
+        for index in range(3)
+    ]
+    starved = cp.create_task(
+        "starved",
+        project="rot",
+        priority=100,
+        required_capabilities=["python"],
+        _task_id="bb00",
+    )
+
+    ready = cp.ready_tasks()
+
+    assert [task.id for task in ready] == [
         flood[0].id,
         starved.id,
         flood[1].id,
