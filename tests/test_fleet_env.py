@@ -230,3 +230,22 @@ def test_resolve_first_accepts_one_shot_iterable():
 def test_resolve_first_returns_none_when_nothing_set():
     chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN"]
     assert fleet_env.resolve_first(chain, fleet="rocky", env={}) is None
+
+
+def test_resolve_first_scoped_empty_string_is_treated_as_set():
+    """An explicitly-empty fleet-scoped value counts as set, matching
+    :func:`resolve`; it short-circuits and is not silently skipped in favor of
+    a legacy flat value later in the chain."""
+    chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN"]
+    env = {"MAC_WORKER_TOKEN__ROCKY": "", "MAC_TOKEN": "legacy-tok"}
+    assert fleet_env.resolve(chain[0], fleet="rocky", env=env) == ""
+    assert fleet_env.resolve_first(chain, fleet="rocky", env=env) == ""
+
+
+def test_resolve_first_legacy_empty_string_is_treated_as_set():
+    """An explicitly-empty legacy flat value is returned rather than skipped,
+    consistent with :func:`resolve`."""
+    chain = ["MAC_WORKER_TOKEN", "MAC_TOKEN"]
+    env = {"MAC_WORKER_TOKEN": "", "MAC_TOKEN": "legacy-tok"}
+    assert fleet_env.resolve(chain[0], fleet="rocky", env=env) == ""
+    assert fleet_env.resolve_first(chain, fleet="rocky", env=env) == ""

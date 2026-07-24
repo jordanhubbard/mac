@@ -288,10 +288,11 @@ def resolve_first(
     *legacy flat* value, regardless of where each sits in the chain:
 
     1. Walk ``base_names`` in argument order and return the first name whose
-       fleet-scoped form (``NAME__<FLEET>``) is set.
+       fleet-scoped form (``NAME__<FLEET>``) is set (present, mirroring
+       :func:`resolve`: an explicit empty value counts as set).
     2. Only if no scoped value exists anywhere in the chain, walk the names
-       again and return the first legacy flat value (emitting the mac-g55y
-       deprecation warning for it).
+       again and return the first legacy flat value that is set (emitting the
+       mac-g55y deprecation warning for it).
 
     This prevents a stale legacy ``MAC_WORKER_TOKEN`` from shadowing the
     correct scoped ``MAC_TOKEN__<FLEET>`` later in the worker's chain
@@ -306,11 +307,11 @@ def resolve_first(
     names = list(base_names)
     for name in names:
         value = _resolve_scoped(name, active_fleet, env=src)
-        if value:
+        if value is not None:
             return value
     for name in names:
         value = _resolve_legacy(name, active_fleet, env=src)
-        if value:
+        if value is not None:
             return value
     return None
 
