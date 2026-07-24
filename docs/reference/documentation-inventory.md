@@ -44,6 +44,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/dream-finding-3dc2cf.md` | Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88 |
 | historical archive | `archive/field-notes/dream-finding-6d1b5b.md` | Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119 |
 | historical archive | `archive/field-notes/dream-finding-805aed7.md` | Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce |
+| historical archive | `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md` | Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948) |
 | historical archive | `archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md` | Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc) |
 | historical archive | `archive/field-notes/findings-crash-service-unknown-crash-path.md` | Findings: crash_service "unknown" crash path (ground truth for parent P0 crash-repair) |
 | historical archive | `archive/field-notes/fleet-ide-workbench-plan.md` | Fleet Workbench — Clean-Slate IDE Plan |

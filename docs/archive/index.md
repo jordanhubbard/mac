@@ -38,6 +38,7 @@ their retained sources.
 - [Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88](../archive/field-notes/dream-finding-3dc2cf.md) — `archive/field-notes/dream-finding-3dc2cf.md`
 - [Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119](../archive/field-notes/dream-finding-6d1b5b.md) — `archive/field-notes/dream-finding-6d1b5b.md`
 - [Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce](../archive/field-notes/dream-finding-805aed7.md) — `archive/field-notes/dream-finding-805aed7.md`
+- [Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948)](../archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md) — `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md`
 - [Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc)](../archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md) — `archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md`
 - [Findings: crash_service "unknown" crash path (ground truth for parent P0 crash-repair)](../archive/field-notes/findings-crash-service-unknown-crash-path.md) — `archive/field-notes/findings-crash-service-unknown-crash-path.md`
 - [Fleet Workbench — Clean-Slate IDE Plan](../archive/field-notes/fleet-ide-workbench-plan.md) — `archive/field-notes/fleet-ide-workbench-plan.md`
