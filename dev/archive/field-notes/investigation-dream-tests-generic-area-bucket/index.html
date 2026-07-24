@@ -1631,6 +1631,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#confirmation-run-2026-07-24-re-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Confirmation run (2026-07-24, re-verification)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1792,6 +1803,37 @@ All sources were read, none modified.</p>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  tests/test_nap_consolidator.py -q
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a># =&gt; 90 passed
 </code></pre></div>
+<h2 id="confirmation-run-2026-07-24-re-verification">Confirmation run (2026-07-24, re-verification)<a class="headerlink" href="#confirmation-run-2026-07-24-re-verification" title="Permanent link">&para;</a></h2>
+<p>A second read-only re-verification against a freshly bootstrapped <code>.venv</code>
+reproduced the same ground truth and re-confirmed the NO-OP verdict. No
+production, test, skill, or tool code was changed.</p>
+<ul>
+<li>Confidence gate reproduced directly:
+  <code>_confidence_for_records([r]) == ("low", 0.35)</code>,
+  <code>_confidence_for_records([r, r]) == ("medium", 0.65)</code>,
+  <code>_confidence_for_records([r, r, r]) == ("high", 0.9)</code> — a single supporting
+  record (support &lt; 2) is <strong>necessarily</strong> low confidence.</li>
+<li>Area bucket reproduced directly: the <code>tests</code> label is emitted by the bare
+  <code>\btests/\w+</code> pattern in <code>dream_cycle_classifier._REPO_AREA_PATTERNS</code>. It
+  matches a concrete path token like <code>tests/foo</code> but not the bare word <code>tests</code>,
+  confirming the label names the <code>tests/</code> tree area, not a concrete failing
+  test.</li>
+<li>Implicated dream-subsystem suites pass under a hermetic scrubbed env
+  (<code>env -i</code> with only the <code>.venv</code> on <code>PATH</code>, mirroring the contract runner's
+  <code>unset MAC_*</code> sweep):</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python3 scripts/bootstrap-project.py
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>env -i PATH=&quot;$PWD/.venv/bin:/usr/bin:/bin&quot; HOME=&quot;$HOME&quot; \
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  .venv/bin/python -m pytest \
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  tests/test_dream_cycle_classifier.py tests/test_nap_consolidator.py \
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  tests/test_nap_consolidator_edges.py tests/test_dream_repair_tasks.py \
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  tests/test_dream_cycle_runner.py -q
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a># =&gt; 111 passed
+</code></pre></div>
+<p><strong>Re-verified verdict:</strong> NO-OP / green. <code>dreamrepair:173ce952</code> is a classifier
+false positive (generic <code>tests</code> area bucket + single-record low confidence).
+Recommendation for the repair child: <strong>close as no-op / green</strong>; no source or
+test change is warranted.</p>
 
 
 
