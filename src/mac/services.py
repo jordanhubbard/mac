@@ -22387,16 +22387,23 @@ class ControlPlane:
         (priority, age) order, so one project flooding high-priority tasks
         starves its siblings for up to the aging period. Interleaving gives
         every project with ready work a claim slot each cycle; within a
-        project the (priority, age) order is preserved.
+        project the candidates are rotated across page-prefix buckets (via
+        :meth:`_rotate_by_page_prefix`) so one id/page-cursor prefix cannot
+        monopolize the claim window either, while the (priority, age) order is
+        preserved within each bucket.
         """
         projects: Dict[str, List[Task]] = {}
         for task in tasks:
             projects.setdefault(task.project or "", []).append(task)
-        for project_tasks in projects.values():
-            project_tasks.sort(
-                key=lambda item: self._dispatch_task_sort_key(
-                    item, now, task_ranks=task_ranks
-                )
+        for name, project_tasks in projects.items():
+            # Within each (tenant, project) group rotate fairly across
+            # page-prefix buckets so one id/page-cursor prefix cannot
+            # monopolize the claim window. The helper preserves the sorted
+            # (priority, age) order within a bucket and is a no-op when only a
+            # single prefix bucket is present, so the group head still leads on
+            # (priority, age).
+            projects[name] = self._rotate_by_page_prefix(
+                project_tasks, now, task_ranks=task_ranks
             )
         project_order = sorted(
             projects,
