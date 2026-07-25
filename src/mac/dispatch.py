@@ -1763,6 +1763,31 @@ class RemoteDispatch:
             self._post("/agents/%s/nap-cycle" % quote(agent_id, safe=""), body)
         )
 
+    def import_dream_logs(
+        self,
+        *,
+        dream_logs_dir: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        created_by: str = "dream-log-import",
+        embed: bool = True,
+        dry_run: bool = False,
+        qdrant_url: Optional[str] = None,
+        vector_writer: Any = None,
+    ) -> _Dictish:
+        if vector_writer is not None:
+            raise DispatchError("hub mode builds the dream vector writer on the hub")
+        body = _drop_none(
+            {
+                "dream_logs_dir": dream_logs_dir,
+                "agent_id": agent_id,
+                "created_by": created_by,
+                "embed": embed,
+                "dry_run": dry_run,
+                "qdrant_url": qdrant_url,
+            }
+        )
+        return _Dictish(self._post("/dream/import-logs", body))
+
     def consolidate_nap(
         self,
         agent_id: str,

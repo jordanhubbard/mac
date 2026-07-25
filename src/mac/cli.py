@@ -4514,6 +4514,23 @@ def cmd_memory_recall_dreams(args: argparse.Namespace) -> None:
     _print(cp.recall_dream_artifacts(args.query, **kwargs))
 
 
+def cmd_dream_import_logs(args: argparse.Namespace) -> None:
+    """Merge the gateway's orphaned ~/.hermes/dream_logs reports into durable
+    memory (record_type dream:imported_report), embedding each so it is
+    retrievable via dream recall. Idempotent; dedups on findings."""
+    cp = _plane(args)
+    kwargs = {
+        "dream_logs_dir": getattr(args, "dream_logs_dir", None),
+        "agent_id": getattr(args, "agent_id", None),
+        "embed": not args.no_embed,
+        "dry_run": args.dry_run,
+    }
+    qdrant_url = getattr(args, "qdrant_url", None)
+    if qdrant_url:
+        kwargs["qdrant_url"] = qdrant_url
+    _print(cp.import_dream_logs(**kwargs))
+
+
 def cmd_nap_cycle(args: argparse.Namespace) -> None:
     """mem-08 autonomy: begin + consolidate + complete in one shot."""
     from mac.dispatch import RemoteDispatch
@@ -7372,6 +7389,35 @@ def build_parser() -> argparse.ArgumentParser:
     mood_history.add_argument("agent_id")
     mood_history.add_argument("--limit", type=int, default=50)
     _set(cmd_mood_history, mood_history)
+
+    dream = sub.add_parser(
+        "dream",
+        help="dream-cycle learning maintenance",
+    ).add_subparsers(dest="dream_command", required=True)
+    dream_import = dream.add_parser(
+        "import-logs",
+        help="merge orphaned ~/.hermes/dream_logs reports into durable memory",
+    )
+    dream_import.add_argument(
+        "--dream-logs-dir",
+        default=None,
+        help="source dir (default: $HERMES_HOME/dream_logs)",
+    )
+    dream_import.add_argument(
+        "--agent-id", default=None, help="attribute imported dreams to this agent"
+    )
+    dream_import.add_argument("--qdrant-url", default=None)
+    dream_import.add_argument(
+        "--no-embed",
+        action="store_true",
+        help="skip vector embedding (imported dreams won't be recall-eligible)",
+    )
+    dream_import.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would be imported without writing",
+    )
+    _set(cmd_dream_import_logs, dream_import)
 
     nap = sub.add_parser(
         "nap",

@@ -121,6 +121,44 @@ def test_dry_run_writes_nothing(tmp_path):
     assert len(rows) == 0
 
 
+class _FakeWriter:
+    def __init__(self, fail=False):
+        self.calls = []
+        self.fail = fail
+
+    def embed_memory(self, memory_id, *, tier, created_by):
+        self.calls.append((memory_id, tier, created_by))
+        if self.fail:
+            raise RuntimeError("qdrant down")
+
+
+def test_import_embeds_each_memory_when_writer_provided(tmp_path):
+    cp = ControlPlane.in_memory()
+    d = _write_logs(tmp_path)
+    writer = _FakeWriter()
+    report = dream_log_import.import_dream_logs(cp, dream_logs_dir=d, vector_writer=writer)
+    assert report["imported"] == 1
+    assert report["embedded"] == 1
+    assert len(writer.calls) == 1
+    assert writer.calls[0][1] == "medium"  # MEDIUM tier
+
+
+def test_embed_failure_keeps_the_memory(tmp_path):
+    cp = ControlPlane.in_memory()
+    d = _write_logs(tmp_path)
+    report = dream_log_import.import_dream_logs(
+        cp, dream_logs_dir=d, vector_writer=_FakeWriter(fail=True)
+    )
+    assert report["imported"] == 1
+    assert report["embedded"] == 0
+    assert any(e.get("phase") == "embed" for e in report["errors"])
+    rows = cp.store.query_all(
+        "SELECT id FROM memory_records WHERE record_type = ?",
+        (dream_log_import.IMPORTED_RECORD_TYPE,),
+    )
+    assert len(rows) == 1  # memory persists even though embedding failed
+
+
 def test_missing_directory_is_reported_not_raised(tmp_path):
     cp = ControlPlane.in_memory()
     report = dream_log_import.import_dream_logs(cp, dream_logs_dir=tmp_path / "nope")

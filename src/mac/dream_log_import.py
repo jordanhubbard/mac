@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mac import mac_paths
-from mac.models import json_dumps
+from mac.models import MacMemoryTier, json_dumps
 
 IMPORT_SCHEMA = "mac.dream_log_import.v1"
 IMPORTED_RECORD_TYPE = "dream:imported_report"
@@ -124,12 +124,16 @@ def import_dream_logs(
     dream_logs_dir: Optional[Path] = None,
     agent_id: Optional[str] = None,
     created_by: str = DEFAULT_CREATED_BY,
+    vector_writer: Optional[Any] = None,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """Consolidate ``$HERMES_HOME/dream_logs/*.md`` into durable memory.
 
-    ``cp`` is a ControlPlane. Returns a stable report dict. When ``dry_run`` is
-    set, nothing is written — the report shows what *would* be imported.
+    ``cp`` is a ControlPlane. When ``vector_writer`` is provided, each imported
+    memory is also embedded into the medium tier so it is retrievable via
+    ``recall_dream_artifacts`` (dream memories that are not embedded never
+    surface in vector recall — the whole point of the merge). Returns a stable
+    report dict. When ``dry_run`` is set, nothing is written.
     """
     directory = Path(dream_logs_dir) if dream_logs_dir is not None else mac_paths.dream_logs_dir()
     report: Dict[str, Any] = {
@@ -137,6 +141,7 @@ def import_dream_logs(
         "source_dir": str(directory),
         "scanned": 0,
         "imported": 0,
+        "embedded": 0,
         "skipped_empty": 0,
         "skipped_duplicate": 0,
         "dry_run": dry_run,
@@ -192,4 +197,16 @@ def import_dream_logs(
             continue
         report["imported"] += 1
         report["imported_ids"].append(memory.id)
+        if vector_writer is not None:
+            try:
+                vector_writer.embed_memory(
+                    memory.id,
+                    tier=MacMemoryTier.MEDIUM.value,
+                    created_by=created_by,
+                )
+                report["embedded"] += 1
+            except Exception as exc:  # noqa: BLE001 - memory persists even if embed fails
+                report["errors"].append(
+                    {"file": path.name, "phase": "embed", "error": str(exc)}
+                )
     return report
