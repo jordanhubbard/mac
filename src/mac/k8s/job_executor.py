@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
 from mac.models import metadata_declares_read_only_report_repository
+from mac.fleet_env import resolve_first
 
 def _q(value: str) -> str:
     return quote(value, safe="")
@@ -50,7 +51,9 @@ def _resolve_mac_and_executor(
     executor: Optional[Callable[[JsonDict], "_ExecResult"]],
 ) -> "tuple[Any, Callable[[JsonDict], _ExecResult]]":
     mac_url = env.get("MAC_URL") or env.get("MAC_HUB_URL", "")
-    token = env.get("MAC_WORKER_TOKEN") or env.get("MAC_API_TOKEN", "")
+    # Resolve fleet-aware (honors env["MAC_FLEET"]) so a legacy flat token can't
+    # shadow the scoped MAC_*__<FLEET> form (mac-g55y).
+    token = resolve_first(["MAC_WORKER_TOKEN", "MAC_API_TOKEN"], env=env) or ""
     if mac is None:
         mac = _default_mac_client(mac_url, token)
     if executor is None:
@@ -240,7 +243,9 @@ def _run_one_review(
 
     if mac is None:
         mac_url = env.get("MAC_URL") or env.get("MAC_HUB_URL", "")
-        token = env.get("MAC_WORKER_TOKEN") or env.get("MAC_API_TOKEN", "")
+        # Resolve fleet-aware (honors env["MAC_FLEET"]) so a legacy flat token
+        # can't shadow the scoped MAC_*__<FLEET> form (mac-g55y).
+        token = resolve_first(["MAC_WORKER_TOKEN", "MAC_API_TOKEN"], env=env) or ""
         mac = _default_mac_client(mac_url, token)
     task, early = _fetch_task_or_fail(mac, task_id, lease_id=None)
     if early is not None:

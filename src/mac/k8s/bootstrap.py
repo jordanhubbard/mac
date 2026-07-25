@@ -578,9 +578,12 @@ def _build_secret_body(
     return k8s_client.V1Secret(metadata=meta, type="Opaque", data=data)
 
 def _token_from_env() -> str:
-    token = os.environ.get("MAC_WORKER_TOKEN") or os.environ.get(
-        "MAC_API_TOKEN", ""
-    )
+    # Resolve fleet-aware so a legacy flat MAC_WORKER_TOKEN/MAC_API_TOKEN can't
+    # shadow the correct scoped MAC_*__<FLEET> form. Honors --fleet via
+    # MAC_FLEET (mac-g55y).
+    from mac.fleet_env import resolve_first
+
+    token = resolve_first(["MAC_WORKER_TOKEN", "MAC_API_TOKEN"]) or ""
     if not token:
         raise SystemExit(
             "MAC_WORKER_TOKEN (or MAC_API_TOKEN) is required"

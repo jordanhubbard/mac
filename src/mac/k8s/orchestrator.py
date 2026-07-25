@@ -190,7 +190,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not runner_cfg.mac_url:
         log.error("MAC_URL is required")
         return 2
-    token = os.environ.get("MAC_WORKER_TOKEN") or os.environ.get("MAC_API_TOKEN", "")
+    # Resolve fleet-aware so a legacy flat MAC_WORKER_TOKEN/MAC_API_TOKEN can't
+    # shadow the scoped MAC_*__<FLEET> form. RunnerConfig has no fleet field, so
+    # derive the active fleet from MAC_FLEET (mac-g55y).
+    from mac.fleet_env import resolve_first
+
+    token = resolve_first(
+        ["MAC_WORKER_TOKEN", "MAC_API_TOKEN"],
+        fleet=os.environ.get("MAC_FLEET"),
+    ) or ""
     if not token:
         log.error("MAC_WORKER_TOKEN (or MAC_API_TOKEN) is required")
         return 2

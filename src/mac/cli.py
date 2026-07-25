@@ -3522,8 +3522,18 @@ def _hub_get_mood(agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
     import os as _os
     import urllib.request as _u
 
+    from mac.fleet_env import resolve_first as _rt
+
     base = (_os.environ.get("MAC_HUB_URL") or _os.environ.get("MAC_URL") or "").rstrip("/")
-    token = (_os.environ.get("MAC_WORKER_TOKEN") or _os.environ.get("MAC_API_TOKEN") or "").strip()
+    # Resolve fleet-aware so a legacy flat token can't shadow the scoped
+    # MAC_*__<FLEET> form; fleet derives from MAC_FLEET (mac-g55y).
+    token = (
+        _rt(
+            ["MAC_WORKER_TOKEN", "MAC_API_TOKEN"],
+            fleet=_os.environ.get("MAC_FLEET"),
+        )
+        or ""
+    ).strip()
     if not (base and token and agent_id):
         return None
     req = _u.Request("%s/agents/%s/mood" % (base, agent_id), method="GET")

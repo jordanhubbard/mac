@@ -4895,11 +4895,14 @@
     "name": "MAC_FLEET",
     "retired": false,
     "sources": [
+      "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
+      "src/mac/executor_memory.py",
       "src/mac/fleet_env.py",
       "src/mac/hermes_adapter.py",
       "src/mac/ide_launcher.py",
+      "src/mac/k8s/orchestrator.py",
       "src/mac/router_app.py",
       "src/mac/worker.py"
     ],

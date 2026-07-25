@@ -14,7 +14,8 @@ import re as _re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mac.env_config import env_bool, env_str, resolve_env_chain
+from mac.env_config import env_bool, resolve_env_chain
+from mac.fleet_env import resolve as fleet_resolve
 from mac.fleet_learning import (
     REPOSITORY_ACCESS_RECORD_TYPE,
     parse_repository_access_learning,
@@ -625,8 +626,15 @@ def curate_lessons_from_outcome(
             signals=json.dumps(outcome.get("signals") or {}, sort_keys=True)[:400],
             error_signature=str(outcome.get("error_signature") or "none")[:200],
         )
+        # Resolve fleet-aware so a legacy flat MAC_API_TOKEN can't shadow the
+        # scoped MAC_API_TOKEN__<FLEET> form; fleet derives from MAC_FLEET
+        # (mac-g55y). Preserve the previous trim/empty-default behavior.
         caller = router_model_caller(
-            router_url, token=env_str("MAC_API_TOKEN")
+            router_url,
+            token=(
+                fleet_resolve("MAC_API_TOKEN", fleet=os.environ.get("MAC_FLEET"))
+                or ""
+            ).strip(),
         )
         answer, _cites, _ms = caller(model, prompt, "")
     except Exception:  # noqa: BLE001 - curation is advisory.
