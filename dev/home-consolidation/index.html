@@ -1682,6 +1682,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#5b-dream-cycle-learning-two-systems-one-orphan-executed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5b. Dream-cycle learning: two systems, one orphan (executed)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#6-risks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1871,6 +1882,32 @@ drop the legacy subtree entirely and remove the compat symlinks.</p>
 <li>Roll out as a deploy epoch with Phase 0 landing first in a backward-compatible
   <strong>read-old / write-new / symlink-bridge</strong> mode so no worker breaks mid-fleet.</li>
 </ul>
+<h2 id="5b-dream-cycle-learning-two-systems-one-orphan-executed">5b. Dream-cycle learning: two systems, one orphan (executed)<a class="headerlink" href="#5b-dream-cycle-learning-two-systems-one-orphan-executed" title="Permanent link">&para;</a></h2>
+<p>Investigation of the dream/learning capability found <strong>two</strong> dream systems:</p>
+<ol>
+<li><strong>MAC's durable pipeline (correct, alive).</strong> <code>nap_consolidator</code> walks each
+   agent's recent <code>memory_records</code>, writes <code>nap_summary</code> + typed <code>dream:*</code>
+   artifacts (schema <code>mac.dream.v1</code>) back into <code>memory_records</code> via
+   <code>add_memory</code>; <code>dream_scanner</code>/<code>dream_cycle_classifier</code>/<code>dream_repair_tasks</code>
+   turn failure candidates into follow-up tasks. Live on the hub: <code>nap_runs</code>
+   ≈1789, latest today; <code>dream:failure_pattern</code> ≈109,752, <code>nap_summary</code>
+   ≈109,803. This is the authoritative, durable location. (An earlier note that
+   naps were dead is stale — the pipeline is running.)</li>
+<li><strong>The gateway's <code>~/.hermes/dream_logs/</code> (orphan).</strong> A host-side cron
+   (<code>~/.hermes/scripts/dream_cycle.py</code>, <em>not</em> MAC code) writes human-readable
+   <code>dream_YYYYMMDD_HHMMSS.md</code> reports. <strong>No first-party MAC code reads this
+   directory</strong> — the learning captured there (error patterns, human
+   corrections, near-failure skill correlations, action items) never reached
+   MAC's durable store. On the live host: 334 reports spanning Jul 5→now.</li>
+</ol>
+<p><strong>Fix (shipped):</strong> <code>src/mac/dream_log_import.py</code> merges those orphaned reports
+into <code>memory_records</code> as <code>dream:imported_report</code> memories. It is idempotent,
+skips empty "No … detected" reports, and — because the gateway writes hourly and
+mostly repeats findings — dedups on the <strong>findings</strong> (section content), not the
+file, so the 334 reports collapse to <strong>65 unique findings-sets</strong> rather than 333
+timestamp-noise copies. The source directory resolves only through
+<code>mac_paths.dream_logs_dir()</code>. Same tool consolidates any other
+single-use-but-wrong-path metadata: point it at the misplaced directory.</p>
 <h2 id="6-risks">6. Risks<a class="headerlink" href="#6-risks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Fleet-wide blast radius: home resolution runs in every worker + the hub +
