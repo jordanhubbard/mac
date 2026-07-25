@@ -1170,6 +1170,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mac-hgx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mac hgx
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#mac-openshell" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2378,6 +2389,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mac-hgx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mac hgx
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#mac-openshell" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2783,13 +2805,13 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="gp">$ </span>mac<span class="w"> </span>--help
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">           [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">           ...</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="go">Multi-agent coordinator control plane</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="go">  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="go">  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}</span>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="go">    diagnostics         run read-only control-plane health checks</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="go">    init                initialize the SQLite store</span>
 <a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="go">    config              configuration helpers</span>
@@ -2812,74 +2834,75 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="go">                        controller stages</span>
 <a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="go">    directive           versioned fleet rules, conditional bindings, and held</span>
 <a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="go">                        workflow macros</span>
-<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="go">    openshell           OpenShell sandbox guardrail commands</span>
-<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="go">    machine             machine registry commands</span>
-<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="go">    agent               agent registry commands</span>
-<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="go">    fleet               fleet-wide queries</span>
-<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="go">    journal             snapshot / restore an agent&#39;s soul + memory state</span>
-<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="go">                        (guards against soul loss)</span>
-<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="go">    optimizer           autonomous scientific policy optimization</span>
-<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a><span class="go">    mood                agent mood overlays (agents self-report; operators</span>
-<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="go">                        query)</span>
-<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a><span class="go">    dream               dream-cycle learning maintenance</span>
-<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a><span class="go">    nap                 agent nap schedule and lifecycle (daily memory</span>
-<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a><span class="go">                        consolidation)</span>
-<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="go">    dispatch            dispatcher commands</span>
-<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a><span class="go">    message             structured message bus commands</span>
-<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a><span class="go">    agentbus            typed high-throughput agent-to-agent content streams</span>
-<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="go">    review              review pipeline commands</span>
-<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="go">    pull-request        open or inspect pull/merge requests on the task&#39;s git</span>
-<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a><span class="go">                        host</span>
-<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="go">    secret              secret boundary commands</span>
-<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a><span class="go">    runtime             runtime boundary commands</span>
-<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a><span class="go">    artifact            artifact registry: canonical record for deliverables</span>
-<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a><span class="go">                        (images, packages, tarballs)</span>
-<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a><span class="go">    env                 environments and deployments (artifact -&gt; environment</span>
-<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a><span class="go">                        edges)</span>
-<a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a><span class="go">    bridge              external project bridge commands</span>
-<a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a><span class="go">    integrations        integration authority observations and findings</span>
-<a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a><span class="go">    memory              memory and provenance commands</span>
-<a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a><span class="go">    rollout             rollout and rescue commands</span>
-<a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a><span class="go">    events              unified audit stream</span>
-<a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a><span class="go">    action-events       canonical MAC action event ledger</span>
-<a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a><span class="go">    command-audit       short-retention per-agent command log</span>
-<a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a><span class="go">    observability       structured metric/log observations</span>
-<a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a><span class="go">    communication (comm)</span>
-<a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a><span class="go">                        logical public identities, representation, and</span>
-<a id="__codelineno-0-67" name="__codelineno-0-67" href="#__codelineno-0-67"></a><span class="go">                        OpenClaw delivery</span>
-<a id="__codelineno-0-68" name="__codelineno-0-68" href="#__codelineno-0-68"></a><span class="go">    notifier            operator notification channel configuration</span>
-<a id="__codelineno-0-69" name="__codelineno-0-69" href="#__codelineno-0-69"></a><span class="go">    migrate             one-time migration from external systems</span>
-<a id="__codelineno-0-70" name="__codelineno-0-70" href="#__codelineno-0-70"></a><span class="go">    workflow            workflow inspection (graph definitions, runs, decision</span>
-<a id="__codelineno-0-71" name="__codelineno-0-71" href="#__codelineno-0-71"></a><span class="go">                        gates)</span>
-<a id="__codelineno-0-72" name="__codelineno-0-72" href="#__codelineno-0-72"></a><span class="go">    eval                evaluation sets and runs</span>
-<a id="__codelineno-0-73" name="__codelineno-0-73" href="#__codelineno-0-73"></a><span class="go">    plan                planning helpers (topology ordering, blast radius,</span>
-<a id="__codelineno-0-74" name="__codelineno-0-74" href="#__codelineno-0-74"></a><span class="go">                        etc.)</span>
-<a id="__codelineno-0-75" name="__codelineno-0-75" href="#__codelineno-0-75"></a>
-<a id="__codelineno-0-76" name="__codelineno-0-76" href="#__codelineno-0-76"></a><span class="go">options:</span>
-<a id="__codelineno-0-77" name="__codelineno-0-77" href="#__codelineno-0-77"></a><span class="go">  -h, --help            show this help message and exit</span>
-<a id="__codelineno-0-78" name="__codelineno-0-78" href="#__codelineno-0-78"></a><span class="go">  --db DB               direct SQLite control-plane authority for hub</span>
-<a id="__codelineno-0-79" name="__codelineno-0-79" href="#__codelineno-0-79"></a><span class="go">                        maintenance, standalone development, tests, and</span>
-<a id="__codelineno-0-80" name="__codelineno-0-80" href="#__codelineno-0-80"></a><span class="go">                        migration. It is not a repository ticket store or</span>
-<a id="__codelineno-0-81" name="__codelineno-0-81" href="#__codelineno-0-81"></a><span class="go">                        offline hub replica and never synchronizes with a hub.</span>
-<a id="__codelineno-0-82" name="__codelineno-0-82" href="#__codelineno-0-82"></a><span class="go">                        When unset and no hub is configured, mac refuses to</span>
-<a id="__codelineno-0-83" name="__codelineno-0-83" href="#__codelineno-0-83"></a><span class="go">                        run.</span>
-<a id="__codelineno-0-84" name="__codelineno-0-84" href="#__codelineno-0-84"></a><span class="go">  --local-authority     enable stopped-hub maintenance against the</span>
-<a id="__codelineno-0-85" name="__codelineno-0-85" href="#__codelineno-0-85"></a><span class="go">                        authoritative SQLite database selected by --db or</span>
-<a id="__codelineno-0-86" name="__codelineno-0-86" href="#__codelineno-0-86"></a><span class="go">                        MAC_DB. The command refuses this mode while the</span>
-<a id="__codelineno-0-87" name="__codelineno-0-87" href="#__codelineno-0-87"></a><span class="go">                        configured hub health endpoint is reachable.</span>
-<a id="__codelineno-0-88" name="__codelineno-0-88" href="#__codelineno-0-88"></a><span class="go">  --hub-url HUB_URL     MAC hub URL (hub mode). Falls back to $MAC_API_URL /</span>
-<a id="__codelineno-0-89" name="__codelineno-0-89" href="#__codelineno-0-89"></a><span class="gp">                        $</span>MAC_URL<span class="w"> </span>/<span class="w"> </span><span class="nv">$MAC_HUB_URL</span>,<span class="w"> </span><span class="k">then</span><span class="w"> </span>~/.mac/fleets.yaml<span class="w"> </span><span class="k">for</span>
-<a id="__codelineno-0-90" name="__codelineno-0-90" href="#__codelineno-0-90"></a><span class="go">                        --fleet.</span>
-<a id="__codelineno-0-91" name="__codelineno-0-91" href="#__codelineno-0-91"></a><span class="go">  --token TOKEN         Bearer token for hub mode. Falls back to</span>
-<a id="__codelineno-0-92" name="__codelineno-0-92" href="#__codelineno-0-92"></a><span class="gp">                        $</span>MAC_API_TOKEN<span class="w"> </span><span class="o">(</span>or<span class="w"> </span><span class="nv">$MAC_API_TOKEN__</span>&lt;FLEET&gt;<span class="w"> </span>when
-<a id="__codelineno-0-93" name="__codelineno-0-93" href="#__codelineno-0-93"></a><span class="go">                        --fleet is set).</span>
-<a id="__codelineno-0-94" name="__codelineno-0-94" href="#__codelineno-0-94"></a><span class="go">  --fleet FLEET         Fleet name; selects MAC_API_TOKEN__&lt;FLEET&gt; and</span>
-<a id="__codelineno-0-95" name="__codelineno-0-95" href="#__codelineno-0-95"></a><span class="go">                        ~/.mac/fleets.yaml entry.</span>
-<a id="__codelineno-0-96" name="__codelineno-0-96" href="#__codelineno-0-96"></a><span class="go">  --profile PROFILE     Secure client profile under ~/.mac/clients. Falls back</span>
-<a id="__codelineno-0-97" name="__codelineno-0-97" href="#__codelineno-0-97"></a><span class="go">                        to $MAC_PROFILE or the active profile.</span>
-<a id="__codelineno-0-98" name="__codelineno-0-98" href="#__codelineno-0-98"></a><span class="go">  --json                Emit JSON instead of the default human-readable text.</span>
-<a id="__codelineno-0-99" name="__codelineno-0-99" href="#__codelineno-0-99"></a><span class="go">                        Works in any position (e.g. `mac task list --json` or</span>
-<a id="__codelineno-0-100" name="__codelineno-0-100" href="#__codelineno-0-100"></a><span class="go">                        `mac --json task list`).</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="go">    hgx                 operator controls for fungible HGX provider capacity</span>
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="go">    openshell           OpenShell sandbox guardrail commands</span>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="go">    machine             machine registry commands</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="go">    agent               agent registry commands</span>
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="go">    fleet               fleet-wide queries</span>
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="go">    journal             snapshot / restore an agent&#39;s soul + memory state</span>
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="go">                        (guards against soul loss)</span>
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a><span class="go">    optimizer           autonomous scientific policy optimization</span>
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="go">    mood                agent mood overlays (agents self-report; operators</span>
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a><span class="go">                        query)</span>
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a><span class="go">    dream               dream-cycle learning maintenance</span>
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a><span class="go">    nap                 agent nap schedule and lifecycle (daily memory</span>
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a><span class="go">                        consolidation)</span>
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a><span class="go">    dispatch            dispatcher commands</span>
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a><span class="go">    message             structured message bus commands</span>
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a><span class="go">    agentbus            typed high-throughput agent-to-agent content streams</span>
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a><span class="go">    review              review pipeline commands</span>
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a><span class="go">    pull-request        open or inspect pull/merge requests on the task&#39;s git</span>
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a><span class="go">                        host</span>
+<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a><span class="go">    secret              secret boundary commands</span>
+<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a><span class="go">    runtime             runtime boundary commands</span>
+<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a><span class="go">    artifact            artifact registry: canonical record for deliverables</span>
+<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a><span class="go">                        (images, packages, tarballs)</span>
+<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a><span class="go">    env                 environments and deployments (artifact -&gt; environment</span>
+<a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a><span class="go">                        edges)</span>
+<a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a><span class="go">    bridge              external project bridge commands</span>
+<a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a><span class="go">    integrations        integration authority observations and findings</span>
+<a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a><span class="go">    memory              memory and provenance commands</span>
+<a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a><span class="go">    rollout             rollout and rescue commands</span>
+<a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a><span class="go">    events              unified audit stream</span>
+<a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a><span class="go">    action-events       canonical MAC action event ledger</span>
+<a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a><span class="go">    command-audit       short-retention per-agent command log</span>
+<a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a><span class="go">    observability       structured metric/log observations</span>
+<a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a><span class="go">    communication (comm)</span>
+<a id="__codelineno-0-67" name="__codelineno-0-67" href="#__codelineno-0-67"></a><span class="go">                        logical public identities, representation, and</span>
+<a id="__codelineno-0-68" name="__codelineno-0-68" href="#__codelineno-0-68"></a><span class="go">                        OpenClaw delivery</span>
+<a id="__codelineno-0-69" name="__codelineno-0-69" href="#__codelineno-0-69"></a><span class="go">    notifier            operator notification channel configuration</span>
+<a id="__codelineno-0-70" name="__codelineno-0-70" href="#__codelineno-0-70"></a><span class="go">    migrate             one-time migration from external systems</span>
+<a id="__codelineno-0-71" name="__codelineno-0-71" href="#__codelineno-0-71"></a><span class="go">    workflow            workflow inspection (graph definitions, runs, decision</span>
+<a id="__codelineno-0-72" name="__codelineno-0-72" href="#__codelineno-0-72"></a><span class="go">                        gates)</span>
+<a id="__codelineno-0-73" name="__codelineno-0-73" href="#__codelineno-0-73"></a><span class="go">    eval                evaluation sets and runs</span>
+<a id="__codelineno-0-74" name="__codelineno-0-74" href="#__codelineno-0-74"></a><span class="go">    plan                planning helpers (topology ordering, blast radius,</span>
+<a id="__codelineno-0-75" name="__codelineno-0-75" href="#__codelineno-0-75"></a><span class="go">                        etc.)</span>
+<a id="__codelineno-0-76" name="__codelineno-0-76" href="#__codelineno-0-76"></a>
+<a id="__codelineno-0-77" name="__codelineno-0-77" href="#__codelineno-0-77"></a><span class="go">options:</span>
+<a id="__codelineno-0-78" name="__codelineno-0-78" href="#__codelineno-0-78"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-0-79" name="__codelineno-0-79" href="#__codelineno-0-79"></a><span class="go">  --db DB               direct SQLite control-plane authority for hub</span>
+<a id="__codelineno-0-80" name="__codelineno-0-80" href="#__codelineno-0-80"></a><span class="go">                        maintenance, standalone development, tests, and</span>
+<a id="__codelineno-0-81" name="__codelineno-0-81" href="#__codelineno-0-81"></a><span class="go">                        migration. It is not a repository ticket store or</span>
+<a id="__codelineno-0-82" name="__codelineno-0-82" href="#__codelineno-0-82"></a><span class="go">                        offline hub replica and never synchronizes with a hub.</span>
+<a id="__codelineno-0-83" name="__codelineno-0-83" href="#__codelineno-0-83"></a><span class="go">                        When unset and no hub is configured, mac refuses to</span>
+<a id="__codelineno-0-84" name="__codelineno-0-84" href="#__codelineno-0-84"></a><span class="go">                        run.</span>
+<a id="__codelineno-0-85" name="__codelineno-0-85" href="#__codelineno-0-85"></a><span class="go">  --local-authority     enable stopped-hub maintenance against the</span>
+<a id="__codelineno-0-86" name="__codelineno-0-86" href="#__codelineno-0-86"></a><span class="go">                        authoritative SQLite database selected by --db or</span>
+<a id="__codelineno-0-87" name="__codelineno-0-87" href="#__codelineno-0-87"></a><span class="go">                        MAC_DB. The command refuses this mode while the</span>
+<a id="__codelineno-0-88" name="__codelineno-0-88" href="#__codelineno-0-88"></a><span class="go">                        configured hub health endpoint is reachable.</span>
+<a id="__codelineno-0-89" name="__codelineno-0-89" href="#__codelineno-0-89"></a><span class="go">  --hub-url HUB_URL     MAC hub URL (hub mode). Falls back to $MAC_API_URL /</span>
+<a id="__codelineno-0-90" name="__codelineno-0-90" href="#__codelineno-0-90"></a><span class="gp">                        $</span>MAC_URL<span class="w"> </span>/<span class="w"> </span><span class="nv">$MAC_HUB_URL</span>,<span class="w"> </span><span class="k">then</span><span class="w"> </span>~/.mac/fleets.yaml<span class="w"> </span><span class="k">for</span>
+<a id="__codelineno-0-91" name="__codelineno-0-91" href="#__codelineno-0-91"></a><span class="go">                        --fleet.</span>
+<a id="__codelineno-0-92" name="__codelineno-0-92" href="#__codelineno-0-92"></a><span class="go">  --token TOKEN         Bearer token for hub mode. Falls back to</span>
+<a id="__codelineno-0-93" name="__codelineno-0-93" href="#__codelineno-0-93"></a><span class="gp">                        $</span>MAC_API_TOKEN<span class="w"> </span><span class="o">(</span>or<span class="w"> </span><span class="nv">$MAC_API_TOKEN__</span>&lt;FLEET&gt;<span class="w"> </span>when
+<a id="__codelineno-0-94" name="__codelineno-0-94" href="#__codelineno-0-94"></a><span class="go">                        --fleet is set).</span>
+<a id="__codelineno-0-95" name="__codelineno-0-95" href="#__codelineno-0-95"></a><span class="go">  --fleet FLEET         Fleet name; selects MAC_API_TOKEN__&lt;FLEET&gt; and</span>
+<a id="__codelineno-0-96" name="__codelineno-0-96" href="#__codelineno-0-96"></a><span class="go">                        ~/.mac/fleets.yaml entry.</span>
+<a id="__codelineno-0-97" name="__codelineno-0-97" href="#__codelineno-0-97"></a><span class="go">  --profile PROFILE     Secure client profile under ~/.mac/clients. Falls back</span>
+<a id="__codelineno-0-98" name="__codelineno-0-98" href="#__codelineno-0-98"></a><span class="go">                        to $MAC_PROFILE or the active profile.</span>
+<a id="__codelineno-0-99" name="__codelineno-0-99" href="#__codelineno-0-99"></a><span class="go">  --json                Emit JSON instead of the default human-readable text.</span>
+<a id="__codelineno-0-100" name="__codelineno-0-100" href="#__codelineno-0-100"></a><span class="go">                        Works in any position (e.g. `mac task list --json` or</span>
+<a id="__codelineno-0-101" name="__codelineno-0-101" href="#__codelineno-0-101"></a><span class="go">                        `mac --json task list`).</span>
 </code></pre></div>
 <h2 id="mac-diagnostics">mac diagnostics<a class="headerlink" href="#mac-diagnostics" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="gp">$ </span>mac<span class="w"> </span>diagnostics<span class="w"> </span>--help
@@ -3207,471 +3230,465 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a><span class="go">options:</span>
 <a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
+<h2 id="mac-hgx">mac hgx<a class="headerlink" href="#mac-hgx" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="gp">$ </span>mac<span class="w"> </span>hgx<span class="w"> </span>--help
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="go">usage: mac hgx [-h] {capacity} ...</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="go">  {capacity}</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="go">    capacity  plan, inspect, or explicitly create bounded standard-dind</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="go">              capacity</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="go">options:</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="go">  -h, --help  show this help message and exit</span>
+</code></pre></div>
 <h2 id="mac-openshell">mac openshell<a class="headerlink" href="#mac-openshell" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="gp">$ </span>mac<span class="w"> </span>openshell<span class="w"> </span>--help
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="go">usage: mac openshell [-h]</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="go">                     {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}</span>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="go">                     ...</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="go">  {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}</span>
-<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="go">    reconcile           reconcile fleet OpenShell required/policy/deployment</span>
-<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="go">                        status after host validation</span>
-<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="go">    sandbox-gc          list or delete old orphaned MAC-owned OpenShell</span>
-<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="go">                        sandboxes</span>
-<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="go">    reap-orphans        fail-closed reap of MAC-owned task sandboxes with</span>
-<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="go">                        mac.keep=false and a dead recorded PID (no age wait)</span>
-<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="go">    render-policy       render the OpenShell guardrail policy from the</span>
-<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="go">                        operator template for this fleet</span>
-<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a><span class="go">    policy              MAC-managed OpenShell policies</span>
-<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a>
-<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a><span class="go">options:</span>
-<a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a><span class="go">  -h, --help            show this help message and exit</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="gp">$ </span>mac<span class="w"> </span>openshell<span class="w"> </span>--help
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="go">usage: mac openshell [-h]</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="go">                     {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="go">                     ...</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="go">  {reconcile,sandbox-gc,reap-orphans,render-policy,policy,status}</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="go">    reconcile           reconcile fleet OpenShell required/policy/deployment</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="go">                        status after host validation</span>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="go">    sandbox-gc          list or delete old orphaned MAC-owned OpenShell</span>
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="go">                        sandboxes</span>
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="go">    reap-orphans        fail-closed reap of MAC-owned task sandboxes with</span>
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a><span class="go">                        mac.keep=false and a dead recorded PID (no age wait)</span>
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a><span class="go">    render-policy       render the OpenShell guardrail policy from the</span>
+<a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a><span class="go">                        operator template for this fleet</span>
+<a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a><span class="go">    policy              MAC-managed OpenShell policies</span>
+<a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a>
+<a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a><span class="go">options:</span>
+<a id="__codelineno-19-19" name="__codelineno-19-19" href="#__codelineno-19-19"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-machine">mac machine<a class="headerlink" href="#mac-machine" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="gp">$ </span>mac<span class="w"> </span>machine<span class="w"> </span>--help
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="go">usage: mac machine [-h] {register,list,show} ...</span>
-<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
-<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="go">  {register,list,show}</span>
-<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="go">    list                list all registered machines</span>
-<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="go">    show                show full record for one machine</span>
-<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>
-<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="go">options:</span>
-<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="go">  -h, --help            show this help message and exit</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="gp">$ </span>mac<span class="w"> </span>machine<span class="w"> </span>--help
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="go">usage: mac machine [-h] {register,list,show} ...</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="go">  {register,list,show}</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="go">    list                list all registered machines</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="go">    show                show full record for one machine</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="go">options:</span>
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-agent">mac agent<a class="headerlink" href="#mac-agent" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="gp">$ </span>mac<span class="w"> </span>agent<span class="w"> </span>--help
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="go">usage: mac agent [-h]</span>
-<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="go">                 {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}</span>
-<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="go">                 ...</span>
-<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>
-<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="go">  {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}</span>
-<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="go">    attestation-recover</span>
-<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="go">                        admin-only conditional recovery for a missing/stale</span>
-<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="go">                        worker signing key</span>
-<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="go">    report-executor-approve</span>
-<a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="go">                        approve the exact current startup-attested OpenShell</span>
-<a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a><span class="go">                        report executor</span>
-<a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a><span class="go">    report-executor-revoke</span>
-<a id="__codelineno-20-15" name="__codelineno-20-15" href="#__codelineno-20-15"></a><span class="go">                        revoke report-repository dispatch eligibility for an</span>
-<a id="__codelineno-20-16" name="__codelineno-20-16" href="#__codelineno-20-16"></a><span class="go">                        agent</span>
-<a id="__codelineno-20-17" name="__codelineno-20-17" href="#__codelineno-20-17"></a><span class="go">    reflect             publish an agent&#39;s runtime self-description over</span>
-<a id="__codelineno-20-18" name="__codelineno-20-18" href="#__codelineno-20-18"></a><span class="go">                        AgentBus</span>
-<a id="__codelineno-20-19" name="__codelineno-20-19" href="#__codelineno-20-19"></a><span class="go">    hardware            fleet hardware inventory from self-reported</span>
-<a id="__codelineno-20-20" name="__codelineno-20-20" href="#__codelineno-20-20"></a><span class="go">                        resources.hardware</span>
-<a id="__codelineno-20-21" name="__codelineno-20-21" href="#__codelineno-20-21"></a><span class="go">    tell                send a hub-verified HUMAN directive to any agent over</span>
-<a id="__codelineno-20-22" name="__codelineno-20-22" href="#__codelineno-20-22"></a><span class="go">                        AgentBus — works for Slack-less agents (GKE runners,</span>
-<a id="__codelineno-20-23" name="__codelineno-20-23" href="#__codelineno-20-23"></a><span class="go">                        ephemeral sessions); the receiver can trust its</span>
-<a id="__codelineno-20-24" name="__codelineno-20-24" href="#__codelineno-20-24"></a><span class="go">                        operator provenance by construction</span>
-<a id="__codelineno-20-25" name="__codelineno-20-25" href="#__codelineno-20-25"></a><span class="go">    deregister          graceful exit for a session/ephemeral agent:</span>
-<a id="__codelineno-20-26" name="__codelineno-20-26" href="#__codelineno-20-26"></a><span class="go">                        optionally leave one final human-facing message</span>
-<a id="__codelineno-20-27" name="__codelineno-20-27" href="#__codelineno-20-27"></a><span class="go">                        (delivered after the agent is gone), then tombstone</span>
-<a id="__codelineno-20-28" name="__codelineno-20-28" href="#__codelineno-20-28"></a><span class="go">                        with history preserved</span>
-<a id="__codelineno-20-29" name="__codelineno-20-29" href="#__codelineno-20-29"></a><span class="go">    delete              decommission (tombstone) an agent: strips operational</span>
-<a id="__codelineno-20-30" name="__codelineno-20-30" href="#__codelineno-20-30"></a><span class="go">                        overlays (moods/naps/config flags/deploy config) but</span>
-<a id="__codelineno-20-31" name="__codelineno-20-31" href="#__codelineno-20-31"></a><span class="go">                        preserves its AgentBus streams, events, deliveries,</span>
-<a id="__codelineno-20-32" name="__codelineno-20-32" href="#__codelineno-20-32"></a><span class="go">                        and task history</span>
-<a id="__codelineno-20-33" name="__codelineno-20-33" href="#__codelineno-20-33"></a><span class="go">    hold                place a dispatch hold on an agent; held agents are</span>
-<a id="__codelineno-20-34" name="__codelineno-20-34" href="#__codelineno-20-34"></a><span class="go">                        skipped during claim-next</span>
-<a id="__codelineno-20-35" name="__codelineno-20-35" href="#__codelineno-20-35"></a><span class="go">    resume              remove the dispatch hold from an agent, making it</span>
-<a id="__codelineno-20-36" name="__codelineno-20-36" href="#__codelineno-20-36"></a><span class="go">                        eligible for dispatch again</span>
-<a id="__codelineno-20-37" name="__codelineno-20-37" href="#__codelineno-20-37"></a><span class="go">    config              consolidated per-agent configuration (the &#39;geek</span>
-<a id="__codelineno-20-38" name="__codelineno-20-38" href="#__codelineno-20-38"></a><span class="go">                        knobs&#39;)</span>
-<a id="__codelineno-20-39" name="__codelineno-20-39" href="#__codelineno-20-39"></a><span class="go">    migrate             move an agent (soul + memory) to a new host; dry-run</span>
-<a id="__codelineno-20-40" name="__codelineno-20-40" href="#__codelineno-20-40"></a><span class="go">                        unless --execute</span>
-<a id="__codelineno-20-41" name="__codelineno-20-41" href="#__codelineno-20-41"></a>
-<a id="__codelineno-20-42" name="__codelineno-20-42" href="#__codelineno-20-42"></a><span class="go">options:</span>
-<a id="__codelineno-20-43" name="__codelineno-20-43" href="#__codelineno-20-43"></a><span class="go">  -h, --help            show this help message and exit</span>
-</code></pre></div>
-<h2 id="mac-fleet">mac fleet<a class="headerlink" href="#mac-fleet" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="gp">$ </span>mac<span class="w"> </span>fleet<span class="w"> </span>--help
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="go">usage: mac fleet [-h]</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="go">                 {build-distribution,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="gp">$ </span>mac<span class="w"> </span>agent<span class="w"> </span>--help
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="go">usage: mac agent [-h]</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="go">                 {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}</span>
 <a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="go">                 ...</span>
 <a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>
 <a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="go">  {build-distribution,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}</span>
-<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="go">    build-distribution  aggregate live agents by running_digest</span>
-<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="go">    backlog-groom       autonomous backlog grooming: status, manual run, per-</span>
-<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="go">                        project opt-in</span>
-<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="go">    model-selection     dynamic powerhouse-model selection: status, refresh,</span>
-<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="go">                        promote a pending swap</span>
-<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="go">    ssh-spec            resolve the canonical secret-free SSH route for one</span>
-<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a><span class="go">                        fleet agent</span>
-<a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a><span class="go">    refresh-source (refresh)</span>
-<a id="__codelineno-21-16" name="__codelineno-21-16" href="#__codelineno-21-16"></a><span class="go">                        ask fleet agents to pull their self-update repo and</span>
-<a id="__codelineno-21-17" name="__codelineno-21-17" href="#__codelineno-21-17"></a><span class="go">                        restart themselves if HEAD changes</span>
-<a id="__codelineno-21-18" name="__codelineno-21-18" href="#__codelineno-21-18"></a><span class="go">    snapshot            compact view of the fleet: who&#39;s online + what each</span>
-<a id="__codelineno-21-19" name="__codelineno-21-19" href="#__codelineno-21-19"></a><span class="go">                        agent is working on</span>
-<a id="__codelineno-21-20" name="__codelineno-21-20" href="#__codelineno-21-20"></a><span class="go">    soul-pull           pull each agent&#39;s editable soul text</span>
-<a id="__codelineno-21-21" name="__codelineno-21-21" href="#__codelineno-21-21"></a><span class="go">                        (SOUL/USER/MEMORY.md) into a local tree</span>
-<a id="__codelineno-21-22" name="__codelineno-21-22" href="#__codelineno-21-22"></a><span class="go">    soul-push           diff an edited soul snapshot vs live and write changes</span>
-<a id="__codelineno-21-23" name="__codelineno-21-23" href="#__codelineno-21-23"></a><span class="go">                        (backup-before-replace)</span>
-<a id="__codelineno-21-24" name="__codelineno-21-24" href="#__codelineno-21-24"></a><span class="go">    soul-audit          audit the remote ~/.hermes directory for a named agent</span>
-<a id="__codelineno-21-25" name="__codelineno-21-25" href="#__codelineno-21-25"></a><span class="go">    memory-export       export Qdrant vector memory to greppable JSONL for</span>
-<a id="__codelineno-21-26" name="__codelineno-21-26" href="#__codelineno-21-26"></a><span class="go">                        vetting</span>
-<a id="__codelineno-21-27" name="__codelineno-21-27" href="#__codelineno-21-27"></a><span class="go">    memory-prune        DELETE vetted Qdrant point ids from a collection</span>
-<a id="__codelineno-21-28" name="__codelineno-21-28" href="#__codelineno-21-28"></a><span class="go">                        (destructive)</span>
-<a id="__codelineno-21-29" name="__codelineno-21-29" href="#__codelineno-21-29"></a><span class="go">    refresh-context     refresh the live Fleet section in this agent&#39;s</span>
-<a id="__codelineno-21-30" name="__codelineno-21-30" href="#__codelineno-21-30"></a><span class="go">                        runtime-context markdown (what the nap-tick-style</span>
-<a id="__codelineno-21-31" name="__codelineno-21-31" href="#__codelineno-21-31"></a><span class="go">                        timer calls so each session knows its teammates)</span>
-<a id="__codelineno-21-32" name="__codelineno-21-32" href="#__codelineno-21-32"></a><span class="go">    validate            validate a declarative mac.fleet_setup.v1 setup spec</span>
-<a id="__codelineno-21-33" name="__codelineno-21-33" href="#__codelineno-21-33"></a><span class="go">    doctor              run setup doctor checks for a declarative fleet spec</span>
-<a id="__codelineno-21-34" name="__codelineno-21-34" href="#__codelineno-21-34"></a><span class="go">    sync-token          pull the hub&#39;s current MAC_API_TOKEN into ~/.mac/.env</span>
-<a id="__codelineno-21-35" name="__codelineno-21-35" href="#__codelineno-21-35"></a><span class="go">                        as MAC_API_TOKEN__&lt;FLEET&gt; (fixes 403 &#39;unknown bearer</span>
-<a id="__codelineno-21-36" name="__codelineno-21-36" href="#__codelineno-21-36"></a><span class="go">                        token&#39; drift)</span>
-<a id="__codelineno-21-37" name="__codelineno-21-37" href="#__codelineno-21-37"></a><span class="go">    creds-status        per-agent coding-CLI (claude/codex/cursor) auth</span>
-<a id="__codelineno-21-38" name="__codelineno-21-38" href="#__codelineno-21-38"></a><span class="go">                        status, from the agents&#39; own heartbeat reports; flags</span>
-<a id="__codelineno-21-39" name="__codelineno-21-39" href="#__codelineno-21-39"></a><span class="go">                        who needs a credential sync</span>
-<a id="__codelineno-21-40" name="__codelineno-21-40" href="#__codelineno-21-40"></a><span class="go">    creds-sync          push THIS workstation&#39;s coding-CLI credentials to</span>
-<a id="__codelineno-21-41" name="__codelineno-21-41" href="#__codelineno-21-41"></a><span class="go">                        fleet workers over their SSH routes (stdin-only</span>
-<a id="__codelineno-21-42" name="__codelineno-21-42" href="#__codelineno-21-42"></a><span class="go">                        transfer; verified on arrival)</span>
-<a id="__codelineno-21-43" name="__codelineno-21-43" href="#__codelineno-21-43"></a><span class="go">    github-ingest       GitHub-issue work generator: status, manual run, and</span>
-<a id="__codelineno-21-44" name="__codelineno-21-44" href="#__codelineno-21-44"></a><span class="go">                        per-project opt-in</span>
-<a id="__codelineno-21-45" name="__codelineno-21-45" href="#__codelineno-21-45"></a><span class="go">    rotate-token        rotate the hub bearer token with an overlap window</span>
-<a id="__codelineno-21-46" name="__codelineno-21-46" href="#__codelineno-21-46"></a><span class="go">                        (dry-run unless --apply)</span>
-<a id="__codelineno-21-47" name="__codelineno-21-47" href="#__codelineno-21-47"></a><span class="go">    move-agent          move an agent between fleets: rewrite fleets.yaml</span>
-<a id="__codelineno-21-48" name="__codelineno-21-48" href="#__codelineno-21-48"></a><span class="go">                        entry, print redeploy command, and emit DB reconcile</span>
-<a id="__codelineno-21-49" name="__codelineno-21-49" href="#__codelineno-21-49"></a><span class="go">                        commands. Dry-run by default; pass --execute to mutate</span>
-<a id="__codelineno-21-50" name="__codelineno-21-50" href="#__codelineno-21-50"></a><span class="go">                        fleets.yaml.</span>
-<a id="__codelineno-21-51" name="__codelineno-21-51" href="#__codelineno-21-51"></a>
-<a id="__codelineno-21-52" name="__codelineno-21-52" href="#__codelineno-21-52"></a><span class="go">options:</span>
-<a id="__codelineno-21-53" name="__codelineno-21-53" href="#__codelineno-21-53"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="go">  {register,update,list,attestation-recover,report-executor-approve,report-executor-revoke,reflect,hardware,heartbeat,tell,deregister,delete,hold,resume,config,migrate}</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="go">    attestation-recover</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="go">                        admin-only conditional recovery for a missing/stale</span>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="go">                        worker signing key</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="go">    report-executor-approve</span>
+<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="go">                        approve the exact current startup-attested OpenShell</span>
+<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="go">                        report executor</span>
+<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a><span class="go">    report-executor-revoke</span>
+<a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a><span class="go">                        revoke report-repository dispatch eligibility for an</span>
+<a id="__codelineno-21-16" name="__codelineno-21-16" href="#__codelineno-21-16"></a><span class="go">                        agent</span>
+<a id="__codelineno-21-17" name="__codelineno-21-17" href="#__codelineno-21-17"></a><span class="go">    reflect             publish an agent&#39;s runtime self-description over</span>
+<a id="__codelineno-21-18" name="__codelineno-21-18" href="#__codelineno-21-18"></a><span class="go">                        AgentBus</span>
+<a id="__codelineno-21-19" name="__codelineno-21-19" href="#__codelineno-21-19"></a><span class="go">    hardware            fleet hardware inventory from self-reported</span>
+<a id="__codelineno-21-20" name="__codelineno-21-20" href="#__codelineno-21-20"></a><span class="go">                        resources.hardware</span>
+<a id="__codelineno-21-21" name="__codelineno-21-21" href="#__codelineno-21-21"></a><span class="go">    tell                send a hub-verified HUMAN directive to any agent over</span>
+<a id="__codelineno-21-22" name="__codelineno-21-22" href="#__codelineno-21-22"></a><span class="go">                        AgentBus — works for Slack-less agents (GKE runners,</span>
+<a id="__codelineno-21-23" name="__codelineno-21-23" href="#__codelineno-21-23"></a><span class="go">                        ephemeral sessions); the receiver can trust its</span>
+<a id="__codelineno-21-24" name="__codelineno-21-24" href="#__codelineno-21-24"></a><span class="go">                        operator provenance by construction</span>
+<a id="__codelineno-21-25" name="__codelineno-21-25" href="#__codelineno-21-25"></a><span class="go">    deregister          graceful exit for a session/ephemeral agent:</span>
+<a id="__codelineno-21-26" name="__codelineno-21-26" href="#__codelineno-21-26"></a><span class="go">                        optionally leave one final human-facing message</span>
+<a id="__codelineno-21-27" name="__codelineno-21-27" href="#__codelineno-21-27"></a><span class="go">                        (delivered after the agent is gone), then tombstone</span>
+<a id="__codelineno-21-28" name="__codelineno-21-28" href="#__codelineno-21-28"></a><span class="go">                        with history preserved</span>
+<a id="__codelineno-21-29" name="__codelineno-21-29" href="#__codelineno-21-29"></a><span class="go">    delete              decommission (tombstone) an agent: strips operational</span>
+<a id="__codelineno-21-30" name="__codelineno-21-30" href="#__codelineno-21-30"></a><span class="go">                        overlays (moods/naps/config flags/deploy config) but</span>
+<a id="__codelineno-21-31" name="__codelineno-21-31" href="#__codelineno-21-31"></a><span class="go">                        preserves its AgentBus streams, events, deliveries,</span>
+<a id="__codelineno-21-32" name="__codelineno-21-32" href="#__codelineno-21-32"></a><span class="go">                        and task history</span>
+<a id="__codelineno-21-33" name="__codelineno-21-33" href="#__codelineno-21-33"></a><span class="go">    hold                place a dispatch hold on an agent; held agents are</span>
+<a id="__codelineno-21-34" name="__codelineno-21-34" href="#__codelineno-21-34"></a><span class="go">                        skipped during claim-next</span>
+<a id="__codelineno-21-35" name="__codelineno-21-35" href="#__codelineno-21-35"></a><span class="go">    resume              remove the dispatch hold from an agent, making it</span>
+<a id="__codelineno-21-36" name="__codelineno-21-36" href="#__codelineno-21-36"></a><span class="go">                        eligible for dispatch again</span>
+<a id="__codelineno-21-37" name="__codelineno-21-37" href="#__codelineno-21-37"></a><span class="go">    config              consolidated per-agent configuration (the &#39;geek</span>
+<a id="__codelineno-21-38" name="__codelineno-21-38" href="#__codelineno-21-38"></a><span class="go">                        knobs&#39;)</span>
+<a id="__codelineno-21-39" name="__codelineno-21-39" href="#__codelineno-21-39"></a><span class="go">    migrate             move an agent (soul + memory) to a new host; dry-run</span>
+<a id="__codelineno-21-40" name="__codelineno-21-40" href="#__codelineno-21-40"></a><span class="go">                        unless --execute</span>
+<a id="__codelineno-21-41" name="__codelineno-21-41" href="#__codelineno-21-41"></a>
+<a id="__codelineno-21-42" name="__codelineno-21-42" href="#__codelineno-21-42"></a><span class="go">options:</span>
+<a id="__codelineno-21-43" name="__codelineno-21-43" href="#__codelineno-21-43"></a><span class="go">  -h, --help            show this help message and exit</span>
+</code></pre></div>
+<h2 id="mac-fleet">mac fleet<a class="headerlink" href="#mac-fleet" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="gp">$ </span>mac<span class="w"> </span>fleet<span class="w"> </span>--help
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="go">usage: mac fleet [-h]</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="go">                 {build-distribution,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="go">                 ...</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="go">  {build-distribution,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="go">    build-distribution  aggregate live agents by running_digest</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="go">    backlog-groom       autonomous backlog grooming: status, manual run, per-</span>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="go">                        project opt-in</span>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="go">    model-selection     dynamic powerhouse-model selection: status, refresh,</span>
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="go">                        promote a pending swap</span>
+<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a><span class="go">    ssh-spec            resolve the canonical secret-free SSH route for one</span>
+<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="go">                        fleet agent</span>
+<a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a><span class="go">    refresh-source (refresh)</span>
+<a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a><span class="go">                        ask fleet agents to pull their self-update repo and</span>
+<a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a><span class="go">                        restart themselves if HEAD changes</span>
+<a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a><span class="go">    snapshot            compact view of the fleet: who&#39;s online + what each</span>
+<a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a><span class="go">                        agent is working on</span>
+<a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a><span class="go">    soul-pull           pull each agent&#39;s editable soul text</span>
+<a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a><span class="go">                        (SOUL/USER/MEMORY.md) into a local tree</span>
+<a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a><span class="go">    soul-push           diff an edited soul snapshot vs live and write changes</span>
+<a id="__codelineno-22-23" name="__codelineno-22-23" href="#__codelineno-22-23"></a><span class="go">                        (backup-before-replace)</span>
+<a id="__codelineno-22-24" name="__codelineno-22-24" href="#__codelineno-22-24"></a><span class="go">    soul-audit          audit the remote ~/.hermes directory for a named agent</span>
+<a id="__codelineno-22-25" name="__codelineno-22-25" href="#__codelineno-22-25"></a><span class="go">    memory-export       export Qdrant vector memory to greppable JSONL for</span>
+<a id="__codelineno-22-26" name="__codelineno-22-26" href="#__codelineno-22-26"></a><span class="go">                        vetting</span>
+<a id="__codelineno-22-27" name="__codelineno-22-27" href="#__codelineno-22-27"></a><span class="go">    memory-prune        DELETE vetted Qdrant point ids from a collection</span>
+<a id="__codelineno-22-28" name="__codelineno-22-28" href="#__codelineno-22-28"></a><span class="go">                        (destructive)</span>
+<a id="__codelineno-22-29" name="__codelineno-22-29" href="#__codelineno-22-29"></a><span class="go">    refresh-context     refresh the live Fleet section in this agent&#39;s</span>
+<a id="__codelineno-22-30" name="__codelineno-22-30" href="#__codelineno-22-30"></a><span class="go">                        runtime-context markdown (what the nap-tick-style</span>
+<a id="__codelineno-22-31" name="__codelineno-22-31" href="#__codelineno-22-31"></a><span class="go">                        timer calls so each session knows its teammates)</span>
+<a id="__codelineno-22-32" name="__codelineno-22-32" href="#__codelineno-22-32"></a><span class="go">    validate            validate a declarative mac.fleet_setup.v1 setup spec</span>
+<a id="__codelineno-22-33" name="__codelineno-22-33" href="#__codelineno-22-33"></a><span class="go">    doctor              run setup doctor checks for a declarative fleet spec</span>
+<a id="__codelineno-22-34" name="__codelineno-22-34" href="#__codelineno-22-34"></a><span class="go">    sync-token          pull the hub&#39;s current MAC_API_TOKEN into ~/.mac/.env</span>
+<a id="__codelineno-22-35" name="__codelineno-22-35" href="#__codelineno-22-35"></a><span class="go">                        as MAC_API_TOKEN__&lt;FLEET&gt; (fixes 403 &#39;unknown bearer</span>
+<a id="__codelineno-22-36" name="__codelineno-22-36" href="#__codelineno-22-36"></a><span class="go">                        token&#39; drift)</span>
+<a id="__codelineno-22-37" name="__codelineno-22-37" href="#__codelineno-22-37"></a><span class="go">    creds-status        per-agent coding-CLI (claude/codex/cursor) auth</span>
+<a id="__codelineno-22-38" name="__codelineno-22-38" href="#__codelineno-22-38"></a><span class="go">                        status, from the agents&#39; own heartbeat reports; flags</span>
+<a id="__codelineno-22-39" name="__codelineno-22-39" href="#__codelineno-22-39"></a><span class="go">                        who needs a credential sync</span>
+<a id="__codelineno-22-40" name="__codelineno-22-40" href="#__codelineno-22-40"></a><span class="go">    creds-sync          push THIS workstation&#39;s coding-CLI credentials to</span>
+<a id="__codelineno-22-41" name="__codelineno-22-41" href="#__codelineno-22-41"></a><span class="go">                        fleet workers over their SSH routes (stdin-only</span>
+<a id="__codelineno-22-42" name="__codelineno-22-42" href="#__codelineno-22-42"></a><span class="go">                        transfer; verified on arrival)</span>
+<a id="__codelineno-22-43" name="__codelineno-22-43" href="#__codelineno-22-43"></a><span class="go">    github-ingest       GitHub-issue work generator: status, manual run, and</span>
+<a id="__codelineno-22-44" name="__codelineno-22-44" href="#__codelineno-22-44"></a><span class="go">                        per-project opt-in</span>
+<a id="__codelineno-22-45" name="__codelineno-22-45" href="#__codelineno-22-45"></a><span class="go">    rotate-token        rotate the hub bearer token with an overlap window</span>
+<a id="__codelineno-22-46" name="__codelineno-22-46" href="#__codelineno-22-46"></a><span class="go">                        (dry-run unless --apply)</span>
+<a id="__codelineno-22-47" name="__codelineno-22-47" href="#__codelineno-22-47"></a><span class="go">    move-agent          move an agent between fleets: rewrite fleets.yaml</span>
+<a id="__codelineno-22-48" name="__codelineno-22-48" href="#__codelineno-22-48"></a><span class="go">                        entry, print redeploy command, and emit DB reconcile</span>
+<a id="__codelineno-22-49" name="__codelineno-22-49" href="#__codelineno-22-49"></a><span class="go">                        commands. Dry-run by default; pass --execute to mutate</span>
+<a id="__codelineno-22-50" name="__codelineno-22-50" href="#__codelineno-22-50"></a><span class="go">                        fleets.yaml.</span>
+<a id="__codelineno-22-51" name="__codelineno-22-51" href="#__codelineno-22-51"></a>
+<a id="__codelineno-22-52" name="__codelineno-22-52" href="#__codelineno-22-52"></a><span class="go">options:</span>
+<a id="__codelineno-22-53" name="__codelineno-22-53" href="#__codelineno-22-53"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-journal">mac journal<a class="headerlink" href="#mac-journal" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="gp">$ </span>mac<span class="w"> </span>journal<span class="w"> </span>--help
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="go">usage: mac journal [-h] {snapshot,list,restore} ...</span>
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>
-<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="go">  {snapshot,list,restore}</span>
-<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="go">    snapshot            snapshot SOUL/USER/MEMORY/memories/mood/config to</span>
-<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="gp">                        $</span>HOME/.mac/journal/&lt;date&gt;/<span class="w"> </span>and<span class="w"> </span>run
-<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="go">                        MAC_JOURNAL_BACKUP_HOOK if set</span>
-<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="go">    list                list journaled snapshots</span>
-<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="go">    restore             restore an agent&#39;s state from a journal date</span>
-<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="go">                        (snapshots current state first, so it&#39;s reversible)</span>
-<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a>
-<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a><span class="go">options:</span>
-<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="go">  -h, --help            show this help message and exit</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="gp">$ </span>mac<span class="w"> </span>journal<span class="w"> </span>--help
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="go">usage: mac journal [-h] {snapshot,list,restore} ...</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="go">  {snapshot,list,restore}</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="go">    snapshot            snapshot SOUL/USER/MEMORY/memories/mood/config to</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="gp">                        $</span>HOME/.mac/journal/&lt;date&gt;/<span class="w"> </span>and<span class="w"> </span>run
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="go">                        MAC_JOURNAL_BACKUP_HOOK if set</span>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="go">    list                list journaled snapshots</span>
+<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="go">    restore             restore an agent&#39;s state from a journal date</span>
+<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="go">                        (snapshots current state first, so it&#39;s reversible)</span>
+<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>
+<a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a><span class="go">options:</span>
+<a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-optimizer">mac optimizer<a class="headerlink" href="#mac-optimizer" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="gp">$ </span>mac<span class="w"> </span>optimizer<span class="w"> </span>--help
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="go">usage: mac optimizer [-h] {status,tick,policy,experiment} ...</span>
-<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
-<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="go">Create allowlisted execution policies, run controlled task experiments, and</span>
-<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="go">promote only statistically superior, quality-noninferior treatments.</span>
-<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>
-<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="go">  {status,tick,policy,experiment}</span>
-<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="go">    status              show scheduler and active experiments</span>
-<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="go">    tick                run one observation, decision, and hypothesis pass now</span>
-<a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="go">    policy              versioned execution-policy lifecycle</span>
-<a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="go">    experiment          controlled experiment lifecycle</span>
-<a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>
-<a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a><span class="go">options:</span>
-<a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a><span class="go">  -h, --help            show this help message and exit</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="gp">$ </span>mac<span class="w"> </span>optimizer<span class="w"> </span>--help
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="go">usage: mac optimizer [-h] {status,tick,policy,experiment} ...</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="go">Create allowlisted execution policies, run controlled task experiments, and</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="go">promote only statistically superior, quality-noninferior treatments.</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="go">  {status,tick,policy,experiment}</span>
+<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="go">    status              show scheduler and active experiments</span>
+<a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a><span class="go">    tick                run one observation, decision, and hypothesis pass now</span>
+<a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="go">    policy              versioned execution-policy lifecycle</span>
+<a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a><span class="go">    experiment          controlled experiment lifecycle</span>
+<a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a>
+<a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a><span class="go">options:</span>
+<a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-mood">mac mood<a class="headerlink" href="#mac-mood" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="gp">$ </span>mac<span class="w"> </span>mood<span class="w"> </span>--help
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="go">usage: mac mood [-h] {set,show,clear,history} ...</span>
-<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>
-<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="go">  {set,show,clear,history}</span>
-<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="go">    set                 record a mood transition</span>
-<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="go">    show                current mood for an agent</span>
-<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="go">    clear               end the active overlay</span>
-<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="go">    history             mood transitions for an agent</span>
-<a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>
-<a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="go">options:</span>
-<a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a><span class="go">  -h, --help            show this help message and exit</span>
-</code></pre></div>
-<h2 id="mac-dream">mac dream<a class="headerlink" href="#mac-dream" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="gp">$ </span>mac<span class="w"> </span>dream<span class="w"> </span>--help
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="go">usage: mac dream [-h] {import-logs} ...</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="gp">$ </span>mac<span class="w"> </span>mood<span class="w"> </span>--help
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="go">usage: mac mood [-h] {set,show,clear,history} ...</span>
 <a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
 <a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="go">  {import-logs}</span>
-<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a><span class="go">    import-logs  merge orphaned ~/.hermes/dream_logs reports into durable</span>
-<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="go">                 memory</span>
-<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>
-<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a><span class="go">options:</span>
-<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a><span class="go">  -h, --help     show this help message and exit</span>
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="go">  {set,show,clear,history}</span>
+<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a><span class="go">    set                 record a mood transition</span>
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="go">    show                current mood for an agent</span>
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a><span class="go">    clear               end the active overlay</span>
+<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a><span class="go">    history             mood transitions for an agent</span>
+<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a>
+<a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a><span class="go">options:</span>
+<a id="__codelineno-25-12" name="__codelineno-25-12" href="#__codelineno-25-12"></a><span class="go">  -h, --help            show this help message and exit</span>
+</code></pre></div>
+<h2 id="mac-dream">mac dream<a class="headerlink" href="#mac-dream" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="gp">$ </span>mac<span class="w"> </span>dream<span class="w"> </span>--help
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="go">usage: mac dream [-h] {import-logs} ...</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="go">  {import-logs}</span>
+<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a><span class="go">    import-logs  merge orphaned ~/.hermes/dream_logs reports into durable</span>
+<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="go">                 memory</span>
+<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a>
+<a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a><span class="go">options:</span>
+<a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a><span class="go">  -h, --help     show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-nap">mac nap<a class="headerlink" href="#mac-nap" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="gp">$ </span>mac<span class="w"> </span>nap<span class="w"> </span>--help
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="go">usage: mac nap [-h]</span>
-<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="go">               {configure,show,next,begin,complete,fail,list,cycle,due,consolidate}</span>
-<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="go">               ...</span>
-<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>
-<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="go">  {configure,show,next,begin,complete,fail,list,cycle,due,consolidate}</span>
-<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="go">    configure           set or refresh an agent&#39;s nap schedule (offset</span>
-<a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a><span class="go">                        defaults to a deterministic hash of agent.name)</span>
-<a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a><span class="go">    next                compute the next nap window</span>
-<a id="__codelineno-26-11" name="__codelineno-26-11" href="#__codelineno-26-11"></a><span class="go">    begin               start a nap; transitions the agent to DRAINING</span>
-<a id="__codelineno-26-12" name="__codelineno-26-12" href="#__codelineno-26-12"></a><span class="go">    complete            mark a nap_run completed and restore the agent</span>
-<a id="__codelineno-26-13" name="__codelineno-26-13" href="#__codelineno-26-13"></a><span class="go">    fail                mark a nap_run failed and restore the agent</span>
-<a id="__codelineno-26-14" name="__codelineno-26-14" href="#__codelineno-26-14"></a><span class="go">    list                list nap_runs</span>
-<a id="__codelineno-26-15" name="__codelineno-26-15" href="#__codelineno-26-15"></a><span class="go">    cycle               run a full nap cycle (begin + consolidate + complete)</span>
-<a id="__codelineno-26-16" name="__codelineno-26-16" href="#__codelineno-26-16"></a><span class="go">                        for one agent — what the auto-trigger timer calls</span>
-<a id="__codelineno-26-17" name="__codelineno-26-17" href="#__codelineno-26-17"></a><span class="go">    due                 list enabled nap_schedules whose current window has</span>
-<a id="__codelineno-26-18" name="__codelineno-26-18" href="#__codelineno-26-18"></a><span class="go">                        opened and not yet been completed</span>
-<a id="__codelineno-26-19" name="__codelineno-26-19" href="#__codelineno-26-19"></a><span class="go">    consolidate         walk the agent&#39;s recent memory_records, summarize by</span>
-<a id="__codelineno-26-20" name="__codelineno-26-20" href="#__codelineno-26-20"></a><span class="go">                        task/project, write a nap_summary row per group, and</span>
-<a id="__codelineno-26-21" name="__codelineno-26-21" href="#__codelineno-26-21"></a><span class="go">                        embed into the medium tier (mem-08)</span>
-<a id="__codelineno-26-22" name="__codelineno-26-22" href="#__codelineno-26-22"></a>
-<a id="__codelineno-26-23" name="__codelineno-26-23" href="#__codelineno-26-23"></a><span class="go">options:</span>
-<a id="__codelineno-26-24" name="__codelineno-26-24" href="#__codelineno-26-24"></a><span class="go">  -h, --help            show this help message and exit</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="gp">$ </span>mac<span class="w"> </span>nap<span class="w"> </span>--help
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="go">usage: mac nap [-h]</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="go">               {configure,show,next,begin,complete,fail,list,cycle,due,consolidate}</span>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="go">               ...</span>
+<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>
+<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a><span class="go">  {configure,show,next,begin,complete,fail,list,cycle,due,consolidate}</span>
+<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a><span class="go">    configure           set or refresh an agent&#39;s nap schedule (offset</span>
+<a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a><span class="go">                        defaults to a deterministic hash of agent.name)</span>
+<a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a><span class="go">    next                compute the next nap window</span>
+<a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a><span class="go">    begin               start a nap; transitions the agent to DRAINING</span>
+<a id="__codelineno-27-12" name="__codelineno-27-12" href="#__codelineno-27-12"></a><span class="go">    complete            mark a nap_run completed and restore the agent</span>
+<a id="__codelineno-27-13" name="__codelineno-27-13" href="#__codelineno-27-13"></a><span class="go">    fail                mark a nap_run failed and restore the agent</span>
+<a id="__codelineno-27-14" name="__codelineno-27-14" href="#__codelineno-27-14"></a><span class="go">    list                list nap_runs</span>
+<a id="__codelineno-27-15" name="__codelineno-27-15" href="#__codelineno-27-15"></a><span class="go">    cycle               run a full nap cycle (begin + consolidate + complete)</span>
+<a id="__codelineno-27-16" name="__codelineno-27-16" href="#__codelineno-27-16"></a><span class="go">                        for one agent — what the auto-trigger timer calls</span>
+<a id="__codelineno-27-17" name="__codelineno-27-17" href="#__codelineno-27-17"></a><span class="go">    due                 list enabled nap_schedules whose current window has</span>
+<a id="__codelineno-27-18" name="__codelineno-27-18" href="#__codelineno-27-18"></a><span class="go">                        opened and not yet been completed</span>
+<a id="__codelineno-27-19" name="__codelineno-27-19" href="#__codelineno-27-19"></a><span class="go">    consolidate         walk the agent&#39;s recent memory_records, summarize by</span>
+<a id="__codelineno-27-20" name="__codelineno-27-20" href="#__codelineno-27-20"></a><span class="go">                        task/project, write a nap_summary row per group, and</span>
+<a id="__codelineno-27-21" name="__codelineno-27-21" href="#__codelineno-27-21"></a><span class="go">                        embed into the medium tier (mem-08)</span>
+<a id="__codelineno-27-22" name="__codelineno-27-22" href="#__codelineno-27-22"></a>
+<a id="__codelineno-27-23" name="__codelineno-27-23" href="#__codelineno-27-23"></a><span class="go">options:</span>
+<a id="__codelineno-27-24" name="__codelineno-27-24" href="#__codelineno-27-24"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-dispatch">mac dispatch<a class="headerlink" href="#mac-dispatch" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="gp">$ </span>mac<span class="w"> </span>dispatch<span class="w"> </span>--help
-<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="go">usage: mac dispatch [-h] {assign,tick} ...</span>
-<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>
-<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="go">  {assign,tick}</span>
-<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a>
-<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a><span class="go">options:</span>
-<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a><span class="go">  -h, --help     show this help message and exit</span>
-</code></pre></div>
-<h2 id="mac-message">mac message<a class="headerlink" href="#mac-message" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="gp">$ </span>mac<span class="w"> </span>message<span class="w"> </span>--help
-<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="go">usage: mac message [-h] {send,inbox} ...</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="gp">$ </span>mac<span class="w"> </span>dispatch<span class="w"> </span>--help
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="go">usage: mac dispatch [-h] {assign,tick} ...</span>
 <a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>
 <a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="go">  {send,inbox}</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="go">  {assign,tick}</span>
 <a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>
 <a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a><span class="go">options:</span>
-<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a><span class="go">  -h, --help    show this help message and exit</span>
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a><span class="go">  -h, --help     show this help message and exit</span>
+</code></pre></div>
+<h2 id="mac-message">mac message<a class="headerlink" href="#mac-message" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="gp">$ </span>mac<span class="w"> </span>message<span class="w"> </span>--help
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="go">usage: mac message [-h] {send,inbox} ...</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="go">  {send,inbox}</span>
+<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a>
+<a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a><span class="go">options:</span>
+<a id="__codelineno-29-8" name="__codelineno-29-8" href="#__codelineno-29-8"></a><span class="go">  -h, --help    show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-agentbus">mac agentbus<a class="headerlink" href="#mac-agentbus" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="gp">$ </span>mac<span class="w"> </span>agentbus<span class="w"> </span>--help
-<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="go">usage: mac agentbus [-h]</span>
-<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="go">                    {open,append,close,list,read,publish,repo-update,artifact-publish}</span>
-<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="go">                    ...</span>
-<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a>
-<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a><span class="go">  {open,append,close,list,read,publish,repo-update,artifact-publish}</span>
-<a id="__codelineno-29-8" name="__codelineno-29-8" href="#__codelineno-29-8"></a>
-<a id="__codelineno-29-9" name="__codelineno-29-9" href="#__codelineno-29-9"></a><span class="go">options:</span>
-<a id="__codelineno-29-10" name="__codelineno-29-10" href="#__codelineno-29-10"></a><span class="go">  -h, --help            show this help message and exit</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="gp">$ </span>mac<span class="w"> </span>agentbus<span class="w"> </span>--help
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="go">usage: mac agentbus [-h]</span>
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="go">                    {open,append,close,list,read,publish,repo-update,artifact-publish}</span>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="go">                    ...</span>
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>
+<a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a><span class="go">  {open,append,close,list,read,publish,repo-update,artifact-publish}</span>
+<a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a>
+<a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a><span class="go">options:</span>
+<a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-review">mac review<a class="headerlink" href="#mac-review" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="gp">$ </span>mac<span class="w"> </span>review<span class="w"> </span>--help
-<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="go">usage: mac review [-h] {request,decision,auto-land,experiment} ...</span>
-<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>
-<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="go">  {request,decision,auto-land,experiment}</span>
-<a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a><span class="go">    auto-land           land a task/branch iff the contract gate is GREEN and</span>
-<a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a><span class="go">                        an independent adversarial reviewer APPROVEs (default-</span>
-<a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a><span class="go">                        to-reject)</span>
-<a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a><span class="go">    experiment          assign and inspect replayable review-strategy</span>
-<a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a><span class="go">                        experiments</span>
-<a id="__codelineno-30-11" name="__codelineno-30-11" href="#__codelineno-30-11"></a>
-<a id="__codelineno-30-12" name="__codelineno-30-12" href="#__codelineno-30-12"></a><span class="go">options:</span>
-<a id="__codelineno-30-13" name="__codelineno-30-13" href="#__codelineno-30-13"></a><span class="go">  -h, --help            show this help message and exit</span>
-</code></pre></div>
-<h2 id="mac-publish">mac publish<a class="headerlink" href="#mac-publish" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="gp">$ </span>mac<span class="w"> </span>publish<span class="w"> </span>--help
-<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="go">usage: mac publish [-h] [--evidence-id EVIDENCE_ID] task_id target created_by</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="gp">$ </span>mac<span class="w"> </span>review<span class="w"> </span>--help
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="go">usage: mac review [-h] {request,decision,auto-land,experiment} ...</span>
 <a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>
 <a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="go">  task_id</span>
-<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="go">  target</span>
-<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="go">  created_by</span>
-<a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a>
-<a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a><span class="go">options:</span>
-<a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a><span class="go">  -h, --help            show this help message and exit</span>
-<a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a><span class="go">  --evidence-id EVIDENCE_ID</span>
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="go">  {request,decision,auto-land,experiment}</span>
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="go">    auto-land           land a task/branch iff the contract gate is GREEN and</span>
+<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="go">                        an independent adversarial reviewer APPROVEs (default-</span>
+<a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a><span class="go">                        to-reject)</span>
+<a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a><span class="go">    experiment          assign and inspect replayable review-strategy</span>
+<a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a><span class="go">                        experiments</span>
+<a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a>
+<a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a><span class="go">options:</span>
+<a id="__codelineno-31-13" name="__codelineno-31-13" href="#__codelineno-31-13"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-pull-request">mac pull-request<a class="headerlink" href="#mac-pull-request" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="gp">$ </span>mac<span class="w"> </span>pull-request<span class="w"> </span>--help
-<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="go">usage: mac pull-request [-h] {open} ...</span>
+<h2 id="mac-publish">mac publish<a class="headerlink" href="#mac-publish" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="gp">$ </span>mac<span class="w"> </span>publish<span class="w"> </span>--help
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="go">usage: mac publish [-h] [--evidence-id EVIDENCE_ID] task_id target created_by</span>
 <a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>
 <a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a><span class="go">  {open}</span>
-<a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a><span class="go">    open      open a PR/MR on github or gitea</span>
-<a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a>
-<a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a><span class="go">options:</span>
-<a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a><span class="go">  -h, --help  show this help message and exit</span>
+<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a><span class="go">  task_id</span>
+<a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a><span class="go">  target</span>
+<a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a><span class="go">  created_by</span>
+<a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a>
+<a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a><span class="go">options:</span>
+<a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-32-11" name="__codelineno-32-11" href="#__codelineno-32-11"></a><span class="go">  --evidence-id EVIDENCE_ID</span>
 </code></pre></div>
-<h2 id="mac-secret">mac secret<a class="headerlink" href="#mac-secret" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="gp">$ </span>mac<span class="w"> </span>secret<span class="w"> </span>--help
-<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a><span class="go">usage: mac secret [-h] {set,list,delete,rotate,access,audits} ...</span>
+<h2 id="mac-pull-request">mac pull-request<a class="headerlink" href="#mac-pull-request" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="gp">$ </span>mac<span class="w"> </span>pull-request<span class="w"> </span>--help
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a><span class="go">usage: mac pull-request [-h] {open} ...</span>
 <a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>
 <a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a><span class="go">  {set,list,delete,rotate,access,audits}</span>
-<a id="__codelineno-33-6" name="__codelineno-33-6" href="#__codelineno-33-6"></a><span class="go">    delete              hard-delete a secret (scrub its value)</span>
-<a id="__codelineno-33-7" name="__codelineno-33-7" href="#__codelineno-33-7"></a><span class="go">    rotate              rotate a secret&#39;s value in place (audited)</span>
-<a id="__codelineno-33-8" name="__codelineno-33-8" href="#__codelineno-33-8"></a>
-<a id="__codelineno-33-9" name="__codelineno-33-9" href="#__codelineno-33-9"></a><span class="go">options:</span>
-<a id="__codelineno-33-10" name="__codelineno-33-10" href="#__codelineno-33-10"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a><span class="go">  {open}</span>
+<a id="__codelineno-33-6" name="__codelineno-33-6" href="#__codelineno-33-6"></a><span class="go">    open      open a PR/MR on github or gitea</span>
+<a id="__codelineno-33-7" name="__codelineno-33-7" href="#__codelineno-33-7"></a>
+<a id="__codelineno-33-8" name="__codelineno-33-8" href="#__codelineno-33-8"></a><span class="go">options:</span>
+<a id="__codelineno-33-9" name="__codelineno-33-9" href="#__codelineno-33-9"></a><span class="go">  -h, --help  show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-runtime">mac runtime<a class="headerlink" href="#mac-runtime" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="gp">$ </span>mac<span class="w"> </span>runtime<span class="w"> </span>--help
-<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a><span class="go">usage: mac runtime [-h] {create,list,delta} ...</span>
+<h2 id="mac-secret">mac secret<a class="headerlink" href="#mac-secret" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="gp">$ </span>mac<span class="w"> </span>secret<span class="w"> </span>--help
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a><span class="go">usage: mac secret [-h] {set,list,delete,rotate,access,audits} ...</span>
 <a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>
 <a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a><span class="go">  {create,list,delta}</span>
-<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a><span class="go">    delta              runtime environment delta lifecycle</span>
-<a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a>
-<a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a><span class="go">options:</span>
-<a id="__codelineno-34-9" name="__codelineno-34-9" href="#__codelineno-34-9"></a><span class="go">  -h, --help           show this help message and exit</span>
+<a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a><span class="go">  {set,list,delete,rotate,access,audits}</span>
+<a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a><span class="go">    delete              hard-delete a secret (scrub its value)</span>
+<a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a><span class="go">    rotate              rotate a secret&#39;s value in place (audited)</span>
+<a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a>
+<a id="__codelineno-34-9" name="__codelineno-34-9" href="#__codelineno-34-9"></a><span class="go">options:</span>
+<a id="__codelineno-34-10" name="__codelineno-34-10" href="#__codelineno-34-10"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-artifact">mac artifact<a class="headerlink" href="#mac-artifact" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="gp">$ </span>mac<span class="w"> </span>artifact<span class="w"> </span>--help
-<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="go">usage: mac artifact [-h] {register,list,show,delete} ...</span>
+<h2 id="mac-runtime">mac runtime<a class="headerlink" href="#mac-runtime" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="gp">$ </span>mac<span class="w"> </span>runtime<span class="w"> </span>--help
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="go">usage: mac runtime [-h] {create,list,delta} ...</span>
 <a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>
 <a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a><span class="go">  {register,list,show,delete}</span>
-<a id="__codelineno-35-6" name="__codelineno-35-6" href="#__codelineno-35-6"></a>
-<a id="__codelineno-35-7" name="__codelineno-35-7" href="#__codelineno-35-7"></a><span class="go">options:</span>
-<a id="__codelineno-35-8" name="__codelineno-35-8" href="#__codelineno-35-8"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a><span class="go">  {create,list,delta}</span>
+<a id="__codelineno-35-6" name="__codelineno-35-6" href="#__codelineno-35-6"></a><span class="go">    delta              runtime environment delta lifecycle</span>
+<a id="__codelineno-35-7" name="__codelineno-35-7" href="#__codelineno-35-7"></a>
+<a id="__codelineno-35-8" name="__codelineno-35-8" href="#__codelineno-35-8"></a><span class="go">options:</span>
+<a id="__codelineno-35-9" name="__codelineno-35-9" href="#__codelineno-35-9"></a><span class="go">  -h, --help           show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-env">mac env<a class="headerlink" href="#mac-env" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="gp">$ </span>mac<span class="w"> </span>env<span class="w"> </span>--help
-<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="go">usage: mac env [-h] {register,list,show,deploy,current,history} ...</span>
+<h2 id="mac-artifact">mac artifact<a class="headerlink" href="#mac-artifact" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="gp">$ </span>mac<span class="w"> </span>artifact<span class="w"> </span>--help
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="go">usage: mac artifact [-h] {register,list,show,delete} ...</span>
 <a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>
 <a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a><span class="go">  {register,list,show,deploy,current,history}</span>
-<a id="__codelineno-36-6" name="__codelineno-36-6" href="#__codelineno-36-6"></a><span class="go">    deploy              record a new active deployment in an environment,</span>
-<a id="__codelineno-36-7" name="__codelineno-36-7" href="#__codelineno-36-7"></a><span class="go">                        retiring the prior one</span>
-<a id="__codelineno-36-8" name="__codelineno-36-8" href="#__codelineno-36-8"></a>
-<a id="__codelineno-36-9" name="__codelineno-36-9" href="#__codelineno-36-9"></a><span class="go">options:</span>
-<a id="__codelineno-36-10" name="__codelineno-36-10" href="#__codelineno-36-10"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a><span class="go">  {register,list,show,delete}</span>
+<a id="__codelineno-36-6" name="__codelineno-36-6" href="#__codelineno-36-6"></a>
+<a id="__codelineno-36-7" name="__codelineno-36-7" href="#__codelineno-36-7"></a><span class="go">options:</span>
+<a id="__codelineno-36-8" name="__codelineno-36-8" href="#__codelineno-36-8"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-bridge">mac bridge<a class="headerlink" href="#mac-bridge" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="gp">$ </span>mac<span class="w"> </span>bridge<span class="w"> </span>--help
-<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a><span class="go">usage: mac bridge [-h] {import,list,repository} ...</span>
+<h2 id="mac-env">mac env<a class="headerlink" href="#mac-env" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="gp">$ </span>mac<span class="w"> </span>env<span class="w"> </span>--help
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a><span class="go">usage: mac env [-h] {register,list,show,deploy,current,history} ...</span>
 <a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>
 <a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a><span class="go">  {import,list,repository}</span>
-<a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a><span class="go">    repository          registered project repository</span>
-<a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a>
-<a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a><span class="go">options:</span>
-<a id="__codelineno-37-9" name="__codelineno-37-9" href="#__codelineno-37-9"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a><span class="go">  {register,list,show,deploy,current,history}</span>
+<a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a><span class="go">    deploy              record a new active deployment in an environment,</span>
+<a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a><span class="go">                        retiring the prior one</span>
+<a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a>
+<a id="__codelineno-37-9" name="__codelineno-37-9" href="#__codelineno-37-9"></a><span class="go">options:</span>
+<a id="__codelineno-37-10" name="__codelineno-37-10" href="#__codelineno-37-10"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-integrations">mac integrations<a class="headerlink" href="#mac-integrations" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="gp">$ </span>mac<span class="w"> </span>integrations<span class="w"> </span>--help
-<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a><span class="go">usage: mac integrations [-h] {findings,observations} ...</span>
+<h2 id="mac-bridge">mac bridge<a class="headerlink" href="#mac-bridge" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="gp">$ </span>mac<span class="w"> </span>bridge<span class="w"> </span>--help
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a><span class="go">usage: mac bridge [-h] {import,list,repository} ...</span>
 <a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>
 <a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a><span class="go">  {findings,observations}</span>
-<a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a>
-<a id="__codelineno-38-7" name="__codelineno-38-7" href="#__codelineno-38-7"></a><span class="go">options:</span>
-<a id="__codelineno-38-8" name="__codelineno-38-8" href="#__codelineno-38-8"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a><span class="go">  {import,list,repository}</span>
+<a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a><span class="go">    repository          registered project repository</span>
+<a id="__codelineno-38-7" name="__codelineno-38-7" href="#__codelineno-38-7"></a>
+<a id="__codelineno-38-8" name="__codelineno-38-8" href="#__codelineno-38-8"></a><span class="go">options:</span>
+<a id="__codelineno-38-9" name="__codelineno-38-9" href="#__codelineno-38-9"></a><span class="go">  -h, --help            show this help message and exit</span>
+</code></pre></div>
+<h2 id="mac-integrations">mac integrations<a class="headerlink" href="#mac-integrations" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="gp">$ </span>mac<span class="w"> </span>integrations<span class="w"> </span>--help
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a><span class="go">usage: mac integrations [-h] {findings,observations} ...</span>
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a>
+<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-39-5" name="__codelineno-39-5" href="#__codelineno-39-5"></a><span class="go">  {findings,observations}</span>
+<a id="__codelineno-39-6" name="__codelineno-39-6" href="#__codelineno-39-6"></a>
+<a id="__codelineno-39-7" name="__codelineno-39-7" href="#__codelineno-39-7"></a><span class="go">options:</span>
+<a id="__codelineno-39-8" name="__codelineno-39-8" href="#__codelineno-39-8"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-memory">mac memory<a class="headerlink" href="#mac-memory" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="gp">$ </span>mac<span class="w"> </span>memory<span class="w"> </span>--help
-<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a><span class="go">usage: mac memory [-h]</span>
-<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a><span class="go">                  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams}</span>
-<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a><span class="go">                  ...</span>
-<a id="__codelineno-39-5" name="__codelineno-39-5" href="#__codelineno-39-5"></a>
-<a id="__codelineno-39-6" name="__codelineno-39-6" href="#__codelineno-39-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-39-7" name="__codelineno-39-7" href="#__codelineno-39-7"></a><span class="go">  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams}</span>
-<a id="__codelineno-39-8" name="__codelineno-39-8" href="#__codelineno-39-8"></a><span class="go">    decay               dream-04: forget stale, low-salience memory records</span>
-<a id="__codelineno-39-9" name="__codelineno-39-9" href="#__codelineno-39-9"></a><span class="go">                        (dry-run unless --apply); curated knowledge (user/proj</span>
-<a id="__codelineno-39-10" name="__codelineno-39-10" href="#__codelineno-39-10"></a><span class="go">                        ect/feedback/deployment_learning/fleet_learning/dream/</span>
-<a id="__codelineno-39-11" name="__codelineno-39-11" href="#__codelineno-39-11"></a><span class="go">                        beads_memory) is preserved</span>
-<a id="__codelineno-39-12" name="__codelineno-39-12" href="#__codelineno-39-12"></a><span class="go">    remember            store an ambient project-scoped fact (bd remember</span>
-<a id="__codelineno-39-13" name="__codelineno-39-13" href="#__codelineno-39-13"></a><span class="go">                        equivalent)</span>
-<a id="__codelineno-39-14" name="__codelineno-39-14" href="#__codelineno-39-14"></a><span class="go">    list                list project-scoped memories (bd memories equivalent)</span>
-<a id="__codelineno-39-15" name="__codelineno-39-15" href="#__codelineno-39-15"></a><span class="go">    forget              delete a project-scoped memory by key (bd forget</span>
-<a id="__codelineno-39-16" name="__codelineno-39-16" href="#__codelineno-39-16"></a><span class="go">                        equivalent)</span>
-<a id="__codelineno-39-17" name="__codelineno-39-17" href="#__codelineno-39-17"></a><span class="go">    summarize-actions   write a bounded memory record from action ledger</span>
-<a id="__codelineno-39-18" name="__codelineno-39-18" href="#__codelineno-39-18"></a><span class="go">                        summaries</span>
-<a id="__codelineno-39-19" name="__codelineno-39-19" href="#__codelineno-39-19"></a><span class="go">    embed               embed one memory_record into the vector tier (mem-07)</span>
-<a id="__codelineno-39-20" name="__codelineno-39-20" href="#__codelineno-39-20"></a><span class="go">    backfill            embed every memory_record not yet in the target Qdrant</span>
-<a id="__codelineno-39-21" name="__codelineno-39-21" href="#__codelineno-39-21"></a><span class="go">                        collection (mem-07)</span>
-<a id="__codelineno-39-22" name="__codelineno-39-22" href="#__codelineno-39-22"></a><span class="go">    health              mem-10: memory-tier health snapshot (counts + alerts</span>
-<a id="__codelineno-39-23" name="__codelineno-39-23" href="#__codelineno-39-23"></a><span class="go">                        for inert vector tier / stalled consolidator / disk</span>
-<a id="__codelineno-39-24" name="__codelineno-39-24" href="#__codelineno-39-24"></a><span class="go">                        bloat)</span>
-<a id="__codelineno-39-25" name="__codelineno-39-25" href="#__codelineno-39-25"></a><span class="go">    recall              vector-tier recall (mem-09): embed query and return</span>
-<a id="__codelineno-39-26" name="__codelineno-39-26" href="#__codelineno-39-26"></a><span class="go">                        top ranked memory hits with their summaries</span>
-<a id="__codelineno-39-27" name="__codelineno-39-27" href="#__codelineno-39-27"></a><span class="go">    recall-dreams       recall typed dream artifacts with</span>
-<a id="__codelineno-39-28" name="__codelineno-39-28" href="#__codelineno-39-28"></a><span class="go">                        scope/kind/confidence filters</span>
-<a id="__codelineno-39-29" name="__codelineno-39-29" href="#__codelineno-39-29"></a>
-<a id="__codelineno-39-30" name="__codelineno-39-30" href="#__codelineno-39-30"></a><span class="go">options:</span>
-<a id="__codelineno-39-31" name="__codelineno-39-31" href="#__codelineno-39-31"></a><span class="go">  -h, --help            show this help message and exit</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a><span class="gp">$ </span>mac<span class="w"> </span>memory<span class="w"> </span>--help
+<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a><span class="go">usage: mac memory [-h]</span>
+<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a><span class="go">                  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams}</span>
+<a id="__codelineno-40-4" name="__codelineno-40-4" href="#__codelineno-40-4"></a><span class="go">                  ...</span>
+<a id="__codelineno-40-5" name="__codelineno-40-5" href="#__codelineno-40-5"></a>
+<a id="__codelineno-40-6" name="__codelineno-40-6" href="#__codelineno-40-6"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-40-7" name="__codelineno-40-7" href="#__codelineno-40-7"></a><span class="go">  {decay,add,search,remember,list,forget,summarize-actions,embed,backfill,health,recall,recall-dreams}</span>
+<a id="__codelineno-40-8" name="__codelineno-40-8" href="#__codelineno-40-8"></a><span class="go">    decay               dream-04: forget stale, low-salience memory records</span>
+<a id="__codelineno-40-9" name="__codelineno-40-9" href="#__codelineno-40-9"></a><span class="go">                        (dry-run unless --apply); curated knowledge (user/proj</span>
+<a id="__codelineno-40-10" name="__codelineno-40-10" href="#__codelineno-40-10"></a><span class="go">                        ect/feedback/deployment_learning/fleet_learning/dream/</span>
+<a id="__codelineno-40-11" name="__codelineno-40-11" href="#__codelineno-40-11"></a><span class="go">                        beads_memory) is preserved</span>
+<a id="__codelineno-40-12" name="__codelineno-40-12" href="#__codelineno-40-12"></a><span class="go">    remember            store an ambient project-scoped fact (bd remember</span>
+<a id="__codelineno-40-13" name="__codelineno-40-13" href="#__codelineno-40-13"></a><span class="go">                        equivalent)</span>
+<a id="__codelineno-40-14" name="__codelineno-40-14" href="#__codelineno-40-14"></a><span class="go">    list                list project-scoped memories (bd memories equivalent)</span>
+<a id="__codelineno-40-15" name="__codelineno-40-15" href="#__codelineno-40-15"></a><span class="go">    forget              delete a project-scoped memory by key (bd forget</span>
+<a id="__codelineno-40-16" name="__codelineno-40-16" href="#__codelineno-40-16"></a><span class="go">                        equivalent)</span>
+<a id="__codelineno-40-17" name="__codelineno-40-17" href="#__codelineno-40-17"></a><span class="go">    summarize-actions   write a bounded memory record from action ledger</span>
+<a id="__codelineno-40-18" name="__codelineno-40-18" href="#__codelineno-40-18"></a><span class="go">                        summaries</span>
+<a id="__codelineno-40-19" name="__codelineno-40-19" href="#__codelineno-40-19"></a><span class="go">    embed               embed one memory_record into the vector tier (mem-07)</span>
+<a id="__codelineno-40-20" name="__codelineno-40-20" href="#__codelineno-40-20"></a><span class="go">    backfill            embed every memory_record not yet in the target Qdrant</span>
+<a id="__codelineno-40-21" name="__codelineno-40-21" href="#__codelineno-40-21"></a><span class="go">                        collection (mem-07)</span>
+<a id="__codelineno-40-22" name="__codelineno-40-22" href="#__codelineno-40-22"></a><span class="go">    health              mem-10: memory-tier health snapshot (counts + alerts</span>
+<a id="__codelineno-40-23" name="__codelineno-40-23" href="#__codelineno-40-23"></a><span class="go">                        for inert vector tier / stalled consolidator / disk</span>
+<a id="__codelineno-40-24" name="__codelineno-40-24" href="#__codelineno-40-24"></a><span class="go">                        bloat)</span>
+<a id="__codelineno-40-25" name="__codelineno-40-25" href="#__codelineno-40-25"></a><span class="go">    recall              vector-tier recall (mem-09): embed query and return</span>
+<a id="__codelineno-40-26" name="__codelineno-40-26" href="#__codelineno-40-26"></a><span class="go">                        top ranked memory hits with their summaries</span>
+<a id="__codelineno-40-27" name="__codelineno-40-27" href="#__codelineno-40-27"></a><span class="go">    recall-dreams       recall typed dream artifacts with</span>
+<a id="__codelineno-40-28" name="__codelineno-40-28" href="#__codelineno-40-28"></a><span class="go">                        scope/kind/confidence filters</span>
+<a id="__codelineno-40-29" name="__codelineno-40-29" href="#__codelineno-40-29"></a>
+<a id="__codelineno-40-30" name="__codelineno-40-30" href="#__codelineno-40-30"></a><span class="go">options:</span>
+<a id="__codelineno-40-31" name="__codelineno-40-31" href="#__codelineno-40-31"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-rollout">mac rollout<a class="headerlink" href="#mac-rollout" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a><span class="gp">$ </span>mac<span class="w"> </span>rollout<span class="w"> </span>--help
-<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a><span class="go">usage: mac rollout [-h]</span>
-<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a><span class="go">                   {create,list,advance,verify-artifact,health,rescue} ...</span>
-<a id="__codelineno-40-4" name="__codelineno-40-4" href="#__codelineno-40-4"></a>
-<a id="__codelineno-40-5" name="__codelineno-40-5" href="#__codelineno-40-5"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-40-6" name="__codelineno-40-6" href="#__codelineno-40-6"></a><span class="go">  {create,list,advance,verify-artifact,health,rescue}</span>
-<a id="__codelineno-40-7" name="__codelineno-40-7" href="#__codelineno-40-7"></a>
-<a id="__codelineno-40-8" name="__codelineno-40-8" href="#__codelineno-40-8"></a><span class="go">options:</span>
-<a id="__codelineno-40-9" name="__codelineno-40-9" href="#__codelineno-40-9"></a><span class="go">  -h, --help            show this help message and exit</span>
-</code></pre></div>
-<h2 id="mac-events">mac events<a class="headerlink" href="#mac-events" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a><span class="gp">$ </span>mac<span class="w"> </span>events<span class="w"> </span>--help
-<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a><span class="go">usage: mac events [-h] {list} ...</span>
-<a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a>
-<a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-41-5" name="__codelineno-41-5" href="#__codelineno-41-5"></a><span class="go">  {list}</span>
-<a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a><span class="go">    list      list events across task/rollout/eval_set/secret audit surfaces</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a><span class="gp">$ </span>mac<span class="w"> </span>rollout<span class="w"> </span>--help
+<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a><span class="go">usage: mac rollout [-h]</span>
+<a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a><span class="go">                   {create,list,advance,verify-artifact,health,rescue} ...</span>
+<a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a>
+<a id="__codelineno-41-5" name="__codelineno-41-5" href="#__codelineno-41-5"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a><span class="go">  {create,list,advance,verify-artifact,health,rescue}</span>
 <a id="__codelineno-41-7" name="__codelineno-41-7" href="#__codelineno-41-7"></a>
 <a id="__codelineno-41-8" name="__codelineno-41-8" href="#__codelineno-41-8"></a><span class="go">options:</span>
-<a id="__codelineno-41-9" name="__codelineno-41-9" href="#__codelineno-41-9"></a><span class="go">  -h, --help  show this help message and exit</span>
+<a id="__codelineno-41-9" name="__codelineno-41-9" href="#__codelineno-41-9"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-action-events">mac action-events<a class="headerlink" href="#mac-action-events" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a><span class="gp">$ </span>mac<span class="w"> </span>action-events<span class="w"> </span>--help
-<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="go">usage: mac action-events [-h] {list,stream,export-otlp} ...</span>
+<h2 id="mac-events">mac events<a class="headerlink" href="#mac-events" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a><span class="gp">$ </span>mac<span class="w"> </span>events<span class="w"> </span>--help
+<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="go">usage: mac events [-h] {list} ...</span>
 <a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a>
 <a id="__codelineno-42-4" name="__codelineno-42-4" href="#__codelineno-42-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-42-5" name="__codelineno-42-5" href="#__codelineno-42-5"></a><span class="go">  {list,stream,export-otlp}</span>
-<a id="__codelineno-42-6" name="__codelineno-42-6" href="#__codelineno-42-6"></a>
-<a id="__codelineno-42-7" name="__codelineno-42-7" href="#__codelineno-42-7"></a><span class="go">options:</span>
-<a id="__codelineno-42-8" name="__codelineno-42-8" href="#__codelineno-42-8"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-42-5" name="__codelineno-42-5" href="#__codelineno-42-5"></a><span class="go">  {list}</span>
+<a id="__codelineno-42-6" name="__codelineno-42-6" href="#__codelineno-42-6"></a><span class="go">    list      list events across task/rollout/eval_set/secret audit surfaces</span>
+<a id="__codelineno-42-7" name="__codelineno-42-7" href="#__codelineno-42-7"></a>
+<a id="__codelineno-42-8" name="__codelineno-42-8" href="#__codelineno-42-8"></a><span class="go">options:</span>
+<a id="__codelineno-42-9" name="__codelineno-42-9" href="#__codelineno-42-9"></a><span class="go">  -h, --help  show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-command-audit">mac command-audit<a class="headerlink" href="#mac-command-audit" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a><span class="gp">$ </span>mac<span class="w"> </span>command-audit<span class="w"> </span>--help
-<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a><span class="go">usage: mac command-audit [-h] {list} ...</span>
+<h2 id="mac-action-events">mac action-events<a class="headerlink" href="#mac-action-events" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a><span class="gp">$ </span>mac<span class="w"> </span>action-events<span class="w"> </span>--help
+<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a><span class="go">usage: mac action-events [-h] {list,stream,export-otlp} ...</span>
 <a id="__codelineno-43-3" name="__codelineno-43-3" href="#__codelineno-43-3"></a>
 <a id="__codelineno-43-4" name="__codelineno-43-4" href="#__codelineno-43-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-43-5" name="__codelineno-43-5" href="#__codelineno-43-5"></a><span class="go">  {list}</span>
-<a id="__codelineno-43-6" name="__codelineno-43-6" href="#__codelineno-43-6"></a><span class="go">    list      list audited command start/completion events</span>
-<a id="__codelineno-43-7" name="__codelineno-43-7" href="#__codelineno-43-7"></a>
-<a id="__codelineno-43-8" name="__codelineno-43-8" href="#__codelineno-43-8"></a><span class="go">options:</span>
-<a id="__codelineno-43-9" name="__codelineno-43-9" href="#__codelineno-43-9"></a><span class="go">  -h, --help  show this help message and exit</span>
+<a id="__codelineno-43-5" name="__codelineno-43-5" href="#__codelineno-43-5"></a><span class="go">  {list,stream,export-otlp}</span>
+<a id="__codelineno-43-6" name="__codelineno-43-6" href="#__codelineno-43-6"></a>
+<a id="__codelineno-43-7" name="__codelineno-43-7" href="#__codelineno-43-7"></a><span class="go">options:</span>
+<a id="__codelineno-43-8" name="__codelineno-43-8" href="#__codelineno-43-8"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-observability">mac observability<a class="headerlink" href="#mac-observability" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a><span class="gp">$ </span>mac<span class="w"> </span>observability<span class="w"> </span>--help
-<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a><span class="go">usage: mac observability [-h] {list,prune} ...</span>
+<h2 id="mac-command-audit">mac command-audit<a class="headerlink" href="#mac-command-audit" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a><span class="gp">$ </span>mac<span class="w"> </span>command-audit<span class="w"> </span>--help
+<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a><span class="go">usage: mac command-audit [-h] {list} ...</span>
 <a id="__codelineno-44-3" name="__codelineno-44-3" href="#__codelineno-44-3"></a>
 <a id="__codelineno-44-4" name="__codelineno-44-4" href="#__codelineno-44-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-44-5" name="__codelineno-44-5" href="#__codelineno-44-5"></a><span class="go">  {list,prune}</span>
-<a id="__codelineno-44-6" name="__codelineno-44-6" href="#__codelineno-44-6"></a><span class="go">    list        list structured observability metrics and logs</span>
-<a id="__codelineno-44-7" name="__codelineno-44-7" href="#__codelineno-44-7"></a><span class="go">    prune       delete observability_events older than --older-than (ISO</span>
-<a id="__codelineno-44-8" name="__codelineno-44-8" href="#__codelineno-44-8"></a><span class="go">                timestamp) or keep only --keep-last rows; returns the number</span>
-<a id="__codelineno-44-9" name="__codelineno-44-9" href="#__codelineno-44-9"></a><span class="go">                removed</span>
-<a id="__codelineno-44-10" name="__codelineno-44-10" href="#__codelineno-44-10"></a>
-<a id="__codelineno-44-11" name="__codelineno-44-11" href="#__codelineno-44-11"></a><span class="go">options:</span>
-<a id="__codelineno-44-12" name="__codelineno-44-12" href="#__codelineno-44-12"></a><span class="go">  -h, --help    show this help message and exit</span>
+<a id="__codelineno-44-5" name="__codelineno-44-5" href="#__codelineno-44-5"></a><span class="go">  {list}</span>
+<a id="__codelineno-44-6" name="__codelineno-44-6" href="#__codelineno-44-6"></a><span class="go">    list      list audited command start/completion events</span>
+<a id="__codelineno-44-7" name="__codelineno-44-7" href="#__codelineno-44-7"></a>
+<a id="__codelineno-44-8" name="__codelineno-44-8" href="#__codelineno-44-8"></a><span class="go">options:</span>
+<a id="__codelineno-44-9" name="__codelineno-44-9" href="#__codelineno-44-9"></a><span class="go">  -h, --help  show this help message and exit</span>
+</code></pre></div>
+<h2 id="mac-observability">mac observability<a class="headerlink" href="#mac-observability" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-45-1" name="__codelineno-45-1" href="#__codelineno-45-1"></a><span class="gp">$ </span>mac<span class="w"> </span>observability<span class="w"> </span>--help
+<a id="__codelineno-45-2" name="__codelineno-45-2" href="#__codelineno-45-2"></a><span class="go">usage: mac observability [-h] {list,prune} ...</span>
+<a id="__codelineno-45-3" name="__codelineno-45-3" href="#__codelineno-45-3"></a>
+<a id="__codelineno-45-4" name="__codelineno-45-4" href="#__codelineno-45-4"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-45-5" name="__codelineno-45-5" href="#__codelineno-45-5"></a><span class="go">  {list,prune}</span>
+<a id="__codelineno-45-6" name="__codelineno-45-6" href="#__codelineno-45-6"></a><span class="go">    list        list structured observability metrics and logs</span>
+<a id="__codelineno-45-7" name="__codelineno-45-7" href="#__codelineno-45-7"></a><span class="go">    prune       delete observability_events older than --older-than (ISO</span>
+<a id="__codelineno-45-8" name="__codelineno-45-8" href="#__codelineno-45-8"></a><span class="go">                timestamp) or keep only --keep-last rows; returns the number</span>
+<a id="__codelineno-45-9" name="__codelineno-45-9" href="#__codelineno-45-9"></a><span class="go">                removed</span>
+<a id="__codelineno-45-10" name="__codelineno-45-10" href="#__codelineno-45-10"></a>
+<a id="__codelineno-45-11" name="__codelineno-45-11" href="#__codelineno-45-11"></a><span class="go">options:</span>
+<a id="__codelineno-45-12" name="__codelineno-45-12" href="#__codelineno-45-12"></a><span class="go">  -h, --help    show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-communication">mac communication<a class="headerlink" href="#mac-communication" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-45-1" name="__codelineno-45-1" href="#__codelineno-45-1"></a><span class="gp">$ </span>mac<span class="w"> </span>communication<span class="w"> </span>--help
-<a id="__codelineno-45-2" name="__codelineno-45-2" href="#__codelineno-45-2"></a><span class="go">usage: mac communication [-h]</span>
-<a id="__codelineno-45-3" name="__codelineno-45-3" href="#__codelineno-45-3"></a><span class="go">                         {identity,account,representation,lease,send,deliveries}</span>
-<a id="__codelineno-45-4" name="__codelineno-45-4" href="#__codelineno-45-4"></a><span class="go">                         ...</span>
-<a id="__codelineno-45-5" name="__codelineno-45-5" href="#__codelineno-45-5"></a>
-<a id="__codelineno-45-6" name="__codelineno-45-6" href="#__codelineno-45-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-45-7" name="__codelineno-45-7" href="#__codelineno-45-7"></a><span class="go">  {identity,account,representation,lease,send,deliveries}</span>
-<a id="__codelineno-45-8" name="__codelineno-45-8" href="#__codelineno-45-8"></a><span class="go">    identity            manage stable human-facing identities</span>
-<a id="__codelineno-45-9" name="__codelineno-45-9" href="#__codelineno-45-9"></a><span class="go">    account             manage channel accounts owned by identities</span>
-<a id="__codelineno-45-10" name="__codelineno-45-10" href="#__codelineno-45-10"></a><span class="go">    representation      map internal agents/roles/projects to public</span>
-<a id="__codelineno-45-11" name="__codelineno-45-11" href="#__codelineno-45-11"></a><span class="go">                        identities</span>
-<a id="__codelineno-45-12" name="__codelineno-45-12" href="#__codelineno-45-12"></a><span class="go">    lease               manage singleton gateway ownership of channel accounts</span>
-<a id="__codelineno-45-13" name="__codelineno-45-13" href="#__codelineno-45-13"></a><span class="go">    send                enqueue an idempotent OpenClaw human-facing delivery</span>
-<a id="__codelineno-45-14" name="__codelineno-45-14" href="#__codelineno-45-14"></a>
-<a id="__codelineno-45-15" name="__codelineno-45-15" href="#__codelineno-45-15"></a><span class="go">options:</span>
-<a id="__codelineno-45-16" name="__codelineno-45-16" href="#__codelineno-45-16"></a><span class="go">  -h, --help            show this help message and exit</span>
-</code></pre></div>
-<h2 id="mac-comm">mac comm<a class="headerlink" href="#mac-comm" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-46-1" name="__codelineno-46-1" href="#__codelineno-46-1"></a><span class="gp">$ </span>mac<span class="w"> </span>comm<span class="w"> </span>--help
+<div class="highlight"><pre><span></span><code><a id="__codelineno-46-1" name="__codelineno-46-1" href="#__codelineno-46-1"></a><span class="gp">$ </span>mac<span class="w"> </span>communication<span class="w"> </span>--help
 <a id="__codelineno-46-2" name="__codelineno-46-2" href="#__codelineno-46-2"></a><span class="go">usage: mac communication [-h]</span>
 <a id="__codelineno-46-3" name="__codelineno-46-3" href="#__codelineno-46-3"></a><span class="go">                         {identity,account,representation,lease,send,deliveries}</span>
 <a id="__codelineno-46-4" name="__codelineno-46-4" href="#__codelineno-46-4"></a><span class="go">                         ...</span>
@@ -3688,71 +3705,89 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <a id="__codelineno-46-15" name="__codelineno-46-15" href="#__codelineno-46-15"></a><span class="go">options:</span>
 <a id="__codelineno-46-16" name="__codelineno-46-16" href="#__codelineno-46-16"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-notifier">mac notifier<a class="headerlink" href="#mac-notifier" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-47-1" name="__codelineno-47-1" href="#__codelineno-47-1"></a><span class="gp">$ </span>mac<span class="w"> </span>notifier<span class="w"> </span>--help
-<a id="__codelineno-47-2" name="__codelineno-47-2" href="#__codelineno-47-2"></a><span class="go">usage: mac notifier [-h] {configure,list,delete,deliver} ...</span>
-<a id="__codelineno-47-3" name="__codelineno-47-3" href="#__codelineno-47-3"></a>
-<a id="__codelineno-47-4" name="__codelineno-47-4" href="#__codelineno-47-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-47-5" name="__codelineno-47-5" href="#__codelineno-47-5"></a><span class="go">  {configure,list,delete,deliver}</span>
-<a id="__codelineno-47-6" name="__codelineno-47-6" href="#__codelineno-47-6"></a>
-<a id="__codelineno-47-7" name="__codelineno-47-7" href="#__codelineno-47-7"></a><span class="go">options:</span>
-<a id="__codelineno-47-8" name="__codelineno-47-8" href="#__codelineno-47-8"></a><span class="go">  -h, --help            show this help message and exit</span>
+<h2 id="mac-comm">mac comm<a class="headerlink" href="#mac-comm" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-47-1" name="__codelineno-47-1" href="#__codelineno-47-1"></a><span class="gp">$ </span>mac<span class="w"> </span>comm<span class="w"> </span>--help
+<a id="__codelineno-47-2" name="__codelineno-47-2" href="#__codelineno-47-2"></a><span class="go">usage: mac communication [-h]</span>
+<a id="__codelineno-47-3" name="__codelineno-47-3" href="#__codelineno-47-3"></a><span class="go">                         {identity,account,representation,lease,send,deliveries}</span>
+<a id="__codelineno-47-4" name="__codelineno-47-4" href="#__codelineno-47-4"></a><span class="go">                         ...</span>
+<a id="__codelineno-47-5" name="__codelineno-47-5" href="#__codelineno-47-5"></a>
+<a id="__codelineno-47-6" name="__codelineno-47-6" href="#__codelineno-47-6"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-47-7" name="__codelineno-47-7" href="#__codelineno-47-7"></a><span class="go">  {identity,account,representation,lease,send,deliveries}</span>
+<a id="__codelineno-47-8" name="__codelineno-47-8" href="#__codelineno-47-8"></a><span class="go">    identity            manage stable human-facing identities</span>
+<a id="__codelineno-47-9" name="__codelineno-47-9" href="#__codelineno-47-9"></a><span class="go">    account             manage channel accounts owned by identities</span>
+<a id="__codelineno-47-10" name="__codelineno-47-10" href="#__codelineno-47-10"></a><span class="go">    representation      map internal agents/roles/projects to public</span>
+<a id="__codelineno-47-11" name="__codelineno-47-11" href="#__codelineno-47-11"></a><span class="go">                        identities</span>
+<a id="__codelineno-47-12" name="__codelineno-47-12" href="#__codelineno-47-12"></a><span class="go">    lease               manage singleton gateway ownership of channel accounts</span>
+<a id="__codelineno-47-13" name="__codelineno-47-13" href="#__codelineno-47-13"></a><span class="go">    send                enqueue an idempotent OpenClaw human-facing delivery</span>
+<a id="__codelineno-47-14" name="__codelineno-47-14" href="#__codelineno-47-14"></a>
+<a id="__codelineno-47-15" name="__codelineno-47-15" href="#__codelineno-47-15"></a><span class="go">options:</span>
+<a id="__codelineno-47-16" name="__codelineno-47-16" href="#__codelineno-47-16"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-migrate">mac migrate<a class="headerlink" href="#mac-migrate" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-48-1" name="__codelineno-48-1" href="#__codelineno-48-1"></a><span class="gp">$ </span>mac<span class="w"> </span>migrate<span class="w"> </span>--help
-<a id="__codelineno-48-2" name="__codelineno-48-2" href="#__codelineno-48-2"></a><span class="go">usage: mac migrate [-h] {import,acc,local-ledger} ...</span>
+<h2 id="mac-notifier">mac notifier<a class="headerlink" href="#mac-notifier" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-48-1" name="__codelineno-48-1" href="#__codelineno-48-1"></a><span class="gp">$ </span>mac<span class="w"> </span>notifier<span class="w"> </span>--help
+<a id="__codelineno-48-2" name="__codelineno-48-2" href="#__codelineno-48-2"></a><span class="go">usage: mac notifier [-h] {configure,list,delete,deliver} ...</span>
 <a id="__codelineno-48-3" name="__codelineno-48-3" href="#__codelineno-48-3"></a>
 <a id="__codelineno-48-4" name="__codelineno-48-4" href="#__codelineno-48-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-48-5" name="__codelineno-48-5" href="#__codelineno-48-5"></a><span class="go">  {import,acc,local-ledger}</span>
-<a id="__codelineno-48-6" name="__codelineno-48-6" href="#__codelineno-48-6"></a><span class="go">    import              replay a JSONL stream of {record:</span>
-<a id="__codelineno-48-7" name="__codelineno-48-7" href="#__codelineno-48-7"></a><span class="go">                        tenant|user|task|evidence|history} rows</span>
-<a id="__codelineno-48-8" name="__codelineno-48-8" href="#__codelineno-48-8"></a><span class="go">    acc                 dry-run or import an ACC SQLite database once</span>
-<a id="__codelineno-48-9" name="__codelineno-48-9" href="#__codelineno-48-9"></a><span class="go">    local-ledger        inspect, transfer active tasks from an isolated SQLite</span>
-<a id="__codelineno-48-10" name="__codelineno-48-10" href="#__codelineno-48-10"></a><span class="go">                        authority to the selected hub, or retire an inactive</span>
-<a id="__codelineno-48-11" name="__codelineno-48-11" href="#__codelineno-48-11"></a><span class="go">                        legacy authority</span>
-<a id="__codelineno-48-12" name="__codelineno-48-12" href="#__codelineno-48-12"></a>
-<a id="__codelineno-48-13" name="__codelineno-48-13" href="#__codelineno-48-13"></a><span class="go">options:</span>
-<a id="__codelineno-48-14" name="__codelineno-48-14" href="#__codelineno-48-14"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-48-5" name="__codelineno-48-5" href="#__codelineno-48-5"></a><span class="go">  {configure,list,delete,deliver}</span>
+<a id="__codelineno-48-6" name="__codelineno-48-6" href="#__codelineno-48-6"></a>
+<a id="__codelineno-48-7" name="__codelineno-48-7" href="#__codelineno-48-7"></a><span class="go">options:</span>
+<a id="__codelineno-48-8" name="__codelineno-48-8" href="#__codelineno-48-8"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-workflow">mac workflow<a class="headerlink" href="#mac-workflow" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-49-1" name="__codelineno-49-1" href="#__codelineno-49-1"></a><span class="gp">$ </span>mac<span class="w"> </span>workflow<span class="w"> </span>--help
-<a id="__codelineno-49-2" name="__codelineno-49-2" href="#__codelineno-49-2"></a><span class="go">usage: mac workflow [-h] {decisions,start} ...</span>
+<h2 id="mac-migrate">mac migrate<a class="headerlink" href="#mac-migrate" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-49-1" name="__codelineno-49-1" href="#__codelineno-49-1"></a><span class="gp">$ </span>mac<span class="w"> </span>migrate<span class="w"> </span>--help
+<a id="__codelineno-49-2" name="__codelineno-49-2" href="#__codelineno-49-2"></a><span class="go">usage: mac migrate [-h] {import,acc,local-ledger} ...</span>
 <a id="__codelineno-49-3" name="__codelineno-49-3" href="#__codelineno-49-3"></a>
 <a id="__codelineno-49-4" name="__codelineno-49-4" href="#__codelineno-49-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-49-5" name="__codelineno-49-5" href="#__codelineno-49-5"></a><span class="go">  {decisions,start}</span>
-<a id="__codelineno-49-6" name="__codelineno-49-6" href="#__codelineno-49-6"></a><span class="go">    decisions        list every human-decision (approval) gate in a workflow</span>
-<a id="__codelineno-49-7" name="__codelineno-49-7" href="#__codelineno-49-7"></a><span class="go">                     or a live run. Pass a workflow id/slug to see the</span>
-<a id="__codelineno-49-8" name="__codelineno-49-8" href="#__codelineno-49-8"></a><span class="go">                     definition&#39;s gates, or a run id (prefix run_) for live</span>
-<a id="__codelineno-49-9" name="__codelineno-49-9" href="#__codelineno-49-9"></a><span class="go">                     state.</span>
-<a id="__codelineno-49-10" name="__codelineno-49-10" href="#__codelineno-49-10"></a><span class="go">    start            start a workflow run, optionally with front-loaded</span>
-<a id="__codelineno-49-11" name="__codelineno-49-11" href="#__codelineno-49-11"></a><span class="go">                     approval decisions so the run can advance unattended.</span>
+<a id="__codelineno-49-5" name="__codelineno-49-5" href="#__codelineno-49-5"></a><span class="go">  {import,acc,local-ledger}</span>
+<a id="__codelineno-49-6" name="__codelineno-49-6" href="#__codelineno-49-6"></a><span class="go">    import              replay a JSONL stream of {record:</span>
+<a id="__codelineno-49-7" name="__codelineno-49-7" href="#__codelineno-49-7"></a><span class="go">                        tenant|user|task|evidence|history} rows</span>
+<a id="__codelineno-49-8" name="__codelineno-49-8" href="#__codelineno-49-8"></a><span class="go">    acc                 dry-run or import an ACC SQLite database once</span>
+<a id="__codelineno-49-9" name="__codelineno-49-9" href="#__codelineno-49-9"></a><span class="go">    local-ledger        inspect, transfer active tasks from an isolated SQLite</span>
+<a id="__codelineno-49-10" name="__codelineno-49-10" href="#__codelineno-49-10"></a><span class="go">                        authority to the selected hub, or retire an inactive</span>
+<a id="__codelineno-49-11" name="__codelineno-49-11" href="#__codelineno-49-11"></a><span class="go">                        legacy authority</span>
 <a id="__codelineno-49-12" name="__codelineno-49-12" href="#__codelineno-49-12"></a>
 <a id="__codelineno-49-13" name="__codelineno-49-13" href="#__codelineno-49-13"></a><span class="go">options:</span>
-<a id="__codelineno-49-14" name="__codelineno-49-14" href="#__codelineno-49-14"></a><span class="go">  -h, --help         show this help message and exit</span>
+<a id="__codelineno-49-14" name="__codelineno-49-14" href="#__codelineno-49-14"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-eval">mac eval<a class="headerlink" href="#mac-eval" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-50-1" name="__codelineno-50-1" href="#__codelineno-50-1"></a><span class="gp">$ </span>mac<span class="w"> </span><span class="nb">eval</span><span class="w"> </span>--help
-<a id="__codelineno-50-2" name="__codelineno-50-2" href="#__codelineno-50-2"></a><span class="go">usage: mac eval [-h] {set,run} ...</span>
+<h2 id="mac-workflow">mac workflow<a class="headerlink" href="#mac-workflow" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-50-1" name="__codelineno-50-1" href="#__codelineno-50-1"></a><span class="gp">$ </span>mac<span class="w"> </span>workflow<span class="w"> </span>--help
+<a id="__codelineno-50-2" name="__codelineno-50-2" href="#__codelineno-50-2"></a><span class="go">usage: mac workflow [-h] {decisions,start} ...</span>
 <a id="__codelineno-50-3" name="__codelineno-50-3" href="#__codelineno-50-3"></a>
 <a id="__codelineno-50-4" name="__codelineno-50-4" href="#__codelineno-50-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-50-5" name="__codelineno-50-5" href="#__codelineno-50-5"></a><span class="go">  {set,run}</span>
-<a id="__codelineno-50-6" name="__codelineno-50-6" href="#__codelineno-50-6"></a><span class="go">    set       eval set commands</span>
-<a id="__codelineno-50-7" name="__codelineno-50-7" href="#__codelineno-50-7"></a><span class="go">    run       eval run commands</span>
-<a id="__codelineno-50-8" name="__codelineno-50-8" href="#__codelineno-50-8"></a>
-<a id="__codelineno-50-9" name="__codelineno-50-9" href="#__codelineno-50-9"></a><span class="go">options:</span>
-<a id="__codelineno-50-10" name="__codelineno-50-10" href="#__codelineno-50-10"></a><span class="go">  -h, --help  show this help message and exit</span>
+<a id="__codelineno-50-5" name="__codelineno-50-5" href="#__codelineno-50-5"></a><span class="go">  {decisions,start}</span>
+<a id="__codelineno-50-6" name="__codelineno-50-6" href="#__codelineno-50-6"></a><span class="go">    decisions        list every human-decision (approval) gate in a workflow</span>
+<a id="__codelineno-50-7" name="__codelineno-50-7" href="#__codelineno-50-7"></a><span class="go">                     or a live run. Pass a workflow id/slug to see the</span>
+<a id="__codelineno-50-8" name="__codelineno-50-8" href="#__codelineno-50-8"></a><span class="go">                     definition&#39;s gates, or a run id (prefix run_) for live</span>
+<a id="__codelineno-50-9" name="__codelineno-50-9" href="#__codelineno-50-9"></a><span class="go">                     state.</span>
+<a id="__codelineno-50-10" name="__codelineno-50-10" href="#__codelineno-50-10"></a><span class="go">    start            start a workflow run, optionally with front-loaded</span>
+<a id="__codelineno-50-11" name="__codelineno-50-11" href="#__codelineno-50-11"></a><span class="go">                     approval decisions so the run can advance unattended.</span>
+<a id="__codelineno-50-12" name="__codelineno-50-12" href="#__codelineno-50-12"></a>
+<a id="__codelineno-50-13" name="__codelineno-50-13" href="#__codelineno-50-13"></a><span class="go">options:</span>
+<a id="__codelineno-50-14" name="__codelineno-50-14" href="#__codelineno-50-14"></a><span class="go">  -h, --help         show this help message and exit</span>
 </code></pre></div>
-<h2 id="mac-plan">mac plan<a class="headerlink" href="#mac-plan" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-51-1" name="__codelineno-51-1" href="#__codelineno-51-1"></a><span class="gp">$ </span>mac<span class="w"> </span>plan<span class="w"> </span>--help
-<a id="__codelineno-51-2" name="__codelineno-51-2" href="#__codelineno-51-2"></a><span class="go">usage: mac plan [-h] {order} ...</span>
+<h2 id="mac-eval">mac eval<a class="headerlink" href="#mac-eval" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-51-1" name="__codelineno-51-1" href="#__codelineno-51-1"></a><span class="gp">$ </span>mac<span class="w"> </span><span class="nb">eval</span><span class="w"> </span>--help
+<a id="__codelineno-51-2" name="__codelineno-51-2" href="#__codelineno-51-2"></a><span class="go">usage: mac eval [-h] {set,run} ...</span>
 <a id="__codelineno-51-3" name="__codelineno-51-3" href="#__codelineno-51-3"></a>
 <a id="__codelineno-51-4" name="__codelineno-51-4" href="#__codelineno-51-4"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-51-5" name="__codelineno-51-5" href="#__codelineno-51-5"></a><span class="go">  {order}</span>
-<a id="__codelineno-51-6" name="__codelineno-51-6" href="#__codelineno-51-6"></a><span class="go">    order     order files/modules by import/call topology (leaf-first or core-</span>
-<a id="__codelineno-51-7" name="__codelineno-51-7" href="#__codelineno-51-7"></a><span class="go">              first layers)</span>
+<a id="__codelineno-51-5" name="__codelineno-51-5" href="#__codelineno-51-5"></a><span class="go">  {set,run}</span>
+<a id="__codelineno-51-6" name="__codelineno-51-6" href="#__codelineno-51-6"></a><span class="go">    set       eval set commands</span>
+<a id="__codelineno-51-7" name="__codelineno-51-7" href="#__codelineno-51-7"></a><span class="go">    run       eval run commands</span>
 <a id="__codelineno-51-8" name="__codelineno-51-8" href="#__codelineno-51-8"></a>
 <a id="__codelineno-51-9" name="__codelineno-51-9" href="#__codelineno-51-9"></a><span class="go">options:</span>
 <a id="__codelineno-51-10" name="__codelineno-51-10" href="#__codelineno-51-10"></a><span class="go">  -h, --help  show this help message and exit</span>
+</code></pre></div>
+<h2 id="mac-plan">mac plan<a class="headerlink" href="#mac-plan" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-52-1" name="__codelineno-52-1" href="#__codelineno-52-1"></a><span class="gp">$ </span>mac<span class="w"> </span>plan<span class="w"> </span>--help
+<a id="__codelineno-52-2" name="__codelineno-52-2" href="#__codelineno-52-2"></a><span class="go">usage: mac plan [-h] {order} ...</span>
+<a id="__codelineno-52-3" name="__codelineno-52-3" href="#__codelineno-52-3"></a>
+<a id="__codelineno-52-4" name="__codelineno-52-4" href="#__codelineno-52-4"></a><span class="go">positional arguments:</span>
+<a id="__codelineno-52-5" name="__codelineno-52-5" href="#__codelineno-52-5"></a><span class="go">  {order}</span>
+<a id="__codelineno-52-6" name="__codelineno-52-6" href="#__codelineno-52-6"></a><span class="go">    order     order files/modules by import/call topology (leaf-first or core-</span>
+<a id="__codelineno-52-7" name="__codelineno-52-7" href="#__codelineno-52-7"></a><span class="go">              first layers)</span>
+<a id="__codelineno-52-8" name="__codelineno-52-8" href="#__codelineno-52-8"></a>
+<a id="__codelineno-52-9" name="__codelineno-52-9" href="#__codelineno-52-9"></a><span class="go">options:</span>
+<a id="__codelineno-52-10" name="__codelineno-52-10" href="#__codelineno-52-10"></a><span class="go">  -h, --help  show this help message and exit</span>
 </code></pre></div>
 
 

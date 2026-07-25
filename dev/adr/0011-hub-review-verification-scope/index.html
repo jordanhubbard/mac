@@ -1667,6 +1667,7 @@
 <li>Status: <strong>Accepted</strong></li>
 <li>Date: 2026-07-05</li>
 <li>Amended: <strong>2026-07-06</strong> by <code>docs/testing-strategy.md</code></li>
+<li>Amended: <strong>2026-07-25</strong> to make current-main publication the central full gate</li>
 <li>Decision owner: MAC fleet owner</li>
 </ul>
 <h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
@@ -1728,7 +1729,7 @@ second full-suite CI system, and the most common failure mode is no longer
 "review found a bug"; it is "another long full-suite environment found a
 flake, coverage-margin wobble, or infrastructure drift."</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
-<p>Task publication and hub review verification should run the explicit
+<p>The task-owned branch and hub review verification should run the explicit
 <strong>affected + canary sanity contract</strong>, not the full repository contract suite,
 when selection is trustworthy. Neither phase should duplicate an identical
 test scope already proven at the same commit.</p>
@@ -1756,19 +1757,28 @@ verifier must fall back to the full repository contract command.</p>
 a cheap deterministic check or no-op, provided the review verdict records why no
 tests were selected and the executor evidence already contains the required
 repository verification.</p>
+<p>Canonical publication is a different boundary: immediately before pushing
+main, the merge queue computes the exact merge of the reviewed commit onto the
+current main tip, materializes that projected tree in a disposable checkout,
+and runs the full configured repository contract in the existing OpenShell
+verification boundary. It then requires the actual local merge tree to equal
+the tested projection before push. This is one full-suite run for the serial
+integration point, not one full run per branch and another per review.</p>
 <h2 id="consequences">Consequences<a class="headerlink" href="#consequences" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Option A remains the canonical branch-publication gate and runs the explicit
-  sanity contract, which fails closed to the full suite for broad or uncertain
-  changes.</li>
+<li>Option A remains the task-branch gate and runs the explicit sanity contract,
+  which fails closed to the full suite for broad or uncertain changes.</li>
 <li>Option C remains a hub-controlled review gate, but it becomes proportional to
   the changed files instead of proportional to the whole repository.</li>
+<li>Canonical current-main publication is the central full-contract gate. A
+  conflict, missing command, test failure, verifier error, or tested-tree
+  mismatch blocks the push.</li>
 <li>The review verdict manifest must record the selected test scope, the command
   that ran, and any fallback reason. It should continue to carry the executor's
   CodeGraph audit because the hub verifies the same commit.</li>
-<li>Full-suite coverage remains valuable, but it belongs at mainline integration,
-  scheduled audits, and explicit fallback points, not as an unconditional
-  duplicate in every task and review sandbox.</li>
+<li>Full-suite coverage remains valuable at mainline integration, scheduled
+  audits, and explicit fallback points, not as an unconditional duplicate in
+  every task and review sandbox.</li>
 <li>The trade-off is that an affected-test review can miss unrelated integration
   regressions. Public/process canaries limit that risk, broad or unmappable
   changes fall back to the full suite, and mainline runs the complete coverage

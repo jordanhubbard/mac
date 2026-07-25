@@ -1646,6 +1646,14 @@
 
 
 <h1 id="dispatch-priority-bias-ordering-audit">Dispatch priority bias ordering audit<a class="headerlink" href="#dispatch-priority-bias-ordering-audit" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Historical audit, amended 2026-07-25. The original priority/FIFO analysis
+below remains useful, but dispatch now also applies a work-conserving class
+lane and bounded due-time aging. <code>urgent</code> and <code>recovery</code> outrank <code>normal</code>,
+while <code>background</code> yields; no worker is held idle when the higher lanes are
+empty. The candidate scan includes an explicit urgent/recovery window, and
+<code>task show</code> exposes the resolved class, age bonus, and due bonus.</p>
+</blockquote>
 <p>Ground-truth finding for the parent repair
 (<code>task_repair_6cd69ae5474dfb0f601ad5cd</code>). It traces how task-dispatch selection
 orders by priority, whether a distinct "priority bias" concept exists, and where
@@ -1672,20 +1680,24 @@ the Python dispatch ordering to the thin dispatch/api/worker surfaces:</p>
 indexes but issues <strong>no</strong> dispatch-time <code>ORDER BY priority</code> query itself. The
 authoritative selection order is computed in <code>src/mac/services.py</code>:</p>
 <ul>
-<li><code>_dispatch_candidate_tasks</code> reads a bounded candidate set as the union of two
+<li><code>_dispatch_candidate_tasks</code> reads a bounded candidate set as the union of
   windows over open, unowned, unleased tasks:
   <code>ORDER BY priority DESC, created_at, id LIMIT 500</code> (the hot high-priority
   window) unioned with <code>ORDER BY created_at, id LIMIT 500</code> (the oldest window,
   so an ancient low-priority task can still enter the scoring pass when the
-  priority window is saturated). De-duplicated by id.</li>
+  priority window is saturated), plus an explicit <code>urgent</code>/<code>recovery</code> metadata
+  window. De-duplicated by id.</li>
 <li><code>_dispatch_task_sort_key</code> is the real comparator. It returns the tuple
   <code>(-effective_priority, -order_signal, created_at, id)</code> where
-  <code>effective_priority = priority + age_bonus</code>. Because the sort is ascending,
+  <code>effective_priority = class_stride + priority + age_bonus + due_bonus</code>.
+  Because the sort is ascending,
   negating the first two fields surfaces the higher priority and higher
   order signal first; <code>created_at</code> then <code>id</code> are ascending fallbacks (FIFO,
   then stable id).</li>
 <li><code>_dispatch_priority_age_bonus</code> adds <code>floor(age_seconds / step)</code> priority
   points, <code>step = MAC_DISPATCH_PRIORITY_AGING_SECONDS</code> (default 24h, floor 60s).</li>
+<li><code>_dispatch_due_bonus</code> adds a bounded bonus after an optional <code>due_at</code> or
+  <code>deadline_at</code> passes (default one point per four hours, capped at 24).</li>
 <li><code>_dispatch_ordered_tasks</code> groups candidates by tenant, and
   <code>_interleave_tasks_by_project</code> round-robins each tenant's projects; within a
   project <code>_rotate_by_page_prefix</code> buckets by the leading
@@ -1694,8 +1706,9 @@ authoritative selection order is computed in <code>src/mac/services.py</code>:</
   <code>_dispatch_task_sort_key</code> order, and single-bucket / single-project groups are
   no-ops, so the head still leads on <code>(priority, age)</code>.</li>
 </ul>
-<p>Effective tie-break precedence: <strong>effective priority (priority + age bonus) →
-work-package order signal → created_at (oldest first) → id</strong>, wrapped in
+<p>Effective tie-break precedence: <strong>dispatch class → effective priority
+(priority + age bonus + due bonus) → work-package order signal → created_at
+(oldest first) → id</strong>, wrapped in
 tenant/project/page-prefix fairness round-robins that only reorder <em>across</em>
 groups, never within a same-key group.</p>
 <h2 id="2-is-priority-bias-a-distinct-concept-or-is-priority-ordering-the-bias">(2) Is "priority bias" a distinct concept, or IS priority ordering the bias?<a class="headerlink" href="#2-is-priority-bias-a-distinct-concept-or-is-priority-ordering-the-bias" title="Permanent link">&para;</a></h2>
