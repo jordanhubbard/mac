@@ -17102,6 +17102,46 @@ class ControlPlane:
             hits = [hit for hit in hits if _confidence_score(hit) >= floor]
         return hits[: max(1, int(limit))]
 
+    def import_dream_logs(
+        self,
+        *,
+        dream_logs_dir: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        created_by: str = "dream-log-import",
+        embed: bool = True,
+        qdrant_url: Optional[str] = None,
+        vector_writer: Optional[Any] = None,
+        dry_run: bool = False,
+    ) -> JsonDict:
+        """Merge the gateway's orphaned ``~/.hermes/dream_logs`` reports into
+        durable ``memory_records`` (record_type ``dream:imported_report``).
+
+        No first-party reader consumes ``dream_logs`` today, so that learning
+        never reached MAC's durable store; this consolidates it. Each imported
+        memory is ``subject_type='dream'`` and, when ``embed`` is set and a
+        Qdrant URL is configured, is embedded into the medium tier so it becomes
+        retrievable via :meth:`recall_dream_artifacts`. Idempotent; dedups on
+        findings. Returns the importer's stable report dict.
+        """
+        from pathlib import Path as _Path
+
+        from mac import dream_log_import as _dli
+
+        if embed and vector_writer is None and not dry_run:
+            url = _configured_qdrant_url(qdrant_url)
+            if url:
+                from mac.vector_writer_service import VectorWriterService
+
+                vector_writer = VectorWriterService(memory=self.memory, qdrant_url=url)
+        return _dli.import_dream_logs(
+            self,
+            dream_logs_dir=_Path(dream_logs_dir) if dream_logs_dir else None,
+            agent_id=agent_id,
+            created_by=created_by,
+            vector_writer=vector_writer,
+            dry_run=dry_run,
+        )
+
     def run_nap_cycle(
         self,
         agent_id: str,

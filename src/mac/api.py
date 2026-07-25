@@ -1849,6 +1849,15 @@ class NapCycle(BaseModel):
     qdrant_url: Optional[str] = None
 
 
+class DreamImportLogs(BaseModel):
+    dream_logs_dir: Optional[str] = None
+    agent_id: Optional[str] = None
+    created_by: str = "dream-log-import"
+    embed: bool = True
+    dry_run: bool = False
+    qdrant_url: Optional[str] = None
+
+
 class NapConsolidate(BaseModel):
     since: Optional[str] = None
     nap_run_id: Optional[str] = None
@@ -7061,6 +7070,22 @@ def create_app(
             vector_writer=vector_writer,
             embed_into_medium=body.embed_into_medium,
             emit_dream_artifacts=body.emit_dream_artifacts,
+        )
+
+    @app.post("/dream/import-logs")
+    def import_dream_logs(body: DreamImportLogs) -> Dict[str, Any]:
+        vector_writer = _vector_writer_for_memory(
+            cp,
+            enabled=body.embed and not body.dry_run,
+            qdrant_url=body.qdrant_url,
+        )
+        return cp.import_dream_logs(
+            dream_logs_dir=body.dream_logs_dir,
+            agent_id=body.agent_id,
+            created_by=body.created_by,
+            embed=body.embed,
+            vector_writer=vector_writer,
+            dry_run=body.dry_run,
         )
 
     @app.post("/agents/{agent_id}/nap-consolidate")
