@@ -312,6 +312,59 @@ def _api_url_for_hub_target(raw: str, *, default_port: int) -> str:
     return "http://%s:%d" % (host, port)
 
 
+def _fleet_prompt_default(env: Mapping[str, str]) -> "tuple[str, int]":
+    """Best-effort hub URL + control port from ``~/.mac/fleets.yaml``.
+
+    A managed login profile's ``api_url`` is an ephemeral loopback SSH-tunnel
+    port that changes every launch, so it is a poor prompt default and forces
+    the operator to re-enter the real hub each time. The fleet registry already
+    records the canonical hub, so we seed the prompt from it: honour
+    ``IDE_FLEET``/``MAC_FLEET`` when set, otherwise use the registry's default
+    fleet. Any problem (no registry, unset ``hub_url``, parse error, multiple
+    fleets with no default) yields ``("", 0)`` so the caller falls back to the
+    profile/tunnel default and the prompt still works. The path is resolved from
+    the caller-supplied ``env`` (via ``MAC_FLEETS_CONFIG``) so tests stay
+    hermetic; only when that is unset do we read the real ``~/.mac`` location.
+    """
+
+    try:
+        from mac.fleet_ssh import (
+            fleet_entries,
+            load_fleet_config,
+            resolve_fleet_key,
+        )
+    except Exception:
+        return ("", 0)
+
+    explicit = _value(env, "MAC_FLEETS_CONFIG")
+    path = (
+        Path(explicit).expanduser()
+        if explicit
+        else Path.home() / ".mac" / "fleets.yaml"
+    )
+    if not path.is_file():
+        return ("", 0)
+    fleet = _value(env, "IDE_FLEET") or _value(env, "MAC_FLEET")
+    try:
+        config = load_fleet_config(str(path))
+        entry = fleet_entries(config)[resolve_fleet_key(config, fleet or None)]
+    except Exception:
+        return ("", 0)
+
+    raw = str(entry.get("hub_url") or "").strip()
+    if not raw:
+        return ("", 0)
+    try:
+        api_url = _validated_api_url(raw)
+    except IdeLauncherError:
+        return ("", 0)
+    try:
+        port = int(entry.get("control_port") or 0)
+    except (TypeError, ValueError):
+        port = 0
+    return (api_url, port if 1 <= port <= 65535 else 0)
+
+
 def prompt_for_ide_connection(
     connection: IdeConnection,
     env: Optional[Mapping[str, str]] = None,
@@ -322,9 +375,12 @@ def prompt_for_ide_connection(
     """Let an interactive operator select the hub before Vite starts.
 
     Explicit ``IDE_API_URL`` values and non-interactive launches remain
-    prompt-free. Bare hosts use the hub's remote API port rather than the
-    profile's ephemeral local tunnel port. The selected URL still flows through
-    Vite's local proxy, so a managed profile token never enters browser storage.
+    prompt-free. The prompt default is seeded from ``~/.mac/fleets.yaml`` (the
+    canonical hub) when available, falling back to the profile connection; this
+    means pressing Enter reaches the real hub instead of a stale loopback tunnel
+    port. Bare hosts use the hub's remote API port rather than the profile's
+    ephemeral local tunnel port. The selected URL still flows through Vite's
+    local proxy, so a managed profile token never enters browser storage.
     """
 
     values = os.environ if env is None else env
@@ -334,27 +390,36 @@ def prompt_for_ide_connection(
     if not should_prompt:
         return connection
 
+    default = connection
+    fleet_url, fleet_port = _fleet_prompt_default(values)
+    if fleet_url:
+        default = replace(
+            connection,
+            api_url=fleet_url,
+            hub_port=fleet_port or connection.hub_port,
+        )
+
     read = input if input_fn is None else input_fn
     while True:
         try:
             entered = read(
                 "Target hub host or IP "
                 "[Enter keeps %s; direct port %d]: "
-                % (connection.api_url, connection.hub_port)
+                % (default.api_url, default.hub_port)
             ).strip()
         except EOFError:
-            return connection
+            return default
         if not entered:
-            return connection
+            return default
         try:
             api_url = _api_url_for_hub_target(
                 entered,
-                default_port=connection.hub_port,
+                default_port=default.hub_port,
             )
         except IdeLauncherError as exc:
             print("Invalid hub target: %s" % exc, file=sys.stderr)
             continue
-        return replace(connection, api_url=api_url)
+        return replace(default, api_url=api_url)
 
 
 def build_vite_environment(
