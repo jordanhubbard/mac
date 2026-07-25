@@ -11934,6 +11934,7 @@ prove_and_commit_hub_epoch() {
   local identity prove_material="$TMPDIR_LOCAL/hub-prove-material.json"
   local prove_plan="$TMPDIR_LOCAL/hub-prove-plan.json" prove_request="$TMPDIR_LOCAL/hub-prove-request.json"
   local proved_receipt="$TMPDIR_LOCAL/hub-proved-receipt.json"
+  local readiness_receipt="$TMPDIR_LOCAL/hub-pre-prove-readiness.json"
   local release_material="$TMPDIR_LOCAL/hub-release-material.json"
   local release_plan="$TMPDIR_LOCAL/hub-release-plan.json" commit_request="$TMPDIR_LOCAL/hub-commit-request.json"
   local commit_receipt="$TMPDIR_LOCAL/hub-commit-receipt.json"
@@ -11970,6 +11971,9 @@ PY
   "$PYTHON_BIN" "$HUB_EPOCH_MATERIAL_HELPER" prove \
     --material "$prove_material" --plan-out "$prove_plan" \
     --request-out "$prove_request" >/dev/null
+  hub_epoch_client_read "$hub_agent" "$readiness_receipt" readiness \
+    --epoch "$COHORT_EPOCH_ID" --identity-sha256 "$identity"
+  echo "==> fleet: exact pending worker readiness verified before hub epoch proof"
   persist_hub_epoch_recovery_request "$hub_agent" "$prove_request" prove
   cohort_journal_mutate hub-prove-start "$COHORT_EPOCH_ID" \
     "$COHORT_JOURNAL_REVISION" hub-prove-start "$DEPLOY_CONTROLLER_NONCE" \

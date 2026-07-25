@@ -6523,6 +6523,20 @@ def create_app(
             return cp.fleet_release_epochs.status(epoch_id, identity_sha256)
         return cp.agent_dispatch_hold_epoch_status(epoch_id, identity_sha256)
 
+    @app.get("/agents/dispatch-hold/epochs/{epoch_id}/readiness")
+    def dispatch_hold_epoch_pre_prove_readiness(
+        epoch_id: str,
+        identity_sha256: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        """Fail closed unless the exact pending cohort is ready to prove."""
+
+        principal.require_global_fleet()
+        principal.require_admin()
+        return cp.fleet_release_epochs.pre_prove_readiness(
+            epoch_id, identity_sha256
+        )
+
     @app.post("/agents/dispatch-hold/epochs/open")
     def open_fleet_release_epoch(
         body: FleetReleaseEpochOpenRequest,

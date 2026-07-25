@@ -1295,6 +1295,9 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         ("GET", "/agents/dispatch-hold/epochs/{epoch_id}"): {
             "epoch_id": "absent_dispatch_hold_epoch_id"
         },
+        ("GET", "/agents/dispatch-hold/epochs/{epoch_id}/readiness"): {
+            "epoch_id": "absent_dispatch_hold_epoch_id"
+        },
         ("POST", "/agents/dispatch-hold/epochs/{epoch_id}/prove"): {
             "epoch_id": "absent_dispatch_hold_epoch_id"
         },
@@ -1487,7 +1490,10 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             kwargs["params"] = {"q": "route coverage", "limit": 1}
         elif path_template == "/v1/agents/{agent_id}/agentbus-cursor":
             kwargs["params"] = {"topic": "peer.message.v1"}
-        elif path_template == "/agents/dispatch-hold/epochs/{epoch_id}":
+        elif path_template in {
+            "/agents/dispatch-hold/epochs/{epoch_id}",
+            "/agents/dispatch-hold/epochs/{epoch_id}/readiness",
+        }:
             kwargs["params"] = {"identity_sha256": "a" * 64}
         elif path_template == "/v1/memory/dreams/recall":
             kwargs["params"] = {"q": "route coverage dream", "limit": 1, "min_confidence": "low"}

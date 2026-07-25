@@ -511,6 +511,64 @@ class WorkerCredentialLifecycle:
             "readiness": readiness,
         }
 
+    def validate_pending_readiness_in_transaction(
+        self,
+        conn: Any,
+        agent_id: str,
+        principal_id: str,
+        *,
+        expected_epoch_id: str,
+    ) -> Dict[str, Any]:
+        """Read-only preflight for the exact pending principal prove will use.
+
+        This deliberately shares the activation readiness evaluator and error
+        contract while omitting receipt validation and all state mutation.
+        ``validate_activation_in_transaction`` remains the authoritative prove
+        check and revalidates the same evidence inside the prove transaction.
+        """
+
+        exact_agent = _validate_agent_id(agent_id)
+        self._assert_release_epoch_reservation(
+            conn, exact_agent, expected_epoch_id=expected_epoch_id
+        )
+        agent_row = conn.execute(
+            "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
+            (exact_agent,),
+        ).fetchone()
+        if agent_row is None:
+            raise WorkerCredentialError("worker agent does not exist")
+        row = conn.execute(
+            "SELECT * FROM worker_credentials WHERE id = ?", (principal_id,)
+        ).fetchone()
+        if row is None:
+            raise WorkerCredentialError("worker principal does not exist")
+        record = _record_from_row(row)
+        if (
+            record.get("agent_id") != exact_agent
+            or record.get("principal_kind") != "worker"
+        ):
+            raise WorkerCredentialError(
+                "principal is not bound to the requested agent"
+            )
+        if record.get("state") != "pending_install" or not _not_expired(record):
+            raise WorkerCredentialError("worker principal is revoked or expired")
+
+        readiness = _credential_readiness(agent_row, record)
+        if not readiness["credential_bound"]:
+            raise WorkerCredentialError(
+                "activation requires live authenticated heartbeat proof"
+            )
+        if record.get("package_capable") and not readiness["ready"]:
+            raise WorkerCredentialError(
+                "activation requires compatible source, runtime, and capability proof"
+            )
+        return {
+            "agent_id": exact_agent,
+            "principal_id": record["id"],
+            "credential_version": record["credential_version"],
+            "readiness": readiness,
+        }
+
     def stage_pending_in_transaction(
         self,
         conn: Any,

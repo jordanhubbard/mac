@@ -30,8 +30,10 @@ MAX_RESPONSE_BYTES = 1024 * 1024
 AUTHORITY_SCHEMA = "mac.fleet_release_hub_authority.v1"
 PARTICIPANT_STATE_SCHEMA = "mac.fleet_release_participant_state.v1"
 RECEIPT_SCHEMA = "mac.fleet_release_epoch_receipt.v1"
+READINESS_SCHEMA = "mac.fleet_release_pre_prove_readiness.v1"
 SAFE_STATUSES = frozenset({"absent", "mismatch", "open", "proved", "committed", "aborted"})
 SAFE_ERROR_DETAIL_PREFIXES = (
+    "activation ",
     "aborted ",
     "attestation ",
     "committed ",
@@ -361,6 +363,50 @@ def _status(
     )
 
 
+def _readiness(
+    value: Mapping[str, Any], *, expected_epoch: str, expected_identity: str
+) -> dict[str, Any]:
+    expected_keys = {
+        "schema",
+        "status",
+        "epoch_id",
+        "hub_authority_id",
+        "identity_sha256",
+        "cohort_size",
+        "agents",
+    }
+    if (
+        set(value) != expected_keys
+        or value.get("schema") != READINESS_SCHEMA
+        or value.get("status") != "ready"
+        or value.get("epoch_id") != expected_epoch
+        or value.get("identity_sha256") != expected_identity
+    ):
+        raise ClientError("hub pre-prove readiness response schema is not exact")
+    try:
+        str(uuid.UUID(str(value.get("hub_authority_id"))))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ClientError("hub pre-prove readiness authority is invalid") from exc
+    agents = value.get("agents")
+    if (
+        not isinstance(agents, list)
+        or value.get("cohort_size") != len(agents)
+        or not all(
+            isinstance(agent, dict)
+            and set(agent) == {"agent_id", "credential_version"}
+            and isinstance(agent.get("agent_id"), str)
+            and bool(agent["agent_id"].strip())
+            and isinstance(agent.get("credential_version"), int)
+            and not isinstance(agent.get("credential_version"), bool)
+            and agent["credential_version"] > 0
+            for agent in agents
+        )
+        or len({agent["agent_id"] for agent in agents}) != len(agents)
+    ):
+        raise ClientError("hub pre-prove readiness cohort is malformed")
+    return dict(value)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hub-url", default="http://127.0.0.1:8789")
@@ -380,6 +426,10 @@ def _parser() -> argparse.ArgumentParser:
     status.add_argument("--epoch", required=True)
     status.add_argument("--identity-sha256", required=True)
     status.add_argument("--output", required=True)
+    readiness = sub.add_parser("readiness")
+    readiness.add_argument("--epoch", required=True)
+    readiness.add_argument("--identity-sha256", required=True)
+    readiness.add_argument("--output", required=True)
     return parser
 
 
@@ -403,19 +453,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 ),
                 agent_id,
             )
-        elif args.command == "status":
+        elif args.command in {"status", "readiness"}:
             epoch = _epoch(args.epoch)
             identity = _digest(args.identity_sha256, "expected hub epoch identity")
             query = urllib.parse.urlencode({"identity_sha256": identity})
-            result = _status(
-                _request(
-                    hub,
-                    token,
-                    "GET",
-                    "/agents/dispatch-hold/epochs/" + urllib.parse.quote(epoch, safe="") + "?" + query,
-                ),
-                expected_epoch=epoch,
-                expected_identity=identity,
+            suffix = "/readiness" if args.command == "readiness" else ""
+            response = _request(
+                hub,
+                token,
+                "GET",
+                "/agents/dispatch-hold/epochs/"
+                + urllib.parse.quote(epoch, safe="")
+                + suffix
+                + "?"
+                + query,
+            )
+            validator = _readiness if args.command == "readiness" else _status
+            result = validator(
+                response, expected_epoch=epoch, expected_identity=identity
             )
         else:
             epoch = _epoch(args.epoch)

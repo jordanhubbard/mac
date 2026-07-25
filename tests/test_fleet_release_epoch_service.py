@@ -1513,6 +1513,69 @@ def test_prove_rejects_active_work_and_node_readiness_drift(
         )
 
 
+def test_pre_prove_readiness_uses_pending_credential_evidence_without_mutation(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "readiness.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    epoch_id = "epoch-pre-prove-readiness"
+    generation = "generation-pre-prove-readiness"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation=generation,
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    _apply_pending(cp, pending, tmp_path, generation=generation)
+
+    readiness = cp.fleet_release_epochs.pre_prove_readiness(
+        epoch_id, opened["identity_sha256"]
+    )
+    assert readiness == {
+        "schema": "mac.fleet_release_pre_prove_readiness.v1",
+        "status": "ready",
+        "epoch_id": epoch_id,
+        "hub_authority_id": cp.fleet_release_epochs.hub_authority_id,
+        "identity_sha256": opened["identity_sha256"],
+        "cohort_size": 1,
+        "agents": [
+            {
+                "agent_id": "agent_alpha",
+                "credential_version": pending.worker_version,
+            }
+        ],
+    }
+    stored = cp.store.query_one(
+        "SELECT state, proof_sha256 FROM fleet_release_epochs WHERE epoch_id = ?",
+        (epoch_id,),
+    )
+    assert dict(stored) == {"state": "open", "proof_sha256": None}
+
+    resources = cp.get_agent("agent_alpha").resources
+    del resources["worker_credential"]
+    cp.store.execute(
+        "UPDATE agents SET resources = ? WHERE id = 'agent_alpha'",
+        (json.dumps(resources),),
+    )
+    with pytest.raises(
+        ValidationError, match="activation requires live authenticated heartbeat proof"
+    ):
+        cp.fleet_release_epochs.pre_prove_readiness(
+            epoch_id, opened["identity_sha256"]
+        )
+    stored = cp.store.query_one(
+        "SELECT state, proof_sha256 FROM fleet_release_epochs WHERE epoch_id = ?",
+        (epoch_id,),
+    )
+    assert dict(stored) == {"state": "open", "proof_sha256": None}
+
+
 def test_hub_authority_uuid_is_durable_and_status_exposes_it(tmp_path: Path) -> None:
     path = tmp_path / "mac.db"
     cp = _plane(path)
@@ -1603,6 +1666,26 @@ def test_epoch_http_routes_are_admin_only_and_redact_candidate(tmp_path: Path) -
         tmp_path,
         generation="generation-api",
     )
+    readiness_rejected = client.get(
+        "/agents/dispatch-hold/epochs/epoch-api/readiness",
+        params={"identity_sha256": receipt["identity_sha256"]},
+        headers={"Authorization": "Bearer reader"},
+    )
+    assert readiness_rejected.status_code == 403
+    readiness = client.get(
+        "/agents/dispatch-hold/epochs/epoch-api/readiness",
+        params={"identity_sha256": receipt["identity_sha256"]},
+        headers={"Authorization": "Bearer admin"},
+    )
+    assert readiness.status_code == 200
+    assert readiness.json()["status"] == "ready"
+    assert readiness.json()["agents"] == [
+        {
+            "agent_id": "agent_alpha",
+            "credential_version": pending.worker_version,
+        }
+    ]
+    assert candidate_key not in readiness.text
     proof = _proof_item(
         pending,
         install_receipt,

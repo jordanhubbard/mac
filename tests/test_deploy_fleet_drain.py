@@ -904,6 +904,16 @@ def test_typed_controller_owns_candidate_proof_and_report_approval_recovery():
     assert prove.index("cohort_journal_mutate hub-prove-start") < prove.index(
         "cohort_journal_mutate hub-proved"
     )
+    assert (
+        'hub_epoch_client_read "$hub_agent" "$readiness_receipt" readiness'
+        in prove
+    )
+    assert prove.index(
+        'hub_epoch_client_read "$hub_agent" "$readiness_receipt" readiness'
+    ) < prove.index("persist_hub_epoch_recovery_request")
+    assert prove.index(
+        'hub_epoch_client_read "$hub_agent" "$readiness_receipt" readiness'
+    ) < prove.index("cohort_journal_mutate hub-prove-start")
     assert prove.index("cohort_journal_mutate hub-proved") < prove.index(
         "cohort_journal_mutate commit-start"
     )

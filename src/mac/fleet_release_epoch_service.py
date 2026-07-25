@@ -57,6 +57,7 @@ from mac.worker_credentials import (
 EPOCH_IDENTITY_SCHEMA = "mac.fleet_release_epoch_identity.v1"
 EPOCH_PROOF_SCHEMA = "mac.fleet_release_epoch_proof.v1"
 EPOCH_RECEIPT_SCHEMA = "mac.fleet_release_epoch_receipt.v1"
+EPOCH_READINESS_SCHEMA = "mac.fleet_release_pre_prove_readiness.v1"
 EPOCH_MARKER_SCHEMA = "mac.fleet_release_epoch_marker.v1"
 ATTESTATION_PROOF_SCHEMA = "mac.fleet_release_attestation_candidate_proof.v1"
 ATTESTATION_PROOF_PURPOSE = "synchronized-fleet-release-candidate"
@@ -1350,6 +1351,70 @@ class FleetReleaseEpochService:
                 (epoch_id,),
             ).fetchone()
             return self._receipt(conn, proved)
+
+    def pre_prove_readiness(
+        self, epoch_id: str, identity_sha256: str
+    ) -> Dict[str, Any]:
+        """Fail closed unless every pending cohort principal is prove-ready.
+
+        This is an early diagnostic and timing gate only. It intentionally
+        performs no mutation; ``prove`` repeats all checks transactionally.
+        """
+
+        with self.store.transaction() as conn:
+            epoch = self._load_exact(conn, epoch_id, identity_sha256)
+            if epoch["state"] != "open":
+                raise TransitionError(
+                    "fleet release epoch is not open for pre-prove readiness"
+                )
+            participants = conn.execute(
+                "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
+                "ORDER BY ordinal",
+                (epoch_id,),
+            ).fetchall()
+            agents: List[Dict[str, Any]] = []
+            for participant in participants:
+                agent_id = str(participant["agent_id"])
+                agent_row = conn.execute(
+                    "SELECT * FROM agents WHERE id = ? AND deleted_at IS NULL",
+                    (agent_id,),
+                ).fetchone()
+                if agent_row is None:
+                    raise NotFoundError("agent not found: %s" % agent_id)
+                if not self._epoch_hold_matches(agent_row, participant):
+                    raise ValidationError(
+                        "fleet release lost epoch-owned hold for %s" % agent_id
+                    )
+                resources = self._validate_node_readiness(
+                    conn, agent_row, participant
+                )
+                self._validate_report_authority_projection(participant, resources)
+                try:
+                    readiness = (
+                        self.credentials.validate_pending_readiness_in_transaction(
+                            conn,
+                            agent_id,
+                            str(participant["principal_id"]),
+                            expected_epoch_id=epoch_id,
+                        )
+                    )
+                except WorkerCredentialError as exc:
+                    raise ValidationError(str(exc)) from exc
+                agents.append(
+                    {
+                        "agent_id": agent_id,
+                        "credential_version": readiness["credential_version"],
+                    }
+                )
+            return {
+                "schema": EPOCH_READINESS_SCHEMA,
+                "status": "ready",
+                "epoch_id": str(epoch["epoch_id"]),
+                "hub_authority_id": self.hub_authority_id,
+                "identity_sha256": str(epoch["identity_sha256"]),
+                "cohort_size": len(agents),
+                "agents": agents,
+            }
 
     def _revalidate_proved_participant(
         self, conn: Any, epoch_id: str, participant: Any

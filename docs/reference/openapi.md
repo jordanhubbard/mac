@@ -35,6 +35,7 @@ request and response definitions.
 | `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/abort` | Abort Fleet Release Epoch |
 | `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/commit` | Commit Fleet Release Epoch |
 | `POST` | `/agents/dispatch-hold/epochs/{epoch_id}/prove` | Prove Fleet Release Epoch |
+| `GET` | `/agents/dispatch-hold/epochs/{epoch_id}/readiness` | Dispatch Hold Epoch Pre Prove Readiness |
 | `POST` | `/agents/dispatch-hold/release-batch` | Release Dispatch Holds Batch |
 | `POST` | `/agents/dispatch-hold/transition-batch` | Transition Dispatch Holds Batch |
 | `DELETE` | `/agents/{agent_id}` | Delete Agent |

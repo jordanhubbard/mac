@@ -123,6 +123,29 @@ def test_authority_and_receipts_are_exactly_bound() -> None:
             expected_identity=DIGEST,
         )
 
+    readiness = {
+        "schema": "mac.fleet_release_pre_prove_readiness.v1",
+        "status": "ready",
+        "epoch_id": "epoch-one",
+        "hub_authority_id": AUTHORITY_ID,
+        "identity_sha256": DIGEST,
+        "cohort_size": 1,
+        "agents": [{"agent_id": "agent_one", "credential_version": 2}],
+    }
+    assert client._readiness(
+        readiness,
+        expected_epoch="epoch-one",
+        expected_identity=DIGEST,
+    ) == readiness
+    leaked = dict(readiness)
+    leaked["token"] = "secret"
+    with pytest.raises(client.ClientError, match="schema is not exact"):
+        client._readiness(
+            leaked,
+            expected_epoch="epoch-one",
+            expected_identity=DIGEST,
+        )
+
 
 def test_main_writes_private_receipt_without_printing_body(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -176,6 +199,12 @@ def test_http_error_detail_allows_only_plain_fleet_release_validation() -> None:
             ).encode()
         )
         == "fleet release epoch lost node readiness for agent_rocky"
+    )
+    assert (
+        client._safe_http_error_detail(
+            b'{"detail":"activation requires live authenticated heartbeat proof"}'
+        )
+        == "activation requires live authenticated heartbeat proof"
     )
     for unsafe in (
         b'{"detail":"token=secret"}',
