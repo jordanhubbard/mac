@@ -185,6 +185,40 @@ def test_main_returns_two_when_token_missing(
     assert orchestrator.main([]) == 2
 
 
+def test_main_resolves_fleet_scoped_worker_token(
+    baseline_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    patched_runtime: Dict[str, Any],
+) -> None:
+    """main() must resolve the fleet-scoped MAC_WORKER_TOKEN__<FLEET> (derived
+    from MAC_FLEET) ahead of the legacy flat form and pass it to the API client
+    (mac-g55y)."""
+    monkeypatch.setenv("MAC_FLEET", "rocky")
+    monkeypatch.setenv("MAC_WORKER_TOKEN", "worker-flat")
+    monkeypatch.setenv("MAC_WORKER_TOKEN__ROCKY", "worker-rocky")
+
+    assert orchestrator.main([]) == 0
+    runner_mac = patched_runtime["runner_calls"][0][0]
+    assert runner_mac.token == "worker-rocky"
+
+
+def test_main_falls_back_to_scoped_api_token(
+    baseline_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    patched_runtime: Dict[str, Any],
+) -> None:
+    """With no worker token set, main() resolves the scoped MAC_API_TOKEN__<FLEET>
+    (mac-g55y)."""
+    monkeypatch.delenv("MAC_WORKER_TOKEN", raising=False)
+    monkeypatch.setenv("MAC_FLEET", "rocky")
+    monkeypatch.setenv("MAC_API_TOKEN", "api-flat")
+    monkeypatch.setenv("MAC_API_TOKEN__ROCKY", "api-rocky")
+
+    assert orchestrator.main([]) == 0
+    runner_mac = patched_runtime["runner_calls"][0][0]
+    assert runner_mac.token == "api-rocky"
+
+
 def test_bound_credential_heartbeat_is_secret_free_and_preserves_resources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

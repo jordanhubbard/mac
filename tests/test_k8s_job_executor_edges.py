@@ -246,3 +246,90 @@ def test_main_prints_result_and_returns_exit_code(
     )
     assert job_executor.main([]) == 0
     assert "status=failed" in capsys.readouterr().out
+
+
+def test_resolve_prefers_fleet_scoped_worker_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_resolve_mac_and_executor must honor MAC_WORKER_TOKEN__<FLEET> from the
+    passed env dict (env["MAC_FLEET"]) over the legacy flat form, and follow the
+    MAC_WORKER_TOKEN > MAC_API_TOKEN chain precedence (mac-g55y)."""
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        job_executor,
+        "_default_mac_client",
+        lambda url, token: captured.update(url=url, token=token) or object(),
+    )
+    monkeypatch.setattr(
+        job_executor, "_default_subprocess_executor", lambda env: object()
+    )
+
+    # Scoped worker token outranks both legacy flat forms.
+    job_executor._resolve_mac_and_executor(
+        {
+            "MAC_URL": "http://mac",
+            "MAC_FLEET": "rocky",
+            "MAC_WORKER_TOKEN__ROCKY": "worker-rocky",
+            "MAC_WORKER_TOKEN": "worker-flat",
+            "MAC_API_TOKEN": "api-flat",
+        },
+        None,
+        None,
+    )
+    assert captured["token"] == "worker-rocky"
+
+    # No scoped form -> legacy chain, MAC_WORKER_TOKEN ahead of MAC_API_TOKEN.
+    job_executor._resolve_mac_and_executor(
+        {
+            "MAC_URL": "http://mac",
+            "MAC_FLEET": "rocky",
+            "MAC_WORKER_TOKEN": "worker-flat",
+            "MAC_API_TOKEN": "api-flat",
+        },
+        None,
+        None,
+    )
+    assert captured["token"] == "worker-flat"
+
+    # Scoped MAC_API_TOKEN__ROCKY wins when no worker token resolves.
+    job_executor._resolve_mac_and_executor(
+        {
+            "MAC_URL": "http://mac",
+            "MAC_FLEET": "rocky",
+            "MAC_API_TOKEN__ROCKY": "api-rocky",
+            "MAC_API_TOKEN": "api-flat",
+        },
+        None,
+        None,
+    )
+    assert captured["token"] == "api-rocky"
+
+
+def test_review_mode_token_read_is_fleet_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The review-mode token read must prefer the fleet-scoped worker token from
+    env["MAC_FLEET"] over the legacy flat form (mac-g55y)."""
+    captured: dict[str, Any] = {}
+
+    def _fake_client(url: str, token: str) -> Any:
+        captured.update(url=url, token=token)
+        return _Mac(fail="get")
+
+    monkeypatch.setattr(job_executor, "_default_mac_client", _fake_client)
+
+    job_executor._run_one_review(
+        mac=None,
+        executor=_ok,
+        env={
+            "MAC_REVIEW_ID": "review-1",
+            "MAC_TASK_ID": "task/1",
+            "MAC_URL": "http://mac",
+            "MAC_FLEET": "rocky",
+            "MAC_WORKER_TOKEN__ROCKY": "worker-rocky",
+            "MAC_WORKER_TOKEN": "worker-flat",
+            "MAC_API_TOKEN": "api-flat",
+        },
+        sleeper=None,
+    )
+    assert captured["token"] == "worker-rocky"

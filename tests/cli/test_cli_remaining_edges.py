@@ -326,3 +326,91 @@ def test_workflow_decisions_and_start(monkeypatch) -> None:
         )
     )
     assert calls[-1][2]["pre_decisions"] == {"gate": "approved"}
+
+
+def test_hub_get_mood_uses_fleet_scoped_token(monkeypatch) -> None:
+    """_hub_get_mood must authenticate with the fleet-scoped worker token
+    (derived from MAC_FLEET) ahead of the legacy flat form (mac-g55y)."""
+    import urllib.request as urllib_request
+
+    for name in (
+        "MAC_HUB_URL",
+        "MAC_URL",
+        "MAC_FLEET",
+        "MAC_WORKER_TOKEN",
+        "MAC_WORKER_TOKEN__ROCKY",
+        "MAC_API_TOKEN",
+        "MAC_API_TOKEN__ROCKY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setenv("MAC_HUB_URL", "http://hub")
+    monkeypatch.setenv("MAC_FLEET", "rocky")
+    monkeypatch.setenv("MAC_WORKER_TOKEN", "worker-flat")
+    monkeypatch.setenv("MAC_WORKER_TOKEN__ROCKY", "worker-rocky")
+
+    captured: dict[str, str] = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def read(self):
+            return b'{"mode": "focused"}'
+
+    def _fake_urlopen(req, timeout=None):
+        captured["auth"] = req.get_header("Authorization")
+        captured["url"] = req.full_url
+        return _Resp()
+
+    monkeypatch.setattr(urllib_request, "urlopen", _fake_urlopen)
+
+    result = cli._hub_get_mood("agent_test")
+    assert result == {"mode": "focused"}
+    assert captured["auth"] == "Bearer worker-rocky"
+    assert captured["url"] == "http://hub/agents/agent_test/mood"
+
+
+def test_hub_get_mood_falls_back_to_legacy_flat_token(monkeypatch) -> None:
+    """Without a scoped form, _hub_get_mood uses the legacy flat token, still
+    preferring MAC_WORKER_TOKEN over MAC_API_TOKEN (mac-g55y)."""
+    import urllib.request as urllib_request
+
+    for name in (
+        "MAC_HUB_URL",
+        "MAC_URL",
+        "MAC_FLEET",
+        "MAC_WORKER_TOKEN",
+        "MAC_WORKER_TOKEN__ROCKY",
+        "MAC_API_TOKEN",
+        "MAC_API_TOKEN__ROCKY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setenv("MAC_HUB_URL", "http://hub")
+    monkeypatch.setenv("MAC_FLEET", "rocky")
+    monkeypatch.setenv("MAC_API_TOKEN", "api-flat")
+
+    captured: dict[str, str] = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def read(self):
+            return b'{"mode": "calm"}'
+
+    def _fake_urlopen(req, timeout=None):
+        captured["auth"] = req.get_header("Authorization")
+        return _Resp()
+
+    monkeypatch.setattr(urllib_request, "urlopen", _fake_urlopen)
+
+    assert cli._hub_get_mood("agent_test") == {"mode": "calm"}
+    assert captured["auth"] == "Bearer api-flat"

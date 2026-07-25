@@ -187,6 +187,44 @@ def test_build_secret_factory_and_token_precedence(monkeypatch) -> None:
     assert bootstrap._token_from_env() == "worker"
 
 
+def test_token_from_env_prefers_fleet_scoped_form(monkeypatch) -> None:
+    """_token_from_env must resolve the scoped MAC_*__<FLEET> token ahead of the
+    legacy flat form, fall back through the chain, treat an empty scoped value as
+    set, and still raise SystemExit when nothing resolves (mac-g55y)."""
+    for name in (
+        "MAC_FLEET",
+        "MAC_WORKER_TOKEN",
+        "MAC_WORKER_TOKEN__ROCKY",
+        "MAC_API_TOKEN",
+        "MAC_API_TOKEN__ROCKY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    # Nothing set -> SystemExit with the required message.
+    with pytest.raises(SystemExit, match="is required"):
+        bootstrap._token_from_env()
+
+    monkeypatch.setenv("MAC_FLEET", "rocky")
+
+    # Legacy flat fallback used when no scoped form is present.
+    monkeypatch.setenv("MAC_API_TOKEN", "api-flat")
+    assert bootstrap._token_from_env() == "api-flat"
+
+    # MAC_WORKER_TOKEN outranks MAC_API_TOKEN within the legacy (flat) chain.
+    monkeypatch.setenv("MAC_WORKER_TOKEN", "worker-flat")
+    assert bootstrap._token_from_env() == "worker-flat"
+
+    # Scoped MAC_WORKER_TOKEN__ROCKY outranks the legacy flat form.
+    monkeypatch.setenv("MAC_WORKER_TOKEN__ROCKY", "worker-rocky")
+    assert bootstrap._token_from_env() == "worker-rocky"
+
+    # An empty scoped value is treated as SET (not skipped), so it still wins
+    # over the legacy flat form; that resolves to "" and triggers SystemExit.
+    monkeypatch.setenv("MAC_WORKER_TOKEN__ROCKY", "")
+    with pytest.raises(SystemExit, match="is required"):
+        bootstrap._token_from_env()
+
+
 def test_main_runs_full_pipeline_with_and_without_secret_rotation(monkeypatch) -> None:
     calls = []
     cfg = _cfg()
