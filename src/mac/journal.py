@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from mac import mac_paths
+
 # The files/dirs that together make up an agent's "soul + memory". Missing ones
 # are skipped — not every agent (or layout) has every file.
 STATE_ENTRIES: List[str] = [
@@ -37,11 +39,15 @@ STATE_ENTRIES: List[str] = [
 
 
 def hermes_home() -> Path:
-    return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    # Resolve via the single sanctioned path helper (behavior-preserving:
+    # HERMES_HOME or ~/.hermes today). See docs/home-consolidation.md.
+    return mac_paths.gateway_home()
 
 
 def journal_root() -> Path:
-    return Path(os.environ.get("MAC_JOURNAL_DIR") or (Path.home() / ".mac" / "journal"))
+    # MAC_JOURNAL_DIR override, else $MAC_HOME/journal (identical to the old
+    # ~/.mac/journal when MAC_HOME is unset, but now relocatable with MAC_HOME).
+    return mac_paths.journal_dir()
 
 
 def _today() -> str:
