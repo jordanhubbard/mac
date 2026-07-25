@@ -1743,3 +1743,94 @@ def test_epoch_http_routes_are_admin_only_and_redact_candidate(tmp_path: Path) -
         for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
     }[abort_pending.record["id"]]
     assert abort_record["state"] == "revoked"
+
+
+def test_open_epoch_replay_is_idempotent_and_pre_mutation(tmp_path: Path) -> None:
+    """Re-opening the same epoch replays the receipt without re-mutating.
+
+    Idempotency is a named cutover requirement: a hub retry of ``open_epoch``
+    with the identical request must return the same receipt, must not stage a
+    second pending principal or re-hold the cohort, and must reject the epoch
+    id if the request differs.
+    """
+
+    cp = _plane(tmp_path / "mac.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    epoch_id = "epoch-idempotent-open"
+    candidate_key = "idempotent-candidate-key-" + ("z" * 40)
+
+    def _request() -> list[dict]:
+        return [
+            _prepare_item(
+                pending,
+                generation="generation-idempotent",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=candidate_key,
+            )
+        ]
+
+    opened = cp.fleet_release_epochs.open_epoch(epoch_id, _request())
+    assert opened["status"] == "open"
+
+    held = cp.get_agent("agent_alpha")
+    staged_after_open = {
+        item["id"]: item["state"]
+        for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
+    }
+    candidate_rows_after_open = cp.store.query_one(
+        "SELECT COUNT(*) AS count FROM fleet_release_attestation_candidates "
+        "WHERE epoch_id = ?",
+        (epoch_id,),
+    )["count"]
+
+    replay = cp.fleet_release_epochs.open_epoch(epoch_id, _request())
+    assert replay == opened
+
+    # A pre-mutation replay must not stage a second principal, re-hold the
+    # agent, or duplicate the encrypted attestation candidate.
+    reheld = cp.get_agent("agent_alpha")
+    assert reheld.dispatch_hold is True
+    assert reheld.dispatch_hold_reason == held.dispatch_hold_reason
+    assert reheld.dispatch_hold_at == held.dispatch_hold_at
+    assert {
+        item["id"]: item["state"]
+        for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
+    } == staged_after_open
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM fleet_release_attestation_candidates "
+            "WHERE epoch_id = ?",
+            (epoch_id,),
+        )["count"]
+        == candidate_rows_after_open
+    )
+    assert (
+        cp.store.query_one(
+            "SELECT COUNT(*) AS count FROM fleet_release_epoch_agents "
+            "WHERE epoch_id = ?",
+            (epoch_id,),
+        )["count"]
+        == 1
+    )
+
+    # The status projection is the same receipt, and it never leaks the raw
+    # symmetric attestation candidate.
+    status = cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"])
+    assert status == opened
+    assert candidate_key not in json.dumps(replay)
+    assert candidate_key not in json.dumps(status)
+
+    # Reusing the epoch id for a different request is rejected, not replayed.
+    with pytest.raises(ValidationError, match="different request"):
+        cp.fleet_release_epochs.open_epoch(
+            epoch_id,
+            [
+                _prepare_item(
+                    pending,
+                    generation="generation-idempotent-drift",
+                    baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                    candidate_key=candidate_key,
+                )
+            ],
+        )
