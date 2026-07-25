@@ -19,6 +19,8 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from mac.fleet_deploy import parse_ssh_target
@@ -282,7 +284,7 @@ def load_fleet_config(path: Optional[str] = None) -> Dict[str, Any]:
     target = Path(
         path
         or os.environ.get("MAC_FLEETS_CONFIG")
-        or (Path.home() / ".mac" / "fleets.yaml")
+        or mac_paths.fleets_config()
     ).expanduser()
     if not target.is_file():
         raise FleetSshError("fleets config not found: %s" % target)

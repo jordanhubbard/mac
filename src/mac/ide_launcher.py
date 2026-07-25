@@ -17,6 +17,8 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Callable, MutableMapping, Optional, Sequence
 from urllib.parse import urlsplit
 
@@ -340,7 +342,7 @@ def _fleet_prompt_default(env: Mapping[str, str]) -> "tuple[str, int]":
     path = (
         Path(explicit).expanduser()
         if explicit
-        else Path.home() / ".mac" / "fleets.yaml"
+        else mac_paths.fleets_config()
     )
     if not path.is_file():
         return ("", 0)

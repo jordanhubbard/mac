@@ -27,6 +27,8 @@ import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib.parse import quote, urlencode
 
@@ -1829,7 +1831,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         if channel_type not in {"", "hermes", "slack"} and target_type != "slack":
             return {"status": "skipped", "sent": 0, "skipped": 1, "failed": 0}
 
-        hermes_home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+        hermes_home = mac_paths.gateway_home()
         accounts = _load_slack_accounts(hermes_home)
         home_channels = _load_slack_home_channels(hermes_home)
         if not accounts or not home_channels:
@@ -1911,7 +1913,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         identity = os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY", "").strip()
         message_bin = Path(
             os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")
-            or Path.home() / ".mac" / "bin" / "openclaw-message"
+            or mac_paths.mac_home() / "bin" / "openclaw-message"
         )
         if not identity or not message_bin.is_file():
             return
@@ -2011,7 +2013,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         identity = os.environ.get("MAC_OPENCLAW_PUBLIC_IDENTITY", "").strip()
         message_bin = Path(
             os.environ.get("MAC_OPENCLAW_MESSAGE_BIN")
-            or Path.home() / ".mac" / "bin" / "openclaw-message"
+            or mac_paths.mac_home() / "bin" / "openclaw-message"
         )
         if not identity or not message_bin.is_file():
             return
@@ -3034,9 +3036,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         ).strip()
         if configured:
             return Path(configured).expanduser()
-        mac_home = Path(
-            os.environ.get("MAC_HOME") or Path.home() / ".mac"
-        ).expanduser()
+        mac_home = mac_paths.mac_home()
         return mac_home / "repo-update-dispatch-blocked.json"
 
     def _write_repo_update_dispatch_blocker(
@@ -3103,9 +3103,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
     def _managed_openshell_source_update_guard(
         self, *, current_sha: str, target_sha: str
     ) -> Optional[JsonDict]:
-        mac_home = Path(
-            os.environ.get("MAC_HOME") or Path.home() / ".mac"
-        ).expanduser()
+        mac_home = mac_paths.mac_home()
         runtime_ref_file = Path(
             os.environ.get("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
             or mac_home / "openshell" / "runtime-image-ref"
@@ -3217,7 +3215,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             return None
         marker = Path(
             os.environ.get("MAC_OPENSHELL_IMAGE_SOURCE_SHA_FILE")
-            or Path(os.environ.get("MAC_HOME") or Path.home() / ".mac")
+            or mac_paths.mac_home()
             / "openshell"
             / "image-source-sha"
         ).expanduser()
@@ -3229,7 +3227,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             return None
         managed_ref_file = Path(
             os.environ.get("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
-            or Path(os.environ.get("MAC_HOME") or Path.home() / ".mac")
+            or mac_paths.mac_home()
             / "openshell"
             / "runtime-image-ref"
         ).expanduser()
@@ -5447,7 +5445,7 @@ def _hermes_media_cache_dirs() -> List[Path]:
         or os.environ.get("MAC_HERMES_HOME")
         or ""
     ).strip()
-    base = Path(home).expanduser() if home else Path.home() / ".hermes"
+    base = Path(home).expanduser() if home else mac_paths.gateway_home()
     cache = base / "cache"
     return [cache / "images", cache / "audio", cache / "video"]
 
@@ -5827,11 +5825,11 @@ def _repository_source_candidates(origin: JsonDict, self_update_repo: Path) -> L
         if ".mac" in parts:
             idx = parts.index(".mac")
             suffix = Path(*parts[idx + 1 :]) if idx + 1 < len(parts) else Path()
-            candidates.append(Path.home() / ".mac" / suffix)
+            candidates.append(mac_paths.mac_home() / suffix)
 
     repository_name = str(origin.get("repository_name") or "").strip()
     if repository_name:
-        candidates.append(Path.home() / ".mac" / "src" / _safe_path_component(repository_name))
+        candidates.append(mac_paths.mac_home() / "src" / _safe_path_component(repository_name))
 
     source = str(origin.get("source") or "").strip()
     contract = origin.get("repository_contract")
@@ -7460,7 +7458,7 @@ def _register_runtime_identity_for_worker(
         or os.environ.get("MAC_WORKER_PERSONA_ID")
         or _stable_id("persona", agent_name)
     )
-    hermes_home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+    hermes_home = mac_paths.gateway_home()
     fleet_name = (
         os.environ.get("MAC_FLEET_NAME")
         or os.environ.get("FLEET_NAME")
@@ -7520,7 +7518,7 @@ def _local_fleet_registry_path() -> Path:
     return Path(
         os.environ.get("MAC_FLEETS_CONFIG")
         or os.environ.get("MAC_DEPLOY_FLEETS_CONFIG")
-        or Path.home() / ".mac" / "fleets.yaml"
+        or mac_paths.fleets_config()
     ).expanduser()
 
 

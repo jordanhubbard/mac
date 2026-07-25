@@ -24,6 +24,8 @@ import os
 import re
 import subprocess
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Optional
 from urllib.parse import quote, urlencode
 
@@ -502,7 +504,7 @@ class DirectableMixin:
         timeout_s = _bounded_float(os.environ.get("MAC_DIRECTABLE_TIMEOUT"), 1.0, 600.0, 120.0)
         agent_bin = Path(
             os.environ.get("MAC_OPENCLAW_AGENT_BIN")
-            or Path.home() / ".mac" / "bin" / "openclaw-agent"
+            or mac_paths.mac_home() / "bin" / "openclaw-agent"
         )
         safe_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", (sender or stream_id)).strip("-")
         session_id = "mac-peer-%s" % (safe_slug or self.agent_id)

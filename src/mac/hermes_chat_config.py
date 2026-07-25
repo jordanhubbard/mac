@@ -32,6 +32,8 @@ import os
 import re
 import shlex
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Dict, List, Optional
 
 # Explicit provider timeouts stamped into the deployed `custom` provider block.
@@ -372,9 +374,9 @@ def main(argv: object = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m mac.hermes_chat_config")
     parser.add_argument(
         "--hermes-home",
-        default=os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes"),
+        default=str(mac_paths.gateway_home()),
     )
-    parser.add_argument("--mac-env", default=str(Path.home() / ".mac" / "mac.env"))
+    parser.add_argument("--mac-env", default=str(mac_paths.mac_env_file()))
     ns = parser.parse_args(argv)
     result = sync(Path(ns.hermes_home), Path(ns.mac_env))
     # Never print key material — only booleans/keys/counts.

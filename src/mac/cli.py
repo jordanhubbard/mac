@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
+from mac import mac_paths
 from mac.migration import import_jsonl, migrate_acc_sqlite
 from mac.models import MACError, REPORT_DELIVERABLE, normalize_deliverable_kind, parse_time, utcnow
 from mac.repository_hygiene import (
@@ -560,7 +561,7 @@ def _local_ledger_notice_payload() -> Optional[Dict[str, Any]]:
     except (LocalLedgerMigrationError, OSError, sqlite3.Error) as exc:
         return {
             "status": "inspection_failed",
-            "source_db": str(Path.home() / ".mac" / "mac.db"),
+            "source_db": str(mac_paths.mac_home() / "mac.db"),
             "message": str(exc),
             "next_command": "mac migrate local-ledger",
         }
@@ -3567,7 +3568,7 @@ def cmd_fleet_refresh_context(args: argparse.Namespace) -> None:
     snapshot = plane.fleet_snapshot(exclude_agent_id=agent)
     markdown = getattr(args, "markdown", None) or _os.environ.get(
         "MAC_HERMES_RUNTIME_CONTEXT_MARKDOWN"
-    ) or str(_Path.home() / ".hermes" / "mac-runtime-context.md")
+    ) or str(mac_paths.gateway_home() / "mac-runtime-context.md")
     path = _Path(markdown)
     refresh_fleet_section(path, render_fleet_section(snapshot))
 
@@ -6754,7 +6755,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_ssh_spec.add_argument("--agent", help="agent name (default: fleet hub_agent)")
     fleet_ssh_spec.add_argument(
-        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+        "--fleets-config", default=str(mac_paths.fleets_config())
     )
     fleet_ssh_spec.add_argument("--ssh-port", type=int)
     fleet_ssh_spec.add_argument(
@@ -6812,7 +6813,7 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_soul_pull.add_argument("--fleet", help="fleet name (default: first in fleets.yaml)")
     fleet_soul_pull.add_argument("--into", required=True, help="destination directory for the snapshot")
     fleet_soul_pull.add_argument(
-        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+        "--fleets-config", default=str(mac_paths.fleets_config())
     )
     fleet_soul_pull.add_argument(
         "--memory-checksum", action="store_true",
@@ -6837,7 +6838,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_soul_push.add_argument("--fleet", help="fleet name (default: snapshot manifest)")
     fleet_soul_push.add_argument(
-        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+        "--fleets-config", default=str(mac_paths.fleets_config())
     )
     _set(cmd_fleet_soul_push, fleet_soul_push)
 
@@ -6848,7 +6849,7 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_soul_audit.add_argument("--agent", required=True, help="agent name to audit")
     fleet_soul_audit.add_argument("--fleet", help="fleet name (default: first in fleets.yaml)")
     fleet_soul_audit.add_argument(
-        "--fleets-config", default=str(Path.home() / ".mac" / "fleets.yaml")
+        "--fleets-config", default=str(mac_paths.fleets_config())
     )
     _set(cmd_fleet_soul_audit, fleet_soul_audit)
 
@@ -6895,11 +6896,11 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_validate.add_argument("--spec", required=True)
     fleet_validate.add_argument(
         "--fleets-config",
-        default=str(Path.home() / ".mac" / "fleets.yaml"),
+        default=str(mac_paths.fleets_config()),
     )
     fleet_validate.add_argument(
         "--env-file",
-        default=str(Path.home() / ".mac" / ".env"),
+        default=str(mac_paths.deploy_env_file()),
     )
     _set(cmd_fleet_validate_setup, fleet_validate)
 
@@ -6944,11 +6945,11 @@ def build_parser() -> argparse.ArgumentParser:
     fleet_doctor.add_argument("--spec", required=True)
     fleet_doctor.add_argument(
         "--fleets-config",
-        default=str(Path.home() / ".mac" / "fleets.yaml"),
+        default=str(mac_paths.fleets_config()),
     )
     fleet_doctor.add_argument(
         "--env-file",
-        default=str(Path.home() / ".mac" / ".env"),
+        default=str(mac_paths.deploy_env_file()),
     )
     _set(cmd_fleet_doctor_setup, fleet_doctor)
 
@@ -6965,12 +6966,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_sync_token.add_argument(
         "--fleets-config",
-        default=str(Path.home() / ".mac" / "fleets.yaml"),
+        default=str(mac_paths.fleets_config()),
         help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
     )
     fleet_sync_token.add_argument(
         "--env-file",
-        default=str(Path.home() / ".mac" / ".env"),
+        default=str(mac_paths.deploy_env_file()),
         help="client env file to update (default ~/.mac/.env)",
     )
     _set(cmd_fleet_sync_token, fleet_sync_token)
@@ -7013,7 +7014,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_creds_sync.add_argument(
         "--fleets-config",
-        default=str(Path.home() / ".mac" / "fleets.yaml"),
+        default=str(mac_paths.fleets_config()),
         help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
     )
     fleet_creds_sync.add_argument(
@@ -7105,12 +7106,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fleet_rotate_token.add_argument(
         "--fleets-config",
-        default=str(Path.home() / ".mac" / "fleets.yaml"),
+        default=str(mac_paths.fleets_config()),
         help="path to fleets.yaml (default ~/.mac/fleets.yaml)",
     )
     fleet_rotate_token.add_argument(
         "--env-file",
-        default=str(Path.home() / ".mac" / ".env"),
+        default=str(mac_paths.deploy_env_file()),
         help="client env file to update (default ~/.mac/.env)",
     )
     _set(cmd_fleet_rotate_token, fleet_rotate_token)
@@ -8523,12 +8524,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate_local_ledger.add_argument(
         "--source-db",
-        default=str(Path.home() / ".mac" / "mac.db"),
+        default=str(mac_paths.mac_home() / "mac.db"),
         help="isolated local SQLite ledger (default: ~/.mac/mac.db)",
     )
     migrate_local_ledger.add_argument(
         "--archive-dir",
-        default=str(Path.home() / ".mac" / "archive"),
+        default=str(mac_paths.archive_dir()),
         help="directory for the verified database archive and manifest",
     )
     migrate_local_ledger.add_argument(

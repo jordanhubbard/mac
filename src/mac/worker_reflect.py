@@ -15,6 +15,8 @@ import os
 import re
 import subprocess
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict
 from urllib.parse import quote, urlencode
 
@@ -153,7 +155,7 @@ class ReflectMixin:
         timeout_s = _bounded_float(os.environ.get("MAC_REFLECT_TIMEOUT"), 1.0, 600.0, 120.0)
         agent_bin = Path(
             os.environ.get("MAC_OPENCLAW_AGENT_BIN")
-            or Path.home() / ".mac" / "bin" / "openclaw-agent"
+            or mac_paths.mac_home() / "bin" / "openclaw-agent"
         )
         safe_stream = re.sub(r"[^A-Za-z0-9_.-]+", "-", stream_id).strip("-")
         session_id = "mac-reflect-%s" % (safe_stream or self.agent_id)

@@ -67,6 +67,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
+from mac import mac_paths
 from mac import relay_observability
 from mac.agent_command import PROMPT_SENTINEL
 from mac.models import (
@@ -664,7 +665,7 @@ def _resolve_openshell_policy() -> str:
         if not Path(explicit).is_file():
             raise FileNotFoundError("MAC_OPENSHELL_POLICY=%r but no such file" % explicit)
         return explicit
-    deployed = Path.home() / ".mac" / "openshell-policy.yaml"
+    deployed = mac_paths.mac_home() / "openshell-policy.yaml"
     if deployed.is_file():
         return str(deployed)
     bundled = _bundled_default_policy()
@@ -1736,7 +1737,7 @@ _MANAGED_OPENSHELL_RUNTIME_REF_RE = _re.compile(
 def _managed_openshell_runtime_image_ref() -> str:
     """Return the deployment-pinned OpenShell image, or fail closed."""
 
-    mac_home = Path(os.environ.get("MAC_HOME") or Path.home() / ".mac").expanduser()
+    mac_home = mac_paths.mac_home()
     path = Path(
         env_str("MAC_OPENSHELL_RUNTIME_IMAGE_REF_FILE")
         or mac_home / "openshell" / "runtime-image-ref"
@@ -3743,7 +3744,7 @@ def _prepare_host_break_glass_environment(
     configured = env_str("MAC_BREAK_GLASS_HOST_PATH")
     candidates = [
         *(configured.split(os.pathsep) if configured else []),
-        str(Path.home() / ".mac" / "bin"),
+        str(mac_paths.mac_home() / "bin"),
         str(Path.home() / ".local" / "bin"),
         "/opt/homebrew/bin",
         "/opt/local/bin",

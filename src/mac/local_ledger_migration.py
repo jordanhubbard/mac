@@ -8,6 +8,8 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
 
 from mac.models import MACError, TERMINAL_TASK_STATES, TaskState
@@ -120,11 +122,13 @@ class LocalLedgerRetirementResult:
 
 
 def default_local_db_path() -> Path:
-    return Path.home() / ".mac" / "mac.db"
+    # The default LOCAL ledger location (~/.mac/mac.db), MAC_DB-agnostic — an
+    # explicit --source-db is used when migrating a non-default file.
+    return mac_paths.mac_home() / "mac.db"
 
 
 def default_archive_dir() -> Path:
-    return Path.home() / ".mac" / "archive"
+    return mac_paths.archive_dir()
 
 
 def _utcnow() -> str:

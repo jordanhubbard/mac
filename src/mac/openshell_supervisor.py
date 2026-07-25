@@ -15,6 +15,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Iterable, List, Optional, Sequence
 
 from mac.openshell_runtime import base_agent_name, openshell_required_for_identity
@@ -63,7 +65,7 @@ def default_policy_path(agent_id: str) -> Path:
     explicit = os.environ.get("MAC_OPENSHELL_POLICY")
     if explicit:
         return Path(explicit).expanduser()
-    return Path.home() / ".mac" / "openshell" / ("%s-policy.yaml" % base_agent_name(agent_id))
+    return mac_paths.mac_home() / "openshell" / ("%s-policy.yaml" % base_agent_name(agent_id))
 
 
 def default_child_argv() -> List[str]:

@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from mac import mac_paths
+
 
 __all__ = [
     "PermissionDecision",
@@ -195,7 +197,7 @@ def load_openshell_policy(path: Optional[str] = None) -> Optional[Dict[str, Any]
         if explicit:
             candidate = Path(explicit)
         else:
-            candidate = Path.home() / ".mac" / "openshell-policy.yaml"
+            candidate = mac_paths.mac_home() / "openshell-policy.yaml"
 
     try:
         if not candidate.is_file():

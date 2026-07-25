@@ -38,6 +38,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from mac import mac_paths
 from typing import List, Optional
 
 SNAPSHOT_MANIFEST_SCHEMA = "mac.ledger_snapshot.v1"
@@ -175,12 +177,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m mac.ledger_backup")
     parser.add_argument(
         "--db",
-        default=os.environ.get("MAC_DB") or str(Path.home() / ".mac" / "mac.db"),
+        default=str(mac_paths.ledger_db()),
     )
     parser.add_argument(
         "--out",
         default=os.environ.get("MAC_LEDGER_BACKUP_DIR")
-        or str(Path.home() / ".mac" / "backups"),
+        or str(mac_paths.backups_dir()),
     )
     parser.add_argument("--keep-last", type=int, default=DEFAULT_KEEP_LAST)
     parser.add_argument("--sync-cmd", default=None)

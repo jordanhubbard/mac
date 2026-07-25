@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -490,7 +492,7 @@ class OpenShellService:
         explicit = os.environ.get("MAC_OPENSHELL_POLICY")
         if explicit and Path(explicit).is_file():
             return Path(explicit)
-        deployed = Path.home() / ".mac" / "openshell-policy.yaml"
+        deployed = mac_paths.mac_home() / "openshell-policy.yaml"
         if deployed.is_file():
             return deployed
         bundled = Path(__file__).resolve().parent / "openshell" / "default-policy.yaml"

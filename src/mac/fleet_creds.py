@@ -35,6 +35,8 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Callable, Dict, List, Optional, Tuple
 
 from mac.fleet_env import scoped_var, set_env_key
@@ -118,7 +120,7 @@ def _fleets_config_path(path: Optional[str] = None) -> Path:
     env = os.environ.get("MAC_FLEETS_CONFIG")
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".mac" / "fleets.yaml"
+    return mac_paths.fleets_config()
 
 
 def load_fleets_config(path: Optional[str] = None) -> dict:
@@ -210,7 +212,7 @@ def sync_token(
             "the hub uses only MAC_API_TOKENS — rotate-token --prune to reduce to one)"
             % hub.target
         )
-    env_file = Path(env_path).expanduser() if env_path else (Path.home() / ".mac" / ".env")
+    env_file = Path(env_path).expanduser() if env_path else mac_paths.deploy_env_file()
     key = scoped_var("MAC_API_TOKEN", fleet)
     changed = set_env_key(env_file, key, token)
     return {
@@ -312,7 +314,7 @@ def rotate_token(
     hub = hub_ssh(config, fleet)
     cur_single, cur_tokens = read_hub_auth(hub, runner=runner)
     registry = normalize_registry(cur_single, cur_tokens)
-    env_file = Path(env_path).expanduser() if env_path else (Path.home() / ".mac" / ".env")
+    env_file = Path(env_path).expanduser() if env_path else mac_paths.deploy_env_file()
     key = scoped_var("MAC_API_TOKEN", fleet)
     restart_cmd = restart_command(hub)
 

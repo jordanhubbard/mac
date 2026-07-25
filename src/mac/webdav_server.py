@@ -11,6 +11,8 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Optional
 
 
@@ -320,7 +322,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Serve public-read MAC artifacts from a hub publish directory.")
     parser.add_argument("--host", default=os.environ.get("MAC_WEBDAV_BIND_ADDR", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("MAC_WEBDAV_PORT", "80")))
-    parser.add_argument("--root", default=os.environ.get("MAC_WEBDAV_ROOT", str(Path.home() / ".mac" / "public-artifacts")))
+    parser.add_argument("--root", default=os.environ.get("MAC_WEBDAV_ROOT", str(mac_paths.mac_home() / "public-artifacts")))
     parser.add_argument("--public-prefix", default=os.environ.get("MAC_WEBDAV_PUBLIC_PATH", DEFAULT_PUBLIC_PREFIX))
     parser.add_argument(
         "--max-upload-bytes",

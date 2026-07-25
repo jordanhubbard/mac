@@ -20,6 +20,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -42,7 +44,7 @@ class RuntimeDepsMixin:
     """
 
     def _mac_home(self) -> Path:
-        return Path(os.environ.get("MAC_HOME") or (Path.home() / ".mac"))
+        return mac_paths.mac_home()
 
     def _agent_venv_python(self) -> str:
         py = self._mac_home() / "venv" / "bin" / "python"

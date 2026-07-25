@@ -7,6 +7,8 @@ import re
 import time
 import urllib.parse
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Optional
 
 import yaml
@@ -299,7 +301,7 @@ def _webdav_publish_method() -> Dict[str, Any]:
     publish_dir = (
         os.environ.get("MAC_PUBLISH_DIR")
         or os.environ.get("MAC_WEBDAV_ROOT")
-        or str(Path.home() / ".mac" / "public-artifacts")
+        or str(mac_paths.mac_home() / "public-artifacts")
     )
     return {
         "enabled": True,
@@ -993,8 +995,8 @@ def _main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--agent-name", default=os.environ.get("AGENT") or os.environ.get("MAC_WORKER_AGENT_NAME", "agent"))
     parser.add_argument("--fleet-name", default=os.environ.get("FLEET_NAME", "mac"))
     parser.add_argument("--mac-url", default=os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL", ""))
-    parser.add_argument("--hermes-home", default=os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
-    parser.add_argument("--mac-home", default=os.environ.get("MAC_HOME", str(Path.home() / ".mac")))
+    parser.add_argument("--hermes-home", default=str(mac_paths.gateway_home()))
+    parser.add_argument("--mac-home", default=str(mac_paths.mac_home()))
     parser.add_argument("--tenant-id", default=os.environ.get("MAC_FLEET_TENANT_ID"))
     parser.add_argument("--persona-id", default=os.environ.get("MAC_HERMES_PERSONA_ID"))
     parser.add_argument("--hermes-instance-id", default=os.environ.get("MAC_HERMES_INSTANCE_ID"))
