@@ -53,6 +53,8 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 from urllib.parse import quote, urlencode
 
@@ -2808,7 +2810,11 @@ def _maybe_print_local_banner(db_path: str) -> None:
 
 
 def _canonical_client_db_path() -> Path:
-    return (Path.home() / ".mac" / "mac.db").expanduser().resolve()
+    # Canonical = the DEFAULT local client DB location, deliberately MAC_DB-
+    # AGNOSTIC (the hub/MAC_DB case is handled separately by
+    # _is_hub_authority_db). Honors MAC_HOME only, so it stays a stable
+    # comparison target even when MAC_DB points elsewhere.
+    return (mac_paths.mac_home() / "mac.db").expanduser().resolve()
 
 
 def _is_canonical_client_db(db_path: str) -> bool:
@@ -3033,8 +3039,7 @@ def _resolve_client_profile(args: Any, env: Dict[str, str]) -> Optional[Dict[str
 
 
 def _fleets_config_path() -> Path:
-    override = os.environ.get("MAC_FLEETS_CONFIG")
-    return Path(override) if override else (Path.home() / ".mac" / "fleets.yaml")
+    return mac_paths.fleets_config()
 
 
 def _load_fleets_yaml() -> Dict[str, Any]:
@@ -3102,7 +3107,7 @@ def _load_dotenv_into(env: Dict[str, str]) -> None:
     a shell would, rather than landing as a bogus ``export MAC_API_TOKEN`` key
     or a value with stray quotes.
     """
-    path = Path(os.environ.get("MAC_DEPLOY_ENV_FILE") or (Path.home() / ".mac" / ".env"))
+    path = mac_paths.deploy_env_file()
     if not path.is_file():
         return
     try:

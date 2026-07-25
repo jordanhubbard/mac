@@ -18,6 +18,8 @@ import os
 import shlex
 import sys
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Callable, List, Optional
 
 
@@ -62,7 +64,7 @@ def _resolve_gateway_policy() -> str:
         if not Path(explicit).is_file():
             raise FileNotFoundError("MAC_OPENSHELL_GATEWAY_POLICY=%r but no such file" % explicit)
         return explicit
-    deployed = Path.home() / ".mac" / "openshell-gateway-policy.yaml"
+    deployed = mac_paths.mac_home() / "openshell-gateway-policy.yaml"
     if deployed.is_file():
         return str(deployed)
     bundled = Path(__file__).resolve().parent / "openshell" / "gateway-default-policy.yaml"

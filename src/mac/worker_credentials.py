@@ -29,6 +29,8 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from mac.client_principals import (
@@ -184,7 +186,7 @@ def default_policy_path() -> Path:
     configured = os.environ.get("MAC_WORKER_CREDENTIAL_POLICY_FILE")
     if configured:
         return Path(configured).expanduser()
-    mac_home = Path(os.environ.get("MAC_HOME") or (Path.home() / ".mac")).expanduser()
+    mac_home = mac_paths.mac_home()
     return mac_home / "worker-credential-policy.json"
 
 

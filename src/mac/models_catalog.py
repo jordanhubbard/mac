@@ -24,6 +24,8 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -131,7 +133,7 @@ def _cache_path() -> Path:
     if configured:
         return Path(configured).expanduser()
     home = str(os.environ.get("MAC_HOME") or "").strip()
-    base = Path(home).expanduser() if home else Path.home() / ".mac"
+    base = Path(home).expanduser() if home else mac_paths.mac_home()
     return base / "models-dev-cache.json"
 
 

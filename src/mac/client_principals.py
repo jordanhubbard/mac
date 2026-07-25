@@ -20,6 +20,8 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 
@@ -60,7 +62,7 @@ def _parse_timestamp(value: Any) -> Optional[datetime]:
 
 
 def mac_home() -> Path:
-    return Path(os.environ.get("MAC_HOME") or (Path.home() / ".mac")).expanduser()
+    return mac_paths.mac_home()
 
 
 def default_registry_path() -> Path:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import yaml
@@ -24,10 +26,7 @@ def default_policy_path() -> Path:
 
 
 def default_fleets_path() -> Path:
-    import os
-
-    override = os.environ.get("MAC_FLEETS_CONFIG")
-    return Path(override).expanduser() if override else Path.home() / ".mac" / "fleets.yaml"
+    return mac_paths.fleets_config()
 
 
 def _to_dict(value: Any) -> Dict[str, Any]:

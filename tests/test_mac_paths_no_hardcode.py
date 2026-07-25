@@ -18,17 +18,8 @@ _SRC = Path(__file__).resolve().parent.parent / "src" / "mac"
 _PATTERN = re.compile(r"""home\(\)\s*/\s*["']\.(mac|hermes)["']""")
 
 # Modules that still contain a legacy literal (Phase 0 baseline; only shrink).
-_BASELINE = {
-    "acp/backend.py", "acp/permission.py", "cli.py", "client_principals.py",
-    "dispatch.py", "executor_sandbox.py", "fleet_creds.py", "fleet_ssh.py",
-    "hermes_chat_config.py", "hermes_config_surface.py", "hermes_gateway.py",
-    "hermes_home_audit.py", "hermes_runtime.py", "ide_launcher.py",
-    "ledger_backup_scheduler.py", "ledger_backup.py", "local_ledger_migration.py",
-    "model_selection.py", "models_catalog.py", "openshell_reconcile.py",
-    "openshell_service.py", "openshell_supervisor.py", "webdav_server.py",
-    "worker_credentials.py", "worker_directable.py", "worker_reflect.py",
-    "worker_runtime_deps.py", "worker.py",
-}
+# Every site has been routed through mac.mac_paths, so the baseline is empty.
+_BASELINE = set()
 
 
 def _offenders():

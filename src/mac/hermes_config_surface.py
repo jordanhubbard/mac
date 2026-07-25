@@ -17,6 +17,8 @@ import re
 import tempfile
 from copy import deepcopy
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import yaml
@@ -75,7 +77,7 @@ _RUNTIME_FIELDS = (
 
 
 def hermes_home() -> Path:
-    return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").expanduser()
+    return mac_paths.gateway_home()
 
 
 def registry_path() -> Path:
@@ -83,7 +85,7 @@ def registry_path() -> Path:
         os.environ.get("MAC_FLEETS_CONFIG")
         or os.environ.get("MAC_DEPLOY_FLEETS_CONFIG")
         or os.environ.get("MAC_DEPLOY_FLEET_REGISTRY")
-        or str(Path.home() / ".mac" / "fleets.yaml")
+        or str(mac_paths.fleets_config())
     )
     return Path(raw).expanduser()
 

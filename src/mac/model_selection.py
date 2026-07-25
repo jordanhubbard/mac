@@ -36,6 +36,8 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from mac import models_catalog
@@ -390,7 +392,7 @@ def selection_file_path(environ: Optional[Mapping[str, str]] = None) -> Path:
     if configured:
         return Path(configured).expanduser()
     home = str(env.get("MAC_HOME") or "").strip()
-    base = Path(home).expanduser() if home else Path.home() / ".mac"
+    base = Path(home).expanduser() if home else mac_paths.mac_home()
     return base / "model-selection.json"
 
 

@@ -16,10 +16,10 @@ disk.
 
 Usage::
 
-    from pathlib import Path
+    from mac import mac_paths
     from mac.hermes_home_audit import audit_hermes_home
 
-    report = audit_hermes_home(Path.home() / ".hermes")
+    report = audit_hermes_home(mac_paths.gateway_home())
 """
 
 from __future__ import annotations

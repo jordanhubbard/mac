@@ -21,6 +21,8 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+
+from mac import mac_paths
 from typing import Any, Dict, Mapping, Optional
 
 from mac import ledger_backup
@@ -43,7 +45,7 @@ def _default_db_path(env: Mapping[str, str]) -> str:
     raw = str(env.get("MAC_DB") or "").strip()
     if raw:
         return raw
-    return str(Path(env.get("MAC_HOME") or Path.home() / ".mac") / "mac.db")
+    return str(Path(env.get("MAC_HOME") or mac_paths.mac_home()) / "mac.db")
 
 
 @dataclass(frozen=True)
@@ -67,7 +69,7 @@ class LedgerBackupConfig:
             except ValueError:
                 return default
 
-        default_home = env.get("MAC_HOME") or str(Path.home() / ".mac")
+        default_home = env.get("MAC_HOME") or str(mac_paths.mac_home())
         return cls(
             # Default-ON, but a non-hub role should not back up.
             enabled=(

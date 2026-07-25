@@ -39,6 +39,8 @@ import threading
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
+from mac import mac_paths
+
 from .protocol import StopReason
 from .server import PromptTurn, _prompt_text
 
@@ -70,7 +72,7 @@ def default_argv(prompt: str) -> List[str]:
 
     wrapper = (
         os.environ.get("MAC_OPENCLAW_AGENT_BIN")
-        or str(Path.home() / ".mac" / "bin" / "openclaw-agent")
+        or str(mac_paths.mac_home() / "bin" / "openclaw-agent")
     )
     return [
         wrapper,
