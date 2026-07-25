@@ -1398,6 +1398,21 @@ import json, os, signal, subprocess, tempfile, time
 workspace = os.environ.get("MAC_TASK_WORKSPACE") or os.getcwd()
 worktree = os.environ.get("MAC_TASK_REPO_WORKTREE") or workspace
 command = os.environ.get("MAC_REPO_TEST_COMMAND", "").strip()
+# Impact-scoped gate (durable per-task gate-speed fix): when the configured
+# command is the full contract gate AND the repo ships the fail-closed sanity
+# contract, run only the tests the task's diff touches (base = the pre-task SHA).
+# run-sanity-tests.sh itself falls back to the whole-repo gate on any resolver
+# error or when an infrastructure path (test-policy.toml global_full_paths)
+# changed, and enforces diff-coverage on the selected subset, so verification is
+# never weakened — only narrowed to the changed surface. Mirrors the opencode
+# executor's gate_detect_test_command and the hub-review verifier, which already
+# prefer the sanity contract; the report/worker sandbox path had been left on the
+# whole-repo gate, so every code task paid the full ~34-60min suite.
+_repo_base_sha = os.environ.get("MAC_TASK_REPO_BASE_SHA", "").strip()
+if command in ("scripts/run-contract-tests.sh", "./scripts/run-contract-tests.sh") and _repo_base_sha:
+    _sanity = os.path.join(worktree, "scripts", "run-sanity-tests.sh")
+    if os.path.isfile(_sanity) and os.access(_sanity, os.X_OK):
+        command = "scripts/run-sanity-tests.sh --base " + _repo_base_sha
 bootstrap_command = os.environ.get("MAC_REPO_BOOTSTRAP_COMMAND", "").strip()
 # `bash -lc` re-runs the login profile, which resets PATH to the system default
 # and drops the toolchain bin we prepended during setup — so repo bootstrap/test
