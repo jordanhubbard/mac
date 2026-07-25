@@ -5,6 +5,8 @@ The deployment controller runs this helper on the hub host and talks only to
 the hub's loopback listener.  Bearers and request bodies are accepted through
 owner-private regular files; response receipts are written atomically with
 mode 0600.  Error messages deliberately omit response bodies and credentials.
+A small allowlist admits only bounded, plain-text fleet-release validation
+details so operators can distinguish which rollout invariant failed.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import argparse
 import json
 import os
 import stat
+import string
 import tempfile
 import urllib.error
 import urllib.parse
@@ -28,6 +31,18 @@ AUTHORITY_SCHEMA = "mac.fleet_release_hub_authority.v1"
 PARTICIPANT_STATE_SCHEMA = "mac.fleet_release_participant_state.v1"
 RECEIPT_SCHEMA = "mac.fleet_release_epoch_receipt.v1"
 SAFE_STATUSES = frozenset({"absent", "mismatch", "open", "proved", "committed", "aborted"})
+SAFE_ERROR_DETAIL_PREFIXES = (
+    "aborted ",
+    "attestation ",
+    "committed ",
+    "fleet release ",
+    "report executor ",
+    "staged ",
+    "worker ",
+)
+SAFE_ERROR_DETAIL_CHARACTERS = frozenset(
+    string.ascii_letters + string.digits + " ._:-"
+)
 
 
 class ClientError(ValueError):
@@ -171,6 +186,26 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ClientError("hub API redirects are forbidden")
 
 
+def _safe_http_error_detail(raw: bytes) -> str:
+    """Return one secret-safe fleet-release validation detail, or nothing."""
+
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(value, dict) or set(value) != {"detail"}:
+        return ""
+    detail = value.get("detail")
+    if (
+        not isinstance(detail, str)
+        or not 1 <= len(detail.encode("utf-8")) <= 512
+        or not detail.startswith(SAFE_ERROR_DETAIL_PREFIXES)
+        or any(character not in SAFE_ERROR_DETAIL_CHARACTERS for character in detail)
+    ):
+        return ""
+    return detail
+
+
 def _request(
     hub_url: str,
     token: str,
@@ -198,10 +233,15 @@ def _request(
         with opener.open(request, timeout=30) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:
-        # Consume a bounded amount so the connection can close, but never echo
-        # a possibly secret-bearing server body into controller logs.
-        exc.read(4096)
-        raise ClientError(f"hub API {method} request failed with HTTP {exc.code}") from exc
+        # Consume a bounded amount so the connection can close. Only an exact,
+        # allowlisted plain-text validation detail may reach controller logs;
+        # arbitrary server bodies and structured validation payloads stay
+        # opaque because they can contain request fragments or credentials.
+        detail = _safe_http_error_detail(exc.read(4096))
+        suffix = f": {detail}" if detail else ""
+        raise ClientError(
+            f"hub API {method} request failed with HTTP {exc.code}{suffix}"
+        ) from exc
     except urllib.error.URLError as exc:
         raise ClientError(f"hub API {method} request failed before a response") from exc
     if len(raw) > MAX_RESPONSE_BYTES:

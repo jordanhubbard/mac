@@ -163,5 +163,29 @@ def test_redirect_handler_fails_closed() -> None:
         client._NoRedirect().redirect_request(None, None, 302, "Found", {}, "http://elsewhere")
 
 
+def test_http_error_detail_allows_only_plain_fleet_release_validation() -> None:
+    client = _module()
+    assert (
+        client._safe_http_error_detail(
+            json.dumps(
+                {
+                    "detail": (
+                        "fleet release epoch lost node readiness for agent_rocky"
+                    )
+                }
+            ).encode()
+        )
+        == "fleet release epoch lost node readiness for agent_rocky"
+    )
+    for unsafe in (
+        b'{"detail":"token=secret"}',
+        b'{"detail":"fleet release leaked /private/path"}',
+        b'{"detail":{"message":"fleet release nested payload"}}',
+        b'{"detail":"fleet release ok","request":{"token":"secret"}}',
+        b"not-json",
+    ):
+        assert client._safe_http_error_detail(unsafe) == ""
+
+
 def test_helper_is_executable() -> None:
     assert os.access(HELPER, os.X_OK)
