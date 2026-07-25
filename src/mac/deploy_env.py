@@ -464,6 +464,7 @@ def _identity_values(cfg: DeployEnvConfig) -> Dict[str, str]:
         "MAC_HERMES_PERSONA_ID": stable_id("persona", identity.agent),
         "MAC_HERMES_INSTANCE_ID": hermes_id,
         "MAC_WORKER_HERMES_INSTANCE_ID": hermes_id,
+        "MAC_PERSONA_INSTANCE_ID": hermes_id,
         "MAC_SHARED_SERVICES_MANAGER_AGENT": identity.shared_services_manager,
     }
 

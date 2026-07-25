@@ -616,7 +616,7 @@ def _codex_provider_config_argv(choice: CodingAgentChoice) -> List[str]:
             "X-MAC-Task-ID": "MAC_TASK_ID",
             "X-MAC-Lease-ID": "MAC_LEASE_ID",
             "X-MAC-Command-ID": "MAC_COMMAND_ID",
-            "X-MAC-Hermes-Instance-ID": "MAC_HERMES_INSTANCE_ID",
+            "X-MAC-Persona-Instance-ID": "MAC_PERSONA_INSTANCE_ID",
             "X-MAC-Fleet": "MAC_FLEET",
         }
         inline_table = "{ %s }" % ", ".join(

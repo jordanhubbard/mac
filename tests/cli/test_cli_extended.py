@@ -505,7 +505,7 @@ def test_agent_reflect_publishes_self_description(tmp_path):
     assert result["schema"] == "mac.agentbus.agent_reflection_publish.v1"
     assert result["agent_id"] == agent["id"]
     assert result["recipient_agent_id"] == agent["id"]
-    assert result["payload"]["schema"] == "mac.agentbus.agent_reflection.v1"
+    assert result["payload"]["schema"] == "mac.agentbus.agent_reflection.v2"
     assert result["payload"].get("request_id") == "rid-42"
     assert result["payload"]["agent"]["name"] == "reflect-agent"
     assert result["streams"][0]["topic"] == "mac.agent.reflect.v1"

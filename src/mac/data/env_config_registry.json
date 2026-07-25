@@ -5293,11 +5293,9 @@
       "deploy/nemoclaw/docker-compose.yaml",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/_hermes/agent/agent_init.py",
-      "src/mac/coding_agent.py",
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/hermes_startup.py",
-      "src/mac/router_app.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -8154,6 +8152,20 @@
     "sources": [
       "deploy/fleet-node-install.sh",
       "deploy/openshell/bootstrap-openshell.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: persona instance id.",
+    "family": "core",
+    "name": "MAC_PERSONA_INSTANCE_ID",
+    "retired": false,
+    "sources": [
+      "src/mac/coding_agent.py",
+      "src/mac/deploy_env.py",
+      "src/mac/hermes_runtime.py",
+      "src/mac/router_app.py"
     ],
     "type": "str"
   },

@@ -16,7 +16,7 @@ ARTIFACT_PUBLISH_SCHEMA = "mac.agentbus.artifact_publish.v1"
 ARTIFACT_PUBLISH_TOPIC = "mac.artifact.publish.v1"
 ARTIFACT_PUBLISH_CONTENT_TYPE = "application/vnd.mac.artifact-publish+json"
 
-AGENT_REFLECTION_SCHEMA = "mac.agentbus.agent_reflection.v1"
+AGENT_REFLECTION_SCHEMA = "mac.agentbus.agent_reflection.v2"
 AGENT_REFLECTION_TOPIC = "mac.agent.reflect.v1"
 AGENT_REFLECTION_CONTENT_TYPE = "application/vnd.mac.agent-reflection+json"
 
@@ -188,7 +188,7 @@ def agent_reflection_payload(
         "current_task_id": agent.get("current_task_id"),
         "running_digest": agent.get("running_digest"),
         "role_id": agent.get("role_id"),
-        "hermes_instance_id": agent.get("hermes_instance_id"),
+        "persona_instance_id": agent.get("persona_instance_id"),
         "installed_packages": agent.get("installed_packages") or {},
         "last_seen_at": agent.get("last_seen_at"),
         "updated_at": agent.get("updated_at"),

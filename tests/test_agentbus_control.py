@@ -148,7 +148,7 @@ _SAMPLE_AGENT: dict = {
     "current_task_id": None,
     "running_digest": None,
     "role_id": "worker",
-    "hermes_instance_id": "hermes-1",
+    "persona_instance_id": "persona-1",
     "installed_packages": {"mac": "0.9.0"},
     "last_seen_at": "2026-01-01T00:00:00Z",
     "updated_at": "2026-01-01T00:00:00Z",
@@ -181,8 +181,21 @@ def test_agent_reflection_payload_inventory_agent_fields() -> None:
     assert inv["status"] == "idle"
     assert inv["health_status"] == "healthy"
     assert inv["role_id"] == "worker"
-    assert inv["hermes_instance_id"] == "hermes-1"
+    assert inv["persona_instance_id"] == "persona-1"
+    assert "hermes_instance_id" not in inv
     assert inv["installed_packages"] == {"mac": "0.9.0"}
+
+
+def test_agent_reflection_schema_is_persona_v2() -> None:
+    """The transport schema vocabulary rename bumps the version to v2."""
+    assert AGENT_REFLECTION_SCHEMA == "mac.agentbus.agent_reflection.v2"
+
+
+def test_agent_reflection_payload_emits_persona_instance_id() -> None:
+    """The first-class persona instance identity is emitted directly."""
+    agent = {"id": "agent_persona", "persona_instance_id": "persona-new"}
+    inv = agent_reflection_payload(agent=agent)["agent"]
+    assert inv["persona_instance_id"] == "persona-new"
 
 
 def test_agent_reflection_payload_summary_format() -> None:

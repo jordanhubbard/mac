@@ -151,7 +151,7 @@ def test_publish_agent_reflection_forwards_deep_request():
     )
     # Two streams exist: inventory to requester, deep request to target.
     assert out["deep_request_stream"]
-    assert out["count"] == 1 and out["payload"]["schema"] == "mac.agentbus.agent_reflection.v1"
+    assert out["count"] == 1 and out["payload"]["schema"] == "mac.agentbus.agent_reflection.v2"
 
 
 # ---------------------------------------------------------------------------

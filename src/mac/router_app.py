@@ -226,12 +226,11 @@ _CONTEXT_HEADER_NAMES = {
     "task_id": "x-mac-task-id",
     "lease_id": "x-mac-lease-id",
     "command_id": "x-mac-command-id",
-    "hermes_instance_id": "x-mac-hermes-instance-id",
+    "persona_instance_id": "x-mac-persona-instance-id",
     "request_id": "x-mac-request-id",
     "fleet": "x-mac-fleet",
 }
 _CONTEXT_BODY_KEYS = ("_mac_context", "mac_context")
-
 
 def _string_value(value: Any) -> str:
     text = str(value or "").strip()
@@ -377,7 +376,7 @@ def mac_route_context_headers(
     agent_id: Optional[str] = None,
     task_id: Optional[str] = None,
     lease_id: Optional[str] = None,
-    hermes_instance_id: Optional[str] = None,
+    persona_instance_id: Optional[str] = None,
     command_id: Optional[str] = None,
     fleet: Optional[str] = None,
     request_id: Optional[str] = None,
@@ -394,7 +393,7 @@ def mac_route_context_headers(
 
     When explicit values are not supplied, the function falls back to env-vars set by
     the worker/executor runtime (MAC_AGENT_ID, MAC_TASK_ID, MAC_LEASE_ID,
-    MAC_HERMES_INSTANCE_ID). Callers that override those env-vars for a specific
+    MAC_PERSONA_INSTANCE_ID). Callers that override those env-vars for a specific
     task run do not need to pass explicit arguments.
 
     Only non-empty values produce a header. Call sites should treat an empty return
@@ -414,7 +413,9 @@ def mac_route_context_headers(
         "x-mac-agent-id": _pick(agent_id, "MAC_AGENT_ID"),
         "x-mac-task-id": _pick(task_id, "MAC_TASK_ID"),
         "x-mac-lease-id": _pick(lease_id, "MAC_LEASE_ID"),
-        "x-mac-hermes-instance-id": _pick(hermes_instance_id, "MAC_HERMES_INSTANCE_ID"),
+        "x-mac-persona-instance-id": _pick(
+            persona_instance_id, "MAC_PERSONA_INSTANCE_ID"
+        ),
         "x-mac-command-id": _pick(command_id, "MAC_COMMAND_ID"),
         "x-mac-fleet": _pick(fleet, "MAC_FLEET"),
         "x-mac-request-id": _pick(request_id, ""),
@@ -724,7 +725,7 @@ class ProviderProxy:
             "task_id",
             "lease_id",
             "command_id",
-            "hermes_instance_id",
+            "persona_instance_id",
             "request_id",
             "fleet",
             "claimed_agent_id",

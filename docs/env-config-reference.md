@@ -681,6 +681,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_OPENSH_EXPECTED_OPENCLAW_SANDBOX` | str | consumer-defined | core | Core setting: opensh expected openclaw sandbox. |
 | `MAC_OPENSH_GATEWAY_OWNER` | str | consumer-defined | core | Core setting: opensh gateway owner. |
 | `MAC_OPENSH_GW` | str | consumer-defined | core | Core setting: opensh gw. |
+| `MAC_PERSONA_INSTANCE_ID` | str | consumer-defined | core | Core setting: persona instance id. |
 | `MAC_PG_POOL_SIZE` | int | consumer-defined | core | Core setting: pg pool size. |
 | `MAC_PHASE1_AGENT` | str | consumer-defined | core | Core setting: phase1 agent. |
 | `MAC_PHASE1_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: phase1 codegraph version. |

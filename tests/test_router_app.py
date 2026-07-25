@@ -871,7 +871,7 @@ def test_mac_route_context_headers_explicit_values():
         agent_id="agent_abc",
         task_id="task_xyz",
         lease_id="lease_123",
-        hermes_instance_id="hermes_hi",
+        persona_instance_id="persona_hi",
         command_id="cmd_999",
         fleet="fleet_main",
         request_id="req_001",
@@ -879,7 +879,7 @@ def test_mac_route_context_headers_explicit_values():
     assert headers["x-mac-agent-id"] == "agent_abc"
     assert headers["x-mac-task-id"] == "task_xyz"
     assert headers["x-mac-lease-id"] == "lease_123"
-    assert headers["x-mac-hermes-instance-id"] == "hermes_hi"
+    assert headers["x-mac-persona-instance-id"] == "persona_hi"
     assert headers["x-mac-command-id"] == "cmd_999"
     assert headers["x-mac-fleet"] == "fleet_main"
     assert headers["x-mac-request-id"] == "req_001"
@@ -891,7 +891,7 @@ def test_mac_route_context_headers_from_env():
         "MAC_AGENT_ID": "agent_from_env",
         "MAC_TASK_ID": "task_from_env",
         "MAC_LEASE_ID": "lease_from_env",
-        "MAC_HERMES_INSTANCE_ID": "hermes_from_env",
+        "MAC_PERSONA_INSTANCE_ID": "persona_from_env",
         "MAC_COMMAND_ID": "cmd_from_env",
         "MAC_FLEET": "fleet_from_env",
     }
@@ -899,7 +899,7 @@ def test_mac_route_context_headers_from_env():
     assert headers["x-mac-agent-id"] == "agent_from_env"
     assert headers["x-mac-task-id"] == "task_from_env"
     assert headers["x-mac-lease-id"] == "lease_from_env"
-    assert headers["x-mac-hermes-instance-id"] == "hermes_from_env"
+    assert headers["x-mac-persona-instance-id"] == "persona_from_env"
     assert headers["x-mac-command-id"] == "cmd_from_env"
     assert headers["x-mac-fleet"] == "fleet_from_env"
 
@@ -1089,7 +1089,7 @@ def test_llm_route_rows_carry_attribution_in_observation():
             "agent_id": "agent_live_test",
             "task_id": "task_live_test",
             "lease_id": "lease_live_test",
-            "hermes_instance_id": "hermes_live_test",
+            "persona_instance_id": "persona_live_test",
         },
     )
 
@@ -1099,7 +1099,7 @@ def test_llm_route_rows_carry_attribution_in_observation():
     assert ev["agent_id"] == "agent_live_test", "agent_id missing from llm.route observation"
     assert ev["task_id"] == "task_live_test",   "task_id missing from llm.route observation"
     assert ev["lease_id"] == "lease_live_test", "lease_id missing from llm.route observation"
-    assert ev["hermes_instance_id"] == "hermes_live_test", "hermes_instance_id missing"
+    assert ev["persona_instance_id"] == "persona_live_test", "persona_instance_id missing"
     # Usage must propagate for cost attribution.
     assert ev["usage"]["total_tokens"] == 30
     # The row is joinable: schema + provider + model are present.
@@ -1123,7 +1123,7 @@ def test_llm_route_mac_route_context_headers_feeds_attribution():
     stamped = mac_route_context_headers(
         agent_id="agent_chain_test",
         task_id="task_chain_test",
-        hermes_instance_id="hermes_chain_test",
+        persona_instance_id="persona_chain_test",
     )
 
     class FakeRequest:
@@ -1133,6 +1133,6 @@ def test_llm_route_mac_route_context_headers_feeds_attribution():
     ctx = _route_context_from_request(FakeRequest(), {})
     assert ctx["agent_id"] == "agent_chain_test"
     assert ctx["task_id"] == "task_chain_test"
-    assert ctx["hermes_instance_id"] == "hermes_chain_test"
+    assert ctx["persona_instance_id"] == "persona_chain_test"
     # No mismatch — no principal, so claimed_agent_id must not appear.
     assert "claimed_agent_id" not in ctx
