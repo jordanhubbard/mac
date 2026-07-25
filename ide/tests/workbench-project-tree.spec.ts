@@ -28,6 +28,7 @@ function makeTask(
 function dashboardState(overrides?: {
   extraTasks?: ReturnType<typeof makeTask>[];
   projectSummaries?: Array<Record<string, unknown>>;
+  agents?: Array<Record<string, unknown>>;
 }) {
   const baseTasks = [
     makeTask("alpha-open-1", "open", "alpha", 2, "Open alpha one"),
@@ -52,7 +53,7 @@ function dashboardState(overrides?: {
       agent_statuses: { idle: 1 },
     },
     project_summaries: projectSummaries,
-    agents: [
+    agents: overrides?.agents ?? [
       {
         agent: {
           id: "agent-test",
@@ -217,6 +218,68 @@ test("agent inspector exposes the verified OpenClaw service advertisement", asyn
   await page.goto("/");
   await expect(page.getByText("OpenClaw", { exact: true })).toBeVisible();
   await expect(page.getByText("openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified")).toBeVisible();
+});
+
+test("agent selector preserves every click target under vertical pressure", async ({ page }) => {
+  const agents = Array.from({ length: 12 }, (_, index) => ({
+    agent: {
+      id: `agent-worker-${index}`,
+      name: `worker-${index}`,
+      status: "idle",
+      health_status: "healthy",
+      capabilities: Array.from({ length: 24 }, (__, capability) => `capability-${capability}`),
+      resources: {
+        hardware: { cpu_count: 8, memory_mb: 16384, arch: "x64" },
+        openclaw_runtime: {
+          implementation: "openclaw",
+          mode: "gateway",
+          confinement: { provider: "openshell" },
+          verified: true,
+        },
+      },
+    },
+    machine: null,
+    availability: { eligible: true, reasons: [] },
+  }));
+  await page.setViewportSize({ width: 1440, height: 600 });
+  await setupPage(page, { agents });
+  await page.goto("/");
+
+  const mesh = page.locator(".agent-mesh");
+  const strip = mesh.locator(".mesh-agent-strip");
+  const buttons = strip.getByRole("button");
+  await expect(buttons).toHaveCount(12);
+
+  const first = buttons.first();
+  const last = buttons.last();
+  const firstBox = await first.boundingBox();
+  expect(firstBox?.width).toBeGreaterThanOrEqual(44);
+  expect(firstBox?.height).toBeGreaterThanOrEqual(44);
+
+  await last.scrollIntoViewIfNeeded();
+  const lastBox = await last.boundingBox();
+  expect(lastBox?.width).toBeGreaterThanOrEqual(44);
+  expect(lastBox?.height).toBeGreaterThanOrEqual(44);
+  await last.click();
+  await expect(last).toHaveAttribute("aria-pressed", "true");
+  await expect(mesh.locator(".selected-agent-head strong")).toHaveText("worker-11");
+
+  const stripBounds = await strip.boundingBox();
+  const avatarBounds = await last.locator(".agent-avatar").boundingBox();
+  expect(avatarBounds!.y).toBeGreaterThanOrEqual(stripBounds!.y);
+  expect(avatarBounds!.y + avatarBounds!.height).toBeLessThanOrEqual(
+    stripBounds!.y + stripBounds!.height,
+  );
+
+  const meshBounds = await mesh.boundingBox();
+  const composerBounds = await mesh.locator(".mesh-composer").boundingBox();
+  expect(composerBounds!.y + composerBounds!.height).toBeLessThanOrEqual(
+    meshBounds!.y + meshBounds!.height + 1,
+  );
+  const inspectorScrolls = await mesh.locator(".agent-inspector").evaluate(
+    (element) => element.scrollHeight > element.clientHeight,
+  );
+  expect(inspectorScrolls).toBe(true);
 });
 
 test("connections explains shared public identity and its active delegate", async ({ page }) => {

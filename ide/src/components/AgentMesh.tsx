@@ -112,8 +112,10 @@ export function AgentMesh({
       {tab === "agents" ? (
         <>
           <div className="mesh-agent-strip">
-            {agents.slice(0, 8).map((agent) => (
+            {agents.map((agent) => (
               <button
+                aria-label={title(agent)}
+                aria-pressed={selectedAgent?.id === agent.id}
                 className={selectedAgent?.id === agent.id ? "selected" : ""}
                 key={agent.id}
                 onClick={() => onSelectAgent(agent.id)}
