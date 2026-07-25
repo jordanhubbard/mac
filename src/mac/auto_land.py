@@ -36,6 +36,7 @@ force-pushes.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -151,11 +152,17 @@ class LandDecision:
     contract: Optional[Dict[str, Any]] = None
     verdict: Optional[Dict[str, Any]] = None
     target: str = ""
+    head_sha: str = ""
+    author: str = ""
+    reviewer: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema": "mac.auto_land.decision.v1",
             "target": self.target,
+            "head_sha": self.head_sha,
+            "author": self.author,
+            "reviewer": self.reviewer,
             "land": self.land,
             "gate": self.gate,
             "reason": self.reason,
@@ -175,72 +182,98 @@ def decide_land(
     review_verdict: Optional[ReviewVerdict],
     *,
     target: str = "",
+    head_sha: str = "",
+    author: str = "",
+    reviewer: str = "",
 ) -> LandDecision:
     """Decide whether to land, given the two gate results.
 
-    Lands **only** when the contract gate is GREEN and the reviewer verdict is
-    an explicit APPROVE. Any ambiguity — a missing contract result, a missing
-    verdict, or an unrecognized verdict — fails closed (does not land). This is
-    a pure function: no I/O, no side effects.
+    Lands **only** when all of the following hold — anything else fails closed
+    (default-to-reject), since a human is no longer in the merge path:
+
+    * the contract gate is GREEN;
+    * the independent adversarial reviewer returned an explicit APPROVE;
+    * the reviewer is a *different* agent than the author (independence). An
+      empty reviewer, an empty author, or ``reviewer == author`` never lands —
+      a change must not sign off on itself.
+
+    This is a pure function: no I/O, no side effects. ``head_sha``/``author``/
+    ``reviewer`` are recorded on the decision so the land action can gate on the
+    exact revision the gates ran against.
     """
     contract_dict = contract_result.to_dict() if contract_result is not None else None
     verdict_dict = review_verdict.to_dict() if review_verdict is not None else None
     findings = list(review_verdict.findings) if review_verdict is not None else []
+    reviewer = reviewer or (review_verdict.reviewer if review_verdict is not None else "")
+
+    def _decision(*, land: bool, gate: str, reason: str) -> LandDecision:
+        return LandDecision(
+            land=land,
+            gate=gate,
+            reason=reason,
+            findings=findings,
+            contract=contract_dict,
+            verdict=verdict_dict,
+            target=target,
+            head_sha=head_sha,
+            author=author,
+            reviewer=reviewer,
+        )
 
     # Gate 1: the machine contract gate.
     if contract_result is None:
-        return LandDecision(
+        return _decision(
             land=False,
             gate="contract",
             reason="no contract result available; default-to-reject",
-            findings=findings,
-            contract=contract_dict,
-            verdict=verdict_dict,
-            target=target,
         )
     if not contract_result.green:
-        return LandDecision(
+        return _decision(
             land=False,
             gate="contract",
             reason="contract gate is RED; %s" % (contract_result.summary or "see details"),
-            findings=findings,
-            contract=contract_dict,
-            verdict=verdict_dict,
-            target=target,
         )
 
     # Gate 2: the independent adversarial reviewer.
     if review_verdict is None:
-        return LandDecision(
+        return _decision(
             land=False,
             gate="review",
             reason="no reviewer verdict available; default-to-reject",
-            findings=findings,
-            contract=contract_dict,
-            verdict=verdict_dict,
-            target=target,
         )
     if not review_verdict.is_approve:
         detail = review_verdict.verdict
-        return LandDecision(
+        return _decision(
             land=False,
             gate="review",
             reason="reviewer did not APPROVE (verdict=%s); default-to-reject" % detail,
-            findings=findings,
-            contract=contract_dict,
-            verdict=verdict_dict,
-            target=target,
         )
 
-    # Both gates green.
-    return LandDecision(
+    # Gate 3: reviewer independence — the reviewer must not be the author.
+    if not reviewer:
+        return _decision(
+            land=False,
+            gate="independence",
+            reason="reviewer identity unknown; cannot prove independence; default-to-reject",
+        )
+    if not author:
+        return _decision(
+            land=False,
+            gate="independence",
+            reason="author identity unknown; cannot prove reviewer independence; default-to-reject",
+        )
+    if reviewer.strip().lower() == author.strip().lower():
+        return _decision(
+            land=False,
+            gate="independence",
+            reason="reviewer (%s) is the author; a change must not approve itself; default-to-reject" % reviewer,
+        )
+
+    # All gates green.
+    return _decision(
         land=True,
         gate="landed",
-        reason="contract GREEN and reviewer APPROVE",
-        findings=findings,
-        contract=contract_dict,
-        verdict=verdict_dict,
-        target=target,
+        reason="contract GREEN, reviewer APPROVE, and reviewer independent of author",
     )
 
 
@@ -256,28 +289,59 @@ def run_auto_land(
     run_review: Callable[[str], Optional[ReviewVerdict]],
     do_land: Callable[[str, LandDecision], Any],
     record: Callable[[str, LandDecision], Any],
+    author: str = "",
+    resolve_head_sha: Optional[Callable[[str], str]] = None,
+    notify_human: Optional[Callable[[str, LandDecision], Any]] = None,
 ) -> LandDecision:
     """Run the full auto-land pipeline for ``target`` (a task id or a branch).
 
     ``run_contract`` runs the machine contract gate; ``run_review`` spawns the
     independent adversarial reviewer; ``do_land`` performs the (safe) land
-    action; ``record`` persists the outcome. All four are injected so tests can
+    action; ``record`` persists the outcome. All are injected so tests can
     substitute fakes.
 
+    The head_sha the gates ran against is captured up front (via
+    ``resolve_head_sha``) and threaded into the decision so ``do_land`` can
+    refuse to land if the tip moved out from under the gate. ``author`` is the
+    change's author; the reviewer must be a *different* agent (independence).
+
     Both gates always run so their findings are recorded even on a no-land.
-    ``do_land`` is invoked **exactly once, and only when both gates are green**.
+    ``do_land`` is invoked **exactly once, and only when the decision lands**.
     ``record`` is **always** invoked with the final decision, even if
-    ``do_land`` raises.
+    ``do_land`` raises. ``notify_human`` (post-hoc, non-blocking) is invoked on
+    **every** outcome — a human is informed, never blocking.
     """
+    head_sha = ""
+    if resolve_head_sha is not None:
+        try:
+            head_sha = str(resolve_head_sha(target) or "")
+        except Exception:  # best-effort; a missing sha simply gates the land
+            head_sha = ""
+
     contract_result = run_contract(target)
     review_verdict = run_review(target)
-    decision = decide_land(contract_result, review_verdict, target=target)
+    reviewer = review_verdict.reviewer if review_verdict is not None else ""
+    decision = decide_land(
+        contract_result,
+        review_verdict,
+        target=target,
+        head_sha=head_sha,
+        author=author,
+        reviewer=reviewer,
+    )
 
     try:
         if decision.land:
             do_land(target, decision)
     finally:
-        record(target, decision)
+        try:
+            record(target, decision)
+        finally:
+            if notify_human is not None:
+                try:
+                    notify_human(target, decision)
+                except Exception:  # visibility is non-blocking; never fail the run
+                    pass
     return decision
 
 
@@ -359,11 +423,28 @@ def _parse_review_output(output: str, *, reviewer: str) -> ReviewVerdict:
     return ReviewVerdict(normalized, findings, reviewer, output[-4000:])
 
 
+def _reviewer_identity(choice: Any, env: Optional[Mapping[str, str]]) -> str:
+    """Resolve the *fleet* identity of the reviewer for the independence check.
+
+    Prefer an explicit reviewer id pinned by the dispatcher
+    (``MAC_REVIEWER_AGENT_ID``) — that is the peer agent pulled from the fleet
+    by capability. Fall back to the current agent id, then to the coding-agent
+    CLI name. Independence is enforced against this value in :func:`decide_land`.
+    """
+    env = os.environ if env is None else env
+    for key in ("MAC_REVIEWER_AGENT_ID", "MAC_AGENT_ID"):
+        val = str(env.get(key) or "").strip()
+        if val:
+            return val
+    return getattr(choice, "agent", "") or ""
+
+
 def run_adversarial_review(
     target: str,
     *,
     repo_dir: str = ".",
     env: Optional[Mapping[str, str]] = None,
+    author: str = "",
     runner: Callable[..., Any] = _default_subprocess_runner,
     resolve: Optional[Callable[..., Any]] = None,
     build_argv: Optional[Callable[..., Any]] = None,
@@ -374,6 +455,10 @@ def run_adversarial_review(
     (the same seam the executor uses). If no coding agent is available/authed,
     this fails **closed** with a REJECT — we never approve just because there is
     no reviewer.
+
+    Independence is load-bearing: the reviewer must be a *different* agent than
+    ``author``. If the resolved reviewer identity is the author, this fails
+    **closed** with a REJECT — a change must never review itself.
     """
     from mac import coding_agent as _ca
 
@@ -387,16 +472,26 @@ def run_adversarial_review(
             findings=["no independent coding agent available to review; failing closed"],
         )
 
+    reviewer_id = _reviewer_identity(choice, env)
+    if author and reviewer_id and reviewer_id.strip().lower() == author.strip().lower():
+        return ReviewVerdict.reject(
+            reviewer=reviewer_id,
+            findings=[
+                "reviewer (%s) is the author; independence violated; failing closed"
+                % reviewer_id
+            ],
+        )
+
     prompt = _ADVERSARIAL_PROMPT.format(target=target)
     argv = build_argv(choice, prompt, env=env)
     proc = runner(argv, cwd=repo_dir)
     output = (getattr(proc, "stdout", "") or "") + (getattr(proc, "stderr", "") or "")
     if int(getattr(proc, "returncode", 1)) != 0 and not output.strip():
         return ReviewVerdict.reject(
-            reviewer=getattr(choice, "agent", ""),
+            reviewer=reviewer_id,
             findings=["reviewer agent exited nonzero with no output; failing closed"],
         )
-    return _parse_review_output(output, reviewer=getattr(choice, "agent", ""))
+    return _parse_review_output(output, reviewer=reviewer_id)
 
 
 def _branch_for_target(target: str) -> Optional[str]:
@@ -419,6 +514,29 @@ def _default_git_runner(repo_dir: str, args) -> Any:  # pragma: no cover - thin 
         text=True,
         check=False,
     )
+
+
+def _resolve_head_sha(
+    target: str,
+    *,
+    repo_dir: str = ".",
+    git_runner: Optional[Callable[..., Any]] = None,
+) -> str:
+    """Resolve the commit sha the gates should run against for ``target``.
+
+    For a branch target, resolve that branch's tip; otherwise resolve ``HEAD``.
+    Returns "" on any failure — a missing sha simply blocks the head_sha land
+    gate (fail-closed), it never silently lands a different revision.
+    """
+    grun = git_runner or _default_git_runner
+    ref = _branch_for_target(target) or "HEAD"
+    try:
+        proc = grun(repo_dir, ["rev-parse", "--verify", "%s^{commit}" % ref])
+    except Exception:
+        return ""
+    if int(getattr(proc, "returncode", 1)) != 0:
+        return ""
+    return (getattr(proc, "stdout", "") or "").strip()
 
 
 def safe_do_land(
@@ -459,6 +577,28 @@ def safe_do_land(
         runner = None
         if git_runner is not None:
             runner = lambda argv: git_runner(repo_dir, argv)  # noqa: E731
+
+        # head_sha gate: only land the *exact* revision the gates ran against.
+        # If the branch tip moved after the contract gate + review, the earlier
+        # green no longer applies — fail closed rather than land unreviewed code.
+        if decision.head_sha:
+            current_sha = _resolve_head_sha(
+                branch, repo_dir=repo_dir, git_runner=git_runner
+            )
+            result["gated_head_sha"] = decision.head_sha
+            result["current_head_sha"] = current_sha
+            if not current_sha:
+                raise AutoLandError(
+                    "cannot resolve current tip of %s to verify gated head_sha; "
+                    "default-to-reject" % branch
+                )
+            if current_sha != decision.head_sha:
+                raise AutoLandError(
+                    "branch tip moved since the gates ran "
+                    "(gated=%s, current=%s); refusing to land unreviewed code"
+                    % (decision.head_sha, current_sha)
+                )
+
         gate = validate_projected_merge(repo_dir, base_ref, branch, git_runner=runner)
         result["merge_gate"] = gate.to_dict()
         if not gate.clean:
@@ -521,6 +661,66 @@ def record_outcome(
     return payload
 
 
+def notify_human(
+    target: str,
+    decision: LandDecision,
+    *,
+    plane: Any = None,
+    created_by: str = "auto-land",
+    sink: Optional[Callable[[Dict[str, Any]], Any]] = None,
+) -> Dict[str, Any]:
+    """Emit a post-hoc, **non-blocking** ``mac_notify_human`` notification.
+
+    Humans are informed of every auto-land outcome (landed or blocked) but never
+    block on it — nothing waits for a human acknowledgement. The notification is
+    delivered to ``sink`` if provided, otherwise recorded as task evidence via
+    the dispatch plane (best-effort). This is QA/PM visibility, not a checkpoint.
+    """
+    landed = bool(decision.land)
+    notification: Dict[str, Any] = {
+        "schema": "mac.mac_notify_human.v1",
+        "kind": "auto_land",
+        "target": target,
+        "landed": landed,
+        "gate": decision.gate,
+        "reason": decision.reason,
+        "head_sha": decision.head_sha,
+        "author": decision.author,
+        "reviewer": decision.reviewer,
+        "findings": list(decision.findings),
+        "blocking": False,
+        "summary": (
+            "AUTO-LANDED %s (head=%s, reviewer=%s)" % (target, decision.head_sha or "?", decision.reviewer or "?")
+            if landed
+            else "auto-land BLOCKED %s at %s gate: %s" % (target, decision.gate, decision.reason)
+        ),
+    }
+
+    if sink is not None:
+        try:
+            sink(notification)
+        except Exception as exc:  # visibility is non-blocking
+            notification = dict(notification)
+            notification["notify_error"] = str(exc)
+        return notification
+
+    if plane is not None:
+        try:
+            plane.add_evidence(
+                target,
+                "mac_notify_human",
+                "auto-land://%s/notify" % target,
+                notification["summary"],
+                created_by,
+                metadata=notification,
+                _trusted_internal=True,
+            )
+        except Exception as exc:  # visibility is non-blocking
+            notification = dict(notification)
+            notification["notify_error"] = str(exc)
+    return notification
+
+
 def build_real_dependencies(
     *,
     plane: Any = None,
@@ -529,16 +729,22 @@ def build_real_dependencies(
     created_by: str = "auto-land",
     allow_push: bool = False,
     env: Optional[Mapping[str, str]] = None,
-) -> Dict[str, Callable[..., Any]]:
+    author: str = "",
+) -> Dict[str, Any]:
     """Build the real injected callables for :func:`run_auto_land`.
 
     Returned as a kwargs dict so callers can splat it: ``run_auto_land(target,
-    **build_real_dependencies(...))``.
+    **build_real_dependencies(...))``. ``author`` defaults to the current
+    fleet agent (``MAC_AGENT_ID``); the reviewer must be a *different* agent.
     """
+    env = os.environ if env is None else env
+    author = author or str(env.get("MAC_AGENT_ID") or "").strip()
     return {
+        "author": author,
+        "resolve_head_sha": lambda target: _resolve_head_sha(target, repo_dir=repo_dir),
         "run_contract": lambda target: run_contract_gate(repo_dir),
         "run_review": lambda target: run_adversarial_review(
-            target, repo_dir=repo_dir, env=env
+            target, repo_dir=repo_dir, env=env, author=author
         ),
         "do_land": lambda target, decision: safe_do_land(
             target,
@@ -550,6 +756,9 @@ def build_real_dependencies(
             allow_push=allow_push,
         ),
         "record": lambda target, decision: record_outcome(
+            target, decision, plane=plane, created_by=created_by
+        ),
+        "notify_human": lambda target, decision: notify_human(
             target, decision, plane=plane, created_by=created_by
         ),
     }
@@ -567,5 +776,6 @@ __all__ = [
     "run_adversarial_review",
     "safe_do_land",
     "record_outcome",
+    "notify_human",
     "build_real_dependencies",
 ]

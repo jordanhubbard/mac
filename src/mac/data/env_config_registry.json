@@ -305,6 +305,7 @@
       "deploy/systemd/mac-openshell-supervisor.service",
       "src/mac/_hermes/agent/agent_init.py",
       "src/mac/_hermes/tools/fleet_tool.py",
+      "src/mac/auto_land.py",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/deploy_env.py",
@@ -9806,6 +9807,17 @@
     "retired": false,
     "sources": [
       "deploy/reviewed-tool-assets.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: reviewer agent id.",
+    "family": "core",
+    "name": "MAC_REVIEWER_AGENT_ID",
+    "retired": false,
+    "sources": [
+      "src/mac/auto_land.py"
     ],
     "type": "str"
   },

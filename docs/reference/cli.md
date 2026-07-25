@@ -343,8 +343,10 @@ positional arguments:
     recover-stalled-finalizer
                         resume a deterministic finalizer that stalled
                         (timeout/cancel/crash) after harvesting verified work
-    force-complete      operator override: mark a task COMPLETED regardless of
-                        state/review (bypasses the review gate; audited)
+    force-complete      BREAK-GLASS operator override: mark a task COMPLETED
+                        regardless of state/review (bypasses the adversarial
+                        auto-land gate; audited). Not the normal path — the
+                        adversarial reviewer + contract gate auto-land is.
     search              keyword search across task title and description
     stats               count tasks by state
     audit               read-only reconciliation of every task's history,

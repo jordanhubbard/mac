@@ -12,6 +12,7 @@ from mac.auto_land import (
     build_real_dependencies,
     decide_land,
     normalize_verdict,
+    notify_human,
     record_outcome,
     run_adversarial_review,
     run_auto_land,
@@ -22,8 +23,10 @@ from mac.auto_land import (
 
 GREEN = ContractResult(green=True, summary="ok")
 RED = ContractResult(green=False, summary="tests failed")
-APPROVE = ReviewVerdict.approve(reviewer="r1")
-REJECT = ReviewVerdict.reject(reviewer="r1", findings=["missing test for edge X"])
+AUTHOR = "author_agent"
+REVIEWER = "reviewer_agent"  # a *different* agent than AUTHOR
+APPROVE = ReviewVerdict.approve(reviewer=REVIEWER)
+REJECT = ReviewVerdict.reject(reviewer=REVIEWER, findings=["missing test for edge X"])
 
 
 # ---------------------------------------------------------------------------
@@ -52,10 +55,12 @@ def test_normalize_verdict_ambiguous_is_not_approve(token):
 
 
 def test_green_plus_approve_lands():
-    decision = decide_land(GREEN, APPROVE, target="task_abc")
+    decision = decide_land(GREEN, APPROVE, target="task_abc", author=AUTHOR)
     assert decision.land is True
     assert decision.gate == "landed"
     assert decision.target == "task_abc"
+    assert decision.author == AUTHOR
+    assert decision.reviewer == REVIEWER
 
 
 def test_red_plus_approve_does_not_land_contract_gate():
@@ -125,13 +130,14 @@ class _Spy:
         self.recorded.append((target, decision))
 
 
-def _run(spy, target="task_x"):
+def _run(spy, target="task_x", author=AUTHOR):
     return run_auto_land(
         target,
         run_contract=spy.run_contract,
         run_review=spy.run_review,
         do_land=spy.do_land,
         record=spy.record,
+        author=author,
     )
 
 
@@ -184,6 +190,7 @@ def test_record_always_called_even_when_do_land_raises():
             run_review=spy.run_review,
             do_land=boom,
             record=spy.record,
+            author=AUTHOR,
         )
     assert len(spy.recorded) == 1
 
@@ -277,7 +284,7 @@ class _FakePlane:
 
 
 def _land_decision(target="task_x"):
-    return decide_land(GREEN, APPROVE, target=target)
+    return decide_land(GREEN, APPROVE, target=target, author=AUTHOR)
 
 
 def test_safe_do_land_refuses_without_land_decision():
@@ -362,10 +369,19 @@ def test_record_outcome_best_effort_when_plane_raises():
     assert "record_error" in payload
 
 
-def test_build_real_dependencies_returns_four_callables():
-    deps = build_real_dependencies(repo_dir=".", base_ref="main")
-    assert set(deps) == {"run_contract", "run_review", "do_land", "record"}
-    assert all(callable(v) for v in deps.values())
+def test_build_real_dependencies_returns_expected_callables():
+    deps = build_real_dependencies(repo_dir=".", base_ref="main", author=AUTHOR)
+    assert set(deps) == {
+        "author",
+        "resolve_head_sha",
+        "run_contract",
+        "run_review",
+        "do_land",
+        "record",
+        "notify_human",
+    }
+    assert deps["author"] == AUTHOR
+    assert all(callable(v) for k, v in deps.items() if k != "author")
 
 
 def test_land_decision_to_dict_shape():
@@ -373,3 +389,252 @@ def test_land_decision_to_dict_shape():
     assert d["schema"] == "mac.auto_land.decision.v1"
     assert d["land"] is True
     assert d["gate"] == "landed"
+
+
+# ---------------------------------------------------------------------------
+# Reviewer independence (author != reviewer)
+# ---------------------------------------------------------------------------
+
+
+def test_reviewer_equal_author_does_not_land_independence_gate():
+    same = ReviewVerdict.approve(reviewer=AUTHOR)
+    decision = decide_land(GREEN, same, target="task_x", author=AUTHOR)
+    assert decision.land is False
+    assert decision.gate == "independence"
+    assert "author" in decision.reason.lower()
+
+
+def test_missing_author_does_not_land_independence_gate():
+    decision = decide_land(GREEN, APPROVE, target="task_x", author="")
+    assert decision.land is False
+    assert decision.gate == "independence"
+
+
+def test_missing_reviewer_identity_does_not_land():
+    anon = ReviewVerdict.approve(reviewer="")
+    decision = decide_land(GREEN, anon, target="task_x", author=AUTHOR)
+    assert decision.land is False
+    assert decision.gate == "independence"
+
+
+def test_run_adversarial_review_fails_closed_when_reviewer_is_author():
+    verdict = run_adversarial_review(
+        "task_x",
+        env={"MAC_REVIEWER_AGENT_ID": "agent_dup"},
+        author="agent_dup",
+        runner=lambda argv, cwd=None: _Proc(0, "VERDICT: APPROVE\nFINDINGS: none"),
+        resolve=lambda env=None: _Choice(),
+        build_argv=lambda choice, prompt, env=None: ["true"],
+    )
+    assert verdict.is_approve is False
+    assert verdict.verdict == "reject"
+    assert verdict.reviewer == "agent_dup"
+
+
+def test_run_adversarial_review_uses_reviewer_env_identity():
+    verdict = run_adversarial_review(
+        "task_x",
+        env={"MAC_REVIEWER_AGENT_ID": "agent_reviewer"},
+        author="agent_author",
+        runner=lambda argv, cwd=None: _Proc(0, "VERDICT: APPROVE\nFINDINGS: none"),
+        resolve=lambda env=None: _Choice(),
+        build_argv=lambda choice, prompt, env=None: ["true"],
+    )
+    assert verdict.is_approve is True
+    assert verdict.reviewer == "agent_reviewer"
+
+
+# ---------------------------------------------------------------------------
+# head_sha land gate — only land the revision the gates ran against
+# ---------------------------------------------------------------------------
+
+
+def _sha_decision(target, head_sha):
+    return decide_land(GREEN, APPROVE, target=target, author=AUTHOR, head_sha=head_sha)
+
+
+def test_safe_do_land_head_sha_match_lands():
+    def git_runner(repo_dir, argv):
+        if argv[0] == "rev-parse":
+            return _Proc(0, "cafe1234")
+        if argv[0] == "merge-tree":
+            return _Proc(0, "treeoid")
+        if argv[0] == "push":
+            return _Proc(0, "pushed")
+        return _Proc(0, "")
+
+    result = safe_do_land(
+        "feature/x",
+        _sha_decision("feature/x", "cafe1234"),
+        repo_dir="/repo",
+        base_ref="main",
+        allow_push=True,
+        git_runner=git_runner,
+    )
+    assert result["action"] == "pushed"
+    assert result["gated_head_sha"] == "cafe1234"
+    assert result["current_head_sha"] == "cafe1234"
+
+
+def test_safe_do_land_head_sha_moved_aborts():
+    def git_runner(repo_dir, argv):
+        if argv[0] == "rev-parse":
+            return _Proc(0, "moved999")
+        return _Proc(0, "")
+
+    with pytest.raises(AutoLandError) as exc:
+        safe_do_land(
+            "feature/x",
+            _sha_decision("feature/x", "cafe1234"),
+            repo_dir="/repo",
+            base_ref="main",
+            allow_push=True,
+            git_runner=git_runner,
+        )
+    assert "moved" in str(exc.value).lower()
+
+
+def test_safe_do_land_head_sha_unresolvable_aborts():
+    def git_runner(repo_dir, argv):
+        if argv[0] == "rev-parse":
+            return _Proc(1, "")
+        return _Proc(0, "")
+
+    with pytest.raises(AutoLandError):
+        safe_do_land(
+            "feature/x",
+            _sha_decision("feature/x", "cafe1234"),
+            repo_dir="/repo",
+            base_ref="main",
+            allow_push=True,
+            git_runner=git_runner,
+        )
+
+
+# ---------------------------------------------------------------------------
+# mac_notify_human — post-hoc, non-blocking visibility on every outcome
+# ---------------------------------------------------------------------------
+
+
+def test_notify_human_on_land_records_evidence():
+    plane = _FakePlane()
+    notify_human("task_x", _land_decision(), plane=plane)
+    assert plane.evidence and plane.evidence[0][1] == "mac_notify_human"
+    meta = plane.evidence[0][3]
+    assert meta["landed"] is True
+    assert meta["blocking"] is False
+    assert meta["schema"] == "mac.mac_notify_human.v1"
+
+
+def test_notify_human_on_block_records_evidence():
+    plane = _FakePlane()
+    blocked = decide_land(RED, APPROVE, target="task_x", author=AUTHOR)
+    notification = notify_human("task_x", blocked, plane=plane)
+    assert notification["landed"] is False
+    assert notification["blocking"] is False
+    assert "BLOCKED" in notification["summary"]
+
+
+def test_notify_human_uses_sink_when_provided():
+    seen = []
+    notify_human("task_x", _land_decision(), sink=seen.append)
+    assert seen and seen[0]["kind"] == "auto_land"
+
+
+def test_notify_human_is_non_blocking_on_sink_error():
+    def boom(_):
+        raise RuntimeError("downstream down")
+
+    out = notify_human("task_x", _land_decision(), sink=boom)
+    assert "notify_error" in out
+
+
+def test_run_auto_land_notifies_human_on_every_outcome():
+    spy = _Spy(GREEN, APPROVE)
+    notifications = []
+    run_auto_land(
+        "task_x",
+        run_contract=spy.run_contract,
+        run_review=spy.run_review,
+        do_land=spy.do_land,
+        record=spy.record,
+        author=AUTHOR,
+        notify_human=lambda t, d: notifications.append((t, d)),
+    )
+    assert len(notifications) == 1
+    assert notifications[0][1].land is True
+
+
+def test_run_auto_land_notifies_even_on_no_land():
+    spy = _Spy(RED, APPROVE)
+    notifications = []
+    run_auto_land(
+        "task_x",
+        run_contract=spy.run_contract,
+        run_review=spy.run_review,
+        do_land=spy.do_land,
+        record=spy.record,
+        author=AUTHOR,
+        notify_human=lambda t, d: notifications.append((t, d)),
+    )
+    assert len(notifications) == 1
+    assert notifications[0][1].land is False
+
+
+def test_run_auto_land_threads_head_sha_into_decision():
+    spy = _Spy(GREEN, APPROVE)
+    decision = run_auto_land(
+        "feature/x",
+        run_contract=spy.run_contract,
+        run_review=spy.run_review,
+        do_land=spy.do_land,
+        record=spy.record,
+        author=AUTHOR,
+        resolve_head_sha=lambda target: "abc123",
+    )
+    assert decision.head_sha == "abc123"
+    assert spy.landed and spy.landed[0][1].head_sha == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_head_sha + notify_human plane best-effort
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_head_sha_branch_and_task_and_failure():
+    from mac.auto_land import _resolve_head_sha
+
+    def ok_runner(repo_dir, argv):
+        assert argv[0] == "rev-parse"
+        return _Proc(0, " sha_value \n")
+
+    assert _resolve_head_sha("feature/x", git_runner=ok_runner) == "sha_value"
+    # task target resolves HEAD, not a branch ref
+    seen = {}
+
+    def head_runner(repo_dir, argv):
+        seen["ref"] = argv[-1]
+        return _Proc(0, "headsha")
+
+    assert _resolve_head_sha("task_x", git_runner=head_runner) == "headsha"
+    assert seen["ref"].startswith("HEAD")
+
+    def bad_runner(repo_dir, argv):
+        return _Proc(1, "")
+
+    assert _resolve_head_sha("feature/x", git_runner=bad_runner) == ""
+
+    def raiser(repo_dir, argv):
+        raise RuntimeError("git missing")
+
+    assert _resolve_head_sha("feature/x", git_runner=raiser) == ""
+
+
+def test_notify_human_best_effort_when_plane_raises():
+    class _Boom:
+        def add_evidence(self, *a, **k):
+            raise RuntimeError("hub down")
+
+    out = notify_human("task_x", _land_decision(), plane=_Boom())
+    assert "notify_error" in out
+    assert out["blocking"] is False

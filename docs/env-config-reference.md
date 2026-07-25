@@ -823,6 +823,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_REVIEWED_CODEGRAPH_VERSION` | str | consumer-defined | core | Core setting: reviewed codegraph version. |
 | `MAC_REVIEWED_PYTHON_VERSION` | str | consumer-defined | core | Core setting: reviewed python version. |
 | `MAC_REVIEWED_UV_VERSION` | str | consumer-defined | core | Core setting: reviewed uv version. |
+| `MAC_REVIEWER_AGENT_ID` | str | consumer-defined | core | Core setting: reviewer agent id. |
 | `MAC_REVIEW_HUB_VERIFY` | str | consumer-defined | review | Review setting: review hub verify. |
 | `MAC_REVIEW_ID` | str | consumer-defined | review | Review setting: review id. |
 | `MAC_REVIEW_NUDGE_MAX_ATTEMPTS` | int | consumer-defined | review | Review setting: review nudge max attempts. |

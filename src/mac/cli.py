@@ -3990,6 +3990,7 @@ def cmd_review_experiment_report(args: argparse.Namespace) -> None:
 
 
 def cmd_review_auto_land(args: argparse.Namespace) -> None:
+    author = getattr(args, "author", "") or os.environ.get("MAC_AGENT_ID", "")
     if getattr(args, "dry_run", False):
         # Preview only: never runs the contract gate, spawns a reviewer, or lands.
         _print(
@@ -3999,7 +4000,14 @@ def cmd_review_auto_land(args: argparse.Namespace) -> None:
                 "repo_dir": args.repo_dir,
                 "base_ref": args.base_ref,
                 "push": bool(args.push),
+                "author": author,
                 "would_run": ["contract-gate", "adversarial-review"],
+                "gates": [
+                    "contract (scripts/run-contract-tests.sh)",
+                    "adversarial-review (independent agent, default-to-reject)",
+                    "independence (reviewer != author)",
+                    "head_sha (land only the reviewed revision)",
+                ],
                 "note": "dry-run: no gate/review/land executed",
             }
         )
@@ -4013,6 +4021,7 @@ def cmd_review_auto_land(args: argparse.Namespace) -> None:
         base_ref=args.base_ref,
         created_by=args.created_by,
         allow_push=args.push,
+        author=author,
     )
     decision = run_auto_land(args.target, **deps)
     _print(decision)
@@ -5483,8 +5492,9 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--no-ticket", dest="no_ticket", action="store_true",
                         help="don't write the .tickets/<id>.md mirror for this task")
     create.add_argument("--no-dispatch", dest="no_dispatch", action="store_true",
-                        help="stage the task: the loop-mode fleet won't auto-claim it "
-                             "(and it's hidden from `task ready`) until started explicitly")
+                        help="BREAK-GLASS human hold: stage the task so the loop-mode fleet won't "
+                             "auto-claim it (hidden from `task ready`) until started "
+                             "explicitly. Not the normal path; auto-dispatch is.")
     create.add_argument("--no-decompose", dest="no_decompose", action="store_true",
                         help="handoff/plan-note guard: the executor will not auto-decompose "
                              "this task into child tasks")
@@ -5682,7 +5692,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     force_complete = task.add_parser(
         "force-complete",
-        help="operator override: mark a task COMPLETED regardless of state/review (bypasses the review gate; audited)",
+        help="BREAK-GLASS operator override: mark a task COMPLETED regardless of state/review (bypasses the adversarial auto-land gate; audited). Not the normal path — the adversarial reviewer + contract gate auto-land is.",
     )
     force_complete.add_argument("task_id")
     force_complete.add_argument("--reason", default="")
@@ -7684,6 +7694,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="base ref for the land-time merge-gate check (default: main)",
     )
     auto_land.add_argument("--created-by", default="auto-land")
+    auto_land.add_argument(
+        "--author",
+        default="",
+        help=(
+            "the change author's fleet agent id; the adversarial reviewer must "
+            "be a DIFFERENT agent (independence). Defaults to $MAC_AGENT_ID."
+        ),
+    )
     auto_land.add_argument(
         "--push",
         action="store_true",
