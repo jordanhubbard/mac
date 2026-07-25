@@ -4801,6 +4801,39 @@ def test_dispatch_task_sort_key_breaks_priority_ties_on_order_signal(cp):
     assert key_a < key_b
 
 
+def test_dispatch_ordered_tasks_breaks_priority_ties_by_created_at(cp):
+    # Audit gap-closer (docs/dispatch-priority-bias-audit.md): the sort-key
+    # tuple only *carries* created_at at index [2]; no end-to-end test pinned
+    # that it actually DECIDES the order when priority and the (absent) order
+    # signal both tie. Two equal-priority tasks with no work-package rank must
+    # dispatch oldest-first (FIFO), so re-prioritising or aging never silently
+    # reorders same-priority peers.
+    now = services.utcnow()
+    newer = cp.create_task(
+        "newer", priority=5, required_capabilities=["python"]
+    )
+    older = cp.create_task(
+        "older", priority=5, required_capabilities=["python"]
+    )
+    newer_at = (
+        services.parse_time(now) - timedelta(hours=1)
+    ).isoformat(timespec="microseconds")
+    older_at = (
+        services.parse_time(now) - timedelta(hours=3)
+    ).isoformat(timespec="microseconds")
+    cp.store.execute(
+        "UPDATE tasks SET created_at = ? WHERE id = ?", (newer_at, newer.id)
+    )
+    cp.store.execute(
+        "UPDATE tasks SET created_at = ? WHERE id = ?", (older_at, older.id)
+    )
+
+    ordered = cp._dispatch_ordered_tasks()
+
+    # Equal priority, no order signal: the earlier created_at wins the tie.
+    assert [task.id for task in ordered[:2]] == [older.id, newer.id]
+
+
 def test_dispatch_task_sort_key_age_bonus_lifts_effective_priority(cp):
     now = services.utcnow()
     aged = cp.create_task("aged", priority=0, required_capabilities=["python"])
