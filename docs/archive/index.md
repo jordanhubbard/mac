@@ -68,4 +68,5 @@ their retained sources.
 - [Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd](../archive/field-notes/prereq-task-e94f546c.md) — `archive/field-notes/prereq-task-e94f546c.md`
 - [Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff](../archive/field-notes/prereq-task-fd2f34.md) — `archive/field-notes/prereq-task-fd2f34.md`
 - [Quickstart Gap Analysis](../archive/field-notes/quickstart-gap-analysis.md) — `archive/field-notes/quickstart-gap-analysis.md`
+- [Field note: HGX session `c902fab4d55f` — realize capacity via preserve-nothing + REPLACE](../archive/field-notes/replace-hgx-session-c902fab4d55f.md) — `archive/field-notes/replace-hgx-session-c902fab4d55f.md`
 - [Scaling Plan](../archive/field-notes/scaling-plan.md) — `archive/field-notes/scaling-plan.md`

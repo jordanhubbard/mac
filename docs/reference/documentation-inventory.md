@@ -74,6 +74,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/prereq-task-e94f546c.md` | Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd |
 | historical archive | `archive/field-notes/prereq-task-fd2f34.md` | Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff |
 | historical archive | `archive/field-notes/quickstart-gap-analysis.md` | Quickstart Gap Analysis |
+| historical archive | `archive/field-notes/replace-hgx-session-c902fab4d55f.md` | Field note: HGX session `c902fab4d55f` — realize capacity via preserve-nothing + REPLACE |
 | historical archive | `archive/field-notes/scaling-plan.md` | Scaling Plan |
 | historical archive | `archive/index.md` | Historical archive |
 | supplemental reference | `audit.md` | MAC Codebase Audit — Active Code, Duplication & Accretion |
