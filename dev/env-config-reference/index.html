@@ -4346,6 +4346,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Deployment setting: deploy worker capabilities.</td>
 </tr>
 <tr>
+<td><code>MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>deployment</td>
+<td>Deployment setting: deploy worker claim only canary tasks.</td>
+</tr>
+<tr>
 <td><code>MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID</code></td>
 <td>str</td>
 <td>consumer-defined</td>
@@ -4421,13 +4428,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>deployment</td>
 <td>Deployment setting: deploy worker required metadata.</td>
-</tr>
-<tr>
-<td><code>MAC_DEPLOY_WORKER_REQUIRE_CANARY</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>deployment</td>
-<td>Deployment setting: deploy worker require canary.</td>
 </tr>
 <tr>
 <td><code>MAC_DEPLOY_WORKER_TOKEN</code></td>
@@ -9050,6 +9050,13 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>Worker setting: worker capabilities.</td>
 </tr>
 <tr>
+<td><code>MAC_WORKER_CLAIM_ONLY_CANARY_TASKS</code></td>
+<td>str</td>
+<td>consumer-defined</td>
+<td>worker</td>
+<td>Worker setting: worker claim only canary tasks.</td>
+</tr>
+<tr>
 <td><code>MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS</code></td>
 <td>int</td>
 <td>consumer-defined</td>
@@ -9237,13 +9244,6 @@ Defaults shown as <code>consumer-defined</code> are intentionally owned by the c
 <td>consumer-defined</td>
 <td>worker</td>
 <td>Worker setting: worker required metadata.</td>
-</tr>
-<tr>
-<td><code>MAC_WORKER_REQUIRE_CANARY</code></td>
-<td>bool</td>
-<td>consumer-defined</td>
-<td>worker</td>
-<td>Worker setting: worker require canary.</td>
 </tr>
 <tr>
 <td><code>MAC_WORKER_RESOURCES</code></td>

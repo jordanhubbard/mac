@@ -3065,7 +3065,7 @@ the backlog tick against the hub:</p>
 <p>Before enabling executor-backed claiming, use <code>dry-run</code> mode to record routing
 candidates without creating leases:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="go">MAC_DEPLOY_WORKER_MODE=dry-run</span>
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="go">MAC_DEPLOY_WORKER_REQUIRE_CANARY=1</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="go">MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS=1</span>
 <a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="go">MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=mac-canary</span>
 </code></pre></div>
 <p>Dry-run mode emits <code>worker.routing.policy</code>,
@@ -3075,7 +3075,7 @@ canary work before loop mode is enabled.</p>
 <p>To enable executor-backed claiming from deploy config, set:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="go">MAC_DEPLOY_WORKER_MODE=loop</span>
 <a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="go">MAC_DEPLOY_WORKER_CAPABILITIES=ops,python,hermes,review</span>
-<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="go">MAC_DEPLOY_WORKER_REQUIRE_CANARY=1</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="go">MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS=1</span>
 <a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="go">MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=mac-canary</span>
 </code></pre></div>
 <p>The generated service then runs <code>mac-agent --register --loop</code> against
@@ -3096,9 +3096,10 @@ real second-eye reviewers. During registration the worker persists its
 attestation key into <code>~/.mac/mac.env</code>; if an older deploy missed that one-time
 key, the service rotates a replacement before it signs new evidence. Rotation
 is explicit recovery behavior and invalidates old signatures from that agent.</p>
-<p>Loop mode is canary-gated by default. To make a worker eligible for real
-migrated work, explicitly set <code>MAC_DEPLOY_WORKER_REQUIRE_CANARY=0</code> and narrow
-the blast radius with project or metadata filters first.</p>
+<p>Loop mode claims ordinary eligible work by default. Set
+<code>MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS=1</code> only for a temporary
+qualification lane in which the worker must reject every task that is not
+explicitly canary-marked. Clear it immediately after qualification.</p>
 <h2 id="legacy-beads-migration-and-repository-registry">Legacy Beads Migration And Repository Registry<a class="headerlink" href="#legacy-beads-migration-and-repository-registry" title="Permanent link">&para;</a></h2>
 <p>The live production issue authority is the MAC task ledger. Beads/Dolt
 round-trip sync is not part of the normal deployment path, and operators should
