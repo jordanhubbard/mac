@@ -501,6 +501,7 @@ def test_worker_source_state_reports_commit_tree_and_dirty(monkeypatch, tmp_path
     state = worker._worker_source_state(tmp_path)
 
     assert state["schema"] == "mac.worker_source_state.v1"
+    assert state["repository_name"] == tmp_path.name
     assert state["commit_sha"] == "a" * 40
     assert state["tree_sha"] == "b" * 40
     assert state["dirty"] is True

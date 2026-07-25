@@ -5912,6 +5912,33 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
     assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
 
 
+@pytest.mark.parametrize("evidence_type", ["investigation", "plan_decomposed"])
+def test_registered_project_preserves_explicit_non_repository_outcome(
+    cp, tmp_path, evidence_type
+):
+    repo = tmp_path / ("non-repository-%s" % evidence_type)
+    repo.mkdir()
+    _write_beads(repo, [])
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+
+    task = cp.create_task(
+        "Non-repository outcome",
+        project="repo-beads-mac",
+        metadata={"evidence_type": evidence_type},
+    )
+
+    execution = task.metadata["execution_contract"]
+    assert execution["type"] == "operator_directive"
+    assert execution["repository_required"] is False
+    assert execution["evidence_type"] == evidence_type
+    assert execution["reason"] == "explicit_non_repository_outcome"
+    assert execution["repository_context"]["repository_id"] == (
+        cp.get_project_repository("mac").id
+    )
+    assert "repository_contract" not in task.metadata.get("origin", {})
+    assert "repository_path" not in task.metadata.get("origin", {})
+
+
 def test_registered_read_only_report_has_one_unambiguous_persisted_contract(
     cp, tmp_path
 ):
@@ -9868,6 +9895,66 @@ def test_tick_exhausted_environment_failure_repair_task_has_environment_prerequi
     assert waiting_states & {"task.updated", "task.transitioned"}, (
         "Expected task.updated or task.transitioned event for waiting state"
     )
+
+
+def test_tick_exhausted_repair_preserves_control_plane_publication_metadata(cp):
+    task = cp.create_task(
+        "exhausted repair with derived publication metadata",
+        required_capabilities=["python"],
+        max_attempts=1,
+        metadata={"operator_note": "keep me"},
+    )
+    derived_publication = {
+        "publication_lane": {"schema": "mac.publication_lane.v1", "lane": "legacy"},
+        "publication_route": {
+            "schema": "mac.publication_lane.v1",
+            "lane": "legacy",
+            "managed": False,
+        },
+        "managed_fast_lane": {"eligible": False, "reason": "legacy"},
+        "work_package": {"managed": False},
+    }
+    persisted_metadata = {**task.metadata, **derived_publication}
+    cp.store.execute(
+        "UPDATE tasks SET metadata = ? WHERE id = ?",
+        (json.dumps(persisted_metadata, sort_keys=True), task.id),
+    )
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "worker",
+        {
+            "reason": "verification_contract_failed",
+            "problems": ["repo evidence requires pushed=true"],
+        },
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    waiting = cp.get_task(task.id)
+    assert waiting.state == TaskState.WAITING.value
+    assert waiting.metadata["operator_note"] == "keep me"
+    for key, value in derived_publication.items():
+        assert waiting.metadata[key] == value
+    assert waiting.metadata["contract_repair_task_id"] == waiting.dependencies[0]
+    repair = cp.get_task(waiting.dependencies[0])
+    assert repair.metadata["origin"] == {
+        "type": "contract_prerequisite",
+        "parent_task_id": task.id,
+    }
+    assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
+    observations = cp.list_observability(
+        subject_type="task",
+        subject_id=task.id,
+        limit=100,
+    )
+    assert not [
+        event for event in observations if event.name == "task.auto_retry.failed"
+    ]
 
 
 def test_tick_exhausted_superseded_attempt_cancels_instead_of_failing(cp):

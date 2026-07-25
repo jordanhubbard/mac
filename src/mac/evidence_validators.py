@@ -389,6 +389,44 @@ class OperatorResultValidator(EvidenceValidator):
         )
 
 
+class InvestigationValidator(EvidenceValidator):
+    evidence_type = "investigation"
+
+    def validate(
+        self,
+        manifest: VerificationManifest,
+        context: EvidenceValidationContext,
+    ) -> List[str]:
+        return operator_result_validation_problems(manifest.raw)
+
+
+class PlanDecomposedValidator(EvidenceValidator):
+    evidence_type = "plan_decomposed"
+
+    def validate(
+        self,
+        manifest: VerificationManifest,
+        context: EvidenceValidationContext,
+    ) -> List[str]:
+        problems: List[str] = []
+        children = _manifest_list(manifest.raw.get("children"))
+        if not children:
+            problems.append("plan_decomposed evidence requires a non-empty children list")
+        else:
+            for index, child in enumerate(children, start=1):
+                if not isinstance(child, dict) or not str(
+                    child.get("title") or ""
+                ).strip():
+                    problems.append(
+                        "plan_decomposed child %d requires a title" % index
+                    )
+        if not str(manifest.raw.get("ordering_rationale") or "").strip():
+            problems.append("plan_decomposed evidence requires ordering_rationale")
+        if not str(manifest.raw.get("coverage_claim") or "").strip():
+            problems.append("plan_decomposed evidence requires coverage_claim")
+        return problems
+
+
 VALIDATORS: Dict[str, EvidenceValidator] = {
     validator.evidence_type: validator
     for validator in (
@@ -400,6 +438,8 @@ VALIDATORS: Dict[str, EvidenceValidator] = {
         NoChangeValidator(),
         ReviewVerdictValidator(),
         OperatorResultValidator(),
+        InvestigationValidator(),
+        PlanDecomposedValidator(),
     )
 }
 

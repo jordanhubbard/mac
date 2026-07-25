@@ -4923,6 +4923,7 @@
       "src/mac/fleet_creds.py",
       "src/mac/fleet_ssh.py",
       "src/mac/hermes_config_surface.py",
+      "src/mac/ide_launcher.py",
       "src/mac/openshell_reconcile.py",
       "src/mac/worker.py"
     ],

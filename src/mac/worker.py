@@ -88,6 +88,7 @@ from mac.models import (
     REPORT_REPOSITORY_READ_ONLY_MODE,
     agent_has_read_only_report_repository_executor,
     read_only_report_repository_executor_attestation,
+    declared_non_repository_outcome_evidence_type,
     metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
     utcnow,
@@ -652,6 +653,7 @@ def _worker_source_state(repo: Path) -> JsonDict:
     state: JsonDict = {
         "schema": "mac.worker_source_state.v1",
         "repo_path": str(repo.expanduser()),
+        "repository_name": repo.expanduser().name,
         "commit_sha": "",
         "tree_sha": "",
         "dirty": False,
@@ -1247,7 +1249,47 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 attempt_state=attempt_state,
             )
             if execution.succeeded:
-                submission_problems = self._execution_submission_problems(task_dir, evidence)
+                evidence_metadata = ensure_json_object(evidence.get("metadata"))
+                manifest = ensure_json_object(evidence_metadata.get("verification"))
+                evidence_type = str(
+                    manifest.get("evidence_type") or ""
+                ).strip().lower()
+                if evidence_type == "plan_decomposed":
+                    submission_problems = _worker_verification_contract_problems(
+                        manifest,
+                        evidence_type,
+                    )
+                    if not submission_problems:
+                        try:
+                            decomposed = self.client.post(
+                                "/tasks/%s/children" % quote(task_id, safe=""),
+                                {
+                                    "children": list(manifest.get("children") or []),
+                                    "actor": self.agent_id,
+                                    "lease_id": lease_id,
+                                },
+                            )
+                        except MacApiError as exc:
+                            submission_problems = [
+                                "plan_decomposed evidence could not be routed to "
+                                "durable child tasks: %s" % exc
+                            ]
+                        else:
+                            parent = (
+                                decomposed.get("parent", decomposed)
+                                if isinstance(decomposed, dict)
+                                else None
+                            )
+                            return WorkerRunResult(
+                                status="decomposed",
+                                task=parent,
+                                lease=lease,
+                                evidence=evidence,
+                            )
+                else:
+                    submission_problems = self._execution_submission_problems(
+                        task_dir, evidence
+                    )
                 if submission_problems:
                     self._observe_log(
                         "worker.execution.verification_failed",
@@ -4358,6 +4400,17 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         if not str(manifest.get("signed_by") or "").strip() or not str(manifest.get("signature") or "").strip():
             problems.append("verification.signed_by and verification.signature are required")
         if evidence_type:
+            if (
+                evidence_type == "investigation"
+                and declared_non_repository_outcome_evidence_type(
+                    ensure_json_object(task_payload.get("metadata"))
+                )
+                != "investigation"
+            ):
+                problems.append(
+                    "investigation evidence requires an operator-authored "
+                    "investigation execution contract"
+                )
             problems.extend(
                 _worker_verification_contract_problems(
                     manifest,
@@ -6956,6 +7009,14 @@ def _worker_verification_contract_problems(
         from mac.evidence_validators import operator_result_validation_problems
 
         return operator_result_validation_problems(manifest)
+    if evidence_type in {"investigation", "plan_decomposed"}:
+        from mac.evidence_validators import validate_evidence_type
+
+        return validate_evidence_type(
+            evidence_type,
+            manifest,
+            passed_check_count=_worker_passed_verification_check_count,
+        )
     return ["unsupported verification.evidence_type: %s" % evidence_type]
 
 

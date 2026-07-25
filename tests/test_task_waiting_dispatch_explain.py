@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from mac.models import AgentStatus, TaskState, json_dumps, new_id, utcnow
+import pytest
+
+from mac.models import (
+    AgentStatus,
+    TaskState,
+    ValidationError,
+    json_dumps,
+    new_id,
+    utcnow,
+)
 from mac.services import ControlPlane
 
 
@@ -181,3 +190,132 @@ def test_dispatch_explanation_uses_exact_task_and_agent_gates():
     assert ready["dispatchable"] is True
     assert ready["eligible_agent_count"] == 1
     assert ready["unclaimed_reasons"][0]["code"] == "awaiting_dispatch"
+
+
+def test_dirty_managed_source_blocks_repo_change_dispatch_and_claim():
+    cp = ControlPlane.in_memory()
+    task = cp.create_task(
+        "change repository source",
+        metadata={
+            "origin": {
+                "type": "direct_task",
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "project": "example",
+                },
+            }
+        },
+    )
+    machine = cp.register_machine("dirty-source-host")
+    agent = cp.register_agent(
+        machine.id,
+        "dirty-source-worker",
+        resources={
+            "source_state": {
+                "schema": "mac.worker_source_state.v1",
+                "repo_path": "/srv/example",
+                "repository_name": "example",
+                "commit_sha": "a" * 40,
+                "dirty": True,
+            }
+        },
+    )
+    cp.update_agent(agent.id, status=AgentStatus.IDLE.value)
+
+    explanation = cp.explain_task_dispatch(task.id)
+
+    assert explanation["dispatchable"] is False
+    assert explanation["eligible_agent_count"] == 0
+    assert explanation["candidates"][0]["reasons"] == [
+        {
+            "code": "repository_source_dirty",
+            "message": "agent's managed repository source checkout is dirty",
+        }
+    ]
+    assert explanation["unclaimed_reasons"][0]["code"] == "no_eligible_agent"
+    assert explanation["unclaimed_reasons"][0]["detail"]["rejected_by"] == [
+        "repository_source_dirty"
+    ]
+    with pytest.raises(ValidationError, match="repository_source_dirty"):
+        cp.claim_task(task.id, agent.id)
+
+    cp.update_agent(
+        agent.id,
+        resources={
+            "source_state": {
+                "schema": "mac.worker_source_state.v1",
+                "repo_path": "/srv/example",
+                "repository_name": "example",
+                "commit_sha": "a" * 40,
+                "dirty": False,
+            }
+        },
+    )
+    clean = cp.explain_task_dispatch(task.id)
+    assert clean["dispatchable"] is True
+    assert clean["eligible_agent_count"] == 1
+
+
+def test_dirty_managed_source_does_not_block_a_different_repository():
+    cp = ControlPlane.in_memory()
+    task = cp.create_task(
+        "change another repository",
+        metadata={
+            "origin": {
+                "type": "direct_task",
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "project": "example",
+                },
+            }
+        },
+    )
+    machine = cp.register_machine("dirty-other-source-host")
+    agent = cp.register_agent(
+        machine.id,
+        "dirty-other-source-worker",
+        resources={
+            "source_state": {
+                "schema": "mac.worker_source_state.v1",
+                "repo_path": "/srv/mac",
+                "repository_name": "mac",
+                "commit_sha": "b" * 40,
+                "dirty": True,
+            }
+        },
+    )
+    cp.update_agent(agent.id, status=AgentStatus.IDLE.value)
+
+    explanation = cp.explain_task_dispatch(task.id)
+
+    assert explanation["dispatchable"] is True
+    assert explanation["eligible_agent_count"] == 1
+    assert explanation["candidates"][0]["eligible"] is True
+
+
+def test_dirty_managed_source_does_not_block_report_task():
+    cp = ControlPlane.in_memory()
+    task = cp.create_task(
+        "inspect repository source",
+        metadata={"deliverable": "report"},
+    )
+    machine = cp.register_machine("dirty-report-host")
+    agent = cp.register_agent(
+        machine.id,
+        "dirty-report-worker",
+        resources={
+            "source_state": {
+                "schema": "mac.worker_source_state.v1",
+                "commit_sha": "b" * 40,
+                "dirty": True,
+            }
+        },
+    )
+    cp.update_agent(agent.id, status=AgentStatus.IDLE.value)
+
+    explanation = cp.explain_task_dispatch(task.id)
+
+    assert explanation["dispatchable"] is True
+    assert explanation["eligible_agent_count"] == 1
+    assert explanation["candidates"][0]["eligible"] is True
+    assert explanation["candidates"][0]["reasons"] == []

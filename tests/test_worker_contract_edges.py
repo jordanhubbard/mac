@@ -92,6 +92,105 @@ def test_operator_result_verification_substance_paths() -> None:
         {"summary": "Analyzed the rollout failures and documented three concrete fixes."},
         "operator_result",
     ) == []
+    assert worker._worker_verification_contract_problems(
+        {
+            "summary": "Established ground truth and documented the evidence gap.",
+            "findings": [{"status": "not_actionable"}],
+        },
+        "investigation",
+    ) == []
+    assert worker._worker_verification_contract_problems(
+        {
+            "children": [{"title": "Inspect"}, {"title": "Repair"}],
+            "ordering_rationale": "Inspect before repair.",
+            "coverage_claim": "Diagnosis and repair cover the parent scope.",
+        },
+        "plan_decomposed",
+    ) == []
+
+
+def test_execute_assignment_routes_plan_to_durable_children(tmp_path) -> None:
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "plan_decomposed",
+        "children": [{"title": "Inspect"}, {"title": "Repair"}],
+        "ordering_rationale": "Inspect before repair.",
+        "coverage_claim": "Diagnosis and repair cover the parent scope.",
+        "signed_by": "agent-planner",
+        "signature": "test-signature",
+    }
+
+    class Client:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, path, payload):
+            self.posts.append((path, payload))
+            if path.endswith("/children"):
+                return {"parent": {"id": "task-plan", "state": "waiting"}}
+            return {}
+
+    class Harness:
+        execute_assignment = worker.MacWorker.execute_assignment
+        agent_id = "agent-planner"
+
+        def __init__(self):
+            self.client = Client()
+
+        def _observe_log(self, *args, **kwargs):
+            return None
+
+        def _observe_metric(self, *args, **kwargs):
+            return None
+
+        def _prepare_task_workspace(self, task, lease):
+            (tmp_path / "task.json").write_text(
+                json.dumps({"task": task, "lease": lease})
+            )
+            return tmp_path
+
+        def _execute_with_lease_renewal(self, task, lease, task_dir):
+            return worker.WorkerExecution(0, "planned")
+
+        def _assignment_is_current(self, task_id, lease_id):
+            return True
+
+        def _record_execution(
+            self, task_id, task_dir, execution, *, lease_id, attempt_state=None
+        ):
+            return {
+                "id": "evidence-plan",
+                "metadata": {"verification": manifest},
+            }
+
+    harness = Harness()
+    result = harness.execute_assignment(
+        {"id": "task-plan", "title": "Plan work", "metadata": {}},
+        {"id": "lease-plan"},
+    )
+
+    assert result.status == "decomposed"
+    assert result.task == {"id": "task-plan", "state": "waiting"}
+    assert result.evidence["id"] == "evidence-plan"
+    child_posts = [
+        (path, payload)
+        for path, payload in harness.client.posts
+        if path.endswith("/children")
+    ]
+    assert child_posts == [
+        (
+            "/tasks/task-plan/children",
+            {
+                "children": manifest["children"],
+                "actor": "agent-planner",
+                "lease_id": "lease-plan",
+            },
+        )
+    ]
+    assert not [
+        path for path, _payload in harness.client.posts if "submit-for-review" in path
+    ]
 
 
 def test_executor_verification_manifest_shapes(tmp_path) -> None:

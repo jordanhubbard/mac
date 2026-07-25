@@ -70,6 +70,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from mac import relay_observability
 from mac.agent_command import PROMPT_SENTINEL
 from mac.models import (
+    NON_REPOSITORY_OUTCOME_EVIDENCE_TYPES,
     REPORT_REPOSITORY_ACCESS_SCHEMA,
     REPORT_REPOSITORY_READ_ONLY_MODE,
     metadata_declares_read_only_report_repository,
@@ -5170,14 +5171,23 @@ def _run_executor(
             reason="clean_agent_failure",
             returncode=result.returncode,
         )
-    elif not is_review and metadata_declares_report_deliverable(
-        task.get("metadata") if isinstance(task, dict) else None
+    elif not is_review and (
+        metadata_declares_report_deliverable(
+            task.get("metadata") if isinstance(task, dict) else None
+        )
+        or task_evidence_type(task) in NON_REPOSITORY_OUTCOME_EVIDENCE_TYPES
     ):
         emit_telemetry(
             "executor_finalization_skipped",
             task_id=task_id,
             level="info",
-            reason="report_deliverable",
+            reason=(
+                "report_deliverable"
+                if metadata_declares_report_deliverable(
+                    task.get("metadata") if isinstance(task, dict) else None
+                )
+                else task_evidence_type(task)
+            ),
             returncode=result.returncode,
         )
     elif not is_review:

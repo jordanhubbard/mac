@@ -119,6 +119,9 @@ REPORT_DELIVERABLE = "report"
 _REPORT_DELIVERABLE_ALIASES = frozenset(
     {"report", "answer", "analysis", "investigation", "question", "triage"}
 )
+NON_REPOSITORY_OUTCOME_EVIDENCE_TYPES = frozenset(
+    {"investigation", "plan_decomposed"}
+)
 REPORT_REPOSITORY_ACCESS_SCHEMA = "mac.report_repository_access.v1"
 REPORT_REPOSITORY_ACCESS_KEY = "report_repository_access"
 REPORT_REPOSITORY_READ_ONLY_MODE = "read_only"
@@ -470,6 +473,32 @@ def metadata_declares_report_deliverable(metadata: Any) -> bool:
     if not isinstance(metadata, Mapping):
         return False
     return normalize_deliverable_kind(metadata.get("deliverable")) == REPORT_DELIVERABLE
+
+
+def declared_non_repository_outcome_evidence_type(metadata: Any) -> str:
+    """Return an operator-authored non-repository outcome type, if present.
+
+    Project registration enriches ordinary code tasks with a repository
+    contract.  It must not erase an explicit investigation/decomposition
+    outcome declaration and silently turn that task into a repo-change job.
+    """
+
+    if not isinstance(metadata, Mapping):
+        return ""
+    policy = metadata.get("policy")
+    policy = policy if isinstance(policy, Mapping) else {}
+    execution = metadata.get("execution_contract")
+    execution = execution if isinstance(execution, Mapping) else {}
+    for candidate in (
+        metadata.get("evidence_type"),
+        policy.get("evidence_type"),
+        policy.get("expected_evidence_type"),
+        execution.get("evidence_type"),
+    ):
+        evidence_type = str(candidate or "").strip().lower()
+        if evidence_type in NON_REPOSITORY_OUTCOME_EVIDENCE_TYPES:
+            return evidence_type
+    return ""
 
 
 def metadata_declares_read_only_report_repository(metadata: Any) -> bool:

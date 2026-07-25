@@ -125,6 +125,7 @@ from mac.models import (
     REPORT_REPOSITORY_EXECUTOR_ATTESTATION_KEY,
     REPORT_REPOSITORY_EXECUTOR_RESOURCE_KEY,
     agent_has_read_only_report_repository_executor,
+    declared_non_repository_outcome_evidence_type,
     metadata_declares_read_only_report_repository,
     metadata_declares_report_deliverable,
     report_repository_context_execution_contract,
@@ -5477,6 +5478,27 @@ class ControlPlane:
         origin = normalized.get("origin")
         origin_dict = dict(origin) if isinstance(origin, dict) else {}
         existing_contract = normalized.get("execution_contract")
+        non_repository_outcome = declared_non_repository_outcome_evidence_type(
+            normalized
+        )
+        if non_repository_outcome and not report_deliverable:
+            normalized["execution_contract"] = (
+                self._report_context_execution_contract(
+                    normalized,
+                    project,
+                    required_capabilities,
+                    existing_contract=(
+                        existing_contract
+                        if isinstance(existing_contract, dict)
+                        else None
+                    ),
+                    attach_repository_origin=False,
+                )
+            )
+            normalized["execution_contract"][
+                "reason"
+            ] = "explicit_non_repository_outcome"
+            return normalized
         if isinstance(existing_contract, dict) and existing_contract.get("type"):
             contract_type = str(existing_contract.get("type") or "").strip().lower()
             repo_like = (
@@ -5632,6 +5654,7 @@ class ControlPlane:
         required_capabilities: Optional[List[str]] = None,
         *,
         existing_contract: Optional[Dict[str, Any]] = None,
+        attach_repository_origin: bool = True,
     ) -> JsonDict:
         """Build the non-repository contract for a project-scoped report task.
 
@@ -5651,12 +5674,26 @@ class ControlPlane:
             contract = repo.metadata.get("repository_contract")
             if not isinstance(contract, dict) or not contract.get("schema"):
                 contract = self._repository_contract_for_repo(repo)
-            origin_dict.setdefault("type", "direct_task")
-            origin_dict.setdefault("repository_id", repo.id)
-            origin_dict.setdefault("repository_name", repo.name)
-            origin_dict.setdefault("repository_path", repo.path)
-            origin_dict.setdefault("source", repo.source)
-            normalized["origin"] = origin_dict
+            if attach_repository_origin:
+                origin_dict.setdefault("type", "direct_task")
+                origin_dict.setdefault("repository_id", repo.id)
+                origin_dict.setdefault("repository_name", repo.name)
+                origin_dict.setdefault("repository_path", repo.path)
+                origin_dict.setdefault("source", repo.source)
+                normalized["origin"] = origin_dict
+            else:
+                # Repository identity remains available in repository_context
+                # below, but must not look executable to worker repo discovery.
+                for key in (
+                    "repository_contract",
+                    "repository_path",
+                    "repository_url",
+                ):
+                    origin_dict.pop(key, None)
+                if origin_dict:
+                    normalized["origin"] = origin_dict
+                else:
+                    normalized.pop("origin", None)
 
         acc_metadata = (
             dict(normalized.get("acc_metadata"))
@@ -5889,6 +5926,9 @@ class ControlPlane:
                 "read-only repository report lacks its exact current repository contract"
             ),
             "agent_resources_insufficient": "agent hardware resources do not satisfy the task",
+            "repository_source_dirty": (
+                "agent's managed repository source checkout is dirty"
+            ),
             "repository_commands_missing": "required repository commands are unavailable in the sandbox",
             "required_role_unknown": "task requires an unknown role",
             "agent_role_unknown": "agent is bound to an unknown role",
@@ -6120,6 +6160,7 @@ class ControlPlane:
         metadata: Optional[Dict[str, Any]] = None,
         max_attempts: Optional[int] = None,
         actor: str = "human",
+        _preserve_control_plane_publication_metadata: bool = False,
     ) -> Task:
         task = self.get_task(task_id)
         self._require_non_package_task_mutation(
@@ -6132,6 +6173,7 @@ class ControlPlane:
         new_project = task.project
         new_capabilities = list(task.required_capabilities)
         new_metadata = ensure_json_object(task.metadata)
+        preserved_publication_metadata: JsonDict = {}
         if title is not None:
             title_value = str(title or "").strip()
             if not title_value:
@@ -6176,6 +6218,22 @@ class ControlPlane:
             new_capabilities = coerce_list(required_capabilities)
         if metadata is not None:
             new_metadata = ensure_json_object(metadata)
+            if _preserve_control_plane_publication_metadata:
+                persisted_metadata = ensure_json_object(task.metadata)
+                for key in (
+                    "publication_lane",
+                    "publication_route",
+                    "managed_fast_lane",
+                    "work_package",
+                ):
+                    # Internal callers may round-trip a task's metadata while
+                    # changing an unrelated controller-owned field.  Never
+                    # trust the supplied derived value: remove it before the
+                    # public validation gate, then restore only the exact value
+                    # already persisted by the control plane.
+                    new_metadata.pop(key, None)
+                    if key in persisted_metadata:
+                        preserved_publication_metadata[key] = persisted_metadata[key]
             self._reject_reserved_break_glass_metadata(new_metadata)
         if should_reconcile_metadata:
             new_capabilities, new_metadata = self._apply_project_task_defaults(
@@ -6192,6 +6250,8 @@ class ControlPlane:
                 new_capabilities,
                 new_metadata,
             )
+            if preserved_publication_metadata:
+                new_metadata.update(preserved_publication_metadata)
             if explicit_required_capabilities_update or new_capabilities != list(task.required_capabilities):
                 updates.append("required_capabilities = ?")
                 params.append(json_dumps(new_capabilities))
@@ -22220,6 +22280,7 @@ class ControlPlane:
                     dependencies=[*task.dependencies, repair_id],
                     metadata=metadata,
                     actor="dispatcher.tick",
+                    _preserve_control_plane_publication_metadata=True,
                 )
                 transition_detail["repair_task_id"] = repair_id
             repair_task = self.get_task(repair_id)
@@ -23241,6 +23302,8 @@ class ControlPlane:
             return None
         if not self._agent_resources_satisfy(agent, machine, task):
             return "agent_resources_insufficient"
+        if not self._agent_has_clean_managed_repository_source(agent, task):
+            return "repository_source_dirty"
         if not self._agent_has_repository_commands(agent, task):
             return "repository_commands_missing"
         coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(
@@ -23487,6 +23550,8 @@ class ControlPlane:
             return True, "break_glass_authorized"
         if not self._agent_resources_satisfy(agent, machine, task):
             return False, "agent_resources_insufficient"
+        if not self._agent_has_clean_managed_repository_source(agent, task):
+            return False, "repository_source_dirty"
         if not self._agent_has_repository_commands(agent, task):
             return False, "repository_commands_missing"
         coding_route_ok, coding_route_reason = self._agent_has_verified_coding_route(
@@ -23597,6 +23662,72 @@ class ControlPlane:
             return True
         available = _agent_resource_command_names(ensure_json_object(agent.resources))
         return set(required_commands).issubset(available)
+
+    def _agent_has_clean_managed_repository_source(
+        self, agent: Agent, task: Task
+    ) -> bool:
+        """Reject work targeting the dirty managed source reported by a worker.
+
+        Workers already refuse to prepare a repository worktree from a dirty
+        managed source checkout.  Projecting that same fact into dispatch keeps
+        ready-task and why-unclaimed results authoritative instead of assigning
+        work that is guaranteed to fail during repository preparation.  The
+        report describes the worker runtime's own managed repository, though,
+        so it must not block a task targeting a different repository.
+
+        Absence of a current source-state report is not treated as dirty: some
+        workers clone task repositories remotely and do not manage a local
+        source base.  Other readiness/credential gates remain responsible for
+        requiring source-state attestations where their execution mode needs
+        one.
+        """
+        if not self._task_is_repo_coupled(task):
+            return True
+        resources = ensure_json_object(agent.resources)
+        source_state = ensure_json_object(resources.get("source_state"))
+        if source_state.get("schema") != "mac.worker_source_state.v1":
+            return True
+        source_names: set[str] = set()
+
+        def add_name(value: Any, *, path: bool = False) -> None:
+            raw = str(value or "").strip()
+            if not raw:
+                return
+            name = Path(raw).name if path else raw
+            normalized = name.removesuffix(".git").strip().lower()
+            if normalized:
+                source_names.add(normalized)
+
+        add_name(source_state.get("repository_name"))
+        add_name(source_state.get("repo_path"), path=True)
+        if not source_names:
+            return True
+
+        metadata = ensure_json_object(task.metadata)
+        execution = ensure_json_object(metadata.get("execution_contract"))
+        origin = ensure_json_object(metadata.get("origin"))
+        contract = ensure_json_object(execution.get("repository_contract"))
+        if not contract:
+            contract = ensure_json_object(origin.get("repository_contract"))
+        target_names: set[str] = set()
+
+        def add_target(value: Any, *, path: bool = False) -> None:
+            raw = str(value or "").strip()
+            if not raw:
+                return
+            name = Path(raw).name if path else raw
+            normalized = name.removesuffix(".git").strip().lower()
+            if normalized:
+                target_names.add(normalized)
+
+        add_target(execution.get("repository_path"), path=True)
+        add_target(origin.get("repository_path"), path=True)
+        add_target(origin.get("repository_name"))
+        add_target(contract.get("project"))
+        add_target(task.project)
+        if source_names.isdisjoint(target_names):
+            return True
+        return source_state.get("dirty") is not True
 
     def _agent_has_verified_coding_route(
         self, agent: Agent, task: Task
@@ -23939,6 +24070,15 @@ class ControlPlane:
         manifest: JsonDict,
         evidence_type: str,
     ) -> List[str]:
+        if (
+            evidence_type == "investigation"
+            and declared_non_repository_outcome_evidence_type(task.metadata)
+            != "investigation"
+        ):
+            return [
+                "investigation evidence requires an operator-authored "
+                "investigation execution contract"
+            ]
         problems = validate_evidence_type(
             evidence_type,
             manifest,

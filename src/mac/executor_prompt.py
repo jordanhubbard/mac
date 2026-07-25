@@ -527,6 +527,7 @@ def task_evidence_type(task: Dict[str, Any]) -> str:
         "repo_change",
         "documentation",
         "investigation",
+        "plan_decomposed",
         "deployment",
         "test",
         "artifact",

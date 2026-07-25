@@ -49,6 +49,21 @@ def test_classify_outcome_keeps_non_repo_signals_not_applicable(tmp_path) -> Non
     assert outcome["signals"]["pushed"] is None
 
 
+def test_task_evidence_type_preserves_non_repository_outcome_contracts() -> None:
+    for evidence_type in ("investigation", "plan_decomposed"):
+        task = {
+            "metadata": {
+                "execution_contract": {
+                    "type": "operator_directive",
+                    "repository_required": False,
+                    "evidence_type": evidence_type,
+                }
+            }
+        }
+        assert prompt.task_evidence_type(task) == evidence_type
+        assert prompt.task_is_repo_coupled(task) is False
+
+
 def test_finalizer_status_split_distinguishes_new_files() -> None:
     tracked, untracked, staged = finalizer._split_porcelain_status(
         " M tracked.py\n?? new.py\nA  staged.py\n"

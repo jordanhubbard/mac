@@ -47,8 +47,10 @@ def test_evidence_validators_are_registry_backed_by_type():
         "artifact",
         "deployment",
         "documentation",
+        "investigation",
         "no_change",
         "operator_result",
+        "plan_decomposed",
         "repo_change",
         "review_verdict",
         "test",
@@ -70,6 +72,66 @@ def test_evidence_validators_are_registry_backed_by_type():
         },
         passed_check_count=_passed_check_count,
     ) == []
+
+
+def test_investigation_reuses_substantive_operator_result_gate():
+    assert validate_evidence_type(
+        "investigation",
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "investigation",
+            "summary": "Verified the historical failure no longer reproduces.",
+            "findings": [{"status": "not_actionable"}],
+        },
+        passed_check_count=_passed_check_count,
+    ) == []
+    assert "requires summary" in validate_evidence_type(
+        "investigation",
+        {
+            "schema": "mac.worker_evidence.v1",
+            "status": "complete",
+            "evidence_type": "investigation",
+        },
+        passed_check_count=_passed_check_count,
+    )[0]
+
+
+def test_plan_decomposed_requires_routable_children_and_rationale():
+    manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "plan_decomposed",
+        "children": [
+            {"node_id": "inspect", "title": "Inspect current behavior"},
+            {
+                "node_id": "repair",
+                "title": "Implement the repair",
+                "depends_on": ["inspect"],
+            },
+        ],
+        "ordering_rationale": "Inspect before modifying.",
+        "coverage_claim": "The children cover diagnosis and implementation.",
+    }
+    assert validate_evidence_type(
+        "plan_decomposed",
+        manifest,
+        passed_check_count=_passed_check_count,
+        repo_coupled=True,
+    ) == []
+    problems = validate_evidence_type(
+        "plan_decomposed",
+        {
+            **manifest,
+            "children": [{}],
+            "ordering_rationale": "",
+            "coverage_claim": "",
+        },
+        passed_check_count=_passed_check_count,
+    )
+    assert "plan_decomposed child 1 requires a title" in problems
+    assert "plan_decomposed evidence requires ordering_rationale" in problems
+    assert "plan_decomposed evidence requires coverage_claim" in problems
 
 
 def test_repo_change_requires_codegraph_for_source_changes():
