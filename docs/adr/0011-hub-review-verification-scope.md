@@ -3,6 +3,7 @@
 - Status: **Accepted**
 - Date: 2026-07-05
 - Amended: **2026-07-06** by `docs/testing-strategy.md`
+- Amended: **2026-07-25** to make current-main publication the central full gate
 - Decision owner: MAC fleet owner
 
 ## Context
@@ -78,7 +79,7 @@ flake, coverage-margin wobble, or infrastructure drift."
 
 ## Decision
 
-Task publication and hub review verification should run the explicit
+The task-owned branch and hub review verification should run the explicit
 **affected + canary sanity contract**, not the full repository contract suite,
 when selection is trustworthy. Neither phase should duplicate an identical
 test scope already proven at the same commit.
@@ -110,19 +111,29 @@ a cheap deterministic check or no-op, provided the review verdict records why no
 tests were selected and the executor evidence already contains the required
 repository verification.
 
+Canonical publication is a different boundary: immediately before pushing
+main, the merge queue computes the exact merge of the reviewed commit onto the
+current main tip, materializes that projected tree in a disposable checkout,
+and runs the full configured repository contract in the existing OpenShell
+verification boundary. It then requires the actual local merge tree to equal
+the tested projection before push. This is one full-suite run for the serial
+integration point, not one full run per branch and another per review.
+
 ## Consequences
 
-- Option A remains the canonical branch-publication gate and runs the explicit
-  sanity contract, which fails closed to the full suite for broad or uncertain
-  changes.
+- Option A remains the task-branch gate and runs the explicit sanity contract,
+  which fails closed to the full suite for broad or uncertain changes.
 - Option C remains a hub-controlled review gate, but it becomes proportional to
   the changed files instead of proportional to the whole repository.
+- Canonical current-main publication is the central full-contract gate. A
+  conflict, missing command, test failure, verifier error, or tested-tree
+  mismatch blocks the push.
 - The review verdict manifest must record the selected test scope, the command
   that ran, and any fallback reason. It should continue to carry the executor's
   CodeGraph audit because the hub verifies the same commit.
-- Full-suite coverage remains valuable, but it belongs at mainline integration,
-  scheduled audits, and explicit fallback points, not as an unconditional
-  duplicate in every task and review sandbox.
+- Full-suite coverage remains valuable at mainline integration, scheduled
+  audits, and explicit fallback points, not as an unconditional duplicate in
+  every task and review sandbox.
 - The trade-off is that an affected-test review can miss unrelated integration
   regressions. Public/process canaries limit that risk, broad or unmappable
   changes fall back to the full suite, and mainline runs the complete coverage

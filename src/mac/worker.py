@@ -5612,6 +5612,7 @@ def _capture_evidence_artifact(
 def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> List[JsonDict]:
     candidates = [
         (primary_result_path, primary_result_path.name, "result"),
+        (task_dir / "repository-wip.json", "repository-wip.json", "repository_wip"),
         (task_dir / "stdout.txt", "stdout.txt", "stdout"),
         (task_dir / "stderr.txt", "stderr.txt", "stderr"),
         (task_dir / "mac-evidence.json", "mac-evidence.json", "verification_manifest"),
@@ -5625,6 +5626,26 @@ def _durable_evidence_artifacts(task_dir: Path, primary_result_path: Path) -> Li
         (task_dir / "review-protocol.json", "review-protocol.json", "review_experiment"),
         (task_dir / "review-independent-draft-evidence.json", "review-independent-draft-evidence.json", "review_experiment"),
     ]
+    try:
+        wip_manifest = json.loads(
+            (task_dir / "repository-wip.json").read_text(encoding="utf-8")
+        )
+    except Exception:
+        wip_manifest = {}
+    if isinstance(wip_manifest, dict):
+        bundle_name = str(wip_manifest.get("bundle_name") or "").strip()
+        if (
+            re.fullmatch(r"repository-wip-[A-Za-z0-9_.-]{1,180}\.bundle", bundle_name)
+            and "/" not in bundle_name
+        ):
+            candidates.insert(
+                2,
+                (
+                    task_dir / bundle_name,
+                    bundle_name,
+                    "repository_wip_bundle",
+                ),
+            )
     artifacts: List[JsonDict] = []
     seen: set[str] = set()
     per_artifact_limit = _evidence_artifact_max_bytes()

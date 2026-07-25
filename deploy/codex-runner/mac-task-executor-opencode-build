@@ -1358,6 +1358,14 @@ if [ -n "${REPO_URL}" ]; then
         TASK_BRANCH="${CHECKOUT_BRANCH}"
         echo "[opencode-build] worktree ready at ${WORKDIR}, existing branch ${TASK_BRANCH} (base ${BASE_SHA})"
     else
+        if [ -z "${MAC_LEASE_ID}" ]; then
+            echo "[FATAL] ordinary repository task branch requires MAC_LEASE_ID" >&2
+            exit 2
+        fi
+        # A new lease is a new execution attempt. Keep its branch immutable and
+        # disjoint from every earlier attempt so a retry cannot collide with or
+        # overwrite a task-level branch left behind by a failed push/rebase.
+        TASK_BRANCH="${TASK_BRANCH}-${MAC_LEASE_ID}"
         git checkout -b "${TASK_BRANCH}"
         echo "[opencode-build] worktree ready at ${WORKDIR}, branch ${TASK_BRANCH} (base ${BASE_SHA})"
     fi

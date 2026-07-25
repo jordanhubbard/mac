@@ -4152,6 +4152,48 @@ def test_dispatch_preserves_priority_order_within_project(cp):
     assert [task.id for task in ordered] == [high.id, low.id]
 
 
+def test_dispatch_recovery_lane_precedes_normal_priority(cp):
+    normal = cp.create_task(
+        "normal-high",
+        project="solo",
+        priority=999,
+        required_capabilities=["python"],
+    )
+    recovery = cp.create_task(
+        "repair-now",
+        project="solo",
+        priority=0,
+        required_capabilities=["python"],
+        metadata={"dispatch_class": "recovery"},
+    )
+
+    ordered = cp._dispatch_ordered_tasks()
+
+    assert [task.id for task in ordered[:2]] == [recovery.id, normal.id]
+    assert cp.explain_task_dispatch(recovery.id)["dispatch_rank"]["class"] == "recovery"
+
+
+def test_dispatch_due_hint_adds_bounded_priority_aging(cp):
+    now = services.utcnow()
+    due = cp.create_task(
+        "due",
+        priority=0,
+        required_capabilities=["python"],
+        metadata={
+            "due_at": (
+                services.parse_time(now) - timedelta(hours=8)
+            ).isoformat(timespec="microseconds")
+        },
+    )
+    fresh = cp.create_task("fresh", priority=1, required_capabilities=["python"])
+
+    due_key = cp._dispatch_task_sort_key(due, now)
+    fresh_key = cp._dispatch_task_sort_key(fresh, now)
+
+    assert cp._dispatch_due_bonus(due, now) == 3
+    assert due_key < fresh_key
+
+
 def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
     worker = register_agent(cp, "worker", ["python"])
     normal = cp.create_task(
@@ -4865,7 +4907,7 @@ def test_review_sweep_isolates_per_task_errors(cp, monkeypatch):
     """A single unadvanceable review must not abort the whole sweep — which,
     inside the hub self-tick, would abort the tick and starve dispatch."""
     worker = register_agent(cp, "worker", ["python"])
-    reviewer = register_agent(cp, "reviewer", ["review"])
+    _reviewer = register_agent(cp, "reviewer", ["review"])
     poison = cp.create_task("poison", required_capabilities=["python"])
     healthy = cp.create_task("healthy", required_capabilities=["python"])
     # Drive both into needs_review so the sweep query selects them.
@@ -5910,6 +5952,96 @@ def test_direct_task_for_registered_project_gets_repository_execution_contract(c
     assert task.metadata["execution_contract"]["evidence_type"] == "repo_change"
     assert task.metadata["origin"]["repository_contract"]["project"] == "repo-beads-mac"
     assert task.metadata["acc_metadata"]["repository_contract_schema"] == "mac.repository_contract.v1"
+
+
+@pytest.mark.parametrize("route", ["push", "pull"])
+def test_large_repository_task_is_sized_before_first_claim(cp, tmp_path, route):
+    repo = tmp_path / ("admission-%s" % route)
+    repo.mkdir()
+    _write_beads(repo, [])
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    worker = register_agent(cp, "admission-%s" % route, ["python"])
+    task = cp.create_task(
+        "Split a broad subsystem into independently verifiable components",
+        description=" ".join(
+            ["Refactor each independent module and preserve its contract."] * 45
+        ),
+        project="repo-beads-mac",
+        required_capabilities=["python"],
+    )
+
+    assert task.attempt_count == 0
+    assert "scope_estimate" not in task.metadata
+
+    if route == "push":
+        assignment = cp.dispatch_once()
+    else:
+        assignment = cp.claim_next_for_agent(worker.id)
+
+    assert assignment is not None
+    prepared = cp.get_task(task.id)
+    assert prepared.attempt_count == 1
+    assert prepared.metadata["scope_estimate"]["size"] == "large"
+    assert prepared.metadata["plan_first"] is True
+    assert prepared.metadata["dispatch_admission"]["decision"] == "plan_first"
+    transitions = cp.task_history(task.id)
+    admission_index = next(
+        index
+        for index, event in enumerate(transitions)
+        if event.event_type == "task.updated"
+        and event.actor == "dispatcher.admission"
+    )
+    claim_index = next(
+        index
+        for index, event in enumerate(transitions)
+        if event.event_type == "task.claimed"
+    )
+    assert admission_index < claim_index
+
+
+def test_dispatch_admission_does_not_write_rejected_or_dry_run_candidates(
+    cp, tmp_path
+):
+    repo = tmp_path / "admission-rejections"
+    repo.mkdir()
+    _write_beads(repo, [])
+    cp.register_project_repository("mac", str(repo), source="repo-beads-mac")
+    worker = register_agent(cp, "admission-rejections", ["python"])
+    description = " ".join(
+        ["Refactor each independent module and preserve its contract."] * 45
+    )
+    held = cp.create_task(
+        "Held large repository task",
+        description=description,
+        project="repo-beads-mac",
+        required_capabilities=["python"],
+        metadata={"no_dispatch": True},
+        priority=300,
+    )
+    incompatible = cp.create_task(
+        "Incompatible large repository task",
+        description=description,
+        project="repo-beads-mac",
+        required_capabilities=["rust"],
+        priority=200,
+    )
+
+    assert cp.dispatch_once() is None
+    assert "scope_estimate" not in cp.get_task(held.id).metadata
+    assert "scope_estimate" not in cp.get_task(incompatible.id).metadata
+
+    eligible = cp.create_task(
+        "Dry-run large repository task",
+        description=description,
+        project="repo-beads-mac",
+        required_capabilities=["python"],
+        priority=400,
+    )
+    candidate = cp.claim_next_for_agent(worker.id, dry_run=True)
+
+    assert candidate is not None
+    assert candidate["task"]["id"] == eligible.id
+    assert "scope_estimate" not in cp.get_task(eligible.id).metadata
 
 
 @pytest.mark.parametrize("evidence_type", ["investigation", "plan_decomposed"])
@@ -7412,6 +7544,22 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
         cp,
         CICDMonitorConfig(enabled=True),
     )
+    publication_gate_calls = []
+
+    def publication_gate_runner(remote_url, branch, projected_sha, command):
+        checkout = Path(remote_url)
+        publication_gate_calls.append(
+            {
+                "branch": branch,
+                "projected_sha": projected_sha,
+                "command": command,
+                "has_feature": (checkout / "feature.txt").is_file(),
+                "has_mainline": (checkout / "mainline.txt").is_file(),
+            }
+        )
+        return 0, "full configured suite passed"
+
+    cp._publication_merge_test_runner = publication_gate_runner
     task = cp.create_task(
         "publish parallel branch",
         project=project.name,
@@ -7420,7 +7568,10 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
             "origin": {
                 "type": "direct_task",
                 "repository_path": str(source),
-                "repository_contract": {"schema": "mac.repository_contract.v1"},
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "test": {"command": "make full-publication-suite"},
+                },
             },
             "publication_target": "git://main",
         },
@@ -7467,6 +7618,12 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     git(source, "merge-base", "--is-ancestor", task_head, final_head)
     git(source, "merge-base", "--is-ancestor", main_head, final_head)
     assert git(source, "ls-remote", "origin", "refs/heads/main").split()[0] == final_head
+    assert len(publication_gate_calls) == 1
+    assert publication_gate_calls[0]["branch"] == "mac-projected-publication"
+    assert publication_gate_calls[0]["projected_sha"]
+    assert publication_gate_calls[0]["command"] == "make full-publication-suite"
+    assert publication_gate_calls[0]["has_feature"] is True
+    assert publication_gate_calls[0]["has_mainline"] is True
     published = [
         event
         for event in cp.list_observability(limit=50)
@@ -7476,6 +7633,18 @@ def test_git_publication_merges_non_fast_forward_task_branch(cp, tmp_path):
     assert published[0].detail["publication_mode"] == "merge_commit"
     assert published[0].detail["head_sha"] == task_head
     assert published[0].detail["final_sha"] == final_head
+    publication_commands = published[0].detail["commands"]
+    contract_gate = next(
+        item
+        for item in publication_commands
+        if item["name"] == "publication_contract_gate"
+    )
+    assert contract_gate["passed"] is True
+    assert contract_gate["test_command"] == "make full-publication-suite"
+    assert any(
+        item["name"] == "verify_projected_tree"
+        for item in publication_commands
+    )
     proofs = [
         item.metadata["verification"]["canonical_integration"]
         for item in cp.list_evidence(task.id)
@@ -7517,6 +7686,7 @@ def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):
     from tests.conftest import submit_review_verdict
 
     source, remote, task_head, git = _setup_publishable_repo(tmp_path, name="k8s")
+    cp._publication_merge_test_runner = lambda *_args: (0, "full suite passed")
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
     task = cp.create_task(
@@ -7526,6 +7696,10 @@ def test_git_publication_via_remote_clone_when_no_repository_path(cp, tmp_path):
             "origin": {
                 "type": "direct_task",
                 "repository_url": str(remote),  # K8s mode: URL only, no repository_path
+                "repository_contract": {
+                    "schema": "mac.repository_contract.v1",
+                    "test": {"command": "true"},
+                },
             },
             "publication_target": "git://main",
         },
@@ -7606,7 +7780,11 @@ def _publishable_task_and_evidence(cp, source, task_head, *, canonical_remote_ur
 
     worker = register_agent(cp, "worker", ["python"])
     reviewer = register_agent(cp, "reviewer", ["review"])
-    contract = {"schema": "mac.repository_contract.v1"}
+    cp._publication_merge_test_runner = lambda *_args: (0, "full suite passed")
+    contract = {
+        "schema": "mac.repository_contract.v1",
+        "test": {"command": "true"},
+    }
     if canonical_remote_url is not None:
         contract["canonical_remote_url"] = canonical_remote_url
     task = cp.create_task(
@@ -7653,6 +7831,38 @@ def _publishable_task_and_evidence(cp, source, task_head, *, canonical_remote_ur
     verdict_id = submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
     cp.submit_review(review.id, ReviewStatus.APPROVED.value, reviewer.id, evidence_id=verdict_id)
     return task, evidence, reviewer
+
+
+def test_git_publication_full_contract_failure_does_not_push_main(cp, tmp_path):
+    source, remote, task_head, git = _setup_publishable_repo(
+        tmp_path, name="contract-fail"
+    )
+    main_before = git(source, "rev-parse", "main")
+    task, evidence, reviewer = _publishable_task_and_evidence(
+        cp, source, task_head
+    )
+    calls = []
+
+    def fail_gate(remote_url, branch, projected_sha, command):
+        calls.append((remote_url, branch, projected_sha, command))
+        return 23, "integration suite failed"
+
+    del cp._publication_merge_test_runner
+    cp._hub_verify_runner = fail_gate
+    with pytest.raises(
+        ValidationError, match="full repository contract gate failed"
+    ):
+        cp.publish_task(
+            task.id, "git://main", reviewer.id, evidence_id=evidence.id
+        )
+
+    assert len(calls) == 1
+    assert calls[0][1] == "mac-projected-publication"
+    assert calls[0][3] == "true"
+    assert git(source, "ls-remote", str(remote), "refs/heads/main").split()[0] == (
+        main_before
+    )
+    assert git(source, "rev-parse", "main") == main_before
 
 
 def test_git_publication_rejects_worktree_origin_mismatch(cp, tmp_path):
@@ -9902,7 +10112,10 @@ def test_tick_exhausted_repair_preserves_control_plane_publication_metadata(cp):
         "exhausted repair with derived publication metadata",
         required_capabilities=["python"],
         max_attempts=1,
-        metadata={"operator_note": "keep me"},
+        metadata={
+            "operator_note": "keep me",
+            "repair_policy": {"contract_prerequisite": True},
+        },
     )
     derived_publication = {
         "publication_lane": {"schema": "mac.publication_lane.v1", "lane": "legacy"},
@@ -10192,18 +10405,18 @@ def test_claim_exhausted_attempt_records_failure_class(cp):
         cp.claim_task(task.id, agent.id)
 
     failed = cp.get_task(task.id)
-    assert failed.state == TaskState.WAITING.value
-    assert len(failed.dependencies) == 1
-    repair = cp.get_task(failed.dependencies[0])
-    assert repair.metadata["origin"]["type"] == "contract_prerequisite"
+    assert failed.state == TaskState.FAILED.value
+    assert failed.dependencies == []
+    assert failed.metadata["failure_class"] == "work"
 
 
-def test_tick_exhausted_contract_failure_sets_contract_repair_status_waiting(cp):
-    """contract_repair_status=waiting is set on contract failure path."""
+def test_tick_exhausted_contract_failure_can_opt_into_prerequisite(cp):
+    """Independent repository repair workflows remain available explicitly."""
     task = cp.create_task(
         "exhausted contract failure repair status",
         required_capabilities=["python"],
         max_attempts=1,
+        metadata={"repair_policy": {"contract_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10225,6 +10438,39 @@ def test_tick_exhausted_contract_failure_sets_contract_repair_status_waiting(cp)
     )
     assert waiting.metadata.get("contract_repair_task_id"), "contract_repair_task_id must be set"
     assert "environment_repair_task_id" not in waiting.metadata
+
+
+def test_repeated_no_telemetry_lease_expiry_does_not_create_repair_task(cp):
+    task = cp.create_task(
+        "silent lease expiry",
+        required_capabilities=["python"],
+        max_attempts=3,
+    )
+    for attempt in range(3):
+        worker = register_agent(cp, "silent-worker-%d" % attempt, ["python"])
+        current, lease = cp.claim_task(task.id, worker.id)
+        assert current.attempt_count == attempt + 1
+        expired_at = "2000-01-01T00:00:00+00:00"
+        cp.store.execute(
+            "UPDATE leases SET expires_at = ? WHERE id = ?",
+            (expired_at, lease.id),
+        )
+        cp.store.execute(
+            "UPDATE tasks SET leased_until = ? WHERE id = ?",
+            (expired_at, task.id),
+        )
+        cp.expire_leases(now=utcnow())
+
+    failed = cp.get_task(task.id)
+    assert failed.state == TaskState.FAILED.value
+    assert failed.dependencies == []
+    assert "environment_repair_task_id" not in failed.metadata
+    expiry = [
+        event for event in cp.task_history(task.id)
+        if event.event_type == "task.lease_expired"
+    ][-1]
+    assert expiry.detail["reason"] == "environment_failure_without_actionable_evidence"
+    assert expiry.detail["manual_repair_required"] is True
 
 
 def test_tick_exhausted_environment_failure_does_not_set_contract_repair_status(cp):
@@ -13700,6 +13946,68 @@ def test_hub_verify_reuses_completed_review_verdict_evidence(cp, monkeypatch):
     assert [item.id for item in hub_verified] == [first.id]
 
 
+def test_hub_verify_does_not_rerun_for_invalid_deterministic_verdict(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    calls = []
+    worker, reviewer, task, executor_evidence = _setup_hubverify_task(
+        cp, lambda *args: calls.append(args) or (0, "ok")
+    )
+    review = cp.request_review(task.id, reviewer.id)
+    head_sha = executor_evidence.metadata["verification"]["repo"]["head_sha"]
+    invalid_manifest = {
+        "schema": "mac.worker_evidence.v1",
+        "status": "complete",
+        "evidence_type": "review_verdict",
+        "verdict": "approved",
+        "review_id": review.id,
+        "reviewed_evidence_id": executor_evidence.id,
+        "worktree_digest": "sha256:" + "0" * 64,
+        "verified_by": "hub_review_verifier_v1",
+        "repo": {"head_sha": head_sha},
+        "signed_by": reviewer.id,
+        "signature": "invalid",
+    }
+    invalid = cp.add_evidence(
+        task.id,
+        "review",
+        cp._hub_review_verification_uri(review.id, head_sha),
+        "invalid deterministic hub verdict",
+        reviewer.id,
+        metadata={
+            "returncode": 0,
+            "hub_verified": True,
+            "verification": invalid_manifest,
+        },
+    )
+
+    first = cp._run_hub_review_verification(
+        task, review, executor_evidence, "test"
+    )
+    second = cp._run_hub_review_verification(
+        task, review, executor_evidence, "test"
+    )
+
+    assert first is None
+    assert second is None
+    assert calls == []
+    retracted = cp.get_review(review.id)
+    assert retracted.status == ReviewStatus.RETRACTED.value
+    assert retracted.reason == "reviewer_protocol_failure:hub_verdict_invalid"
+    hub_verdicts = [
+        item
+        for item in cp.list_evidence(task.id)
+        if item.uri == cp._hub_review_verification_uri(review.id, head_sha)
+    ]
+    assert [item.id for item in hub_verdicts] == [invalid.id]
+    observations = cp.list_observability(
+        subject_type="task", subject_id=task.id, limit=100
+    )
+    assert any(
+        item.name == "workflow.default_review.hub_verify_invalid_existing"
+        for item in observations
+    )
+
+
 def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeypatch):
     """The tar-uploaded repo can be owned by a different uid than the sandbox
     user, and HOME=/tmp means no safe.directory whitelist exists — without the
@@ -13714,6 +14022,10 @@ def test_hub_verify_sandbox_command_whitelists_uploaded_repo_for_git(cp, monkeyp
 
     def fake_run(argv, **kwargs):
         captured.append(list(argv))
+        if "rev-parse" in argv and "HEAD" in argv:
+            return _subprocess.CompletedProcess(
+                argv, 0, stdout=("a" * 40) + "\n", stderr=""
+            )
         return _subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr(services_mod.subprocess, "run", fake_run)

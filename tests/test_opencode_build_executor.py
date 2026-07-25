@@ -950,6 +950,44 @@ def test_work_package_pushes_exact_attempt_ref_reads_it_back_and_skips_pr(
     ) == []
 
 
+def test_ordinary_retry_uses_distinct_lease_scoped_task_branches(
+    tmp_path: Path,
+) -> None:
+    task_id = "task-retry-branch"
+    branches = []
+
+    for lease_id in ("lease-first", "lease-second"):
+        bindir = tmp_path / lease_id / "bin"
+        _make_fake_bin(
+            bindir,
+            opencode_stdout=json.dumps({"type": "step_finish", "reason": "stop"})
+            + "\n",
+            task_record_id=task_id,
+        )
+        manifest_path = tmp_path / lease_id / "mac-evidence.json"
+
+        result = _run_build(
+            bindir=bindir,
+            manifest_path=manifest_path,
+            task_id=task_id,
+            extra_env={"MAC_LEASE_ID": lease_id},
+        )
+
+        assert result.returncode == 0, "stdout=%s stderr=%s" % (
+            result.stdout,
+            result.stderr,
+        )
+        branch = (
+            "mac/mac-worker-python-coder-opencode/%s-%s" % (task_id, lease_id)
+        )
+        branches.append(branch)
+        git_calls = (bindir / "_git_calls.txt").read_text(encoding="utf-8")
+        assert "checkout -b %s" % branch in git_calls
+        assert "push origin HEAD:refs/heads/%s" % branch in git_calls
+
+    assert branches[0] != branches[1]
+
+
 def test_work_package_rejects_stale_assignment_lease_before_clone(
     tmp_path: Path,
 ) -> None:
@@ -2073,7 +2111,7 @@ def test_agent_committed_branch_is_pushed_to_task_branch(tmp_path: Path) -> None
     findings = _findings_by_kind(manifest)
     repo = findings["repo_change_summary"]
 
-    expected_branch = "mac/mac-worker-python-coder-opencode/%s" % task_id
+    expected_branch = "mac/mac-worker-python-coder-opencode/%s-lease-1" % task_id
     assert repo["pushed"] is True, (
         "agent-committed branch must be pushed; repo=%s stdout=%s"
         % (repo, result.stdout)

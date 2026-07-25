@@ -54,6 +54,7 @@ import os
 import re as _re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -112,6 +113,8 @@ from mac.repository_recovery import RepositoryRecoveryError
 PRESERVED_EXECUTOR_WORKTREE_FILENAME = "preserved-executor-worktree.json"
 PRESERVED_EXECUTOR_EVIDENCE_FILENAME = "executor-evidence-preserved.json"
 BREAK_GLASS_AUTHORIZATION_SCHEMA = "mac.break_glass_authorization.v1"
+REPOSITORY_WIP_BUNDLE_SCHEMA = "mac.repository_wip_bundle.v1"
+REPOSITORY_WIP_MANIFEST_FILENAME = "repository-wip.json"
 
 
 class PreservationMissing(RuntimeError):
@@ -436,6 +439,350 @@ def _git(args, cwd, *, timeout: Optional[float] = None):
     if timeout is None:
         return subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, check=False)
     return _run_captured(argv, Path(cwd), timeout)
+
+
+def _repository_wip_bundle_limit() -> int:
+    """Return the largest bundle that the worker can upload without truncation."""
+
+    raw_per_artifact = os.environ.get("MAC_EVIDENCE_ARTIFACT_MAX_BYTES", "").strip()
+    raw_total = os.environ.get("MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES", "").strip()
+    try:
+        per_artifact = int(raw_per_artifact) if raw_per_artifact else 5 * 1024 * 1024
+    except ValueError:
+        per_artifact = 5 * 1024 * 1024
+    try:
+        total = int(raw_total) if raw_total else 50 * 1024 * 1024
+    except ValueError:
+        total = 50 * 1024 * 1024
+    per_artifact = min(50 * 1024 * 1024, max(0, per_artifact))
+    total = min(100 * 1024 * 1024, max(0, total))
+    # Reserve half the total budget for the result, logs, and repository
+    # context. A bundle larger than this cannot be called durable because the
+    # worker evidence layer would truncate it.
+    return min(per_artifact, total // 2)
+
+
+def _write_repository_wip_manifest(workspace: Path, payload: Mapping[str, Any]) -> None:
+    destination = workspace / REPOSITORY_WIP_MANIFEST_FILENAME
+    descriptor, temporary_raw = tempfile.mkstemp(
+        prefix=".%s." % REPOSITORY_WIP_MANIFEST_FILENAME,
+        suffix=".tmp",
+        dir=str(workspace),
+    )
+    temporary = Path(temporary_raw)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(dict(payload), stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        _fsync_regular_file(destination)
+        directory = os.open(workspace, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _fsync_regular_file(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+            raise PreservationMissing(
+                "repository WIP artifact is not a single-link regular file"
+            )
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def preserve_repository_wip_bundle(
+    task_workspace: Path,
+    task: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Preserve repository WIP without changing the worktree, index, or HEAD.
+
+    The OpenShell checkout has a sandbox-local ``.git`` directory which is
+    deliberately excluded from harvest. A clean agent commit therefore becomes
+    ordinary file changes in the authoritative host worktree. This function
+    snapshots both that case and ordinary dirty WIP by building a commit through
+    a temporary Git index, then writes a lease-bound incremental bundle whose
+    prerequisite is recorded by the existing ``repository-worktree.json``.
+
+    The bundle is verified and size-bounded before success is returned. Any
+    failure raises so the caller can retain the OpenShell sandbox fail-closed.
+    """
+
+    workspace = Path(task_workspace).expanduser().resolve(strict=True)
+    context_path = workspace / "repository-worktree.json"
+    try:
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - caller retains the sandbox
+        raise PreservationMissing(
+            "repository-worktree.json is missing or invalid"
+        ) from exc
+    if not isinstance(context, dict):
+        raise PreservationMissing("repository-worktree.json must contain an object")
+
+    worktree_raw = str(context.get("repository_worktree") or "").strip()
+    if not worktree_raw:
+        raise PreservationMissing("repository worktree path is missing")
+    try:
+        worktree = Path(worktree_raw).expanduser().resolve(strict=True)
+        worktree.relative_to(workspace)
+    except (OSError, ValueError) as exc:
+        raise PreservationMissing(
+            "repository worktree is outside the task workspace"
+        ) from exc
+
+    def run_git(
+        args: List[str],
+        *,
+        environment: Optional[Mapping[str, str]] = None,
+        timeout: float = 120.0,
+    ) -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ)
+        # The task executor may itself run under Git plumbing environment
+        # variables. Never let ambient routing redirect preservation away from
+        # the host-authored worktree validated above.
+        for name in (
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_DIR",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_GRAFT_FILE",
+            "GIT_INDEX_FILE",
+            "GIT_NAMESPACE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_PREFIX",
+            "GIT_REPLACE_REF_BASE",
+            "GIT_SHALLOW_FILE",
+            "GIT_WORK_TREE",
+        ):
+            env.pop(name, None)
+        if environment is not None:
+            env.update({str(key): str(value) for key, value in environment.items()})
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "commit.gpgsign=false",
+                    *args,
+                ],
+                cwd=str(worktree),
+                capture_output=True,
+                text=True,
+                errors="surrogateescape",
+                check=False,
+                timeout=timeout,
+                env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise PreservationMissing(
+                "repository WIP Git command failed to run: git %s" % " ".join(args[:2])
+            ) from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise PreservationMissing(
+                "repository WIP Git command failed: git %s: %s"
+                % (" ".join(args[:2]), detail[-500:])
+            )
+        return result
+
+    head_sha = run_git(["rev-parse", "--verify", "HEAD^{commit}"]).stdout.strip()
+    base_sha = str(
+        context.get("repository_base_sha")
+        or _repository_prepared_base(dict(task))
+        or ""
+    ).strip()
+    if not base_sha:
+        raise PreservationMissing("repository prepared base SHA is missing")
+    base_sha = run_git(
+        ["rev-parse", "--verify", "%s^{commit}" % base_sha]
+    ).stdout.strip()
+    status = run_git(
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"]
+    ).stdout
+    dirty = bool(status)
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        raise PreservationMissing("task id is missing")
+    lease_id = str(
+        context.get("repository_lease_id")
+        or _repository_lease_id(dict(task))
+        or ""
+    ).strip()
+    if not lease_id:
+        raise PreservationMissing("repository lease id is missing")
+
+    context_digest = "sha256:%s" % hashlib.sha256(context_path.read_bytes()).hexdigest()
+    status_digest = "sha256:%s" % hashlib.sha256(
+        status.encode("utf-8", errors="surrogateescape")
+    ).hexdigest()
+    changed_file_count = len([item for item in status.split("\0") if item])
+    if not dirty and head_sha == base_sha:
+        result = {
+            "schema": REPOSITORY_WIP_BUNDLE_SCHEMA,
+            "status": "no_changes",
+            "task_id": task_id,
+            "lease_id": lease_id,
+            "repository_context_sha256": context_digest,
+            "base_sha": base_sha,
+            "source_head_sha": head_sha,
+            "salvage_head_sha": head_sha,
+            "dirty": False,
+            "changed_file_count": 0,
+            "changed_file_digest": status_digest,
+            "bundle_name": "",
+            "bundle_sha256": "",
+            "bundle_size_bytes": 0,
+            "bundle_ref": "",
+            "at": utcnow(),
+        }
+        _write_repository_wip_manifest(workspace, result)
+        return result
+
+    ancestor = run_git(["merge-base", "--is-ancestor", base_sha, head_sha])
+    if ancestor.returncode != 0:
+        # ``run_git`` already raises on non-zero, but keep the invariant
+        # explicit for readers and injected test runners.
+        raise PreservationMissing("repository prepared base is not an ancestor of HEAD")
+
+    safe_task = safe_path_component(task_id) or "task"
+    safe_lease = safe_path_component(lease_id) or "lease"
+    temporary_index = workspace / (
+        ".repository-wip-%s-%d.index" % (safe_lease, os.getpid())
+    )
+    temporary_bundle = workspace / (
+        ".repository-wip-%s-%d.bundle.tmp" % (safe_lease, os.getpid())
+    )
+    salvage_head = head_sha
+    bundle_ref = ""
+    try:
+        if dirty:
+            index_environment = {
+                "GIT_INDEX_FILE": str(temporary_index),
+                "GIT_AUTHOR_NAME": "MAC WIP preservation",
+                "GIT_AUTHOR_EMAIL": "mac-wip@invalid",
+                "GIT_COMMITTER_NAME": "MAC WIP preservation",
+                "GIT_COMMITTER_EMAIL": "mac-wip@invalid",
+            }
+            run_git(["read-tree", head_sha], environment=index_environment)
+            run_git(["add", "-A", "--", "."], environment=index_environment)
+            tree_sha = run_git(
+                ["write-tree"], environment=index_environment
+            ).stdout.strip()
+            salvage_head = run_git(
+                [
+                    "commit-tree",
+                    tree_sha,
+                    "-p",
+                    head_sha,
+                    "-m",
+                    "Preserve MAC task WIP %s" % task_id,
+                ],
+                environment=index_environment,
+            ).stdout.strip()
+
+        bundle_ref = "refs/mac/salvage/%s/%s/%s" % (
+            safe_task,
+            safe_lease,
+            salvage_head[:12],
+        )
+        run_git(["check-ref-format", bundle_ref])
+        run_git(["update-ref", bundle_ref, salvage_head])
+        run_git(
+            [
+                "bundle",
+                "create",
+                str(temporary_bundle),
+                bundle_ref,
+                "^%s" % base_sha,
+            ],
+            timeout=300.0,
+        )
+        run_git(["bundle", "verify", str(temporary_bundle)], timeout=300.0)
+        bundle_size = temporary_bundle.stat().st_size
+        bundle_limit = _repository_wip_bundle_limit()
+        if bundle_limit <= 0 or bundle_size > bundle_limit:
+            raise PreservationMissing(
+                "repository WIP bundle is %d bytes; durable artifact limit is %d"
+                % (bundle_size, bundle_limit)
+            )
+        bundle_digest = "sha256:%s" % hashlib.sha256(
+            temporary_bundle.read_bytes()
+        ).hexdigest()
+        bundle_name = "repository-wip-%s-%s.bundle" % (
+            safe_lease,
+            salvage_head[:12],
+        )
+        bundle_path = workspace / bundle_name
+        if bundle_path.exists() or bundle_path.is_symlink():
+            details = bundle_path.lstat()
+            if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+                raise PreservationMissing(
+                    "immutable repository WIP bundle path is not a single-link regular file"
+                )
+            existing_digest = "sha256:%s" % hashlib.sha256(
+                bundle_path.read_bytes()
+            ).hexdigest()
+            if existing_digest != bundle_digest:
+                raise PreservationMissing(
+                    "immutable repository WIP bundle name already exists with different content"
+                )
+            temporary_bundle.unlink(missing_ok=True)
+        else:
+            os.replace(temporary_bundle, bundle_path)
+            bundle_path.chmod(0o400)
+        _fsync_regular_file(bundle_path)
+
+        result = {
+            "schema": REPOSITORY_WIP_BUNDLE_SCHEMA,
+            "status": "preserved",
+            "task_id": task_id,
+            "lease_id": lease_id,
+            "repository_context_sha256": context_digest,
+            "base_sha": base_sha,
+            "source_head_sha": head_sha,
+            "salvage_head_sha": salvage_head,
+            "dirty": dirty,
+            "changed_file_count": changed_file_count,
+            "changed_file_digest": status_digest,
+            "bundle_name": bundle_name,
+            "bundle_sha256": bundle_digest,
+            "bundle_size_bytes": bundle_size,
+            "bundle_ref": bundle_ref,
+            "at": utcnow(),
+        }
+        _write_repository_wip_manifest(workspace, result)
+        return result
+    finally:
+        temporary_index.unlink(missing_ok=True)
+        temporary_bundle.unlink(missing_ok=True)
+        if bundle_ref:
+            # The bundle, not a mutable local ref, is the durable recovery
+            # object. Ref cleanup is best-effort because retaining the exact
+            # immutable commit is safer than failing after the bundle exists.
+            subprocess.run(
+                ["git", "update-ref", "-d", bundle_ref],
+                cwd=str(worktree),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
 
 
 def _split_porcelain_status(status_text: str) -> tuple[List[str], List[str], List[str]]:

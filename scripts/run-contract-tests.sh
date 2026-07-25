@@ -241,6 +241,22 @@ if ! _py_can_run_suite "$PY"; then
 fi
 export PATH="$(cd "$(dirname "$PY")" && pwd):${PATH}"
 
+# Fail the cheapest repository-wide consistency contracts before paying for
+# xdist startup, subprocess/container tests, and full coverage. These checks
+# are intentionally existing tests rather than a second implementation of the
+# rules: generated config/reference drift, invalid executable documentation,
+# and a published Python API break now fail in seconds while the complete suite
+# remains the final authority. Nested invocations are runner contract tests
+# themselves, so they skip this outer preflight and retain a single pytest
+# owner.
+if [ "$#" -eq 0 ] && [ "$_MAC_TEST_NESTED_PYTEST" = "0" ]; then
+    echo "run-contract-tests.sh: running fail-fast repository contract preflight"
+    "$PY" scripts/test-docs.py --static-only
+    "$PY" scripts/generate-env-config-registry.py --check
+    "$PY" scripts/generate-docs-reference.py --check
+    "$PY" -m pytest -q -x tests/test_control_plane_public_contract.py
+fi
+
 # pytest exit code 5 means "no tests were collected". When this runner is
 # invoked from INSIDE a pytest/xdist worker (the outer merge gate parallelizes
 # the whole suite, and some contract tests shell out to this very script), the

@@ -704,12 +704,24 @@ def test_review_nudge_prepares_review_worktree_and_git_main_publication(tmp_path
         review_executor,
         attestation_key=cp._agent_attestation_key(reviewer.id),
     )
+    publication_gate_calls: list[tuple[str, str, str, str]] = []
+
+    def publication_gate(
+        repo_dir: str, projected_branch: str, projected_sha: str, command: str
+    ) -> tuple[int, str]:
+        publication_gate_calls.append(
+            (repo_dir, projected_branch, projected_sha, command)
+        )
+        return 0, "projected full contract passed"
+
+    cp._publication_merge_test_runner = publication_gate
 
     result = worker.run_once()
 
     assert result.status == "review_verdict_recorded"
     verdict_manifest = cp.list_evidence(task.id)[-1].metadata["verification"]
     assert verdict_manifest["repo"]["remote_ref"] == "refs/heads/%s" % branch
+    assert len(publication_gate_calls) == 1
     assert cp.get_task(task.id).state == TaskState.COMPLETED.value
     assert cp.list_publications(task.id)[0].target == "git://main"
     assert _git(repo, "rev-parse", "HEAD") == reviewed_head
@@ -1398,6 +1410,10 @@ def test_worker_timeout_harvests_finalizer_progress_artifact(tmp_path: Path):
                 "workspace = Path(os.environ['MAC_TASK_WORKSPACE'])",
                 "progress = {'schema': 'mac.finalizer_progress.v1', 'phase': 'guarded_push', 'status': 'running'}",
                 "(workspace / 'finalizer-progress.json').write_text(json.dumps(progress), encoding='utf-8')",
+                "bundle_name = 'repository-wip-lease-timeout-deadbeef.bundle'",
+                "(workspace / bundle_name).write_bytes(b'# v2 git bundle\\nfixture')",
+                "wip = {'schema': 'mac.repository_wip_bundle.v1', 'status': 'preserved', 'bundle_name': bundle_name}",
+                "(workspace / 'repository-wip.json').write_text(json.dumps(wip), encoding='utf-8')",
                 "time.sleep(60)",
             ]
         ),
@@ -1421,6 +1437,14 @@ def test_worker_timeout_harvests_finalizer_progress_artifact(tmp_path: Path):
     ]
     assert len(progress_artifacts) == 1
     assert progress_artifacts[0]["name"] == "finalizer-progress.json"
+    artifact_types = {
+        artifact["artifact_type"]: artifact for artifact in artifacts
+    }
+    assert artifact_types["repository_wip"]["name"] == "repository-wip.json"
+    assert (
+        artifact_types["repository_wip_bundle"]["name"]
+        == "repository-wip-lease-timeout-deadbeef.bundle"
+    )
     history = cp.task_history(task.id)
     timeout_transition = [
         item

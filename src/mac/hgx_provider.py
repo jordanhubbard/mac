@@ -1,9 +1,10 @@
 """First-class, dependency-light adapter for the ``hgx`` provider CLI.
 
 This module wraps the ``hgx`` CLI verbs ``create``, ``list``, ``status``,
-``ssh``, ``stop`` and ``resume`` as structured, subprocess-based calls, in the
-same spirit as the subprocess helpers in :mod:`mac.fleet_deploy` and the
-secret-free, dataclass-first decision surface in :mod:`mac.agent_provider`.
+``ssh``, ``stop``, ``resume`` and ``delete`` as structured, subprocess-based
+calls, in the same spirit as the subprocess helpers in
+:mod:`mac.fleet_deploy` and the secret-free, dataclass-first decision surface
+in :mod:`mac.agent_provider`.
 
 Design contract (why this exists)
 ---------------------------------
@@ -12,12 +13,12 @@ way to talk to the provider without leaking the well-known dark spots of
 ad-hoc CLI shelling:
 
 - **Immutable-ID addressing only.** Every lifecycle operation (``status``,
-  ``ssh``, ``stop``, ``resume``) addresses a session by its immutable provider
-  session ID. A human-facing display *name* is never used to select a session
-  directly; :func:`HgxProvider.resolve_session_id` refuses when a name maps to
-  zero or multiple sessions and only proceeds when it resolves to a single
-  unique ID. This removes the "operated on the wrong box because two sessions
-  shared a name" failure mode.
+  ``ssh``, ``stop``, ``resume``, ``delete``) addresses a session by its
+  immutable provider session ID. A human-facing display *name* is never used
+  to select a session directly; :func:`HgxProvider.resolve_session_id` refuses
+  when a name maps to zero or multiple sessions and only proceeds when it
+  resolves to a single unique ID. This removes the "operated on the wrong box
+  because two sessions shared a name" failure mode.
 - **No ``hgx info``, ever.** ``hgx info`` can echo a fallback bootstrap
   password on stdout. This adapter never invokes it, and it never stores raw
   provider stdout that could carry a credential in any returned/observable
@@ -27,9 +28,10 @@ ad-hoc CLI shelling:
 - **``standard-dind`` is an explicit path.** OpenShell / Docker execution needs
   the ``standard-dind`` flavor; creating one is a first-class, parameterized
   option rather than a magic string callers must remember.
-- **Validated SSH targets.** SSH endpoints parsed out of ``hgx`` output are run
-  through :func:`mac.fleet_deploy.parse_ssh_target` so downstream code always
-  receives a validated :class:`mac.fleet_deploy.SshTarget`.
+- **Real SSH attestation.** ``attest_ssh`` executes a nonce-bearing remote
+  command through the current ``hgx ssh <id> -- <command>`` contract. Merely
+  finding a session in ``hgx list`` or parsing an endpoint is never treated as
+  reachability proof.
 
 It is intentionally stdlib-only and does not import anything heavier than
 :mod:`mac.fleet_deploy`, so it is unit-testable in mac's own venv.
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import shlex
 import subprocess
 from dataclasses import dataclass, field
@@ -292,7 +295,8 @@ class HgxProvider:
     # -- subprocess plumbing -------------------------------------------------
     def _run(self, args: Sequence[str]) -> str:
         """Run ``hgx <args>`` and return stdout, guarding the banned verb."""
-        if args and args[0] == _FORBIDDEN_VERB:
+        verb = next((arg for arg in args if not arg.startswith("-")), "")
+        if verb == _FORBIDDEN_VERB:
             raise HgxError("hgx info is forbidden: it can echo a fallback password")
         argv = [self._binary, *args]
         try:
@@ -310,12 +314,12 @@ class HgxProvider:
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise HgxCommandError(
-                "hgx %s timed out after %ss" % (args[0] if args else "", self._timeout),
+                "hgx %s timed out after %ss" % (verb, self._timeout),
                 argv=argv,
             ) from exc
         if completed.returncode != 0:
             raise HgxCommandError(
-                "hgx %s failed (exit %d)" % (args[0] if args else "", completed.returncode),
+                "hgx %s failed (exit %d)" % (verb, completed.returncode),
                 argv=argv,
                 returncode=completed.returncode,
                 stderr=completed.stderr or "",
@@ -328,7 +332,9 @@ class HgxProvider:
         if not session_id:
             raise HgxError("hgx session payload is missing an immutable id")
         name = _first_str(payload, ("name", "display_name", "displayName", "label"))
-        flavor = _first_str(payload, ("flavor", "type", "image", "kind"))
+        flavor = _first_str(
+            payload, ("agent_type", "agentType", "flavor", "type", "image", "kind")
+        )
         state = _first_str(payload, ("state", "status", "phase"))
 
         scrubbed = sorted(key for key in payload if _has_secret_hint(str(key)))
@@ -381,7 +387,10 @@ class HgxProvider:
         extra_args: Optional[Sequence[str]] = None,
     ) -> HgxSession:
         """Create a session of ``flavor`` and return its structured view."""
-        args: List[str] = ["create", "--flavor", flavor, "--json"]
+        # hgx 0.9 uses a global --json flag and names the session execution
+        # shape --type. Keep ``flavor`` in this Python API for compatibility
+        # with callers and persisted HgxSession records.
+        args: List[str] = ["--json", "create", "--type", flavor]
         if name:
             args += ["--name", name]
         if extra_args:
@@ -409,13 +418,13 @@ class HgxProvider:
 
     def list(self) -> List[HgxSession]:
         """List all sessions as structured, secret-free views."""
-        stdout = self._run(["list", "--json"])
+        stdout = self._run(["--json", "list"])
         return self._sessions_from_output(stdout)
 
     def status(self, session_id: str) -> HgxSession:
         """Return status for the session addressed by its immutable ID."""
         sid = _require_session_id(session_id)
-        stdout = self._run(["status", "--json", sid])
+        stdout = self._run(["--json", "status", sid])
         payload = _loads_or_none(stdout)
         row = _single_session_payload(payload)
         if row is None:
@@ -428,16 +437,53 @@ class HgxProvider:
         return session
 
     def ssh_target(self, session_id: str) -> HgxSshEndpoint:
-        """Resolve and validate the SSH endpoint for an immutable session ID."""
+        """Return a structured endpoint when current status exposes one.
+
+        Current hgx versions no longer advertise ``ssh --print`` as a public
+        endpoint-discovery contract. Call :meth:`attest_ssh` when the caller
+        needs proof that the session is actually reachable.
+        """
         sid = _require_session_id(session_id)
-        stdout = self._run(["ssh", "--print", sid])
-        endpoint = _parse_ssh_from_text(stdout)
+        endpoint = self.status(sid).ssh
         if endpoint is None:
-            # Fall back to status, which may carry a structured SSH target.
-            endpoint = self.status(sid).ssh
-        if endpoint is None:
-            raise HgxError("could not parse an SSH target for session %r" % sid)
+            raise HgxError(
+                "hgx status did not expose an SSH target for session %r; "
+                "use attest_ssh() to prove reachability" % sid
+            )
         return endpoint
+
+    def run_ssh_command(self, session_id: str, command: Sequence[str]) -> str:
+        """Run a non-interactive command through a session's real SSH path.
+
+        The immutable session ID and explicit ``--`` separator are always
+        supplied by this adapter. A command is required so callers can never
+        accidentally open an interactive SSH session and hang a controller.
+        """
+
+        sid = _require_session_id(session_id)
+        if isinstance(command, (str, bytes)) or not command:
+            raise HgxError("hgx ssh requires a non-empty argv sequence")
+        argv: List[str] = []
+        for item in command:
+            if not isinstance(item, str) or not item:
+                raise HgxError("hgx ssh command items must be non-empty strings")
+            argv.append(item)
+        return self._run(["ssh", sid, "--", *argv])
+
+    def attest_ssh(self, session_id: str) -> str:
+        """Prove real SSH command execution and return the immutable session ID.
+
+        A successful CLI exit alone is insufficient: hgx may print local
+        connection diagnostics before SSH starts. The remote side must echo an
+        unpredictable marker exactly, otherwise attestation fails closed.
+        """
+
+        sid = _require_session_id(session_id)
+        marker = "mac-hgx-ssh-attest-" + secrets.token_hex(16)
+        stdout = self.run_ssh_command(sid, ["printf", marker])
+        if marker not in stdout.splitlines():
+            raise HgxError("hgx ssh attestation marker was not returned for session %r" % sid)
+        return sid
 
     def stop(self, session_id: str) -> str:
         """Stop the session addressed by its immutable ID; returns its ID."""
@@ -449,6 +495,12 @@ class HgxProvider:
         """Resume the session addressed by its immutable ID; returns its ID."""
         sid = _require_session_id(session_id)
         self._run(["resume", sid])
+        return sid
+
+    def delete(self, session_id: str) -> str:
+        """Delete the session addressed by its immutable ID; returns its ID."""
+        sid = _require_session_id(session_id)
+        self._run(["delete", sid])
         return sid
 
     # -- name -> immutable id resolver --------------------------------------
@@ -521,6 +573,11 @@ def _iter_session_payloads(payload: Any) -> Optional[List[Mapping[str, Any]]]:
     if isinstance(payload, list):
         return [row for row in payload if isinstance(row, Mapping)]
     if isinstance(payload, Mapping):
+        # Current ``hgx --json status <id>`` wraps the provider record with
+        # restore and event details.
+        if "session" in payload:
+            session = payload.get("session")
+            return [session] if isinstance(session, Mapping) else []
         for key in ("sessions", "items", "data", "results"):
             value = payload.get(key)
             if isinstance(value, list):

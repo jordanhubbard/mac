@@ -227,6 +227,8 @@ from mac.executor_finalizer import (  # noqa: E402,F401 - compatibility re-expor
     BREAK_GLASS_AUTHORIZATION_SCHEMA,
     PRESERVED_EXECUTOR_EVIDENCE_FILENAME,
     PRESERVED_EXECUTOR_WORKTREE_FILENAME,
+    REPOSITORY_WIP_BUNDLE_SCHEMA,
+    REPOSITORY_WIP_MANIFEST_FILENAME,
     PreservationMissing,
     PreservedExecutorState,
     _FinalizerPhaseContext,
@@ -244,6 +246,7 @@ from mac.executor_finalizer import (  # noqa: E402,F401 - compatibility re-expor
     _write_git_finalizer_refusal_manifest,
     _write_partial_finalizer_evidence,
     load_preserved_executor_state,
+    preserve_repository_wip_bundle,
     recover_from_new_file_refusal,
     run_deterministic_git_finalizer,
     run_deterministic_review_verdict,
@@ -735,6 +738,18 @@ def _sandbox_identity_labels() -> List[str]:
 
 
 def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
+    # Repository sandboxes carry the only copy of sandbox-local clean commits
+    # until harvest creates a durable host bundle. Mark them protected from the
+    # stale/dead-PID/lease reapers even when the operator did not request debug
+    # retention. The ordinary lifecycle still deletes them directly after
+    # preservation succeeds. Read-only report sandboxes cannot contain WIP and
+    # retain their mandatory-teardown contract.
+    repository_wip_guard = (
+        kind == "task"
+        and bool((env_str("MAC_TASK_REPO_WORKTREE") or "").strip())
+        and (env_str("MAC_TASK_REPO_ACCESS_MODE") or "").strip().lower()
+        != REPORT_REPOSITORY_READ_ONLY_MODE
+    )
     return [
         "--label",
         "mac.owner=mac",
@@ -743,7 +758,7 @@ def _sandbox_label_argv(kind: str, *, keep: bool = False) -> List[str]:
         "--label",
         "mac.pid=%d" % os.getpid(),
         "--label",
-        "mac.keep=%s" % ("true" if keep else "false"),
+        "mac.keep=%s" % ("true" if keep or repository_wip_guard else "false"),
     ] + _sandbox_identity_labels()
 
 
@@ -2121,6 +2136,7 @@ def _sandbox_download_path_is_host_control(rel_path: Path) -> bool:
     if name in {
         "task.json",
         "repository-worktree.json",
+        REPOSITORY_WIP_MANIFEST_FILENAME,
         "executor-task.json",
         "executor-evidence.json",
         ".mac-executor-policy.txt",
@@ -2133,6 +2149,11 @@ def _sandbox_download_path_is_host_control(rel_path: Path) -> bool:
         "stdout.txt",
         "stderr.txt",
     }:
+        return True
+    if (
+        name.startswith("repository-wip-")
+        and name.endswith(".bundle")
+    ):
         return True
     return name.startswith((".mac-agent-command-", ".mac-agent-prompt-"))
 
@@ -3353,8 +3374,9 @@ def _run_sandboxed(
     """Run the agent through the OpenShell sandbox lifecycle: create (upload the
     workspace + run the agent, keep) -> download results -> delete. The agent
     runs confined. Harvest is attempted before teardown on every exit path,
-    including runner exceptions and cancellation, so a useful partial patch or
-    evidence manifest is not destroyed with the sandbox."""
+    including runner exceptions and cancellation. Repository failures are
+    deleted only after WIP is durably bundled; preservation failure retains the
+    GC-protected sandbox instead of destroying the only remaining copy."""
     _force_child_yolo_env()  # truly silent agent; OpenShell is the guardrail
     _ensure_landlock_or_fail()
     _sandbox_gc_best_effort()
@@ -3546,6 +3568,7 @@ def _run_sandboxed(
     finally:
         active_error = sys.exc_info()[1]
         progress.stop()
+        progress_evidence = progress.evidence()
         try:
             harvested = _sandbox_download(name, basename, workspace)
         except Exception as exc:  # noqa: BLE001 - teardown must continue to delete
@@ -3569,6 +3592,66 @@ def _run_sandboxed(
                     "[executor] WARNING: trusted verification promotion raised: %s\n"
                     % exc
                 )
+        preservation_required = (
+            not read_only_report
+            and isinstance(task, dict)
+            and task_is_repo_coupled(task)
+            and (
+                active_error is not None
+                or not runner_completed
+                or result is None
+                or int(getattr(result, "returncode", 1)) != 0
+            )
+        )
+        wip_preservation: Dict[str, Any] = {
+            "schema": REPOSITORY_WIP_BUNDLE_SCHEMA,
+            "status": "not_required",
+        }
+        if preservation_required:
+            try:
+                if not harvested:
+                    raise PreservationMissing(
+                        "sandbox harvest failed before repository WIP preservation"
+                    )
+                wip_preservation = preserve_repository_wip_bundle(workspace, task)
+                if (
+                    wip_preservation.get("status") == "no_changes"
+                    and progress_evidence.get("mutation_observed") is True
+                ):
+                    raise PreservationMissing(
+                        "sandbox reported repository mutation but harvested host worktree is unchanged"
+                    )
+            except Exception as exc:  # noqa: BLE001 - retain sandbox fail-closed
+                kept = True
+                wip_preservation = {
+                    "schema": REPOSITORY_WIP_BUNDLE_SCHEMA,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+                sys.stderr.write(
+                    "[executor] WARNING: repository WIP preservation failed; "
+                    "retaining sandbox %s: %s\n" % (name, exc)
+                )
+                emit_telemetry(
+                    "sandbox_wip_preservation_failed",
+                    task_id=str(audit_id) if audit_id else None,
+                    level="warning",
+                    sandbox=name,
+                    error=str(exc),
+                )
+            else:
+                emit_telemetry(
+                    "sandbox_wip_preserved",
+                    task_id=str(audit_id) if audit_id else None,
+                    sandbox=name,
+                    status=str(wip_preservation.get("status") or ""),
+                    bundle_sha256=str(
+                        wip_preservation.get("bundle_sha256") or ""
+                    ),
+                    salvage_head_sha=str(
+                        wip_preservation.get("salvage_head_sha") or ""
+                    ),
+                )
         salvage = {
             "schema": "mac.openshell_salvage.v1",
             "sandbox": name,
@@ -3577,7 +3660,8 @@ def _run_sandboxed(
             "harvested": harvested,
             "kept": kept,
             "error": str(active_error) if active_error is not None else "",
-            "progress": progress.evidence(),
+            "progress": progress_evidence,
+            "wip_preservation": wip_preservation,
             "at": utcnow(),
         }
         try:

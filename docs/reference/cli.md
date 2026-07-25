@@ -9,13 +9,13 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 $ mac --help
 usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
-           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
            ...
 
 Multi-agent coordinator control plane
 
 positional arguments:
-  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
     diagnostics         run read-only control-plane health checks
     init                initialize the SQLite store
     config              configuration helpers
@@ -38,6 +38,7 @@ positional arguments:
                         controller stages
     directive           versioned fleet rules, conditional bindings, and held
                         workflow macros
+    hgx                 operator controls for fungible HGX provider capacity
     openshell           OpenShell sandbox guardrail commands
     machine             machine registry commands
     agent               agent registry commands
@@ -483,6 +484,21 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+```
+
+## mac hgx
+
+```console
+$ mac hgx --help
+usage: mac hgx [-h] {capacity} ...
+
+positional arguments:
+  {capacity}
+    capacity  plan, inspect, or explicitly create bounded standard-dind
+              capacity
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## mac openshell

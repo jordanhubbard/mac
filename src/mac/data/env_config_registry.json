@@ -4572,6 +4572,17 @@
   },
   {
     "default": null,
+    "description": "Core setting: dispatch due aging seconds.",
+    "family": "core",
+    "name": "MAC_DISPATCH_DUE_AGING_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/services.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Core setting: dispatch page prefix width.",
     "family": "core",
     "name": "MAC_DISPATCH_PAGE_PREFIX_WIDTH",
@@ -4610,6 +4621,7 @@
     "name": "MAC_EVIDENCE_ARTIFACT_MAX_BYTES",
     "retired": false,
     "sources": [
+      "src/mac/executor_finalizer.py",
       "src/mac/services.py",
       "src/mac/worker.py"
     ],
@@ -4622,6 +4634,7 @@
     "name": "MAC_EVIDENCE_ARTIFACT_TOTAL_MAX_BYTES",
     "retired": false,
     "sources": [
+      "src/mac/executor_finalizer.py",
       "src/mac/services.py",
       "src/mac/worker.py"
     ],

@@ -173,17 +173,20 @@ def recall_scope_lessons(
     return records
 
 
-def compute_scope_estimate(task: Dict[str, Any]) -> Dict[str, Any]:
-    """Estimate task scope using deterministic text signals and prior lessons."""
+def compute_scope_estimate_from_lessons(
+    task: Dict[str, Any],
+    prior_lessons: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Estimate task scope from explicit, already-fetched lessons.
+
+    Control-plane admission uses this entry point with an empty list so sizing
+    remains a bounded, network-free operation before any worker lease exists.
+    """
     title = str(task.get("title") or "") if isinstance(task, dict) else ""
     description = str(task.get("description") or "") if isinstance(task, dict) else ""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     if not isinstance(metadata, dict):
         metadata = {}
-    try:
-        prior_lessons = recall_scope_lessons(task)
-    except Exception:
-        prior_lessons = []
     signals = _compute_scope_signals(title, description, metadata, prior_lessons)
     large_signal_count = sum(
         1 for signal in signals if not signal.startswith("plan_signal:")
@@ -201,6 +204,16 @@ def compute_scope_estimate(task: Dict[str, Any]) -> Dict[str, Any]:
         "estimated_units": 2 if size == "large" else 1,
         "signals": signals,
     }
+
+
+def compute_scope_estimate(task: Dict[str, Any]) -> Dict[str, Any]:
+    """Estimate task scope using deterministic text signals and prior lessons."""
+
+    try:
+        prior_lessons = recall_scope_lessons(task)
+    except Exception:
+        prior_lessons = []
+    return compute_scope_estimate_from_lessons(task, prior_lessons)
 
 
 def needs_scope_estimate(task: Dict[str, Any]) -> bool:

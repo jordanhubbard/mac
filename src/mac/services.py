@@ -16,7 +16,18 @@ import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import yaml
 from cryptography.fernet import Fernet
@@ -36,6 +47,9 @@ from mac.agentbus_control import (
     reflect_request_payload,
     repo_update_payload,
 )
+
+if TYPE_CHECKING:
+    from mac.executor_directive import TaskOwnershipVerdict
 from mac.attempt_failure_classifier import classify_attempt_failure
 from mac.gitops import validate_git_ref
 from mac.repository_contract import (
@@ -160,6 +174,7 @@ from mac.repository_hygiene import (
     validate_replacement_target,
 )
 from mac.env_config import resolve_hub_agent
+from mac.executor_scope import compute_scope_estimate_from_lessons
 from mac.reconciliation import ReconciliationCoordinator
 from mac.ticketing_service import TicketingCoordinator
 from mac.agent_state_service import AgentStateService
@@ -6029,6 +6044,12 @@ class ControlPlane:
             "task": task.to_dict(),
             "task_ready": not task_reasons,
             "dispatchable": bool(eligible_count),
+            "dispatch_rank": {
+                "class": self._dispatch_class(task),
+                "priority": int(task.priority or 0),
+                "age_bonus": self._dispatch_priority_age_bonus(task, utcnow()),
+                "due_bonus": self._dispatch_due_bonus(task, utcnow()),
+            },
             "eligible_agent_count": eligible_count,
             "candidate_count": len(candidates),
             "candidate_limit": limit_value,
@@ -17758,7 +17779,7 @@ class ControlPlane:
                 continue
 
             def _try_assign(allow_cooperative_reuse: bool) -> bool:
-                nonlocal skip_logs
+                nonlocal skip_logs, task
                 eligible_agents = []
                 for agent in agents:
                     available, reason = self._agent_availability_for_task(
@@ -17778,6 +17799,9 @@ class ControlPlane:
                             skip_logs += 1
                         continue
                     eligible_agents.append(agent)
+                if not eligible_agents:
+                    return False
+                task = self._prepare_task_dispatch_admission(task)
                 ranked_agents = assignment_advisor.rank_agents(
                     task=task,
                     eligible_agents=eligible_agents,
@@ -18006,6 +18030,55 @@ class ControlPlane:
             },
         )
 
+    def _prepare_task_dispatch_admission(self, task: Task) -> Task:
+        """Persist deterministic sizing before an implementation lease exists.
+
+        The executor historically estimated scope only after ``claim_task`` had
+        incremented the attempt counter.  Large tasks therefore burned their
+        first scarce worker slot discovering that they should have planned.
+        Prepare ordinary repository tasks while they are still OPEN, then let
+        the existing planning-mode executor consume the prepared decision.
+
+        Work-package tasks retain their package coordinator's own admission
+        authority.  Reports, child tasks, and explicitly non-decomposable work
+        are also left alone.
+        """
+
+        if (
+            task.state != TaskState.OPEN.value
+            or task.attempt_count != 0
+            or not self._task_is_repo_coupled(task)
+            or self._task_is_work_package_linked(task.id)
+        ):
+            return task
+        metadata = ensure_json_object(task.metadata)
+        if "scope_estimate" in metadata:
+            return task
+        if metadata.get("no_decompose"):
+            return task
+        relationships = ensure_json_object(metadata.get("relationships"))
+        if relationships.get("parent_task_id") or relationships.get("child_task_ids"):
+            return task
+
+        estimate = compute_scope_estimate_from_lessons(task.to_dict(), [])
+        prepared = dict(metadata)
+        prepared["scope_estimate"] = estimate
+        if estimate.get("size") == "large":
+            prepared["plan_first"] = True
+        prepared["dispatch_admission"] = {
+            "schema": "mac.dispatch_admission.v1",
+            "prepared_at": utcnow(),
+            "decision": (
+                "plan_first" if estimate.get("size") == "large" else "execute"
+            ),
+            "attempt_count": task.attempt_count,
+        }
+        return self.update_task(
+            task.id,
+            metadata=prepared,
+            actor="dispatcher.admission",
+        )
+
     def claim_next_for_agent(
         self,
         agent_id: str,
@@ -18137,6 +18210,8 @@ class ControlPlane:
                     )
                     skip_logs += 1
                 continue
+            if not dry_run:
+                task = self._prepare_task_dispatch_admission(task)
             advice = assignment_advisor.rank_agents(
                 task=task,
                 eligible_agents=[agent],
@@ -19940,7 +20015,10 @@ class ControlPlane:
         # agent) rather than fail cryptically or land skewed. See
         # mac.merge_queue for the model (Not-Rocket-Science-Rule / merge queue /
         # OCC). This makes conflict detection proactive and names the files.
-        from mac.merge_queue import validate_projected_merge
+        from mac.merge_queue import (
+            validate_projected_merge,
+            validate_projected_merge_contract,
+        )
 
         gate = validate_projected_merge(str(root), "HEAD", head_sha)
         commands.append({"name": "merge_gate", **gate.to_dict()})
@@ -19953,6 +20031,40 @@ class ControlPlane:
                     gate.base_sha[:12] or "?",
                     ", ".join(gate.conflicted_files[:10]) or gate.error or "unknown",
                 )
+            )
+
+        # Publication is the serial integration boundary, so branch-scoped
+        # evidence is not sufficient here: run the FULL configured repository
+        # command on the exact tree produced by merging the reviewed commit into
+        # CURRENT main. The merge queue materializes that tree in a disposable
+        # checkout; the existing hub verifier supplies the isolated OpenShell
+        # execution boundary. Nothing has mutated local main or the remote yet.
+        full_test_command = (
+            _repository_contract_test_command_for_task(task)
+            or "scripts/run-contract-tests.sh"
+        )
+        publication_test_runner = getattr(
+            self, "_publication_merge_test_runner", None
+        )
+        if publication_test_runner is None:
+            publication_test_runner = self._hub_verify_run_contract_test
+        contract_gate = validate_projected_merge_contract(
+            str(root),
+            "HEAD",
+            head_sha,
+            full_test_command,
+            test_runner=publication_test_runner,
+            merge_gate=gate,
+        )
+        commands.append(
+            {"name": "publication_contract_gate", **contract_gate.to_dict()}
+        )
+        if not contract_gate.passed:
+            diagnosis = contract_gate.error or contract_gate.output_tail
+            raise ValidationError(
+                "git publication full repository contract gate failed on the "
+                "projected current-main merge: %s"
+                % (diagnosis or "unknown failure")
             )
 
         publication_mode = "fast_forward"
@@ -19979,6 +20091,16 @@ class ControlPlane:
                         "git publication merge_source failed: %s"
                         % (merge.get("stderr") or merge.get("stdout") or head_sha)
                     )
+        publication_tree = run_step(
+            "verify_projected_tree", ["rev-parse", "HEAD^{tree}"]
+        )
+        actual_tree_sha = str(publication_tree.get("stdout") or "").strip()
+        if actual_tree_sha != gate.merged_tree_sha:
+            raise ValidationError(
+                "git publication merged tree differs from the fully tested "
+                "projection: expected %s, observed %s"
+                % (gate.merged_tree_sha, actual_tree_sha or "<unresolved>")
+            )
         run_step("push_main", ["push", "origin", "main"], timeout=180)
         final_head = run_step("final_head", ["rev-parse", "HEAD"])
         final_sha = str(final_head.get("stdout") or "").strip()
@@ -22213,6 +22335,42 @@ class ControlPlane:
                 return output_tail, ""
         return "", "no captured stdout, stderr, output, log, or tail exists in attempt history"
 
+    def _has_actionable_environment_repair_evidence(
+        self,
+        task: Task,
+        *,
+        output_tail: str,
+        salvage: Mapping[str, Any],
+    ) -> bool:
+        """Require a concrete repair target before manufacturing a dependency.
+
+        A run of lease expiries with no telemetry identifies a worker/capacity
+        incident, not a task-specific prerequisite.  Turning that signal into
+        a generic "repair environment" task wedges the parent behind work that
+        cannot say what to repair.  Durable output, preserved work, or an
+        explicit failure/remediation diagnosis is actionable; bare
+        claim/expiry bookkeeping is not.
+        """
+        if output_tail or salvage:
+            return True
+        for event in reversed(self.task_history(task.id, limit=100)):
+            detail = ensure_json_object(event.detail)
+            diagnosis = ensure_json_object(detail.get("diagnosis"))
+            for candidate in (diagnosis, detail):
+                if any(
+                    str(candidate.get(key) or "").strip()
+                    for key in (
+                        "reason",
+                        "failure",
+                        "error",
+                        "problem",
+                        "problems",
+                        "remediation",
+                    )
+                ):
+                    return True
+        return False
+
     def _exhausted_attempt_terminal_transition(
         self,
         task: Task,
@@ -22231,16 +22389,31 @@ class ControlPlane:
             transition_detail.setdefault("output_tail_unavailable_reason", unavailable)
         if salvage:
             transition_detail["salvage"] = salvage
-        # Contract failures are recoverable prerequisites, not dead-letter
-        # task failures.  Create a durable repair task and suspend the parent
-        # until that task supplies valid pushed/evidence state.  This prevents
-        # the dispatcher from orphaning otherwise-complete work after retries.
         recent_history = self.task_history(task.id, limit=100)
         contract_failure = any(
             "verification_contract_failed" in json_dumps(ensure_json_object(event.detail)).lower()
             for event in recent_history
         )
-        repairable_prerequisite = contract_failure or failure_class == "environment"
+        repair_policy = ensure_json_object(
+            ensure_json_object(task.metadata).get("repair_policy")
+        )
+        # Contract failures normally belong to the original task and should
+        # fail visibly after its bounded retries.  A repository may explicitly
+        # opt into a separate prerequisite only when it has a real independent
+        # repair workflow.
+        contract_repair = bool(
+            contract_failure
+            and repair_policy.get("contract_prerequisite") is True
+        )
+        environment_repair = bool(
+            failure_class == "environment"
+            and self._has_actionable_environment_repair_evidence(
+                task,
+                output_tail=output_tail,
+                salvage=salvage,
+            )
+        )
+        repairable_prerequisite = contract_repair or environment_repair
         # Recursion base case (2026-07-14 churn root cause): a repair task that
         # itself exhausts its attempts must NOT spawn a repair-of-repair. Without
         # this guard every deterministic infra failure (e.g. a stale attestation
@@ -22260,15 +22433,19 @@ class ControlPlane:
             # freshly recorded failure class and salvage with the stale task
             # object passed into this method.
             metadata = ensure_json_object(self.get_task(task.id).metadata)
-            repair_metadata_key = "contract_repair_task_id" if contract_failure else "environment_repair_task_id"
+            repair_metadata_key = (
+                "contract_repair_task_id"
+                if contract_repair
+                else "environment_repair_task_id"
+            )
             origin_type = (
                 "contract_prerequisite"
-                if contract_failure
+                if contract_repair
                 else "environment_prerequisite"
             )
             repair_id = str(metadata.get(repair_metadata_key) or "").strip()
             if not repair_id:
-                if contract_failure:
+                if contract_repair:
                     repair_title = "Repair contract prerequisites: %s" % task.title
                     repair_description = (
                         "Repair the repository contract for parent task %s: commit all "
@@ -22291,13 +22468,30 @@ class ControlPlane:
                 repair_id = "task_repair_%s" % hashlib.sha256(
                     (task.id + ":" + repair_metadata_key).encode("utf-8")
                 ).hexdigest()[:24]
+                failure_fingerprint = hashlib.sha256(
+                    json_dumps(
+                        {
+                            "failure_class": failure_class,
+                            "output_tail": output_tail[-2000:],
+                            "origin_type": origin_type,
+                        }
+                    ).encode("utf-8")
+                ).hexdigest()
                 repair = self.create_task(
                     repair_title,
                     description=repair_description,
                     project=task.project,
                     priority=task.priority,
                     required_capabilities=task.required_capabilities,
-                    metadata={"origin": {"type": origin_type, "parent_task_id": task.id}},
+                    metadata={
+                        "dispatch_class": "recovery",
+                        "due_at": utcnow(),
+                        "failure_fingerprint": "sha256:%s" % failure_fingerprint,
+                        "origin": {
+                            "type": origin_type,
+                            "parent_task_id": task.id,
+                        },
+                    },
                     actor="dispatcher.tick",
                     _task_id=repair_id,
                 )
@@ -22313,7 +22507,7 @@ class ControlPlane:
                         "deterministic repair id collides with unrelated task"
                     )
                 metadata[repair_metadata_key] = repair_id
-                if contract_failure:
+                if contract_repair:
                     metadata["contract_repair_status"] = "waiting"
                 self.update_task(
                     task.id,
@@ -22343,7 +22537,7 @@ class ControlPlane:
                 transition_detail["reset_attempt_count"] = True
             transition_detail["reason"] = (
                 "waiting_on_contract_prerequisite"
-                if contract_failure
+                if contract_repair
                 else "waiting_on_environment_prerequisite"
             )
             transition_detail["manual_repair_required"] = False
@@ -22351,6 +22545,12 @@ class ControlPlane:
         if failure_class == "superseded":
             transition_detail["reason"] = "superseded"
             return TaskState.CANCELLED.value, transition_detail
+        if contract_failure and not contract_repair:
+            transition_detail["reason"] = "verification_contract_failed"
+            transition_detail["manual_repair_required"] = True
+        elif failure_class == "environment" and not environment_repair:
+            transition_detail["reason"] = "environment_failure_without_actionable_evidence"
+            transition_detail["manual_repair_required"] = True
         return TaskState.FAILED.value, transition_detail
 
     def _blocked_attempt_retry_backoff_seconds(self, task: Task) -> int:
@@ -22792,6 +22992,19 @@ class ControlPlane:
     # remaining below the point where the Python sort cost is noticeable.
     _DISPATCH_TASK_WINDOW = 500
     _DISPATCH_PRIORITY_AGING_SECONDS = 24 * 60 * 60
+    # Dispatch classes are deliberately a soft, work-conserving lane rather
+    # than a permanently idle worker reservation.  A recovery task wins over
+    # ordinary backlog as soon as any worker becomes available; when no
+    # recovery is queued, every worker remains usable for normal work.
+    _DISPATCH_CLASS_PRIORITY_STRIDE = 1_000_000
+    _DISPATCH_CLASS_RANKS = {
+        "background": -1,
+        "normal": 0,
+        "recovery": 1,
+        "urgent": 2,
+    }
+    _DISPATCH_DUE_AGING_SECONDS = 4 * 60 * 60
+    _DISPATCH_DUE_BONUS_CAP = 24
     _DISPATCH_SKIP_LOG_LIMIT = 25
     # mac page-prefix fairness: within a single (tenant, project) group, a burst
     # of candidates sharing a common id / page-cursor prefix can otherwise fill
@@ -22974,8 +23187,18 @@ class ControlPlane:
             "ORDER BY created_at, id LIMIT ?" % where_sql,
             limit_params,
         )
+        # Explicit urgent/recovery lanes must not disappear outside both
+        # bounded priority and oldest windows when the normal backlog is very
+        # large.  Repair tasks written by this control plane always carry the
+        # top-level dispatch_class field.
+        lane_rows = self.store.query_all(
+            "SELECT * FROM tasks WHERE %s "
+            "AND json_extract(metadata, '$.dispatch_class') IN ('urgent', 'recovery') "
+            "ORDER BY created_at, id LIMIT ?" % where_sql,
+            limit_params,
+        )
         tasks_by_id: Dict[str, Task] = {}
-        for row in list(priority_rows) + list(oldest_rows):
+        for row in list(lane_rows) + list(priority_rows) + list(oldest_rows):
             task = self._task_from_row(row)
             tasks_by_id.setdefault(task.id, task)
         return list(tasks_by_id.values())
@@ -22988,10 +23211,55 @@ class ControlPlane:
         task_ranks: Optional[Mapping[str, WorkPackageTaskRank]] = None,
     ) -> Tuple[int, float, str, str]:
         age_bonus = self._dispatch_priority_age_bonus(task, now or utcnow())
-        effective_priority = int(task.priority or 0) + age_bonus
+        due_bonus = self._dispatch_due_bonus(task, now or utcnow())
+        dispatch_class = self._dispatch_class(task)
+        class_rank = self._DISPATCH_CLASS_RANKS[dispatch_class]
+        effective_priority = (
+            int(task.priority or 0)
+            + age_bonus
+            + due_bonus
+            + class_rank * self._DISPATCH_CLASS_PRIORITY_STRIDE
+        )
         package_rank = (task_ranks or {}).get(task.id)
         order_signal = package_rank.order_signal if package_rank is not None else 0.0
         return (-effective_priority, -order_signal, task.created_at, task.id)
+
+    def _dispatch_class(self, task: Task) -> str:
+        metadata = ensure_json_object(task.metadata)
+        value = str(metadata.get("dispatch_class") or "").strip().lower()
+        if value in self._DISPATCH_CLASS_RANKS:
+            return value
+        origin = ensure_json_object(metadata.get("origin"))
+        if str(origin.get("type") or "").strip().endswith("_prerequisite"):
+            return "recovery"
+        return "normal"
+
+    def _dispatch_due_bonus(self, task: Task, now: str) -> int:
+        metadata = ensure_json_object(task.metadata)
+        raw_due_at = str(
+            metadata.get("due_at")
+            or metadata.get("deadline_at")
+            or ""
+        ).strip()
+        if not raw_due_at:
+            return 0
+        try:
+            overdue_seconds = (
+                parse_time(now) - parse_time(raw_due_at)
+            ).total_seconds()
+        except Exception:  # noqa: BLE001 - malformed hints must not block work.
+            return 0
+        if overdue_seconds < 0:
+            return 0
+        step_seconds = _int_env(
+            "MAC_DISPATCH_DUE_AGING_SECONDS",
+            self._DISPATCH_DUE_AGING_SECONDS,
+            minimum=60,
+        )
+        return min(
+            self._DISPATCH_DUE_BONUS_CAP,
+            1 + int(overdue_seconds // step_seconds),
+        )
 
     def _dispatch_priority_age_bonus(self, task: Task, now: str) -> int:
         step_seconds = _int_env(
@@ -24476,6 +24744,21 @@ class ControlPlane:
                 return 1, "hub verify clone failed: %s" % _gitops.redact_git_remote_auth_in_text(
                     (clone.stderr or clone.stdout or "").strip()
                 )[-800:]
+            cloned_head = subprocess.run(
+                ["git", "-C", str(tmp / "repo"), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            observed_head = (
+                cloned_head.stdout.strip() if cloned_head.returncode == 0 else ""
+            )
+            if observed_head != head_sha:
+                return 1, (
+                    "hub verify clone HEAD mismatch: expected %s, observed %s"
+                    % (head_sha, observed_head or "<unresolved>")
+                )
             # Upload ONE tar file and extract inside the sandbox. Uploading the
             # directory tree loses .git in transit (OpenShell's upload drops
             # it), which failed every git-at-checkout contract test — and, once
@@ -24591,6 +24874,37 @@ class ControlPlane:
                 actor,
             )
             return existing
+        invalid_existing = self._invalid_hub_review_verification_evidence(
+            task.id,
+            current_review,
+            executor_evidence.id,
+            info["head_sha"],
+        )
+        if invalid_existing is not None:
+            # The deterministic verdict identity is already occupied by a
+            # hub-verifier-shaped row, but its signature/manifest did not pass
+            # the normal verdict validator. Do not launch another expensive
+            # sandbox for the same review, and never return the invalid row as
+            # an approving verdict. Retract this attempt so the bounded review
+            # workflow can choose a fresh reviewer instead of leaving the task
+            # permanently stuck in REVIEWING.
+            self._retract_default_review(
+                current_review,
+                actor,
+                "reviewer_protocol_failure:hub_verdict_invalid",
+            )
+            self._record_default_review_observation(
+                task.id,
+                "workflow.default_review.hub_verify_invalid_existing",
+                "warning",
+                {
+                    "review_id": review.id,
+                    "verdict_evidence_id": invalid_existing.id,
+                    "reason": "invalid_existing_hub_verdict",
+                },
+                actor,
+            )
+            return None
         # In-flight guard: the review sweep re-ticks (~30s) while a verify runs
         # for minutes; without this, each tick would launch another concurrent
         # sandbox for the same review. One verify per review at a time.
@@ -24692,6 +25006,58 @@ class ControlPlane:
         executor_evidence_id: str,
         head_sha: str,
     ) -> Optional[Evidence]:
+        for candidate in self._hub_review_verification_identity_candidates(
+            task_id,
+            review,
+            executor_evidence_id,
+            head_sha,
+        ):
+            verdict, _problems = self._find_review_verdict_evidence(
+                task_id,
+                review.reviewer_agent_id,
+                executor_evidence_id=executor_evidence_id,
+                verdict_evidence_id=candidate.id,
+                not_before=review.created_at,
+            )
+            if verdict is not None:
+                return verdict
+        return None
+
+    def _invalid_hub_review_verification_evidence(
+        self,
+        task_id: str,
+        review: Review,
+        executor_evidence_id: str,
+        head_sha: str,
+    ) -> Optional[Evidence]:
+        """Return a deterministic hub-verdict identity that fails validation."""
+
+        for candidate in self._hub_review_verification_identity_candidates(
+            task_id,
+            review,
+            executor_evidence_id,
+            head_sha,
+        ):
+            verdict, _problems = self._find_review_verdict_evidence(
+                task_id,
+                review.reviewer_agent_id,
+                executor_evidence_id=executor_evidence_id,
+                verdict_evidence_id=candidate.id,
+                not_before=review.created_at,
+            )
+            if verdict is None:
+                return candidate
+        return None
+
+    def _hub_review_verification_identity_candidates(
+        self,
+        task_id: str,
+        review: Review,
+        executor_evidence_id: str,
+        head_sha: str,
+    ) -> List[Evidence]:
+        """Return rows occupying the deterministic hub-verdict identity."""
+
         candidates: List[Evidence] = []
         if review.evidence_id:
             try:
@@ -24700,6 +25066,7 @@ class ControlPlane:
                 pass
         candidates.extend(reversed(self.list_evidence(task_id)))
         seen: set[str] = set()
+        matches: List[Evidence] = []
         for candidate in candidates:
             if candidate.id in seen:
                 continue
@@ -24713,16 +25080,8 @@ class ControlPlane:
                 head_sha=head_sha,
             ):
                 continue
-            verdict, _problems = self._find_review_verdict_evidence(
-                task_id,
-                review.reviewer_agent_id,
-                executor_evidence_id=executor_evidence_id,
-                verdict_evidence_id=candidate.id,
-                not_before=review.created_at,
-            )
-            if verdict is not None:
-                return verdict
-        return None
+            matches.append(candidate)
+        return matches
 
     def _run_hub_review_verification_locked(
         self, task: Task, review: Review, executor_evidence: Evidence, actor: str,
@@ -24764,6 +25123,30 @@ class ControlPlane:
                 actor,
             )
             return existing
+        invalid_existing = self._invalid_hub_review_verification_evidence(
+            task.id,
+            current_review,
+            executor_evidence.id,
+            info["head_sha"],
+        )
+        if invalid_existing is not None:
+            self._retract_default_review(
+                current_review,
+                actor,
+                "reviewer_protocol_failure:hub_verdict_invalid",
+            )
+            self._record_default_review_observation(
+                task.id,
+                "workflow.default_review.hub_verify_invalid_existing",
+                "warning",
+                {
+                    "review_id": review.id,
+                    "verdict_evidence_id": invalid_existing.id,
+                    "reason": "invalid_existing_hub_verdict_after_run",
+                },
+                actor,
+            )
+            return None
         if (
             current_review.status != ReviewStatus.PENDING.value
             or self.get_task(task.id).state == TaskState.COMPLETED.value

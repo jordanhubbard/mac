@@ -1,0 +1,899 @@
+"""Bounded, operator-invoked HGX capacity planning and execution.
+
+The controller in this module deliberately stops at *attested provider
+capacity*.  A successful ``hgx create`` only proves that the provider accepted
+the request; readiness requires a subsequent nonce-bearing
+``HgxProvider.attest_ssh(session_id)`` call.  Turning that machine into a MAC
+agent remains the reviewed fungible-onboarding flow in :mod:`mac.hgx_provision`.
+
+``plan`` and ``status`` are read-only. ``execute`` is the only provider
+mutation path, and it only creates explicit ``standard-dind`` sessions.
+``mark_onboarded`` is a receipt-only transition after real agent registration.
+The controller never stops, resumes, or deletes a session.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import tempfile
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+)
+
+from mac.hgx_provider import (
+    STANDARD_DIND_FLAVOR,
+    HgxCommandError,
+    HgxError,
+    HgxProvider,
+    HgxSession,
+)
+from mac.models import MACError, ValidationError
+
+
+CAPACITY_SCHEMA = "mac.hgx_elastic_capacity.v1"
+DEFAULT_STATE_PATH = "~/.mac/hgx-elastic-capacity.json"
+
+_TERMINAL_PROVIDER_STATES = frozenset(
+    {"dead", "deleted", "error", "failed", "stopped", "terminated"}
+)
+
+
+class HgxCapacityError(MACError):
+    """A safe, operator-facing capacity-controller failure."""
+
+
+class _Provider(Protocol):
+    def list(self) -> List[HgxSession]: ...
+
+    def status(self, session_id: str) -> HgxSession: ...
+
+    def create_standard_dind(
+        self, *, name: Optional[str] = None, extra_args: Optional[List[str]] = None
+    ) -> HgxSession: ...
+
+    def attest_ssh(self, session_id: str) -> str: ...
+
+
+@dataclass(frozen=True)
+class HgxCapacityPolicy:
+    """Explicit bounds for one controller invocation."""
+
+    min_ready: int = 0
+    max_sessions: int = 10
+    headroom: int = 0
+    cluster: str = "gke-newhouse"
+    gpu_count: int = 1
+    memory_gib: int = 64
+    cpu_count: int = 8
+    cooldown_seconds: float = 300.0
+    wait_timeout_seconds: float = 300.0
+    poll_interval_seconds: float = 5.0
+
+    def __post_init__(self) -> None:
+        for name in ("min_ready", "max_sessions", "headroom"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValidationError("%s must be an integer" % name)
+            if value < 0:
+                raise ValidationError("%s must be non-negative" % name)
+        if self.max_sessions < 1:
+            raise ValidationError("max_sessions must be at least 1")
+        if self.min_ready > self.max_sessions:
+            raise ValidationError("min_ready must not exceed max_sessions")
+        cluster = str(self.cluster or "").strip()
+        allowed_cluster_chars = (
+            "abcdefghijklmnopqrstuvwxyz"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "0123456789-_"
+        )
+        if (
+            not cluster
+            or len(cluster) > 64
+            or any(ch not in allowed_cluster_chars for ch in cluster)
+        ):
+            raise ValidationError(
+                "cluster must be 1..64 letters, digits, '-' or '_'"
+            )
+        object.__setattr__(self, "cluster", cluster)
+        for name, minimum, maximum in (
+            ("gpu_count", 0, 8),
+            ("memory_gib", 8, 256),
+            ("cpu_count", 1, 64),
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValidationError("%s must be an integer" % name)
+            if not minimum <= value <= maximum:
+                raise ValidationError(
+                    "%s must be within %d..%d" % (name, minimum, maximum)
+                )
+        for name in (
+            "cooldown_seconds",
+            "wait_timeout_seconds",
+            "poll_interval_seconds",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValidationError("%s must be a number" % name)
+            if value < 0:
+                raise ValidationError("%s must be non-negative" % name)
+        if self.wait_timeout_seconds <= 0:
+            raise ValidationError("wait_timeout_seconds must be greater than zero")
+        if self.poll_interval_seconds <= 0:
+            raise ValidationError("poll_interval_seconds must be greater than zero")
+
+    def desired_ready(self, pending_request_count: int) -> int:
+        pending = _pending_count(pending_request_count)
+        return min(
+            self.max_sessions,
+            max(self.min_ready, pending + self.headroom),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "min_ready": self.min_ready,
+            "max_sessions": self.max_sessions,
+            "headroom": self.headroom,
+            "cluster": self.cluster,
+            "gpu_count": self.gpu_count,
+            "memory_gib": self.memory_gib,
+            "cpu_count": self.cpu_count,
+            "cooldown_seconds": self.cooldown_seconds,
+            "wait_timeout_seconds": self.wait_timeout_seconds,
+            "poll_interval_seconds": self.poll_interval_seconds,
+        }
+
+
+def count_pending_provisioning_requests(requests: Iterable[Any]) -> int:
+    """Count unique pending rows from ``ProvisioningService.list_requests``.
+
+    This small adapter keeps provider capacity tied to the durable provisioning
+    signal without confusing an HGX session with a registered MAC agent.
+    """
+
+    identifiers: set[str] = set()
+    anonymous = 0
+    for request in requests:
+        if isinstance(request, Mapping):
+            status = request.get("status")
+            request_id = request.get("id")
+        else:
+            status = getattr(request, "status", None)
+            request_id = getattr(request, "id", None)
+        if str(status or "").strip().lower() != "pending":
+            continue
+        if request_id:
+            identifiers.add(str(request_id))
+        else:
+            anonymous += 1
+    return len(identifiers) + anonymous
+
+
+class HgxElasticCapacityController:
+    """Inspect or explicitly add bounded, nonce-attested HGX capacity."""
+
+    def __init__(
+        self,
+        *,
+        provider: Optional[_Provider] = None,
+        policy: Optional[HgxCapacityPolicy] = None,
+        state_path: str | Path = DEFAULT_STATE_PATH,
+        name_prefix: str = "mac-fungible",
+        clock: Callable[[], float] = time.time,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.provider = provider or HgxProvider()
+        self.policy = policy or HgxCapacityPolicy()
+        self.state_path = Path(state_path).expanduser()
+        prefix = str(name_prefix or "").strip()
+        allowed_name_chars = (
+            "abcdefghijklmnopqrstuvwxyz"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "0123456789-_"
+        )
+        if not prefix or any(ch not in allowed_name_chars for ch in prefix):
+            raise ValidationError(
+                "name_prefix must contain only letters, digits, '-' or '_'"
+            )
+        self.name_prefix = prefix
+        self._clock = clock
+        self._sleep = sleeper
+
+    # Read-only surfaces -------------------------------------------------
+
+    def status(self, *, pending_request_count: int = 0) -> Dict[str, Any]:
+        """Return current provider/state inventory without changing either."""
+
+        return self._inspect(
+            mode="status",
+            pending_request_count=pending_request_count,
+        )
+
+    def plan(self, *, pending_request_count: int = 0) -> Dict[str, Any]:
+        """Return the bounded next action without changing provider or state."""
+
+        return self._inspect(
+            mode="plan",
+            pending_request_count=pending_request_count,
+        )
+
+    def _inspect(
+        self, *, mode: str, pending_request_count: int
+    ) -> Dict[str, Any]:
+        pending = _pending_count(pending_request_count)
+        state = self._load_state()
+        inventory = self._list_sessions()
+        now = self._clock()
+        snapshot = self._snapshot(
+            inventory=inventory,
+            state=state,
+            pending_request_count=pending,
+            now=now,
+        )
+        actions: List[Dict[str, Any]] = []
+        if snapshot["unattested_session_ids"]:
+            actions.append(
+                {
+                    "action": "attest_existing",
+                    "session_ids": snapshot["unattested_session_ids"],
+                    "requires_execute": True,
+                }
+            )
+        if snapshot["create_count"] > 0:
+            actions.append(
+                {
+                    "action": "create_standard_dind",
+                    "count": snapshot["create_count"],
+                    "requires_execute": True,
+                }
+            )
+        if snapshot["cooldown_remaining_seconds"] > 0 and snapshot["ready_gap"] > 0:
+            actions.append(
+                {
+                    "action": "wait_for_cooldown",
+                    "seconds": snapshot["cooldown_remaining_seconds"],
+                }
+            )
+        return {
+            "schema": CAPACITY_SCHEMA,
+            "mode": mode,
+            "read_only": True,
+            "state_path": str(self.state_path),
+            "policy": self.policy.to_dict(),
+            "pending_request_count": pending,
+            **snapshot,
+            "actions": actions,
+            "deletion": {
+                "automatic": False,
+                "reason": "session deletion always requires an explicit operator action",
+            },
+        }
+
+    # Explicit mutation surface -----------------------------------------
+
+    def execute(self, *, pending_request_count: int = 0) -> Dict[str, Any]:
+        """Attest existing capacity, then create within the configured bounds."""
+
+        with self._execution_lock():
+            return self._execute_locked(
+                pending_request_count=pending_request_count
+            )
+
+    def mark_onboarded(
+        self, session_id: str, *, agent_id: str
+    ) -> Dict[str, Any]:
+        """Consume attested supply after it becomes a registered MAC agent."""
+
+        immutable_id = str(session_id or "").strip()
+        registered_agent_id = str(agent_id or "").strip()
+        if not immutable_id:
+            raise ValidationError("session_id must not be empty")
+        if not registered_agent_id:
+            raise ValidationError("agent_id must not be empty")
+        with self._execution_lock():
+            state = self._load_state()
+            record = state["sessions"].get(immutable_id)
+            if not isinstance(record, dict):
+                raise HgxCapacityError(
+                    "session %s has no controller receipt" % immutable_id
+                )
+            if record.get("created_by_controller") is not True:
+                raise HgxCapacityError(
+                    "session %s is not controller-created capacity" % immutable_id
+                )
+            if record.get("attestation_status") != "passed":
+                raise HgxCapacityError(
+                    "session %s has not passed SSH attestation" % immutable_id
+                )
+            prior_agent_id = str(record.get("onboarded_agent_id") or "").strip()
+            if prior_agent_id and prior_agent_id != registered_agent_id:
+                raise HgxCapacityError(
+                    "session %s is already consumed by agent %s"
+                    % (immutable_id, prior_agent_id)
+                )
+            now = self._clock()
+            record.update(
+                {
+                    "onboarding_status": "onboarded",
+                    "onboarded_agent_id": registered_agent_id,
+                    "onboarded_at": record.get("onboarded_at") or _timestamp(now),
+                    "next_action": None,
+                }
+            )
+            self._write_state(state)
+            return {
+                "schema": CAPACITY_SCHEMA,
+                "mode": "mark_onboarded",
+                "state_path": str(self.state_path),
+                "session_id": immutable_id,
+                "agent_id": registered_agent_id,
+                "available_for_pending_supply": False,
+                "provider_mutation": False,
+                "idempotent": bool(prior_agent_id),
+            }
+
+    def _execute_locked(
+        self, *, pending_request_count: int = 0
+    ) -> Dict[str, Any]:
+        pending = _pending_count(pending_request_count)
+        state = self._load_state()
+        inventory = self._list_sessions()
+        inventory_by_id = {session.session_id: session for session in inventory}
+        attested: List[str] = []
+        failed_attestations: List[str] = []
+        created: List[str] = []
+
+        # Only controller-created, not-yet-onboarded sessions are pending
+        # provisioning supply. Untracked standard-dind sessions may be busy
+        # workers: they consume provider quota but are neither re-attested nor
+        # allowed to satisfy new demand.
+        for session in sorted(
+            (
+                item
+                for item in inventory
+                if self._is_available_capacity_session(item, state)
+                and not _is_terminal(item.state)
+            ),
+            key=lambda item: item.session_id,
+        ):
+            if self._attest_once(session.session_id, state):
+                attested.append(session.session_id)
+            else:
+                failed_attestations.append(session.session_id)
+        self._write_state(state)
+
+        desired = self.policy.desired_ready(pending)
+        ready_ids = set(attested)
+        cooldown_remaining = self._cooldown_remaining(state, self._clock())
+        create_failure_class: Optional[str] = None
+        initial_live_count = sum(
+            1
+            for session in inventory_by_id.values()
+            if self._session_is_live(session, state)
+        )
+        create_budget = max(0, self.policy.max_sessions - initial_live_count)
+
+        # Cooldown limits independent scale-up invocations, not the bounded
+        # batch within a single explicit execute command.
+        if cooldown_remaining <= 0:
+            while len(ready_ids) < desired and len(created) < create_budget:
+                live_count = sum(
+                    1
+                    for session in inventory_by_id.values()
+                    if self._session_is_live(session, state)
+                )
+                if live_count >= self.policy.max_sessions:
+                    break
+                try:
+                    session = self.provider.create_standard_dind(
+                        name=self._new_session_name(len(created) + 1),
+                        extra_args=[
+                            "--cluster",
+                            self.policy.cluster,
+                            "--gpu",
+                            str(self.policy.gpu_count),
+                            "--memory",
+                            "%dGi" % self.policy.memory_gib,
+                            "--cpu",
+                            str(self.policy.cpu_count),
+                        ],
+                    )
+                except HgxCommandError as exc:
+                    create_failure_class = _classify_create_failure(exc)
+                    break
+                except HgxError:
+                    create_failure_class = "provider_create_failed"
+                    break
+                if not session.session_id:
+                    create_failure_class = "provider_create_invalid_response"
+                    break
+                created.append(session.session_id)
+                inventory_by_id[session.session_id] = session
+                now = self._clock()
+                state["last_create_at"] = now
+                state["sessions"][session.session_id] = {
+                    "session_id": session.session_id,
+                    "created_by_controller": True,
+                    "provider_flavor": STANDARD_DIND_FLAVOR,
+                    "provider_state": session.state or None,
+                    "creation_status": "provider_accepted",
+                    "created_at": _timestamp(now),
+                    "attestation_status": "pending",
+                    "onboarding_status": "not_onboarded",
+                    "next_action": {
+                        "action": "wait_for_ssh_attestation",
+                        "session_id": session.session_id,
+                    },
+                }
+                # Persist immediately: a crash after create must not lose the
+                # immutable ID and cause the next invocation to create blindly.
+                self._write_state(state)
+                if self._wait_for_attestation(session.session_id, state):
+                    ready_ids.add(session.session_id)
+                    attested.append(session.session_id)
+                else:
+                    failed_attestations.append(session.session_id)
+                self._write_state(state)
+
+        desired_gap = max(0, desired - len(ready_ids))
+        final_live_count = sum(
+            1
+            for session in inventory_by_id.values()
+            if self._session_is_live(session, state)
+        )
+        capacity_bound_reached = final_live_count >= self.policy.max_sessions
+        next_actions = self._next_actions(
+            ready_ids=sorted(ready_ids),
+            failed_ids=sorted(set(failed_attestations)),
+            desired_gap=desired_gap,
+            cooldown_remaining=self._cooldown_remaining(state, self._clock()),
+            create_failure_class=create_failure_class,
+            capacity_bound_reached=capacity_bound_reached,
+        )
+        state["last_result"] = {
+            "recorded_at": _timestamp(self._clock()),
+            "desired_ready": desired,
+            "attested_session_ids": sorted(ready_ids),
+            "created_session_ids": list(created),
+            "ready_gap": desired_gap,
+            "next_actions": next_actions,
+        }
+        self._write_state(state)
+
+        if desired_gap == 0:
+            outcome = (
+                "attested_capacity_requires_onboarding"
+                if ready_ids
+                else "capacity_satisfied"
+            )
+        elif create_failure_class:
+            outcome = create_failure_class
+        elif capacity_bound_reached:
+            outcome = "capacity_bound_reached"
+        elif cooldown_remaining > 0:
+            outcome = "cooldown"
+        else:
+            outcome = "capacity_not_ready"
+        return {
+            "schema": CAPACITY_SCHEMA,
+            "mode": "execute",
+            "read_only": False,
+            "outcome": outcome,
+            "state_path": str(self.state_path),
+            "policy": self.policy.to_dict(),
+            "pending_request_count": pending,
+            "desired_ready": desired,
+            "attested_session_ids": sorted(ready_ids),
+            "created_session_ids": created,
+            "failed_attestation_session_ids": sorted(set(failed_attestations)),
+            "provider_create_failure_class": create_failure_class,
+            "ready_gap": desired_gap,
+            "next_actions": next_actions,
+            "deletion": {
+                "automatic": False,
+                "performed": False,
+            },
+        }
+
+    # Provider and state helpers ----------------------------------------
+
+    def _list_sessions(self) -> List[HgxSession]:
+        try:
+            sessions = self.provider.list()
+        except HgxError as exc:
+            raise HgxCapacityError(
+                "unable to list HGX sessions; provider inventory is unavailable"
+            ) from exc
+        ids: set[str] = set()
+        for session in sessions:
+            if not session.session_id:
+                raise HgxCapacityError(
+                    "HGX inventory included a session without an immutable ID"
+                )
+            if session.session_id in ids:
+                raise HgxCapacityError(
+                    "HGX inventory repeated immutable session ID %s"
+                    % session.session_id
+                )
+            ids.add(session.session_id)
+        return sessions
+
+    def _attest_once(self, session_id: str, state: Dict[str, Any]) -> bool:
+        now = self._clock()
+        record = state["sessions"].setdefault(
+            session_id,
+            {
+                "session_id": session_id,
+                "created_by_controller": False,
+            },
+        )
+        try:
+            session = self.provider.status(session_id)
+            record["provider_state"] = session.state or None
+            if _is_terminal(session.state):
+                return self._record_attestation_failure(
+                    record, now, "terminal_provider_state"
+                )
+            proven_id = self.provider.attest_ssh(session_id)
+            if proven_id != session_id:
+                return self._record_attestation_failure(
+                    record, now, "immutable_id_mismatch"
+                )
+        except HgxError:
+            return self._record_attestation_failure(
+                record, now, "ssh_attestation_failed"
+            )
+        record.update(
+            {
+                "attestation_status": "passed",
+                "attested_at": _timestamp(now),
+                "failure_class": None,
+                "next_action": _onboarding_action(session_id),
+            }
+        )
+        return True
+
+    def _wait_for_attestation(
+        self, session_id: str, state: Dict[str, Any]
+    ) -> bool:
+        deadline = self._clock() + self.policy.wait_timeout_seconds
+        while True:
+            if self._attest_once(session_id, state):
+                return True
+            now = self._clock()
+            if now >= deadline:
+                record = state["sessions"][session_id]
+                record["attestation_status"] = "failed"
+                record["failure_class"] = "ssh_attestation_timeout"
+                record["next_action"] = {
+                    "action": "retry_or_retire_explicitly",
+                    "session_id": session_id,
+                    "reason": (
+                        "provider creation completed but nonce SSH attestation "
+                        "did not pass before the deadline"
+                    ),
+                    "automatic_deletion": False,
+                }
+                return False
+            self._sleep(
+                min(self.policy.poll_interval_seconds, max(0.0, deadline - now))
+            )
+
+    @staticmethod
+    def _record_attestation_failure(
+        record: Dict[str, Any], now: float, failure_class: str
+    ) -> bool:
+        record.update(
+            {
+                "attestation_status": "failed",
+                "last_attestation_attempt_at": _timestamp(now),
+                "failure_class": failure_class,
+                "next_action": {
+                    "action": "retry_ssh_attestation",
+                    "session_id": record["session_id"],
+                },
+            }
+        )
+        return False
+
+    def _snapshot(
+        self,
+        *,
+        inventory: List[HgxSession],
+        state: Mapping[str, Any],
+        pending_request_count: int,
+        now: float,
+    ) -> Dict[str, Any]:
+        state_sessions = state.get("sessions", {})
+        live = [item for item in inventory if not _is_terminal(item.state)]
+        available_capacity = [
+            item
+            for item in live
+            if self._is_available_capacity_session(item, state)
+        ]
+        known_attested = [
+            item.session_id
+            for item in available_capacity
+            if isinstance(state_sessions.get(item.session_id), Mapping)
+            and state_sessions[item.session_id].get("attestation_status") == "passed"
+        ]
+        desired = self.policy.desired_ready(pending_request_count)
+        gap = max(0, desired - len(known_attested))
+        slots = max(0, self.policy.max_sessions - len(live))
+        cooldown = self._cooldown_remaining(state, now)
+        unattested = sorted(
+            item.session_id
+            for item in available_capacity
+            if item.session_id not in known_attested
+        )
+        tracked_ids = {
+            str(session_id)
+            for session_id, record in state_sessions.items()
+            if isinstance(record, Mapping)
+            and record.get("created_by_controller") is True
+        }
+        untracked_live_ids = sorted(
+            item.session_id
+            for item in live
+            if item.session_id not in tracked_ids
+        )
+        onboarded_ids = sorted(
+            item.session_id
+            for item in live
+            if _is_onboarded(state_sessions.get(item.session_id))
+        )
+        create_gap = max(0, gap - len(unattested))
+        return {
+            "desired_ready": desired,
+            "known_attested_session_ids": sorted(known_attested),
+            "unattested_session_ids": unattested,
+            "onboarded_session_ids": onboarded_ids,
+            "untracked_live_session_ids": untracked_live_ids,
+            "live_provider_session_count": len(live),
+            "available_capacity_session_count": len(available_capacity),
+            "provider_sessions": [item.observable() for item in inventory],
+            "ready_gap": gap,
+            "available_session_slots": slots,
+            "cooldown_remaining_seconds": cooldown,
+            "create_count": 0 if cooldown > 0 else min(create_gap, slots),
+        }
+
+    @staticmethod
+    def _is_available_capacity_session(
+        session: HgxSession, state: Mapping[str, Any]
+    ) -> bool:
+        record = state.get("sessions", {}).get(session.session_id, {})
+        return bool(
+            isinstance(record, Mapping)
+            and record.get("created_by_controller") is True
+            and not _is_onboarded(record)
+        )
+
+    @staticmethod
+    def _session_is_live(
+        session: HgxSession, state: Mapping[str, Any]
+    ) -> bool:
+        record = state.get("sessions", {}).get(session.session_id, {})
+        observed_state = (
+            record.get("provider_state")
+            if isinstance(record, Mapping)
+            else None
+        )
+        return not _is_terminal(observed_state or session.state)
+
+    def _cooldown_remaining(
+        self, state: Mapping[str, Any], now: float
+    ) -> float:
+        last_create = state.get("last_create_at")
+        if not isinstance(last_create, (int, float)):
+            return 0.0
+        return round(
+            max(0.0, float(last_create) + self.policy.cooldown_seconds - now),
+            3,
+        )
+
+    def _new_session_name(self, ordinal: int) -> str:
+        stamp = datetime.fromtimestamp(
+            self._clock(), tz=timezone.utc
+        ).strftime("%Y%m%d-%H%M%S")
+        return "%s-%s-%02d" % (self.name_prefix, stamp, ordinal)
+
+    def _load_state(self) -> Dict[str, Any]:
+        if not self.state_path.exists():
+            return {
+                "schema": CAPACITY_SCHEMA,
+                "sessions": {},
+                "last_create_at": None,
+            }
+        try:
+            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HgxCapacityError(
+                "HGX capacity state is unreadable: %s" % self.state_path
+            ) from exc
+        if not isinstance(payload, dict) or payload.get("schema") != CAPACITY_SCHEMA:
+            raise HgxCapacityError(
+                "HGX capacity state has an unsupported schema: %s"
+                % self.state_path
+            )
+        if not isinstance(payload.get("sessions"), dict):
+            raise HgxCapacityError(
+                "HGX capacity state has invalid sessions: %s" % self.state_path
+            )
+        return payload
+
+    def _write_state(self, state: Mapping[str, Any]) -> None:
+        parent = self.state_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(state)
+        payload["schema"] = CAPACITY_SCHEMA
+        payload["updated_at"] = _timestamp(self._clock())
+        encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        fd, temporary = tempfile.mkstemp(
+            dir=str(parent), prefix=".%s." % self.state_path.name
+        )
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.state_path)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+
+    @contextmanager
+    def _execution_lock(self) -> Iterator[None]:
+        """Fail fast when another mutating controller invocation is active."""
+
+        parent = self.state_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.state_path.with_name(self.state_path.name + ".lock")
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise HgxCapacityError(
+                    "another HGX capacity execute command is already active"
+                ) from exc
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+    @staticmethod
+    def _next_actions(
+        *,
+        ready_ids: List[str],
+        failed_ids: List[str],
+        desired_gap: int,
+        cooldown_remaining: float,
+        create_failure_class: Optional[str],
+        capacity_bound_reached: bool,
+    ) -> List[Dict[str, Any]]:
+        actions = [_onboarding_action(session_id) for session_id in ready_ids]
+        actions.extend(
+            {
+                "action": "retry_or_retire_explicitly",
+                "session_id": session_id,
+                "automatic_deletion": False,
+            }
+            for session_id in failed_ids
+        )
+        if desired_gap > 0 and create_failure_class:
+            actions.append(
+                {
+                    "action": (
+                        "wait_for_provider_quota_or_raise_bound"
+                        if create_failure_class == "provider_quota_exhausted"
+                        else "repair_provider_create_path_then_execute"
+                    ),
+                    "ready_gap": desired_gap,
+                    "failure_class": create_failure_class,
+                }
+            )
+        elif desired_gap > 0 and capacity_bound_reached:
+            actions.append(
+                {
+                    "action": "review_failed_sessions_or_capacity_bound",
+                    "ready_gap": desired_gap,
+                    "automatic_deletion": False,
+                }
+            )
+        elif desired_gap > 0 and cooldown_remaining > 0:
+            actions.append(
+                {
+                    "action": "execute_after_cooldown",
+                    "seconds": cooldown_remaining,
+                }
+            )
+        elif desired_gap > 0:
+            actions.append(
+                {
+                    "action": "review_capacity_bound_then_execute",
+                    "ready_gap": desired_gap,
+                }
+            )
+        return actions
+
+
+def _pending_count(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValidationError("pending_request_count must be a non-negative integer")
+    return value
+
+
+def _timestamp(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+def _is_terminal(state: str) -> bool:
+    return str(state or "").strip().lower() in _TERMINAL_PROVIDER_STATES
+
+
+def _is_onboarded(record: Any) -> bool:
+    if not isinstance(record, Mapping):
+        return False
+    return bool(
+        str(record.get("onboarding_status") or "").strip().lower()
+        in {"consumed", "onboarded"}
+        or str(record.get("onboarded_agent_id") or "").strip()
+    )
+
+
+def _classify_create_failure(error: HgxCommandError) -> str:
+    """Reduce provider stderr to a secret-free actionable failure class."""
+
+    detail = str(error.stderr or "").lower()
+    quota_markers = (
+        "429",
+        "quota",
+        "resource exhausted",
+        "resource_exhausted",
+        "limit exceeded",
+        "too many requests",
+    )
+    if any(marker in detail for marker in quota_markers):
+        return "provider_quota_exhausted"
+    return "provider_create_failed"
+
+
+def _onboarding_action(session_id: str) -> Dict[str, Any]:
+    return {
+        "action": "prepare_fungible_onboarding",
+        "session_id": session_id,
+        "reason": (
+            "nonce SSH attestation passed, but an HGX session is not yet a "
+            "registered MAC agent"
+        ),
+        "required_inputs": [
+            "fleet_agent_name",
+            "hub_agent",
+            "reviewed_fungible_placeholder",
+            "endpoint_bound_worker_credentials",
+        ],
+        "planner": "mac.hgx_provision.plan_fungible_onboarding",
+        "automatic_fulfillment": False,
+    }

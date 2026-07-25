@@ -23,6 +23,7 @@ def _run_with_fake_python(
     combine_output: str = "Combined data file .coverage.fake",
     combine_status: int = 0,
     json_status: int = 0,
+    preflight_status: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -43,6 +44,14 @@ if [ "$*" = "-m coverage combine" ]; then
     printf '%s\n' "$FAKE_COMBINE_OUTPUT"
     exit "$FAKE_COMBINE_STATUS"
 fi
+case "$*" in
+    *"scripts/test-docs.py --static-only"*|\
+    *"scripts/generate-env-config-registry.py --check"*|\
+    *"scripts/generate-docs-reference.py --check"*|\
+    *"tests/test_control_plane_public_contract.py"*)
+        exit "$FAKE_PREFLIGHT_STATUS"
+        ;;
+esac
 case "$*" in
     "-m coverage json -o "*) exit "$FAKE_JSON_STATUS" ;;
 esac
@@ -70,6 +79,7 @@ exit 0
         "FAKE_COMBINE_OUTPUT": combine_output,
         "FAKE_COMBINE_STATUS": str(combine_status),
         "FAKE_JSON_STATUS": str(json_status),
+        "FAKE_PREFLIGHT_STATUS": str(preflight_status),
         "FAKE_PYTEST_STATUS": str(pytest_status),
         # Deterministic answer to the runner's headroom-default cpu probe.
         "FAKE_DEFAULT_JOBS": "6",
@@ -112,6 +122,39 @@ exit 0
     return completed, calls
 
 
+def test_contract_runner_preflight_failure_stops_before_full_gate(tmp_path):
+    completed, calls = _run_with_fake_python(tmp_path, preflight_status=23)
+
+    assert completed.returncode == 23, completed.stdout + completed.stderr
+    assert "running fail-fast repository contract preflight" in completed.stdout
+    assert sum("scripts/test-docs.py --static-only" in line for line in calls) == 1
+    assert not any("generate-env-config-registry.py" in line for line in calls)
+    assert not any("-m coverage run -m pytest" in line for line in calls)
+    assert not any("-m coverage combine" in line for line in calls)
+    assert not any("scripts/coverage-policy.py" in line for line in calls)
+
+
+def test_contract_runner_preflight_completes_before_full_gate(tmp_path):
+    completed, calls = _run_with_fake_python(tmp_path)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    expected = (
+        "scripts/test-docs.py --static-only",
+        "scripts/generate-env-config-registry.py --check",
+        "scripts/generate-docs-reference.py --check",
+        "tests/test_control_plane_public_contract.py",
+    )
+    positions = [
+        next(index for index, line in enumerate(calls) if command in line)
+        for command in expected
+    ]
+    first_full = next(
+        index for index, line in enumerate(calls) if "-m coverage run -m pytest" in line
+    )
+    assert positions == sorted(positions)
+    assert positions[-1] < first_full
+
+
 def test_contract_runner_defaults_to_headroom_workers_and_protects_serial_phase(tmp_path):
     completed, calls = _run_with_fake_python(tmp_path)
 
@@ -145,6 +188,7 @@ def test_contract_runner_fast_mode_skips_coverage_and_policy(tmp_path):
         line
         for line in calls
         if "-m pytest" in line and "coverage" not in line and "--version" not in line
+        and "test_control_plane_public_contract.py" not in line
     ]
     assert len(pytest_calls) == 2
     assert "-n 6 --dist loadscope" in pytest_calls[0]
@@ -180,6 +224,7 @@ def test_contract_runner_honors_disable_groups_in_fast_mode(tmp_path):
         line
         for line in calls
         if "-m pytest" in line and "coverage" not in line and "--version" not in line
+        and "test_control_plane_public_contract.py" not in line
     ]
     assert pytest_calls, "expected fast-mode pytest phases"
     assert all("DISABLE=fleet,heavy_e2e" in line for line in pytest_calls)

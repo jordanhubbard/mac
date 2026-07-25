@@ -111,6 +111,45 @@ def test_submit_review_validation_and_verdict_finder_edges(monkeypatch) -> None:
         service.submit_review("review", "approved", "reviewer", evidence_id="e")
 
 
+def test_submit_review_completed_retry_is_idempotent_only_for_exact_decision(
+    monkeypatch,
+) -> None:
+    cp = ControlPlane.in_memory()
+    service = cp.reviews
+    completed = _review(
+        status=ReviewStatus.APPROVED.value,
+        reason="verified",
+        evidence_id="verdict",
+    )
+    monkeypatch.setattr(service, "get_review", lambda *_a: completed)
+
+    assert (
+        service.submit_review(
+            "review",
+            ReviewStatus.APPROVED.value,
+            "reviewer",
+            reason="verified",
+            evidence_id="verdict",
+        )
+        is completed
+    )
+
+    conflicts = [
+        (ReviewStatus.REJECTED.value, "verified", "verdict"),
+        (ReviewStatus.APPROVED.value, "different", "verdict"),
+        (ReviewStatus.APPROVED.value, "verified", "other-verdict"),
+    ]
+    for status, reason, evidence_id in conflicts:
+        with pytest.raises(ValidationError, match="different decision"):
+            service.submit_review(
+                "review",
+                status,
+                "reviewer",
+                reason=reason,
+                evidence_id=evidence_id,
+            )
+
+
 def test_review_and_publication_list_limit_paths(monkeypatch) -> None:
     cp = ControlPlane.in_memory()
     service = cp.reviews

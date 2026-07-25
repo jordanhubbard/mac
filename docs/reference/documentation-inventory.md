@@ -119,6 +119,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `haskell_migration.md` | A Notional Haskell Migration Plan for MAC |
 | supplemental reference | `hermes-boundary.md` | Hermes Boundary |
 | supplemental reference | `hermes-integration.md` | Hermes Integration |
+| supplemental reference | `hgx-elastic-capacity.md` | HGX elastic capacity |
 | supplemental reference | `home-consolidation.md` | Home-Directory Consolidation: Analysis & Plan |
 | runbook | `hub-availability.md` | Hub Availability |
 | supplemental reference | `image-publication-and-qualification.md` | Image Publication and Pre-Publication Qualification |

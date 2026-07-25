@@ -80,3 +80,28 @@ description, metadata, and status.
 
 Creating a task expresses intent; it does not grant an agent permission to work.
 The claim and lease in the next chapter provide that fence.
+
+Before the first repository-task claim, the dispatcher records a bounded
+`scope_estimate`. Broad work is marked `plan_first` while it is still unleased,
+so sizing does not consume an execution attempt. Work-package nodes and
+explicitly non-decomposable tasks retain their own admission policy.
+
+Scheduling remains work-conserving but supports an optional
+`metadata.dispatch_class`:
+
+- `urgent` and `recovery` run ahead of ordinary backlog when a slot opens;
+- `normal` is the default;
+- `background` yields to the other classes;
+- `metadata.due_at` or `metadata.deadline_at` adds a small, bounded aging bonus
+  after the time passes.
+
+These are routing hints, not correctness gates. `task show` and the dispatch
+explanation expose the resolved class and bonuses.
+
+An exhausted environment attempt creates a separate recovery prerequisite only
+when its history contains a concrete output, preserved-work record, or explicit
+failure/remediation diagnosis. Bare lease expiries with no telemetry fail
+visibly instead of creating an unactionable repair task. Verification-contract
+failures stay with the original task by default; a repository with a genuinely
+independent repair workflow may opt in with
+`metadata.repair_policy.contract_prerequisite=true`.

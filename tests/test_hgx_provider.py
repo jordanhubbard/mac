@@ -4,7 +4,8 @@ These cover the adapter's hard requirements:
 
 - create (including the explicit ``standard-dind`` path),
 - list/status parsing into secret-free dataclasses,
-- SSH-target resolution through ``mac.fleet_deploy.parse_ssh_target``,
+- current global-JSON/type argv and wrapped status payloads,
+- real SSH command execution and nonce attestation,
 - immutable-ID-only selection for lifecycle verbs,
 - display-name resolution that refuses zero/multiple matches,
 - that ``hgx info`` is never invoked, and
@@ -31,6 +32,7 @@ from mac.hgx_provider import (
     HgxProvider,
     HgxSession,
     HgxSshEndpoint,
+    _parse_ssh_from_text,
 )
 
 
@@ -57,9 +59,9 @@ def _install_run(monkeypatch, handler):
 def test_create_returns_structured_session(monkeypatch):
     payload = {
         "id": "sess-abc123",
-        "name": "worker-1",
-        "flavor": "standard",
-        "state": "running",
+        "display_name": "worker-1",
+        "agent_type": "standard",
+        "status": "running",
         "ssh": "ubuntu@10.0.0.5",
         "port": 2201,
     }
@@ -74,16 +76,24 @@ def test_create_returns_structured_session(monkeypatch):
     assert session.state == "running"
     assert isinstance(session.ssh, HgxSshEndpoint)
     assert session.ssh.target == SshTarget(user_host="ubuntu@10.0.0.5", port=2201)
-    # argv carries the flavor, name and JSON request, and never touches "info".
-    argv = calls[0]["argv"]
-    assert argv[:1] == ["hgx"]
-    assert "create" in argv and "--flavor" in argv and "standard" in argv
-    assert "--json" in argv and "--name" in argv and "worker-1" in argv
-    assert "info" not in argv
+    # hgx 0.9 expects the global JSON flag before the verb and --type.
+    assert calls[0]["argv"] == [
+        "hgx",
+        "--json",
+        "create",
+        "--type",
+        "standard",
+        "--name",
+        "worker-1",
+    ]
 
 
 def test_create_standard_dind_uses_named_flavor(monkeypatch):
-    payload = {"id": "sess-dind", "flavor": STANDARD_DIND_FLAVOR, "state": "running"}
+    payload = {
+        "id": "sess-dind",
+        "agent_type": STANDARD_DIND_FLAVOR,
+        "status": "running",
+    }
     calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(json.dumps(payload)))
     session = HgxProvider().create_standard_dind(name="dind-box")
 
@@ -93,14 +103,14 @@ def test_create_standard_dind_uses_named_flavor(monkeypatch):
 
 
 def test_create_standard_dind_rejects_wrong_flavor(monkeypatch):
-    payload = {"id": "sess-x", "flavor": "standard", "state": "running"}
+    payload = {"id": "sess-x", "agent_type": "standard", "status": "running"}
     _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(json.dumps(payload)))
     with pytest.raises(HgxError):
         HgxProvider().create_standard_dind()
 
 
 def test_create_extra_args_are_forwarded(monkeypatch):
-    payload = {"id": "sess-e", "flavor": STANDARD_DIND_FLAVOR}
+    payload = {"id": "sess-e", "agent_type": STANDARD_DIND_FLAVOR}
     calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(json.dumps(payload)))
     HgxProvider().create(flavor=STANDARD_DIND_FLAVOR, extra_args=["--region", "us"])
     assert calls[0]["argv"][-2:] == ["--region", "us"]
@@ -128,9 +138,10 @@ def test_list_parses_multiple_shapes(monkeypatch):
 
 def test_list_top_level_array(monkeypatch):
     payload = [{"id": "s1"}, {"id": "s2"}, "junk"]
-    _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(json.dumps(payload)))
+    calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(json.dumps(payload)))
     sessions = HgxProvider().list()
     assert [s.session_id for s in sessions] == ["s1", "s2"]
+    assert calls[0]["argv"] == ["hgx", "--json", "list"]
 
 
 def test_list_non_json_yields_empty(monkeypatch):
@@ -139,12 +150,22 @@ def test_list_non_json_yields_empty(monkeypatch):
 
 
 def test_status_addresses_by_immutable_id(monkeypatch):
-    payload = {"id": "sess-9", "name": "n", "state": "running"}
+    payload = {
+        "session": {
+            "id": "sess-9",
+            "display_name": "n",
+            "agent_type": "standard-dind",
+            "status": "running",
+        },
+        "restore": {},
+        "events": {},
+    }
     calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(json.dumps(payload)))
     session = HgxProvider().status("sess-9")
     assert session.session_id == "sess-9"
-    assert "sess-9" in calls[0]["argv"]
-    assert calls[0]["argv"][1] == "status"
+    assert session.name == "n"
+    assert session.is_dind is True
+    assert calls[0]["argv"] == ["hgx", "--json", "status", "sess-9"]
 
 
 def test_status_missing_session_raises(monkeypatch):
@@ -178,51 +199,81 @@ def test_payload_without_id_raises(monkeypatch):
         HgxProvider().create(flavor="standard")
 
 
-# -- ssh target resolution ----------------------------------------------
-def test_ssh_target_from_labelled_output(monkeypatch):
-    def handler(argv, kw):
-        if argv[1] == "ssh":
-            return _FakeCompleted("ssh endpoint: ubuntu@203.0.113.7:2222\n")
-        return _FakeCompleted("{}")
-
-    calls = _install_run(monkeypatch, handler)
+# -- SSH endpoint compatibility + real reachability proof ----------------
+def test_ssh_target_uses_structured_status_without_print_probe(monkeypatch):
+    payload = {
+        "session": {
+            "id": "sess-1",
+            "ssh": "ubuntu@203.0.113.7:2222",
+        }
+    }
+    calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(json.dumps(payload)))
     endpoint = HgxProvider().ssh_target("sess-1")
     assert endpoint.user_host == "ubuntu@203.0.113.7"
     assert endpoint.port == 2222
-    assert calls[0]["argv"][1] == "ssh"
+    assert calls[0]["argv"] == ["hgx", "--json", "status", "sess-1"]
 
 
-def test_ssh_target_from_invocation_output(monkeypatch):
-    def handler(argv, kw):
-        return _FakeCompleted("Run: ssh -p 2201 root@198.51.100.9\n")
-
-    _install_run(monkeypatch, handler)
-    endpoint = HgxProvider().ssh_target("sess-1")
+def test_legacy_ssh_invocation_output_remains_parseable():
+    endpoint = _parse_ssh_from_text("Run: ssh -p 2201 root@198.51.100.9\n")
+    assert endpoint is not None
     assert endpoint.user_host == "root@198.51.100.9"
     assert endpoint.port == 2201
 
 
-def test_ssh_target_falls_back_to_status(monkeypatch):
-    def handler(argv, kw):
-        if argv[1] == "ssh":
-            return _FakeCompleted("no target here\n")
-        return _FakeCompleted(json.dumps({"id": "sess-1", "ssh": "ubuntu@10.1.1.1", "port": 22}))
-
-    _install_run(monkeypatch, handler)
-    endpoint = HgxProvider().ssh_target("sess-1")
-    assert endpoint.user_host == "ubuntu@10.1.1.1"
-    assert endpoint.port == 22
-
-
 def test_ssh_target_unparseable_raises(monkeypatch):
-    def handler(argv, kw):
-        if argv[1] == "ssh":
-            return _FakeCompleted("\n")
-        return _FakeCompleted(json.dumps({"id": "sess-1"}))
-
-    _install_run(monkeypatch, handler)
+    _install_run(
+        monkeypatch,
+        lambda argv, kw: _FakeCompleted(json.dumps({"session": {"id": "sess-1"}})),
+    )
     with pytest.raises(HgxError):
         HgxProvider().ssh_target("sess-1")
+
+
+def test_run_ssh_command_uses_current_noninteractive_syntax(monkeypatch):
+    calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted("remote-output"))
+    output = HgxProvider().run_ssh_command("sess-1", ["uname", "-a"])
+
+    assert output == "remote-output"
+    assert calls[0]["argv"] == ["hgx", "ssh", "sess-1", "--", "uname", "-a"]
+
+
+@pytest.mark.parametrize("command", [[], "", [""]])
+def test_run_ssh_command_requires_nonempty_argv(monkeypatch, command):
+    calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(""))
+    with pytest.raises(HgxError):
+        HgxProvider().run_ssh_command("sess-1", command)
+    assert calls == []
+
+
+def test_attest_ssh_requires_remote_nonce_echo(monkeypatch):
+    monkeypatch.setattr("mac.hgx_provider.secrets.token_hex", lambda size: "a1b2")
+    calls = _install_run(
+        monkeypatch,
+        lambda argv, kw: _FakeCompleted(
+            "Connecting to sess-1...\nmac-hgx-ssh-attest-a1b2"
+        ),
+    )
+
+    assert HgxProvider().attest_ssh("sess-1") == "sess-1"
+    assert calls[0]["argv"] == [
+        "hgx",
+        "ssh",
+        "sess-1",
+        "--",
+        "printf",
+        "mac-hgx-ssh-attest-a1b2",
+    ]
+
+
+def test_attest_ssh_fails_when_remote_nonce_is_missing(monkeypatch):
+    monkeypatch.setattr("mac.hgx_provider.secrets.token_hex", lambda size: "a1b2")
+    _install_run(
+        monkeypatch,
+        lambda argv, kw: _FakeCompleted("Connecting to sess-1...\n"),
+    )
+    with pytest.raises(HgxError, match="attestation marker"):
+        HgxProvider().attest_ssh("sess-1")
 
 
 def test_ssh_from_separate_host_user_fields(monkeypatch):
@@ -233,14 +284,16 @@ def test_ssh_from_separate_host_user_fields(monkeypatch):
     assert session.ssh.port == 2020
 
 
-# -- lifecycle: stop / resume by id -------------------------------------
-def test_stop_and_resume_use_immutable_id(monkeypatch):
+# -- lifecycle: stop / resume / delete by id ----------------------------
+def test_stop_resume_and_delete_use_immutable_id(monkeypatch):
     calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(""))
     provider = HgxProvider()
     assert provider.stop("sess-7") == "sess-7"
     assert provider.resume("sess-7") == "sess-7"
+    assert provider.delete("sess-7") == "sess-7"
     assert calls[0]["argv"] == ["hgx", "stop", "sess-7"]
     assert calls[1]["argv"] == ["hgx", "resume", "sess-7"]
+    assert calls[2]["argv"] == ["hgx", "delete", "sess-7"]
 
 
 def test_stop_requires_id(monkeypatch):
@@ -249,6 +302,15 @@ def test_stop_requires_id(monkeypatch):
 
     with pytest.raises(HgxSessionNotFoundError):
         HgxProvider().stop("")
+
+
+def test_delete_requires_id(monkeypatch):
+    calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(""))
+    from mac.hgx_provider import HgxSessionNotFoundError
+
+    with pytest.raises(HgxSessionNotFoundError):
+        HgxProvider().delete("")
+    assert calls == []
 
 
 # -- name -> immutable id resolver --------------------------------------
@@ -301,14 +363,21 @@ def test_info_verb_is_refused(monkeypatch):
     assert calls == []
 
 
+def test_global_json_cannot_bypass_info_ban(monkeypatch):
+    calls = _install_run(monkeypatch, lambda argv, kw: _FakeCompleted(""))
+    with pytest.raises(HgxError):
+        HgxProvider()._run(["--json", "info", "sess-1"])
+    assert calls == []
+
+
 def test_no_verb_ever_calls_info(monkeypatch):
     seen_argv = []
 
     def handler(argv, kw):
         seen_argv.append(argv)
-        if argv[1] in ("create", "status"):
+        if "create" in argv or "status" in argv:
             return _FakeCompleted(json.dumps({"id": "s1", "ssh": "u@h", "port": 22}))
-        if argv[1] == "list":
+        if "list" in argv:
             return _FakeCompleted(_list_payload([{"id": "s1", "name": "n"}]))
         return _FakeCompleted("")
 
@@ -319,6 +388,7 @@ def test_no_verb_ever_calls_info(monkeypatch):
     provider.status("s1")
     provider.stop("s1")
     provider.resume("s1")
+    provider.delete("s1")
     for argv in seen_argv:
         assert "info" not in argv
 
@@ -438,38 +508,21 @@ def test_endpoint_properties_and_is_dind():
 # -- targeted parser-edge coverage --------------------------------------
 def test_ssh_invocation_with_non_p_flag_still_finds_host(monkeypatch):
     # A leading -i keyfile option is skipped; host is still recovered.
-    def handler(argv, kw):
-        return _FakeCompleted("connect via: ssh -i key.pem -p 2202 admin@192.0.2.5\n")
-
-    _install_run(monkeypatch, handler)
-    endpoint = HgxProvider().ssh_target("s1")
+    endpoint = _parse_ssh_from_text(
+        "connect via: ssh -i key.pem -p 2202 admin@192.0.2.5\n"
+    )
+    assert endpoint is not None
     assert endpoint.user_host == "admin@192.0.2.5"
     assert endpoint.port == 2202
 
 
-def test_ssh_invocation_without_host_falls_back_to_status(monkeypatch):
+def test_ssh_invocation_without_host_is_not_parsed():
     # "ssh -v" has only a flag and no host token -> _endpoint_from_ssh_args None.
-    def handler(argv, kw):
-        if argv[1] == "ssh":
-            return _FakeCompleted("ssh -v\n")
-        return _FakeCompleted(json.dumps({"id": "s1", "ssh": "u@h", "port": 22}))
-
-    _install_run(monkeypatch, handler)
-    endpoint = HgxProvider().ssh_target("s1")
-    assert endpoint.user_host == "u@h"
+    assert _parse_ssh_from_text("ssh -v\n") is None
 
 
-def test_labelled_ssh_with_invalid_value_falls_back(monkeypatch):
-    # Labelled endpoint is a blank/invalid target -> _try_endpoint returns None,
-    # then status supplies the real one.
-    def handler(argv, kw):
-        if argv[1] == "ssh":
-            return _FakeCompleted("ssh endpoint: host:0\n")
-        return _FakeCompleted(json.dumps({"id": "s1", "ssh": "u@h", "port": 22}))
-
-    _install_run(monkeypatch, handler)
-    endpoint = HgxProvider().ssh_target("s1")
-    assert endpoint.user_host == "u@h"
+def test_labelled_ssh_with_invalid_value_is_not_parsed():
+    assert _parse_ssh_from_text("ssh endpoint: host:0\n") is None
 
 
 def test_status_raw_ssh_invalid_but_host_field_used(monkeypatch):

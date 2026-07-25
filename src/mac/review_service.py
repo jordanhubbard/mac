@@ -444,8 +444,6 @@ class ReviewService:
         review = self.get_review(review_id)
         if review.reviewer_agent_id != reviewer_agent_id:
             raise AuthorizationError("reviewer does not own review")
-        if review.status != ReviewStatus.PENDING.value:
-            raise ValidationError("review is already completed")
         status_value = _state_value(status)
         if status_value not in {
             ReviewStatus.APPROVED.value,
@@ -453,6 +451,20 @@ class ReviewService:
             ReviewStatus.REJECTED.value,
         }:
             raise ValidationError("unsupported review decision: %s" % status_value)
+        if review.status != ReviewStatus.PENDING.value:
+            if (
+                review.status == status_value
+                and getattr(review, "reason", None) == reason
+                and getattr(review, "evidence_id", None) == evidence_id
+            ):
+                # The completed row is the durable idempotency receipt. A caller
+                # retrying after a lost response gets the original result without
+                # re-running evidence or task-state checks that may have changed
+                # after the decision committed.
+                return review
+            raise ValidationError(
+                "review is already completed with a different decision"
+            )
         if status_value == ReviewStatus.APPROVED.value and evidence_id is None:
             raise ValidationError("approving a review requires an evidence_id")
         if evidence_id is not None:

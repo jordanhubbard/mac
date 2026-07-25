@@ -5126,6 +5126,137 @@ def cmd_plan_order(args: argparse.Namespace) -> None:
     _print(result.to_dict())
 
 
+def _hgx_capacity_controller(args: argparse.Namespace) -> Any:
+    from mac.hgx_elastic_capacity import (
+        HgxCapacityPolicy,
+        HgxElasticCapacityController,
+    )
+    from mac.hgx_provider import HgxProvider
+
+    policy = HgxCapacityPolicy(
+        min_ready=args.min_ready,
+        max_sessions=args.max_sessions,
+        headroom=args.headroom,
+        cluster=args.cluster,
+        gpu_count=args.gpu,
+        memory_gib=args.memory_gib,
+        cpu_count=args.cpu,
+        cooldown_seconds=args.cooldown_seconds,
+        wait_timeout_seconds=args.wait_timeout_seconds,
+        poll_interval_seconds=args.poll_interval_seconds,
+    )
+    provider = HgxProvider(
+        binary=args.hgx_binary,
+        timeout=args.hgx_command_timeout_seconds,
+    )
+    return HgxElasticCapacityController(
+        provider=provider,
+        policy=policy,
+        state_path=args.state_file,
+        name_prefix=args.name_prefix,
+    )
+
+
+def cmd_hgx_capacity_status(args: argparse.Namespace) -> None:
+    """Inspect HGX capacity without mutating provider or controller state."""
+
+    _print(
+        _hgx_capacity_controller(args).status(
+            pending_request_count=args.pending_requests
+        )
+    )
+
+
+def cmd_hgx_capacity_plan(args: argparse.Namespace) -> None:
+    """Plan bounded HGX capacity changes without applying them."""
+
+    _print(
+        _hgx_capacity_controller(args).plan(
+            pending_request_count=args.pending_requests
+        )
+    )
+
+
+def cmd_hgx_capacity_execute(args: argparse.Namespace) -> None:
+    """Explicitly create and nonce-attest bounded standard-dind capacity."""
+
+    _print(
+        _hgx_capacity_controller(args).execute(
+            pending_request_count=args.pending_requests
+        )
+    )
+
+
+def cmd_hgx_capacity_mark_onboarded(args: argparse.Namespace) -> None:
+    """Consume an attested capacity receipt after real agent registration."""
+
+    from mac.hgx_elastic_capacity import HgxElasticCapacityController
+
+    _print(
+        HgxElasticCapacityController(
+            state_path=args.state_file
+        ).mark_onboarded(
+            args.session_id,
+            agent_id=args.agent_id,
+        )
+    )
+
+
+def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
+    from mac.hgx_elastic_capacity import DEFAULT_STATE_PATH
+
+    parser.add_argument(
+        "--pending-requests",
+        type=int,
+        default=0,
+        help=(
+            "durable pending ProvisioningService request count; the controller "
+            "does not mark those requests fulfilled until a MAC agent exists"
+        ),
+    )
+    parser.add_argument("--min-ready", type=int, default=0)
+    parser.add_argument("--max-sessions", type=int, default=10)
+    parser.add_argument("--headroom", type=int, default=0)
+    parser.add_argument(
+        "--cluster",
+        default="gke-newhouse",
+        help="explicit HGX cluster (default: gke-newhouse)",
+    )
+    parser.add_argument(
+        "--gpu",
+        type=int,
+        default=1,
+        help="GPU count, bounded to 0..8 (default: 1)",
+    )
+    parser.add_argument(
+        "--memory-gib",
+        type=int,
+        default=64,
+        help="memory request in GiB, bounded to 8..256 (default: 64)",
+    )
+    parser.add_argument(
+        "--cpu",
+        type=int,
+        default=8,
+        help="CPU request, bounded to 1..64 (default: 8)",
+    )
+    parser.add_argument("--cooldown-seconds", type=float, default=300.0)
+    parser.add_argument("--wait-timeout-seconds", type=float, default=300.0)
+    parser.add_argument("--poll-interval-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--state-file",
+        default=DEFAULT_STATE_PATH,
+        help="durable controller receipt path (written only by execute)",
+    )
+    parser.add_argument("--name-prefix", default="mac-fungible")
+    parser.add_argument("--hgx-binary", default="hgx")
+    parser.add_argument(
+        "--hgx-command-timeout-seconds",
+        type=float,
+        default=120.0,
+    )
+
+
 def _set(func: Callable[[argparse.Namespace], None], parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(func=func)
 
@@ -6325,6 +6456,53 @@ def build_parser() -> argparse.ArgumentParser:
     directive_waiver_revoke.add_argument("--reason-file")
     directive_waiver_revoke.add_argument("--actor", default="human")
     _set(cmd_directive_waiver_revoke, directive_waiver_revoke)
+
+    hgx = sub.add_parser(
+        "hgx",
+        help="operator controls for fungible HGX provider capacity",
+    ).add_subparsers(dest="hgx_command", required=True)
+    hgx_capacity = hgx.add_parser(
+        "capacity",
+        help="plan, inspect, or explicitly create bounded standard-dind capacity",
+    ).add_subparsers(dest="hgx_capacity_command", required=True)
+    hgx_capacity_status = hgx_capacity.add_parser(
+        "status",
+        help="read provider inventory and durable attestation receipts",
+    )
+    _add_hgx_capacity_args(hgx_capacity_status)
+    _set(cmd_hgx_capacity_status, hgx_capacity_status)
+    hgx_capacity_plan = hgx_capacity.add_parser(
+        "plan",
+        help="show the bounded capacity action without applying it",
+    )
+    _add_hgx_capacity_args(hgx_capacity_plan)
+    _set(cmd_hgx_capacity_plan, hgx_capacity_plan)
+    hgx_capacity_execute = hgx_capacity.add_parser(
+        "execute",
+        help=(
+            "create standard-dind sessions within bounds and require nonce SSH "
+            "attestation; never deletes sessions"
+        ),
+    )
+    _add_hgx_capacity_args(hgx_capacity_execute)
+    _set(cmd_hgx_capacity_execute, hgx_capacity_execute)
+    hgx_capacity_mark_onboarded = hgx_capacity.add_parser(
+        "mark-onboarded",
+        help=(
+            "consume an attested capacity receipt after the session is "
+            "registered as a real MAC agent"
+        ),
+    )
+    hgx_capacity_mark_onboarded.add_argument("session_id")
+    hgx_capacity_mark_onboarded.add_argument("--agent-id", required=True)
+    from mac.hgx_elastic_capacity import DEFAULT_STATE_PATH
+
+    hgx_capacity_mark_onboarded.add_argument(
+        "--state-file",
+        default=DEFAULT_STATE_PATH,
+        help="durable controller receipt path",
+    )
+    _set(cmd_hgx_capacity_mark_onboarded, hgx_capacity_mark_onboarded)
 
     openshell = sub.add_parser("openshell", help="OpenShell sandbox guardrail commands").add_subparsers(dest="openshell_command", required=True)
     osh_reconcile = openshell.add_parser(

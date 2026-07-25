@@ -2,7 +2,7 @@
 
 Enforcement is gated by MAC_OPENSHELL_SANDBOX (default OFF). When on, the run is
 a lifecycle — `create` (upload the task workspace, run the agent confined, keep)
--> `download` (sync edits + evidence back) -> `delete` — because OpenShell
+-> `download` (sync edits + evidence back) -> preserve repository WIP -> `delete` — because OpenShell
 sandboxes are container copies with no bind-mount. These tests pin the
 default-OFF guarantee, the create-argv construction (policy always passed,
 workspace uploaded, agent run in /sandbox/<basename> with the in-sandbox
@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from mac import openshell_sandbox_gc as sandbox_gc
 from mac import task_executor as te
 
 _REAL_MERGE_SANDBOX_DOWNLOAD_TREE = te._merge_sandbox_download_tree
@@ -43,12 +44,16 @@ _OPENSHELL_ENVS = [
     "MAC_OPENSHELL_SANDBOX_NAME",
     "MAC_OPENSHELL_KEEP",
     "MAC_OPENSHELL_GC",
+    "MAC_OPENSHELL_REAP_ORPHANS",
+    "MAC_OPENSHELL_RECONCILE_LEASES",
     "MAC_OPENSHELL_STALE_AFTER_SECONDS",
     "MAC_OPENSHELL_CREATE_ARGS",
     "MAC_OPENSHELL_ENV_PASSTHROUGH",
     "MAC_OPENSHELL_ALLOW_NO_LANDLOCK",
     "MAC_OPENSHELL_HOST_ALIAS",
     "MAC_OPENSHELL_PROGRESS_INTERVAL",
+    "MAC_TASK_REPO_WORKTREE",
+    "MAC_TASK_REPO_ACCESS_MODE",
     "MAC_HERMES_PYTHON",
     "MAC_ALLOW_UNSANDBOXED_YOLO",
     "MAC_EXECUTOR_BACKEND",
@@ -68,8 +73,62 @@ def _clean(monkeypatch, tmp_path):
     # orchestration tests exercise the lifecycle. The precheck has its own tests.
     monkeypatch.setenv("MAC_OPENSHELL_ALLOW_NO_LANDLOCK", "1")
     monkeypatch.setenv("MAC_OPENSHELL_PROGRESS_INTERVAL", "0")
+    monkeypatch.setenv("MAC_OPENSHELL_REAP_ORPHANS", "0")
+    monkeypatch.setenv("MAC_OPENSHELL_RECONCILE_LEASES", "0")
+    # Hard test isolation: an accidental opt-in cannot reach the developer's
+    # live OpenShell gateway. Individual tests may replace these fakes with
+    # scenario-specific reports.
+    empty_gc_report = {
+        "scanned": 0,
+        "protected": 0,
+        "candidates": [],
+        "deleted": [],
+        "failures": [],
+    }
+    monkeypatch.setattr(
+        sandbox_gc,
+        "reconcile_stale_sandboxes",
+        lambda **_kwargs: dict(empty_gc_report),
+    )
+    monkeypatch.setattr(
+        sandbox_gc,
+        "reap_orphaned_task_sandboxes",
+        lambda **_kwargs: dict(empty_gc_report),
+    )
+    monkeypatch.setattr(
+        sandbox_gc,
+        "reconcile_task_sandboxes_from_lease_authority",
+        lambda **_kwargs: dict(empty_gc_report),
+    )
     monkeypatch.setattr(te, "_merge_sandbox_download_tree", lambda download_root, workspace: None)
     yield
+
+
+def test_background_reaper_uses_only_injected_fake_cli(monkeypatch):
+    calls = []
+
+    def fake_reap(**kwargs):
+        calls.append(kwargs)
+        return {
+            "scanned": 0,
+            "protected": 0,
+            "candidates": [],
+            "deleted": [],
+            "failures": [],
+        }
+
+    monkeypatch.setenv("MAC_OPENSHELL_REAP_ORPHANS", "1")
+    monkeypatch.setenv("MAC_OPENSHELL_BIN", "/test-only/fake-openshell")
+    monkeypatch.setattr(sandbox_gc, "reap_orphaned_task_sandboxes", fake_reap)
+
+    te._reap_orphaned_task_sandboxes_best_effort("task-test")
+
+    assert calls == [
+        {
+            "openshell_bin": "/test-only/fake-openshell",
+            "apply": True,
+        }
+    ]
 
 
 class _Result:
@@ -224,6 +283,19 @@ def test_build_labels_sandbox_for_safe_orphan_collection(create_argv):
 def test_build_marks_debug_kept_sandbox(monkeypatch):
     monkeypatch.setenv("MAC_OPENSHELL_KEEP", "1")
     assert "mac.keep=true" in _build()
+
+
+def test_build_marks_repository_sandbox_kept_until_wip_is_preserved(
+    monkeypatch,
+):
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", "/work/task-7/repo")
+    assert "mac.keep=true" in _build()
+
+
+def test_build_does_not_leak_read_only_report_sandbox(monkeypatch):
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", "/work/task-7/repo")
+    monkeypatch.setenv("MAC_TASK_REPO_ACCESS_MODE", "read_only")
+    assert "mac.keep=false" in _build()
 
 
 def test_build_uploads_workspace_to_sandbox_root(create_argv):
@@ -504,6 +576,105 @@ def test_invoke_sandboxed_harvests_then_tears_down_on_agent_failure(monkeypatch,
     assert '"runner_completed": false' in (
         workspace / "openshell-salvage.json"
     ).read_text(encoding="utf-8")
+
+
+def test_repository_failure_preserves_wip_before_delete(monkeypatch, tmp_path):
+    workspace = tmp_path / "task-7"
+    repo = workspace / "repo"
+    repo.mkdir(parents=True)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(repo))
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+    monkeypatch.setattr(te, "_sandbox_name", lambda: "sb-repo-failure")
+    monkeypatch.setattr(te, "_sandbox_gc_best_effort", lambda: None)
+    monkeypatch.setattr(te, "_reap_orphaned_task_sandboxes_best_effort", lambda *_: None)
+    monkeypatch.setattr(
+        te,
+        "_reconcile_task_sandboxes_from_lease_authority_best_effort",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(te, "_sandbox_download", lambda *_: True)
+    deleted = []
+    monkeypatch.setattr(
+        te, "_sandbox_delete", lambda name: deleted.append(name) or True
+    )
+    preserved = {
+        "schema": te.REPOSITORY_WIP_BUNDLE_SCHEMA,
+        "status": "preserved",
+        "salvage_head_sha": "a" * 40,
+        "bundle_sha256": "sha256:" + ("b" * 64),
+    }
+    monkeypatch.setattr(
+        te, "preserve_repository_wip_bundle", lambda *_: preserved
+    )
+    task = {
+        "id": "task-repo-failure",
+        "metadata": {"execution_contract": {"type": "repository"}},
+    }
+
+    result = te._run_sandboxed(
+        FakeRunner(rc=124),
+        _ARGV,
+        workspace,
+        task["id"],
+        {"task": task},
+    )
+
+    assert result.returncode == 124
+    assert deleted == ["sb-repo-failure"]
+    salvage = json.loads(
+        (workspace / "openshell-salvage.json").read_text(encoding="utf-8")
+    )
+    assert salvage["wip_preservation"] == preserved
+    assert salvage["kept"] is False
+
+
+def test_repository_failure_retains_sandbox_when_wip_preservation_fails(
+    monkeypatch, tmp_path
+):
+    workspace = tmp_path / "task-7"
+    repo = workspace / "repo"
+    repo.mkdir(parents=True)
+    monkeypatch.setenv("MAC_TASK_REPO_WORKTREE", str(repo))
+    monkeypatch.setattr(te, "_resolve_openshell_policy", lambda: "/policy.yaml")
+    monkeypatch.setattr(te, "_sandbox_name", lambda: "sb-repo-retained")
+    monkeypatch.setattr(te, "_sandbox_gc_best_effort", lambda: None)
+    monkeypatch.setattr(te, "_reap_orphaned_task_sandboxes_best_effort", lambda *_: None)
+    monkeypatch.setattr(
+        te,
+        "_reconcile_task_sandboxes_from_lease_authority_best_effort",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(te, "_sandbox_download", lambda *_: True)
+    deleted = []
+    monkeypatch.setattr(
+        te, "_sandbox_delete", lambda name: deleted.append(name) or True
+    )
+
+    def refuse_preservation(*_args):
+        raise te.PreservationMissing("bundle verification failed")
+
+    monkeypatch.setattr(te, "preserve_repository_wip_bundle", refuse_preservation)
+    task = {
+        "id": "task-repo-failure",
+        "metadata": {"execution_contract": {"type": "repository"}},
+    }
+
+    result = te._run_sandboxed(
+        FakeRunner(rc=124),
+        _ARGV,
+        workspace,
+        task["id"],
+        {"task": task},
+    )
+
+    assert result.returncode == 124
+    assert deleted == []
+    salvage = json.loads(
+        (workspace / "openshell-salvage.json").read_text(encoding="utf-8")
+    )
+    assert salvage["kept"] is True
+    assert salvage["wip_preservation"]["status"] == "failed"
+    assert "bundle verification failed" in salvage["wip_preservation"]["error"]
 
 
 def test_invoke_sandboxed_keep_skips_delete(monkeypatch, tmp_path):

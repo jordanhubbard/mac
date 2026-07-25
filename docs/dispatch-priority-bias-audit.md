@@ -1,5 +1,12 @@
 # Dispatch priority bias ordering audit
 
+> Historical audit, amended 2026-07-25. The original priority/FIFO analysis
+> below remains useful, but dispatch now also applies a work-conserving class
+> lane and bounded due-time aging. `urgent` and `recovery` outrank `normal`,
+> while `background` yields; no worker is held idle when the higher lanes are
+> empty. The candidate scan includes an explicit urgent/recovery window, and
+> `task show` exposes the resolved class, age bonus, and due bonus.
+
 Ground-truth finding for the parent repair
 (`task_repair_6cd69ae5474dfb0f601ad5cd`). It traces how task-dispatch selection
 orders by priority, whether a distinct "priority bias" concept exists, and where
@@ -29,20 +36,24 @@ The store defines the `priority` column and the `priority DESC, created_at`
 indexes but issues **no** dispatch-time `ORDER BY priority` query itself. The
 authoritative selection order is computed in `src/mac/services.py`:
 
-- `_dispatch_candidate_tasks` reads a bounded candidate set as the union of two
+- `_dispatch_candidate_tasks` reads a bounded candidate set as the union of
   windows over open, unowned, unleased tasks:
   `ORDER BY priority DESC, created_at, id LIMIT 500` (the hot high-priority
   window) unioned with `ORDER BY created_at, id LIMIT 500` (the oldest window,
   so an ancient low-priority task can still enter the scoring pass when the
-  priority window is saturated). De-duplicated by id.
+  priority window is saturated), plus an explicit `urgent`/`recovery` metadata
+  window. De-duplicated by id.
 - `_dispatch_task_sort_key` is the real comparator. It returns the tuple
   `(-effective_priority, -order_signal, created_at, id)` where
-  `effective_priority = priority + age_bonus`. Because the sort is ascending,
+  `effective_priority = class_stride + priority + age_bonus + due_bonus`.
+  Because the sort is ascending,
   negating the first two fields surfaces the higher priority and higher
   order signal first; `created_at` then `id` are ascending fallbacks (FIFO,
   then stable id).
 - `_dispatch_priority_age_bonus` adds `floor(age_seconds / step)` priority
   points, `step = MAC_DISPATCH_PRIORITY_AGING_SECONDS` (default 24h, floor 60s).
+- `_dispatch_due_bonus` adds a bounded bonus after an optional `due_at` or
+  `deadline_at` passes (default one point per four hours, capped at 24).
 - `_dispatch_ordered_tasks` groups candidates by tenant, and
   `_interleave_tasks_by_project` round-robins each tenant's projects; within a
   project `_rotate_by_page_prefix` buckets by the leading
@@ -51,8 +62,9 @@ authoritative selection order is computed in `src/mac/services.py`:
   `_dispatch_task_sort_key` order, and single-bucket / single-project groups are
   no-ops, so the head still leads on `(priority, age)`.
 
-Effective tie-break precedence: **effective priority (priority + age bonus) →
-work-package order signal → created_at (oldest first) → id**, wrapped in
+Effective tie-break precedence: **dispatch class → effective priority
+(priority + age bonus + due bonus) → work-package order signal → created_at
+(oldest first) → id**, wrapped in
 tenant/project/page-prefix fairness round-robins that only reorder *across*
 groups, never within a same-key group.
 

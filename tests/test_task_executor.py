@@ -892,11 +892,25 @@ def test_clean_failed_agent_skips_repository_finalizer_but_harvests(tmp_path, mo
     monkeypatch.setattr(te, "_ensure_landlock_or_fail", lambda: None)
     monkeypatch.setattr(te, "_sandbox_name", lambda: "sb-clean-failure")
     monkeypatch.setattr(te, "_sandbox_gc_best_effort", lambda: None)
+    monkeypatch.setattr(te, "_reap_orphaned_task_sandboxes_best_effort", lambda *_: None)
+    monkeypatch.setattr(
+        te,
+        "_reconcile_task_sandboxes_from_lease_authority_best_effort",
+        lambda *_: None,
+    )
     harvested = []
     deleted = []
     telemetry = []
     monkeypatch.setattr(te, "_sandbox_download", lambda *args: harvested.append(args) or True)
     monkeypatch.setattr(te, "_sandbox_delete", lambda name: deleted.append(name) or True)
+    monkeypatch.setattr(
+        te,
+        "preserve_repository_wip_bundle",
+        lambda *_: {
+            "schema": te.REPOSITORY_WIP_BUNDLE_SCHEMA,
+            "status": "no_changes",
+        },
+    )
     monkeypatch.setattr(
         te,
         "_sandbox_run_repository_verification",
@@ -1615,6 +1629,72 @@ def test_recall_includes_structured_common_fleet_learning(monkeypatch):
 
 def _git(cwd, *args):
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_preserve_repository_wip_bundle_captures_clean_and_dirty_state(
+    tmp_path, dirty
+):
+    workspace = tmp_path / "task"
+    repo = workspace / "repo"
+    repo.mkdir(parents=True)
+    assert _git(repo, "init", "-q").returncode == 0
+    assert _git(repo, "config", "user.email", "tests@example.invalid").returncode == 0
+    assert _git(repo, "config", "user.name", "MAC tests").returncode == 0
+    (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+    assert _git(repo, "add", "-A").returncode == 0
+    assert _git(repo, "commit", "-qm", "base").returncode == 0
+    base_sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    if dirty:
+        (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+        (repo / "new.txt").write_text("new\n", encoding="utf-8")
+    else:
+        (repo / "tracked.txt").write_text("committed\n", encoding="utf-8")
+        assert _git(repo, "add", "-A").returncode == 0
+        assert _git(repo, "commit", "-qm", "agent commit").returncode == 0
+
+    context = {
+        "repository_worktree": str(repo),
+        "repository_base_sha": base_sha,
+        "repository_branch": "mac/task-test",
+        "repository_lease_id": "lease-test",
+    }
+    (workspace / "repository-worktree.json").write_text(
+        json.dumps(context), encoding="utf-8"
+    )
+    before_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    before_status = _git(repo, "status", "--porcelain=v1").stdout
+    before_cached = _git(repo, "diff", "--cached", "--binary").stdout
+
+    result = te.preserve_repository_wip_bundle(
+        workspace,
+        {"id": "task-test", "metadata": {}},
+    )
+
+    assert result["schema"] == te.REPOSITORY_WIP_BUNDLE_SCHEMA
+    assert result["status"] == "preserved"
+    assert result["base_sha"] == base_sha
+    assert result["source_head_sha"] == before_head
+    assert result["dirty"] is dirty
+    bundle = workspace / result["bundle_name"]
+    assert bundle.is_file()
+    assert result["bundle_sha256"].startswith("sha256:")
+    assert result["bundle_size_bytes"] == bundle.stat().st_size
+    assert _git(repo, "bundle", "verify", str(bundle)).returncode == 0
+    heads = _git(repo, "bundle", "list-heads", str(bundle)).stdout
+    assert result["salvage_head_sha"] in heads
+    assert result["bundle_ref"] in heads
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == before_head
+    assert _git(repo, "status", "--porcelain=v1").stdout == before_status
+    assert _git(repo, "diff", "--cached", "--binary").stdout == before_cached
+    assert _git(repo, "show-ref", result["bundle_ref"]).returncode == 1
+    manifest = json.loads(
+        (workspace / te.REPOSITORY_WIP_MANIFEST_FILENAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest == result
 
 
 def _install_fake_codegraph(tmp_path: Path, monkeypatch) -> Path:
