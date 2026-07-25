@@ -22,6 +22,17 @@ the agent's current `target` from that file first. Do not assume a hostname from
 the agent name, local SSH aliases, known_hosts entries, old fleet backups, hub
 history, or prior conversation context; those can be stale after host swaps.
 
+For some provider-managed workers, `$HOME/.local/bin/hgx` is also a direct SSH
+transport. Use it only when that executable is present and `hgx list` returns a
+session relevant to the requested fleet work. Resolve duplicate or recreated
+workers by immutable HGX session ID, then use `hgx ssh <session-id>` rather than
+guessing from a display name. When working interactively, `hgx login` may be run
+to authenticate the user before retrying `hgx list`; do not start an interactive
+login flow from unattended automation. HGX access supplements the registered
+target in `~/.mac/fleets.yaml`; reconcile any replacement endpoint and agent
+identity back into the fleet registry instead of allowing the two views to
+silently diverge.
+
 ## Quick Reference
 
 ```bash

@@ -1,6 +1,6 @@
 ---
 name: setup-mac-fleet
-description: Use when a user asks to set up, bootstrap, deploy, or configure mac agents or a fleet — including how to deploy onto bare-metal, virtual-machine, or containerized agents. Runs the first-time setup wizard, writes a home-scoped multi-fleet registry, selects the right supervisor (systemd / launchd / supervisord) and SSH transport (direct / Tailscale / Headscale / bastion ProxyJump) per host type, and keeps fleet-specific data out of Git.
+description: Use when a user asks to set up, bootstrap, deploy, access, or configure mac agents or a fleet — including how to deploy onto bare-metal, virtual-machine, containerized, or provider-managed HGX agents. Runs the first-time setup wizard, writes a home-scoped multi-fleet registry, selects the right supervisor (systemd / launchd / supervisord) and SSH transport (direct / HGX / Tailscale / Headscale / bastion ProxyJump) per host type, and keeps fleet-specific data out of Git.
 ---
 
 # Setup Mac Fleet
@@ -77,6 +77,28 @@ agent onto a specific host type (bare metal, VM, or container).
 
 5. If asked to inspect or edit the fleet later, edit
    `~/.mac/fleets.yaml`, not `deploy/fleet/config.yaml`.
+
+## HGX direct worker access
+
+Treat HGX as an additional direct SSH path for provider-managed workers, not as
+an assumed dependency:
+
+1. Confirm `$HOME/.local/bin/hgx` is present and executable.
+2. Run `$HOME/.local/bin/hgx list` and use HGX only when it returns a worker
+   relevant to the requested fleet operation.
+3. Resolve the worker by immutable HGX session ID, especially when display
+   names are duplicated or an instance has been recreated.
+4. Connect with `$HOME/.local/bin/hgx ssh <session-id>`.
+
+When working interactively and HGX is not authenticated, run
+`$HOME/.local/bin/hgx login`, then retry `hgx list`. Do not launch that
+interactive login flow from unattended automation; report the authentication
+requirement instead.
+
+HGX does not replace `~/.mac/fleets.yaml` as the registered MAC topology. After
+using HGX to recover or replace a worker, reconcile its endpoint and attested
+agent identity into the fleet registry so later deploy and SSH operations do
+not use stale routing.
 
 ## Agent host types
 
