@@ -188,7 +188,6 @@ class ActionEventService:
         conn: Any,
         event: ObservabilityEvent,
     ) -> Optional[ActionEvent]:
-        detail = ensure_json_object(event.detail)
         actor = str(event.source or "mac")
         outcome = "success"
         if event.level in {"error", "critical"}:
@@ -205,6 +204,17 @@ class ActionEventService:
             subject_id=event.subject_id,
             outcome=outcome,
             severity=event.level,
+            # AMANALAP ("as little as necessary"): store only a REFERENCE to the
+            # source observability row, never a re-embedded copy of its `detail`
+            # blob. The full detail already lives in observability_events.detail
+            # under the same telemetry retention window and is recoverable by
+            # joining on observability_id. Re-embedding it here made
+            # action_events a duplicate superset of observability_events — the
+            # firehose that grew the hub mac.db to 16GB. No reader extracts
+            # action_events.attributes.detail: OTLP export (_otel_attributes)
+            # projects typed columns only, and dream_scanner also scans
+            # observability_events directly, so dropping the copy loses no
+            # signal while halving this table's write volume and row size.
             attributes={
                 "schema": ACTION_EVENT_SCHEMA,
                 "observability_id": event.id,
@@ -214,7 +224,6 @@ class ActionEventService:
                 "source": event.source,
                 "value": event.value,
                 "unit": event.unit,
-                "detail": detail,
             },
             redaction_state="redacted",
             conn=conn,
