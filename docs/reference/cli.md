@@ -9,13 +9,13 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 $ mac --help
 usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
-           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
            ...
 
 Multi-agent coordinator control plane
 
 positional arguments:
-  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
     diagnostics         run read-only control-plane health checks
     init                initialize the SQLite store
     config              configuration helpers
@@ -47,6 +47,7 @@ positional arguments:
     optimizer           autonomous scientific policy optimization
     mood                agent mood overlays (agents self-report; operators
                         query)
+    dream               dream-cycle learning maintenance
     nap                 agent nap schedule and lifecycle (daily memory
                         consolidation)
     dispatch            dispatcher commands
@@ -681,6 +682,21 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+```
+
+## mac dream
+
+```console
+$ mac dream --help
+usage: mac dream [-h] {import-logs} ...
+
+positional arguments:
+  {import-logs}
+    import-logs  merge orphaned ~/.hermes/dream_logs reports into durable
+                 memory
+
+options:
+  -h, --help     show this help message and exit
 ```
 
 ## mac nap

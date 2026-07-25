@@ -1512,8 +1512,8 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/dispatch.py",
-      "src/mac/ledger_backup.py",
       "src/mac/ledger_backup_scheduler.py",
+      "src/mac/mac_paths.py",
       "src/mac/router_service.py",
       "src/mac/store.py",
       "src/mac/worker.py",
@@ -2174,7 +2174,7 @@
     "sources": [
       "deploy/deploy-mac-fleet.sh",
       "scripts/purge-dead-tokenhub-keys.sh",
-      "src/mac/dispatch.py"
+      "src/mac/mac_paths.py"
     ],
     "type": "str"
   },
@@ -4365,6 +4365,18 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy worker claim only canary tasks.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS",
+    "retired": false,
+    "sources": [
+      "deploy/deploy-mac-fleet.sh",
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy worker credential agent id.",
     "family": "deployment",
     "name": "MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID",
@@ -4479,18 +4491,6 @@
     "description": "Deployment setting: deploy worker required metadata.",
     "family": "deployment",
     "name": "MAC_DEPLOY_WORKER_REQUIRED_METADATA",
-    "retired": false,
-    "sources": [
-      "deploy/deploy-mac-fleet.sh",
-      "deploy/fleet-node-install.sh"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Deployment setting: deploy worker require canary.",
-    "family": "deployment",
-    "name": "MAC_DEPLOY_WORKER_REQUIRE_CANARY",
     "retired": false,
     "sources": [
       "deploy/deploy-mac-fleet.sh",
@@ -4924,7 +4924,7 @@
       "src/mac/fleet_ssh.py",
       "src/mac/hermes_config_surface.py",
       "src/mac/ide_launcher.py",
-      "src/mac/openshell_reconcile.py",
+      "src/mac/mac_paths.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -5497,16 +5497,12 @@
       "deploy/openclaw/install-openclaw-gateway.sh",
       "deploy/openshell/bootstrap-openshell.sh",
       "src/mac/api.py",
-      "src/mac/client_principals.py",
-      "src/mac/executor_sandbox.py",
       "src/mac/hermes_runtime.py",
       "src/mac/ledger_backup_scheduler.py",
+      "src/mac/mac_paths.py",
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
-      "src/mac/services.py",
-      "src/mac/worker.py",
-      "src/mac/worker_credentials.py",
-      "src/mac/worker_runtime_deps.py"
+      "src/mac/services.py"
     ],
     "type": "str"
   },
@@ -5875,7 +5871,7 @@
       "deploy/install-agent-journal-service.sh",
       "deploy/systemd/mac-agent-journal.service",
       "src/mac/cli.py",
-      "src/mac/journal.py"
+      "src/mac/mac_paths.py"
     ],
     "type": "str"
   },
@@ -7260,7 +7256,8 @@
     "name": "MAC_OPENCLAW_HOST_DIR",
     "retired": false,
     "sources": [
-      "deploy/openclaw/install-openclaw-gateway.sh"
+      "deploy/openclaw/install-openclaw-gateway.sh",
+      "src/mac/mac_paths.py"
     ],
     "type": "str"
   },
@@ -12476,6 +12473,19 @@
   },
   {
     "default": null,
+    "description": "Worker setting: worker claim only canary tasks.",
+    "family": "worker",
+    "name": "MAC_WORKER_CLAIM_ONLY_CANARY_TASKS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh",
+      "src/mac/deploy_env.py",
+      "src/mac/worker.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Worker setting: worker coding route probe interval seconds.",
     "family": "worker",
     "name": "MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS",
@@ -12815,19 +12825,6 @@
     "description": "Worker setting: worker required metadata.",
     "family": "worker",
     "name": "MAC_WORKER_REQUIRED_METADATA",
-    "retired": false,
-    "sources": [
-      "deploy/fleet-node-install.sh",
-      "src/mac/deploy_env.py",
-      "src/mac/worker.py"
-    ],
-    "type": "bool"
-  },
-  {
-    "default": null,
-    "description": "Worker setting: worker require canary.",
-    "family": "worker",
-    "name": "MAC_WORKER_REQUIRE_CANARY",
     "retired": false,
     "sources": [
       "deploy/fleet-node-install.sh",

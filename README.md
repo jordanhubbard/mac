@@ -674,14 +674,14 @@ mac-agent --url http://hub.example.internal:8789 --register --agent-name worker-
     --hostname worker-1.local --capabilities python,ops,review \
     --resources '{"capacity":2}' --heartbeat-only
 mac-agent --url http://hub.example.internal:8789 --register --agent-name worker-1 \
-    --capabilities python,ops,review --allowed-projects mac-canary --require-canary \
+    --capabilities python,ops,review --allowed-projects mac-canary --claim-only-canary-tasks \
     --dry-run-claim
 mac-agent --url http://hub.example.internal:8789 --agent-id agent_... \
     --workspace ~/.mac-agent/workspaces --allowed-projects mac-canary \
-    --require-canary --executor ~/.mac/bin/mac-hermes-task-executor
+    --claim-only-canary-tasks --executor ~/.mac/bin/mac-hermes-task-executor
 mac-agent --url http://hub.example.internal:8789 --register --agent-name worker-1 \
     --capabilities python,ops,review --loop --workspace ~/.mac-agent/workspaces \
-    --allowed-projects mac-canary --require-canary \
+    --allowed-projects mac-canary --claim-only-canary-tasks \
     --executor ~/.mac/bin/mac-hermes-task-executor
 
 # Typed AgentBus: durable ordered content chunks; this is transport, not exec.

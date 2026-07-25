@@ -28,10 +28,10 @@ def test_resolve_gateway_model_materializes_default():
 def test_build_agent_never_writes_blank_model():
     m = _load()
     blank = m.build_agent(name="rocky", target="jkh@h", os_kind="linux", model="",
-                          supervisor="systemd", mode="loop", require_canary=False)
+                          supervisor="systemd", mode="loop", claim_only_canary_tasks=False)
     assert blank["hermes"]["gateway_model"] == m.DEFAULT_GATEWAY_MODEL
     explicit = m.build_agent(name="x", target="t", os_kind="linux", model="custom/y",
-                             supervisor="systemd", mode="loop", require_canary=False)
+                             supervisor="systemd", mode="loop", claim_only_canary_tasks=False)
     assert explicit["hermes"]["gateway_model"] == "custom/y"
 
 

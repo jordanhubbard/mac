@@ -187,6 +187,19 @@ def test_worker_main_never_rotates_missing_or_invalid_attestation_keys(
             )
 
 
+def test_worker_canary_claim_filter_is_explicit_and_defaults_off():
+    parser = worker.build_parser()
+    assert parser.parse_args(["--agent-id", "agent_test"]).claim_only_canary_tasks is False
+    assert (
+        parser.parse_args(
+            ["--agent-id", "agent_test", "--claim-only-canary-tasks"]
+        ).claim_only_canary_tasks
+        is True
+    )
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--agent-id", "agent_test", "--require-canary"])
+
+
 def test_worker_main_dry_run_and_executor_modes(worker_main, tmp_path, capsys):
     assert worker.main(
         [
@@ -198,7 +211,7 @@ def test_worker_main_dry_run_and_executor_modes(worker_main, tmp_path, capsys):
             "one,two",
             "--required-metadata",
             '{"canary": true}',
-            "--require-canary",
+            "--claim-only-canary-tasks",
             "--disable-agentbus-control",
             "--self-update-repo",
             str(tmp_path),
@@ -209,6 +222,7 @@ def test_worker_main_dry_run_and_executor_modes(worker_main, tmp_path, capsys):
     instance = FakeWorker.instances[-1]
     assert instance.kwargs["allowed_projects"] == ["one", "two"]
     assert instance.kwargs["required_metadata"] == {"canary": True}
+    assert instance.kwargs["claim_only_canary_tasks"] is True
     assert instance.kwargs["agentbus_control_enabled"] is False
 
     FakeWorker.run_status = "self_update_restart"

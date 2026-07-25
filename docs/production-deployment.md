@@ -706,7 +706,7 @@ candidates without creating leases:
 
 ```console
 MAC_DEPLOY_WORKER_MODE=dry-run
-MAC_DEPLOY_WORKER_REQUIRE_CANARY=1
+MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS=1
 MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=mac-canary
 ```
 
@@ -720,7 +720,7 @@ To enable executor-backed claiming from deploy config, set:
 ```console
 MAC_DEPLOY_WORKER_MODE=loop
 MAC_DEPLOY_WORKER_CAPABILITIES=ops,python,hermes,review
-MAC_DEPLOY_WORKER_REQUIRE_CANARY=1
+MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS=1
 MAC_DEPLOY_WORKER_ALLOWED_PROJECTS=mac-canary
 ```
 
@@ -745,9 +745,10 @@ attestation key into `~/.mac/mac.env`; if an older deploy missed that one-time
 key, the service rotates a replacement before it signs new evidence. Rotation
 is explicit recovery behavior and invalidates old signatures from that agent.
 
-Loop mode is canary-gated by default. To make a worker eligible for real
-migrated work, explicitly set `MAC_DEPLOY_WORKER_REQUIRE_CANARY=0` and narrow
-the blast radius with project or metadata filters first.
+Loop mode claims ordinary eligible work by default. Set
+`MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS=1` only for a temporary
+qualification lane in which the worker must reject every task that is not
+explicitly canary-marked. Clear it immediately after qualification.
 
 ## Legacy Beads Migration And Repository Registry
 

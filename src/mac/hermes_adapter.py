@@ -432,7 +432,7 @@ class HermesMacAdapter:
         lease_seconds: int = 900,
         allowed_projects: Sequence[str] = (),
         required_metadata: Optional[JsonDict] = None,
-        require_canary: bool = False,
+        claim_only_canary_tasks: bool = False,
         dry_run: bool = False,
     ) -> Optional[JsonDict]:
         return self.client.post(
@@ -441,7 +441,7 @@ class HermesMacAdapter:
                 "lease_seconds": int(lease_seconds),
                 "allowed_projects": list(allowed_projects),
                 "required_metadata": _sanitize_json_object(required_metadata or {}),
-                "require_canary": require_canary,
+                "claim_only_canary_tasks": claim_only_canary_tasks,
                 "dry_run": dry_run,
             },
         )
@@ -1055,7 +1055,7 @@ def _cmd_claim_next(args: argparse.Namespace) -> None:
             lease_seconds=args.lease_seconds,
             allowed_projects=args.allowed_project,
             required_metadata=_json_arg(args.required_metadata, {}),
-            require_canary=args.require_canary,
+            claim_only_canary_tasks=args.claim_only_canary_tasks,
             dry_run=args.dry_run,
         )
     )
@@ -1414,7 +1414,7 @@ def build_parser() -> argparse.ArgumentParser:
     claim_next.add_argument("--lease-seconds", type=int, default=900)
     claim_next.add_argument("--allowed-project", action="append", default=[])
     claim_next.add_argument("--required-metadata", default="{}")
-    claim_next.add_argument("--require-canary", action="store_true")
+    claim_next.add_argument("--claim-only-canary-tasks", action="store_true")
     claim_next.add_argument("--dry-run", action="store_true")
     claim_next.set_defaults(func=_cmd_claim_next)
 

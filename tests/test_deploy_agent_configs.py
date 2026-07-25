@@ -134,7 +134,7 @@ def deploy_env_config(
             capabilities=DEFAULT_WORKER_CAPABILITIES,
             allowed_projects="",
             required_metadata="",
-            require_canary="1",
+            claim_only_canary_tasks="1",
         ),
         services=SharedServicesConfig(
             qdrant_url="",

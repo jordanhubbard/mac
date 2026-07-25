@@ -156,7 +156,7 @@ def test_every_remote_dispatch_method_has_a_transport_contract(
         assert (
             "local-only" in message
             or "no HTTP endpoint" in message
-            or "builds the nap vector writer on the hub" in message
+            or "vector writer on the hub" in message
         )
         assert not client.calls
     else:

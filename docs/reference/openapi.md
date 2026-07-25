@@ -158,6 +158,7 @@ request and response definitions.
 | `GET` | `/dispatch/dead-letters` | Dead Letters |
 | `GET` | `/dispatch/dead-letters/page` | Dead Letters Page |
 | `POST` | `/dispatch/tick` | Dispatch Tick |
+| `POST` | `/dream/import-logs` | Import Dream Logs |
 | `GET` | `/environments` | List Environments |
 | `POST` | `/environments` | Register Environment |
 | `GET` | `/environments/{env_id}` | Get Environment |

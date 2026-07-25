@@ -822,7 +822,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         poll_interval_seconds: float = 1.0,
         allowed_projects: Optional[List[str]] = None,
         required_metadata: Optional[JsonDict] = None,
-        require_canary: bool = False,
+        claim_only_canary_tasks: bool = False,
         lease_renew_interval_seconds: Optional[float] = None,
         agentbus_control_enabled: bool = True,
         self_update_repo: Optional[Path] = None,
@@ -857,7 +857,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self.poll_interval_seconds = float(poll_interval_seconds)
         self.allowed_projects = list(allowed_projects or [])
         self.required_metadata = dict(required_metadata or {})
-        self.require_canary = bool(require_canary)
+        self.claim_only_canary_tasks = bool(claim_only_canary_tasks)
         self.lease_renew_interval_seconds = lease_renew_interval_seconds
         self.agentbus_control_enabled = bool(agentbus_control_enabled)
         self.self_update_repo = (self_update_repo or _default_self_update_repo()).expanduser().resolve()
@@ -3485,7 +3485,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             "lease_seconds": self.lease_seconds,
             "allowed_projects": self.allowed_projects,
             "required_metadata": self.required_metadata,
-            "require_canary": self.require_canary,
+            "claim_only_canary_tasks": self.claim_only_canary_tasks,
             "dry_run": dry_run,
         }
 
@@ -3493,7 +3493,7 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         return {
             "allowed_projects": self.allowed_projects,
             "required_metadata": self.required_metadata,
-            "require_canary": self.require_canary,
+            "claim_only_canary_tasks": self.claim_only_canary_tasks,
         }
 
     def _observe_policy_once(self) -> None:
@@ -7839,9 +7839,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON object of top-level task metadata key/value pairs required before claiming",
     )
     parser.add_argument(
-        "--require-canary",
+        "--claim-only-canary-tasks",
         action="store_true",
-        default=_env_bool("MAC_WORKER_REQUIRE_CANARY", False),
+        default=_env_bool("MAC_WORKER_CLAIM_ONLY_CANARY_TASKS", False),
         help="claim only tasks with metadata.canary, metadata.mac_canary, or metadata.worker_canary true",
     )
     parser.add_argument(
@@ -8065,7 +8065,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 poll_interval_seconds=args.poll_interval,
                 allowed_projects=allowed_projects,
                 required_metadata=required_metadata,
-                require_canary=args.require_canary,
+                claim_only_canary_tasks=args.claim_only_canary_tasks,
                 agentbus_control_enabled=not args.disable_agentbus_control,
                 self_update_repo=Path(args.self_update_repo).expanduser()
                 if args.self_update_repo
@@ -8086,7 +8086,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             poll_interval_seconds=args.poll_interval,
             allowed_projects=allowed_projects,
             required_metadata=required_metadata,
-            require_canary=args.require_canary,
+            claim_only_canary_tasks=args.claim_only_canary_tasks,
             agentbus_control_enabled=not args.disable_agentbus_control,
             self_update_repo=Path(args.self_update_repo).expanduser()
             if args.self_update_repo

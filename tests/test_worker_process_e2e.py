@@ -184,7 +184,7 @@ def test_real_hub_and_mac_agent_process_execute_canary_without_touching_normal_t
             str(tmp_path / "attestation.env"),
             "--allowed-projects",
             "mac-canary",
-            "--require-canary",
+            "--claim-only-canary-tasks",
             "--poll-interval",
             "0",
         ]

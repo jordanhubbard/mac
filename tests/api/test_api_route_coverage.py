@@ -2166,6 +2166,13 @@ edges:
             "created_by": "operator",
             "write": False,
         },
+        ("POST", "/dream/import-logs"): {
+            "dream_logs_dir": "/nonexistent-route-coverage-dream-logs",
+            "agent_id": ctx["agent_id"],
+            "created_by": "route-coverage",
+            "embed": False,
+            "dry_run": True,
+        },
         ("POST", "/integrations/findings"): {
             "source_kind": "repository",
             "source_id": "route-repo",

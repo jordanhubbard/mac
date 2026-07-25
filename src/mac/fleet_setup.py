@@ -277,7 +277,7 @@ def build_setup_plan(
                 "capabilities": _list(worker_defaults.get("capabilities")) or default_worker_capabilities(),
                 "allowed_projects": _str(worker_defaults.get("allowed_projects")),
                 "required_metadata": _str(worker_defaults.get("required_metadata")),
-                "require_canary": worker_defaults.get("require_canary", True),
+                "claim_only_canary_tasks": worker_defaults.get("claim_only_canary_tasks", False),
             },
             "qdrant": qdrant,
             "firecrawl": firecrawl,
@@ -478,9 +478,9 @@ def _agent_configs(
             "worker": {
                 "mode": _str(worker.get("mode") or worker_defaults.get("mode"))
                 or ("loop" if name == hub_name else "heartbeat"),
-                "require_canary": worker.get(
-                    "require_canary",
-                    False if name == hub_name else worker_defaults.get("require_canary", False),
+                "claim_only_canary_tasks": worker.get(
+                    "claim_only_canary_tasks",
+                    False if name == hub_name else worker_defaults.get("claim_only_canary_tasks", False),
                 ),
             },
         }

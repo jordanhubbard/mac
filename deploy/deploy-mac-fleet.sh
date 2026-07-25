@@ -1308,7 +1308,7 @@ for name in selected:
         worker_capabilities_field(worker.get("capabilities")),
         text_field(worker.get("allowed_projects")),
         text_field(worker.get("required_metadata")),
-        bool_field(worker.get("require_canary"), True),
+        bool_field(worker.get("claim_only_canary_tasks"), False),
         text_field(agent.get("supervisor") or defaults.get("supervisor") or "auto"),
         shared_services_manager,
         text_field(qdrant.get("url")),
@@ -7903,7 +7903,7 @@ validate_openshell_runtime_image_spec() {
 }
 
 deploy_host() {
-  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" already_prepared="${7:-0}" node_action="${8:-legacy-one-shot}" prerequisite_bundle="${9:-}" prerequisite_expectations="${10:-}" node_identity_sha256="${11:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required remote_archive remote_registry deploy_generation ssh_args ssh_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
+  local spec="$1" hub_token="${2:-}" hub_tunnel_pubkey="${3:-}" allow_degraded_services="${4:-0}" github_review_key_b64="${5:-}" direct_mesh_hub_flag="${6:-0}" already_prepared="${7:-0}" node_action="${8:-legacy-one-shot}" prerequisite_bundle="${9:-}" prerequisite_expectations="${10:-}" node_identity_sha256="${11:-}" agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_claim_only_canary_tasks supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required remote_archive remote_registry deploy_generation ssh_args ssh_target nvidia_api_key nvidia_api_base nvidia_base_url openai_api_key openai_base_url anthropic_api_key anthropic_base_url perplexity_api_key perplexity_base_url perplexity_api_base
   case "$node_action" in
     legacy-one-shot|arm-phase2|apply-phase2|finalize) ;;
     *) echo "ERROR: ${node_action}: unsupported deploy-host node action" >&2; return 2 ;;
@@ -7912,7 +7912,7 @@ deploy_host() {
   local staged_verifier="" typed_staged_bundle=0
   local reviewed_openshell_version reviewed_openshell_asset_sha
   local reviewed_openshell_cli_sha reviewed_openshell_receipt_sha
-  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_require_canary supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required <<<"$spec"
+  IFS='|' read -r agent target os home_channel gateway_model gateway_provider gateway_base_url hub_url bind_host worker_mode worker_capabilities worker_allowed_projects worker_required_metadata worker_claim_only_canary_tasks supervisor shared_services_manager qdrant_url qdrant_install qdrant_required qdrant_bind_addr qdrant_port qdrant_image qdrant_memory_limit fleet_name control_port qdrant_data_dir firecrawl_url firecrawl_install firecrawl_required firecrawl_bind_addr firecrawl_port network_provider network_install network_hostname_prefix tailscale_auth_key_env headscale_manage headscale_login_server headscale_health_url headscale_fleet_url headscale_preauth_key_source headscale_preauth_key_env headscale_port headscale_public_addr headscale_dns headscale_ip_prefix webdav_enabled webdav_install webdav_url webdav_bind_addr webdav_port webdav_root webdav_public_path hermes_surface_b64 openshell_required github_credentials_required <<<"$spec"
   deploy_generation="$(deployment_id_for_agent "$agent")"
   # The read-only cohort classifier is the authority for the exact reviewed
   # OpenShell CLI and receipt used by both phase 1 and the one-time installer's
@@ -8135,7 +8135,7 @@ PY
   add_remote_env MAC_DEPLOY_WORKER_CAPABILITIES "$worker_capabilities"
   add_remote_env MAC_DEPLOY_WORKER_ALLOWED_PROJECTS "$worker_allowed_projects"
   add_remote_env MAC_DEPLOY_WORKER_REQUIRED_METADATA "$worker_required_metadata"
-  add_remote_env MAC_DEPLOY_WORKER_REQUIRE_CANARY "$worker_require_canary"
+  add_remote_env MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS "$worker_claim_only_canary_tasks"
   # Preserve the caller's three-state intent: blank means keep an optional
   # node's existing OpenShell state, true bootstraps it, and explicit false
   # tears down stale deploy-managed state.  The independently derived required

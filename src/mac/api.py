@@ -1288,7 +1288,7 @@ class AgentClaimNextRequest(BaseModel):
     lease_seconds: int = 900
     allowed_projects: List[str] = Field(default_factory=list)
     required_metadata: Dict[str, Any] = Field(default_factory=dict)
-    require_canary: bool = False
+    claim_only_canary_tasks: bool = False
     dry_run: bool = False
     capabilities: List[str] = Field(default_factory=list)
 
@@ -7215,7 +7215,7 @@ def create_app(
             lease_seconds=body.lease_seconds,
             allowed_projects=body.allowed_projects,
             required_metadata=body.required_metadata,
-            require_canary=body.require_canary,
+            claim_only_canary_tasks=body.claim_only_canary_tasks,
             dry_run=body.dry_run,
             capabilities=body.capabilities,
             allow_package_linked=allow_package_linked,

@@ -18012,7 +18012,7 @@ class ControlPlane:
         lease_seconds: int = 900,
         allowed_projects: Optional[Iterable[str]] = None,
         required_metadata: Optional[Dict[str, Any]] = None,
-        require_canary: bool = False,
+        claim_only_canary_tasks: bool = False,
         dry_run: bool = False,
         capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
@@ -18024,7 +18024,7 @@ class ControlPlane:
             lease_seconds=lease_seconds,
             allowed_projects=allowed_projects,
             required_metadata=required_metadata,
-            require_canary=require_canary,
+            claim_only_canary_tasks=claim_only_canary_tasks,
             dry_run=dry_run,
             capabilities=capabilities,
             sync_beads=sync_beads,
@@ -18037,7 +18037,7 @@ class ControlPlane:
         lease_seconds: int = 900,
         allowed_projects: Optional[Iterable[str]] = None,
         required_metadata: Optional[Dict[str, Any]] = None,
-        require_canary: bool = False,
+        claim_only_canary_tasks: bool = False,
         dry_run: bool = False,
         capabilities: Optional[Iterable[str]] = None,
         sync_beads: bool = True,
@@ -18082,7 +18082,7 @@ class ControlPlane:
         policy = self._worker_claim_policy(
             allowed_projects=allowed_projects,
             required_metadata=required_metadata,
-            require_canary=require_canary,
+            claim_only_canary_tasks=claim_only_canary_tasks,
             dry_run=dry_run,
             capabilities=capabilities,
         )
@@ -23009,7 +23009,7 @@ class ControlPlane:
         self,
         allowed_projects: Optional[Iterable[str]],
         required_metadata: Optional[Dict[str, Any]],
-        require_canary: bool,
+        claim_only_canary_tasks: bool,
         dry_run: bool,
         capabilities: Optional[Iterable[str]] = None,
     ) -> JsonDict:
@@ -23022,7 +23022,7 @@ class ControlPlane:
                 }
             ),
             "required_metadata": ensure_json_object(required_metadata or {}),
-            "require_canary": bool(require_canary),
+            "claim_only_canary_tasks": bool(claim_only_canary_tasks),
             "dry_run": bool(dry_run),
             "capabilities": sorted(
                 {
@@ -23174,7 +23174,7 @@ class ControlPlane:
             if required and not required.issubset(capabilities):
                 return False, "capability_not_allowed"
         metadata = ensure_json_object(task.metadata)
-        if policy.get("require_canary") and not (
+        if policy.get("claim_only_canary_tasks") and not (
             metadata.get("canary") is True
             or metadata.get("mac_canary") is True
             or metadata.get("worker_canary") is True

@@ -370,6 +370,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_WEBDAV_URL` | str | consumer-defined | deployment | Deployment setting: deploy webdav url. |
 | `MAC_DEPLOY_WORKER_ALLOWED_PROJECTS` | str | consumer-defined | deployment | Deployment setting: deploy worker allowed projects. |
 | `MAC_DEPLOY_WORKER_CAPABILITIES` | str | consumer-defined | deployment | Deployment setting: deploy worker capabilities. |
+| `MAC_DEPLOY_WORKER_CLAIM_ONLY_CANARY_TASKS` | str | consumer-defined | deployment | Deployment setting: deploy worker claim only canary tasks. |
 | `MAC_DEPLOY_WORKER_CREDENTIAL_AGENT_ID` | str | consumer-defined | deployment | Deployment setting: deploy worker credential agent id. |
 | `MAC_DEPLOY_WORKER_CREDENTIAL_FINGERPRINT` | str | consumer-defined | deployment | Deployment setting: deploy worker credential fingerprint. |
 | `MAC_DEPLOY_WORKER_CREDENTIAL_ID` | str | consumer-defined | deployment | Deployment setting: deploy worker credential id. |
@@ -381,7 +382,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_WORKER_IDENTITY_ENFORCE` | str | consumer-defined | deployment | Deployment setting: deploy worker identity enforce. |
 | `MAC_DEPLOY_WORKER_MODE` | str | consumer-defined | deployment | Deployment setting: deploy worker mode. |
 | `MAC_DEPLOY_WORKER_REQUIRED_METADATA` | bool | consumer-defined | deployment | Deployment setting: deploy worker required metadata. |
-| `MAC_DEPLOY_WORKER_REQUIRE_CANARY` | bool | consumer-defined | deployment | Deployment setting: deploy worker require canary. |
 | `MAC_DEPLOY_WORKER_TOKEN` | str | consumer-defined | deployment | Deployment setting: deploy worker token. |
 | `MAC_DEPLOY_WORK_PACKAGE_BUNDLE_DIR` | str | consumer-defined | deployment | Deployment setting: deploy work package bundle dir. |
 | `MAC_DEPLOY_WORK_PACKAGE_LANDING_ENABLED` | bool | consumer-defined | deployment | Deployment setting: deploy work package landing enabled. |
@@ -1042,6 +1042,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_ALLOWED_PROJECTS` | str | consumer-defined | worker | Worker setting: worker allowed projects. |
 | `MAC_WORKER_CANCELLATION_POLL_SECONDS` | int | consumer-defined | worker | Worker setting: worker cancellation poll seconds. |
 | `MAC_WORKER_CAPABILITIES` | str | consumer-defined | worker | Worker setting: worker capabilities. |
+| `MAC_WORKER_CLAIM_ONLY_CANARY_TASKS` | str | consumer-defined | worker | Worker setting: worker claim only canary tasks. |
 | `MAC_WORKER_CODING_ROUTE_PROBE_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker coding route probe interval seconds. |
 | `MAC_WORKER_COMMAND_INVENTORY_INTERVAL_SECONDS` | int | consumer-defined | worker | Worker setting: worker command inventory interval seconds. |
 | `MAC_WORKER_COMMAND_INVENTORY_MAX` | int | consumer-defined | worker | Worker setting: worker command inventory max. |
@@ -1069,7 +1070,6 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_WORKER_REPOSITORY_BOOTSTRAP_TIMEOUT` | int | consumer-defined | worker | Worker setting: worker repository bootstrap timeout. |
 | `MAC_WORKER_REPOSITORY_TEST_TIMEOUT` | int | consumer-defined | worker | Worker setting: worker repository test timeout. |
 | `MAC_WORKER_REQUIRED_METADATA` | bool | consumer-defined | worker | Worker setting: worker required metadata. |
-| `MAC_WORKER_REQUIRE_CANARY` | bool | consumer-defined | worker | Worker setting: worker require canary. |
 | `MAC_WORKER_RESOURCES` | str | consumer-defined | worker | Worker setting: worker resources. |
 | `MAC_WORKER_RESOURCES_FILE` | str | consumer-defined | worker | Worker setting: worker resources file. |
 | `MAC_WORKER_RUNNING_DIGEST` | str | consumer-defined | worker | Worker setting: worker running digest. |

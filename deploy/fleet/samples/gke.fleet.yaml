@@ -50,7 +50,7 @@ defaults:
     gateway_model: <provider>/<model>
   worker:
     mode: loop
-    require_canary: false
+    claim_only_canary_tasks: false
 
 # In-cluster DNS only; no overlay network. The hub is reached over the stock
 # hub->spoke reverse tunnels rather than tailscale/headscale.

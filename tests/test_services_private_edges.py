@@ -55,7 +55,7 @@ def test_project_pause_and_worker_claim_policy_edges(monkeypatch) -> None:
     assert cp._task_matches_worker_claim_policy(task, {"capabilities": ["git"]}) == (
         False, "capability_not_allowed"
     )
-    assert cp._task_matches_worker_claim_policy(task, {"require_canary": True}) == (
+    assert cp._task_matches_worker_claim_policy(task, {"claim_only_canary_tasks": True}) == (
         False, "not_canary"
     )
     assert cp._task_matches_worker_claim_policy(task, {"required_metadata": {"tier": "gold"}}) == (
@@ -63,7 +63,7 @@ def test_project_pause_and_worker_claim_policy_edges(monkeypatch) -> None:
     )
     canary = replace(task, metadata={"worker_canary": True, "tier": "gold"})
     assert cp._task_matches_worker_claim_policy(
-        canary, {"require_canary": True, "required_metadata": {"tier": "gold"}}
+        canary, {"claim_only_canary_tasks": True, "required_metadata": {"tier": "gold"}}
     ) == (True, "matched")
 
 

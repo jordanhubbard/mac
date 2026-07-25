@@ -181,7 +181,7 @@ def build_agent(
     model: str,
     supervisor: str,
     mode: str,
-    require_canary: bool,
+    claim_only_canary_tasks: bool,
     control_bind_host: str = "",
 ) -> Dict[str, Any]:
     agent: Dict[str, Any] = {
@@ -194,7 +194,7 @@ def build_agent(
     if control_bind_host:
         agent["control_bind_host"] = control_bind_host
     agent["hermes"] = {"gateway_model": resolve_gateway_model(model)}
-    agent["worker"] = {"mode": mode, "require_canary": require_canary}
+    agent["worker"] = {"mode": mode, "claim_only_canary_tasks": claim_only_canary_tasks}
     return agent
 
 
@@ -374,7 +374,9 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
     home_channel = prompt("Slack home channel name without # (blank to skip)", default="")
     hub_model = prompt("Hub Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
     hub_worker_mode = prompt("Hub worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
-    hub_require_canary = prompt_bool("Require canary metadata on hub tasks?", default=False)
+    hub_claim_only_canary_tasks = prompt_bool(
+        "Claim only canary-marked tasks on the hub worker?", default=False
+    )
     qdrant_required = True
     print("Shared Qdrant memory readiness is mandatory.")
     qdrant_port_str = prompt("Qdrant port", default="6333")
@@ -528,7 +530,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
             model=hub_model,
             supervisor=supervisor,
             mode=hub_worker_mode,
-            require_canary=hub_require_canary,
+            claim_only_canary_tasks=hub_claim_only_canary_tasks,
             control_bind_host="0.0.0.0",
         )
     ]
@@ -544,7 +546,9 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
         model = prompt("Agent Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
         agent_supervisor = prompt("Agent supervisor", default=supervisor, choices=["auto", "systemd", "launchd", "supervisord"])
         mode = prompt("Agent worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
-        require_canary = prompt_bool("Require canary metadata on this agent?", default=False)
+        claim_only_canary_tasks = prompt_bool(
+            "Claim only canary-marked tasks on this agent?", default=False
+        )
         agents.append(
             build_agent(
                 name=name,
@@ -553,7 +557,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
                 model=model,
                 supervisor=agent_supervisor,
                 mode=mode,
-                require_canary=require_canary,
+                claim_only_canary_tasks=claim_only_canary_tasks,
             )
         )
 
@@ -576,7 +580,7 @@ def _setup_hub(args: argparse.Namespace, fleets_config: Path, env_file: Path, ru
                 "capabilities": _default_worker_capabilities(),
                 "allowed_projects": "",
                 "required_metadata": "",
-                "require_canary": True,
+                "claim_only_canary_tasks": False,
             },
             "qdrant": {
                 "install": "auto",
@@ -800,7 +804,9 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
     )
     agent_model = prompt("Worker Hermes model selector", default=DEFAULT_GATEWAY_MODEL)
     agent_mode = prompt("Worker mode", default="loop", choices=["heartbeat", "dry-run", "loop"])
-    require_canary = prompt_bool("Require canary metadata on this worker?", default=False)
+    claim_only_canary_tasks = prompt_bool(
+        "Claim only canary-marked tasks on this worker?", default=False
+    )
 
     new_agent = build_agent(
         name=agent_name,
@@ -809,7 +815,7 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
         model=agent_model,
         supervisor=agent_supervisor,
         mode=agent_mode,
-        require_canary=require_canary,
+        claim_only_canary_tasks=claim_only_canary_tasks,
     )
 
     if existing_fleet:
@@ -841,7 +847,7 @@ def _setup_worker(args: argparse.Namespace, fleets_config: Path, env_file: Path,
                     "capabilities": _default_worker_capabilities(),
                     "allowed_projects": "",
                     "required_metadata": "",
-                    "require_canary": True,
+                    "claim_only_canary_tasks": False,
                 },
                 "qdrant": {
                     "install": "none",
@@ -1101,7 +1107,7 @@ def main(argv: List[str]) -> int:
                     "capabilities": _default_worker_capabilities(),
                     "allowed_projects": "",
                     "required_metadata": "",
-                    "require_canary": True,
+                    "claim_only_canary_tasks": False,
                 },
                 "qdrant": {
                     "install": "auto",
@@ -1158,7 +1164,7 @@ def main(argv: List[str]) -> int:
                     model=args.hub_model,
                     supervisor=args.supervisor,
                     mode="loop",
-                    require_canary=False,
+                    claim_only_canary_tasks=False,
                     control_bind_host="0.0.0.0",
                 )
             ],

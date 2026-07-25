@@ -159,7 +159,7 @@ class WorkerConfig:
     capabilities: str
     allowed_projects: str
     required_metadata: str
-    require_canary: str
+    claim_only_canary_tasks: str
     # A worker-facing bearer is distinct from both the hub's local admin token
     # and the router credential.  The remaining fields are secret-free proof
     # material written beside it so heartbeats can attest the installed version.
@@ -520,7 +520,7 @@ def _worker_values(cfg: DeployEnvConfig, values: Mapping[str, str]) -> Dict[str,
         "MAC_WORKER_HOSTNAME": identity.agent,
         "MAC_WORKER_MODE": worker.mode,
         "MAC_WORKER_CAPABILITIES": worker.capabilities,
-        "MAC_WORKER_REQUIRE_CANARY": worker.require_canary,
+        "MAC_WORKER_CLAIM_ONLY_CANARY_TASKS": worker.claim_only_canary_tasks,
         "MAC_WORKER_ALLOWED_PROJECTS": worker.allowed_projects,
         "MAC_WORKER_REQUIRED_METADATA": worker.required_metadata,
     }
@@ -1230,7 +1230,7 @@ class LegacyDeployArgs:
     worker_capabilities: str
     worker_allowed_projects: str
     worker_required_metadata: str
-    worker_require_canary: str
+    worker_claim_only_canary_tasks: str
     agent: str
     supervisor_kind: str
     shared_services_manager: str
@@ -1293,7 +1293,7 @@ def config_from_legacy_args(args: Sequence[str], env: Mapping[str, str]) -> Depl
             capabilities=normalize_worker_capabilities(a.worker_capabilities),
             allowed_projects=a.worker_allowed_projects.strip(),
             required_metadata=a.worker_required_metadata.strip(),
-            require_canary=a.worker_require_canary.strip() or "1",
+            claim_only_canary_tasks=a.worker_claim_only_canary_tasks.strip() or "0",
             token=(env.get("MAC_DEPLOY_WORKER_TOKEN") or "").strip(),
             credential_id=(env.get("MAC_DEPLOY_WORKER_CREDENTIAL_ID") or "").strip(),
             credential_version=(

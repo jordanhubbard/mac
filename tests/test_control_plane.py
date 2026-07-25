@@ -4171,7 +4171,7 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
     dry_run = cp.claim_next_for_agent(
         worker.id,
         allowed_projects=["mac-canary"],
-        require_canary=True,
+        claim_only_canary_tasks=True,
         dry_run=True,
     )
 
@@ -4192,7 +4192,7 @@ def test_claim_next_dry_run_and_canary_policy_are_observed(cp):
     claimed = cp.claim_next_for_agent(
         worker.id,
         allowed_projects=["mac-canary"],
-        require_canary=True,
+        claim_only_canary_tasks=True,
     )
 
     assert claimed is not None
