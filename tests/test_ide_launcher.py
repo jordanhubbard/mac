@@ -7,6 +7,10 @@ import pytest
 
 from mac import ide_launcher
 
+# Point the fleet-registry lookup at a path that does not exist so prompt tests
+# stay hermetic regardless of the developer's real ``~/.mac/fleets.yaml``.
+_NO_FLEETS = {"MAC_FLEETS_CONFIG": "/nonexistent/mac-fleets.yaml"}
+
 
 def _profile(*, token: str = "profile-token", api_url: str = "http://127.0.0.1:48789"):
     return {
@@ -200,7 +204,7 @@ def test_interactive_prompt_selects_hub_without_changing_managed_auth() -> None:
 
     selected = ide_launcher.prompt_for_ide_connection(
         connection,
-        {},
+        _NO_FLEETS,
         interactive=True,
         input_fn=lambda prompt: prompts.append(prompt) or "192.0.2.10",
     )
@@ -218,6 +222,96 @@ def test_interactive_prompt_selects_hub_without_changing_managed_auth() -> None:
     )
 
 
+def _write_fleets(tmp_path, *, hub_url: str, control_port: int = 8789):
+    path = tmp_path / "fleets.yaml"
+    path.write_text(
+        "version: 1\n"
+        "fleets:\n"
+        "  rocky:\n"
+        "    default: true\n"
+        "    hub_url: %s\n"
+        "    control_port: %d\n" % (hub_url, control_port),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_prompt_default_seeds_hub_from_fleets_registry(tmp_path) -> None:
+    """The prompt default (and Enter) must come from ~/.mac/fleets.yaml, not the
+    profile's ephemeral loopback tunnel port."""
+    fleets = _write_fleets(tmp_path, hub_url="http://100.72.16.110:8789")
+    connection = ide_launcher.IdeConnection(
+        api_url="http://127.0.0.1:48789",  # stale per-launch SSH-tunnel port
+        token="profile-token",
+        source="client-profile:default",
+        profile="default",
+        hub_port=48789,
+    )
+    prompts: list[str] = []
+
+    # Pressing Enter accepts the fleet hub, preserving the managed token.
+    selected = ide_launcher.prompt_for_ide_connection(
+        connection,
+        {"MAC_FLEETS_CONFIG": str(fleets)},
+        interactive=True,
+        input_fn=lambda prompt: prompts.append(prompt) or "",
+    )
+    assert prompts == [
+        "Target hub host or IP "
+        "[Enter keeps http://100.72.16.110:8789; direct port 8789]: "
+    ]
+    assert selected == ide_launcher.IdeConnection(
+        api_url="http://100.72.16.110:8789",
+        token="profile-token",
+        source="client-profile:default",
+        profile="default",
+        hub_port=8789,
+    )
+
+
+def test_prompt_bare_host_uses_fleet_control_port(tmp_path) -> None:
+    fleets = _write_fleets(
+        tmp_path, hub_url="http://100.72.16.110:9443", control_port=9443
+    )
+    connection = ide_launcher.IdeConnection(
+        api_url="http://127.0.0.1:48789", hub_port=48789
+    )
+
+    selected = ide_launcher.prompt_for_ide_connection(
+        connection,
+        {"MAC_FLEETS_CONFIG": str(fleets)},
+        interactive=True,
+        input_fn=lambda _prompt: "hub.internal",
+    )
+
+    assert selected.api_url == "http://hub.internal:9443"
+
+
+def test_prompt_falls_back_when_fleet_hub_url_missing(tmp_path) -> None:
+    fleets = tmp_path / "fleets.yaml"
+    fleets.write_text(
+        "version: 1\nfleets:\n  rocky:\n    default: true\n    control_port: 8789\n",
+        encoding="utf-8",
+    )
+    connection = ide_launcher.IdeConnection(
+        api_url="http://127.0.0.1:48789", hub_port=8789
+    )
+    prompts: list[str] = []
+
+    selected = ide_launcher.prompt_for_ide_connection(
+        connection,
+        {"MAC_FLEETS_CONFIG": str(fleets)},
+        interactive=True,
+        input_fn=lambda prompt: prompts.append(prompt) or "",
+    )
+
+    assert prompts == [
+        "Target hub host or IP "
+        "[Enter keeps http://127.0.0.1:48789; direct port 8789]: "
+    ]
+    assert selected is connection
+
+
 def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
     capsys,
 ) -> None:
@@ -226,7 +320,7 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
 
     selected = ide_launcher.prompt_for_ide_connection(
         connection,
-        {},
+        _NO_FLEETS,
         interactive=True,
         input_fn=lambda _prompt: next(answers),
     )
@@ -236,7 +330,7 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
     assert (
         ide_launcher.prompt_for_ide_connection(
             connection,
-            {"IDE_API_URL": "http://explicit.example:8789"},
+            {**_NO_FLEETS, "IDE_API_URL": "http://explicit.example:8789"},
             interactive=True,
             input_fn=lambda _prompt: (_ for _ in ()).throw(
                 AssertionError("unexpected prompt")
@@ -247,7 +341,7 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
     assert (
         ide_launcher.prompt_for_ide_connection(
             connection,
-            {},
+            _NO_FLEETS,
             interactive=False,
             input_fn=lambda _prompt: (_ for _ in ()).throw(
                 AssertionError("unexpected prompt")
@@ -268,7 +362,7 @@ def test_hub_prompt_retries_invalid_url_and_skips_explicit_or_noninteractive(
 def test_hub_prompt_accepts_explicit_ports_and_urls(entered, expected) -> None:
     selected = ide_launcher.prompt_for_ide_connection(
         ide_launcher.IdeConnection(api_url=ide_launcher.DEFAULT_API_URL),
-        {},
+        _NO_FLEETS,
         interactive=True,
         input_fn=lambda _prompt: entered,
     )
