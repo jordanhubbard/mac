@@ -4482,6 +4482,178 @@ def test_rotate_by_page_prefix_width_env_gated(cp, monkeypatch):
     assert fallback == width_two
 
 
+def test_page_prefix_key_slices_task_id_by_width(cp):
+    # _page_prefix_key is the bucketing contract that _rotate_by_page_prefix
+    # builds on; pin it directly rather than only through the rotation helper.
+    task = _prefix_task(cp, "abcdef")
+
+    # The key is the leading *width* characters of the task id.
+    assert cp._page_prefix_key(task, 2) == "ab"
+    # width=1 collapses to a single leading character.
+    assert cp._page_prefix_key(task, 1) == "a"
+
+
+def test_page_prefix_key_width_wider_than_id_returns_whole_id(cp):
+    # A width larger than the id must not raise or pad; it returns the whole id
+    # so every such task lands in a single (well-defined) bucket.
+    task = _prefix_task(cp, "xy")
+
+    assert cp._page_prefix_key(task, 5) == "xy"
+
+
+def test_page_prefix_key_empty_id_returns_empty_key(cp):
+    # A blank id degrades to the empty key rather than raising, so a corrupt or
+    # id-less candidate still buckets deterministically.
+    task = dataclasses.replace(_prefix_task(cp, "seedable"), id="")
+
+    assert cp._page_prefix_key(task, 2) == ""
+
+
+def test_page_prefix_key_falls_back_to_task_id_without_page_cursor(cp):
+    # Task has no ``page_cursor`` field, so the getattr-based source always
+    # falls through to the task id for every real Task. Lock in the observed
+    # behavior so a future model/helper change is a conscious decision.
+    assert "page_cursor" not in services.Task.__dataclass_fields__
+    task = _prefix_task(cp, "cc42")
+
+    assert not hasattr(task, "page_cursor")
+    assert cp._page_prefix_key(task, 2) == "cc"
+
+
+def test_rotate_by_page_prefix_below_floor_width_falls_back_to_default(cp, monkeypatch):
+    now = services.utcnow()
+    # Two ids that share a "a" prefix but split on the default width (2) into
+    # "ab" and "ac" buckets, so a below-floor override that (wrongly) clamped to
+    # width 1 would collapse them and change the ordering.
+    tasks = [_prefix_task(cp, task_id) for task_id in ("abx", "aby", "acz")]
+
+    monkeypatch.setenv("MAC_DISPATCH_PAGE_PREFIX_WIDTH", "2")
+    width_two = [task.id for task in cp._rotate_by_page_prefix(tasks, now)]
+    assert width_two == ["abx", "acz", "aby"]
+
+    # A below-floor override (< 1) can never DISABLE the prefix rotation: it
+    # falls back to the safe default width (2), NOT the floor width (1). If it
+    # clamped to 1 everything would collapse into the "a" bucket and the
+    # rotation would become a no-op (["abx", "aby", "acz"]).
+    monkeypatch.setenv("MAC_DISPATCH_PAGE_PREFIX_WIDTH", "0")
+    below_floor = [task.id for task in cp._rotate_by_page_prefix(tasks, now)]
+    assert below_floor == width_two
+
+    # A negative override behaves identically (reject-and-default).
+    monkeypatch.setenv("MAC_DISPATCH_PAGE_PREFIX_WIDTH", "-3")
+    negative = [task.id for task in cp._rotate_by_page_prefix(tasks, now)]
+    assert negative == width_two
+
+
+def test_task_tenant_id_prefers_origin_tenant_over_top_level(cp):
+    # _task_tenant_id drives tenant grouping in _dispatch_ordered_tasks; pin its
+    # three branches directly rather than only via the tick machinery.
+    seed = cp.create_task("tenant-src", required_capabilities=["python"])
+
+    origin_scoped = dataclasses.replace(
+        seed,
+        metadata={"origin": {"tenant_id": "tenant-origin"}, "tenant_id": "tenant-top"},
+    )
+    # The origin.tenant_id branch wins when both are present.
+    assert cp._task_tenant_id(origin_scoped) == "tenant-origin"
+
+
+def test_task_tenant_id_falls_back_to_top_level_tenant(cp):
+    seed = cp.create_task("tenant-src", required_capabilities=["python"])
+
+    top_level = dataclasses.replace(seed, metadata={"tenant_id": "tenant-top"})
+    # With no origin tenant, the top-level tenant_id is used.
+    assert cp._task_tenant_id(top_level) == "tenant-top"
+
+    empty_origin = dataclasses.replace(
+        seed, metadata={"origin": {"tenant_id": ""}, "tenant_id": "tenant-top"}
+    )
+    # A blank origin tenant is falsy and falls through to the top-level id.
+    assert cp._task_tenant_id(empty_origin) == "tenant-top"
+
+
+def test_task_tenant_id_returns_none_without_tenant_metadata(cp):
+    seed = cp.create_task("tenant-src", required_capabilities=["python"])
+
+    untenanted = dataclasses.replace(seed, metadata={})
+    # No tenant metadata at all yields the None fallback (the shared bucket).
+    assert cp._task_tenant_id(untenanted) is None
+
+    blank_top = dataclasses.replace(seed, metadata={"tenant_id": ""})
+    # A blank top-level tenant is falsy and also yields None.
+    assert cp._task_tenant_id(blank_top) is None
+
+
+def test_interleave_tasks_by_project_round_robins_projects(cp):
+    now = services.utcnow()
+    # A single tenant's candidates split across two projects; the flooding
+    # project must not starve its sibling within the tenant.
+    flood = [
+        _prefix_task(cp, "flood-%d" % index, project="flood", priority=100)
+        for index in range(3)
+    ]
+    starved = _prefix_task(cp, "starved", project="starved", priority=10)
+
+    interleaved = cp._interleave_tasks_by_project(
+        [*flood, starved], now
+    )
+
+    # The low-priority project's head gets the second claim slot instead of
+    # queueing behind every high-priority task from the flooding project.
+    assert [task.id for task in interleaved] == [
+        "flood-0",
+        "starved",
+        "flood-1",
+        "flood-2",
+    ]
+
+
+def test_interleave_tasks_by_project_single_project_preserves_priority(cp):
+    now = services.utcnow()
+    tasks = [
+        _prefix_task(cp, "solo-low", project="solo", priority=10),
+        _prefix_task(cp, "solo-high", project="solo", priority=100),
+    ]
+
+    interleaved = cp._interleave_tasks_by_project(tasks, now)
+
+    # A single project is a no-op interleave: the sorted (priority, age) order
+    # is preserved.
+    assert [task.id for task in interleaved] == ["solo-high", "solo-low"]
+
+
+def test_dispatch_ordered_tasks_round_robins_between_tenants(cp):
+    # Cross-tenant round-robin asserted directly on _dispatch_ordered_tasks,
+    # independent of the tick / capability-matching machinery that
+    # test_dispatch_tick_round_robins_between_tenants routes through.
+    tenant_a = cp.register_tenant("tenant-a")
+    tenant_b = cp.register_tenant("tenant-b")
+    hermes_a = cp.register_hermes_instance(tenant_a.id, "rocky")
+    hermes_b = cp.register_hermes_instance(tenant_b.id, "bullwinkle")
+    a1 = cp.create_interaction_task(
+        hermes_a.id, "A1", priority=100, required_capabilities=["python"]
+    )
+    cp.create_interaction_task(
+        hermes_a.id, "A2", priority=90, required_capabilities=["python"]
+    )
+    b1 = cp.create_interaction_task(
+        hermes_b.id, "B1", priority=10, required_capabilities=["python"]
+    )
+
+    ordered = cp._dispatch_ordered_tasks()
+
+    # The low-priority tenant's head wins the second claim slot instead of
+    # trailing every task from the high-priority tenant.
+    assert cp._task_tenant_id(ordered[0]) == tenant_a.id
+    order = [task.id for task in ordered]
+    assert order[0] == a1.id
+    assert order[1] == b1.id
+    # The second high-priority task from tenant-a comes after tenant-b's head.
+    assert order.index(a1.id) < order.index(b1.id) < order.index(
+        next(t.id for t in ordered if t.id not in {a1.id, b1.id})
+    )
+
+
 def test_dispatch_ordered_tasks_single_prefix_bucket_is_noop(cp):
     # Auto-generated task ids share the same page prefix, so within each
     # project only a single prefix bucket exists and the page-prefix rotation
