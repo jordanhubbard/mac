@@ -140,6 +140,34 @@ drop the legacy subtree entirely and remove the compat symlinks.
 - Roll out as a deploy epoch with Phase 0 landing first in a backward-compatible
   **read-old / write-new / symlink-bridge** mode so no worker breaks mid-fleet.
 
+## 5b. Dream-cycle learning: two systems, one orphan (executed)
+
+Investigation of the dream/learning capability found **two** dream systems:
+
+1. **MAC's durable pipeline (correct, alive).** `nap_consolidator` walks each
+   agent's recent `memory_records`, writes `nap_summary` + typed `dream:*`
+   artifacts (schema `mac.dream.v1`) back into `memory_records` via
+   `add_memory`; `dream_scanner`/`dream_cycle_classifier`/`dream_repair_tasks`
+   turn failure candidates into follow-up tasks. Live on the hub: `nap_runs`
+   ≈1789, latest today; `dream:failure_pattern` ≈109,752, `nap_summary`
+   ≈109,803. This is the authoritative, durable location. (An earlier note that
+   naps were dead is stale — the pipeline is running.)
+2. **The gateway's `~/.hermes/dream_logs/` (orphan).** A host-side cron
+   (`~/.hermes/scripts/dream_cycle.py`, *not* MAC code) writes human-readable
+   `dream_YYYYMMDD_HHMMSS.md` reports. **No first-party MAC code reads this
+   directory** — the learning captured there (error patterns, human
+   corrections, near-failure skill correlations, action items) never reached
+   MAC's durable store. On the live host: 334 reports spanning Jul 5→now.
+
+**Fix (shipped):** `src/mac/dream_log_import.py` merges those orphaned reports
+into `memory_records` as `dream:imported_report` memories. It is idempotent,
+skips empty "No … detected" reports, and — because the gateway writes hourly and
+mostly repeats findings — dedups on the **findings** (section content), not the
+file, so the 334 reports collapse to **65 unique findings-sets** rather than 333
+timestamp-noise copies. The source directory resolves only through
+`mac_paths.dream_logs_dir()`. Same tool consolidates any other
+single-use-but-wrong-path metadata: point it at the misplaced directory.
+
 ## 6. Risks
 
 - Fleet-wide blast radius: home resolution runs in every worker + the hub +
