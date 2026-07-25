@@ -286,7 +286,7 @@ class NotifierService:
             return [row["id"] for row in existing]
         targets = self._configured_targets(notification)
         if not targets and "hermes" in notification.channels:
-            targets = self._auto_hermes_targets(notification)
+            targets = self._auto_persona_instance_targets(notification)
         message_ids: List[str] = []
         use_openclaw_outbox = bool(
             self._enqueue_human_message
@@ -455,13 +455,20 @@ class NotifierService:
             target.setdefault("external_id", binding.external_id)
             return [
                 {**target, "agent_id": agent.id}
-                for agent in self._agents_for_hermes(binding.hermes_instance_id)
+                for agent in self._agents_for_persona_instance(
+                    binding.persona_instance_id
+                )
             ]
-        hermes_instance_id = str(target.get("hermes_instance_id") or "").strip()
-        if hermes_instance_id:
+        persona_instance_id = str(
+            target.get("persona_instance_id")
+            # Accept the deprecated key for one release.
+            or target.get("hermes_instance_id")
+            or ""
+        ).strip()
+        if persona_instance_id:
             return [
                 {**target, "agent_id": agent.id}
-                for agent in self._agents_for_hermes(hermes_instance_id)
+                for agent in self._agents_for_persona_instance(persona_instance_id)
             ]
         platform = target.get("platform") or (
             channel.channel_type if channel.channel_type in {"slack", "telegram"} else None
@@ -470,14 +477,18 @@ class NotifierService:
             return self._platform_targets(str(platform), target)
         return []
 
-    def _auto_hermes_targets(self, notification: OperatorNotification) -> List[JsonDict]:
+    def _auto_persona_instance_targets(
+        self, notification: OperatorNotification
+    ) -> List[JsonDict]:
         metadata = ensure_json_object(notification.metadata)
         actor = str(metadata.get("actor") or "").strip()
         if actor:
             try:
                 agent = self._get_agent(actor)
-                if agent.hermes_instance_id:
-                    return self._platform_targets_for_hermes(agent.hermes_instance_id)
+                if agent.persona_instance_id:
+                    return self._platform_targets_for_persona_instance(
+                        agent.persona_instance_id
+                    )
             except NotFoundError:
                 pass
         return self._platform_targets("slack", {}) + self._platform_targets("telegram", {})
@@ -487,7 +498,9 @@ class NotifierService:
         for binding in self._list_platform_bindings():
             if binding.platform != platform:
                 continue
-            for agent in self._agents_for_hermes(binding.hermes_instance_id):
+            for agent in self._agents_for_persona_instance(
+                binding.persona_instance_id
+            ):
                 targets.append(
                     {
                         **base,
@@ -501,14 +514,16 @@ class NotifierService:
                 )
         return targets
 
-    def _platform_targets_for_hermes(self, hermes_instance_id: str) -> List[JsonDict]:
+    def _platform_targets_for_persona_instance(
+        self, persona_instance_id: str
+    ) -> List[JsonDict]:
         targets: List[JsonDict] = []
         for binding in self._list_platform_bindings():
-            if binding.hermes_instance_id != hermes_instance_id:
+            if binding.persona_instance_id != persona_instance_id:
                 continue
             if binding.platform not in {"slack", "telegram"}:
                 continue
-            for agent in self._agents_for_hermes(hermes_instance_id):
+            for agent in self._agents_for_persona_instance(persona_instance_id):
                 targets.append(
                     {
                         "agent_id": agent.id,
@@ -521,11 +536,13 @@ class NotifierService:
                 )
         return targets
 
-    def _agents_for_hermes(self, hermes_instance_id: str) -> List[Agent]:
+    def _agents_for_persona_instance(
+        self, persona_instance_id: str
+    ) -> List[Agent]:
         return [
             agent
             for agent in self._list_agents()
-            if agent.hermes_instance_id == hermes_instance_id
+            if agent.persona_instance_id == persona_instance_id
         ]
 
     def _dedupe_targets(self, targets: List[JsonDict]) -> List[JsonDict]:

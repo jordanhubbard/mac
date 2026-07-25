@@ -98,6 +98,7 @@ class ActionEventService:
         event_id: Optional[str] = None,
         timestamp: Optional[str] = None,
         agent_id: Optional[str] = None,
+        persona_instance_id: Optional[str] = None,
         hermes_instance_id: Optional[str] = None,
         task_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -118,6 +119,11 @@ class ActionEventService:
         conn: Any = None,
     ) -> ActionEvent:
         writer = conn if conn is not None else self.store
+        # ``persona_instance_id`` is the runtime-neutral provenance link; the
+        # persisted column remains ``hermes_instance_id`` for the one-release
+        # migration boundary. Accept either keyword and coalesce.
+        if persona_instance_id is not None:
+            hermes_instance_id = persona_instance_id
         event = self._coerce_event(
             {
                 "event_id": event_id or new_id("act"),

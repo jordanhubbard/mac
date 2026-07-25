@@ -105,12 +105,12 @@ def test_reviewer_time_identity_and_executor_helpers(monkeypatch) -> None:
     assert cp._agent_seen_recently(replace(agent, last_seen_at="bad"), 300) is False
 
     assert cp._agent_tenant_and_persona(agent) == (None, None)
-    attached = replace(agent, hermes_instance_id="hermes")
-    monkeypatch.setattr(cp.identity, "get_hermes_instance", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
+    attached = replace(agent, hermes_instance_id="persona")
+    monkeypatch.setattr(cp.identity, "get_persona_instance", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
     assert cp._agent_tenant_and_persona(attached) == (None, None)
-    monkeypatch.setattr(cp.identity, "get_hermes_instance", lambda *_a: SimpleNamespace(tenant_id="tenant", persona_id=None))
+    monkeypatch.setattr(cp.identity, "get_persona_instance", lambda *_a: SimpleNamespace(tenant_id="tenant", persona_id=None))
     assert cp._agent_tenant_and_persona(attached) == ("tenant", None)
-    monkeypatch.setattr(cp.identity, "get_hermes_instance", lambda *_a: SimpleNamespace(tenant_id="tenant", persona_id="persona"))
+    monkeypatch.setattr(cp.identity, "get_persona_instance", lambda *_a: SimpleNamespace(tenant_id="tenant", persona_id="persona"))
     monkeypatch.setattr(cp.identity, "get_persona", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
     assert cp._agent_tenant_and_persona(attached) == ("tenant", None)
     monkeypatch.setattr(cp.identity, "get_persona", lambda *_a: SimpleNamespace(name="Code Reviewer"))

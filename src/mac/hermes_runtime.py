@@ -384,8 +384,8 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                 "source_of_truth": "mac task records and task history",
                 "identity_fields": ["id", "title", "state", "project", "owner_agent_id"],
                 "api_paths": [
-                    "/hermes-instances/%s/work-context" % hermes_instance_id,
-                    "/hermes-instances/%s/tasks" % hermes_instance_id,
+                    "/persona-instances/%s/work-context" % hermes_instance_id,
+                    "/persona-instances/%s/tasks" % hermes_instance_id,
                     "/tasks",
                     "/tasks/{task_id}",
                     "/tasks/{task_id}/children",
@@ -429,7 +429,7 @@ def _first_class_object_contract(hermes_instance_id: str, agent_id: str) -> Dict
                 "source_of_truth": "MAC project summaries, ProjectItem rows, and registered Beads repositories",
                 "identity_fields": ["project", "task_count", "frontier_tasks", "repository_count"],
                 "api_paths": [
-                    "/hermes-instances/%s/work-context" % hermes_instance_id,
+                    "/persona-instances/%s/work-context" % hermes_instance_id,
                     "/projects",
                     "/projects/{project}",
                     "/bridge/items",
@@ -574,7 +574,7 @@ def build_runtime_context(
         "endpoints": {
             "mac_api": resolved_mac_url,
             "work_context_api": (
-                "%s/hermes-instances/%s/work-context" % (resolved_mac_url, resolved_instance_id)
+                "%s/persona-instances/%s/work-context" % (resolved_mac_url, resolved_instance_id)
                 if resolved_mac_url
                 else ""
             ),

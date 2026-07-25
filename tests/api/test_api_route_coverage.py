@@ -243,7 +243,7 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
 
     hermes = _ok(
         client.post(
-            "/hermes-instances",
+            "/persona-instances",
             json={
                 "tenant_id": tenant["id"],
                 "name": "rocky-route",
@@ -1566,13 +1566,13 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "soul_ref": "hermes://route/case/SOUL.md",
             "memory_scope": "hermes://route/case/memory",
         },
-        ("POST", "/hermes-instances"): {
+        ("POST", "/persona-instances"): {
             "tenant_id": ctx["tenant_id"],
             "name": "case-hermes",
             "persona_id": ctx["persona_id"],
             "home_ref": "hermes://route/case",
         },
-        ("POST", "/hermes-instances/{instance_id}/runtime-proof"): {
+        ("POST", "/persona-instances/{instance_id}/runtime-proof"): {
             "hermes_startup": {
                 "task_project_runtime": {
                     "required": True,
@@ -1586,7 +1586,7 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
                 }
             }
         },
-        ("POST", "/hermes-instances/{instance_id}/tasks"): {
+        ("POST", "/persona-instances/{instance_id}/tasks"): {
             "title": "case hermes task",
             "project": ctx["project_name"],
             "platform_binding_id": ctx["platform_binding_id"],

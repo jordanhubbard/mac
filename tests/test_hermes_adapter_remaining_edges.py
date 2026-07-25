@@ -109,7 +109,7 @@ def test_reply_and_memory_writeback_error_edges(monkeypatch: pytest.MonkeyPatch)
 
     client = _Client()
     adapter = hermes_adapter.HermesMacAdapter(client)  # type: ignore[arg-type]
-    client.get_values["/hermes-instances/instance/context"] = {
+    client.get_values["/persona-instances/instance/context"] = {
         "memory_contract": {"memory_scope": ""},
         "hermes_instance": {},
     }

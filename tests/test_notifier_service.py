@@ -1584,7 +1584,7 @@ class TestDeliverNotificationNoAgentIdSkip:
             return [{"channel_type": "hermes", "no_agent_here": True}]
 
         with patch.object(notifiers, "_configured_targets", side_effect=_patched_targets):
-            with patch.object(notifiers, "_auto_hermes_targets", return_value=[]):
+            with patch.object(notifiers, "_auto_persona_instance_targets", return_value=[]):
                 message_ids = notifiers._deliver_notification(notification)
 
         assert message_ids == []
@@ -1617,11 +1617,11 @@ class TestConfiguredTargetsChannelMismatch:
         assert len(sent) == 0
 
 class TestAutoHermesTargetsActorPath:
-    """Lines 477-482, 489: _auto_hermes_targets actor and NotFoundError branches."""
+    """Lines 477-482, 489: _auto_persona_instance_targets actor and NotFoundError branches."""
 
     def test_auto_hermes_actor_with_hermes_id_routes_to_platform_targets(self, cp):
         """When notification.metadata.actor is set to an agent with a hermes_instance_id,
-        _auto_hermes_targets returns the platform-specific targets for that instance."""
+        _auto_persona_instance_targets returns the platform-specific targets for that instance."""
         notifiers, sent = _make_notifiers_plain(cp)
         _, instance, agent, binding = _setup_platform_infra(cp, "actorhid", "slack")
 
@@ -1672,10 +1672,10 @@ class TestAutoHermesTargetsActorPath:
 
 
 class TestPlatformTargetsForHermes:
-    """Lines 505-522: _platform_targets_for_hermes function."""
+    """Lines 505-522: _platform_targets_for_persona_instance function."""
 
-    def test_platform_targets_for_hermes_returns_slack_and_telegram(self, cp):
-        """_platform_targets_for_hermes returns entries for both slack and telegram bindings."""
+    def test_platform_targets_for_persona_instance_returns_slack_and_telegram(self, cp):
+        """_platform_targets_for_persona_instance returns entries for both slack and telegram bindings."""
         notifiers, sent = _make_notifiers_plain(cp)
         tenant = cp.register_tenant("t-ptfh")
         persona = cp.register_persona(
@@ -1693,20 +1693,20 @@ class TestPlatformTargetsForHermes:
             tenant.id, instance.id, "telegram", "tg_ptfh_chat", display_name="tg-ptfh"
         )
 
-        targets = notifiers._platform_targets_for_hermes(instance.id)
+        targets = notifiers._platform_targets_for_persona_instance(instance.id)
         assert len(targets) == 2
         platforms = {t["platform"] for t in targets}
         assert platforms == {"slack", "telegram"}
 
-    def test_platform_targets_for_hermes_excludes_hermes_platform(self, cp):
-        """_platform_targets_for_hermes only returns slack/telegram, not hermes bindings."""
+    def test_platform_targets_for_persona_instance_excludes_hermes_platform(self, cp):
+        """_platform_targets_for_persona_instance only returns slack/telegram, not hermes bindings."""
         notifiers, sent = _make_notifiers_plain(cp)
         # Nothing registered → empty
-        targets = notifiers._platform_targets_for_hermes("nonexistent-hermes-instance")
+        targets = notifiers._platform_targets_for_persona_instance("nonexistent-hermes-instance")
         assert targets == []
 
-    def test_auto_hermes_actor_uses_platform_targets_for_hermes_path(self, cp):
-        """When actor has hermes_instance_id, _platform_targets_for_hermes is invoked."""
+    def test_auto_hermes_actor_uses_platform_targets_for_persona_instance_path(self, cp):
+        """When actor has hermes_instance_id, _platform_targets_for_persona_instance is invoked."""
         notifiers, sent = _make_notifiers_plain(cp)
         tenant = cp.register_tenant("t-ptfh2")
         persona = cp.register_persona(
@@ -1719,7 +1719,7 @@ class TestPlatformTargetsForHermes:
             tenant.id, instance.id, "slack", "channel:PTFH2SL", display_name="sl-ptfh2"
         )
 
-        # Notification with actor set → _auto_hermes_targets → _platform_targets_for_hermes
+        # Notification with actor set → _auto_persona_instance_targets → _platform_targets_for_persona_instance
         _make_notification(cp, channels=["hermes"], metadata={"actor": agent.id})
         result = notifiers.deliver_pending()
         assert result["delivered"] == 1
@@ -1727,7 +1727,7 @@ class TestPlatformTargetsForHermes:
 
 
 class TestPlatformTargetsForHermesFilters:
-    """Cover the filtering branches inside _platform_targets_for_hermes (lines 508, 510)."""
+    """Cover the filtering branches inside _platform_targets_for_persona_instance (lines 508, 510)."""
 
     def test_bindings_from_other_hermes_instance_are_excluded(self, cp):
         """Bindings whose hermes_instance_id does not match are skipped (line 508 branch)."""
@@ -1753,8 +1753,8 @@ class TestPlatformTargetsForHermesFilters:
             tenant.id, instanceB.id, "slack", "channel:FILTB", display_name="slack-filtB"
         )
 
-        # Query _platform_targets_for_hermes for instanceA — should only return instanceA binding
-        targets = notifiers._platform_targets_for_hermes(instanceA.id)
+        # Query _platform_targets_for_persona_instance for instanceA — should only return instanceA binding
+        targets = notifiers._platform_targets_for_persona_instance(instanceA.id)
         assert len(targets) == 1
         assert targets[0]["platform_binding_id"] is not None
         # Ensure binding for instanceB is excluded
@@ -1781,7 +1781,7 @@ class TestPlatformTargetsForHermesFilters:
             tenant.id, instance.id, "discord", "discord_guild_123", display_name="discord-other"
         )
 
-        targets = notifiers._platform_targets_for_hermes(instance.id)
+        targets = notifiers._platform_targets_for_persona_instance(instance.id)
         # Only the slack binding should be returned; the discord binding triggers line 510 continue
         assert len(targets) == 1
         assert targets[0]["platform"] == "slack"

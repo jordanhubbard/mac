@@ -74,7 +74,7 @@ def test_role_assignment_routes_through_agents_endpoint():
         },
     ).json()
     instance = client.post(
-        "/hermes-instances",
+        "/persona-instances",
         json={
             "tenant_id": tenant["id"],
             "name": "qa-instance",
@@ -125,7 +125,7 @@ def test_agent_identity_endpoint_returns_layered_view():
         },
     ).json()
     instance = client.post(
-        "/hermes-instances",
+        "/persona-instances",
         json={
             "tenant_id": tenant["id"],
             "name": "qa-instance",

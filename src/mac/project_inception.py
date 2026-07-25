@@ -48,7 +48,7 @@ def run_c26_project_inception_proof(
         "hermes://c26/memory",
         metadata={"role_slugs": ["planner", "reviewer", "systems-builder"]},
     )
-    hermes = cp.register_hermes_instance(
+    hermes = cp.register_persona_instance(
         tenant.id,
         "c26-hermes",
         persona_id=persona.id,
@@ -303,14 +303,14 @@ def run_c26_project_inception_proof(
     }
 
 
-def _register_c26_agents(cp: ControlPlane, hermes_instance_id: str) -> Dict[str, Any]:
+def _register_c26_agents(cp: ControlPlane, persona_instance_id: str) -> Dict[str, Any]:
     machine = cp.register_machine("c26-proof-host")
-    base_instance = cp.identity.get_hermes_instance(hermes_instance_id)
+    base_instance = cp.identity.get_persona_instance(persona_instance_id)
 
     def agent(
         name: str, capabilities: Iterable[str], *, use_base_instance: bool = False
     ):
-        instance_id = hermes_instance_id
+        instance_id = persona_instance_id
         if not use_base_instance:
             persona = cp.register_persona(
                 base_instance.tenant_id,
@@ -318,7 +318,7 @@ def _register_c26_agents(cp: ControlPlane, hermes_instance_id: str) -> Dict[str,
                 "hermes://c26/%s/SOUL.md" % name,
                 "hermes://c26/%s/memory" % name,
             )
-            instance = cp.register_hermes_instance(
+            instance = cp.register_persona_instance(
                 base_instance.tenant_id,
                 "%s-hermes" % name,
                 persona_id=persona.id,
@@ -329,7 +329,7 @@ def _register_c26_agents(cp: ControlPlane, hermes_instance_id: str) -> Dict[str,
             machine.id,
             name,
             capabilities=capabilities,
-            hermes_instance_id=instance_id,
+            persona_instance_id=instance_id,
         )
 
     return {

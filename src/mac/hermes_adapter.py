@@ -131,7 +131,7 @@ class HermesMacAdapter:
             },
         )
         instance = self.client.post(
-            "/hermes-instances",
+            "/persona-instances",
             {
                 "tenant_id": tenant["id"],
                 "name": instance_name,
@@ -172,7 +172,7 @@ class HermesMacAdapter:
         if not task_input.summary.strip():
             raise MacApiError("conversation task summary is required")
         return self.client.post(
-            "/hermes-instances/%s/tasks" % hermes_instance_id,
+            "/persona-instances/%s/tasks" % hermes_instance_id,
             {
                 "title": task_input.title,
                 "description": task_input.description(),
@@ -289,7 +289,7 @@ class HermesMacAdapter:
             )
         )
         return self.client.get(
-            "/hermes-instances/%s/work-context?%s" % (_path_part(hermes_instance_id), query)
+            "/persona-instances/%s/work-context?%s" % (_path_part(hermes_instance_id), query)
         )
 
     def work_context_brief(self, hermes_instance_id: str) -> str:
@@ -315,7 +315,7 @@ class HermesMacAdapter:
         *,
         hermes_startup: Optional[JsonDict] = None,
     ) -> JsonDict:
-        path = "/hermes-instances/%s/runtime-proof" % _path_part(hermes_instance_id)
+        path = "/persona-instances/%s/runtime-proof" % _path_part(hermes_instance_id)
         if hermes_startup is None:
             return self.client.get(path)
         return self.client.post(path, {"hermes_startup": _sanitize_json_object(hermes_startup)})
@@ -721,7 +721,7 @@ class HermesMacAdapter:
         return "%s is currently %s." % (summary["title"], summary["state"])
 
     def memory_writeback_payload(self, hermes_instance_id: str, task_id: str) -> JsonDict:
-        context = self.client.get("/hermes-instances/%s/context" % hermes_instance_id)
+        context = self.client.get("/persona-instances/%s/context" % hermes_instance_id)
         summary = self.task_summary(task_id)
         if summary["state"] != "completed":
             raise MacApiError("only completed tasks should be written back to Hermes memory")

@@ -79,9 +79,9 @@ def test_soul_role_lookup_missing_identity_and_persona(monkeypatch) -> None:
     agent = cp.register_agent(machine.id, "agent")
     assert cp.roles._allowed_role_slugs_for(agent) is None
     attached = replace(agent, hermes_instance_id="hermes")
-    monkeypatch.setattr(cp.roles, "_get_hermes_instance", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
+    monkeypatch.setattr(cp.roles, "_get_persona_instance", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
     assert cp.roles._allowed_role_slugs_for(attached) is None
-    monkeypatch.setattr(cp.roles, "_get_hermes_instance", lambda *_a: SimpleNamespace(persona_id="persona"))
+    monkeypatch.setattr(cp.roles, "_get_persona_instance", lambda *_a: SimpleNamespace(persona_id="persona"))
     monkeypatch.setattr(cp.roles, "_get_persona", lambda *_a: (_ for _ in ()).throw(NotFoundError()))
     assert cp.roles._allowed_role_slugs_for(attached) == []
     monkeypatch.setattr(cp.roles, "_get_persona", lambda *_a: SimpleNamespace(metadata="bad", name=""))

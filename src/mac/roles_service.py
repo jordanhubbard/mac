@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from mac.models import (
     Agent,
     AgentRole,
-    HermesInstance,
+    PersonaInstance,
     JsonDict,
     Machine,
     NotFoundError,
@@ -57,7 +57,7 @@ class RolesService:
         get_tenant: Callable[[str], Tenant],
         get_agent: Callable[[str], Agent],
         get_machine: Callable[[str], Machine],
-        get_hermes_instance: Optional[Callable[[str], HermesInstance]] = None,
+        get_persona_instance: Optional[Callable[[str], PersonaInstance]] = None,
         get_persona: Optional[Callable[[str], Persona]] = None,
     ) -> None:
         self.store = store
@@ -69,7 +69,7 @@ class RolesService:
         # without depending on IdentityService directly. ControlPlane
         # wires these in; tests that don't touch souls can leave them
         # None.
-        self._get_hermes_instance = get_hermes_instance
+        self._get_persona_instance = get_persona_instance
         self._get_persona = get_persona
 
     # CRUD ---------------------------------------------------------------
@@ -280,7 +280,7 @@ class RolesService:
         allowed = self._allowed_role_slugs_for(agent)
         if allowed is None:
             raise ValidationError(
-                "agent %s has no soul (hermes_instance_id); assign one before "
+                "agent %s has no soul (persona_instance_id); assign one before "
                 "binding a role" % agent.id
             )
         if role.slug not in allowed:
@@ -382,7 +382,7 @@ class RolesService:
     def _allowed_role_slugs_for(self, agent: Agent) -> Optional[List[str]]:
         """Return the role slugs an agent's soul accepts.
 
-        ``None`` means the agent has no soul (no ``hermes_instance_id``)
+        ``None`` means the agent has no soul (no ``persona_instance_id``)
         and is therefore refused for any role per the layering rule.
         An empty list means the soul exists but accepts no roles.
         Otherwise, the persona's ``metadata.role_slugs`` is honored, and
@@ -390,15 +390,15 @@ class RolesService:
         personas map 1-to-1 to roles by name, so the default is exactly
         right for the seeded fleet.
         """
-        if not agent.hermes_instance_id:
+        if not agent.persona_instance_id:
             return None
-        if self._get_hermes_instance is None or self._get_persona is None:
+        if self._get_persona_instance is None or self._get_persona is None:
             # No identity wiring (tests, dev). Be permissive when an
             # operator has gone out of their way to set a soul but the
             # service wasn't given identity callables.
             return []  # type: ignore[return-value]
         try:
-            instance = self._get_hermes_instance(agent.hermes_instance_id)
+            instance = self._get_persona_instance(agent.persona_instance_id)
         except NotFoundError:
             return None
         if not instance.persona_id:

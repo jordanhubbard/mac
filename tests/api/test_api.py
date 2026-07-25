@@ -821,7 +821,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
         },
     ).json()
     hermes = client.post(
-        "/hermes-instances",
+        "/persona-instances",
         json={
             "tenant_id": tenant["id"],
             "name": "rocky",
@@ -839,7 +839,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
         },
     ).json()
 
-    context = client.get("/hermes-instances/%s/context" % hermes["id"]).json()
+    context = client.get("/persona-instances/%s/context" % hermes["id"]).json()
     assert context["memory_contract"]["user_memory_authority"] == "hermes"
     assert context["platform_bindings"][0]["id"] == binding["id"]
 
@@ -854,7 +854,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
         },
     ).json()
     dependency = client.post(
-        "/hermes-instances/%s/tasks" % hermes["id"],
+        "/persona-instances/%s/tasks" % hermes["id"],
         json={
             "title": "Prepare project",
             "project": "nanolang",
@@ -862,7 +862,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
         },
     ).json()
     task = client.post(
-        "/hermes-instances/%s/tasks" % hermes["id"],
+        "/persona-instances/%s/tasks" % hermes["id"],
         json={
             "title": "Follow up from chat",
             "project": "nanolang",
@@ -875,7 +875,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert task["metadata"]["origin"]["hermes_instance_id"] == hermes["id"]
     assert task["metadata"]["memory_boundary"]["mac_records_operational_provenance_only"] is True
 
-    work_context = client.get("/hermes-instances/%s/work-context" % hermes["id"]).json()
+    work_context = client.get("/persona-instances/%s/work-context" % hermes["id"]).json()
     assert work_context["schema"] == "mac.hermes_work_context.v1"
     assert work_context["authority"]["tasks"] == "mac"
     assert work_context["authority"]["projects"] == "mac"
@@ -961,7 +961,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert "/ui?view=projects&project={project}" in work_context["operations"]["dashboard"]["deep_link_templates"]["projects"]
     assert "/ui?view=work&project={project}" in work_context["operations"]["dashboard"]["deep_link_templates"]["projects"]
 
-    runtime_proof = client.get("/hermes-instances/%s/runtime-proof" % hermes["id"]).json()
+    runtime_proof = client.get("/persona-instances/%s/runtime-proof" % hermes["id"]).json()
     assert runtime_proof["schema"] == "mac.hermes_runtime_proof.v1"
     assert runtime_proof["ready"] is True
     assert runtime_proof["checks"]["api_work_context_schema"] is True
@@ -1046,7 +1046,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert degraded_runtime_proof["checks"]["runtime_session_capabilities_available"] is False
     assert "runtime_session_capabilities_available" in degraded_runtime_proof["missing"]
     posted_runtime_proof = client.post(
-        "/hermes-instances/%s/runtime-proof" % hermes["id"],
+        "/persona-instances/%s/runtime-proof" % hermes["id"],
         json={
             "hermes_startup": {
                 "task_project_runtime": {
@@ -1085,7 +1085,7 @@ def test_fastapi_exposes_hermes_identity_boundary(monkeypatch, tmp_path):
     assert "hermes_oneshot_executor" in posted_runtime_proof["evidence"]["hermes_runtime"]["session_capability_names"]
 
     active_only = client.get(
-        "/hermes-instances/%s/work-context?include_completed=false&task_limit=1" % hermes["id"]
+        "/persona-instances/%s/work-context?include_completed=false&task_limit=1" % hermes["id"]
     ).json()
     assert active_only["task_limit"] == 1
     assert active_only["task_truncated"] is True

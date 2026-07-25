@@ -184,13 +184,6 @@ request and response definitions.
 | `POST` | `/github-ingest/run` | Github Ingest Run |
 | `GET` | `/github-ingest/status` | Github Ingest Status |
 | `GET` | `/health` | Health |
-| `GET` | `/hermes-instances` | List Hermes Instances |
-| `POST` | `/hermes-instances` | Register Hermes Instance |
-| `GET` | `/hermes-instances/{instance_id}/context` | Hermes Context |
-| `GET` | `/hermes-instances/{instance_id}/runtime-proof` | Hermes Runtime Proof |
-| `POST` | `/hermes-instances/{instance_id}/runtime-proof` | Hermes Runtime Proof With Startup |
-| `POST` | `/hermes-instances/{instance_id}/tasks` | Create Interaction Task |
-| `GET` | `/hermes-instances/{instance_id}/work-context` | Hermes Work Context |
 | `GET` | `/humans` | List Humans |
 | `POST` | `/humans` | Register Human |
 | `GET` | `/humans/resolve` | Resolve Human |
@@ -263,6 +256,13 @@ request and response definitions.
 | `POST` | `/optimizer/projects/{project}/rollback/{policy_id}` | Rollback Scientific Policy |
 | `GET` | `/optimizer/status` | Scientific Optimizer Status |
 | `POST` | `/optimizer/tick` | Scientific Optimizer Tick |
+| `GET` | `/persona-instances` | List Persona Instances |
+| `POST` | `/persona-instances` | Register Persona Instance |
+| `GET` | `/persona-instances/{instance_id}/context` | Persona Context |
+| `GET` | `/persona-instances/{instance_id}/runtime-proof` | Persona Runtime Proof |
+| `POST` | `/persona-instances/{instance_id}/runtime-proof` | Persona Runtime Proof With Startup |
+| `POST` | `/persona-instances/{instance_id}/tasks` | Create Interaction Task |
+| `GET` | `/persona-instances/{instance_id}/work-context` | Persona Work Context |
 | `GET` | `/personas` | List Personas |
 | `POST` | `/personas` | Register Persona |
 | `GET` | `/platform-bindings` | List Platform Bindings |

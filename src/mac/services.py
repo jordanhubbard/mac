@@ -86,6 +86,7 @@ from mac.models import (
     HealthStatus,
     HistoryEvent,
     HermesInstance,
+    PersonaInstance,
     Human,
     IntegrationFinding,
     IntegrationObservation,
@@ -1401,7 +1402,7 @@ class ControlPlane:
             get_tenant=self.get_tenant,
             get_agent=self.get_agent,
             get_machine=self.get_machine,
-            get_hermes_instance=self.identity.get_hermes_instance,
+            get_persona_instance=self.identity.get_persona_instance,
             get_persona=self.identity.get_persona,
         )
         self.workflows = WorkflowService(
@@ -2034,14 +2035,24 @@ class ControlPlane:
     def list_personas(self, *args: Any, **kwargs: Any) -> List[Persona]:
         return self.identity.list_personas(*args, **kwargs)
 
-    def register_hermes_instance(self, *args: Any, **kwargs: Any) -> HermesInstance:
-        return self.identity.register_hermes_instance(*args, **kwargs)
+    def register_persona_instance(self, *args: Any, **kwargs: Any) -> PersonaInstance:
+        return self.identity.register_persona_instance(*args, **kwargs)
 
-    def get_hermes_instance(self, instance_id: str) -> HermesInstance:
-        return self.identity.get_hermes_instance(instance_id)
+    def get_persona_instance(self, instance_id: str) -> PersonaInstance:
+        return self.identity.get_persona_instance(instance_id)
 
-    def list_hermes_instances(self, *args: Any, **kwargs: Any) -> List[HermesInstance]:
-        return self.identity.list_hermes_instances(*args, **kwargs)
+    def list_persona_instances(self, *args: Any, **kwargs: Any) -> List[PersonaInstance]:
+        return self.identity.list_persona_instances(*args, **kwargs)
+
+    # Backward-compatible aliases for the pre-persona names.
+    def register_hermes_instance(self, *args: Any, **kwargs: Any) -> PersonaInstance:
+        return self.register_persona_instance(*args, **kwargs)
+
+    def get_hermes_instance(self, instance_id: str) -> PersonaInstance:
+        return self.get_persona_instance(instance_id)
+
+    def list_hermes_instances(self, *args: Any, **kwargs: Any) -> List[PersonaInstance]:
+        return self.list_persona_instances(*args, **kwargs)
 
     def register_platform_binding(self, *args: Any, **kwargs: Any) -> PlatformBinding:
         return self.identity.register_platform_binding(*args, **kwargs)
@@ -2054,6 +2065,44 @@ class ControlPlane:
 
     def hermes_context(self, hermes_instance_id: str) -> JsonDict:
         return self.identity.hermes_context(hermes_instance_id)
+
+    def persona_context(self, persona_instance_id: str) -> JsonDict:
+        return self.identity.persona_context(persona_instance_id)
+
+    def persona_work_context(
+        self,
+        persona_instance_id: str,
+        *,
+        include_completed: bool = True,
+        task_limit: int = 100,
+    ) -> JsonDict:
+        return self.hermes_work_context(
+            persona_instance_id,
+            include_completed=include_completed,
+            task_limit=task_limit,
+        )
+
+    def persona_runtime_proof(
+        self,
+        persona_instance_id: str,
+        *,
+        hermes_startup: Optional[JsonDict] = None,
+    ) -> JsonDict:
+        return self.hermes_runtime_proof(
+            persona_instance_id,
+            hermes_startup=hermes_startup,
+        )
+
+    def record_persona_runtime_proof(
+        self,
+        persona_instance_id: str,
+        proof: JsonDict,
+        *,
+        actor: str = "hermes",
+    ) -> PersonaInstance:
+        return self.record_hermes_runtime_proof(
+            persona_instance_id, proof, actor=actor
+        )
 
     def hermes_work_context(
         self,
@@ -2722,7 +2771,7 @@ class ControlPlane:
             "evidence": {
                 "api": {
                     "work_context_schema": work_context.get("schema"),
-                    "work_context_path": "/hermes-instances/%s/work-context" % hermes_instance_id,
+                    "work_context_path": "/persona-instances/%s/work-context" % hermes_instance_id,
                     "operation_names": sorted(api_operation_names),
                     "task_operation_names": sorted(
                         api_operation_names & expected_task_api_operations
@@ -3210,7 +3259,7 @@ class ControlPlane:
             "capabilities": list(agent.capabilities),
             "resources": dict(agent.resources),
             "role_id": agent.role_id,
-            "hermes_instance_id": agent.hermes_instance_id,
+            "hermes_instance_id": agent.persona_instance_id,
             "current_task_id": agent.current_task_id,
             "capacity": self._agent_capacity(agent),
             "active_lease_count": self._agent_active_lease_count(agent.id),
@@ -3280,17 +3329,17 @@ class ControlPlane:
                 {
                     "name": "get_work_context",
                     "method": "GET",
-                    "path": "/hermes-instances/%s/work-context" % hermes_instance_id,
+                    "path": "/persona-instances/%s/work-context" % hermes_instance_id,
                 },
                 {
                     "name": "get_runtime_proof",
                     "method": "GET",
-                    "path": "/hermes-instances/%s/runtime-proof" % hermes_instance_id,
+                    "path": "/persona-instances/%s/runtime-proof" % hermes_instance_id,
                 },
                 {
                     "name": "create_task_from_conversation",
                     "method": "POST",
-                    "path": "/hermes-instances/%s/tasks" % hermes_instance_id,
+                    "path": "/persona-instances/%s/tasks" % hermes_instance_id,
                 },
                 {"name": "list_tasks", "method": "GET", "path": "/tasks"},
                 {"name": "get_task", "method": "GET", "path": "/tasks/{task_id}"},
@@ -3668,9 +3717,9 @@ class ControlPlane:
         machine = self.get_machine(agent.machine_id)
         soul: Optional[JsonDict] = None
         role_slugs: Optional[List[str]] = self.roles._allowed_role_slugs_for(agent)
-        if agent.hermes_instance_id:
+        if agent.persona_instance_id:
             try:
-                instance = self.identity.get_hermes_instance(agent.hermes_instance_id)
+                instance = self.identity.get_persona_instance(agent.persona_instance_id)
                 persona = (
                     self.identity.get_persona(instance.persona_id)
                     if instance.persona_id
@@ -14543,6 +14592,7 @@ class ControlPlane:
         capabilities: Optional[Iterable[str]] = None,
         resources: Optional[Dict[str, Any]] = None,
         agent_id: Optional[str] = None,
+        persona_instance_id: Optional[str] = None,
         hermes_instance_id: Optional[str] = None,
         actor: str = "human",
         status: Optional[str] = None,
@@ -14553,10 +14603,16 @@ class ControlPlane:
         self.get_machine(machine_id)
         if not name:
             raise ValidationError("agent name is required")
+        # ``persona_instance_id`` is the runtime-neutral linkage name; accept
+        # the deprecated ``hermes_instance_id`` keyword for one release. The
+        # persisted ``agents`` column remains ``hermes_instance_id`` during the
+        # migration boundary.
+        if persona_instance_id is not None:
+            hermes_instance_id = persona_instance_id
         if hermes_instance_id is not None:
             # Confirms the soul exists before binding. The identity layer
             # is what gates role assignment downstream.
-            self.identity.get_hermes_instance(hermes_instance_id)
+            self.identity.get_persona_instance(hermes_instance_id)
         now = utcnow()
         aid = agent_id or new_id("agent")
         existing_agent_row = self.store.query_one(
@@ -15222,10 +15278,15 @@ class ControlPlane:
         resources: Optional[Dict[str, Any]] = None,
         status: Optional[str] = None,
         health_status: Optional[str] = None,
+        persona_instance_id: Optional[str] = None,
         hermes_instance_id: Optional[str] = None,
         instance_kind: Optional[str] = None,
         actor: str = "human",
     ) -> Agent:
+        # ``persona_instance_id`` is the runtime-neutral linkage name; accept the
+        # deprecated ``hermes_instance_id`` keyword for one release.
+        if persona_instance_id is not None:
+            hermes_instance_id = persona_instance_id
         agent_before = self.get_agent(agent_id)
         updates: List[str] = []
         params: List[Any] = []
@@ -15233,7 +15294,7 @@ class ControlPlane:
         next_name = agent_before.name
         next_status = agent_before.status
         next_health_status = agent_before.health_status
-        next_hermes_instance_id = agent_before.hermes_instance_id
+        next_hermes_instance_id = agent_before.persona_instance_id
         next_instance_kind = agent_before.instance_kind
         requested_resource_value: Optional[Dict[str, Any]] = None
         resource_param_index: Optional[int] = None
@@ -15305,14 +15366,14 @@ class ControlPlane:
         if hermes_instance_id is not None:
             hermes_value = hermes_instance_id.strip()
             if hermes_value:
-                self.identity.get_hermes_instance(hermes_value)
+                self.identity.get_persona_instance(hermes_value)
                 updates.append("hermes_instance_id = ?")
                 params.append(hermes_value)
                 next_hermes_instance_id = hermes_value
             else:
                 updates.append("hermes_instance_id = NULL")
                 next_hermes_instance_id = None
-            if next_hermes_instance_id != agent_before.hermes_instance_id:
+            if next_hermes_instance_id != agent_before.persona_instance_id:
                 changed_fields.append("hermes_instance_id")
         if instance_kind is not None:
             instance_kind_value = _state_value(instance_kind).strip()
@@ -15367,7 +15428,7 @@ class ControlPlane:
                     "status": next_status,
                     "previous_health_status": agent_before.health_status,
                     "health_status": next_health_status,
-                    "previous_hermes_instance_id": agent_before.hermes_instance_id,
+                    "previous_hermes_instance_id": agent_before.persona_instance_id,
                     "hermes_instance_id": next_hermes_instance_id,
                     "previous_instance_kind": agent_before.instance_kind,
                     "instance_kind": next_instance_kind,
@@ -16279,7 +16340,7 @@ class ControlPlane:
                     "machine_id": agent.machine_id,
                     "status": agent.status,
                     "health_status": agent.health_status,
-                    "hermes_instance_id": agent.hermes_instance_id,
+                    "hermes_instance_id": agent.persona_instance_id,
                 },
                 now,
             )
@@ -23290,15 +23351,15 @@ class ControlPlane:
             )
             if not hardware_ok:
                 return "role_hardware_insufficient"
-            if not agent.hermes_instance_id:
+            if not agent.persona_instance_id:
                 return "role_not_accepted_by_soul"
             conn.execute(
                 "UPDATE persona_instances SET updated_at = updated_at WHERE id = ?",
-                (agent.hermes_instance_id,),
+                (agent.persona_instance_id,),
             )
             instance = conn.execute(
                 "SELECT persona_id FROM persona_instances WHERE id = ?",
-                (agent.hermes_instance_id,),
+                (agent.persona_instance_id,),
             ).fetchone()
             if instance is None or not instance["persona_id"]:
                 return "role_not_accepted_by_soul"
@@ -25641,10 +25702,10 @@ class ControlPlane:
         anti-collusion). Agents without a hermes_instance_id have
         neither and are treated as ineligible by the reviewer picker
         when the task is tenant-scoped."""
-        if not agent.hermes_instance_id:
+        if not agent.persona_instance_id:
             return None, None
         try:
-            instance = self.identity.get_hermes_instance(agent.hermes_instance_id)
+            instance = self.identity.get_persona_instance(agent.persona_instance_id)
         except NotFoundError:
             return None, None
         if not instance.persona_id:

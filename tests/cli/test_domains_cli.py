@@ -377,7 +377,7 @@ def test_hermes_register(tmp_path):
     tenant = _setup_tenant(tmp_path)
     rc, hermes = _run(tmp_path, "hermes", "register", tenant["id"], "hermes-hub")
     assert rc == 0
-    assert hermes["id"].startswith("hermes_")
+    assert hermes["id"].startswith("persona_")
     assert hermes["name"] == "hermes-hub"
 
 

@@ -15,8 +15,8 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional
 
 from mac.models import (
-    HermesInstance,
-    HermesInstanceStatus,
+    PersonaInstance,
+    PersonaInstanceStatus,
     JsonDict,
     NotFoundError,
     Persona,
@@ -215,26 +215,26 @@ class IdentityService:
             rows = self.store.query_all("SELECT * FROM personas ORDER BY tenant_id, name")
         return [self._persona_from_row(row) for row in rows]
 
-    # Hermes instances --------------------------------------------------
+    # Persona instances -------------------------------------------------
 
-    def register_hermes_instance(
+    def register_persona_instance(
         self,
         tenant_id: str,
         name: str,
         persona_id: Optional[str] = None,
         home_ref: str = "",
-        status: str = HermesInstanceStatus.ACTIVE.value,
+        status: str = PersonaInstanceStatus.ACTIVE.value,
         metadata: Optional[Dict[str, Any]] = None,
         instance_id: Optional[str] = None,
-    ) -> HermesInstance:
+    ) -> PersonaInstance:
         self.get_tenant(tenant_id)
         if persona_id:
             persona = self.get_persona(persona_id)
             if persona.tenant_id != tenant_id:
-                raise ValidationError("persona must belong to hermes instance tenant")
+                raise ValidationError("persona must belong to persona instance tenant")
         name = name.strip()
         if not name:
-            raise ValidationError("hermes instance name is required")
+            raise ValidationError("persona instance name is required")
         existing = self.store.query_one(
             "SELECT id FROM persona_instances WHERE tenant_id = ? AND name = ?",
             (tenant_id, name),
@@ -243,11 +243,11 @@ class IdentityService:
             instance_id = existing["id"]
         status_value = _state_value(status)
         try:
-            HermesInstanceStatus(status_value)
+            PersonaInstanceStatus(status_value)
         except ValueError:
-            raise ValidationError("unsupported hermes instance status: %s" % status_value)
+            raise ValidationError("unsupported persona instance status: %s" % status_value)
         now = utcnow()
-        hid = instance_id or new_id("hermes")
+        hid = instance_id or new_id("persona")
         metadata_json = self._resolved_json_column("persona_instances", "metadata", hid, metadata)
         self.store.execute(
             """
@@ -278,17 +278,17 @@ class IdentityService:
                 now,
             ),
         )
-        return self.get_hermes_instance(hid)
+        return self.get_persona_instance(hid)
 
-    def get_hermes_instance(self, instance_id: str) -> HermesInstance:
+    def get_persona_instance(self, instance_id: str) -> PersonaInstance:
         row = self.store.query_one(
             "SELECT * FROM persona_instances WHERE id = ?", (instance_id,)
         )
         if row is None:
-            raise NotFoundError("hermes instance not found: %s" % instance_id)
-        return self._hermes_instance_from_row(row)
+            raise NotFoundError("persona instance not found: %s" % instance_id)
+        return self._persona_instance_from_row(row)
 
-    def list_hermes_instances(self, tenant_id: Optional[str] = None) -> List[HermesInstance]:
+    def list_persona_instances(self, tenant_id: Optional[str] = None) -> List[PersonaInstance]:
         if tenant_id:
             rows = self.store.query_all(
                 "SELECT * FROM persona_instances WHERE tenant_id = ? ORDER BY name",
@@ -298,14 +298,28 @@ class IdentityService:
             rows = self.store.query_all(
                 "SELECT * FROM persona_instances ORDER BY tenant_id, name"
             )
-        return [self._hermes_instance_from_row(row) for row in rows]
+        return [self._persona_instance_from_row(row) for row in rows]
+
+    # Backward-compatible aliases for the pre-persona method names. Higher
+    # layers migrate to the ``*_persona_instance`` names; keep the old names
+    # working for one release.
+    def register_hermes_instance(self, *args: Any, **kwargs: Any) -> PersonaInstance:
+        return self.register_persona_instance(*args, **kwargs)
+
+    def get_hermes_instance(self, instance_id: str) -> PersonaInstance:
+        return self.get_persona_instance(instance_id)
+
+    def list_hermes_instances(
+        self, tenant_id: Optional[str] = None
+    ) -> List[PersonaInstance]:
+        return self.list_persona_instances(tenant_id)
 
     # Platform bindings ------------------------------------------------
 
     def register_platform_binding(
         self,
         tenant_id: str,
-        hermes_instance_id: str,
+        persona_instance_id: str,
         platform: str,
         external_id: str,
         display_name: str = "",
@@ -314,9 +328,9 @@ class IdentityService:
         binding_id: Optional[str] = None,
     ) -> PlatformBinding:
         self.get_tenant(tenant_id)
-        instance = self.get_hermes_instance(hermes_instance_id)
+        instance = self.get_persona_instance(persona_instance_id)
         if instance.tenant_id != tenant_id:
-            raise ValidationError("platform binding must belong to hermes instance tenant")
+            raise ValidationError("platform binding must belong to persona instance tenant")
         if not platform.strip() or not external_id.strip():
             raise ValidationError("platform and external_id are required")
         platform = platform.strip()
@@ -350,7 +364,7 @@ class IdentityService:
             (
                 bid,
                 tenant_id,
-                hermes_instance_id,
+                persona_instance_id,
                 platform,
                 external_id,
                 display_name or external_id,
@@ -373,16 +387,20 @@ class IdentityService:
     def list_platform_bindings(
         self,
         tenant_id: Optional[str] = None,
+        persona_instance_id: Optional[str] = None,
         hermes_instance_id: Optional[str] = None,
     ) -> List[PlatformBinding]:
         clauses = []
         params: List[Any] = []
+        # Accept the deprecated ``hermes_instance_id`` keyword for one release.
+        if persona_instance_id is None:
+            persona_instance_id = hermes_instance_id
         if tenant_id:
             clauses.append("tenant_id = ?")
             params.append(tenant_id)
-        if hermes_instance_id:
+        if persona_instance_id:
             clauses.append("persona_instance_id = ?")
-            params.append(hermes_instance_id)
+            params.append(persona_instance_id)
         sql = "SELECT * FROM platform_bindings"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
@@ -390,20 +408,22 @@ class IdentityService:
         rows = self.store.query_all(sql, tuple(params))
         return [self._platform_binding_from_row(row) for row in rows]
 
-    # Hermes operational context ---------------------------------------
+    # Persona operational context --------------------------------------
 
-    def hermes_context(self, hermes_instance_id: str) -> JsonDict:
-        instance = self.get_hermes_instance(hermes_instance_id)
+    def persona_context(self, persona_instance_id: str) -> JsonDict:
+        instance = self.get_persona_instance(persona_instance_id)
         persona = self.get_persona(instance.persona_id) if instance.persona_id else None
         return {
             "tenant": self.get_tenant(instance.tenant_id).to_dict(),
+            "persona_instance": instance.to_dict(),
+            # Backward-compatible key for the pre-persona context contract.
             "hermes_instance": instance.to_dict(),
             "persona": persona.to_dict() if persona else None,
             "platform_bindings": [
                 binding.to_dict()
                 for binding in self.list_platform_bindings(
                     tenant_id=instance.tenant_id,
-                    hermes_instance_id=instance.id,
+                    persona_instance_id=instance.id,
                 )
             ],
             "memory_contract": {
@@ -414,6 +434,10 @@ class IdentityService:
                 "memory_scope": persona.memory_scope if persona else None,
             },
         }
+
+    # Backward-compatible alias for the pre-persona context method name.
+    def hermes_context(self, hermes_instance_id: str) -> JsonDict:
+        return self.persona_context(hermes_instance_id)
 
     # Shared JSON-column upsert helper --------------------------------
 
@@ -474,8 +498,8 @@ class IdentityService:
             row["updated_at"],
         )
 
-    def _hermes_instance_from_row(self, row: Any) -> HermesInstance:
-        return HermesInstance(
+    def _persona_instance_from_row(self, row: Any) -> PersonaInstance:
+        return PersonaInstance(
             row["id"],
             row["tenant_id"],
             row["name"],

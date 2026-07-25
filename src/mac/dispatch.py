@@ -1472,24 +1472,24 @@ class RemoteDispatch:
         return _Dictish(self._post("/personas", _drop_none(kw)))
 
     def register_hermes_instance(self, **kw: Any) -> _Dictish:
-        return _Dictish(self._post("/hermes-instances", _drop_none(kw)))
+        return _Dictish(self._post("/persona-instances", _drop_none(kw)))
 
     def hermes_context(self, instance_id: str) -> _Dictish:
-        return _Dictish(self._get("/hermes-instances/%s/context" % quote(instance_id, safe="")))
+        return _Dictish(self._get("/persona-instances/%s/context" % quote(instance_id, safe="")))
 
     def hermes_work_context(self, instance_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
-            self._get("/hermes-instances/%s/work-context" % quote(instance_id, safe=""), **kw)
+            self._get("/persona-instances/%s/work-context" % quote(instance_id, safe=""), **kw)
         )
 
     def hermes_runtime_proof(self, instance_id: str, *, hermes_startup: Any = None) -> _Dictish:
         if hermes_startup is None:
             return _Dictish(
-                self._get("/hermes-instances/%s/runtime-proof" % quote(instance_id, safe=""))
+                self._get("/persona-instances/%s/runtime-proof" % quote(instance_id, safe=""))
             )
         return _Dictish(
             self._post(
-                "/hermes-instances/%s/runtime-proof" % quote(instance_id, safe=""),
+                "/persona-instances/%s/runtime-proof" % quote(instance_id, safe=""),
                 {"hermes_startup": hermes_startup},
             )
         )
@@ -1500,7 +1500,7 @@ class RemoteDispatch:
     def create_interaction_task(self, instance_id: str, **kw: Any) -> _Dictish:
         return _Dictish(
             self._post(
-                "/hermes-instances/%s/tasks" % quote(instance_id, safe=""),
+                "/persona-instances/%s/tasks" % quote(instance_id, safe=""),
                 _drop_none(kw),
             )
         )

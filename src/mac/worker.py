@@ -7427,7 +7427,7 @@ def _register_runtime_identity_for_worker(
         },
     )
     client.post(
-        "/hermes-instances",
+        "/persona-instances",
         {
             "tenant_id": tenant_id,
             "name": agent_name,

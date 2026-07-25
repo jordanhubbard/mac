@@ -650,7 +650,7 @@ def test_e2e_workflow_runtime_drives_task_via_http(tmp_path: Path):
         },
     ).json()
     instance = client.post(
-        "/hermes-instances",
+        "/persona-instances",
         json={
             "tenant_id": tenant["id"],
             "name": "qa-instance",

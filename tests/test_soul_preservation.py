@@ -78,7 +78,7 @@ def test_soul_survives_hermes_process_loss():
 
     # --- Recovery payload comes from mac alone. A fresh Hermes process would
     # GET this on startup.
-    context = client.get("/hermes-instances/%s/context" % pre_instance_id).json()
+    context = client.get("/persona-instances/%s/context" % pre_instance_id).json()
     assert context["memory_contract"]["personality_authority"] == "hermes"
     assert context["memory_contract"]["user_memory_authority"] == "hermes"
     assert context["persona"]["soul_ref"] == pre_persona_soul
@@ -182,7 +182,7 @@ def test_reregistering_does_not_proliferate_personas_or_bindings():
 
     tenants = client.get("/tenants").json()
     personas = client.get("/personas").json()
-    instances = client.get("/hermes-instances").json()
+    instances = client.get("/persona-instances").json()
     bindings = client.get("/platform-bindings").json()
     assert len([t for t in tenants if t["name"] == "team"]) == 1
     assert len([p for p in personas if p["name"] == "Natasha"]) == 1

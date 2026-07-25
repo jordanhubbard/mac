@@ -771,7 +771,7 @@ class HumanRegister(BaseModel):
     human_id: Optional[str] = None
 
 
-class HermesInstanceRegister(BaseModel):
+class PersonaInstanceRegister(BaseModel):
     tenant_id: str
     name: str
     persona_id: Optional[str] = None
@@ -781,15 +781,31 @@ class HermesInstanceRegister(BaseModel):
     instance_id: Optional[str] = None
 
 
+# Backward-compatible alias for the pre-persona request type name.
+HermesInstanceRegister = PersonaInstanceRegister
+
+
 class PlatformBindingRegister(BaseModel):
     tenant_id: str
-    hermes_instance_id: str
+    persona_instance_id: Optional[str] = None
+    # Deprecated pre-persona field name; accepted for one release.
+    hermes_instance_id: Optional[str] = None
     platform: str
     external_id: str
     display_name: str = ""
     scopes: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     binding_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _coalesce_persona_instance_id(self) -> "PlatformBindingRegister":
+        if not self.persona_instance_id and self.hermes_instance_id:
+            self.persona_instance_id = self.hermes_instance_id
+        if not self.persona_instance_id:
+            raise ValueError("persona_instance_id is required")
+        # Keep the deprecated attribute in sync for legacy readers.
+        self.hermes_instance_id = self.persona_instance_id
+        return self
 
 
 class InteractionTaskCreate(TaskCreate):
@@ -799,8 +815,12 @@ class InteractionTaskCreate(TaskCreate):
     actor: str = "hermes"
 
 
-class HermesRuntimeProofCreate(BaseModel):
+class PersonaRuntimeProofCreate(BaseModel):
     hermes_startup: Dict[str, Any] = Field(default_factory=dict)
+
+
+# Backward-compatible alias for the pre-persona request type name.
+HermesRuntimeProofCreate = PersonaRuntimeProofCreate
 
 
 class TransitionRequest(BaseModel):
@@ -2696,7 +2716,7 @@ def _dashboard_hermes_activity(
     instance_id: str,
     tasks: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
-    context = cp.hermes_context(instance_id)
+    context = cp.persona_context(instance_id)
     tasks = tasks if tasks is not None else cp.list_tasks()
     interaction_tasks = [
         task.to_dict()
@@ -3280,7 +3300,7 @@ def _dashboard_state(
     tenants = [tenant.to_dict() for tenant in cp.list_tenants()]
     users = [user.to_dict() for user in cp.list_users()]
     personas = [persona.to_dict() for persona in cp.list_personas()]
-    hermes_instances = [instance.to_dict() for instance in cp.list_hermes_instances()]
+    hermes_instances = [instance.to_dict() for instance in cp.list_persona_instances()]
     bindings = [binding.to_dict() for binding in cp.list_platform_bindings()]
     machines = cp.list_machines()
     machines_by_id = {machine.id: machine for machine in machines}
@@ -3349,13 +3369,13 @@ def _dashboard_state(
     rollout_statuses = [_dashboard_rollout_status(cp, rollout.id) for rollout in rollouts]
     project_summaries = cp.list_projects()
     hermes_work_contexts = {
-        instance["id"]: cp.hermes_work_context(instance["id"], task_limit=40)
+        instance["id"]: cp.persona_work_context(instance["id"], task_limit=40)
         for instance in hermes_instances
     }
     hermes_runtime_proofs = {}
     for instance in hermes_instances:
         submitted = _latest_submitted_runtime_proof(instance)
-        hermes_runtime_proofs[instance["id"]] = submitted or cp.hermes_runtime_proof(
+        hermes_runtime_proofs[instance["id"]] = submitted or cp.persona_runtime_proof(
             instance["id"],
             hermes_startup=hermes_startup,
         )
@@ -5009,61 +5029,61 @@ def create_app(
         cp.delete_human(human_id)
         return {"deleted": human_id}
 
-    @app.post("/hermes-instances")
-    def register_hermes_instance(
-        body: HermesInstanceRegister,
+    @app.post("/persona-instances")
+    def register_persona_instance(
+        body: PersonaInstanceRegister,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         principal.assert_tenant(body.tenant_id)
-        return cp.register_hermes_instance(**_data(body)).to_dict()
+        return cp.register_persona_instance(**_data(body)).to_dict()
 
-    @app.get("/hermes-instances")
-    def list_hermes_instances(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-        return [instance.to_dict() for instance in cp.list_hermes_instances(tenant_id)]
+    @app.get("/persona-instances")
+    def list_persona_instances(tenant_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+        return [instance.to_dict() for instance in cp.list_persona_instances(tenant_id)]
 
-    @app.get("/hermes-instances/{instance_id}/context")
-    def hermes_context(instance_id: str) -> Dict[str, Any]:
-        return cp.hermes_context(instance_id)
+    @app.get("/persona-instances/{instance_id}/context")
+    def persona_context(instance_id: str) -> Dict[str, Any]:
+        return cp.persona_context(instance_id)
 
-    @app.get("/hermes-instances/{instance_id}/work-context")
-    def hermes_work_context(
+    @app.get("/persona-instances/{instance_id}/work-context")
+    def persona_work_context(
         instance_id: str,
         include_completed: bool = Query(default=True),
         task_limit: int = Query(default=100),
     ) -> Dict[str, Any]:
-        return cp.hermes_work_context(
+        return cp.persona_work_context(
             instance_id,
             include_completed=include_completed,
             task_limit=task_limit,
         )
 
-    @app.get("/hermes-instances/{instance_id}/runtime-proof")
-    def hermes_runtime_proof(instance_id: str) -> Dict[str, Any]:
+    @app.get("/persona-instances/{instance_id}/runtime-proof")
+    def persona_runtime_proof(instance_id: str) -> Dict[str, Any]:
         app.state.hermes_startup = build_hermes_startup_report()
-        return cp.hermes_runtime_proof(
+        return cp.persona_runtime_proof(
             instance_id,
             hermes_startup=app.state.hermes_startup,
         )
 
-    @app.post("/hermes-instances/{instance_id}/runtime-proof")
-    def hermes_runtime_proof_with_startup(
+    @app.post("/persona-instances/{instance_id}/runtime-proof")
+    def persona_runtime_proof_with_startup(
         instance_id: str,
-        body: HermesRuntimeProofCreate,
+        body: PersonaRuntimeProofCreate,
     ) -> Dict[str, Any]:
-        proof = cp.hermes_runtime_proof(
+        proof = cp.persona_runtime_proof(
             instance_id,
             hermes_startup=body.hermes_startup,
         )
-        cp.record_hermes_runtime_proof(instance_id, proof)
+        cp.record_persona_runtime_proof(instance_id, proof)
         return proof
 
-    @app.post("/hermes-instances/{instance_id}/tasks")
+    @app.post("/persona-instances/{instance_id}/tasks")
     def create_interaction_task(
         instance_id: str,
         body: InteractionTaskCreate,
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
-        instance = cp.get_hermes_instance(instance_id)
+        instance = cp.get_persona_instance(instance_id)
         principal.assert_tenant(instance.tenant_id)
         data = _data(body)
         actor = data.pop("actor", "hermes")
@@ -5093,7 +5113,12 @@ def create_app(
         principal: TokenPrincipal = Depends(_get_principal),
     ) -> Dict[str, Any]:
         principal.assert_tenant(body.tenant_id)
-        return cp.register_platform_binding(**_data(body)).to_dict()
+        data = _data(body)
+        # ``hermes_instance_id`` is the deprecated alias; the service consumes
+        # ``persona_instance_id``. The validator has already coalesced them.
+        data.pop("hermes_instance_id", None)
+        data["persona_instance_id"] = body.persona_instance_id
+        return cp.register_platform_binding(**data).to_dict()
 
     @app.get("/platform-bindings")
     def list_platform_bindings(

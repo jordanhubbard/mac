@@ -501,7 +501,7 @@ def test_hermes_adapter_exposes_mcp_ready_read_create_surface():
     assert calls == [
         (
             "POST",
-            "/hermes-instances/hermes_1/tasks",
+            "/persona-instances/hermes_1/tasks",
             {
                 "title": "Triage customer report",
                 "description": "Summary:\nThe latest report needs investigation.",
@@ -796,7 +796,7 @@ def test_mac_hermes_cli_fetches_work_context(monkeypatch, capsys):
         (
             "http://hub:8789",
             "GET",
-            "/hermes-instances/hermes_1/work-context?include_completed=false&task_limit=7",
+            "/persona-instances/hermes_1/work-context?include_completed=false&task_limit=7",
             None,
         )
     ]
@@ -833,7 +833,7 @@ def test_mac_hermes_cli_submits_local_startup_for_runtime_proof(monkeypatch, cap
         (
             "http://hub:8789",
             "POST",
-            "/hermes-instances/hermes_1/runtime-proof",
+            "/persona-instances/hermes_1/runtime-proof",
             {"hermes_startup": startup},
         )
     ]
@@ -864,7 +864,7 @@ def test_mac_hermes_cli_can_fetch_hub_only_runtime_proof(monkeypatch, capsys):
         (
             "http://hub:8789",
             "GET",
-            "/hermes-instances/hermes_1/runtime-proof",
+            "/persona-instances/hermes_1/runtime-proof",
             None,
         )
     ]

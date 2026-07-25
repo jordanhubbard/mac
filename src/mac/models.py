@@ -1245,6 +1245,16 @@ class Agent:
     def to_dict(self) -> JsonDict:
         return asdict(self)
 
+    @property
+    def persona_instance_id(self) -> Optional[str]:
+        """Runtime-neutral accessor for the persona-instance linkage.
+
+        The stored column/field is still ``hermes_instance_id`` for the
+        one-release migration boundary; the persona-instance surface reads it
+        through this alias so callers use runtime-neutral terminology.
+        """
+        return self.hermes_instance_id
+
 
 @dataclass
 class AgentRole:
@@ -2280,6 +2290,16 @@ class ActionEvent:
 
     def to_dict(self) -> JsonDict:
         return asdict(self)
+
+    @property
+    def persona_instance_id(self) -> Optional[str]:
+        """Runtime-neutral accessor for the persona-instance provenance link.
+
+        The stored column/field remains ``hermes_instance_id`` during the
+        one-release migration boundary; persona-instance readers use this
+        alias for runtime-neutral terminology.
+        """
+        return self.hermes_instance_id
 
 
 @dataclass
