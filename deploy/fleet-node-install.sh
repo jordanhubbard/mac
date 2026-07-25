@@ -1289,7 +1289,13 @@ PY
 
   expected_openclaw=""
   if [ "${MAC_CHAT_GATEWAY_IMPL:-openclaw}" = openclaw ]; then
-    suffix="$(printf '%s' "${MAC_AGENT_ID:-agent_$AGENT}" \
+    # Derive the expected OpenClaw sandbox identity from this node's own frozen
+    # AGENT, exactly as install-openclaw-gateway.sh names the sandbox when
+    # MAC_AGENT_ID is unset (agent_$AGENT). Reading an ambient MAC_AGENT_ID here
+    # is unsafe: a value leaked from an unrelated controller/session would make
+    # the schema-safe pre-upgrade retirement checkpoint (or fail to checkpoint)
+    # the wrong OpenClaw container before the drained-node gateway upgrade.
+    suffix="$(printf '%s' "agent_$AGENT" \
       | sed -E 's/^agent_//; s/[^A-Za-z0-9]+/-/g; s/^-+//; s/-+$//' \
       | tr '[:upper:]' '[:lower:]')"
     expected_openclaw="mac-openclaw-${suffix:-gateway}"
