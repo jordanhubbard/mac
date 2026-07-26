@@ -1913,7 +1913,10 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         channel_type = str(payload.get("channel_type") or "").strip().lower()
         target = ensure_json_object(payload.get("target"))
         target_type = str(target.get("channel_type") or "").strip().lower()
-        if channel_type not in {"", "hermes", "slack"} and target_type != "slack":
+        # OpenClaw is the only supported persona/Slack runtime; ``hermes`` is no
+        # longer an accepted persona runtime value, so only blank/``slack`` route
+        # here (OpenClaw itself returns above via the fenced outbox).
+        if channel_type not in {"", "slack"} and target_type != "slack":
             return {"status": "skipped", "sent": 0, "skipped": 1, "failed": 0}
 
         hermes_home = mac_paths.gateway_home()

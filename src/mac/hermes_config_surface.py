@@ -1,10 +1,17 @@
-"""Fleet-scoped Hermes configuration inspection and application.
+"""Fleet-scoped OpenClaw configuration inspection and application.
 
-The dashboard should not invent a second Hermes settings model.  This module
-builds its inspector from the vendored Hermes runtime's own supported surfaces:
+The dashboard should not invent a second OpenClaw settings model.  This module
+builds its inspector from the vendored OpenClaw runtime's own supported surfaces:
 ``config.yaml`` defaults, ``.env`` declarations, plugin manifests, and skill
 frontmatter.  Writes land in the home-scoped fleet registry as desired state and
-can also be applied to the current node's Hermes home.
+can also be applied to the current node's OpenClaw home.
+
+Terminology note: OpenClaw is the fleet's chat-gateway runtime. The public
+schema strings (``SCHEMA`` / ``PAYLOAD_SCHEMA``) and the fleet registry
+``defaults.hermes`` config key are retained as-is for backward compatibility
+with the persisted ``fleets.yaml`` wire format, the deploy payload contract, and
+existing callers; reads accept the OpenClaw-named ``openclaw`` block first and
+fall back to the legacy ``hermes`` key.
 """
 from __future__ import annotations
 
@@ -478,8 +485,12 @@ def _find_or_create_fleet_entry(
 
 def _fleet_hermes_defaults(entry: Mapping[str, Any]) -> Dict[str, Any]:
     defaults = entry.get("defaults") if isinstance(entry.get("defaults"), dict) else {}
-    hermes = defaults.get("hermes") if isinstance(defaults.get("hermes"), dict) else {}
-    return deepcopy(hermes)
+    # Prefer the OpenClaw-named block; fall back to the legacy ``hermes`` key so
+    # existing fleet registries keep loading (backward-compatible READ only).
+    openclaw = defaults.get("openclaw") if isinstance(defaults.get("openclaw"), dict) else None
+    if openclaw is None:
+        openclaw = defaults.get("hermes") if isinstance(defaults.get("hermes"), dict) else {}
+    return deepcopy(openclaw)
 
 
 def hermes_payload_from_defaults(hermes: Mapping[str, Any]) -> Dict[str, Any]:
