@@ -1373,7 +1373,7 @@ def cmd_persona_register(args: argparse.Namespace) -> None:
 
 def cmd_hermes_register(args: argparse.Namespace) -> None:
     _print(
-        _plane(args).register_hermes_instance(
+        _plane(args).register_persona_instance(
             args.tenant_id,
             args.name,
             persona_id=args.persona_id,
@@ -1386,12 +1386,12 @@ def cmd_hermes_register(args: argparse.Namespace) -> None:
 
 
 def cmd_hermes_context(args: argparse.Namespace) -> None:
-    _print(_plane(args).hermes_context(args.instance_id))
+    _print(_plane(args).persona_context(args.instance_id))
 
 
 def cmd_hermes_work_context(args: argparse.Namespace) -> None:
     _print(
-        _plane(args).hermes_work_context(
+        _plane(args).persona_work_context(
             args.instance_id,
             include_completed=not args.active_only,
             task_limit=args.task_limit,
@@ -1405,14 +1405,14 @@ def cmd_hermes_runtime_proof(args: argparse.Namespace) -> None:
         from mac.hermes_startup import build_hermes_startup_report
 
         startup = build_hermes_startup_report()
-    _print(_plane(args).hermes_runtime_proof(args.instance_id, hermes_startup=startup))
+    _print(_plane(args).persona_runtime_proof(args.instance_id, hermes_startup=startup))
 
 
 def cmd_binding_register(args: argparse.Namespace) -> None:
     _print(
         _plane(args).register_platform_binding(
             args.tenant_id,
-            args.hermes_instance_id,
+            args.persona_instance_id,
             args.platform,
             args.external_id,
             display_name=args.display_name or "",
@@ -1426,7 +1426,7 @@ def cmd_binding_register(args: argparse.Namespace) -> None:
 def cmd_interaction_task(args: argparse.Namespace) -> None:
     _print(
         _plane(args).create_interaction_task(
-            args.hermes_instance_id,
+            args.persona_instance_id,
             args.title,
             user_id=args.user_id,
             platform_binding_id=args.platform_binding_id,
@@ -2623,7 +2623,7 @@ def cmd_agent_register(args: argparse.Namespace) -> None:
             capabilities=_csv(args.capabilities),
             resources=_json_arg(args.resources, {}),
             agent_id=args.agent_id,
-            hermes_instance_id=args.hermes_instance_id,
+            persona_instance_id=args.persona_instance_id,
             instance_kind=getattr(args, "instance_kind", None),
         )
     )
@@ -5671,7 +5671,7 @@ def build_parser() -> argparse.ArgumentParser:
     binding = sub.add_parser("binding", help="Hermes platform binding commands").add_subparsers(dest="binding_command", required=True)
     binding_register = binding.add_parser("register")
     binding_register.add_argument("tenant_id")
-    binding_register.add_argument("hermes_instance_id")
+    binding_register.add_argument("persona_instance_id")
     binding_register.add_argument("platform")
     binding_register.add_argument("external_id")
     binding_register.add_argument("--display-name")
@@ -5682,7 +5682,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     interaction = sub.add_parser("interaction", help="create durable work from Hermes conversation context").add_subparsers(dest="interaction_command", required=True)
     interaction_task = interaction.add_parser("task")
-    interaction_task.add_argument("hermes_instance_id")
+    interaction_task.add_argument("persona_instance_id")
     interaction_task.add_argument("title")
     interaction_task.add_argument("--user-id")
     interaction_task.add_argument("--platform-binding-id")
@@ -6849,7 +6849,11 @@ def build_parser() -> argparse.ArgumentParser:
     agent_register.add_argument("--capabilities")
     agent_register.add_argument("--resources")
     agent_register.add_argument("--agent-id")
-    agent_register.add_argument("--hermes-instance-id")
+    agent_register.add_argument(
+        "--persona-instance-id",
+        dest="persona_instance_id",
+        help="Persona instance id to link this agent to.",
+    )
     agent_register.add_argument(
         "--instance-kind", choices=("static", "fungible"), default=None
     )

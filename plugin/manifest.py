@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-REQUIRED_ENV = ["MAC_URL", "MAC_WORKER_TOKEN", "MAC_HERMES_INSTANCE_ID"]
+REQUIRED_ENV = ["MAC_URL", "MAC_WORKER_TOKEN", "MAC_PERSONA_INSTANCE_ID"]
 PLUGIN_NAME = "mac"
 TOOLSET = "mac"
 
@@ -25,9 +25,9 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="mac_create_task",
         method="POST",
-        path="/hermes-instances/{hermes_instance_id}/tasks",
+        path="/persona-instances/{persona_instance_id}/tasks",
         description=(
-            "Create a durable task in mac for this Hermes instance. Use when "
+            "Create a durable task in mac for this persona instance. Use when "
             "the user asks for work that should be tracked, executed, and "
             "audited (e.g. 'refactor the auth module', 'investigate the deploy "
             "failure', 'create a daily report'). Pass `title` (short imperative "
@@ -99,9 +99,9 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="mac_work_brief",
         method="GET",
-        path="/hermes-instances/{hermes_instance_id}/work-context",
+        path="/persona-instances/{persona_instance_id}/work-context",
         description=(
-            "Get the mac authoritative work projection for this Hermes "
+            "Get the mac authoritative work projection for this persona "
             "instance — what tasks are open/in-flight, what projects they "
             "roll up to, which agents are assigned. Use when the user asks "
             "an open-ended 'what are you (or the fleet) working on?' "
@@ -115,7 +115,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         path="/notifications",
         description=(
             "List undelivered task notifications (status=pending, "
-            "subject_type=task) that this Hermes instance still needs to "
+            "subject_type=task) that this persona instance still needs to "
             "announce. mac's database is the source of truth for what has "
             "already been delivered, so call this to learn which task "
             "updates are new instead of tracking state locally. Returns a "

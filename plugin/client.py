@@ -16,6 +16,8 @@ import httpx
 MAC_URL_ENV = "MAC_URL"
 MAC_HUB_URL_ENV = "MAC_HUB_URL"
 MAC_TOKEN_ENVS = ("MAC_WORKER_TOKEN", "MAC_API_TOKEN", "MAC_TOKEN")
+PERSONA_INSTANCE_ENV = "MAC_PERSONA_INSTANCE_ID"
+# Deprecated one-release alias for the pre-persona identity env var.
 HERMES_INSTANCE_ENV = "MAC_HERMES_INSTANCE_ID"
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -170,7 +172,7 @@ def env_ready() -> bool:
         return False
     if not _resolve_token():
         return False
-    if not os.environ.get(HERMES_INSTANCE_ENV):
+    if not (os.environ.get(PERSONA_INSTANCE_ENV) or os.environ.get(HERMES_INSTANCE_ENV)):
         return False
     return True
 
@@ -195,8 +197,16 @@ def _resolve_token() -> str:
     return ""
 
 
-def hermes_instance_id() -> str:
-    return os.environ.get(HERMES_INSTANCE_ENV, "")
+def persona_instance_id() -> str:
+    return (
+        os.environ.get(PERSONA_INSTANCE_ENV)
+        or os.environ.get(HERMES_INSTANCE_ENV)
+        or ""
+    )
+
+
+# Deprecated one-release alias for ``persona_instance_id``.
+hermes_instance_id = persona_instance_id
 
 
 _CLIENTS: dict[int, MacClient] = {}

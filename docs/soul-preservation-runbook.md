@@ -22,7 +22,7 @@ registered against `mac`:
    instance — the natural key `(tenant_id, name)` is what we match against.
 3. `platform_bindings` for the instance remain attached as long as the
    `(tenant_id, platform, external_id)` triple stays stable.
-4. `GET /hermes-instances/{id}/context` returns a single recovery payload
+4. `GET /persona-instances/{id}/context` returns a single recovery payload
    containing tenant, instance, persona, all bindings, and the memory contract.
 5. Every identity write produces an `events` row, so the audit stream shows
    when an instance was last registered, when its bindings changed, and which
@@ -44,7 +44,7 @@ operator killed the daemon). `mac` is still up.
 1. **Fetch the recovery payload.**
 
    ```console
-   curl $MAC_URL/hermes-instances/<instance_id>/context
+   curl $MAC_URL/persona-instances/<instance_id>/context
    ```
 
    Response shape:
