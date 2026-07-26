@@ -51,22 +51,27 @@ class AuthorizationError(MACError):
 
 
 def utcnow() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def parse_time(value: str) -> datetime:
+    """Parse an ISO-8601 timestamp string into a datetime."""
     return datetime.fromisoformat(value)
 
 
 def new_id(prefix: str) -> str:
+    """Return a new unique id with the given prefix."""
     return "%s_%s" % (prefix, uuid.uuid4().hex)
 
 
 def json_dumps(value: Any) -> str:
+    """Serialize a value to a compact, sorted JSON string."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 def json_loads(value: Any, default: Any = None) -> Any:
+    """Deserialize a JSON value, returning default when empty."""
     if value is None or value == "":
         return default
     # psycopg decodes JSON/JSONB columns into native Python values, while
@@ -78,6 +83,7 @@ def json_loads(value: Any, default: Any = None) -> Any:
 
 
 def coerce_list(value: Optional[Iterable[str]]) -> List[str]:
+    """Return a sorted, de-duplicated list of non-empty strings."""
     return sorted({item for item in (value or []) if item})
 
 
@@ -313,6 +319,7 @@ def read_only_report_repository_executor_approval(
 
 
 def valid_read_only_report_repository_executor_approval(value: Any) -> bool:
+    """Return True when the value is a well-formed read-only report executor approval."""
     if not isinstance(value, Mapping):
         return False
     expected_keys = {
@@ -347,6 +354,7 @@ def valid_read_only_report_repository_executor_approval(value: Any) -> bool:
 def report_repository_executor_approval_matches_attestation(
     approval: Any, attestation: Any
 ) -> bool:
+    """Return True when an executor approval matches its attestation."""
     if not valid_read_only_report_repository_executor_approval(approval):
         return False
     if not valid_read_only_report_repository_executor_attestation(attestation):
@@ -879,6 +887,7 @@ class Tenant:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Tenant."""
         return asdict(self)
 
 
@@ -893,6 +902,7 @@ class User:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this User."""
         return asdict(self)
 
 
@@ -908,6 +918,7 @@ class Persona:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Persona."""
         return asdict(self)
 
 
@@ -925,6 +936,7 @@ class PersonaInstance:
     last_seen_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this PersonaInstance."""
         return asdict(self)
 
 
@@ -948,6 +960,7 @@ class PlatformBinding:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this PlatformBinding."""
         return asdict(self)
 
     @property
@@ -984,6 +997,7 @@ class Task:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Task."""
         data = asdict(self)
         data["last_updated_at"] = self.updated_at
         return data
@@ -1016,6 +1030,7 @@ class BreakGlassAuthorization:
     revoke_reason: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this BreakGlassAuthorization."""
         return asdict(self)
 
 
@@ -1031,6 +1046,7 @@ class HistoryEvent:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this HistoryEvent."""
         return asdict(self)
 
 
@@ -1049,6 +1065,7 @@ class TaskTransitionOutbox:
     processed_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this TaskTransitionOutbox."""
         return asdict(self)
 
 
@@ -1065,6 +1082,7 @@ class Evidence:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Evidence."""
         return asdict(self)
 
 
@@ -1090,6 +1108,7 @@ class EvidenceArtifact:
     content_uri: str = ""
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this EvidenceArtifact."""
         return asdict(self)
 
 
@@ -1115,6 +1134,7 @@ class EvidenceAttemptLink:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this EvidenceAttemptLink."""
         return asdict(self)
 
 
@@ -1143,6 +1163,7 @@ class EvidenceAttemptVerification:
     receipt_digest: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this EvidenceAttemptVerification."""
         return asdict(self)
 
 
@@ -1162,6 +1183,7 @@ class Lease:
     delegated_agent_id: Optional[str] = None
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Lease."""
         return asdict(self)
 
 
@@ -1184,6 +1206,7 @@ class ServiceRole:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this ServiceRole."""
         return asdict(self)
 
 
@@ -1201,6 +1224,7 @@ class ServiceClaim:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this ServiceClaim."""
         return asdict(self)
 
 
@@ -1217,6 +1241,7 @@ class Machine:
     hardware: JsonDict = field(default_factory=dict)
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Machine."""
         return asdict(self)
 
 
@@ -1235,6 +1260,7 @@ class Fleet:
     unmanaged_agent_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Fleet."""
         return asdict(self)
 
 
@@ -1279,6 +1305,7 @@ class Agent:
     instance_kind: str = AgentInstanceKind.STATIC.value
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Agent."""
         return asdict(self)
 
     @property
@@ -1322,6 +1349,7 @@ class AgentRole:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this AgentRole."""
         return asdict(self)
 
 
@@ -1367,6 +1395,7 @@ class AgentProvisioningRequest:
     requested_by: Optional[str] = None
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this AgentProvisioningRequest."""
         return asdict(self)
 
 
@@ -1411,6 +1440,7 @@ class Workflow:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Workflow."""
         return asdict(self)
 
 
@@ -1441,6 +1471,7 @@ class WorkflowRun:
     completed_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkflowRun."""
         return asdict(self)
 
 
@@ -1461,6 +1492,7 @@ class WorkflowDraft:
     approved_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkflowDraft."""
         return asdict(self)
 
 
@@ -1590,6 +1622,7 @@ class WorkPackage:
     completed_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackage."""
         return asdict(self)
 
 
@@ -1607,6 +1640,7 @@ class WorkPackagePlanVersion:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackagePlanVersion."""
         return asdict(self)
 
 
@@ -1626,6 +1660,7 @@ class WorkPackageEpoch:
     superseded_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageEpoch."""
         return asdict(self)
 
 
@@ -1646,6 +1681,7 @@ class WorkPackageTaskLink:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageTaskLink."""
         return asdict(self)
 
 
@@ -1672,6 +1708,7 @@ class WorkPackageNodeLineage:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageNodeLineage."""
         return asdict(self)
 
 
@@ -1699,6 +1736,7 @@ class WorkPackageAssignmentAudit:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageAssignmentAudit."""
         return asdict(self)
 
 
@@ -1723,6 +1761,7 @@ class WorkPackageNodeCandidate:
     rejection_reason: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageNodeCandidate."""
         return asdict(self)
 
 
@@ -1750,6 +1789,7 @@ class WorkPackageWipToken:
     release_reason: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageWipToken."""
         return asdict(self)
 
 
@@ -1782,6 +1822,7 @@ class WorkPackageLeaseExpiryRepair:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageLeaseExpiryRepair."""
         return asdict(self)
 
 
@@ -1813,6 +1854,7 @@ class WorkPackageIntegrationBatch:
     completed_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageIntegrationBatch."""
         return asdict(self)
 
 
@@ -1837,6 +1879,7 @@ class WorkPackageBatchInput:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageBatchInput."""
         return asdict(self)
 
 
@@ -1868,6 +1911,7 @@ class WorkPackageCertification:
     publication_evidence_id: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageCertification."""
         return asdict(self)
 
 
@@ -1884,6 +1928,7 @@ class WorkPackageLandingStream:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageLandingStream."""
         return asdict(self)
 
 
@@ -1908,6 +1953,7 @@ class WorkPackageLandingIntent:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageLandingIntent."""
         return asdict(self)
 
 
@@ -1927,6 +1973,7 @@ class WorkPackageLandingAttempt:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageLandingAttempt."""
         return asdict(self)
 
 
@@ -1951,6 +1998,7 @@ class WorkPackageLandingReceipt:
     receipt_digest: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageLandingReceipt."""
         return asdict(self)
 
 
@@ -1967,6 +2015,7 @@ class WorkPackageHistoryEvent:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this WorkPackageHistoryEvent."""
         return asdict(self)
 
 
@@ -2000,6 +2049,7 @@ class AgentMessage:
     delivered_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this AgentMessage."""
         return asdict(self)
 
 
@@ -2023,6 +2073,7 @@ class AgentBusStream:
     participants: Optional[List[str]] = None
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this AgentBusStream."""
         return asdict(self)
 
 
@@ -2039,6 +2090,7 @@ class AgentBusChunk:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this AgentBusChunk."""
         return asdict(self)
 
 
@@ -2059,6 +2111,7 @@ class ObservabilityEvent:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this ObservabilityEvent."""
         return asdict(self)
 
 
@@ -2077,6 +2130,7 @@ class OperatorNotification:
     delivered_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this OperatorNotification."""
         return asdict(self)
 
 
@@ -2093,6 +2147,7 @@ class NotifierChannel:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this NotifierChannel."""
         return asdict(self)
 
 
@@ -2111,6 +2166,7 @@ class CommunicationIdentity:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this CommunicationIdentity."""
         return asdict(self)
 
 
@@ -2129,6 +2185,7 @@ class CommunicationAccount:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this CommunicationAccount."""
         return asdict(self)
 
 
@@ -2148,6 +2205,7 @@ class RepresentationBinding:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this RepresentationBinding."""
         return asdict(self)
 
 
@@ -2165,6 +2223,7 @@ class GatewayIdentityLease:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this GatewayIdentityLease."""
         return asdict(self)
 
 
@@ -2195,6 +2254,7 @@ class HumanMessageDelivery:
     delivered_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this HumanMessageDelivery."""
         return asdict(self)
 
 
@@ -2229,6 +2289,7 @@ class CommandAuditRecord:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this CommandAuditRecord."""
         return asdict(self)
 
 
@@ -2249,6 +2310,7 @@ class OpenShellPolicy:
     deleted_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this OpenShellPolicy."""
         return asdict(self)
 
 
@@ -2264,6 +2326,7 @@ class OpenShellPolicyVersion:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this OpenShellPolicyVersion."""
         return asdict(self)
 
 
@@ -2280,6 +2343,7 @@ class OpenShellPolicyAssignment:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this OpenShellPolicyAssignment."""
         return asdict(self)
 
 
@@ -2298,6 +2362,7 @@ class OpenShellStatus:
     reported_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this OpenShellStatus."""
         return asdict(self)
 
 
@@ -2325,6 +2390,7 @@ class ActionEvent:
     redaction_state: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this ActionEvent."""
         return asdict(self)
 
     @property
@@ -2350,6 +2416,7 @@ class Review:
     completed_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Review."""
         return asdict(self)
 
 
@@ -2365,6 +2432,7 @@ class Publication:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Publication."""
         return asdict(self)
 
 
@@ -2380,6 +2448,7 @@ class SecretRecord:
     enabled: bool
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this SecretRecord."""
         data = asdict(self)
         data["value"] = "***REDACTED***"
         return data
@@ -2397,6 +2466,7 @@ class SecretAccess:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this SecretAccess."""
         return asdict(self)
 
 
@@ -2408,6 +2478,7 @@ class SecretHandle:
     granted: bool
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this SecretHandle."""
         return asdict(self)
 
 
@@ -2423,6 +2494,7 @@ class ConversationThread:
     last_seen_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this ConversationThread."""
         return asdict(self)
 
 
@@ -2439,6 +2511,7 @@ class VectorRef:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this VectorRef."""
         return asdict(self)
 
 
@@ -2502,6 +2575,7 @@ class MacVectorPayload:
     schema: str = MAC_MEMORY_PAYLOAD_SCHEMA
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this MacVectorPayload."""
         # Drop None values to keep the Qdrant payload tight. Schema +
         # required fields always pass through.
         data = asdict(self)
@@ -2509,6 +2583,7 @@ class MacVectorPayload:
 
     @classmethod
     def from_dict(cls, raw: JsonDict) -> "MacVectorPayload":
+        """Construct a MacVectorPayload from its serialized dict form."""
         if not isinstance(raw, dict):
             raise ValidationError("vector payload must be an object")
         if str(raw.get("schema") or "") != MAC_MEMORY_PAYLOAD_SCHEMA:
@@ -2583,6 +2658,7 @@ class MoodOverlay:
     cleared_reason: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this MoodOverlay."""
         return asdict(self)
 
 
@@ -2599,6 +2675,7 @@ class NapSchedule:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this NapSchedule."""
         return asdict(self)
 
 
@@ -2619,6 +2696,7 @@ class NapRun:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this NapRun."""
         return asdict(self)
 
 
@@ -2635,6 +2713,7 @@ class Environment:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Environment."""
         return asdict(self)
 
 
@@ -2650,6 +2729,7 @@ class Deployment:
     metadata: JsonDict
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Deployment."""
         return asdict(self)
 
 
@@ -2667,6 +2747,7 @@ class Artifact:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Artifact."""
         return asdict(self)
 
 
@@ -2680,6 +2761,7 @@ class RuntimeEnvironment:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this RuntimeEnvironment."""
         return asdict(self)
 
 
@@ -2707,6 +2789,7 @@ class RuntimeEnvironmentDelta:
     promoted_at: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this RuntimeEnvironmentDelta."""
         return asdict(self)
 
 
@@ -2722,6 +2805,7 @@ class RuntimeRun:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this RuntimeRun."""
         return asdict(self)
 
 
@@ -2738,6 +2822,7 @@ class ProjectItem:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this ProjectItem."""
         return asdict(self)
 
 
@@ -2752,6 +2837,7 @@ class ProjectRecord:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this ProjectRecord."""
         return asdict(self)
 
 
@@ -2773,6 +2859,7 @@ class ProjectRepository:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this ProjectRepository."""
         return asdict(self)
 
 
@@ -2789,6 +2876,7 @@ class IntegrationObservation:
     observed_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this IntegrationObservation."""
         return asdict(self)
 
 
@@ -2809,6 +2897,7 @@ class IntegrationFinding:
     resolution: Optional[str]
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this IntegrationFinding."""
         return asdict(self)
 
 
@@ -2825,6 +2914,7 @@ class MemoryRecord:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this MemoryRecord."""
         return asdict(self)
 
 
@@ -2848,6 +2938,7 @@ class Rollout:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Rollout."""
         return asdict(self)
 
 
@@ -2865,6 +2956,7 @@ class EvalSet:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this EvalSet."""
         return asdict(self)
 
 
@@ -2885,10 +2977,12 @@ class EvalRun:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this EvalRun."""
         return asdict(self)
 
 
 def validate_transition(current: str, target: str) -> None:
+    """Raise TransitionError if the task state transition is not allowed."""
     allowed = TASK_TRANSITIONS.get(current, set())
     if target not in allowed:
         raise TransitionError(
@@ -2963,6 +3057,7 @@ class SourceRelease:
         _reject_branch_ref(self.canonical_ref)
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this SourceRelease."""
         return asdict(self)
 
 
@@ -3016,6 +3111,7 @@ class FleetDesiredSourceState:
             )
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this FleetDesiredSourceState."""
         return asdict(self)
 
 
@@ -3038,6 +3134,7 @@ class DesiredSourceTransition:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this DesiredSourceTransition."""
         return asdict(self)
 
 
@@ -3057,6 +3154,7 @@ class DesiredSourceIdempotencyRecord:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this DesiredSourceIdempotencyRecord."""
         return asdict(self)
 
 
@@ -3100,15 +3198,18 @@ class EvidenceReuseRecord:
 
     @property
     def prior_evidence_id(self) -> str:
+        """Return the source evidence id (provenance alias)."""
         return self.source_evidence_id
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this EvidenceReuseRecord."""
         data = asdict(self)
         data["prior_evidence_id"] = self.source_evidence_id
         return data
 
 
 def ensure_json_object(value: Optional[Mapping[str, Any]]) -> JsonDict:
+    """Return a plain dict copy of the mapping, or an empty dict when None."""
     if value is None:
         return {}
     return dict(value)
@@ -3145,6 +3246,7 @@ class Human:
     updated_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this Human."""
         return asdict(self)
 
 
@@ -3163,4 +3265,5 @@ class HumanGroup:
     created_at: str
 
     def to_dict(self) -> JsonDict:
+        """Return a JSON-serializable dict representation of this HumanGroup."""
         return asdict(self)
