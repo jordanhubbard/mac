@@ -86,6 +86,7 @@ def _format_reset(dt: Optional[datetime]) -> str:
 
 
 def render_account_usage_lines(snapshot: Optional[AccountUsageSnapshot], *, markdown: bool = False) -> list[str]:
+    """Render an account-usage snapshot into displayable text lines."""
     if not snapshot:
         return []
     header = f"📈 {'**' if markdown else ''}{snapshot.title}{'**' if markdown else ''}"
@@ -311,6 +312,7 @@ def fetch_account_usage(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
 ) -> Optional[AccountUsageSnapshot]:
+    """Fetch and normalize the account-usage snapshot for a provider, or None."""
     normalized = str(provider or "").strip().lower()
     if normalized in {"", "auto", "custom"}:
         return None

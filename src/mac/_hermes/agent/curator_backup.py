@@ -160,6 +160,7 @@ def is_enabled() -> bool:
 
 
 def get_keep() -> int:
+    """Return the configured number of curator backups to retain."""
     cfg = _load_config()
     try:
         n = int(cfg.get("keep", DEFAULT_KEEP))
@@ -670,6 +671,7 @@ def rollback(backup_id: Optional[str] = None) -> Tuple[bool, str, Optional[Path]
 # ---------------------------------------------------------------------------
 
 def format_size(n: int) -> str:
+    """Format a byte count as a human-readable size string."""
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
@@ -678,6 +680,7 @@ def format_size(n: int) -> str:
 
 
 def summarize_backups() -> str:
+    """Return a formatted table summarizing existing curator backups."""
     rows = list_backups()
     if not rows:
         return "No curator snapshots yet."

@@ -113,6 +113,7 @@ _REGISTRY: List[RemovalStep] = []
 
 
 def register(step: RemovalStep) -> RemovalStep:
+    """Register a removal step in the global registry and return it."""
     _REGISTRY.append(step)
     return step
 

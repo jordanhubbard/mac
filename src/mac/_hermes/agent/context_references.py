@@ -60,6 +60,7 @@ class ContextReferenceResult:
 
 
 def parse_context_references(message: str) -> list[ContextReference]:
+    """Parse ``@`` context references from a message into structured refs."""
     refs: list[ContextReference] = []
     if not message:
         return refs
@@ -110,6 +111,7 @@ def preprocess_context_references(
     url_fetcher: Callable[[str], str | Awaitable[str]] | None = None,
     allowed_root: str | Path | None = None,
 ) -> ContextReferenceResult:
+    """Resolve context references in a message synchronously."""
     coro = preprocess_context_references_async(
         message,
         cwd=cwd,
@@ -137,6 +139,7 @@ async def preprocess_context_references_async(
     url_fetcher: Callable[[str], str | Awaitable[str]] | None = None,
     allowed_root: str | Path | None = None,
 ) -> ContextReferenceResult:
+    """Resolve context references in a message, expanding them inline."""
     refs = parse_context_references(message)
     if not refs:
         return ContextReferenceResult(message=message, original_message=message)

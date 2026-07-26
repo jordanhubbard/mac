@@ -1243,6 +1243,7 @@ def anthropic_prompt_cache_policy(
 
 
 def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: bool) -> Any:
+    """Build the provider-appropriate OpenAI-compatible client for an agent."""
     from agent.auxiliary_client import _validate_base_url, _validate_proxy_env_urls
     # Treat client_kwargs as read-only. Callers pass agent._client_kwargs (or shallow
     # copies of it) in; any in-place mutation leaks back into the stored dict and is

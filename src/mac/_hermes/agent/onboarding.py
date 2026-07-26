@@ -81,6 +81,7 @@ def busy_input_hint_cli(mode: str) -> str:
 
 
 def tool_progress_hint_gateway() -> str:
+    """Return the first-time tool-progress hint shown in the gateway."""
     return (
         "💡 First-time tip — that tool took a while and I'm streaming every step. "
         "If the progress messages feel noisy, send `/verbose` to cycle modes "
@@ -89,6 +90,7 @@ def tool_progress_hint_gateway() -> str:
 
 
 def tool_progress_hint_cli() -> str:
+    """Return the first-time tool-progress hint shown in the CLI."""
     return (
         "(tip) That tool ran for a while. Use /verbose to cycle tool-progress "
         "display modes (all -> new -> off -> verbose). This tip only shows once."
