@@ -38,6 +38,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/assessment-task-f9cd72.md` | Assessment: task_f9cd72342aef4e7b8701b131b12d29ff |
 | historical archive | `archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md` | Close-Out: dream finding `dreamrepair:3dc2cf317ea21e032952a355c3550f88` (openclaw_fleet_rollout deliverable) |
 | historical archive | `archive/field-notes/closeout-dreamrepair-5404b15-skill.md` | Close-Out: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
+| historical archive | `archive/field-notes/closeout-dreamrepair-965c6e89-openclaw-fleet-rollout.md` | Close-Out: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
 | historical archive | `archive/field-notes/closeout-review-finalize-verify-prerequisite.md` | Close-Out: dream-finding review finalize/verify prerequisite |
 | historical archive | `archive/field-notes/closeout-task-9c83aa5b-skill.md` | Close-Out: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — CLOSE, NOT ACTIONABLE |
 | historical archive | `archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md` | Disposition: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem) |
