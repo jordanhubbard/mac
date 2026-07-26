@@ -5351,6 +5351,28 @@ def cmd_plan_order(args: argparse.Namespace) -> None:
     _print(result.to_dict())
 
 
+def _hgx_registered_agents(args: argparse.Namespace) -> Any:
+    """Load the immutable-session -> registered-agent map for reconciliation.
+
+    Accepts a JSON object (``{session_id: agent_id}``) or a JSON array of
+    ``{"session_id": ..., "agent_id": ...}`` records so live capacity planning
+    can count already-onboarded HGX sessions instead of treating them as spare
+    quota. Returns ``None`` when the operator supplies no registry snapshot.
+    """
+
+    path = getattr(args, "registered_agents_file", None)
+    if not path:
+        return None
+    import json as _json
+    from pathlib import Path as _Path
+
+    try:
+        payload = _json.loads(_Path(path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit("unable to read registered-agents file: %s" % exc)
+    return payload
+
+
 def _hgx_capacity_controller(args: argparse.Namespace) -> Any:
     from mac.hgx_elastic_capacity import (
         HgxCapacityPolicy,
@@ -5387,7 +5409,8 @@ def cmd_hgx_capacity_status(args: argparse.Namespace) -> None:
 
     _print(
         _hgx_capacity_controller(args).status(
-            pending_request_count=args.pending_requests
+            pending_request_count=args.pending_requests,
+            registered_agents=_hgx_registered_agents(args),
         )
     )
 
@@ -5397,7 +5420,8 @@ def cmd_hgx_capacity_plan(args: argparse.Namespace) -> None:
 
     _print(
         _hgx_capacity_controller(args).plan(
-            pending_request_count=args.pending_requests
+            pending_request_count=args.pending_requests,
+            registered_agents=_hgx_registered_agents(args),
         )
     )
 
@@ -5407,7 +5431,8 @@ def cmd_hgx_capacity_execute(args: argparse.Namespace) -> None:
 
     _print(
         _hgx_capacity_controller(args).execute(
-            pending_request_count=args.pending_requests
+            pending_request_count=args.pending_requests,
+            registered_agents=_hgx_registered_agents(args),
         )
     )
 
@@ -5472,6 +5497,15 @@ def _add_hgx_capacity_args(parser: argparse.ArgumentParser) -> None:
         "--state-file",
         default=DEFAULT_STATE_PATH,
         help="durable controller receipt path (written only by execute)",
+    )
+    parser.add_argument(
+        "--registered-agents-file",
+        default=None,
+        help=(
+            "JSON map or record list binding immutable HGX session IDs to "
+            "registered fungible agents; already-onboarded healthy sessions are "
+            "counted as capacity instead of being treated as spare quota"
+        ),
     )
     parser.add_argument("--name-prefix", default="mac-fungible")
     parser.add_argument("--hgx-binary", default="hgx")

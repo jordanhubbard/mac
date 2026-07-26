@@ -14,17 +14,21 @@ def _run(tmp_path, *args):
 class _FakeController:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
+        self.registered_agents: list[object] = []
 
-    def status(self, *, pending_request_count: int = 0):
+    def status(self, *, pending_request_count: int = 0, registered_agents=None):
         self.calls.append(("status", pending_request_count))
+        self.registered_agents.append(registered_agents)
         return {"mode": "status", "read_only": True}
 
-    def plan(self, *, pending_request_count: int = 0):
+    def plan(self, *, pending_request_count: int = 0, registered_agents=None):
         self.calls.append(("plan", pending_request_count))
+        self.registered_agents.append(registered_agents)
         return {"mode": "plan", "read_only": True}
 
-    def execute(self, *, pending_request_count: int = 0):
+    def execute(self, *, pending_request_count: int = 0, registered_agents=None):
         self.calls.append(("execute", pending_request_count))
+        self.registered_agents.append(registered_agents)
         return {
             "mode": "execute",
             "read_only": False,
@@ -101,3 +105,27 @@ def test_hgx_capacity_cli_marks_attested_session_onboarded(
     assert persisted["sessions"]["session-immutable"]["onboarding_status"] == (
         "onboarded"
     )
+
+
+def test_hgx_capacity_cli_passes_registered_agents_file(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    controller = _FakeController()
+    monkeypatch.setattr(cli, "_hgx_capacity_controller", lambda _args: controller)
+
+    registry = tmp_path / "registered.json"
+    registry.write_text(
+        json.dumps({"hgx-immutable": "agent_worker_1"}), encoding="utf-8"
+    )
+
+    assert _run(
+        tmp_path,
+        "hgx",
+        "capacity",
+        "plan",
+        "--registered-agents-file",
+        str(registry),
+    ) == 0
+    capsys.readouterr()
+
+    assert controller.registered_agents == [{"hgx-immutable": "agent_worker_1"}]
