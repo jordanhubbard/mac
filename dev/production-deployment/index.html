@@ -3142,11 +3142,12 @@ not checked into this repository and is not a cross-host ledger.</p>
 <p>Repository-backed execution uses the project repository registry instead of a
 legacy bridge poller. Register or onboard repositories through the current
 project/repository commands:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="go">mac project register &lt;git-url&gt;[#branch]                # #main by default; creates contract task</span>
-<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="go">mac project update &lt;project&gt; --branch &lt;branch&gt;         # move the internal project fork</span>
-<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="go">mac project unregister &lt;project&gt; --force               # detach history; disable checkout registration</span>
-<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="go">mac bridge repository register &lt;name&gt; &lt;path&gt; --project &lt;project&gt;  # after .mac/project.yaml exists</span>
-<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="go">mac bridge repository repos</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="go">mac project register                                  # current checkout; creates contract task</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="go">mac project register &lt;path-or-git-url&gt;[#branch]       # local or remote-first onboarding</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="go">mac project update &lt;project&gt; --branch &lt;branch&gt;         # move the internal project fork</span>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="go">mac project unregister &lt;project&gt; --force               # detach history; disable checkout registration</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="go">mac bridge repository register &lt;name&gt; &lt;path&gt; --project &lt;project&gt;  # after .mac/project.yaml exists</span>
+<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="go">mac bridge repository repos</span>
 </code></pre></div>
 <p>Every registered repository must include a repository runtime contract at
 <code>.mac/project.yaml</code>. Registration and task creation use that contract to attach

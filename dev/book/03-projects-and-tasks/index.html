@@ -1632,15 +1632,25 @@ task exists, then releases it for dispatch.</p>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>task<span class="w"> </span>release<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$task_id</span><span class="s2">&quot;</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>task<span class="w"> </span>ready<span class="w"> </span>--project<span class="w"> </span>tutorial<span class="w"> </span>--limit<span class="w"> </span><span class="m">10</span>
 </code></pre></div>
-<p>Repository-backed projects use one branch-qualified registration string:
+<p>From inside an existing checkout, the shortest repository-backed onboarding
+command is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac project register</span>
+</code></pre></div>
+<p>Pass <code>.</code> explicitly or provide another checkout path when useful:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac project register .</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac project register ~/Src/widget</span>
+</code></pre></div>
+<p>Local registration reads the <code>origin</code> remote and prefers <code>origin/HEAD</code> for the
+branch, falling back to the current branch. <code>--branch</code> overrides discovery.
+Remote-first onboarding uses one branch-qualified registration string,
 <code>GIT_URL#BRANCH</code>. The fragment defaults to <code>main</code>, so these are equivalent:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac project register git@github.com:org/widget.git</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac project register git@github.com:org/widget.git#main</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac project register git@github.com:org/widget.git</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac project register git@github.com:org/widget.git#main</span>
 </code></pre></div>
 <p><code>register</code> creates the project record and its contract-authoring task. A second
 registration for another branch is an internal project fork:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac project register git@github.com:org/widget.git#release/next</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="gp"># </span>default<span class="w"> </span>project<span class="w"> </span>name:<span class="w"> </span>widget@release/next
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mac project register git@github.com:org/widget.git#release/next</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="gp"># </span>default<span class="w"> </span>project<span class="w"> </span>name:<span class="w"> </span>widget@release/next
 </code></pre></div>
 <p>The URL-and-branch pair is unique. The same URL may be registered again only
 with a different branch. Once <code>.mac/project.yaml</code> exists in a hub-visible
@@ -1648,21 +1658,21 @@ checkout, register that checkout with <code>mac bridge repository register</code
 The checkout attachment is an internal execution detail; the operator-facing
 resource remains the project.</p>
 <p>The CLI provides project CRUD:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">mac project create manual-project</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">mac project list</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">mac project show widget</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="go">mac project update widget --branch release/next</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">mac project update widget --description &quot;Release maintenance&quot;</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="go">mac project unregister widget --force</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mac project create manual-project</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">mac project list</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">mac project show widget</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="go">mac project update widget --branch release/next</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="go">mac project update widget --description &quot;Release maintenance&quot;</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="go">mac project unregister widget --force</span>
 </code></pre></div>
 <p>The HTTP API exposes the same lifecycle:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>POST   /projects
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>POST   /projects/register
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>GET    /projects
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>GET    /projects/{project}
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>PUT    /projects/{project}
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>DELETE /projects/{project}?force=true
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>POST   /projects/{project}/dispatch
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>POST   /projects
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>POST   /projects/register
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>GET    /projects
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>GET    /projects/{project}
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>PUT    /projects/{project}
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>DELETE /projects/{project}?force=true
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>POST   /projects/{project}/dispatch
 </code></pre></div>
 <p><code>POST /projects/register</code> accepts the existing repository-onboarding body; put
 the canonical string in <code>repository_url</code>. <code>PUT /projects/{project}</code> accepts

@@ -1631,10 +1631,10 @@ checkout.</p>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--project<span class="w"> </span>mac<span class="w"> </span>--source<span class="w"> </span>docs-book
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>mac<span class="w"> </span>--db<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DOCS_DB</span><span class="s2">&quot;</span><span class="w"> </span>bridge<span class="w"> </span>repository<span class="w"> </span>repos
 </code></pre></div>
-<p>For a new Git-backed project, use <code>mac project register GIT_URL[#BRANCH]</code>
-first. Its contract-authoring
-task should inspect the real build rather than guessing from filenames. Register
-the checkout only after the contract exists.</p>
+<p>For a new Git-backed project, run <code>mac project register</code> from its checkout or
+use <code>mac project register GIT_URL[#BRANCH]</code> for remote-first onboarding. Its
+contract-authoring task should inspect the real build rather than guessing from
+filenames. Register the checkout only after the contract exists.</p>
 <p>Code executors must run the repository's mandatory tests and a CodeGraph audit
 before pushing. A missing test command is a review condition, not permission to
 skip verification.</p>
