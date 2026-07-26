@@ -3682,6 +3682,14 @@ try:
         raise ReceiptFailure("daemon receipt lacks stable inactivity")
     if not isinstance(daemon.get("openclaw"), dict) or daemon["openclaw"].get("final_state") != "absent":
         raise ReceiptFailure("daemon receipt lacks OpenClaw absence")
+    openshell_task_sandboxes = daemon.get("openshell_task_sandboxes")
+    if (
+        not isinstance(openshell_task_sandboxes, dict)
+        or openshell_task_sandboxes.get("final_state") != "quiescent"
+        or openshell_task_sandboxes.get("stable_inactive_observations") != 2
+        or not isinstance(openshell_task_sandboxes.get("reconciled"), list)
+    ):
+        raise ReceiptFailure("daemon receipt lacks OpenShell task-sandbox quiescence")
     if not isinstance(daemon.get("legacy_nemoclaw"), dict) or daemon["legacy_nemoclaw"].get("final_state") != "inactive":
         raise ReceiptFailure("daemon receipt lacks Nemo inactivity")
     reject_secret_or_raw_output(daemon)

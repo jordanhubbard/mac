@@ -103,11 +103,22 @@ if len(args) >= 2 and args[0:2] == ["sandbox", "list"]:
         state["lists_after_delete"] = state.get("lists_after_delete", 0) + 1
         if mode == "delayed-delete" and state["lists_after_delete"] >= 3:
             state["present"] = False
+    stale = json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))
+    reaped = set(state.get("deleted_stale", []))
+    listing = [{{"name": sandbox}}] if state.get("present") else []
+    listing.extend(row for row in stale if row.get("name") not in reaped)
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    print(json.dumps([{{"name": sandbox}}] if state.get("present") else []))
+    print(json.dumps(listing))
     raise SystemExit(0)
 
 if len(args) >= 3 and args[0:2] == ["sandbox", "delete"]:
+    stale_names = {{row.get("name") for row in json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))}}
+    if args[2] in stale_names:
+        reaped = set(state.get("deleted_stale", []))
+        reaped.add(args[2])
+        state["deleted_stale"] = sorted(reaped)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        raise SystemExit(0)
     if args[2] != sandbox:
         raise SystemExit(65)
     state["delete_seen"] = True
@@ -1052,6 +1063,85 @@ def test_stopped_openshell_managed_container_is_compatible_and_proved(
     }
     state = json.loads(run.docker_state.read_text(encoding="utf-8"))
     assert [item["Id"] for item in state["containers"]] == [container_id]
+
+
+def _dead_pid() -> int:
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - child exits immediately.
+        os._exit(0)
+    os.waitpid(pid, 0)
+    return pid
+
+
+def _managed_task_sandbox(
+    name: str,
+    *,
+    owner: str = "mac",
+    kind: str = "task",
+    keep: str = "false",
+    pid: int,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "phase": "Ready",
+        "labels": {
+            "mac.owner": owner,
+            "mac.kind": kind,
+            "mac.keep": keep,
+            "mac.pid": str(pid),
+        },
+    }
+
+
+def test_stale_orphaned_task_sandbox_is_reconciled_before_receipt(
+    tmp_path: Path,
+) -> None:
+    stale = _managed_task_sandbox("mac-task-orphaned-fixture", pid=_dead_pid())
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([stale])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["stable_inactive_observations"] == 2
+    assert proof["reconciled"] == ["mac-task-orphaned-fixture"]
+    assert proof["reconciled_count"] == 1
+    assert (
+        "openshell:sandbox delete mac-task-orphaned-fixture" in _call_lines(run)
+    )
+    _assert_no_secret(run)
+
+
+def test_live_and_partially_labeled_task_sandboxes_are_never_reaped(
+    tmp_path: Path,
+) -> None:
+    protected = [
+        _managed_task_sandbox("mac-task-live-fixture", pid=os.getpid()),
+        _managed_task_sandbox(
+            "mac-task-missing-keep-fixture", keep="", pid=_dead_pid()
+        ),
+        _managed_task_sandbox(
+            "mac-task-foreign-owner-fixture", owner="other", pid=_dead_pid()
+        ),
+        _managed_task_sandbox(
+            "mac-task-unmanaged-kind-fixture", kind="gadget", pid=_dead_pid()
+        ),
+    ]
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps(protected)},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["stable_inactive_observations"] == 2
+    assert proof["reconciled"] == []
+    assert proof["reconciled_count"] == 0
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
 
 
 def test_all_local_docker_context_endpoints_are_certified(tmp_path: Path) -> None:

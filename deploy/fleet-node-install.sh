@@ -6460,7 +6460,8 @@ daemon_resource_quiescence_gate() {
       FAKE_DAEMON_CALLS FAKE_OPENSHELL_STATE FAKE_DOCKER_STATE \
       FAKE_PODMAN_STATE FAKE_CHILD_PID FAKE_OPENSHELL_MODE \
       FAKE_STOP_WRAPPER_MODE FAKE_DOCKER_MODE FAKE_PODMAN_MODE \
-      FAKE_SANDBOX_NAME FAKE_SECRET FAKE_GATE_CAPTURE; do
+      FAKE_SANDBOX_NAME FAKE_SECRET FAKE_GATE_CAPTURE \
+      FAKE_STALE_SANDBOXES; do
       env_value="${!env_name-}"
       [ -z "$env_value" ] || gate_env+=("$env_name=$env_value")
     done
@@ -6809,6 +6810,7 @@ test_child_environment = (
     "FAKE_SANDBOX_NAME",
     "FAKE_SECRET",
     "FAKE_GATE_CAPTURE",
+    "FAKE_STALE_SANDBOXES",
 )
 
 
@@ -6940,6 +6942,236 @@ def stable_sandbox_absence(expected, deadline, return_on_presence):
             raise QuiescenceFailure("OpenShell sandbox did not remain absent")
         sleep_for_poll()
     return True
+
+
+# --- MAC-managed OpenShell task-sandbox reconciliation ----------------------
+#
+# The OpenShell-managed *container* inactivity proof above only covers running
+# managed containers.  A completed executor can still leave a *Ready* MAC-owned
+# task sandbox whose creator process has already exited.  The stale/orphan
+# reconciliation discipline lives in src/mac/openshell_sandbox_gc.py; this gate
+# runs in an isolated, no-site interpreter and cannot import it, so the exact
+# same fail-closed classification is mirrored inline here.  A sandbox is reaped
+# only when every one of these is positively proven and is otherwise left
+# untouched (never reap on partial ownership):
+#
+#   * name matches an exact MAC-managed prefix
+#   * ``mac.owner`` == ``mac`` (exact, case-insensitive)
+#   * ``mac.kind`` is a recognized managed kind
+#   * ``mac.keep`` is present and explicitly falsey
+#   * ``mac.pid`` is a positive integer whose recorded process is dead
+#
+# There is no age threshold and no legacy (unlabeled) acceptance on this path.
+
+managed_task_sandbox_name = re.compile(
+    r"mac-(?:task|hubverify|codingcap|runtime-smoke|security-probe)-[A-Za-z0-9._-]+\Z"
+)
+managed_task_sandbox_kinds = frozenset(
+    {"task", "hubverify", "codingcap", "runtime-smoke", "security-probe"}
+)
+falsey_keep_values = frozenset({"0", "false", "no", "off"})
+
+
+def sandbox_pid_is_alive(pid):
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def classify_orphan_task_sandbox(sandbox):
+    """Fail-closed classification of one listed sandbox for dead-PID reaping.
+
+    Returns a secret-free record carrying only the ownership signals the
+    decision is based on (never label values beyond them), so it is safe to
+    emit as certificate evidence.
+    """
+
+    name = str(sandbox.get("name") or "").strip()
+    labels_value = sandbox.get("labels")
+    labels = labels_value if isinstance(labels_value, dict) else {}
+    owner = str(labels.get("mac.owner") or "").strip().lower()
+    kind = str(labels.get("mac.kind") or "").strip().lower()
+    keep_raw = labels.get("mac.keep")
+    keep = str(keep_raw if keep_raw is not None else "").strip().lower()
+    pid_raw = str(labels.get("mac.pid") or "").strip()
+
+    record = {
+        "name": name,
+        "owner": owner,
+        "kind": kind,
+        "keep": keep,
+        "reap": False,
+    }
+
+    if not name or not managed_task_sandbox_name.fullmatch(name):
+        return record
+    if owner != "mac":
+        return record
+    if kind not in managed_task_sandbox_kinds:
+        return record
+    if keep not in falsey_keep_values:
+        # Missing, blank, or truthy mac.keep is protective: fail closed.
+        return record
+    if not pid_raw:
+        return record
+    try:
+        pid = int(pid_raw)
+    except ValueError:
+        return record
+    if pid <= 0:
+        return record
+    if sandbox_pid_is_alive(pid):
+        return record
+
+    record["reap"] = True
+    return record
+
+
+def list_openshell_sandboxes():
+    """Enumerate every OpenShell sandbox with its labels (secret-free).
+
+    Uses the same paginated, strictly validated inventory contract as
+    ``sandbox_inventory`` but retains the ``labels`` mapping needed to classify
+    MAC-managed task sandboxes.
+    """
+
+    openshell_target = resolve_owned_executable(openshell)
+    reviewed_openshell_cli_summary()
+    offset = 0
+    rows = []
+    names = set()
+    while True:
+        result = run_bounded(
+            [
+                str(openshell_target),
+                "sandbox",
+                "list",
+                "--limit",
+                "1000",
+                "--offset",
+                str(offset),
+                "--output",
+                "json",
+            ],
+            env=openshell_env(),
+        )
+        if result.timed_out:
+            raise QuiescenceFailure("OpenShell sandbox inventory timed out")
+        if result.returncode != 0:
+            raise QuiescenceFailure("OpenShell sandbox inventory failed")
+        try:
+            payload = json.loads(result.stdout)
+        except (TypeError, ValueError):
+            raise QuiescenceFailure("OpenShell sandbox inventory is malformed")
+        if not isinstance(payload, list):
+            raise QuiescenceFailure("OpenShell sandbox inventory is not a list")
+        for item in payload:
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                raise QuiescenceFailure("OpenShell sandbox inventory has an invalid entry")
+            name = item["name"]
+            if not name or "\x00" in name or "\n" in name:
+                raise QuiescenceFailure("OpenShell sandbox inventory has an invalid name")
+            if name in names:
+                raise QuiescenceFailure(
+                    "OpenShell sandbox inventory contains duplicate identities"
+                )
+            names.add(name)
+            labels_value = item.get("labels")
+            if labels_value is not None and not isinstance(labels_value, dict):
+                raise QuiescenceFailure("OpenShell sandbox inventory has malformed labels")
+            rows.append(item)
+        if len(payload) < 1000:
+            return rows
+        offset += len(payload)
+
+
+def orphan_task_sandbox_candidates(sandboxes):
+    return [
+        record
+        for record in (classify_orphan_task_sandbox(row) for row in sandboxes)
+        if record["reap"]
+    ]
+
+
+def delete_managed_task_sandbox(name):
+    openshell_target = resolve_owned_executable(openshell)
+    deleted = run_bounded(
+        [str(openshell_target), "sandbox", "delete", name], env=openshell_env()
+    )
+    if deleted.timed_out:
+        raise QuiescenceFailure("OpenShell task sandbox deletion timed out")
+    if deleted.returncode != 0:
+        raise QuiescenceFailure("OpenShell task sandbox deletion failed")
+
+
+def summarize_managed_task_sandboxes(sandboxes):
+    managed = 0
+    reap_eligible = 0
+    for row in sandboxes:
+        name = str(row.get("name") or "").strip()
+        labels_value = row.get("labels")
+        labels = labels_value if isinstance(labels_value, dict) else {}
+        owner = str(labels.get("mac.owner") or "").strip().lower()
+        if not managed_task_sandbox_name.fullmatch(name) or owner != "mac":
+            continue
+        managed += 1
+        if classify_orphan_task_sandbox(row)["reap"]:
+            reap_eligible += 1
+    return managed, reap_eligible
+
+
+def reconcile_managed_task_sandboxes():
+    """Fail-closed reconcile stale/orphaned MAC-managed task sandboxes.
+
+    Positively-identified stale/orphaned task sandboxes are deleted, then the
+    managed set is proven quiescent with the same stable-observation discipline
+    (two consecutive stale-free observations) used elsewhere in this gate.  The
+    returned proof is secret-free: it records final state, stable observation
+    count, and the names reconciled plus scanned/managed counts.
+    """
+
+    reconciled = []
+    seen = set()
+    stable_observations = 0
+    deadline = min(gate_deadline, time.monotonic() + quiescence_timeout)
+    scanned = 0
+    managed = 0
+    while stable_observations < 2:
+        sandboxes = list_openshell_sandboxes()
+        scanned = len(sandboxes)
+        managed, reap_eligible = summarize_managed_task_sandboxes(sandboxes)
+        candidates = orphan_task_sandbox_candidates(sandboxes)
+        if candidates:
+            stable_observations = 0
+            for record in candidates:
+                name = record["name"]
+                delete_managed_task_sandbox(name)
+                if name not in seen:
+                    seen.add(name)
+                    reconciled.append(name)
+        else:
+            stable_observations += 1
+        if stable_observations >= 2:
+            break
+        if time.monotonic() >= deadline:
+            raise QuiescenceFailure(
+                "stale OpenShell task sandboxes survived phase-1 quiescence"
+            )
+        sleep_for_poll()
+    return {
+        "final_state": "quiescent",
+        "stable_inactive_observations": stable_observations,
+        "reconciled": sorted(reconciled),
+        "reconciled_count": len(reconciled),
+        "scanned": scanned,
+        "managed": managed,
+    }
 
 
 runtime_candidates = {
@@ -7840,7 +8072,7 @@ def atomic_write_certificate(path, payload):
 
 
 def write_pre_source_certificate(
-    path, sandbox, runtimes, retained, openshell_managed
+    path, sandbox, runtimes, retained, openshell_managed, openshell_task_sandboxes
 ):
     identities = runtime_identities(runtimes)
     timestamp = recorded_at()
@@ -7852,6 +8084,7 @@ def write_pre_source_certificate(
         "openclaw": sandbox,
         "container_runtimes": identities,
         "openshell_managed": openshell_managed,
+        "openshell_task_sandboxes": openshell_task_sandboxes,
         "legacy_nemoclaw": {
             "retained_stopped": retained,
             "final_state": "inactive",
@@ -7883,6 +8116,7 @@ def load_certificate(path):
         raise QuiescenceFailure("daemon quiescence receipt lacks runtime identities")
     openclaw = payload.get("openclaw")
     openshell_managed = payload.get("openshell_managed")
+    openshell_task_sandboxes = payload.get("openshell_task_sandboxes")
     legacy = payload.get("legacy_nemoclaw")
     proofs = payload.get("proofs")
     if not isinstance(openclaw, dict) or openclaw.get("final_state") != "absent":
@@ -7896,6 +8130,15 @@ def load_certificate(path):
     ):
         raise QuiescenceFailure(
             "daemon quiescence receipt lacks OpenShell-managed inactivity"
+        )
+    if (
+        not isinstance(openshell_task_sandboxes, dict)
+        or openshell_task_sandboxes.get("final_state") != "quiescent"
+        or openshell_task_sandboxes.get("stable_inactive_observations") != 2
+        or not isinstance(openshell_task_sandboxes.get("reconciled"), list)
+    ):
+        raise QuiescenceFailure(
+            "daemon quiescence receipt lacks OpenShell task-sandbox quiescence"
         )
     if not isinstance(legacy, dict) or legacy.get("final_state") != "inactive":
         raise QuiescenceFailure("daemon quiescence receipt lacks Nemo inactivity")
@@ -8095,8 +8338,14 @@ try:
         retained = prove_legacy_nemoclaw_inactive(runtimes)
         sandbox = quiesce_openclaw_sandbox()
         openshell_managed = prove_managed_openshell_inactive(runtimes)
+        openshell_task_sandboxes = reconcile_managed_task_sandboxes()
         write_pre_source_certificate(
-            certificate, sandbox, runtimes, retained, openshell_managed
+            certificate,
+            sandbox,
+            runtimes,
+            retained,
+            openshell_managed,
+            openshell_task_sandboxes,
         )
     else:
         receipt = load_certificate(certificate)
