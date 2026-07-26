@@ -2400,6 +2400,11 @@ codebase. <strong>No deletion is warranted.</strong> The only legitimate follow-
 confirm each staged module has a real integration path on the roadmap, so a genuinely
 abandoned one doesn't hide among the merely-not-yet-wired. (Contrast <code>ide_launcher.py</code> /
 <code>hermes_chat_config.py</code>, un-imported yet invoked via <code>python -m mac.&lt;mod&gt;</code> — also not dead.)</p>
+<p><strong>Tracking follow-up (done):</strong> the per-module integration classification called for above is
+recorded in <code>docs/reference/staged-module-integration-audit.md</code>. A regenerated enumeration
+found 19 candidates — 10 <code>keep-wired</code> (entrypoint/script-deploy), 9 <code>stage-with-tracking</code>
+(tested, design-traced, not yet called at runtime), and <strong>0 abandoned</strong>. No deletion is
+warranted; the only action is lightweight wiring-tracking for the staged modules.</p>
 </blockquote>
 <h3 id="62-beads-removal-residue-mostly-a-live-mechanism-with-a-legacy-name">6.2 Beads-removal residue — mostly a live mechanism with a legacy name<a class="headerlink" href="#62-beads-removal-residue-mostly-a-live-mechanism-with-a-legacy-name" title="Permanent link">&para;</a></h3>
 <p>The legacy beads <em>dolt-sync</em> bridge is genuinely gone (removal markers at <code>dispatch.py:2144</code>,

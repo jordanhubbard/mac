@@ -10,13 +10,9 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/reference/documentation-inventory/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/reference/staged-module-integration-audit/">
       
       
-        <link rel="prev" href="../../fleet-registry-schema/">
-      
-      
-        <link rel="next" href="../../production-deployment/">
       
       
         
@@ -27,7 +23,7 @@
     
     
       
-        <title>Documentation inventory - MAC Documentation</title>
+        <title>Staged-but-unwired src/mac module integration audit - MAC Documentation</title>
       
     
     
@@ -80,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#documentation-inventory" class="md-skip">
+        <a href="#staged-but-unwired-srcmac-module-integration-audit" class="md-skip">
           Skip to content
         </a>
       
@@ -120,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Documentation inventory
+              Staged-but-unwired src/mac module integration audit
             
           </span>
         </div>
@@ -855,8 +851,6 @@
       
   
   
-    
-  
   
   
     
@@ -869,11 +863,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
@@ -894,7 +888,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1105,19 +1099,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1133,7 +1118,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -1592,6 +1576,80 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-reproducible-enumeration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Reproducible enumeration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-reconciliation-with-docsauditmd-61" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Reconciliation with docs/audit.md §6.1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-classification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Classification
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-verdict-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Verdict summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-action-list-for-the-repair-task" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Action list for the repair task
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Verification
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1607,7 +1665,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/reference/documentation-inventory.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/reference/staged-module-integration-audit.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1615,807 +1673,304 @@
   
 
 
-<h1 id="documentation-inventory">Documentation inventory<a class="headerlink" href="#documentation-inventory" title="Permanent link">&para;</a></h1>
-<p>This generated inventory classifies every Markdown source included in the
-documentation tree. Book chapters are authoritative and executable. Runbooks
-and references describe production boundaries. Historical material is retained
-for provenance and is not a current operating contract.</p>
+<h1 id="staged-but-unwired-srcmac-module-integration-audit">Staged-but-unwired <code>src/mac</code> module integration audit<a class="headerlink" href="#staged-but-unwired-srcmac-module-integration-audit" title="Permanent link">&para;</a></h1>
+<p>Tracking follow-up for <code>docs/audit.md</code> §6.1. This is a <strong>read-only audit</strong>: it
+enumerates every first-party module under <code>src/mac</code> (excluding the vendored
+<code>src/mac/_hermes</code> runtime) that is imported by no other <code>src/mac</code> module and is
+statically reachable only from its own test file, then classifies each one as
+having a <strong>real integration path</strong> or being <strong>genuinely abandoned</strong>. It changes
+no <code>src/</code> code and deletes nothing — it records findings and names the modules a
+future repair task must act on.</p>
+<h2 id="1-reproducible-enumeration">1. Reproducible enumeration<a class="headerlink" href="#1-reproducible-enumeration" title="Permanent link">&para;</a></h2>
+<p>A module is a <strong>candidate</strong> when a repo-wide grep (scope: <code>src</code>, <code>tests</code>,
+<code>scripts</code>, <code>deploy</code>, <code>docs</code>, <code>.mac</code>, <code>pyproject.toml</code>, <code>Makefile</code>, <code>conftest.py</code>,
+<code>ide</code>, <code>desktop</code>, <code>plugin</code>, <code>skills</code>, <code>docker</code>, and <code>src/mac/data/*.json</code>) shows
+<strong>no import or reference</strong> to it from any <strong>non-test, non-self <code>src/mac</code></strong> file.
+<code>_hermes</code> is excluded as a candidate but references <em>from</em> <code>_hermes</code> still count.
+Binary assets and <code>.venv</code> are excluded from the scan.</p>
+<p>Deterministic reproduction (no <code>rg</code> dependency; pure Python stdlib):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python3 - &lt;&lt;&#39;PY&#39;
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>import os, re
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>SRC = &quot;src/mac&quot;
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>modules = [n[:-3] for n in sorted(os.listdir(SRC))
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>           if n.endswith(&quot;.py&quot;) and n != &quot;__init__.py&quot; and not n.startswith(&quot;_hermes&quot;)]
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>scope = [&quot;src&quot;, &quot;tests&quot;, &quot;scripts&quot;, &quot;deploy&quot;, &quot;docs&quot;, &quot;.mac&quot;,
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>         &quot;ide&quot;, &quot;desktop&quot;, &quot;plugin&quot;, &quot;skills&quot;, &quot;docker&quot;]
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>extra = [&quot;pyproject.toml&quot;, &quot;setup.py&quot;, &quot;Makefile&quot;, &quot;conftest.py&quot;]
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>skip = {&quot;.png&quot;, &quot;.jpg&quot;, &quot;.jpeg&quot;, &quot;.gif&quot;, &quot;.wav&quot;, &quot;.mp3&quot;, &quot;.gz&quot;, &quot;.zip&quot;,
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        &quot;.tar&quot;, &quot;.ico&quot;, &quot;.pdf&quot;, &quot;.woff&quot;, &quot;.woff2&quot;, &quot;.ttf&quot;, &quot;.so&quot;, &quot;.pyc&quot;}
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>paths = []
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>for d in scope:
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    for base, dirs, fs in os.walk(d):
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        if &quot;.venv&quot; in dirs: dirs.remove(&quot;.venv&quot;)
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        if &quot;__pycache__&quot; in dirs: dirs.remove(&quot;__pycache__&quot;)
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        paths += [os.path.join(base, f) for f in fs
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>                  if os.path.splitext(f)[1].lower() not in skip]
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>paths += [f for f in extra if os.path.isfile(f)]
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>text = {}
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>for p in paths:
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    try: text[&quot;./&quot; + p] = open(p, encoding=&quot;utf-8&quot;, errors=&quot;replace&quot;).read()
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    except Exception: text[&quot;./&quot; + p] = &quot;&quot;
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>def referenced_by_src(mod):
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>    self_f = f&quot;./src/mac/{mod}.py&quot;
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    imp = re.compile(rf&quot;(?:^|[^.\w])(?:import\s+mac\.{mod}(?:[.\s,]|$)|&quot;
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>                     rf&quot;from\s+mac\.{mod}(?:[.\s]|$))&quot;, re.M)
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    imp3 = re.compile(rf&quot;from\s+mac\s+import\s+[^\n]*\b{mod}\b&quot;)
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    dotted = re.compile(rf&quot;\bmac\.{mod}\b&quot;)
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    for n, t in text.items():
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>        if n == self_f or (f&quot;mac.{mod}&quot; not in t and &quot;from mac import&quot; not in t):
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>            continue
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>        if imp.search(t) or imp3.search(t) or dotted.search(t):
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>            if n.startswith(&quot;./src/mac/&quot;) and &quot;/_hermes/&quot; not in n:
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>                return True
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>    return False
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>cands = [m for m in modules if not referenced_by_src(m)]
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>print(len(cands), &quot;candidates:&quot;)
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>for c in cands: print(&quot; &quot;, c)
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>PY
+</code></pre></div>
+<p>Run against the audited worktree this yields <strong>19 candidates</strong> (198 modules
+scanned):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>changeset_adoption        hermes_gateway            openclaw_delivery_continuity  review_finalizer
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>dream_scanner             hermes_home_audit         openshell_collector           skill_auto_repair
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>evidence_cli              ide_launcher              openshell_supervisor          supervisor
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>git_askpass               investigation_artifacts   predispatch_conflict          webdav_server
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>hermes_chat_config        openclaw_checkpoint_gc    project_inception
+</code></pre></div>
+<h2 id="2-reconciliation-with-docsauditmd-61">2. Reconciliation with <code>docs/audit.md</code> §6.1<a class="headerlink" href="#2-reconciliation-with-docsauditmd-61" title="Permanent link">&para;</a></h2>
+<p>The enumeration is regenerated, not hardcoded, and reconciled against the
+task's prior candidate lists:</p>
+<ul>
+<li><strong>No longer candidates (now referenced by other <code>src/mac</code> modules).</strong> <code>docs/audit.md</code> §6.1
+  listed <code>hgx_provider</code>, <code>hgx_provision</code>, <code>harness_reflex</code>, and
+  <code>evidence_reuse_verifier</code>. In the current worktree these are referenced by
+  first-party modules and therefore fall out of the candidate set:
+  <code>hgx_provider</code> — real import at <code>src/mac/hgx_elastic_capacity.py:38</code> and
+  <code>src/mac/cli.py:5262</code>; <code>hgx_provision</code> — design-surface reference at
+  <code>src/mac/hgx_elastic_capacity.py:7</code>; <code>harness_reflex</code> — design-surface
+  reference at <code>src/mac/harness_recovery.py:4</code>; <code>evidence_reuse_verifier</code> —
+  design-surface references at <code>src/mac/services.py:9605</code> and
+  <code>src/mac/models.py:3168</code>.</li>
+<li><strong>Newly present candidates</strong> not named in the original ~18/§6.1 lists:
+  <code>openclaw_delivery_continuity</code>, <code>supervisor</code>, <code>hermes_home_audit</code>.</li>
+<li><strong>Still candidates</strong> from the prior lists: <code>changeset_adoption</code>, <code>dream_scanner</code>,
+  <code>evidence_cli</code>, <code>git_askpass</code>, <code>hermes_chat_config</code>, <code>hermes_gateway</code>,
+  <code>ide_launcher</code>, <code>investigation_artifacts</code>, <code>openclaw_checkpoint_gc</code>,
+  <code>openshell_collector</code>, <code>openshell_supervisor</code>, <code>predispatch_conflict</code>,
+  <code>project_inception</code>, <code>review_finalizer</code>, <code>skill_auto_repair</code>, <code>webdav_server</code>.</li>
+</ul>
+<blockquote>
+<p><strong>Assumption (recorded).</strong> The audited worktree is a single squashed baseline
+commit (<code>MAC OpenShell sandbox baseline</code>), so per-file authorship dates from
+git history are not available here. The landing dates in <code>docs/audit.md</code> §6.1
+(e.g. <code>openclaw_checkpoint_gc</code> 2026-07-24) are carried forward from that
+document rather than re-derived. Classification below relies on static
+integration evidence (entrypoints, script/deploy callers, design surface,
+passing tests), which does not depend on commit dates.</p>
+</blockquote>
+<h2 id="3-classification">3. Classification<a class="headerlink" href="#3-classification" title="Permanent link">&para;</a></h2>
+<p>Classes: <strong>WIRED-VIA-ENTRYPOINT</strong> (<code>pyproject.toml</code> <code>[project.scripts]</code>),
+<strong>WIRED-VIA-SCRIPT/DEPLOY</strong> (<code>scripts/*.py</code> / <code>deploy/*</code> invoking <code>python -m
+mac.&lt;mod&gt;</code> or importing it), <strong>WIRED-VIA-DESIGN-SURFACE</strong> (referenced from
+first-party module docstrings/design comments or the test-impact map),
+<strong>STAGED-INTENDED</strong> (recent tested-first addition with a plausible roadmap owner
+but no runtime caller yet), <strong>ABANDONED</strong> (no entrypoint, script/deploy caller,
+design reference, or roadmap trace).</p>
 <table>
 <thead>
 <tr>
-<th>Category</th>
-<th>Source</th>
-<th>Title</th>
+<th>module</th>
+<th>classification</th>
+<th>evidence (file:line)</th>
+<th>has_test</th>
+<th>verdict</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>supplemental reference</td>
-<td><code>activation-probe/calibration-spec.md</code></td>
-<td>Held-out calibration protocol</td>
+<td><code>evidence_cli</code></td>
+<td>WIRED-VIA-ENTRYPOINT</td>
+<td><code>pyproject.toml:101</code> (<code>mac-evidence = "mac.evidence_cli:main"</code>); also <code>deploy/codex-runner/mac-task-executor-codex:48</code></td>
+<td><code>tests/test_evidence_cli.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>supplemental reference</td>
-<td><code>activation-probe/classifier-spec.md</code></td>
-<td>External activation-probe classifier contract</td>
+<td><code>git_askpass</code></td>
+<td>WIRED-VIA-ENTRYPOINT</td>
+<td><code>pyproject.toml:107</code> (<code>mac-git-askpass = "mac.git_askpass:main"</code>)</td>
+<td><code>tests/test_git_askpass.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>supplemental reference</td>
-<td><code>activation-probe/integration-guide.md</code></td>
-<td>External activation-probe worker integration</td>
+<td><code>hermes_gateway</code></td>
+<td>WIRED-VIA-ENTRYPOINT</td>
+<td><code>pyproject.toml:102</code> (<code>mac-hermes-gateway = "mac.hermes_gateway:main"</code>); <code>main</code> at <code>src/mac/hermes_gateway.py:122</code></td>
+<td><code>tests/test_hermes_gateway_sandbox.py</code>, <code>tests/test_hermes_vendor.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>supplemental reference</td>
-<td><code>activation-probe/prototype-report.md</code></td>
-<td>External activation-probe prototype</td>
+<td><code>openshell_supervisor</code></td>
+<td>WIRED-VIA-ENTRYPOINT</td>
+<td><code>pyproject.toml:103</code> (<code>mac-openshell-supervisor = "mac.openshell_supervisor:main"</code>)</td>
+<td><code>tests/test_openshell_management.py</code>, <code>tests/test_infrastructure_coverage.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>supplemental reference</td>
-<td><code>activation-probe/runtime-selection.md</code></td>
-<td>External activation capture runtime</td>
+<td><code>openshell_collector</code></td>
+<td>WIRED-VIA-ENTRYPOINT</td>
+<td><code>pyproject.toml:104</code> (<code>mac-openshell-collector = "mac.openshell_collector:main"</code>)</td>
+<td><code>tests/test_openshell_management.py</code>, <code>tests/test_infrastructure_coverage.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0001-unify-hermes-runtime-into-mac.md</code></td>
-<td>ADR 0001 — Unify the Hermes runtime into the <code>mac</code> monorepo</td>
+<td><code>webdav_server</code></td>
+<td>WIRED-VIA-ENTRYPOINT</td>
+<td><code>pyproject.toml:91</code> (<code>mac-webdav-server = "mac.webdav_server:main"</code>); also <code>deploy/install-webdav-server.sh:193</code></td>
+<td><code>tests/test_webdav_server.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0002-memory-store-at-scale.md</code></td>
-<td>ADR 0002 — Memory store / vector tier at fleet scale (50–200 agents per hub)</td>
+<td><code>project_inception</code></td>
+<td>WIRED-VIA-SCRIPT/DEPLOY</td>
+<td><code>scripts/prove-c26-inception.py:9</code> (<code>from mac.project_inception import run_c26_project_inception_proof</code>)</td>
+<td><code>tests/test_project_inception.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0003-tokenhub-core-into-mac.md</code></td>
-<td>ADR 0003 — Optional in-mac model router + vault (revisiting TokenHub's boundary)</td>
+<td><code>review_finalizer</code></td>
+<td>WIRED-VIA-SCRIPT/DEPLOY</td>
+<td><code>deploy/codex-runner/mac-task-executor-opencode-review:449</code> (<code>python3 -m mac.review_finalizer</code>)</td>
+<td><code>tests/test_review_finalizer.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0004-task-ledger-vs-hermes-kanban.md</code></td>
-<td>ADR 0004 — One task database: revert the Hermes kanban adoption, keep our own board</td>
+<td><code>hermes_chat_config</code></td>
+<td>WIRED-VIA-SCRIPT/DEPLOY</td>
+<td><code>deploy/fleet-node-install.sh:8755</code> (<code>python -m mac.hermes_chat_config ...</code>)</td>
+<td><code>tests/test_hermes_chat_config.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0005-elastic-executor-tier-vs-static-fleet.md</code></td>
-<td>ADR 0005 — Elastic executor tier vs. the static fleet (and "every agent is a GitHub runner")</td>
+<td><code>ide_launcher</code></td>
+<td>WIRED-VIA-SCRIPT/DEPLOY</td>
+<td><code>Makefile:302</code> (<code>"$(PYTHON)" -m mac.ide_launcher</code>)</td>
+<td><code>tests/test_ide_launcher.py</code> (pass)</td>
+<td>keep-wired</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0006-acp-support.md</code></td>
-<td>ADR 0006 — Agent Client Protocol (ACP) support</td>
+<td><code>dream_scanner</code></td>
+<td>WIRED-VIA-DESIGN-SURFACE</td>
+<td>design ref <code>src/mac/dream_repair_tasks.py:22</code>; in <code>src/mac/data/test_impact_map.json</code>; §6.1 <code>docs/audit.md:259</code></td>
+<td><code>tests/test_dream_scanner.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0007-hermes-boundary-mood-nap-soul-memory.md</code></td>
-<td>ADR 0007 — Per-module ownership: mood_policy, nap_consolidator, soul_snapshot, memory_vetting</td>
+<td><code>investigation_artifacts</code></td>
+<td>WIRED-VIA-DESIGN-SURFACE</td>
+<td>canonical per-run artifact set; exercised by <code>tests/test_per_run_artifact_gitignore.py:25</code> (<code>from mac.investigation_artifacts import ...</code>); §6.1 <code>docs/audit.md:259</code></td>
+<td>via <code>tests/test_per_run_artifact_gitignore.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0008-openshell-docker-engine-runtime.md</code></td>
-<td>ADR 0008 - OpenShell uses Docker Engine/Moby as its only container runtime</td>
+<td><code>predispatch_conflict</code></td>
+<td>WIRED-VIA-DESIGN-SURFACE</td>
+<td>investigation trace <code>docs/reference/documentation-inventory.md:63</code>; in <code>src/mac/data/test_impact_map.json</code>; §6.1 <code>docs/audit.md:251</code></td>
+<td><code>tests/test_predispatch_conflict.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0009-minimal-base-on-demand-layered-provisioning.md</code></td>
-<td>ADR 0009 - Minimal sandbox base + on-demand, layered, cached provisioning</td>
+<td><code>openclaw_checkpoint_gc</code></td>
+<td>WIRED-VIA-DESIGN-SURFACE</td>
+<td>in <code>src/mac/data/test_impact_map.json</code>; §6.1 <code>docs/audit.md:265</code>; cross-referenced by <code>src/mac/openclaw_checkpoint_gc.py:44</code> OpenClaw family</td>
+<td><code>tests/test_openclaw_checkpoint_gc.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0010-fleet-ide-cutover-parity-matrix.md</code></td>
-<td>ADR 0010 — Fleet IDE Cut-over and Parity Matrix</td>
+<td><code>skill_auto_repair</code></td>
+<td>WIRED-VIA-DESIGN-SURFACE</td>
+<td>in <code>src/mac/data/test_impact_map.json</code>; dream-pipeline design trace <code>docs/archive/field-notes/prereq-task-fd2f34.md:47</code>; §6.1 <code>docs/audit.md:253</code></td>
+<td><code>tests/test_skill_auto_repair.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0011-hub-review-verification-scope.md</code></td>
-<td>ADR 0011 - Hub review verification uses affected tests</td>
+<td><code>hermes_home_audit</code></td>
+<td>STAGED-INTENDED</td>
+<td>roadmap owner: <code>docs/home-consolidation.md:134</code> ("Extend <code>src/mac/hermes_home_audit.py</code> into a <code>mac_home_audit</code> ..."); in <code>src/mac/data/test_impact_map.json</code>; no runtime caller yet</td>
+<td><code>tests/test_hermes_home_audit.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 <tr>
-<td>architecture decision</td>
-<td><code>adr/0012-hybrid-native-steward-containerized-execution.md</code></td>
-<td>ADR 0012 - Native node steward with containerized task execution</td>
+<td><code>supervisor</code></td>
+<td>STAGED-INTENDED</td>
+<td>self-describing watchdog design <code>src/mac/supervisor.py:15</code> (launchd <code>com.mac.supervisor</code>); <code>main</code> at <code>src/mac/supervisor.py:479</code>; in <code>src/mac/data/test_impact_map.json</code>; no entrypoint/launchd install wired yet</td>
+<td><code>tests/test_supervisor.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 <tr>
-<td>supplemental reference</td>
-<td><code>agent-lifecycle-proof.md</code></td>
-<td>Agent Lifecycle Proof</td>
+<td><code>openclaw_delivery_continuity</code></td>
+<td>STAGED-INTENDED</td>
+<td>OpenClaw restart-safe delivery core <code>src/mac/openclaw_delivery_continuity.py:1</code>; family cross-reference <code>src/mac/openclaw_checkpoint_gc.py:44</code>; in <code>src/mac/data/test_impact_map.json</code>; no runtime caller yet</td>
+<td><code>tests/test_openclaw_delivery_continuity.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 <tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-1b6783.md</code></td>
-<td>Assessment: task_1b67831356c347c3a91d782982f47d1c</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-7023d6.md</code></td>
-<td>Assessment: task_7023d6a7ef6e4bbf8f6c2da523a4320f</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-83f38e.md</code></td>
-<td>Assessment: task_83f38e9754f64908a316cccba0952329</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-8bf378.md</code></td>
-<td>Assessment: task_8bf37845abf445149d99fb4a1e3a41d5</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-97627e.md</code></td>
-<td>Resolution: task_97627e43b1034100831e726f8981e5e2</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-a33145.md</code></td>
-<td>Assessment: task_a33145a37db34ffeb55a0db61797df5c</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-a608f4.md</code></td>
-<td>Assessment: task_a608f4405b0446a3b28ed7a8beb4fd65</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-b07fbf.md</code></td>
-<td>Assessment: task_b07fbff6994e41a39ce24157f1832ad5</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-de3502.md</code></td>
-<td>Assessment: task_de35029099d34c94be186c8992ee706a</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-f6a813.md</code></td>
-<td>Assessment: task_f6a813fede7841d28b154af3a544864a</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/assessment-task-f9cd72.md</code></td>
-<td>Assessment: task_f9cd72342aef4e7b8701b131b12d29ff</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/closeout-dreamrepair-3dc2cf-openclaw-fleet-rollout.md</code></td>
-<td>Close-Out: dream finding <code>dreamrepair:3dc2cf317ea21e032952a355c3550f88</code> (openclaw_fleet_rollout deliverable)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/closeout-dreamrepair-5404b15-skill.md</code></td>
-<td>Close-Out: dream finding <code>dreamrepair:5404b15fffa355d739c21e138c5cc122</code> (skill subsystem)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/closeout-review-finalize-verify-prerequisite.md</code></td>
-<td>Close-Out: dream-finding review finalize/verify prerequisite</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/closeout-task-9c83aa5b-skill.md</code></td>
-<td>Close-Out: low-confidence dream finding <code>skill</code> (parent <code>task_9c83aa5b</code>) — CLOSE, NOT ACTIONABLE</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/disposition-dreamrepair-c8dd8037-skill.md</code></td>
-<td>Disposition: dream finding <code>dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1</code> (skill subsystem)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/disposition-dreamrepair-ecd3548-skill.md</code></td>
-<td>Disposition: low-confidence dream finding <code>skill</code> (<code>dreamrepair:ecd3548120e07c38d04e46f0c62e16dd</code>) — CLOSE, NOT ACTIONABLE</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/disposition-hgx-session-c902fab4d55f.md</code></td>
-<td>Disposition: HGX session <code>c902fab4d55f</code> — workspace/PVC inventory, preservation, and convert-in-place feasibility</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md</code></td>
-<td>Disposition: skill environment-prerequisite finding — smallest repair applied</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/disposition-task-9c83aa5b-skill.md</code></td>
-<td>Disposition: low-confidence dream finding <code>skill</code> (parent <code>task_9c83aa5b</code>) — not actionable</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/dream-finding-3dc2cf.md</code></td>
-<td>Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md</code></td>
-<td>Dream-Finding Assessment: dreamrepair:58afe279d34e186ee4d6d6125532371c</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/dream-finding-6d1b5b.md</code></td>
-<td>Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/dream-finding-805aed7.md</code></td>
-<td>Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md</code></td>
-<td>Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/findings-crash-591645a3-startup-selftest-timeout.md</code></td>
-<td>Findings: startup self-test transient-timeout crash (crash_591645a352fc4d54bf5e3f99384da7dc)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/findings-crash-mac-agent-service-62021be0.md</code></td>
-<td>Findings: mac-agent-service startup self-test crash (62021be0)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/findings-crash-service-unknown-crash-path.md</code></td>
-<td>Findings: crash_service "unknown" crash path (ground truth for parent P0 crash-repair)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/fleet-ide-workbench-plan.md</code></td>
-<td>Fleet Workbench — Clean-Slate IDE Plan</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/forensics-task-643b33ee1c7b4a4ab7a81bf8d5af34a4.md</code></td>
-<td>Forensics: Diagnose 90s Dispatch Delay for CLI-Created Probe Task</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/forensics-task-a32a35e90ab0434e8c7766057b268bc6.md</code></td>
-<td>Root-Cause Report: Silent Executor Insta-Block for task_a32a35e90ab0434e8c7766057b268bc6</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-dream-skill-generic-area-bucket.md</code></td>
-<td>Investigation: dream finding with a generic <code>skill</code> affected label — placeholder area bucket, not a defect location</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-dream-skill-tool_or_skill_name-actionability.md</code></td>
-<td>Investigation: dream <code>tool_or_skill_name</code> (skill) finding — actionability &amp; root signal</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-dream-tests-generic-area-bucket.md</code></td>
-<td>Investigation: dream finding <code>dreamrepair:173ce952</code> with a generic <code>tests</code> affected label — placeholder area bucket, not a defect location</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md</code></td>
-<td>Investigation: dream finding <code>dreamrepair:4c4429bc</code> (scripts / openclaw_fleet_rollout audit)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-dreamrepair-5404b15-skill.md</code></td>
-<td>Investigation: dream finding <code>dreamrepair:5404b15fffa355d739c21e138c5cc122</code> (skill subsystem)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md</code></td>
-<td>Investigation: dream finding <code>dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1</code> (skill subsystem)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-predispatch-conflict-5a43ad.md</code></td>
-<td>Investigation: <code>predispatch_conflict.py</code> failure-pattern (dream finding)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-review-finalize-verify-prerequisite.md</code></td>
-<td>Investigation: dream-finding review finalize/verify prerequisite ground truth</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-task-2284f3-env-prerequisite-false-positive.md</code></td>
-<td>Investigation: mac environment-prerequisite finding is a classifier false positive</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-task-b6ddd8-skill-env-prereqs.md</code></td>
-<td>Investigation: skills environment-prerequisite behavior vs. the finding</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-task-ed7b0b-new-file-staging-finalizer.md</code></td>
-<td>Investigation: new-file staging finalizer ground truth (task_ed7b0b)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/investigation-task-f869c0-new-file-staging-finalizer.md</code></td>
-<td>Investigation: new-file staging finalizer ground truth (task_f869c0)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/k8s-native-rewrite-plan.md</code></td>
-<td>Kubernetes-native rewrite plan</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/mac-task-bd-parity-audit.md</code></td>
-<td><code>mac task</code> ↔ <code>bd</code> (beads) functional-parity audit</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/metadata-sync-assessment.md</code></td>
-<td>Metadata sync assessment (post-bd-bridge)</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/prereq-task-029665.md</code></td>
-<td>Preflight: HGX auth path, fleet baseline, and standard-dind fungible reference</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/prereq-task-403ed263.md</code></td>
-<td>Prerequisite Verification: task_403ed263ed7e45c6b7624345005a097c</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/prereq-task-e94f546c.md</code></td>
-<td>Prerequisite Investigation: task_e94f546cf9dc41409d4a9fe6b8b39dcd</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/prereq-task-fd2f34.md</code></td>
-<td>Prerequisite Investigation: task_fd2f34b64823410c84a14fc0345610ff</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/quickstart-gap-analysis.md</code></td>
-<td>Quickstart Gap Analysis</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/replace-hgx-session-c902fab4d55f.md</code></td>
-<td>Field note: HGX session <code>c902fab4d55f</code> — realize capacity via preserve-nothing + REPLACE</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/field-notes/scaling-plan.md</code></td>
-<td>Scaling Plan</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>archive/index.md</code></td>
-<td>Historical archive</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>audit.md</code></td>
-<td>MAC Codebase Audit — Active Code, Duplication &amp; Accretion</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/01-system.md</code></td>
-<td>MAC as a System</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/02-local-start.md</code></td>
-<td>Install and Start Locally</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/03-projects-and-tasks.md</code></td>
-<td>Projects and Tasks</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/04-machines-and-agents.md</code></td>
-<td>Machines and Agents</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/05-evidence-review-completion.md</code></td>
-<td>Evidence, Review, and Completion</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/06-hermes-and-ide.md</code></td>
-<td>Hermes and the Fleet IDE</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/07-repository-contracts.md</code></td>
-<td>Repository Contracts</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/08-plans-and-dags.md</code></td>
-<td>Plans, DAGs, and the Fast Lane</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/09-fleet-onboarding.md</code></td>
-<td>Heterogeneous Fleet Onboarding</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/10-identity-and-secrets.md</code></td>
-<td>Identity, Credentials, and Secrets</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/11-publication-and-refs.md</code></td>
-<td>Review, Publication, and Ref Hygiene</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/12-operations.md</code></td>
-<td>Operating the Fleet</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/13-deployment-topologies.md</code></td>
-<td>Deployment Topologies</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/14-images-and-cutover.md</code></td>
-<td>Qualified Images and Synchronized Cutover</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/15-sandboxed-runtimes.md</code></td>
-<td>Sandboxed Agent Runtimes</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/16-apis-and-integrations.md</code></td>
-<td>APIs, AgentBus, and Integrations</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/17-learning-evals-scaling.md</code></td>
-<td>Learning, Evals, and Scaling</td>
-</tr>
-<tr>
-<td>book</td>
-<td><code>book/18-capstone.md</code></td>
-<td>From Request to Production</td>
-</tr>
-<tr>
-<td>runbook</td>
-<td><code>break-glass-host-recovery.md</code></td>
-<td>Break-glass host recovery</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>c26-certifier-phase-profile-example.md</code></td>
-<td>c26 certifier phase-profile example</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>certifier-linux-openshell-gateway.md</code></td>
-<td>Linux OpenShell gateway for a Darwin certifier controller</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>changeset-adoption-core-spec.md</code></td>
-<td>Controller Changeset-Adoption Core Spec</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>client-bootstrap-contract.md</code></td>
-<td>SSH Client Bootstrap Contracts</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>coding-cli-credentials.md</code></td>
-<td>Coding-CLI Credentials and Model Selection</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>contract-verify-environment-failure-finding.md</code></td>
-<td>Contract-verify environment failure investigation finding</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>crash-diagnosis-and-repair.md</code></td>
-<td>Crash diagnosis and autonomous repair</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>crash-incident-finding.md</code></td>
-<td>Crash incident investigation finding</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>dashboard-connection.md</code></td>
-<td>Dashboard Connection Contract</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>deploy-prerequisite-vs-phase1-audit.md</code></td>
-<td>Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>dispatch-priority-bias-audit.md</code></td>
-<td>Dispatch priority bias ordering audit</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>dream-finding-965c6e89.md</code></td>
-<td>Ground Truth: dream finding <code>dreamrepair:965c6e89c762d29f07df25aafd3ac96f</code> (openclaw_fleet_rollout deliverable)</td>
-</tr>
-<tr>
-<td>runbook</td>
-<td><code>dream-stalled-finalizer-recovery-finding.md</code></td>
-<td>Dream-repair review finding: stalled-finalizer recovery</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>env-config-reference.md</code></td>
-<td>MAC environment configuration reference</td>
-</tr>
-<tr>
-<td>runbook</td>
-<td><code>fleet-cutover-transaction-protocol.md</code></td>
-<td>Fleet Cut-over Transaction Protocol</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>fleet-directives.md</code></td>
-<td>Fleet directives</td>
-</tr>
-<tr>
-<td>runbook</td>
-<td><code>fleet-node-onboarding-checklist.md</code></td>
-<td>Fleet node onboarding checklist</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>fleet-operational-learning.md</code></td>
-<td>Fleet operational learning</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>fleet-registry-schema.md</code></td>
-<td>Fleet registry schema</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>getting-started.md</code></td>
-<td>MAC Quickstart</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>haskell_migration.md</code></td>
-<td>A Notional Haskell Migration Plan for MAC</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>hermes-boundary.md</code></td>
-<td>Hermes Boundary</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>hermes-integration.md</code></td>
-<td>Hermes Integration</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>hgx-elastic-capacity.md</code></td>
-<td>HGX elastic capacity</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>home-consolidation.md</code></td>
-<td>Home-Directory Consolidation: Analysis &amp; Plan</td>
-</tr>
-<tr>
-<td>runbook</td>
-<td><code>hub-availability.md</code></td>
-<td>Hub Availability</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>hub-ha-audit.md</code></td>
-<td>Ground-Truth Audit: Hub High-Availability Primitives</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>hub-host-saturation-remediation.md</code></td>
-<td>Hub-Host Saturation Remediation</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>image-publication-and-qualification.md</code></td>
-<td>Image Publication and Pre-Publication Qualification</td>
-</tr>
-<tr>
-<td>landing page</td>
-<td><code>index.md</code></td>
-<td>MAC: trustworthy work across an agent fleet</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>integration-authority-contract.md</code></td>
-<td>Integration Authority Contract</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>job-per-task-roles-spec-review.md</code></td>
-<td>Review: docs/job-per-task-roles-spec.md</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>job-per-task-roles-spec.md</code></td>
-<td>Job-per-task Role Specialisation — Design Spec</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>linear-bridge-spec-review.md</code></td>
-<td>Linear Bridge Spec — Review Notes</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>linear-bridge-spec.md</code></td>
-<td>Linear Bridge — Design Spec</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>local-ledger-migration.md</code></td>
-<td>Local Ledger Authority Transfer</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>memory-tier-schema.md</code></td>
-<td>MAC vector memory tier — schema, collections, model, TTLs</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>memory-tier-verification.md</code></td>
-<td>Memory tier — end-to-end verification</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>notifier-configuration-guide.md</code></td>
-<td>Notifier Configuration Guide</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>oneshot-isolation-gate-verification.md</code></td>
-<td>Oneshot isolation — contract gate verification</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>openclaw-identities.md</code></td>
-<td>OpenClaw public identities and fleet representation</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>openshell-nemo-relay-e2e.md</code></td>
-<td>OpenShell + NeMo Relay: container-contract verification</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>openshell-nemo-relay-integration.md</code></td>
-<td>OpenShell + NeMo Relay integration</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>openshell-sandbox.md</code></td>
-<td>Running Hermes under the OpenShell sandbox</td>
-</tr>
-<tr>
-<td>runbook</td>
-<td><code>production-deployment.md</code></td>
-<td>Production Deployment</td>
-</tr>
-<tr>
-<td>generated reference</td>
-<td><code>reference/cli.md</code></td>
-<td>Command-line reference</td>
-</tr>
-<tr>
-<td>generated reference</td>
-<td><code>reference/documentation-inventory.md</code></td>
-<td>Documentation inventory</td>
-</tr>
-<tr>
-<td>generated reference</td>
-<td><code>reference/openapi.md</code></td>
-<td>HTTP API reference</td>
-</tr>
-<tr>
-<td>generated reference</td>
-<td><code>reference/staged-module-integration-audit.md</code></td>
-<td>Staged-but-unwired <code>src/mac</code> module integration audit</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>repository-cicd-monitor.md</code></td>
-<td>Repository CI/CD lifecycle monitoring</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>repository-ref-hygiene.md</code></td>
-<td>Managed Repository Ref Hygiene</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>repository-runtime-contract.md</code></td>
-<td>Repository Runtime Contract</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>review-strategy-experiments.md</code></td>
-<td>Review-strategy experiments</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>scientific-optimizer.md</code></td>
-<td>Autonomous scientific optimizer</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>secrets-management-guide.md</code></td>
-<td>Secrets Management Guide</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>security/openshell-0.0.72-compatibility-review.mdx</code></td>
-<td>OpenShell 0.0.72 Compatibility Review</td>
-</tr>
-<tr>
-<td>runbook</td>
-<td><code>soul-preservation-runbook.md</code></td>
-<td>Soul Preservation Runbook</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>superpowers/plans/2026-05-31-autonomous-project-routing-review-fix-loop.md</code></td>
-<td>Autonomous Project Routing and Review/Fix Loop Implementation Plan</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>superpowers/specs/2026-05-31-autonomous-review-fix-loop-design.md</code></td>
-<td>Autonomous Project Routing and Review/Fix Loop Design</td>
-</tr>
-<tr>
-<td>historical archive</td>
-<td><code>superpowers/specs/2026-06-04-k8s-bootstrap-fleet-registration-design.md</code></td>
-<td>K8s bootstrap fleet registration — design</td>
-</tr>
-<tr>
-<td>runbook</td>
-<td><code>synchronized-fleet-cutover.md</code></td>
-<td>Synchronized Fleet Cut-over</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>testing-strategy.md</code></td>
-<td>Test portfolio strategy</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>work-graph-control-plane.md</code></td>
-<td>Work-Graph Assembly Control Plane</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>work-package-execution-telemetry.md</code></td>
-<td>Managed-versus-legacy execution telemetry</td>
-</tr>
-<tr>
-<td>supplemental reference</td>
-<td><code>work-package-pipeline-activation.md</code></td>
-<td>Work-Package Pipeline Activation</td>
+<td><code>changeset_adoption</code></td>
+<td>STAGED-INTENDED</td>
+<td>controller changeset-adoption core <code>src/mac/changeset_adoption.py:1</code>; shares OpenClaw rollout schema family (<code>ROLLOUT_PLAN_SCHEMA = "mac.openclaw_fleet_rollout.v1"</code>, <code>src/mac/openclaw_fleet_rollout.py:22</code>); no runtime caller yet</td>
+<td><code>tests/test_changeset_adoption.py</code> (pass)</td>
+<td>stage-with-tracking</td>
 </tr>
 </tbody>
 </table>
+<h2 id="4-verdict-summary">4. Verdict summary<a class="headerlink" href="#4-verdict-summary" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>keep-wired (10)</strong> — a concrete runtime path exists today:
+  <code>evidence_cli</code>, <code>git_askpass</code>, <code>hermes_gateway</code>, <code>openshell_supervisor</code>,
+  <code>openshell_collector</code>, <code>webdav_server</code> (entrypoints); <code>project_inception</code>,
+  <code>review_finalizer</code>, <code>hermes_chat_config</code>, <code>ide_launcher</code> (script/deploy).</li>
+<li><strong>stage-with-tracking (9)</strong> — no runtime caller yet, but each has a passing
+  test and a design/roadmap trace, i.e. the deliberate "land the capability with
+  unit tests, wire it later" pattern from §6.1:
+  <code>dream_scanner</code>, <code>investigation_artifacts</code>, <code>predispatch_conflict</code>,
+  <code>openclaw_checkpoint_gc</code>, <code>skill_auto_repair</code>, <code>hermes_home_audit</code>,
+  <code>supervisor</code>, <code>openclaw_delivery_continuity</code>, <code>changeset_adoption</code>.</li>
+<li><strong>ABANDONED-needs-action (0)</strong> — no candidate lacks all of entrypoint,
+  script/deploy caller, design reference, and passing test. <strong>No module is
+  genuinely abandoned; no deletion is warranted.</strong></li>
+</ul>
+<h2 id="5-action-list-for-the-repair-task">5. Action list for the repair task<a class="headerlink" href="#5-action-list-for-the-repair-task" title="Permanent link">&para;</a></h2>
+<p>There is <strong>no deletion or code change to perform</strong>. The only follow-up is
+lightweight tracking so a future genuinely-abandoned module cannot hide among
+the not-yet-wired:</p>
+<ol>
+<li>Add a runtime-wiring tracking note (roadmap owner + target integration point)
+   for each of the 9 <strong>stage-with-tracking</strong> modules, prioritising the three
+   with the thinnest external trace — <code>supervisor</code> (needs a launchd/systemd
+   install unit), <code>openclaw_delivery_continuity</code>, and <code>changeset_adoption</code>
+   (both awaiting an OpenClaw-rollout caller).</li>
+<li>Re-run the enumeration in §1 on each subsequent audit and diff against this
+   table; investigate any module that becomes a candidate <strong>and</strong> loses its
+   passing test or design trace — that is the abandonment signal to act on.</li>
+<li>No <code>src/mac</code> deletions. Preserve all 19 modules.</li>
+</ol>
+<h2 id="6-verification">6. Verification<a class="headerlink" href="#6-verification" title="Permanent link">&para;</a></h2>
+<p>Doc-only change. The candidate module tests and their covering suites are green
+in the audited worktree:</p>
+<ul>
+<li>Dedicated candidate tests: <code>290 passed</code> across
+  <code>tests/test_changeset_adoption.py</code>, <code>tests/test_dream_scanner.py</code>,
+  <code>tests/test_evidence_cli.py</code>, <code>tests/test_git_askpass.py</code>,
+  <code>tests/test_hermes_chat_config.py</code>, <code>tests/test_hermes_home_audit.py</code>,
+  <code>tests/test_ide_launcher.py</code>, <code>tests/test_openclaw_checkpoint_gc.py</code>,
+  <code>tests/test_openclaw_delivery_continuity.py</code>,
+  <code>tests/test_predispatch_conflict.py</code>, <code>tests/test_project_inception.py</code>,
+  <code>tests/test_review_finalizer.py</code>, <code>tests/test_skill_auto_repair.py</code>,
+  <code>tests/test_supervisor.py</code>, <code>tests/test_webdav_server.py</code>.</li>
+<li>Covering suites for candidates without a dedicated test file: <code>35 passed</code>
+  across <code>tests/test_hermes_gateway_sandbox.py</code>,
+  <code>tests/test_per_run_artifact_gitignore.py</code>,
+  <code>tests/test_openshell_management.py</code>, <code>tests/test_infrastructure_coverage.py</code>.</li>
+</ul>
 
 
 
@@ -2446,44 +2001,6 @@ for provenance and is not a current operating contract.</p>
       
         <footer class="md-footer">
   
-    
-      
-      <nav class="md-footer__inner md-grid" aria-label="Footer" >
-        
-          
-          <a href="../../fleet-registry-schema/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Fleet registry">
-            <div class="md-footer__button md-icon">
-              
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
-            </div>
-            <div class="md-footer__title">
-              <span class="md-footer__direction">
-                Previous
-              </span>
-              <div class="md-ellipsis">
-                Fleet registry
-              </div>
-            </div>
-          </a>
-        
-        
-          
-          <a href="../../production-deployment/" class="md-footer__link md-footer__link--next" aria-label="Next: Production deployment">
-            <div class="md-footer__title">
-              <span class="md-footer__direction">
-                Next
-              </span>
-              <div class="md-ellipsis">
-                Production deployment
-              </div>
-            </div>
-            <div class="md-footer__button md-icon">
-              
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
-            </div>
-          </a>
-        
-      </nav>
     
   
   <div class="md-footer-meta md-typeset">
