@@ -1,5 +1,7 @@
 import base64
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -71,6 +73,97 @@ def test_health_does_not_wait_on_dynamic_principal_store(monkeypatch):
     )
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_slow_scoped_auth_does_not_starve_health(monkeypatch):
+    app = create_app(
+        control_plane=ControlPlane.in_memory(),
+        auth_tokens={"reader": ["read"]},
+    )
+    token_read_started = threading.Event()
+    release_token_read = threading.Event()
+
+    def _slow_principal_store():
+        token_read_started.set()
+        release_token_read.wait(timeout=3)
+        return {}
+
+    monkeypatch.setattr(
+        app.state.worker_principals,
+        "tokens",
+        _slow_principal_store,
+    )
+    health_done = threading.Event()
+    health_result = {}
+
+    def _get_health(client):
+        health_result["response"] = client.get("/health")
+        health_done.set()
+
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as pool:
+        protected = pool.submit(
+            client.get,
+            "/tasks",
+            headers={"Authorization": "Bearer reader"},
+        )
+        assert token_read_started.wait(timeout=1)
+        health = pool.submit(_get_health, client)
+        try:
+            assert health_done.wait(timeout=1)
+        finally:
+            release_token_read.set()
+        health.result(timeout=2)
+        assert health_result["response"].json() == {"status": "ok"}
+        assert protected.result(timeout=2).status_code == 200
+
+
+def test_health_skips_relay_scope_and_flush(monkeypatch):
+    app = create_app(control_plane=ControlPlane.in_memory())
+
+    def _relay_must_not_run(*_args, **_kwargs):
+        raise AssertionError("public health route entered the Relay request path")
+
+    monkeypatch.setattr("mac.api._relay_agent_scope", _relay_must_not_run)
+    monkeypatch.setattr("mac.api._relay_flush", _relay_must_not_run)
+    with TestClient(app) as client:
+        assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_slow_relay_flush_does_not_starve_health(monkeypatch):
+    app = create_app(
+        control_plane=ControlPlane.in_memory(),
+        auth_tokens={"reader": ["read"]},
+    )
+    flush_started = threading.Event()
+    release_flush = threading.Event()
+
+    def _slow_relay_flush():
+        flush_started.set()
+        release_flush.wait(timeout=3)
+
+    monkeypatch.setattr("mac.api._relay_flush", _slow_relay_flush)
+    health_done = threading.Event()
+    health_result = {}
+
+    def _get_health(client):
+        health_result["response"] = client.get("/health")
+        health_done.set()
+
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as pool:
+        protected = pool.submit(
+            client.get,
+            "/tasks",
+            headers={"Authorization": "Bearer reader"},
+        )
+        assert flush_started.wait(timeout=1)
+        health = pool.submit(_get_health, client)
+        try:
+            assert health_done.wait(timeout=1)
+        finally:
+            release_flush.set()
+        health.result(timeout=2)
+        assert health_result["response"].json() == {"status": "ok"}
+        assert protected.result(timeout=2).status_code == 200
 
 
 def test_repository_ref_reconciler_follows_app_lifecycle(monkeypatch):

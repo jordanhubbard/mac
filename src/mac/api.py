@@ -4276,6 +4276,7 @@ def create_app(
         started = time.monotonic()
         status_code = 500
         error_name = ""
+        public_route = _required_scope(request.method, request.url.path) is None
         try:
             # Public liveness/discovery routes do not need a principal. Avoid
             # consulting the dynamic worker-principal registry for them: that
@@ -4284,8 +4285,8 @@ def create_app(
             # and provoke the supervisor into killing a busy-but-live hub.
             auth_tokens_for_request = (
                 {}
-                if _required_scope(request.method, request.url.path) is None
-                else _current_auth_tokens()
+                if public_route
+                else await asyncio.to_thread(_current_auth_tokens)
             )
             principal = _authorize_request(
                 request.method,
@@ -4296,14 +4297,29 @@ def create_app(
             if principal is not None:
                 principal = replace(
                     principal,
-                    worker_identity_mode=worker_identity_policy.mode,
+                    worker_identity_mode=await asyncio.to_thread(
+                        lambda: worker_identity_policy.mode
+                    ),
                 )
             request.state.principal = principal
         except AuthorizationError as exc:
             status_code = 403
             error_name = exc.__class__.__name__
-            _emit_http_observation(request, status_code, started, error_name)
+            await asyncio.to_thread(
+                _emit_http_observation,
+                request,
+                status_code,
+                started,
+                error_name,
+            )
             return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+        # Public liveness/discovery traffic has no agent identity or durable
+        # work to trace. Keep it out of the optional native Relay request scope
+        # and flush path so those best-effort exporters can never become part of
+        # the supervisor's liveness contract.
+        if public_route:
+            return await call_next(request)
 
         # NeMo Relay: open an Agent scope per HTTP request when relay is active.
         # The session_id is taken from the X-Session-Id header when present, or
@@ -4324,9 +4340,15 @@ def create_app(
                     error_name = exc.__class__.__name__
                     raise
                 finally:
-                    _emit_http_observation(request, status_code, started, error_name)
+                    await asyncio.to_thread(
+                        _emit_http_observation,
+                        request,
+                        status_code,
+                        started,
+                        error_name,
+                    )
         finally:
-            _relay_flush()
+            await asyncio.to_thread(_relay_flush)
 
     # th-merge-04: let model-provider keys be `secret:<name>`, resolved
     # decrypt-at-use from the in-mac encrypted key store. Shared by the /v1
