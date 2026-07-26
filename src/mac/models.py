@@ -749,11 +749,47 @@ NAP_WINDOW_MINUTES = 60
 NAP_DEFAULT_DURATION_MINUTES = 15
 
 
-EVIDENCE_KINDS = {"test", "review", "artifact", "publication", "log", "eval"}
+# Canonical evidence-kind registry — the single source of truth every
+# validation path consults, so no surface can accept a kind that another rejects.
+#
+# It unions three durable vocabularies that all land in the same ``evidence.kind``
+# column and therefore must be mutually consistent:
+#   * ``_STORED_EVIDENCE_KINDS``  — kinds the CLI/API historically accept and store
+#     (``test``/``review``/``artifact``/``publication``/``log``/``eval``).
+#   * ``_INTERNAL_EVIDENCE_KINDS`` — kinds the runtime itself writes via
+#     ``add_evidence`` (auto-land bookkeeping + human notifications). These are
+#     already persisted, so the registry must keep accepting them.
+#   * ``_VALIDATOR_EVIDENCE_KINDS`` — the verification ``evidence_type`` tokens the
+#     validator registry (``mac.evidence_validators.VALIDATORS``) advertises, e.g.
+#     ``deployment``/``repo_change``/``no_change``. Live operator evidence showed
+#     the validators accepting these while ``add_evidence`` rejected the identical
+#     request before storage; folding them in removes that contradiction without a
+#     translation layer. ``evidence_validators`` asserts at import time that its
+#     registry is a subset of this set, so the two can never drift apart again.
+_STORED_EVIDENCE_KINDS = {"test", "review", "artifact", "publication", "log", "eval"}
+_INTERNAL_EVIDENCE_KINDS = {
+    "auto_land_ready",
+    "auto_land_decision",
+    "mac_notify_human",
+}
+_VALIDATOR_EVIDENCE_KINDS = {
+    "repo_change",
+    "documentation",
+    "deployment",
+    "artifact",
+    "no_change",
+    "review_verdict",
+    "operator_result",
+    "investigation",
+    "plan_decomposed",
+}
+EVIDENCE_KINDS = (
+    _STORED_EVIDENCE_KINDS | _INTERNAL_EVIDENCE_KINDS | _VALIDATOR_EVIDENCE_KINDS
+)
 # Deterministic, sorted view of the canonical evidence kinds. This is the single
 # source of truth shared by the CLI (argparse ``choices`` + help), the runtime
-# service (``ControlPlane.add_evidence``), and any other caller, so a new kind is
-# added in exactly one place.
+# service (``ControlPlane.add_evidence``), the validator registry, and any other
+# caller, so a new kind is added in exactly one place.
 EVIDENCE_KIND_CHOICES = tuple(sorted(EVIDENCE_KINDS))
 
 
