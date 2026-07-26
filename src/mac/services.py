@@ -19886,7 +19886,7 @@ class ControlPlane:
         gate = validate_projected_merge(str(root), "HEAD", head_sha)
         commands.append({"name": "merge_gate", **gate.to_dict()})
         if not gate.clean:
-            raise ValidationError(
+            merge_gate_error = ValidationError(
                 "git publication merge gate: task branch does not integrate onto "
                 "the current main tip (%s); conflicts: %s — route to integration "
                 "(rebase + resolve + re-verify), do not merge"
@@ -19895,6 +19895,25 @@ class ControlPlane:
                     ", ".join(gate.conflicted_files[:10]) or gate.error or "unknown",
                 )
             )
+            # Carry the exact, authoritative conflict context on the exception so
+            # the review handler can hand this legacy single-task publication off
+            # to an integration executor without re-resolving or re-cloning the
+            # repo. ``gate.base_sha`` is the CURRENT canonical main tip we just
+            # fetched+pulled (the moving trunk the branch failed to integrate
+            # onto), and ``gate.conflicted_files`` names the conflicting paths.
+            merge_gate_error.conflict_integration_context = {
+                "schema": "mac.merge_gate_conflict_context.v1",
+                "task_id": str(task_id),
+                "reviewed_head_sha": str(head_sha).strip(),
+                "current_main_sha": str(gate.base_sha or "").strip(),
+                "conflicted_paths": [
+                    str(path).strip()
+                    for path in gate.conflicted_files
+                    if str(path).strip() and str(path).strip() != "<unknown>"
+                ],
+                "repo_root": str(root),
+            }
+            raise merge_gate_error
 
         # Publication is the serial integration boundary, so branch-scoped
         # evidence is not sufficient here: run the FULL configured repository
@@ -20024,7 +20043,15 @@ class ControlPlane:
             )
 
         def git_runner(args: List[str], timeout: int = 60) -> JsonDict:
-            return self._git_output(repo_path, list(args), timeout=timeout)
+            # Landed-commit provenance is best-effort: if the resolved repo path
+            # is unavailable (e.g. a transient clone already cleaned up, or a
+            # path that no longer exists), return a failure dict so the pure
+            # builder records empty provenance rather than raising — a conflict
+            # payload must always be producible.
+            try:
+                return self._git_output(repo_path, list(args), timeout=timeout)
+            except OSError:
+                return {"returncode": 1, "stdout": "", "stderr": "repo path unavailable"}
 
         return build_conflict_integration_payload(
             approved_task_id=approved_task_id,
@@ -20036,6 +20063,278 @@ class ControlPlane:
             depends_on=depends_on,
             git_runner=git_runner,
         )
+
+    @staticmethod
+    def _conflict_integration_idempotency_fingerprint(
+        *,
+        approved_task_id: str,
+        accepted_evidence_id: str,
+        attempt_base_sha: str,
+        current_main_sha: str,
+        reviewed_head_sha: str,
+        conflicted_paths: Sequence[str],
+    ) -> str:
+        """Stable fingerprint over the conflict identity.
+
+        Duplicate conflict events for the SAME approved task, accepted
+        evidence, attempt base, canonical tip, reviewed head, and conflict set
+        must resolve to the SAME integration task rather than spawning
+        duplicates.  The conflict set is order-normalised so path enumeration
+        order never changes the fingerprint.
+        """
+        normalized_paths = sorted(
+            {str(path).strip() for path in (conflicted_paths or []) if str(path).strip()}
+        )
+        material = json_dumps(
+            {
+                "schema": "mac.conflict_integration_fingerprint.v1",
+                "approved_task_id": str(approved_task_id).strip(),
+                "accepted_evidence_id": str(accepted_evidence_id).strip(),
+                "attempt_base_sha": str(attempt_base_sha).strip(),
+                "current_main_sha": str(current_main_sha).strip(),
+                "reviewed_head_sha": str(reviewed_head_sha).strip(),
+                "conflicted_paths": normalized_paths,
+            }
+        )
+        return "sha256:%s" % hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def _find_linked_conflict_integration_task(
+        self, approved_task_id: str, fingerprint: str
+    ) -> Optional[str]:
+        """Re-read any integration task already created for this exact conflict.
+
+        Looks for a task whose metadata records the same
+        ``conflict_integration.fingerprint`` and links back to the approved
+        task.  This is the durable idempotency backstop that complements the
+        ``create_task`` idempotency key, so a duplicate conflict event that
+        loses the key race still resolves to the SAME single integration task.
+        """
+        try:
+            rows = self.store.query_all(
+                "SELECT id, metadata FROM tasks WHERE metadata LIKE ?",
+                ("%" + fingerprint + "%",),
+            )
+        except Exception:  # noqa: BLE001 - idempotency lookup is best-effort.
+            return None
+        for row in rows:
+            try:
+                metadata = ensure_json_object(json.loads(row["metadata"] or "{}"))
+            except Exception:  # noqa: BLE001
+                continue
+            integration = ensure_json_object(metadata.get("conflict_integration"))
+            if (
+                str(integration.get("fingerprint") or "") == fingerprint
+                and str(integration.get("approved_task_id") or "")
+                == str(approved_task_id).strip()
+            ):
+                return str(row["id"])
+        return None
+
+    def _handoff_conflict_to_integration(
+        self,
+        *,
+        task: Task,
+        review: "Review",
+        evidence: "Evidence",
+        target: str,
+        conflict_context: Mapping[str, Any],
+        actor: str,
+    ) -> Optional[str]:
+        """Turn a legacy single-task publication conflict into ONE idempotent,
+        context-rich integration repair task.
+
+        Guarded to the legacy single-task publication lane: work-package
+        (plan-DAG) tasks keep their declared plan DAG, batch membership, plan
+        version, and epoch and route through the managed integration surface,
+        so this NEVER diverts them.  Returns the integration task id (existing
+        or newly created), or ``None`` when the handoff does not apply / could
+        not be produced (the caller still records the diagnosis telemetry).
+        """
+        approved_task_id = str(task.id)
+        # LANE GUARD: only the legacy single-task publication lane may take this
+        # compatibility handoff.  A work-package-linked task is managed-lane and
+        # must never be diverted off its plan DAG / batch / epoch here.
+        if self._task_is_work_package_linked(approved_task_id):
+            return None
+        metadata = ensure_json_object(task.metadata)
+        publication_lane = classify_publication_lane(
+            package_linked=self._task_is_work_package_linked(approved_task_id)
+        )
+        if publication_lane != PUBLICATION_LANE_LEGACY:
+            return None
+        # COORDINATION GUARD: plan-DAG / work-package coordination modes own
+        # their own integration path; never divert them.
+        coordination = ensure_json_object(metadata.get("coordination"))
+        coordination_mode = str(coordination.get("mode") or "").strip()
+        if coordination_mode in {
+            "cooperative_integration",
+            "work_package",
+            "work_package_integration",
+            "plan_dag",
+        }:
+            return None
+
+        reviewed_head_sha = str(conflict_context.get("reviewed_head_sha") or "").strip()
+        current_main_sha = str(conflict_context.get("current_main_sha") or "").strip()
+        conflicted_paths = [
+            str(path).strip()
+            for path in (conflict_context.get("conflicted_paths") or [])
+            if str(path).strip()
+        ]
+        repo_root = str(conflict_context.get("repo_root") or "").strip()
+        runtime = ensure_json_object(metadata.get("runtime"))
+        attempt_base_sha = str(runtime.get("repository_base_sha") or "").strip()
+        if not attempt_base_sha:
+            # Without a valid attempt base the pure builder cannot validate; fall
+            # back to the current main tip so the payload still records where the
+            # attempt diverged (worst case: empty landed-since provenance).
+            attempt_base_sha = current_main_sha
+        if not (reviewed_head_sha and current_main_sha and conflicted_paths):
+            # Not a structured merge-gate conflict (some other publish failure);
+            # let the caller record the plain diagnosis without a handoff.
+            return None
+
+        fingerprint = self._conflict_integration_idempotency_fingerprint(
+            approved_task_id=approved_task_id,
+            accepted_evidence_id=str(evidence.id),
+            attempt_base_sha=attempt_base_sha,
+            current_main_sha=current_main_sha,
+            reviewed_head_sha=reviewed_head_sha,
+            conflicted_paths=conflicted_paths,
+        )
+
+        # Idempotency backstop: if an integration task already exists for this
+        # exact conflict identity, reuse it rather than spawning a duplicate.
+        existing = self._find_linked_conflict_integration_task(
+            approved_task_id, fingerprint
+        )
+        if existing is not None:
+            return existing
+
+        try:
+            payload = self._build_conflict_integration_payload(
+                approved_task_id=approved_task_id,
+                accepted_evidence_id=str(evidence.id),
+                reviewed_head_sha=reviewed_head_sha,
+                current_main_sha=current_main_sha,
+                attempt_base_sha=attempt_base_sha,
+                conflicted_paths=conflicted_paths,
+                repo_path=Path(repo_root) if repo_root else Path("."),
+                depends_on=[approved_task_id],
+            )
+        except (ValidationError, MACError):
+            # Payload could not be assembled (e.g. an unexpected non-git sha);
+            # do not spawn a malformed integration task — the caller still
+            # surfaces the diagnosis.
+            return None
+
+        # DISTINCT AGENT: the integration executor must not be the approved
+        # task's executor.  Model the integration task as a cooperative family
+        # member of the approved task so the durable lease-based separation
+        # (``_coordination_excluded_agent_ids``) excludes the executor, and add
+        # an explicit exclusion of the executor agent as a belt-and-suspenders.
+        excluded_agent_ids = sorted(
+            {
+                str(evidence.created_by).strip()
+                for _ in (0,)
+                if str(evidence.created_by or "").strip()
+            }
+            | {
+                str(task.owner_agent_id).strip()
+                for _ in (0,)
+                if str(task.owner_agent_id or "").strip()
+            }
+        )
+
+        integration_metadata: JsonDict = {
+            "schema": "mac.task.v1",
+            "conflict_integration": {
+                "schema": "mac.conflict_integration_link.v1",
+                "role": "integration_repair",
+                "lane": PUBLICATION_LANE_LEGACY,
+                "approved_task_id": approved_task_id,
+                "accepted_evidence_id": str(evidence.id),
+                "review_id": review.id,
+                "publication_target": target,
+                "fingerprint": fingerprint,
+                "payload": payload,
+            },
+            "context_payload": payload,
+            "publication_target": target,
+            "relationships": {
+                "parent_task_id": approved_task_id,
+                "relationship": "integration_repair",
+                "blocks": [approved_task_id],
+            },
+            "coordination": {
+                "mode": "legacy_conflict_integration",
+                "integration_task_id": approved_task_id,
+                "require_distinct_agent": True,
+            },
+            "excluded_agent_ids": excluded_agent_ids,
+            "retry_excluded_agent_ids": excluded_agent_ids,
+        }
+        # Carry the approved task's project and repository/execution contract so
+        # the integration executor runs against the same repository.
+        for carry_key in ("origin", "execution_contract", "acc_metadata", "runtime"):
+            value = metadata.get(carry_key)
+            if value is not None:
+                integration_metadata[carry_key] = value
+
+        landed_task_ids = [
+            str(tid).strip()
+            for tid in ensure_json_object(payload.get("landed_since_base")).get(
+                "task_ids", []
+            )
+            if str(tid).strip()
+        ]
+
+        description = (
+            "Legacy single-task publication conflict repair.\n\n"
+            "The approved task %s (evidence %s, reviewed head %s) could not "
+            "fast-forward onto the current canonical main tip %s: the reviewed "
+            "branch conflicts on: %s.\n\n"
+            "As a DISTINCT agent (you must not be the approved task's executor): "
+            "rebase/resolve the reviewed change onto current main, rerun the FULL "
+            "projected-main contract (validate_projected_merge_contract via "
+            "scripts/run-contract-tests.sh on the projected merge), push a "
+            "replacement ref, and trigger publication retry for the approved "
+            "task. Current main is the canonical baseline; preserve it and record "
+            "any supersession decision explicitly (see "
+            "metadata.context_payload.supersession). Landed tasks touching the "
+            "conflicted paths since the attempt base: %s."
+            % (
+                approved_task_id,
+                str(evidence.id),
+                reviewed_head_sha[:12],
+                current_main_sha[:12],
+                ", ".join(conflicted_paths[:20]) or "(unknown)",
+                ", ".join(landed_task_ids) or "(none recorded)",
+            )
+        )
+
+        try:
+            integration_task = self.create_task(
+                "Integrate conflicting approved task %s onto current main"
+                % approved_task_id,
+                description=description,
+                project=task.project,
+                priority=int(task.priority),
+                required_capabilities=list(task.required_capabilities),
+                dependencies=[approved_task_id],
+                metadata=integration_metadata,
+                actor=actor,
+                idempotency_key=fingerprint,
+                _idempotency_scope="conflict-integration:%s" % approved_task_id,
+            )
+        except (ValidationError, MACError):
+            # A concurrent duplicate conflict event may have won the create
+            # race; re-read the linked integration task so both events resolve
+            # to the SAME single task.
+            return self._find_linked_conflict_integration_task(
+                approved_task_id, fingerprint
+            )
+        return integration_task.id
 
     def _validate_publication_evidence(self, task_id: str, evidence_id: Optional[str]) -> None:
         if evidence_id is None:
@@ -21129,6 +21428,37 @@ class ControlPlane:
             # operator knows exactly why it didn't merge and how to recover.
             # (mac task_51a777c2)
             detail = str(exc)
+            # Legacy single-task publication conflict handoff: when the failure
+            # is the merge-gate reporting that the approved branch no longer
+            # integrates onto the CURRENT canonical main tip, do not just park
+            # the task in REVIEWING with a diagnosis. Create exactly ONE
+            # idempotent, context-rich integration repair task that a DISTINCT
+            # agent picks up to rebase/resolve, rerun the FULL projected-main
+            # contract, push a replacement ref, and trigger publication retry.
+            # Work-package / plan-DAG tasks are guarded out inside the helper and
+            # keep their managed integration path unchanged. The diagnosis /
+            # observation telemetry below is preserved regardless so operators
+            # still see why publication paused.
+            conflict_context = getattr(exc, "conflict_integration_context", None)
+            integration_task_id: Optional[str] = None
+            if isinstance(conflict_context, Mapping):
+                try:
+                    integration_task_id = self._handoff_conflict_to_integration(
+                        task=task,
+                        review=review,
+                        evidence=evidence,
+                        target=target,
+                        conflict_context=conflict_context,
+                        actor=actor,
+                    )
+                except Exception:  # noqa: BLE001 - handoff is best-effort; the
+                    # diagnosis telemetry below still surfaces the failure.
+                    logging.getLogger("mac.conflict_integration").warning(
+                        "conflict-to-integration handoff failed for %s",
+                        task_id,
+                        exc_info=True,
+                    )
+                    integration_task_id = None
             self._record_default_review_observation(
                 task_id,
                 "workflow.default_review.publish_failed",
@@ -21138,23 +21468,57 @@ class ControlPlane:
                     "evidence_id": evidence.id,
                     "target": target,
                     "error": detail[:500],
+                    "integration_task_id": integration_task_id,
                 },
                 actor,
             )
-            try:
-                self.append_task_activity(
+            if integration_task_id is not None:
+                # Distinct, glanceable telemetry that a repair task was linked so
+                # operators can follow the handoff, without losing the diagnosis.
+                self._record_default_review_observation(
                     task_id,
-                    "diagnosis",
+                    "workflow.default_review.conflict_integration_created",
+                    "info",
+                    {
+                        "review_id": review.id,
+                        "evidence_id": evidence.id,
+                        "target": target,
+                        "integration_task_id": integration_task_id,
+                    },
                     actor,
-                    "Problem: Auto-publish to %s failed after approval — the "
-                    "reviewed branch could not be merged into main (usually a "
-                    "merge conflict from a stale branch base). The task is "
-                    "approved but stays in REVIEWING, unpublished.\n"
-                    "Remediation: Re-drive the task from current main so its "
-                    "branch merges cleanly and let review->publish re-run, or an "
-                    "operator resolves the conflict and re-publishes. Error: %s"
-                    % (target, detail[:300]),
                 )
+            try:
+                if integration_task_id is not None:
+                    self.append_task_activity(
+                        task_id,
+                        "diagnosis",
+                        actor,
+                        "Problem: Auto-publish to %s failed after approval — the "
+                        "reviewed branch no longer integrates onto the current "
+                        "canonical main tip (a merge conflict against the moving "
+                        "trunk). The task is approved but stays in REVIEWING, "
+                        "unpublished.\n"
+                        "Remediation: Linked integration repair task %s was "
+                        "created for a DISTINCT agent to rebase/resolve onto "
+                        "current main, rerun the full projected-main contract, "
+                        "push a replacement ref, and trigger publication retry. "
+                        "Current main remains the canonical baseline. Error: %s"
+                        % (target, integration_task_id, detail[:300]),
+                    )
+                else:
+                    self.append_task_activity(
+                        task_id,
+                        "diagnosis",
+                        actor,
+                        "Problem: Auto-publish to %s failed after approval — the "
+                        "reviewed branch could not be merged into main (usually a "
+                        "merge conflict from a stale branch base). The task is "
+                        "approved but stays in REVIEWING, unpublished.\n"
+                        "Remediation: Re-drive the task from current main so its "
+                        "branch merges cleanly and let review->publish re-run, or an "
+                        "operator resolves the conflict and re-publishes. Error: %s"
+                        % (target, detail[:300]),
+                    )
             except Exception:
                 pass
             return {
@@ -21163,6 +21527,7 @@ class ControlPlane:
                 "review_id": review.id,
                 "target": target,
                 "error": detail,
+                "integration_task_id": integration_task_id,
             }
         self._record_default_review_observation(
             task_id,

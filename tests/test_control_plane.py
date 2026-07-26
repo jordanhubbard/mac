@@ -1113,6 +1113,173 @@ def test_default_review_publish_failure_surfaces_diagnosis(cp, monkeypatch):
     assert "workflow.default_review.published" not in names
 
 
+def _drive_task_to_approved(cp, *, task_metadata=None, files_changed=None):
+    """Register worker+reviewer, drive a task through evidence + review to the
+    approval gate, returning (task, worker, reviewer, evidence)."""
+    from tests.conftest import submit_review_verdict
+
+    worker = register_agent(cp, "worker", ["python"])
+    reviewer = register_agent(cp, "reviewer", ["review"])
+    metadata = {"publication_target": "git://main"}
+    metadata.update(task_metadata or {})
+    task = cp.create_task(
+        "Implement thing",
+        required_capabilities=["python"],
+        metadata=metadata,
+    )
+    cp.claim_task(task.id, worker.id)
+    cp.start_task(task.id, worker.id)
+    evidence = cp.add_evidence(
+        task.id, "log", "artifact://worker-result", "tests passed", worker.id,
+        metadata=verified_repo_metadata(
+            cp, worker.id, files_changed=files_changed
+        ),
+    )
+    cp.submit_for_review(task.id, worker.id)
+    cp.advance_default_review_workflow(task.id)  # assign reviewer
+    submit_review_verdict(cp, task.id, reviewer.id, evidence.id)
+    return task, worker, reviewer, evidence
+
+
+def _merge_gate_conflict_raiser(cp, task_id, evidence, *, conflicted_paths):
+    """Return a publish_task replacement that raises a merge-gate conflict
+    carrying the structured conflict-integration context, exactly as the git
+    publisher attaches it."""
+    from mac.models import ValidationError
+
+    def _boom(*_a, **_k):
+        exc = ValidationError(
+            "git publication merge gate: task branch does not integrate onto "
+            "the current main tip (bbbbbbbbbbbb); conflicts: %s — route to "
+            "integration" % ", ".join(conflicted_paths)
+        )
+        exc.conflict_integration_context = {
+            "schema": "mac.merge_gate_conflict_context.v1",
+            "task_id": task_id,
+            "reviewed_head_sha": "abcdef1234567890abcdef1234567890abcdef12",
+            "current_main_sha": "b" * 40,
+            "conflicted_paths": list(conflicted_paths),
+            "repo_root": "/nonexistent-repo",
+        }
+        raise exc
+
+    return _boom
+
+
+def test_conflict_creates_single_integration_task(cp, monkeypatch):
+    """A legacy single-task publication merge-gate conflict creates exactly ONE
+    context-rich integration repair task (not just a diagnosis), preserving the
+    approved task in REVIEWING and the diagnosis/observation telemetry."""
+    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
+
+    monkeypatch.setattr(
+        cp,
+        "publish_task",
+        _merge_gate_conflict_raiser(
+            cp, task.id, evidence, conflicted_paths=["src/example.py"]
+        ),
+    )
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "publish_failed"
+    integration_task_id = result["integration_task_id"]
+    assert integration_task_id is not None
+
+    # Exactly one integration repair task exists for this conflict.
+    integration = cp.get_task(integration_task_id)
+    link = (integration.metadata or {}).get("conflict_integration", {})
+    assert link.get("role") == "integration_repair"
+    assert link.get("approved_task_id") == task.id
+    assert link.get("lane") == "legacy"
+    # Full context payload carried on the integration task.
+    payload = (integration.metadata or {}).get("context_payload", {})
+    assert payload.get("schema") == "mac.conflict_integration_payload.v1"
+    assert payload["approved_task"]["task_id"] == task.id
+    assert payload["approved_task"]["reviewed_head_sha"] == "abcdef1234567890abcdef1234567890abcdef12"
+    assert payload["canonical_baseline"]["main_sha"] == "b" * 40
+    assert payload["conflicted_paths"] == ["src/example.py"]
+    # Explicit dependency on the approved task.
+    assert task.id in payload["dependencies"]["depends_on"]
+    assert task.id in integration.dependencies
+    # Distinct-agent enforcement: the approved task's executor is excluded.
+    excluded = set((integration.metadata or {}).get("excluded_agent_ids", []))
+    assert worker.id in excluded
+    assert (integration.metadata or {}).get("coordination", {}).get(
+        "require_distinct_agent"
+    ) is True
+
+    # Approved task stays REVIEWING and keeps its diagnosis telemetry.
+    parked = cp.get_task(task.id)
+    assert parked.state == TaskState.REVIEWING.value
+    activity = (parked.metadata or {}).get("activity", [])
+    assert any(
+        "Remediation" in (e.get("summary") or "")
+        and integration_task_id in (e.get("summary") or "")
+        for e in activity
+    )
+    names = {event.name for event in cp.list_observability(limit=50)}
+    assert "workflow.default_review.publish_failed" in names
+    assert "workflow.default_review.conflict_integration_created" in names
+
+
+def test_conflict_handoff_is_idempotent(cp, monkeypatch):
+    """Duplicate conflict events for the same (task, evidence, attempt base,
+    canonical tip, conflict set) resolve to the SAME single integration task."""
+    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
+
+    monkeypatch.setattr(
+        cp,
+        "publish_task",
+        _merge_gate_conflict_raiser(
+            cp, task.id, evidence, conflicted_paths=["src/example.py"]
+        ),
+    )
+    first = cp.advance_default_review_workflow(task.id)
+    second = cp.advance_default_review_workflow(task.id)
+
+    assert first["integration_task_id"] is not None
+    assert second["integration_task_id"] == first["integration_task_id"]
+
+    # No duplicate integration tasks were created.
+    integration_tasks = [
+        t
+        for t in cp.list_tasks(limit=100)
+        if (t.metadata or {}).get("conflict_integration", {}).get("approved_task_id")
+        == task.id
+    ]
+    assert len(integration_tasks) == 1
+
+
+def test_work_package_conflict_not_diverted(cp, monkeypatch):
+    """A work-package (plan-DAG) linked task's publication conflict is NEVER
+    diverted into the legacy conflict-to-integration handoff; it keeps the plain
+    diagnosis and no integration task is spawned."""
+    task, worker, reviewer, evidence = _drive_task_to_approved(cp)
+
+    # Mark the task as work-package linked so the lane guard trips.
+    monkeypatch.setattr(cp, "_task_is_work_package_linked", lambda tid: True)
+    monkeypatch.setattr(
+        cp,
+        "publish_task",
+        _merge_gate_conflict_raiser(
+            cp, task.id, evidence, conflicted_paths=["src/example.py"]
+        ),
+    )
+    result = cp.advance_default_review_workflow(task.id)
+
+    assert result["status"] == "publish_failed"
+    assert result["integration_task_id"] is None
+    integration_tasks = [
+        t
+        for t in cp.list_tasks(limit=100)
+        if (t.metadata or {}).get("conflict_integration", {}).get("approved_task_id")
+        == task.id
+    ]
+    assert integration_tasks == []
+    names = {event.name for event in cp.list_observability(limit=50)}
+    assert "workflow.default_review.conflict_integration_created" not in names
+
+
 
 
 
