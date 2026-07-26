@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import sqlite3
 import threading
@@ -1318,3 +1319,318 @@ def test_renew_leases_refreshes_both_fences_and_reasserts(tmp_path: Path) -> Non
             service._renew_leases(stream, batch_lease)
     finally:
         store.close()
+
+
+class _ClockAdvancingGitRunner(SubprocessGitRunner):
+    """Real git runner that advances an injected clock on every invocation.
+
+    The per-call cost is charged to a deterministic ``_ManualClock`` rather than
+    real elapsed time, so a landing's total *simulated* Git I/O is reproducible
+    regardless of transient host load.  This is exactly the property the
+    historical wall-clock fixture lacked: a 30-second fixture that expired only
+    because the host stalled for 75.49s.  Here the expiry deadline is driven by
+    the same monotonic clock the runner advances, never by real duration.
+    """
+
+    def __init__(self, clock: "_ManualClock", *, seconds_per_call: float) -> None:
+        super().__init__()
+        self._clock = clock
+        self._seconds_per_call = seconds_per_call
+        self.calls: list[tuple[str, ...]] = []
+
+    def run(self, args, *, cwd, env):
+        self.calls.append(tuple(args))
+        # Charge the simulated cost of this Git operation to the injected clock
+        # *before* running so the service observes the advanced deadline on its
+        # very next now()-driven renewal or lease check.
+        self._clock.advance(self._seconds_per_call)
+        return super().run(args, cwd=cwd, env=env)
+
+
+def test_assembly_completes_when_simulated_git_io_exceeds_lease_via_renewal(
+    tmp_path: Path,
+) -> None:
+    """A landing whose total simulated Git I/O exceeds lease_seconds still
+    completes because the interleaved fenced renewal refreshes the deadline.
+
+    Each git call advances the injected clock by 12s; assembly performs enough
+    clone/fetch/merge/rev-parse/push calls that the aggregate simulated cost far
+    exceeds the 30s lease.  Without renewal the lease would lapse mid-flight;
+    with the fenced pre-expiry renewal wired around clone and the per-input
+    fetch/merge loop it does not.
+    """
+
+    remote, _work, base_sha, reviewed_sha = _repository(tmp_path)
+    store = SQLiteStore(str(tmp_path / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store, remote=remote, base_sha=base_sha, candidate_sha=reviewed_sha
+        )
+        _seed_assembly_batch(
+            store,
+            base_sha=base_sha,
+            reviewed_sha=reviewed_sha,
+            reviewed_ref=ATTEMPT_REF,
+        )
+
+        clock = _ManualClock()
+        runner = _ClockAdvancingGitRunner(clock, seconds_per_call=12)
+        service = _service(
+            store,
+            owner="landing-a",
+            git_runner=runner,
+            lease_seconds=30,
+            now=clock,
+        )
+
+        outcome = service.assemble(
+            "batch_assemble", RepositoryEndpoint("repo_1", str(remote))
+        )
+
+        # The assembly completed even though the simulated Git I/O dwarfs the
+        # lease window.
+        assert outcome.status == "assembled"
+        assert len(runner.calls) * 12 > 30  # aggregate simulated cost > lease
+        batch = store.query_one(
+            "SELECT * FROM work_package_integration_batches "
+            "WHERE id = 'batch_assemble'"
+        )
+        assert batch["state"] == "verifying"
+        assert batch["candidate_sha"] == outcome.candidate_sha
+
+        # Possession was preserved by renewal, not by fence advancement: the
+        # stream fence never moved past the single value the holder acquired
+        # (the owner is cleared on the clean release at the end of the flow).
+        stream_row = _stream_lease_row(store)
+        assert int(stream_row["lease_fence"]) == outcome.stream_fence
+        assert stream_row["lease_owner"] is None  # released cleanly by holder
+
+    finally:
+        store.close()
+
+    # Negative control on a fresh, independently seeded store: prove the renewal
+    # is load-bearing.  With renewal neutered, a competing lander that wakes once
+    # the injected clock has passed the un-refreshed deadline steals the batch
+    # lease with a bumped fence, so the original holder's next fenced side effect
+    # -- the candidate-assignment CAS -- fails closed rather than mutating a ref
+    # it no longer owns.
+    control_dir = tmp_path / "control"
+    remote2, _work2, base2, reviewed2 = _repository(control_dir)
+    store2 = SQLiteStore(str(control_dir / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store2, remote=remote2, base_sha=base2, candidate_sha=reviewed2
+        )
+        _seed_assembly_batch(
+            store2, base_sha=base2, reviewed_sha=reviewed2, reviewed_ref=ATTEMPT_REF
+        )
+        control_clock = _ManualClock()
+        control_runner = _ClockAdvancingGitRunner(control_clock, seconds_per_call=12)
+        holder = _service(
+            store2,
+            owner="landing-a",
+            git_runner=control_runner,
+            lease_seconds=30,
+            now=control_clock,
+        )
+        holder._renew_leases = lambda *_a, **_k: None  # type: ignore[method-assign]
+
+        contender = _service(
+            store2, owner="landing-b", lease_seconds=30, now=control_clock
+        )
+        original_assign = holder._assign_candidate
+        theft = {"done": False}
+
+        def assign_after_theft(batch, batch_lease, **kwargs):
+            if not theft["done"]:
+                theft["done"] = True
+                # The un-renewed deadline has already elapsed on the injected
+                # clock, so the contender wins the batch lease with a higher
+                # fence right before the holder tries to assign the candidate.
+                stolen = contender._acquire_batch("batch_assemble")
+                assert stolen is not None
+                assert stolen.fence == batch_lease.fence + 1
+            return original_assign(batch, batch_lease, **kwargs)
+
+        holder._assign_candidate = assign_after_theft  # type: ignore[method-assign]
+        control_clock.advance(31)  # push the un-renewed deadline into the past
+        with pytest.raises(LandingLeaseLostError):
+            holder.assemble(
+                "batch_assemble", RepositoryEndpoint("repo_1", str(remote2))
+            )
+    finally:
+        store2.close()
+
+
+def test_interleaved_renewal_extends_deadline_without_advancing_fence_across_io(
+    tmp_path: Path,
+) -> None:
+    """Renewal around clone and the fetch/merge loop extends lease_expires_at
+    while keeping lease_fence pinned, for both the stream and the batch lease.
+    """
+
+    remote, _work, base_sha, reviewed_sha = _repository(tmp_path)
+    store = SQLiteStore(str(tmp_path / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store, remote=remote, base_sha=base_sha, candidate_sha=reviewed_sha
+        )
+        _seed_assembly_batch(
+            store,
+            base_sha=base_sha,
+            reviewed_sha=reviewed_sha,
+            reviewed_ref=ATTEMPT_REF,
+        )
+
+        clock = _ManualClock()
+        runner = _ClockAdvancingGitRunner(clock, seconds_per_call=9)
+        service = _service(
+            store,
+            owner="landing-a",
+            git_runner=runner,
+            lease_seconds=30,
+            now=clock,
+        )
+
+        # Snapshot the fences from the acquire step by cloning the acquire path
+        # the service takes internally: acquire happens at the start of assemble,
+        # so capture right after a successful assemble instead and assert the
+        # fence never advanced beyond the single acquisition.
+        outcome = service.assemble(
+            "batch_assemble", RepositoryEndpoint("repo_1", str(remote))
+        )
+        assert outcome.status == "assembled"
+
+        stream_row = _stream_lease_row(store)
+        batch_row = _batch_lease_row_named(store, "batch_assemble")
+
+        # Fences are pinned to the single acquisition (fence 1 for a freshly
+        # seeded stream/batch); renewal never bumped them.
+        assert int(stream_row["lease_fence"]) == 1
+        assert int(batch_row["lease_fence"]) == 1
+
+        # The aggregate simulated Git I/O exceeded the 30s lease, yet the
+        # landing reached the verifying station -- only reachable by a holder
+        # whose fence stayed alive across the whole flow.
+        assert len(runner.calls) * 9 > 30
+        assert batch_row["state"] == "verifying"
+        assert batch_row["lease_owner"] in {None, "landing-a"}
+    finally:
+        store.close()
+
+
+def test_stale_holder_renewal_fails_closed_after_competitor_steals_lease(
+    tmp_path: Path,
+) -> None:
+    """A competing lander that steals an expired lease bumps the fence, so the
+    original holder's next fenced renewal raises LandingLeaseLostError.
+
+    Expiry is driven purely by the injected clock: the holder's simulated Git
+    I/O advances time past the lease window without any interleaved renewal
+    (the primitive is invoked manually), the contender steals with a bumped
+    fence, and the holder's combined renewal fails closed.
+    """
+
+    remote, _work, base_sha, candidate_sha = _repository(tmp_path)
+    store = SQLiteStore(str(tmp_path / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
+        )
+        clock = _ManualClock()
+        holder = _service(store, owner="landing-a", lease_seconds=30, now=clock)
+        batch = holder._batch("batch_1")
+        stream = holder._acquire_stream(batch)
+        assert stream is not None
+        batch_lease = holder._acquire_batch("batch_1")
+        assert batch_lease is not None
+
+        # Simulate long Git I/O: the injected clock advances past the lease
+        # deadline without any renewal having been issued.
+        clock.advance(31)
+
+        contender = _service(store, owner="landing-b", lease_seconds=30, now=clock)
+        stolen_stream = contender._acquire_stream(batch)
+        stolen_batch = contender._acquire_batch("batch_1")
+        assert stolen_stream is not None
+        assert stolen_batch is not None
+        assert stolen_stream.fence == stream.fence + 1
+        assert stolen_batch.fence == batch_lease.fence + 1
+
+        # The evicted holder's combined fenced renewal fails closed.
+        with pytest.raises(LandingLeaseLostError):
+            holder._renew_leases(stream, batch_lease)
+    finally:
+        store.close()
+
+
+def test_assert_leases_rejects_owner_fence_and_expiry_mismatches(
+    tmp_path: Path,
+) -> None:
+    """_assert_leases must reject owner, fence, and expiry mismatches; the
+    guard is not weakened by the renewal wiring.
+    """
+
+    remote, _work, base_sha, candidate_sha = _repository(tmp_path)
+    store = SQLiteStore(str(tmp_path / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
+        )
+        clock = _ManualClock()
+        service = _service(store, owner="landing-a", lease_seconds=30, now=clock)
+        batch = service._batch("batch_1")
+        stream = service._acquire_stream(batch)
+        assert stream is not None
+        batch_lease = service._acquire_batch("batch_1")
+        assert batch_lease is not None
+
+        # Baseline: the freshly acquired, unexpired, correctly-fenced leases pass.
+        service._assert_leases(stream, batch_lease)
+
+        # Owner mismatch: a lease handle claiming a different owner is rejected
+        # against the durable row.
+        wrong_owner_stream = dataclasses.replace(stream, owner="intruder")
+        with pytest.raises(LandingLeaseLostError):
+            service._assert_leases(wrong_owner_stream, batch_lease)
+        wrong_owner_batch = dataclasses.replace(batch_lease, owner="intruder")
+        with pytest.raises(LandingLeaseLostError):
+            service._assert_leases(stream, wrong_owner_batch)
+
+        # Fence mismatch: a stale fence (older than the durable value) is
+        # rejected without mutating the monotonic durable row.
+        stale_stream = dataclasses.replace(stream, fence=stream.fence - 1)
+        with pytest.raises(LandingLeaseLostError):
+            service._assert_leases(stale_stream, batch_lease)
+        stale_batch = dataclasses.replace(batch_lease, fence=batch_lease.fence - 1)
+        with pytest.raises(LandingLeaseLostError):
+            service._assert_leases(stream, stale_batch)
+
+        # The correctly-fenced, correctly-owned handles still pass -- the guard
+        # was not weakened.
+        service._assert_leases(stream, batch_lease)
+
+        # Expiry mismatch: advance the injected clock past the deadline so the
+        # unchanged durable rows now read as expired -> rejected.
+        clock.advance(31)
+        with pytest.raises(LandingLeaseLostError):
+            service._assert_leases(stream, batch_lease)
+    finally:
+        store.close()
+
+
+def _stream_lease_row(store: SQLiteStore):
+    return store.query_one(
+        "SELECT lease_owner, lease_expires_at, lease_fence "
+        "FROM work_package_landing_streams "
+        "WHERE repository_id = 'repo_1' AND target_ref = ?",
+        (TARGET_REF,),
+    )
+
+
+def _batch_lease_row_named(store: SQLiteStore, batch_id: str):
+    return store.query_one(
+        "SELECT state, lease_owner, lease_expires_at, lease_fence "
+        "FROM work_package_integration_batches WHERE id = ?",
+        (batch_id,),
+    )
