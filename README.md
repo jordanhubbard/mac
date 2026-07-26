@@ -185,6 +185,25 @@ floor rather than a target for generating tests; see
 for the same full-suite report, `make test-portfolio` to audit redundant
 execution, and `make fault-replay` to prove tests detect known historical bugs.
 
+### Linting and formatting
+
+A single shared [Ruff](https://docs.astral.sh/ruff/) configuration lives in
+`[tool.ruff]` in `pyproject.toml`, so linting and formatting are byte-identical
+on every host instead of ad-hoc per-directory settings.
+
+```bash
+make lint       # check-only lint gate (scripts/run-lint.sh)
+make lint-fix   # apply safe autofixes and reformat in place
+```
+
+The enforced lint set starts at the always-green correctness floor (pyflakes
+logic errors and undefined names, plus syntax errors) so `make lint` is red only
+for a real regression; widen `[tool.ruff.lint].select` as the codebase is
+cleaned up. Ruff is a dev-only tool pinned in the `dev` extra and fetched on
+demand with `uv run --with ruff`; it is not a runtime dependency. The vendored
+Hermes runtime under `src/mac/_hermes` keeps its own upstream lint discipline
+and is excluded.
+
 The common lifecycle is deliberately conventional:
 
 ```bash

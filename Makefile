@@ -28,7 +28,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchest
 	install install-cli install-gui uninstall uninstall-cli \
 	build build-cli build-gui package package-cli package-gui publish \
 	clean clean-cli clean-gui distclean run-gui \
-	install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage \
+	install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage lint lint-fix \
 	test-portfolio fault-replay sanity-test compatibility-test \
 	docs docs-install docs-serve docs-test docs-build docs-check docs-lab docs-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
@@ -44,6 +44,7 @@ help: ## Show the supported local build, install, run, test, and cleanup command
 		'  make build         Build the CLI wheel and canonical Fleet IDE' \
 		'  make run-gui       Run the Fleet IDE using the active mac login profile' \
 		'  make test          Run the hermetic contract test suite' \
+		'  make lint          Run the shared Ruff lint gate' \
 		'  make clean         Remove generated build artifacts (keep installed dependencies)' \
 		'  make distclean     Also remove .venv and JavaScript dependencies' \
 		'' \
@@ -242,6 +243,12 @@ test-ui: require-npm codegraph-sync $(IDE_NODE_MODULES_STAMP) ## Run API UI cont
 
 cli-coverage: codegraph-sync ## Print CLI subcommand coverage.
 	@$(VENV)/bin/python scripts/cli-coverage.py
+
+lint: ## Run the shared Ruff lint gate (check-only, same rules on every host).
+	@scripts/run-lint.sh
+
+lint-fix: ## Apply the shared Ruff safe autofixes and formatting in place.
+	@scripts/run-lint.sh --fix
 
 # ---------------------------------------------------------------------------
 # Production documentation book.

@@ -46,6 +46,10 @@ dev = [
     "psycopg[binary]>=3.1,<4.0",
     "psycopg_pool>=3.2,<4.0",
     "kubernetes>=30.1,<33",
+    # Shared lint/format toolchain; see [tool.ruff] and scripts/run-lint.sh.
+    # `make lint` fetches this on demand via `uv run --with ruff`, but pinning
+    # it in the dev extra keeps the enforced version consistent across hosts.
+    "ruff>=0.16,<0.17",
 ]
 docs = [
     "mkdocs-material>=9.7,<10",
@@ -147,3 +151,35 @@ skip_covered = true
 # assets — a force-include of src/mac/ui would double-add them and fail the
 # build ("a second file ... at the same path").
 packages = ["src/mac"]
+
+# --- Shared lint / format configuration --------------------------------------
+# One Ruff configuration is the single source of truth for linting and
+# formatting across the mac control plane. It is wired to `make lint`
+# (check-only, the CI/pre-push contract) and `make lint-fix` (apply safe
+# autofixes locally) via scripts/run-lint.sh, so every developer and every host
+# runs byte-identical rules instead of ad-hoc per-directory settings.
+[tool.ruff]
+# Match the project's minimum supported interpreter (ADR 0001).
+target-version = "py311"
+line-length = 100
+# The vendored Hermes runtime keeps its own upstream lint discipline (see
+# deploy/hermes/SNAPSHOT.md); do not relint it here. The generated vulture
+# allowlist intentionally references undefined names for the dead-code gate.
+extend-exclude = [
+    "src/mac/_hermes",
+    "scripts/vulture_allowlist.py",
+    ".venv",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Start from the always-green correctness floor so `make lint` is enforceable
+# from day one on every host: pyflakes logic errors / undefined names
+# (F63, F7, F82) and syntax errors (E9). Broaden this set as the codebase is
+# cleaned up (F401, I, UP, B, ...) — widen the select list, not the tool.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.ruff.format]
+# Match Ruff's Black-compatible defaults so `ruff format` is deterministic and
+# reviewable; `make lint` only checks formatting, `make lint-fix` applies it.
+docstring-code-format = false
