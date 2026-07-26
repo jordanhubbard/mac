@@ -136,6 +136,7 @@ nav:
       - Fleet node onboarding: fleet-node-onboarding-checklist.md
       - Synchronized cutover: synchronized-fleet-cutover.md
       - Hub availability: hub-availability.md
+      - Hub HA audit: hub-ha-audit.md
       - Break-glass recovery: break-glass-host-recovery.md
   - Architecture:
       - Work-graph control plane: work-graph-control-plane.md

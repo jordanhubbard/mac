@@ -122,6 +122,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `hgx-elastic-capacity.md` | HGX elastic capacity |
 | supplemental reference | `home-consolidation.md` | Home-Directory Consolidation: Analysis & Plan |
 | runbook | `hub-availability.md` | Hub Availability |
+| supplemental reference | `hub-ha-audit.md` | Ground-Truth Audit: Hub High-Availability Primitives |
 | supplemental reference | `image-publication-and-qualification.md` | Image Publication and Pre-Publication Qualification |
 | landing page | `index.md` | MAC: trustworthy work across an agent fleet |
 | supplemental reference | `integration-authority-contract.md` | Integration Authority Contract |
