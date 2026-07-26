@@ -352,6 +352,63 @@ publication receipts, with remote SHA equal to `observed_sha`. Run them in that
 order during an ingress freeze so unrelated writers cannot invalidate the
 before/after proof.
 
+## 6. Pilot canary activation checklist
+
+Before releasing real work under a new pilot revision, walk this ordered gate
+checklist. Each row is a hard precondition for the next; do not proceed on a
+partial pass. This consolidates the proofs above into the exact operator
+sequence and the read-only-versus-live boundary of `scripts/work-package-canary.py`.
+
+1. Hub runtime proven: OpenShell bootstrapped and confinement probe passed
+   while both switches were still off (section 1).
+2. Certifier and policy pinned: `.mac/project.yaml` carries the atomic
+   `work_package_certification` extension with an `name@sha256:<64 hex>`
+   `image_ref`, the policy and phase-profile checksums recomputed, and the
+   contract validated through `mac.services._load_repository_contract`
+   (section 2).
+3. Controller Git authority proven: the registered `canonical_remote_url` is
+   secret-free, read access is non-interactive, and the reviewed write path is
+   in place (section 3).
+4. Durable bundle storage present: the configured bundle directory exists as a
+   non-symlink `0700` directory owned by the service user (section 4).
+5. Pipeline and landing enabled together in a second deployment, with the pilot
+   seed and cohort allocation supplied exactly once and retained in the
+   owner-only secret store (section 5).
+6. Status healthy: `/work-package-pipeline/status` reports `enabled: true` with
+   no configuration error.
+
+Only after all six pass, review the two cut-over plans in the helper's default
+read-only mode, then admit the live canaries during an ingress freeze:
+
+```console
+# Read-only: resolve the repository and print both plans, no admission.
+scripts/work-package-canary.py --hub-url "$MAC_URL"
+
+# Live: requires all three explicit flags plus an admin token in MAC_API_TOKEN.
+MAC_API_TOKEN=<admin-token> scripts/work-package-canary.py \
+  --hub-url "$MAC_URL" \
+  --execute --confirm-live --confirm-exclusive-main-window \
+  --receipt-file pilot-canary-receipts.json
+```
+
+The helper emits a `mac.work_package.cutover_canary_plan.v1` document and, in
+live mode, refuses to run without both `--confirm-live` and
+`--confirm-exclusive-main-window`, without `--hub-url`, or without the admin
+token in `MAC_API_TOKEN`. Restrict the case with `--case negative` or
+`--case positive` only to re-run a single leg; the default `both` runs the
+negative leg first. The recorded assertions are the acceptance criteria:
+
+- Negative leg: a certification rejection/station receipt exists and the
+  canonical SHA is unchanged (no Git movement, no publication receipt).
+- Positive leg: publication/finalization receipts exist and the remote SHA
+  equals `observed_sha`.
+
+Treat activation as complete only when both legs record those receipts against
+a stable before/after canonical SHA. A missing receipt, any unexpected Git
+movement on the negative leg, or a remote SHA mismatch on the positive leg is a
+failed activation: disable both switches and re-run the gate checklist from the
+first failing row.
+
 ## Kubernetes boundary
 
 `deploy/k8s/mac-api/deployment.yaml` keeps both switches explicitly false. The
