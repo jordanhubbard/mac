@@ -396,6 +396,33 @@ def test_tailscale_and_headscale_secret_branches(tmp_path: Path) -> None:
     assert head['env_values']['MAC_DEPLOY_HUB_TOKEN'] == 'hub-token'
 
 
+def test_tailscale_auth_key_format_validation() -> None:
+    valid = [
+        'tskey-auth-k123456789CNTRL-abcdefghij0123456789',
+        'tskey-abcdefghij0123',
+        '  tskey-auth-kAbc123CNTRL-zzzzzzzzzz  ',
+    ]
+    invalid = ['tail-secret', 'tskey-', 'tskey-auth-x', '', 'placeholder-key']
+    for value in valid:
+        assert fleet_setup._looks_like_tailscale_auth_key(value) is True
+    for value in invalid:
+        assert fleet_setup._looks_like_tailscale_auth_key(value) is False
+
+
+def test_tailscale_stale_auth_key_emits_rotation_warning(tmp_path: Path) -> None:
+    spec = _base_spec()
+    spec['network'] = {'provider': 'tailscale', 'tailscale': {'auth_key_env': 'TS_AUTH'}}
+    spec['secrets'] = {'tailscale_auth_key': 'stale-placeholder'}
+    stale = _build(tmp_path, spec)
+    assert stale['env_values']['TS_AUTH'] == 'stale-placeholder'
+    assert any('rotate it before deploy' in w for w in stale['warnings'])
+
+    spec['secrets'] = {'tailscale_auth_key': 'tskey-auth-kAbc123CNTRL-zzzzzzzzzz'}
+    fresh = _build(tmp_path, spec)
+    assert fresh['env_values']['TS_AUTH'] == 'tskey-auth-kAbc123CNTRL-zzzzzzzzzz'
+    assert not any('rotate it before deploy' in w for w in fresh['warnings'])
+
+
 def test_agent_config_validation_edges(monkeypatch: pytest.MonkeyPatch) -> None:
     errors: list[str] = []
 
