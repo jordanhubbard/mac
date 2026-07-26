@@ -648,10 +648,23 @@ def test_open_is_pre_mutation_and_abort_restores_exact_prior_hold(
             ],
         )
 
+    abort_disposition = "auto"
+    if prove_before_abort:
+        # The pending credential is installed and heartbeating; a default abort
+        # must refuse the destructive revoke that caused the 403 outage until an
+        # explicit recovery disposition is chosen.
+        with pytest.raises(TransitionError, match="installed pending credentials"):
+            cp.fleet_release_epochs.abort(
+                epoch_id,
+                opened["identity_sha256"],
+                reason="node apply was rolled back",
+            )
+        abort_disposition = "discard_installed"
     aborted = cp.fleet_release_epochs.abort(
         epoch_id,
         opened["identity_sha256"],
         reason="node apply was rolled back",
+        disposition=abort_disposition,
     )
     assert aborted["status"] == "aborted"
     assert (
@@ -662,6 +675,7 @@ def test_open_is_pre_mutation_and_abort_restores_exact_prior_hold(
             epoch_id,
             opened["identity_sha256"],
             reason="node apply was rolled back",
+            disposition=abort_disposition,
         )
         == aborted
     )
@@ -717,6 +731,121 @@ def test_open_is_pre_mutation_and_abort_restores_exact_prior_hold(
         )
         is None
     )
+
+
+def test_abort_retain_installed_preserves_proven_predecessor_projection(
+    tmp_path: Path,
+) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    old = _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    candidate_key = "retain-candidate-key-" + ("q" * 40)
+    epoch_id = "epoch-abort-retain"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation="generation-retain",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=candidate_key,
+            )
+        ],
+    )
+    receipt = _apply_pending(
+        cp, pending, tmp_path, generation="generation-retain"
+    )
+    cp.fleet_release_epochs.prove(
+        epoch_id,
+        opened["identity_sha256"],
+        [
+            _proof_item(
+                pending,
+                receipt,
+                candidate_key=candidate_key,
+                epoch_id=epoch_id,
+                generation="generation-retain",
+            )
+        ],
+    )
+
+    # A default abort must refuse to revoke the installed credential.
+    with pytest.raises(TransitionError, match="installed pending credentials"):
+        cp.fleet_release_epochs.abort(
+            epoch_id,
+            opened["identity_sha256"],
+            reason="node apply is being rolled back",
+        )
+
+    aborted = cp.fleet_release_epochs.abort(
+        epoch_id,
+        opened["identity_sha256"],
+        reason="node apply is being rolled back",
+        disposition="retain_installed",
+    )
+    assert aborted["status"] == "aborted"
+    assert aborted["abort_disposition"] == "retain_installed"
+    assert (
+        cp.fleet_release_epochs.status(epoch_id, opened["identity_sha256"]) == aborted
+    )
+
+    # The installed successor stays pending_install so the node keeps
+    # authenticating with the credential already written into its mac.env.
+    states = {
+        item["id"]: item["state"]
+        for item in WorkerCredentialLifecycle(cp.store).list(agent_id="agent_alpha")
+    }
+    assert states == {
+        old.record["id"]: "active",
+        pending.record["id"]: "pending_install",
+    }
+    projected = WorkerCredentialPrincipalProvider(cp.store).tokens()
+    assert old.record["token_hash"] in projected
+    assert pending.record["token_hash"] in projected
+
+    # Replaying with a conflicting disposition is rejected; the recorded one
+    # replays identically.
+    with pytest.raises(ValidationError, match="different disposition"):
+        cp.fleet_release_epochs.abort(
+            epoch_id,
+            opened["identity_sha256"],
+            reason="node apply is being rolled back",
+            disposition="discard_installed",
+        )
+    assert (
+        cp.fleet_release_epochs.abort(
+            epoch_id,
+            opened["identity_sha256"],
+            reason="node apply is being rolled back",
+            disposition="retain_installed",
+        )
+        == aborted
+    )
+
+
+def test_abort_rejects_unknown_disposition(tmp_path: Path) -> None:
+    cp = _plane(tmp_path / "mac.db")
+    _bootstrap_active(cp, "agent_alpha", tmp_path)
+    pending = _issue(cp, "agent_alpha")
+    epoch_id = "epoch-abort-bad-disposition"
+    opened = cp.fleet_release_epochs.open_epoch(
+        epoch_id,
+        [
+            _prepare_item(
+                pending,
+                generation="generation-bad-disposition",
+                baseline_seen=cp.get_agent("agent_alpha").last_seen_at,
+                candidate_key=None,
+            )
+        ],
+    )
+    with pytest.raises(ValidationError, match="disposition is invalid"):
+        cp.fleet_release_epochs.abort(
+            epoch_id,
+            opened["identity_sha256"],
+            reason="rollback",
+            disposition="teleport",
+        )
 
 
 def test_abort_accepts_prior_operator_hold_already_restored_exactly(
@@ -862,12 +991,23 @@ def test_full_cohort_commit_failure_rolls_back_early_promotions(tmp_path: Path) 
             pending[name].record["id"]: "pending_install",
         }
         assert cp._agent_attestation_key("agent_%s" % name) != candidates[name]
+    # The cohort proved, so both pending credentials are installed and
+    # heartbeating. A default abort must now refuse the destructive revoke and
+    # force an explicit recovery disposition.
+    with pytest.raises(TransitionError, match="installed pending credentials"):
+        cp.fleet_release_epochs.abort(
+            "epoch-two-agent",
+            opened["identity_sha256"],
+            reason="preserve later operator safety hold",
+        )
     aborted = cp.fleet_release_epochs.abort(
         "epoch-two-agent",
         opened["identity_sha256"],
         reason="preserve later operator safety hold",
+        disposition="discard_installed",
     )
     assert aborted["status"] == "aborted"
+    assert aborted["abort_disposition"] == "discard_installed"
     alpha = cp.get_agent("agent_alpha")
     assert alpha.dispatch_hold is False
     beta = cp.get_agent("agent_beta")

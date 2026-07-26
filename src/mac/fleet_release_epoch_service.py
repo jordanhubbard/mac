@@ -63,6 +63,26 @@ ATTESTATION_PROOF_SCHEMA = "mac.fleet_release_attestation_candidate_proof.v1"
 ATTESTATION_PROOF_PURPOSE = "synchronized-fleet-release-candidate"
 REPORT_ACTIONS = frozenset({"preserve", "approve", "revoke"})
 
+# Abort dispositions govern what happens to an epoch-owned pending
+# credential that a node has already installed and is heartbeating with.
+# ``auto`` refuses a destructive abort once any pending credential is
+# installed, forcing the operator to choose an explicit recovery action.
+# ``retain_installed`` aborts epoch bookkeeping while leaving every
+# installed pending credential authenticating, so the proven predecessor
+# projection each node depends on survives.  ``discard_installed`` is the
+# explicit destructive path that revokes even installed pending
+# credentials (the historical, unconditional abort behaviour).
+ABORT_DISPOSITION_AUTO = "auto"
+ABORT_DISPOSITION_RETAIN_INSTALLED = "retain_installed"
+ABORT_DISPOSITION_DISCARD_INSTALLED = "discard_installed"
+ABORT_DISPOSITIONS = frozenset(
+    {
+        ABORT_DISPOSITION_AUTO,
+        ABORT_DISPOSITION_RETAIN_INSTALLED,
+        ABORT_DISPOSITION_DISCARD_INSTALLED,
+    }
+)
+
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -528,6 +548,8 @@ class FleetReleaseEpochService:
                 receipt[key] = str(epoch[key])
         if epoch.get("abort_reason"):
             receipt["abort_reason"] = str(epoch["abort_reason"])
+        if epoch.get("abort_disposition"):
+            receipt["abort_disposition"] = str(epoch["abort_disposition"])
         return receipt
 
     def _assert_epoch_identity_integrity(self, conn: Any, epoch_row: Any) -> None:
@@ -1752,10 +1774,14 @@ class FleetReleaseEpochService:
         identity_sha256: str,
         *,
         reason: str,
+        disposition: str = ABORT_DISPOSITION_AUTO,
         actor: str = "fleet-deploy",
     ) -> Dict[str, Any]:
         reason_value = _text(reason, "fleet release abort reason", 1024)
         actor_value = str(actor or "fleet-deploy")
+        disposition_value = str(disposition or ABORT_DISPOSITION_AUTO).strip()
+        if disposition_value not in ABORT_DISPOSITIONS:
+            raise ValidationError("fleet release abort disposition is invalid")
         with self.store.transaction() as conn:
             epoch = self._load_exact(conn, epoch_id, identity_sha256)
             conn.execute(
@@ -1770,12 +1796,43 @@ class FleetReleaseEpochService:
                     raise ValidationError(
                         "fleet release epoch was aborted with a different reason"
                     )
+                prior_disposition = str(
+                    epoch["abort_disposition"] or ABORT_DISPOSITION_AUTO
+                )
+                if (
+                    disposition_value != ABORT_DISPOSITION_AUTO
+                    and disposition_value != prior_disposition
+                ):
+                    raise ValidationError(
+                        "fleet release epoch was aborted with a different disposition"
+                    )
                 return self._receipt(conn, epoch)
             participants = conn.execute(
                 "SELECT * FROM fleet_release_epoch_agents WHERE epoch_id = ? "
                 "ORDER BY ordinal",
                 (epoch_id,),
             ).fetchall()
+            # A pending credential whose install receipt is recorded has already
+            # been written into node ``mac.env`` and is the identity the node is
+            # currently heartbeating with. Discarding it after install is what
+            # left healthy static nodes in a 403 outage: the epoch never
+            # committed, so the hub still treats the predecessor as authoritative
+            # while the node presents the now-revoked successor. Abort must not
+            # perform that destructive revoke implicitly.
+            installed_agents = {
+                str(participant["agent_id"])
+                for participant in participants
+                if participant["install_receipt_sha256"] is not None
+            }
+            if installed_agents and disposition_value == ABORT_DISPOSITION_AUTO:
+                raise TransitionError(
+                    "fleet release abort refuses to revoke installed pending "
+                    "credentials for %s; choose an explicit recovery disposition "
+                    "(retain_installed to keep the proven predecessor projection "
+                    "authenticating, or discard_installed to force the "
+                    "destructive revoke)"
+                    % ", ".join(sorted(installed_agents))
+                )
             locked: Dict[str, Any] = {}
             preserve_superseding_hold: set[str] = set()
             for participant in participants:
@@ -1835,16 +1892,21 @@ class FleetReleaseEpochService:
                         raise ValidationError(
                             "fleet release abort could not restore exact service claim"
                         )
-                try:
-                    self.credentials.discard_pending_in_transaction(
-                        conn,
-                        agent_id,
-                        str(participant["principal_id"]),
-                        expected_epoch_id=epoch_id,
-                        actor=actor_value,
-                    )
-                except WorkerCredentialError as exc:
-                    raise ValidationError(str(exc)) from exc
+                retained_installed = (
+                    agent_id in installed_agents
+                    and disposition_value == ABORT_DISPOSITION_RETAIN_INSTALLED
+                )
+                if not retained_installed:
+                    try:
+                        self.credentials.discard_pending_in_transaction(
+                            conn,
+                            agent_id,
+                            str(participant["principal_id"]),
+                            expected_epoch_id=epoch_id,
+                            actor=actor_value,
+                        )
+                    except WorkerCredentialError as exc:
+                        raise ValidationError(str(exc)) from exc
                 if agent_id in preserve_superseding_hold:
                     # A later operator hold is safer than the stale pre-epoch
                     # snapshot. Abort releases epoch ownership but must not
@@ -1888,6 +1950,8 @@ class FleetReleaseEpochService:
                             if agent_id in preserve_superseding_hold
                             else None
                         ),
+                        "disposition": disposition_value,
+                        "retained_installed_pending": retained_installed,
                     },
                     now,
                 )
@@ -1902,9 +1966,9 @@ class FleetReleaseEpochService:
             )
             conn.execute(
                 "UPDATE fleet_release_epochs SET state = 'aborted', "
-                "aborted_at = ?, abort_reason = ? "
+                "aborted_at = ?, abort_reason = ?, abort_disposition = ? "
                 "WHERE epoch_id = ? AND state IN ('open', 'proved')",
-                (now, reason_value, epoch_id),
+                (now, reason_value, disposition_value, epoch_id),
             )
             aborted = conn.execute(
                 "SELECT * FROM fleet_release_epochs WHERE epoch_id = ?",

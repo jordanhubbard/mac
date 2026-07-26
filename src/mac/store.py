@@ -1315,7 +1315,8 @@ class SQLiteStore:
                     proved_at TEXT,
                     committed_at TEXT,
                     aborted_at TEXT,
-                    abort_reason TEXT
+                    abort_reason TEXT,
+                    abort_disposition TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS fleet_release_epoch_agents (
@@ -6458,6 +6459,11 @@ class SQLiteStore:
             "fleet_release_epoch_agents",
             "prior_report_executor_projection_sha256",
             "prior_report_executor_projection_sha256 TEXT",
+        )
+        self._ensure_column(
+            "fleet_release_epochs",
+            "abort_disposition",
+            "abort_disposition TEXT",
         )
         # mac-1oi4: capture who asked for an agent so fulfill can refuse
         # a self-fulfill (the same actor approving its own request).
