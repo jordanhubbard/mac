@@ -114,6 +114,32 @@ if len(args) >= 2 and args[0:2] == ["sandbox", "list"]:
 if len(args) >= 3 and args[0:2] == ["sandbox", "delete"]:
     stale_names = {{row.get("name") for row in json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))}}
     if args[2] in stale_names:
+        # Additive stale-delete fault injection keyed on the already-allowlisted
+        # ``FAKE_OPENSHELL_MODE`` (no new production env passthrough required).
+        # The default modes are unchanged: the stale sandbox is reaped and
+        # disappears from subsequent listings.  ``stale-delete-nonzero`` makes
+        # the delete itself fail (nonzero exit) without reaping, exercising the
+        # deletion-failure path.  ``stale-persist`` returns success yet never
+        # reaps, so the sandbox keeps reappearing and the reconcile deadline
+        # path must fail closed.  ``stale-linger`` returns success but only
+        # reaps a name after two delete attempts, so a reap-eligible sandbox is
+        # re-observed on a later pass — exercising ``seen`` name de-duplication.
+        state["stale_delete_attempts"] = state.get("stale_delete_attempts", 0) + 1
+        if mode == "stale-delete-nonzero":
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            raise SystemExit(66)
+        if mode == "stale-persist":
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            raise SystemExit(0)
+        if mode == "stale-linger":
+            per_name = state.get("stale_delete_per_name", {{}})
+            per_name[args[2]] = per_name.get(args[2], 0) + 1
+            state["stale_delete_per_name"] = per_name
+            if per_name[args[2]] < 2:
+                # First observation: report success but leave it present so it
+                # is re-listed and re-classified as reap-eligible next pass.
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+                raise SystemExit(0)
         reaped = set(state.get("deleted_stale", []))
         reaped.add(args[2])
         state["deleted_stale"] = sorted(reaped)
@@ -1307,6 +1333,347 @@ def test_task_sandbox_reconciliation_runs_when_primary_sandbox_is_absent(
         if line.startswith("openshell:sandbox delete ")
     ]
     assert delete_calls == ["openshell:sandbox delete mac-task-no-openclaw-fixture"]
+    _assert_no_secret(run)
+
+
+@pytest.mark.parametrize(
+    "pid_label",
+    ["not-a-pid", "-1", "0", "  ", "3.14", "0x10", ""],
+)
+def test_task_sandbox_with_non_positive_or_nonintegral_pid_is_never_reaped(
+    tmp_path: Path, pid_label: str
+) -> None:
+    """A recorded ``mac.pid`` that is not a positive integer fails closed.
+
+    Non-integer, negative, zero, blank, or (via a fully missing label) absent
+    process identities can never prove the recorded owner is dead, so the
+    sandbox must be preserved and never deleted, yet the gate still certifies.
+    """
+
+    sandbox = {
+        "name": "mac-task-badpid-fixture",
+        "phase": "Ready",
+        "labels": {
+            "mac.owner": "mac",
+            "mac.kind": "task",
+            "mac.keep": "false",
+            "mac.pid": pid_label,
+        },
+    }
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([sandbox])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["reconciled"] == []
+    assert proof["reconciled_count"] == 0
+    # The sandbox is managed (name + owner match) but not reap-eligible.
+    assert proof["managed"] == 1
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_task_sandbox_with_missing_pid_label_is_never_reaped(
+    tmp_path: Path,
+) -> None:
+    """A managed sandbox whose ``mac.pid`` label is entirely absent fails closed."""
+
+    sandbox = {
+        "name": "mac-task-nopid-fixture",
+        "phase": "Ready",
+        "labels": {
+            "mac.owner": "mac",
+            "mac.kind": "task",
+            "mac.keep": "false",
+        },
+    }
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([sandbox])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["reconciled"] == []
+    assert proof["reconciled_count"] == 0
+    assert proof["managed"] == 1
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "mac-unmanaged-prefix-fixture",
+        "task-mac-task-fixture",
+        "mac-task-",
+        "not-mac-at-all",
+        "mac-openclaw-agent-lookalike",
+    ],
+)
+def test_task_sandbox_with_unmatched_name_is_never_reaped(
+    tmp_path: Path, name: str
+) -> None:
+    """A name outside the managed-task prefix set is neither managed nor reaped."""
+
+    sandbox = _managed_task_sandbox(name, pid=_dead_pid())
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([sandbox])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["reconciled"] == []
+    assert proof["reconciled_count"] == 0
+    # An unmatched name is not even counted as managed.
+    assert proof["managed"] == 0
+    assert proof["scanned"] == 1
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["gateway", "openshell-gateway", "", "daemon", "unknown-kind"],
+)
+def test_task_sandbox_with_unmanaged_kind_is_never_reaped(
+    tmp_path: Path, kind: str
+) -> None:
+    """A recognized name but an unmanaged ``mac.kind`` value fails closed."""
+
+    sandbox = _managed_task_sandbox(
+        "mac-task-badkind-fixture", kind=kind, pid=_dead_pid()
+    )
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([sandbox])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["reconciled"] == []
+    assert proof["reconciled_count"] == 0
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+@pytest.mark.parametrize("owner", ["other", "MAC-imposter", "", "hub"])
+def test_task_sandbox_with_foreign_or_missing_owner_is_never_reaped(
+    tmp_path: Path, owner: str
+) -> None:
+    """A foreign or blank ``mac.owner`` is never reaped (never reap on partial)."""
+
+    sandbox = _managed_task_sandbox(
+        "mac-task-foreign-fixture", owner=owner, pid=_dead_pid()
+    )
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([sandbox])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["reconciled"] == []
+    assert proof["reconciled_count"] == 0
+    # A foreign or blank owner is not counted as MAC-managed.
+    assert proof["managed"] == 0
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_task_sandbox_with_missing_owner_label_is_never_reaped(
+    tmp_path: Path,
+) -> None:
+    """A managed-name sandbox with no ``mac.owner`` label at all fails closed."""
+
+    sandbox = {
+        "name": "mac-task-ownerless-fixture",
+        "phase": "Ready",
+        "labels": {
+            "mac.kind": "task",
+            "mac.keep": "false",
+            "mac.pid": str(_dead_pid()),
+        },
+    }
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([sandbox])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["reconciled"] == []
+    assert proof["reconciled_count"] == 0
+    assert proof["managed"] == 0
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_stale_task_sandbox_delete_failure_fails_closed_without_receipt(
+    tmp_path: Path,
+) -> None:
+    """A reap-eligible sandbox whose delete returns nonzero blocks the receipt.
+
+    The deletion command failing (nonzero exit) must raise ``QuiescenceFailure``
+    inside the gate, producing no receipt marker and disclosing no secret.
+    """
+
+    stale = _managed_task_sandbox("mac-task-delfail-fixture", pid=_dead_pid())
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        seed_marker=True,
+        openshell_mode="stale-delete-nonzero",
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([stale])},
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    # The delete was attempted (proving the classifier reaped it) but failed.
+    assert (
+        "openshell:sandbox delete mac-task-delfail-fixture" in _call_lines(run)
+    )
+    _assert_no_secret(run)
+
+
+def test_persistently_stale_task_sandbox_trips_deadline_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """A stale sandbox that never becomes reap-free trips the deadline path.
+
+    When deletes report success yet the reap-eligible sandbox keeps
+    reappearing, reconciliation can never reach two consecutive stale-free
+    observations and must fail closed with the stable ``survived phase-1``
+    message, leaving no receipt and disclosing no secret.
+    """
+
+    stale = _managed_task_sandbox("mac-task-persist-fixture", pid=_dead_pid())
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        seed_marker=True,
+        openshell_mode="stale-persist",
+        extra_env={
+            "FAKE_STALE_SANDBOXES": json.dumps([stale]),
+            # Keep the deadline tight so the survival is proven quickly.
+            "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS": "1",
+        },
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    assert (
+        "stale OpenShell task sandboxes survived phase-1 quiescence"
+        in run.result.stderr
+    )
+    # At least one delete was attempted before the deadline fired.
+    assert any(
+        line.startswith("openshell:sandbox delete mac-task-persist-fixture")
+        for line in _call_lines(run)
+    )
+    _assert_no_secret(run)
+
+
+def test_malformed_sandbox_labels_fail_inventory_closed(tmp_path: Path) -> None:
+    """A non-mapping ``labels`` field aborts the inventory fail-closed."""
+
+    stale = {
+        "name": "mac-task-badlabels-fixture",
+        "phase": "Ready",
+        "labels": ["mac.owner=mac"],
+    }
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        seed_marker=True,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([stale])},
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_malformed_inventory_json_fails_reconciliation_closed(
+    tmp_path: Path,
+) -> None:
+    """Non-JSON inventory output during listing fails the gate closed."""
+
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        openshell_mode="malformed",
+        seed_marker=True,
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    assert not any("sandbox delete" in line for line in _call_lines(run))
+    _assert_no_secret(run)
+
+
+def test_reconciled_names_are_deduplicated_across_multipass_observations(
+    tmp_path: Path,
+) -> None:
+    """Across the multi-pass observation loop each reaped name appears once.
+
+    The ``linger`` stale-delete mode acknowledges the first delete yet leaves
+    the sandbox present, so each reap-eligible sandbox is re-listed and
+    re-classified as reap-eligible on a subsequent pass before it finally
+    disappears.  The reconcile proof must record each reconciled name exactly
+    once (``seen`` de-duplication) even though it is deleted on more than one
+    pass, so ``reconciled_count`` counts distinct names, not delete calls.
+    """
+
+    stale = [
+        _managed_task_sandbox("mac-task-dedup-a-fixture", pid=_dead_pid()),
+        _managed_task_sandbox("mac-task-dedup-b-fixture", pid=_dead_pid()),
+    ]
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        openshell_mode="stale-linger",
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps(stale)},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    # Each distinct reap-eligible name appears exactly once despite being
+    # observed and deleted across multiple passes.
+    assert proof["reconciled"] == [
+        "mac-task-dedup-a-fixture",
+        "mac-task-dedup-b-fixture",
+    ]
+    assert proof["reconciled_count"] == 2
+    delete_calls = [
+        line
+        for line in _call_lines(run)
+        if line.startswith("openshell:sandbox delete ")
+    ]
+    # ``linger`` forces two delete attempts per sandbox, proving multi-pass
+    # observation, while the reconciled proof still de-duplicates the names.
+    assert delete_calls.count("openshell:sandbox delete mac-task-dedup-a-fixture") >= 2
+    assert delete_calls.count("openshell:sandbox delete mac-task-dedup-b-fixture") >= 2
+    state = json.loads(run.openshell_state.read_text(encoding="utf-8"))
+    assert state["stale_delete_per_name"]["mac-task-dedup-a-fixture"] >= 2
+    assert state["stale_delete_per_name"]["mac-task-dedup-b-fixture"] >= 2
     _assert_no_secret(run)
 
 
