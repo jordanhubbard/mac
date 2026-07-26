@@ -124,6 +124,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `hermes-integration.md` | Hermes Integration |
 | supplemental reference | `hgx-elastic-capacity.md` | HGX elastic capacity |
 | supplemental reference | `home-consolidation.md` | Home-Directory Consolidation: Analysis & Plan |
+| supplemental reference | `hub-active-passive-design.md` | Hub Active-Passive Design (Minimal Standby) |
 | runbook | `hub-availability.md` | Hub Availability |
 | supplemental reference | `hub-ha-audit.md` | Ground-Truth Audit: Hub High-Availability Primitives |
 | supplemental reference | `hub-host-saturation-remediation.md` | Hub-Host Saturation Remediation |
