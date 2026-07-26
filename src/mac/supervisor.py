@@ -188,6 +188,7 @@ def post_alert(webhook: str, payload: Dict[str, object], timeout: float = 8.0) -
 
 
 def run_restart_command(command: Sequence[str], timeout: float = 30.0) -> bool:
+    """Run a restart command and return whether it succeeded."""
     try:
         proc = subprocess.run(
             list(command), timeout=timeout,
@@ -402,6 +403,7 @@ class _OpsHandler(BaseHTTPRequestHandler):
 
 
 def build_ops_server(config: SupervisorConfig, watchdog: ProcessWatchdog) -> ThreadingHTTPServer:
+    """Build the supervisor ops HTTP server bound to the watchdog."""
     handler = type("_BoundOpsHandler", (_OpsHandler,), {
         "watchdog": watchdog,
         "token": config.auth_token,
@@ -475,6 +477,7 @@ class Supervisor:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Run the supervisor entry point and return its exit code."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s mac.supervisor %(levelname)s %(message)s",

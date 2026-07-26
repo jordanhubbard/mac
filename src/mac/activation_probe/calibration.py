@@ -12,6 +12,7 @@ from .classifier import ActivationProbeClassifier
 def expected_calibration_error(
     scores: Sequence[float], labels: Sequence[int], *, bins: int = 10
 ) -> float:
+    """Compute the expected calibration error of scores against binary labels."""
     if len(scores) != len(labels) or not scores:
         raise ValueError("scores and labels must have equal nonzero length")
     if bins < 1:
@@ -34,6 +35,7 @@ def expected_calibration_error(
 
 
 def auroc(scores: Sequence[float], labels: Sequence[int]) -> float:
+    """Compute the area under the ROC curve for scores and binary labels."""
     positives = [score for score, label in zip(scores, labels) if int(label) == 1]
     negatives = [score for score, label in zip(scores, labels) if int(label) == 0]
     if not positives or not negatives:
@@ -48,6 +50,7 @@ def auroc(scores: Sequence[float], labels: Sequence[int]) -> float:
 def accuracy_at_threshold(
     scores: Sequence[float], labels: Sequence[int], *, threshold: float
 ) -> float:
+    """Compute classification accuracy for scores at the given decision threshold."""
     if len(scores) != len(labels) or not scores:
         raise ValueError("scores and labels must have equal nonzero length")
     correct = sum(
@@ -57,6 +60,7 @@ def accuracy_at_threshold(
 
 
 def load_calibration_records(path: str | Path) -> list[Mapping[str, Any]]:
+    """Load held-out calibration records from a JSONL file at the given path."""
     records = []
     for line_number, line in enumerate(
         Path(path).read_text(encoding="utf-8").splitlines(), 1
@@ -81,6 +85,7 @@ def calibration_report(
     *,
     bins: int = 10,
 ) -> dict[str, Any]:
+    """Build a calibration metrics report for the classifier over the given records."""
     materialized = list(records)
     predictions = [classifier.predict(record["activations"]) for record in materialized]
     scores = [prediction.score for prediction in predictions]

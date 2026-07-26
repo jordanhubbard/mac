@@ -74,6 +74,7 @@ def wait_for_mac_api(
     delay_s: float = DEFAULT_HEALTH_DELAY_S,
     sleeper: Optional[Callable[[float], None]] = None,
 ) -> None:
+    """Poll the mac-api health endpoint until it responds or attempts are exhausted."""
     sleep = sleeper or time.sleep
     last_exc: Optional[Exception] = None
     for attempt in range(1, attempts + 1):
@@ -135,6 +136,7 @@ def _post_agent(
     return resp
 
 def register_dispatcher(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
+    """Register the dispatcher machine and agent with the mac-api."""
     machine_spec = cfg.dispatcher["machine"]
     agent_spec = cfg.dispatcher["agent"]
     machine = _post_machine(mac, machine_spec)
@@ -154,6 +156,7 @@ def register_dispatcher(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
 def seed_role_machines_and_agents(
     mac: MacApiProtocol, cfg: BootstrapConfig
 ) -> None:
+    """Seed the configured role machines and their agents in the mac-api."""
     machine_db_ids: Dict[str, str] = {}
     for m in cfg.role_machines:
         seed_id = m.get("machine_id") or m.get("id")
@@ -227,6 +230,7 @@ def register_role_definitions(
 
 
 def register_projects(mac: MacApiProtocol, cfg: BootstrapConfig) -> None:
+    """Register the configured projects with the mac-api."""
     for spec in cfg.projects:
         name = spec.get("name")
         if not name:
@@ -451,6 +455,7 @@ def rotate_attestation_keys(
     *,
     secret_factory: Optional[Callable[[str, str, Dict[str, str]], Any]] = None,
 ) -> None:
+    """Rotate attestation signing keys into the configured Kubernetes secret."""
     if cfg.attestation_keys is None:
         log.info("attestation_keys not configured; skipping key-rotation step")
         return
@@ -591,6 +596,7 @@ def _token_from_env() -> str:
     return token
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Run the Kubernetes bootstrap entry point and return its exit code."""
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )

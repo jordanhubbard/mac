@@ -26,6 +26,7 @@ def normalize_openshell_event(
     agent_id: Optional[str] = None,
     sandbox_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Normalize a raw OpenShell event into the action-event schema."""
     event = raw.get("event") if isinstance(raw.get("event"), dict) else raw
     outcome_raw = str(
         event.get("outcome")
@@ -68,6 +69,7 @@ def normalize_openshell_event(
 
 
 def iter_json_lines(path: Path) -> Iterator[Dict[str, Any]]:
+    """Yield parsed JSON objects from each non-empty line of the file."""
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -77,6 +79,7 @@ def iter_json_lines(path: Path) -> Iterator[Dict[str, Any]]:
 
 
 def post_action_event(base_url: str, token: str, event: Dict[str, Any], *, timeout: float = 10.0) -> None:
+    """Post a single action event to the hub action-events endpoint."""
     data = json.dumps(event, sort_keys=True, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         base_url.rstrip("/") + "/action-events",
@@ -99,6 +102,7 @@ def collect_once(
     agent_id: Optional[str] = None,
     sandbox_id: Optional[str] = None,
 ) -> int:
+    """Normalize and post each event, returning the number sent."""
     count = 0
     for raw in events:
         post_action_event(
@@ -111,6 +115,7 @@ def collect_once(
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Run the OpenShell collector entry point and return its exit code."""
     parser = argparse.ArgumentParser(prog="mac-openshell-collector")
     parser.add_argument("--events-file", required=True)
     parser.add_argument("--hub-url", default=os.environ.get("MAC_HUB_URL") or os.environ.get("MAC_URL"))

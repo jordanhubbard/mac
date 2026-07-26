@@ -187,6 +187,7 @@ def build_router_app(env: Optional[Dict[str, str]] = None):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Run the MAC router service entry point and return its exit code."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(prog="mac-router")
     parser.add_argument("--host", default=os.environ.get("MAC_ROUTER_BIND_HOST") or "127.0.0.1")

@@ -22,10 +22,12 @@ VALID_STATUSES = {"active", "starting", "inactive", "degraded", "failed", "unkno
 
 
 def default_policy_path() -> Path:
+    """Return the default path to the OpenShell policy file."""
     return Path(__file__).resolve().parents[2] / "deploy" / "openshell" / "mac-hermes-policy.yaml"
 
 
 def default_fleets_path() -> Path:
+    """Return the default path to the fleets configuration file."""
     return mac_paths.fleets_config()
 
 
@@ -49,6 +51,7 @@ def _policy_metadata() -> Dict[str, Any]:
 
 
 def load_fleet_config(path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load and validate the fleet configuration from the given or default path."""
     cfg_path = path or default_fleets_path()
     if not cfg_path.is_file():
         raise FileNotFoundError("fleet config not found: %s" % cfg_path)
@@ -59,6 +62,7 @@ def load_fleet_config(path: Optional[Path] = None) -> Dict[str, Any]:
 
 
 def default_fleet_name(config: Dict[str, Any]) -> str:
+    """Return the name of the default fleet from the configuration."""
     fleets = config.get("fleets") or {}
     if not isinstance(fleets, dict) or not fleets:
         raise ValueError("fleet config does not define any fleets")
@@ -75,6 +79,7 @@ def default_fleet_name(config: Dict[str, Any]) -> str:
 
 
 def fleet_agent_names(config: Dict[str, Any], fleet: Optional[str] = None) -> List[str]:
+    """Return the enabled Linux agent names for the given or default fleet."""
     fleet_name = fleet or default_fleet_name(config)
     fleets = config.get("fleets") or {}
     entry = fleets.get(fleet_name)

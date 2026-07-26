@@ -450,6 +450,7 @@ def build_job_spec(
     lease: JsonDict,
     cfg: RunnerConfig,
 ) -> JsonDict:
+    """Build the Kubernetes Job spec for executing the given task lease."""
     if metadata_declares_read_only_report_repository(task.get("metadata")):
         raise ValueError(READ_ONLY_REPORT_REQUIRES_OPENSHELL_REASON)
     task_id = task["id"]
@@ -636,6 +637,7 @@ def _start_lease_renewal_thread(
 def check_dispatcher_capabilities(
     cfg: RunnerConfig, mac: MacApiProtocol
 ) -> List[str]:
+    """Return the union of role agent capabilities missing from the dispatcher."""
     if not cfg.role_agent_ids:
         return []
 
@@ -712,6 +714,7 @@ def claim_and_launch_one(
     k8s: K8sJobsProtocol,
     cfg: RunnerConfig,
 ) -> Optional[JsonDict]:
+    """Claim the next task and launch a Kubernetes Job for it."""
     payload: JsonDict = {}
     if cfg.capability_filter:
         payload["capabilities"] = cfg.capability_filter
@@ -1137,6 +1140,7 @@ def review_loop(
     iterations: Optional[int] = None,
     sleep: Optional[Any] = None,
 ) -> int:
+    """Repeatedly claim and launch review jobs until iterations are exhausted."""
     sleeper = sleep or time.sleep
     launched = 0
     i = 0
@@ -1158,6 +1162,7 @@ def runner_loop(
     iterations: Optional[int] = None,
     sleep: Optional[Any] = None,
 ) -> int:
+    """Repeatedly claim and launch task jobs until iterations are exhausted."""
     sleeper = sleep or time.sleep
     launched = 0
     i = 0

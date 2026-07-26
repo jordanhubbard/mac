@@ -254,6 +254,7 @@ from mac.executor_finalizer import (  # noqa: E402,F401 - compatibility re-expor
 )
 
 def post_command_audit(agent_id: str, payload: Dict[str, Any]) -> None:
+    """Post a command audit record for the given agent to the hub."""
     if not agent_id:
         return
     _hub_post("/agents/%s/command-audit" % agent_id, payload)
@@ -261,6 +262,7 @@ def post_command_audit(agent_id: str, payload: Dict[str, Any]) -> None:
 
 
 def run_audited_command(argv: List[str], cwd: Path, task_id, metadata: Dict[str, Any]):
+    """Run a command with audit records emitted before and after execution."""
     command_id = command_audit_id()
     agent_id = local_agent_id()
     started_at = utcnow()
@@ -4768,6 +4770,7 @@ def _write_startup_failclose_evidence(task_workspace: Path, task_id: Any, detail
 
 
 def main(*, runner: Callable[..., Any] = run_audited_command) -> int:
+    """Run the task executor entry point and return its exit code."""
     try:
         task_file = Path(os.environ["MAC_TASK_FILE"])
         task_workspace = Path(os.environ["MAC_TASK_WORKSPACE"])

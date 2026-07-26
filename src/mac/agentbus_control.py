@@ -66,6 +66,7 @@ CONTROL_STREAM_TYPES = {
 
 
 def is_control_stream(topic: str, content_type: str) -> bool:
+    """Return whether the topic and content type identify a control stream."""
     base_content_type = str(content_type or "").split(";", 1)[0]
     return (str(topic or ""), base_content_type) in CONTROL_STREAM_TYPES
 
@@ -82,6 +83,7 @@ def repo_update_payload(
     desired_generation: Optional[int] = None,
     release_id: Optional[str] = None,
 ) -> JsonDict:
+    """Build a repository-update control payload."""
     payload: JsonDict = {
         "schema": REPO_UPDATE_SCHEMA,
         "remote": remote,
@@ -113,6 +115,7 @@ def artifact_publish_payload(
     path: Optional[str] = None,
     request_id: Optional[str] = None,
 ) -> JsonDict:
+    """Build an artifact-publish control payload."""
     payload: JsonDict = {
         "schema": ARTIFACT_PUBLISH_SCHEMA,
         "operation": operation,
@@ -222,6 +225,7 @@ def hermes_config_apply_payload(
     registry_path: Optional[str] = None,
     request_id: Optional[str] = None,
 ) -> JsonDict:
+    """Build a Hermes config-apply control payload."""
     message: JsonDict = {
         "schema": HERMES_CONFIG_APPLY_SCHEMA,
         "payload": payload,
@@ -243,6 +247,7 @@ def reflect_request_payload(
     query: str,
     request_id: Optional[str] = None,
 ) -> JsonDict:
+    """Build a reflect-request control payload."""
     payload: JsonDict = {
         "schema": REFLECT_REQUEST_SCHEMA,
         "sender_agent_id": sender_agent_id,
@@ -260,6 +265,7 @@ def reflect_result_payload(
     response: str,
     word_count: int,
 ) -> JsonDict:
+    """Build a reflect-result control payload."""
     return {
         "schema": REFLECT_RESULT_SCHEMA,
         "request_id": request_id,
@@ -311,6 +317,7 @@ def debug_terminal_open_payload(
     ttl_seconds: int = 900,
     request_id: Optional[str] = None,
 ) -> JsonDict:
+    """Build a debug-terminal open control payload."""
     payload: JsonDict = {
         "schema": DEBUG_TERMINAL_OPEN_SCHEMA,
         "session_id": session_id,
@@ -338,6 +345,7 @@ def debug_terminal_input_payload(
     rows: Optional[int] = None,
     cols: Optional[int] = None,
 ) -> JsonDict:
+    """Build a debug-terminal input control payload."""
     payload: JsonDict = {
         "schema": DEBUG_TERMINAL_INPUT_SCHEMA,
         "session_id": session_id,
@@ -362,6 +370,7 @@ def debug_terminal_output_payload(
     message: Optional[str] = None,
     exit_code: Optional[int] = None,
 ) -> JsonDict:
+    """Build a debug-terminal output control payload."""
     payload: JsonDict = {
         "schema": DEBUG_TERMINAL_OUTPUT_SCHEMA,
         "session_id": session_id,

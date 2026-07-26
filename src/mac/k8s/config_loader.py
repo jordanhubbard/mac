@@ -237,6 +237,7 @@ def _parse_notifier_channel(i: int, raw: JsonDict) -> NotifierChannelConfig:
 
 
 def load_config_file(path: Optional[str] = None) -> MacConfigFile:
+    """Load and parse the MAC configuration file from the given or default path."""
     resolved = path or os.environ.get("MAC_CONFIG_FILE") or DEFAULT_CONFIG_PATH
     try:
         with open(resolved, "r", encoding="utf-8") as fh:

@@ -95,6 +95,7 @@ def run_one_lease(
     env: Optional[Dict[str, str]] = None,
     sleeper: Optional[Callable[[float], None]] = None,
 ) -> JobExecutionResult:
+    """Execute a single leased task or review and return the execution result."""
     env = env if env is not None else os.environ
     review_id = env.get("MAC_REVIEW_ID", "").strip()
     if review_id:
@@ -683,6 +684,7 @@ def _block_task_after_evidence(
     )
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Run the task runner entry point and return its exit code."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     result = run_one_lease()
     print(

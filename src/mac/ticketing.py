@@ -375,6 +375,7 @@ def detect_ticketing(repo_path: Path) -> TicketingDetection:
 
 
 def connector_for(name: str) -> Optional[TicketingConnector]:
+    """Return the ticketing connector with the given name, or None."""
     for connector in available_connectors():
         if connector.name == name:
             return connector

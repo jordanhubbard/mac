@@ -68,6 +68,7 @@ def manifest_llm_model(manifest: Any) -> str:
 
 
 def normalize_llm_model(model: str) -> str:
+    """Normalize an LLM model name for case-insensitive comparison."""
     return " ".join(str(model or "").strip().lower().split())
 
 
@@ -175,6 +176,7 @@ def review_diversity_requirements(task: Any) -> Dict[str, bool]:
 
 
 def manifest_requires_cross_llm_review(manifest: Any) -> bool:
+    """Return whether the evidence manifest requires cross-LLM review."""
     if not isinstance(manifest, dict):
         return False
     evidence_type = str(manifest.get("evidence_type") or "").strip().lower()
@@ -196,6 +198,7 @@ def cross_llm_review_problems(
     *,
     requirements: Optional[Dict[str, bool]] = None,
 ) -> List[str]:
+    """Return problems preventing a valid cross-LLM review of the evidence."""
     if not manifest_requires_cross_llm_review(executor_manifest):
         return []
     executor_model = manifest_llm_model(executor_manifest)

@@ -422,6 +422,7 @@ def _error_signature(manifest: Dict[str, Any]) -> str:
 
 
 def repository_contract_section(task: Dict[str, Any]) -> str:
+    """Render the repository runtime contract section of the task prompt."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     origin = metadata.get("origin") if isinstance(metadata, dict) else {}
     origin = origin if isinstance(origin, dict) else {}
@@ -513,6 +514,7 @@ def repository_contract_section(task: Dict[str, Any]) -> str:
 
 
 def task_evidence_type(task: Dict[str, Any]) -> str:
+    """Determine the evidence type required for the given task."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     if isinstance(metadata, dict) and isinstance(metadata.get("review_context"), dict):
         return "review_verdict"
@@ -542,6 +544,7 @@ def task_evidence_type(task: Dict[str, Any]) -> str:
 
 
 def task_is_repo_coupled(task: Dict[str, Any]) -> bool:
+    """Return whether the task is coupled to a repository change contract."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     if not isinstance(metadata, dict):
         return False
@@ -810,6 +813,7 @@ def _cooperative_integration_section(task: Dict[str, Any]) -> str:
 
 
 def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[List[str]] = None) -> str:
+    """Build the full executor prompt text for the given task."""
     metadata = task.get("metadata") if isinstance(task, dict) else {}
     evidence_contract = (
         "This is a read-only repository report. Evidence must use evidence_type=operator_result; repository mutation, commit, push, and host finalization are forbidden."
@@ -844,6 +848,7 @@ def build_task_prompt(task: Dict[str, Any], task_file: Path, lessons: Optional[L
 
 
 def build_review_prompt(task: Dict[str, Any], task_workspace: Path, review_context: Dict[str, Any], lessons: Optional[List[str]] = None) -> str:
+    """Build the full reviewer prompt text for the given task and review context."""
     parts = [
             "You are running as a MAC fleet reviewer. Review the executor's work independently.",
             "Use the workspace files as the source of truth. Preserve secrets and do not print bearer tokens.",

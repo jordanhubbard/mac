@@ -33,10 +33,12 @@ from mac.openshell_runtime import (
 
 
 def policy_checksum(policy_text: str) -> str:
+    """Return the SHA-256 checksum of the OpenShell policy text."""
     return "sha256:%s" % hashlib.sha256(policy_text.encode("utf-8")).hexdigest()
 
 
 def parse_policy_metadata(policy_text: str) -> JsonDict:
+    """Parse the OpenShell policy YAML into summary metadata."""
     try:
         parsed = yaml.safe_load(policy_text) or {}
     except yaml.YAMLError as exc:

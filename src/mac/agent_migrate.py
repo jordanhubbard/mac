@@ -532,6 +532,7 @@ def migration_plan(
 
 
 def render_plan(name: str, steps: List[Tuple[str, str]]) -> str:
+    """Render a human-readable dry-run migration plan for the named agent."""
     lines = ["migration plan for agent %r (DRY-RUN — pass --execute to run):" % name]
     for i, (step, cmd) in enumerate(steps, 1):
         lines.append("  %d. [%s]\n       %s" % (i, step, cmd))

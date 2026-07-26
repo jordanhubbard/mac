@@ -22,10 +22,12 @@ SANDBOX_BASE_PATH = "/opt/mac-venv/bin:/usr/local/bin:/usr/bin:/bin"
 
 
 def truthy(value: Any) -> bool:
+    """Return whether the value represents a truthy string."""
     return str(value or "").strip().lower() in TRUTHY_VALUES
 
 
 def base_agent_name(value: Any) -> str:
+    """Return the normalized base agent name without prefix or domain."""
     text = str(value or "").strip().lower()
     if text.startswith("agent_"):
         text = text[len("agent_") :]
@@ -47,6 +49,7 @@ def openshell_required_for_identity(
     explicit: Any = None,
     required_agent_names: Iterable[str] = DEFAULT_REQUIRED_AGENT_NAMES,
 ) -> bool:
+    """Determine whether OpenShell is required for the given agent identity."""
     if explicit is not None:
         return truthy(explicit)
     data = resources or {}
@@ -69,6 +72,7 @@ def openshell_required_for_local_agent(
     *,
     fallback_name: Optional[str] = None,
 ) -> bool:
+    """Determine whether OpenShell is required for the local agent from the environment."""
     env = os.environ if environ is None else environ
     if "MAC_OPENSHELL_REQUIRED" in env:
         return truthy(env.get("MAC_OPENSHELL_REQUIRED"))

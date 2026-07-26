@@ -32,23 +32,28 @@ from mac.env_config import resolve_env_chain
 
 
 def utcnow() -> str:
+    """Return the current UTC time as an ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def sha256_text(value: str) -> str:
+    """Return the SHA-256 digest of the given text as a prefixed hex string."""
     return "sha256:%s" % hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def command_audit_id() -> str:
+    """Generate a unique identifier for a command audit record."""
     seed = "%s:%s" % (time.time_ns(), os.getpid())
     return "cmd_%s" % hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
 
 
 def redacted_arg(value: str) -> str:
+    """Return a redacted placeholder describing the given argument value."""
     return "<redacted:%s:chars=%d>" % (sha256_text(value), len(value))
 
 
 def audit_safe_argv(argv: List[str]) -> List[str]:
+    """Return a copy of the argument vector with sensitive values redacted."""
     safe: List[str] = []
     redact_next = False
     for raw in argv:
@@ -73,10 +78,12 @@ def audit_safe_argv(argv: List[str]) -> List[str]:
 
 
 def safe_path_component(value: str) -> str:
+    """Return a filesystem-safe version of the given string for use in paths."""
     return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in value)[:180]
 
 
 def local_agent_id() -> str:
+    """Resolve the local agent identifier from the environment or hostname."""
     configured = resolve_env_chain("MAC_AGENT_ID", "MAC_WORKER_AGENT_ID")
     if configured:
         return configured

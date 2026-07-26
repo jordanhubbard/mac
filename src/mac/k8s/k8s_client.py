@@ -16,6 +16,7 @@ JsonDict = Dict[str, Any]
 
 
 def load_in_cluster_config() -> None:
+    """Load in-cluster Kubernetes configuration, falling back to kubeconfig."""
     try:
         k8s_config.load_incluster_config()
     except k8s_config.ConfigException:

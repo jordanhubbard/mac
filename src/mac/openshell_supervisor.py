@@ -33,6 +33,7 @@ def build_supervisor_argv(
     env_passthrough: Optional[Iterable[str]] = None,
     extra_create_args: Optional[Sequence[str]] = None,
 ) -> List[str]:
+    """Build the OpenShell sandbox command line for running the child process."""
     if not agent_id:
         raise ValueError("agent_id is required")
     if not policy_path:
@@ -62,6 +63,7 @@ def build_supervisor_argv(
 
 
 def default_policy_path(agent_id: str) -> Path:
+    """Return the default OpenShell policy path for the given agent."""
     explicit = os.environ.get("MAC_OPENSHELL_POLICY")
     if explicit:
         return Path(explicit).expanduser()
@@ -69,6 +71,7 @@ def default_policy_path(agent_id: str) -> Path:
 
 
 def default_child_argv() -> List[str]:
+    """Return the default child command to run under OpenShell."""
     configured = os.environ.get("MAC_OPENSHELL_CHILD")
     if configured:
         import shlex
@@ -78,6 +81,7 @@ def default_child_argv() -> List[str]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Run the OpenShell supervisor entry point and return its exit code."""
     parser = argparse.ArgumentParser(prog="mac-openshell-supervisor")
     parser.add_argument("--agent-id", default=os.environ.get("MAC_AGENT_ID") or os.uname().nodename)
     parser.add_argument("--policy")

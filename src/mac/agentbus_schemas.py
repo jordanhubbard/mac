@@ -188,4 +188,5 @@ def validate_payload(payload: Any) -> Tuple[Optional[str], List[str]]:
 
 
 def is_registered(schema_name: str) -> bool:
+    """Return whether the schema name is present in the agentbus registry."""
     return schema_name in AGENTBUS_SCHEMA_REGISTRY

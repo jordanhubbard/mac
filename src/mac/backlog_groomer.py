@@ -146,6 +146,7 @@ class ProjectGroomingPolicy:
 
 
 def build_grooming_description(project: str, repo_url: str, backlog_size: int) -> str:
+    """Build the task description for an autonomous backlog-grooming task."""
     return "\n".join([
         "Autonomous backlog grooming for project %s (%s)." % (project, repo_url),
         "",

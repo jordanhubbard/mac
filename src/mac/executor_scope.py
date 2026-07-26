@@ -217,6 +217,7 @@ def compute_scope_estimate(task: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def needs_scope_estimate(task: Dict[str, Any]) -> bool:
+    """Return whether the task requires a preflight scope estimate."""
     if not isinstance(task, dict):
         return False
     try:
@@ -234,6 +235,7 @@ def record_scope_estimate(
     estimate: Dict[str, Any],
     existing_metadata: Optional[Dict[str, Any]] = None,
 ) -> bool:
+    """Persist the scope estimate for the task via the hub."""
     if not task_id:
         return False
     merged = dict(existing_metadata or {})
@@ -244,6 +246,7 @@ def record_scope_estimate(
 def maybe_preflight_scope_estimate(
     task: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
+    """Compute and record a scope estimate for the task when one is needed."""
     if not needs_scope_estimate(task):
         return None
     task_id = str(task.get("id") or "")
@@ -367,6 +370,7 @@ def build_planning_prompt(
 
 
 def is_plan_decomposed_evidence(task_workspace: Path) -> bool:
+    """Return whether the workspace evidence declares a plan-decomposed result."""
     manifest_path = task_workspace / "mac-evidence.json"
     if not manifest_path.exists():
         return False

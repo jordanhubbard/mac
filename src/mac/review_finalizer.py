@@ -15,6 +15,7 @@ from mac.task_executor import run_deterministic_review_verdict
 
 
 def main() -> int:
+    """Run the deterministic review finalizer entry point and return its exit code."""
     workspace = Path(os.environ["MAC_TASK_WORKSPACE"])
     task_file = Path(os.environ.get("MAC_TASK_FILE") or workspace / "task.json")
     payload = json.loads(task_file.read_text(encoding="utf-8"))

@@ -136,6 +136,7 @@ def _run_external_with_stdin(argv: list[str], prompt: str) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the agent command wrapper entry point and return its exit code."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--command-file", required=True)
     parser.add_argument("--prompt-file", required=True)

@@ -51,6 +51,7 @@ def reconcile_stuck_jobs(
     *,
     now: Optional[datetime] = None,
 ) -> List[JsonDict]:
+    """Reconcile active managed jobs and reap those that are stuck."""
     now = now or datetime.now(timezone.utc)
     summaries: List[JsonDict] = []
     try:

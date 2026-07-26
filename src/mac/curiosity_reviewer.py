@@ -52,6 +52,7 @@ def _utcnow() -> datetime:
 
 
 def build_adjudication_description(agent_name: str, task_ref: str) -> str:
+    """Build the task description for adjudicating quarantined curiosity candidates."""
     return (
         "Adjudicate this host's quarantined curiosity candidates.\n\n"
         "Agent %(name)s accumulates evidence-linked learning hypotheses in a "

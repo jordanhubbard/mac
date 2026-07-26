@@ -68,6 +68,7 @@ def _integer_threshold(value: Any, field: str, *, minimum: int) -> int:
 
 
 def normalize_arm_weights(raw: Mapping[str, Any]) -> Dict[str, float]:
+    """Normalize raw arm weights into a probability distribution."""
     weights: Dict[str, float] = {}
     for name, value in raw.items():
         arm = _text(name)
@@ -88,6 +89,7 @@ def choose_weighted_arm(
     policy_version: str,
     arms: Mapping[str, Any],
 ) -> Tuple[str, float, Dict[str, float]]:
+    """Deterministically choose a weighted experiment arm for the task."""
     distribution = normalize_arm_weights(arms)
     seed = "%s|%s|%s" % (experiment_id, task_id, policy_version)
     digest = hashlib.sha256(seed.encode("utf-8")).digest()
@@ -117,6 +119,7 @@ def build_assignment(
     assigned_by: str = "human",
     assigned_at: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Build a review experiment assignment record."""
     experiment = _text(experiment_id)
     if not experiment:
         raise ValidationError("review experiment id is required")
@@ -171,6 +174,7 @@ def build_assignment(
 
 
 def parse_assignment(metadata: Any) -> Optional[Dict[str, Any]]:
+    """Parse a review experiment assignment from task metadata."""
     block = _object(_object(metadata).get("review_experiment"))
     if block.get("schema") != ASSIGNMENT_SCHEMA:
         return None
@@ -190,6 +194,7 @@ def build_outcome(
     detail: Optional[Mapping[str, Any]] = None,
     observed_at: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Build a review experiment outcome record."""
     kind_value = _text(kind)
     status_value = _text(status).lower()
     if not kind_value:
@@ -222,6 +227,7 @@ def build_outcome(
 
 
 def append_outcome(metadata: Any, outcome: Mapping[str, Any]) -> Dict[str, Any]:
+    """Append an outcome to the task review-outcomes metadata."""
     next_metadata = _object(metadata)
     current = [
         _object(item)
@@ -408,6 +414,7 @@ def finding_fingerprint(
     index: int,
     finding: Mapping[str, Any],
 ) -> str:
+    """Compute a stable fingerprint for a review finding."""
     stable = {
         "task_id": task_id,
         "review_evidence_id": review_evidence_id,
@@ -454,6 +461,7 @@ def build_observation(
     *,
     llm_routes: Optional[Iterable[Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    """Build a review experiment observation from task detail."""
     task = _object(task_detail.get("task"))
     task_id = _text(task.get("id"))
     metadata = _object(task.get("metadata"))
@@ -706,6 +714,7 @@ def build_report(
     min_tasks_per_arm: int = 5,
     min_validated_outcomes_per_arm: int = 3,
 ) -> Dict[str, Any]:
+    """Build an aggregated review experiment report from observations."""
     experiment = _text(experiment_id)
     task_threshold = _integer_threshold(
         min_tasks_per_arm, "min_tasks_per_arm", minimum=1

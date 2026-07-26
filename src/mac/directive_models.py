@@ -88,14 +88,17 @@ class DirectiveEvaluation:
 
 
 def canonical_json(value: Any) -> str:
+    """Serialize the value to canonical, sorted, compact JSON."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def canonical_digest(value: Any) -> str:
+    """Return the SHA-256 digest of the value canonical JSON encoding."""
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
 def parse_directive_document(raw: Mapping[str, Any]) -> DirectiveDocument:
+    """Parse and validate a raw mapping into a directive document."""
     if not isinstance(raw, Mapping):
         raise ValidationError("directive document must be an object")
     candidate = _json_copy(dict(raw))
@@ -249,6 +252,7 @@ def evaluate_directive(
     facts: Mapping[str, Any],
     bindings: Sequence[Mapping[str, Any]] = (),
 ) -> DirectiveEvaluation:
+    """Evaluate a directive document against facts and bindings."""
     matched = True if document.when is None else evaluate_condition(document.when, facts)
     if not matched:
         return DirectiveEvaluation(False, False, None, {}, {}, None)
@@ -274,6 +278,7 @@ def evaluate_directive(
 
 
 def evaluate_condition(expression: Any, facts: Mapping[str, Any]) -> bool:
+    """Evaluate a directive condition expression against the given facts."""
     counter = [0]
 
     def visit(node: Any, depth: int) -> bool:
@@ -352,6 +357,7 @@ def render_marked_value(
     facts: Mapping[str, Any],
     variables: Mapping[str, Any],
 ) -> Any:
+    """Render a directive marked value using the given facts and variables."""
     if value is None:
         return None
     if isinstance(value, Mapping):

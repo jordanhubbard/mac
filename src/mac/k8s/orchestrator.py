@@ -174,6 +174,7 @@ def _credential_heartbeat_loop(
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Run the Kubernetes orchestrator entry point and return its exit code."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("mac-k8s-orchestrator")
 
