@@ -1299,6 +1299,72 @@
   },
   {
     "default": null,
+    "description": "Core setting: continuity bus chunk scan.",
+    "family": "core",
+    "name": "MAC_CONTINUITY_BUS_CHUNK_SCAN",
+    "retired": false,
+    "sources": [
+      "src/mac/openclaw_continuity.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: continuity bus stream scan.",
+    "family": "core",
+    "name": "MAC_CONTINUITY_BUS_STREAM_SCAN",
+    "retired": false,
+    "sources": [
+      "src/mac/openclaw_continuity.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: continuity max items.",
+    "family": "core",
+    "name": "MAC_CONTINUITY_MAX_ITEMS",
+    "retired": false,
+    "sources": [
+      "src/mac/openclaw_continuity.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: continuity max low value memories.",
+    "family": "core",
+    "name": "MAC_CONTINUITY_MAX_LOW_VALUE_MEMORIES",
+    "retired": false,
+    "sources": [
+      "src/mac/openclaw_continuity.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: continuity min score.",
+    "family": "core",
+    "name": "MAC_CONTINUITY_MIN_SCORE",
+    "retired": false,
+    "sources": [
+      "src/mac/openclaw_continuity.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: continuity token budget.",
+    "family": "core",
+    "name": "MAC_CONTINUITY_TOKEN_BUDGET",
+    "retired": false,
+    "sources": [
+      "src/mac/openclaw_continuity.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Core setting: contract description.",
     "family": "core",
     "name": "MAC_CONTRACT_DESCRIPTION",
