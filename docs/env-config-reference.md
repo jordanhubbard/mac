@@ -463,11 +463,24 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_HOME` | str | consumer-defined | core | Core setting: home. |
 | `MAC_HOME_DIR` | str | consumer-defined | core | Core setting: home dir. |
 | `MAC_HOSTNAME` | str | consumer-defined | core | Core setting: hostname. |
+| `MAC_HUB_CONTROL_PLANE_CPU_HIGH` | str | consumer-defined | hub | Hub setting: hub control plane cpu high. |
+| `MAC_HUB_CONTROL_PLANE_CPU_LOW` | str | consumer-defined | hub | Hub setting: hub control plane cpu low. |
+| `MAC_HUB_CONTROL_PLANE_RSS_HIGH_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss high mb. |
+| `MAC_HUB_CONTROL_PLANE_RSS_LOW_MB` | str | consumer-defined | hub | Hub setting: hub control plane rss low mb. |
 | `MAC_HUB_IMAGE_MODEL` | str | consumer-defined | hub | Hub setting: hub image model. |
+| `MAC_HUB_LOAD_SHED_AGENT` | str | consumer-defined | hub | Hub setting: hub load shed agent. |
+| `MAC_HUB_LOAD_SHED_DISABLED` | str | consumer-defined | hub | Hub setting: hub load shed disabled. |
+| `MAC_HUB_LOAD_SHED_FORCE` | str | consumer-defined | hub | Hub setting: hub load shed force. |
+| `MAC_HUB_LOAD_SHED_HIGH` | str | consumer-defined | hub | Hub setting: hub load shed high. |
+| `MAC_HUB_LOAD_SHED_LOW` | str | consumer-defined | hub | Hub setting: hub load shed low. |
+| `MAC_HUB_MAX_CONCURRENT_TASKS` | str | consumer-defined | hub | Hub setting: hub max concurrent tasks. |
+| `MAC_HUB_MAX_TEST_JOBS` | str | consumer-defined | hub | Hub setting: hub max test jobs. |
+| `MAC_HUB_MIN_TEST_JOBS` | str | consumer-defined | hub | Hub setting: hub min test jobs. |
 | `MAC_HUB_REVIEWER_AGENT_ID` | str | consumer-defined | hub | Hub setting: hub reviewer agent id. |
 | `MAC_HUB_REVIEWER_AGENT_NAME` | str | consumer-defined | hub | Hub setting: hub reviewer agent name. |
 | `MAC_HUB_REVIEWER_AUTO_REGISTER` | bool | consumer-defined | hub | Hub setting: hub reviewer auto register. |
 | `MAC_HUB_REVIEWER_MACHINE_ID` | str | consumer-defined | hub | Hub setting: hub reviewer machine id. |
+| `MAC_HUB_TEST_JOBS_FRACTION` | str | consumer-defined | hub | Hub setting: hub test jobs fraction. |
 | `MAC_HUB_TICK_INTERVAL_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick interval seconds. |
 | `MAC_HUB_TICK_STALE_AFTER_SECONDS` | int | consumer-defined | hub | Hub setting: hub tick stale after seconds. |
 | `MAC_HUB_TOKEN` | str | consumer-defined | hub | Hub setting: hub token. |

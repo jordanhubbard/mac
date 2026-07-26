@@ -73,6 +73,27 @@ def env_int(
     return value
 
 
+def env_float(
+    name: str,
+    default: float,
+    *,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> float:
+    """Parse a float with optional clamping. Unset/blank/invalid -> ``default`` (then clamped)."""
+    raw = str(_env(environ).get(name) or "").strip()
+    try:
+        value = float(raw) if raw else float(default)
+    except ValueError:
+        value = float(default)
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
 def resolve_env_chain(
     *names: str,
     default: str = "",
@@ -196,6 +217,7 @@ __all__ = [
     "env_str",
     "env_bool",
     "env_int",
+    "env_float",
     "resolve_env_chain",
     "resolve_hub_agent",
 ] + sorted(ENV_VARS)

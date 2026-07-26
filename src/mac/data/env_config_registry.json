@@ -303,6 +303,7 @@
       "deploy/systemd/mac-agent-journal.service",
       "deploy/systemd/mac-fleet-context.service",
       "deploy/systemd/mac-openshell-supervisor.service",
+      "scripts/run-contract-tests.sh",
       "src/mac/_hermes/agent/agent_init.py",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/auto_land.py",
@@ -364,6 +365,7 @@
       "deploy/fleet-node-install.sh",
       "scripts/mac-fetch-openclaw-secrets.py",
       "scripts/mac-fetch-slack-secrets.py",
+      "scripts/run-contract-tests.sh",
       "src/mac/journal.py",
       "src/mac/worker.py"
     ],
@@ -5547,6 +5549,50 @@
   },
   {
     "default": null,
+    "description": "Hub setting: hub control plane cpu high.",
+    "family": "hub",
+    "name": "MAC_HUB_CONTROL_PLANE_CPU_HIGH",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub control plane cpu low.",
+    "family": "hub",
+    "name": "MAC_HUB_CONTROL_PLANE_CPU_LOW",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub control plane rss high mb.",
+    "family": "hub",
+    "name": "MAC_HUB_CONTROL_PLANE_RSS_HIGH_MB",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub control plane rss low mb.",
+    "family": "hub",
+    "name": "MAC_HUB_CONTROL_PLANE_RSS_LOW_MB",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
     "description": "Hub setting: hub image model.",
     "family": "hub",
     "name": "MAC_HUB_IMAGE_MODEL",
@@ -5554,6 +5600,94 @@
     "sources": [
       "deploy/hermes/overlay/plugins/image_gen/mac-hub/__init__.py",
       "src/mac/_hermes/plugins/image_gen/mac-hub/__init__.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub load shed agent.",
+    "family": "hub",
+    "name": "MAC_HUB_LOAD_SHED_AGENT",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub load shed disabled.",
+    "family": "hub",
+    "name": "MAC_HUB_LOAD_SHED_DISABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub load shed force.",
+    "family": "hub",
+    "name": "MAC_HUB_LOAD_SHED_FORCE",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub load shed high.",
+    "family": "hub",
+    "name": "MAC_HUB_LOAD_SHED_HIGH",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub load shed low.",
+    "family": "hub",
+    "name": "MAC_HUB_LOAD_SHED_LOW",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub max concurrent tasks.",
+    "family": "hub",
+    "name": "MAC_HUB_MAX_CONCURRENT_TASKS",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub max test jobs.",
+    "family": "hub",
+    "name": "MAC_HUB_MAX_TEST_JOBS",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub min test jobs.",
+    "family": "hub",
+    "name": "MAC_HUB_MIN_TEST_JOBS",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
     ],
     "type": "str"
   },
@@ -5606,6 +5740,17 @@
       "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/services.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Hub setting: hub test jobs fraction.",
+    "family": "hub",
+    "name": "MAC_HUB_TEST_JOBS_FRACTION",
+    "retired": false,
+    "sources": [
+      "src/mac/hub_load_shed.py"
     ],
     "type": "str"
   },
@@ -6947,6 +7092,7 @@
     "retired": false,
     "sources": [
       "src/mac/env_config.py",
+      "src/mac/hub_load_shed.py",
       "src/mac/services.py"
     ],
     "type": "str"
@@ -9903,6 +10049,7 @@
     "sources": [
       "src/mac/deploy_env.py",
       "src/mac/env_config.py",
+      "src/mac/hub_load_shed.py",
       "src/mac/services.py",
       "src/mac/source_convergence_service.py"
     ],
@@ -11293,6 +11440,7 @@
       "src/mac/deploy_env.py",
       "src/mac/env_config.py",
       "src/mac/hermes_startup.py",
+      "src/mac/hub_load_shed.py",
       "src/mac/worker.py"
     ],
     "type": "str"
@@ -12044,7 +12192,8 @@
     "name": "MAC_TEST_JOBS",
     "retired": false,
     "sources": [
-      "scripts/run-contract-tests.sh"
+      "scripts/run-contract-tests.sh",
+      "src/mac/hub_load_shed.py"
     ],
     "type": "str"
   },
