@@ -172,13 +172,10 @@ from mac.models import (
     new_id,
     parse_time,
     utcnow,
-    validate_transition,
     WorkflowDraft,
 )
 from mac.repository_hygiene import (
-    normalize_cancellation_detail,
     repository_ref_lifecycle_for_transition,
-    validate_replacement_target,
 )
 from mac.env_config import resolve_hub_agent
 from mac.executor_scope import compute_scope_estimate_from_lessons
@@ -232,6 +229,7 @@ from mac.secrets_service import SecretsService
 from mac.scientific_optimizer import ScientificOptimizerConfig, ScientificOptimizerService
 from mac.store import SQLiteStore, Store, make_store_from_env
 from mac.task_lifecycle import DispatchService, TaskLedgerService
+from mac.task_transition_service import TaskTransitionService
 from mac.workflow_runtime import WorkflowRuntime
 from mac.workflow_service import WorkflowService
 from mac.work_package_acceptance_service import WorkPackageAcceptanceService
@@ -1393,6 +1391,7 @@ class ControlPlane:
         # service classes rather than as more methods on ControlPlane.
         self.task_ledger = TaskLedgerService(self.store)
         self.dispatch = DispatchService(self)
+        self.task_transitions = TaskTransitionService(self)
         self._task_outbox_drain_lock = threading.Lock()
         self.reconciliation = ReconciliationCoordinator(self.store)
         self.identity = IdentityService(self.store)
@@ -10057,489 +10056,22 @@ class ControlPlane:
         drain_outbox: bool,
         conn: Optional[Any],
     ) -> Task:
-        target = _state_value(target_state)
-        if conn is None:
-            task = self.get_task(task_id)
-        else:
-            task_row = conn.execute(
-                "SELECT * FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
-            if task_row is None:
-                raise NotFoundError("task not found: %s" % task_id)
-            task = self._task_from_row(task_row)
-        # ``get_task`` accepts unambiguous display prefixes.  Every write and
-        # related-record lookup below must use the canonical id it resolved;
-        # otherwise the initial read succeeds but the UPDATE/history/outbox
-        # writes target the non-existent prefix.
-        task_id = task.id
-        package_link = (
-            conn.execute(
-                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-                (task_id,),
-            ).fetchone()
-            if conn is not None
-            else self.store.query_one(
-                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-                (task_id,),
-            )
-        )
-        if package_link is not None and target not in {
-            TaskState.RUNNING.value,
-            TaskState.NEEDS_REVIEW.value,
-        }:
-            self._require_non_package_task_mutation(
-                task_id,
-                operation="generic transition to %s" % target,
-                conn=conn,
-            )
-        # Worker-authored lifecycle writes are fenced to the exact active lease
-        # attempt. Without this check, an old process for lease A can mutate a
-        # task after the same agent has reacquired it as lease B (the classic
-        # ABA failure). It also prevents any bound agent from using the generic
-        # endpoint to mutate an unowned OPEN/review/terminal task. Operators,
-        # dispatchers, and reviewers use explicit trusted service paths.
-        fenced_lease_id: Optional[str] = None
-        if not trusted_internal:
-            if task.state not in {
-                TaskState.CLAIMED.value,
-                TaskState.RUNNING.value,
-            }:
-                raise AuthorizationError(
-                    "worker task transitions require ownership of an active lease"
-                )
-            self._require_exact_lease_actor(task, actor, lease_id)
-            fenced_lease_id = str(lease_id or "").strip()
-        transition_detail = dict(detail or {})
-        if target == TaskState.BLOCKED.value:
-            transition_detail = _normalize_blocked_detail(transition_detail)
-        diagnosis_record = _structured_failure_diagnosis(
-            target,
-            transition_detail,
-            actor=actor,
-            attempt_count=task.attempt_count,
-        )
-        if diagnosis_record is not None:
-            existing_diagnosis = transition_detail.get("diagnosis")
-            if existing_diagnosis not in (None, "", {}, diagnosis_record):
-                diagnosis_record["reported_diagnosis"] = str(existing_diagnosis)[:1000]
-            transition_detail["diagnosis"] = diagnosis_record
-        if target == TaskState.CANCELLED.value:
-            # Resolve replacement_task_id prefix before normalization so that
-            # normalize_cancellation_detail receives a canonical full ID.
-            # AmbiguousIdError and NotFoundError propagate without state change.
-            _raw_replacement = str(
-                (dict(transition_detail) if transition_detail else {}).get(
-                    "replacement_task_id"
-                ) or ""
-            ).strip()
-            if _raw_replacement:
-                _resolved_replacement = self._resolve_task_id(_raw_replacement)
-                if _resolved_replacement != _raw_replacement:
-                    transition_detail = dict(transition_detail)
-                    transition_detail["replacement_task_id"] = _resolved_replacement
-            transition_detail = normalize_cancellation_detail(transition_detail)
-            # Write guard: reject cancellations that point at a terminal or held
-            # replacement task unless the caller has explicitly set archival_override.
-            disposition = str(transition_detail.get("disposition") or "").strip().lower()
-            if disposition in {"superseded", "duplicate"}:
-                replacement_id = str(
-                    transition_detail.get("replacement_task_id") or ""
-                ).strip()
-                archival_override = bool(transition_detail.get("archival_override", False))
-                validate_replacement_target(
-                    replacement_id,
-                    self.get_task,
-                    archival_override=archival_override,
-                )
-                if archival_override:
-                    # Record archival_override in lifecycle metadata for audit.
-                    transition_detail["archival_override_recorded"] = True
-        detail = transition_detail
-        if task.state == target:
-            # A terminal cancellation may be re-submitted solely to backfill or
-            # correct its repository-ref disposition. Keep the original
-            # terminal timestamp so this cannot reset the grace period.
-            if target != TaskState.CANCELLED.value:
-                return task
-            lifecycle = repository_ref_lifecycle_for_transition(
-                target,
-                detail,
-                now=task.completed_at or utcnow(),
-            )
-            metadata = ensure_json_object(task.metadata)
-            if metadata.get("repository_ref_lifecycle") == lifecycle:
-                if drain_outbox and conn is None:
-                    self.drain_task_transition_outbox(task_id=task_id, limit=20)
-                return task
-            metadata["repository_ref_lifecycle"] = lifecycle
-            now = utcnow()
-
-            def apply_lifecycle(transaction: Any) -> None:
-                transaction.execute(
-                    "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
-                    (json_dumps(metadata), now, task_id),
-                )
-                self._record_history(
-                    task_id,
-                    "repository_ref.lifecycle_updated",
-                    actor,
-                    target,
-                    target,
-                    detail,
-                    conn=transaction,
-                )
-                self.task_ledger.enqueue_outbox(
-                    transaction,
-                    task_id=task_id,
-                    event_type="task.lifecycle",
-                    actor=actor,
-                    from_state=target,
-                    to_state=target,
-                    detail=detail,
-                    created_at=now,
-                )
-            if conn is None:
-                with self.store.transaction() as transaction:
-                    apply_lifecycle(transaction)
-                if drain_outbox:
-                    self.drain_task_transition_outbox(task_id=task_id, limit=20)
-                return self.get_task(task_id)
-            apply_lifecycle(conn)
-            transitioned_row = conn.execute(
-                "SELECT * FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
-            if transitioned_row is None:
-                raise NotFoundError("task not found: %s" % task_id)
-            return self._task_from_row(transitioned_row)
-        validate_transition(task.state, target)
-        review_ready_evidence: Optional[Evidence] = None
-        if target == TaskState.NEEDS_REVIEW.value:
-            review_ready_evidence = self._require_review_ready(task)
-        if target == TaskState.COMPLETED.value and not self.reviews.completion_authorized(task_id):
-            raise ValidationError("task completion requires approved review and evidence")
-        if target == TaskState.COMPLETED.value:
-            self._require_canonical_integration_proof(task)
-        now = utcnow()
-        updated_metadata: Optional[JsonDict] = None
-        candidate_metadata = ensure_json_object(task.metadata)
-        metadata_changed = False
-        if diagnosis_record is not None:
-            diagnosis_summary = _failure_diagnosis(target, detail) or diagnosis_record["problem"]
-            activity = candidate_metadata.get("activity")
-            if not isinstance(activity, list):
-                activity = []
-            activity.append(
-                {
-                    "phase": "diagnosis",
-                    "actor": str(actor or "")[:120],
-                    "summary": str(diagnosis_summary)[:1200],
-                    "detail": diagnosis_record,
-                    "at": utcnow(),
-                }
-            )
-            candidate_metadata["activity"] = activity[-24:]
-            metadata_changed = True
-        if review_ready_evidence is not None:
-            candidate_metadata["review_target"] = {
-                "executor_evidence_id": review_ready_evidence.id,
-                "attempt_count": task.attempt_count,
-                "recorded_at": now,
-            }
-            metadata_changed = True
-        elif target in {
-            TaskState.OPEN.value,
-            TaskState.WAITING.value,
-            TaskState.BLOCKED.value,
-            TaskState.RUNNING.value,
-            TaskState.FAILED.value,
-            TaskState.CANCELLED.value,
-        }:
-            if candidate_metadata.pop("review_target", None) is not None:
-                metadata_changed = True
-        repository_ref_lifecycle = repository_ref_lifecycle_for_transition(
-            target,
+        return self.task_transitions._transition_task_impl(
+            task_id,
+            target_state,
+            actor,
             detail,
-            now=now,
+            lease_id=lease_id,
+            trusted_internal=trusted_internal,
+            drain_outbox=drain_outbox,
+            conn=conn,
         )
-        if repository_ref_lifecycle is not None:
-            if candidate_metadata.get("repository_ref_lifecycle") != repository_ref_lifecycle:
-                candidate_metadata["repository_ref_lifecycle"] = repository_ref_lifecycle
-                metadata_changed = True
-        if metadata_changed:
-            updated_metadata = candidate_metadata
-        owner_agent_id = task.owner_agent_id
-        lease_id = task.lease_id
-        leased_until = task.leased_until
-        release_lease_id = None
-        if target in {
-            TaskState.WAITING.value,
-            TaskState.BLOCKED.value,
-            TaskState.OPEN.value,
-            TaskState.NEEDS_REVIEW.value,
-            TaskState.FAILED.value,
-            TaskState.CANCELLED.value,
-        }:
-            release_lease_id = lease_id
-            owner_agent_id = None
-            lease_id = None
-            leased_until = None
-        # mac-d2xh: a dead-letter requeue (FAILED→OPEN or CANCELLED→OPEN)
-        # must reset attempt_count and clear completed_at; otherwise the
-        # next claim immediately fails the cap check (attempt_count >=
-        # max_attempts) and the requeue is a no-op.
-        is_requeue_from_terminal = (
-            task.state in {TaskState.FAILED.value, TaskState.CANCELLED.value}
-            and target == TaskState.OPEN.value
-        )
-
-        def apply_transition(conn: Any) -> None:
-            if fenced_lease_id:
-                self._require_exact_lease_actor_in_transaction(
-                    conn,
-                    task_id=task_id,
-                    agent_id=actor,
-                    lease_id=fenced_lease_id,
-                    allowed_states=(task.state,),
-                )
-            if release_lease_id:
-                conn.execute(
-                    "UPDATE leases SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
-                    (LeaseStatus.RELEASED.value, now, release_lease_id, LeaseStatus.ACTIVE.value),
-                )
-                self._consume_break_glass_authorizations(
-                    conn,
-                    task_id=task_id,
-                    lease_id=release_lease_id,
-                    now=now,
-                )
-            if is_requeue_from_terminal:
-                transition_where = "WHERE id = ? AND state = ?"
-                transition_guards: List[Any] = [task_id, task.state]
-                if fenced_lease_id:
-                    transition_where += " AND lease_id = ?"
-                    transition_guards.append(fenced_lease_id)
-                changed = conn.execute(
-                    """
-                    UPDATE tasks
-                    SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
-                        started_at = NULL, completed_at = NULL,
-                        attempt_count = 0, updated_at = ?
-                    """ + transition_where,
-                    tuple(
-                        [
-                        target,
-                        owner_agent_id,
-                        lease_id,
-                        leased_until,
-                        now,
-                        ]
-                        + transition_guards
-                    ),
-                )
-            else:
-                transition_where = "WHERE id = ? AND state = ?"
-                transition_guards = [task_id, task.state]
-                if fenced_lease_id:
-                    transition_where += " AND lease_id = ?"
-                    transition_guards.append(fenced_lease_id)
-                changed = conn.execute(
-                    """
-                    UPDATE tasks
-                    SET state = ?, owner_agent_id = ?, lease_id = ?, leased_until = ?,
-                        started_at = ?, completed_at = ?, updated_at = ?
-                    """ + transition_where,
-                    tuple(
-                        [
-                        target,
-                        owner_agent_id,
-                        lease_id,
-                        leased_until,
-                        now if target == TaskState.RUNNING.value and not task.started_at else task.started_at,
-                        now if target in TERMINAL_TASK_STATES and not task.completed_at else task.completed_at,
-                        now,
-                        ]
-                        + transition_guards
-                    ),
-                )
-            if changed.rowcount != 1:
-                raise TransitionError("task state changed during transition; retry")
-            if updated_metadata is not None:
-                conn.execute(
-                    "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
-                    (json_dumps(updated_metadata), now, task_id),
-                )
-            if task.owner_agent_id and target in TERMINAL_TASK_STATES.union(
-                {
-                    TaskState.WAITING.value,
-                    TaskState.BLOCKED.value,
-                    TaskState.OPEN.value,
-                    TaskState.NEEDS_REVIEW.value,
-                }
-            ):
-                self._set_agent_idle(task.owner_agent_id, conn=conn)
-            self._record_history(
-                task_id, "task.transitioned", actor, task.state, target, detail or {}, conn=conn
-            )
-            self.task_ledger.enqueue_outbox(
-                conn,
-                task_id=task_id,
-                event_type="task.lifecycle",
-                actor=actor,
-                from_state=task.state,
-                to_state=target,
-                detail=detail or {},
-                created_at=now,
-            )
-            if target in TERMINAL_TASK_STATES.union({TaskState.BLOCKED.value}):
-                row = conn.execute(
-                    "SELECT workflow_run_id FROM tasks WHERE id = ?", (task_id,)
-                ).fetchone()
-                if row is not None and row["workflow_run_id"]:
-                    self.task_ledger.enqueue_outbox(
-                        conn,
-                        task_id=task_id,
-                        event_type="workflow.advance",
-                        actor=actor,
-                        from_state=task.state,
-                        to_state=target,
-                        detail=detail or {},
-                        created_at=now,
-                    )
-        if conn is None:
-            with self.store.transaction() as transaction:
-                apply_transition(transaction)
-        else:
-            apply_transition(conn)
-            transitioned_row = conn.execute(
-                "SELECT * FROM tasks WHERE id = ?", (task_id,)
-            ).fetchone()
-            if transitioned_row is None:
-                raise NotFoundError("task not found: %s" % task_id)
-            return self._task_from_row(transitioned_row)
-        if drain_outbox:
-            self.drain_task_transition_outbox(task_id=task_id, limit=20)
-        transitioned = self.get_task(task_id)
-        if target in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
-            self._resolve_waiting_dependents_of(task_id, target, actor)
-        return transitioned
 
     def _terminal_dependency_replacement(self, dep_id: str) -> Optional[str]:
-        """Return a live replacement recorded on a terminal prerequisite.
-
-        Cancellation normalisation already validates a superseding replacement
-        at write time. Re-check its current liveness here because a replacement
-        may have become terminal between the prerequisite transition and this
-        dependent reconciliation.
-        """
-        try:
-            dependency = self.get_task(dep_id)
-        except NotFoundError:
-            return None
-        lifecycle = ensure_json_object(dependency.metadata).get(
-            "repository_ref_lifecycle"
-        )
-        replacement_id = str(
-            ensure_json_object(lifecycle).get("replacement_task_id") or ""
-        ).strip()
-        if not replacement_id:
-            return None
-        try:
-            replacement = self.get_task(replacement_id)
-        except NotFoundError:
-            return None
-        if replacement.state in {TaskState.FAILED.value, TaskState.CANCELLED.value}:
-            return None
-        if bool(ensure_json_object(replacement.metadata).get("no_dispatch")):
-            return None
-        return replacement.id
+        return self.task_transitions._terminal_dependency_replacement(dep_id)
 
     def _resolve_waiting_dependents_of(self, dep_id: str, dep_state: str, actor: str) -> None:
-        """Reconcile waiting dependents of a terminal prerequisite.
-
-        A terminal prerequisite cannot satisfy a waiting dependency edge.  The
-        old behaviour recursively marked every dependent as ``failed``; that
-        converted one root failure into a large, misleading execution-failure
-        count.  A durable replacement is instead substituted into each edge.
-        When none exists, the dependent is explicitly cancelled with its
-        terminal-dependency provenance, preserving an auditable decision without
-        claiming the dependent itself executed and failed.
-
-        This remains best-effort: a reconciliation error must never invalidate
-        the triggering terminal transition.
-        """
-        replacement_id = self._terminal_dependency_replacement(dep_id)
-        try:
-            rows = self.store.query_all(
-                "SELECT id FROM tasks WHERE state = ? AND dependencies LIKE ?",
-                (TaskState.WAITING.value, "%" + dep_id + "%"),
-            )
-        except Exception:  # noqa: BLE001 - propagation must not break the transition
-            return
-        for row in rows or []:
-            dependent_id = row["id"]
-            try:
-                dependent = self.get_task(dependent_id)
-            except NotFoundError:
-                continue
-            # LIKE is a substring match — confirm a real dependency edge, and
-            # that the dependent is still WAITING (a concurrent transition may
-            # have moved it).
-            if dep_id not in dependent.dependencies:
-                continue
-            if dependent.state != TaskState.WAITING.value:
-                continue
-            if self.store.query_one(
-                "SELECT package_id FROM work_package_task_links WHERE task_id = ?",
-                (dependent_id,),
-            ) is not None:
-                # A package node's dependency and cancellation decisions are
-                # part of the immutable graph/epoch transaction.  The legacy
-                # best-effort reconciler must not rewrite just the task row.
-                try:
-                    self.record_log(
-                        "work_package.dependency_reconciliation_deferred",
-                        level="warning",
-                        detail={
-                            "dependent": dependent_id,
-                            "dependency": dep_id,
-                            "dependency_state": dep_state,
-                        },
-                    )
-                except Exception:  # noqa: BLE001 - diagnostic only
-                    pass
-                continue
-            try:
-                if replacement_id:
-                    self.update_task(
-                        dependent_id,
-                        dependencies=[
-                            replacement_id if item == dep_id else item
-                            for item in dependent.dependencies
-                        ],
-                        actor="dependency-reconciliation",
-                    )
-                else:
-                    self._transition_task_internal(
-                        dependent_id,
-                        TaskState.CANCELLED.value,
-                        "dependency-reconciliation",
-                        {
-                            "reason": "dependency_terminated",
-                            "disposition": "preserve",
-                            "failed_dependency": dep_id,
-                            "dependency_state": dep_state,
-                            "manual_repair_required": True,
-                        },
-                    )
-            except Exception as exc:  # noqa: BLE001 - one dependent must not stop the rest
-                try:
-                    self.record_log(
-                        "task.dependency_propagation_failed",
-                        level="warning",
-                        detail={"dependent": dependent_id, "dependency": dep_id, "error": str(exc)},
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+        return self.task_transitions._resolve_waiting_dependents_of(dep_id, dep_state, actor)
 
     def reopen_task(
         self,
@@ -11141,7 +10673,9 @@ class ControlPlane:
         task_id: Optional[str] = None,
         limit: int = 100,
     ) -> List[TaskTransitionOutbox]:
-        return self.task_ledger.list_outbox(status=status, task_id=task_id, limit=limit)
+        return self.task_transitions.list_task_transition_outbox(
+            status=status, task_id=task_id, limit=limit
+        )
 
     def drain_task_transition_outbox(
         self,
@@ -11149,26 +10683,9 @@ class ControlPlane:
         task_id: Optional[str] = None,
         limit: int = 100,
     ) -> JsonDict:
-        processed = []
-        for item in self.task_ledger.list_outbox(task_id=task_id, limit=limit):
-            try:
-                self._process_task_transition_outbox_item(item)
-            except Exception as exc:  # noqa: BLE001 - one failed side effect must not block later rows.
-                self.task_ledger.mark_outbox_failed(item.id, str(exc))
-                self.record_log(
-                    "task.transition_outbox.failed",
-                    layer="control_plane",
-                    source="task-ledger",
-                    level="warning",
-                    subject_type="task",
-                    subject_id=item.task_id,
-                    detail={"outbox_id": item.id, "event_type": item.event_type, "error": str(exc)},
-                )
-                processed.append({"id": item.id, "event_type": item.event_type, "status": "failed"})
-                continue
-            self.task_ledger.mark_outbox_processed(item.id)
-            processed.append({"id": item.id, "event_type": item.event_type, "status": "delivered"})
-        return {"processed": processed, "count": len(processed)}
+        return self.task_transitions.drain_task_transition_outbox(
+            task_id=task_id, limit=limit
+        )
 
     def drain_task_transition_outbox_best_effort(
         self,
@@ -11176,85 +10693,12 @@ class ControlPlane:
         task_id: Optional[str] = None,
         limit: int = 100,
     ) -> JsonDict:
-        if not self._task_outbox_drain_lock.acquire(blocking=False):
-            return {"processed": [], "count": 0, "status": "busy"}
-        try:
-            result = self.drain_task_transition_outbox(task_id=task_id, limit=limit)
-            # Success resets the failure streak so the health signal reflects
-            # only *ongoing* trouble.
-            self._task_outbox_drain_failures = 0
-            return result
-        except Exception as exc:  # noqa: BLE001 - side effects must not break API responses.
-            # Track failures in an in-memory counter that CANNOT itself fail:
-            # the previous code logged-and-swallowed, then wrapped the log in a
-            # bare `except: pass`, so a persistently failing outbox (stranded
-            # task transitions) could be entirely invisible if logging also
-            # failed and the caller ignored the return. The counter guarantees
-            # the failure is observable via status(), and severity escalates
-            # once failures persist.
-            self._task_outbox_drain_failures = (
-                getattr(self, "_task_outbox_drain_failures", 0) + 1
-            )
-            failures = self._task_outbox_drain_failures
-            try:
-                self.record_log(
-                    "task.transition_outbox.drain_failed",
-                    layer="control_plane",
-                    source="task-ledger",
-                    # A one-off drain miss is a warning; a sustained failure
-                    # streak means transitions are stranding — escalate.
-                    level="error" if failures >= 3 else "warning",
-                    subject_type="task" if task_id else None,
-                    subject_id=task_id,
-                    detail={
-                        "error": str(exc),
-                        "limit": limit,
-                        "consecutive_failures": failures,
-                    },
-                )
-            except Exception:  # noqa: BLE001 - telemetry may be down; counter still holds it.
-                pass
-            return {
-                "processed": [],
-                "count": 0,
-                "status": "failed",
-                "error": str(exc),
-                "consecutive_failures": failures,
-            }
-        finally:
-            self._task_outbox_drain_lock.release()
+        return self.task_transitions.drain_task_transition_outbox_best_effort(
+            task_id=task_id, limit=limit
+        )
 
     def _process_task_transition_outbox_item(self, item: TaskTransitionOutbox) -> None:
-        if item.event_type == "task.lifecycle":
-            task = self.get_task(item.task_id)
-            metadata = ensure_json_object(task.metadata)
-            lifecycle = ensure_json_object(metadata.get("repository_ref_lifecycle"))
-            if lifecycle:
-                self.record_log(
-                    "repository.ref.lifecycle",
-                    layer="control_plane",
-                    source="task-ledger",
-                    level="info",
-                    subject_type="task",
-                    subject_id=item.task_id,
-                    detail={
-                        "task_state": task.state,
-                        "disposition": lifecycle.get("disposition"),
-                        "status": lifecycle.get("status"),
-                        "eligible_after": lifecycle.get("eligible_after"),
-                        "replacement_task_id": lifecycle.get("replacement_task_id"),
-                    },
-                )
-            return
-        task = self.get_task(item.task_id)
-        if item.event_type == "workflow.advance":
-            # Workflow-runtime hook. The link is the `tasks.workflow_run_id`
-            # column (never caller metadata), so forged task metadata cannot
-            # push a free-floating task into the workflow state machine.
-            if item.to_state in TERMINAL_TASK_STATES.union({TaskState.BLOCKED.value}):
-                self.workflow_runtime.on_task_completed(item.task_id, item.to_state or "")
-            return
-        raise ValidationError("unsupported task transition outbox event: %s" % item.event_type)
+        return self.task_transitions._process_task_transition_outbox_item(item)
 
     def start_task(
         self,
