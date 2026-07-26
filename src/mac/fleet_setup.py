@@ -257,6 +257,11 @@ def build_setup_plan(
         auth_key = _str(secrets_block.get(auth_key_env) or secrets_block.get("tailscale_auth_key"))
         if auth_key:
             env_values[auth_key_env] = auth_key
+            if not _looks_like_tailscale_auth_key(auth_key):
+                warnings.append(
+                    "%s does not look like a valid tskey- Tailscale auth key; "
+                    "rotate it before deploy or mesh join will fail" % auth_key_env
+                )
         elif auth_key_env not in required_env and spec.get("require_mesh_auth") is True:
             required_env.append(auth_key_env)
     elif network["provider"] == "headscale":
@@ -774,6 +779,27 @@ def _optional_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _looks_like_tailscale_auth_key(value: str) -> bool:
+    """Return True when ``value`` matches the Tailscale auth-key format.
+
+    Tailscale cloud auth keys are issued as ``tskey-auth-<id>-<secret>`` (older
+    keys use the bare ``tskey-<secret>`` form). Placeholder, truncated, or
+    expired-and-replaced-with-junk values do not carry the ``tskey-`` prefix, so
+    a mismatch is a strong signal that the key must be rotated before the mesh
+    join step runs. This is intentionally a format check, not a liveness probe:
+    it flags the common "stale/rotated-out key silently shipped" failure without
+    reaching out to the Tailscale control plane.
+    """
+    candidate = value.strip()
+    if not candidate.startswith("tskey-"):
+        return False
+    # Reject the bare prefix / obvious placeholders with no secret material.
+    remainder = candidate[len("tskey-"):]
+    if remainder.startswith("auth-"):
+        remainder = remainder[len("auth-"):]
+    return len(remainder) >= 8
 
 
 def _looks_secret(key: str) -> bool:
