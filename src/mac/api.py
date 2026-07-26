@@ -1279,6 +1279,7 @@ class FleetReleaseEpochProveRequest(FleetReleaseEpochCommitRequest):
 
 class FleetReleaseEpochAbortRequest(FleetReleaseEpochCommitRequest):
     reason: str
+    disposition: str = "auto"
 
 
 class BreakGlassAuthorizeRequest(BaseModel):
@@ -6689,6 +6690,7 @@ def create_app(
             epoch_id,
             body.identity_sha256,
             reason=body.reason,
+            disposition=body.disposition,
             actor=principal.client_id or principal.agent_id or "admin",
         )
 
