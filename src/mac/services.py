@@ -20519,6 +20519,37 @@ class ControlPlane:
             raise ValidationError("invalid review sweep cursor")
         return priority, created_at, task_id
 
+    def _terminal_review_noop(self, task_id: str) -> Optional[JsonDict]:
+        """Return a terminal-aware successful no-op result when ``task_id`` has
+        already been completed and/or published, otherwise ``None``.
+
+        The default-review workflow runs from both the periodic sweep actor
+        (``default-review-workflow``) and the event-driven consumer
+        (``event-driven-review``). When those race, one consumer can complete +
+        publish a task while the other is mid-flight. Re-reading the terminal
+        state through this helper — at entry, immediately before publishing, and
+        in the publish-failure handler — lets the losing consumer return an
+        idempotent no-op (never a spurious ``publish_failed`` diagnosis) while
+        preserving the canonical publication receipt of the first publish.
+        """
+        task = self.get_task(task_id)
+        published = [
+            publication
+            for publication in self.list_publications(task_id)
+            if publication.status == PublicationStatus.PUBLISHED.value
+        ]
+        if published:
+            # Return the id of the EXISTING published publication; never create
+            # or mutate a second receipt.
+            return {
+                "task_id": task_id,
+                "status": "already_published",
+                "publication_id": published[-1].id,
+            }
+        if task.state == TaskState.COMPLETED.value:
+            return {"task_id": task_id, "status": "already_completed"}
+        return None
+
     def advance_default_review_workflow(
         self,
         task_id: str,
@@ -20526,22 +20557,14 @@ class ControlPlane:
         *,
         allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
+        # Terminal-aware entry gate: if a concurrent consumer already
+        # completed/published this task, no-op with the existing receipt.
+        terminal = self._terminal_review_noop(task_id)
+        if terminal is not None:
+            return terminal
         task = self.get_task(task_id)
-        if task.state == TaskState.COMPLETED.value:
-            return {"task_id": task_id, "status": "already_completed"}
         if task.state not in {TaskState.NEEDS_REVIEW.value, TaskState.REVIEWING.value}:
             return {"task_id": task_id, "status": "not_reviewable", "state": task.state}
-        existing_publications = [
-            publication
-            for publication in self.list_publications(task_id)
-            if publication.status == PublicationStatus.PUBLISHED.value
-        ]
-        if existing_publications:
-            return {
-                "task_id": task_id,
-                "status": "already_published",
-                "publication_id": existing_publications[-1].id,
-            }
         if self._default_review_disabled(task):
             self._record_default_review_observation(
                 task_id,
@@ -21259,6 +21282,15 @@ class ControlPlane:
                     "status": "waiting_for_publication_target",
                     "review_id": review.id,
                 }
+        # Re-read terminal state immediately before publishing. Between the
+        # approval gate above and this point a racing consumer (sweep vs.
+        # event-driven-review) may have already completed + published this
+        # task. Publishing again would either create a duplicate receipt or
+        # raise TransitionError('task state changed during publish; retry');
+        # instead return the existing receipt as an idempotent no-op.
+        terminal = self._terminal_review_noop(task_id)
+        if terminal is not None:
+            return terminal
         try:
             publication = self.publish_task(
                 task_id,
@@ -21267,6 +21299,19 @@ class ControlPlane:
                 evidence_id=evidence.id,
             )
         except (ValidationError, MACError) as exc:
+            # A concurrent consumer may have completed + published this task
+            # after the pre-publish re-read (or its publish_task landed the
+            # WHERE state=REVIEWING UPDATE first, so ours raised
+            # TransitionError('task state changed during publish; retry') /
+            # ValidationError). Re-read terminal state BEFORE recording any
+            # failure telemetry: if the task is now completed/published, the
+            # exception was caused by that concurrent completion, so treat it
+            # as a successful no-op and never emit a spurious publish_failed
+            # diagnosis. Only genuine, still-in-REVIEWING failures (e.g. a real
+            # merge conflict) fall through to the diagnosis below.
+            terminal = self._terminal_review_noop(task_id)
+            if terminal is not None:
+                return terminal
             # Auto-publish failed AFTER a genuine approval — most often the
             # reviewed branch no longer merges cleanly into main (a stale branch
             # base / merge conflict). Previously this exception propagated and was
