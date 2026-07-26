@@ -178,6 +178,53 @@ contains only their secret-free plans and digests. Recovery can therefore
 resolve a lost response without reconstructing credentials from ambient files,
 and removes each envelope after its receipt is journaled or the epoch aborts.
 
+### Bounded per-node fan-out inside each typed barrier
+
+Every all-node barrier is still a hard barrier: phase 2 cannot begin until the
+controller holds one generation-bound receipt for every member of the frozen
+cohort, and the atomic hub commit still validates the complete cohort as one
+row set. What changed is *how* the controller reaches each barrier. Instead of
+six serial per-node loops plus serial SSH-master setup, the controller first
+durably records the whole-phase intent in the owner-private cohort journal, then
+runs the independent remote node operations for that phase concurrently with a
+conservative bounded fan-out, and only then serializes evidence validation and
+the journal compare-and-swap before crossing the barrier. Concurrency is
+confined to the independent remote work; endpoint identity binding, per-node
+locks, rollback-journal contracts, holds, the atomic hub commit, and
+fail-closed recovery are unchanged and remain serialized where the safety proof
+requires it.
+
+The fan-out width is `MAC_DEPLOY_NODE_PARALLELISM` (default `4`, accepted range
+`1`-`32`). Set it to `1` to force the original strictly serial behavior; raise
+it to shorten wall time on a wider cohort when the controller host and mesh have
+headroom. The scheduler launches each node operation in its own child with a
+distinct log, never exceeds the configured width, waits for every attempted
+node, and reaps a child that dies before publishing its atomic status (for
+example a `SIGKILL`) by synthesizing a controller failure rather than polling a
+receipt that can never appear. Results are rendered in the frozen selection
+order so a fast later failure can neither hide nor reorder an earlier node's
+evidence, and each per-node failure persists a durable, secret-safe artifact
+before the transient working directory is wiped. A first failure stops
+scheduling new work but never abandons siblings that are already in flight; the
+barrier is only crossed when every reaped node passed.
+
+Each immutable archive and helper bundle is pre-staged **once per node by
+digest** and then reused for both arm and apply. The controller uploads the
+bundle a single time, records its size and SHA-256 in an owner-private manifest,
+and the later generation-scoped arm/apply steps verify against that manifest
+instead of re-uploading. This removes the previous duplicate transfer: the
+deployer no longer uploads the same ~15.8 MB archive twice per node, so a
+five-node cohort no longer performs ten serial transfers (~158 MB) of identical
+bytes.
+
+These two changes attack the measured wall-time cost directly: the serial
+per-node loops and the redundant per-node upload. The behavior is covered by
+deterministic tests for failure, crash (child killed before status), selection
+ordering, retry/fail-fast scheduling, and single-digest stage reuse for arm and
+apply in `tests/test_deploy_fleet_parallel_staging.py`; those tests assert the
+barriers, journal CAS, and endpoint/lock invariants above are preserved rather
+than merely that the phases run in parallel.
+
 After every selected hub row is held and drained, the controller invokes the
 same phase-1 helper on every selected node. The helper stops and proves absent
 the worker plus Hermes, OpenClaw, and legacy Nemo gateway identities through
