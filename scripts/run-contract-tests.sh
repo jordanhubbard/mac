@@ -97,15 +97,17 @@ unset COVERAGE_FILE COVERAGE_PROCESS_START
 # CLI route from provider endpoint/model/credential env vars, several of which
 # are NOT MAC_-prefixed and so survive the unset "${!MAC_@}" sweep above. A
 # fleet worker / codex-runner host carries a live OPENAI_BASE_URL (the mac
-# router endpoint) and API keys; those leaked into "hermetic" detection tests
-# and shifted the codex route to provider=mac-router, so the heartbeat
+# router endpoint) and API keys (OPENAI_API_KEY plus the codex-specific
+# CODEX_API_KEY that _detect_codex also honors); those leaked into
+# "hermetic" detection tests and shifted the codex route to
+# provider=mac-router, so the heartbeat
 # inventory fingerprint no longer matched the probe report and
 # test_worker_falls_through_failed_claude_and_publishes_verified_codex saw
 # "unverified" instead of "verified" — passing on tokenless dev machines and
 # hub sandboxes but failing on every host with a configured coding route.
 # Clear the non-prefixed provider knobs so route fingerprints are built from a
 # clean baseline identically on all hosts.
-unset OPENAI_BASE_URL OPENAI_API_KEY
+unset OPENAI_BASE_URL OPENAI_API_KEY CODEX_API_KEY
 unset ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
 unset CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY
 unset CURSOR_API_KEY CURSOR_AGENT_ENDPOINT

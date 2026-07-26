@@ -643,3 +643,97 @@ def test_contract_runner_reports_when_no_interpreter_can_run_the_suite(tmp_path)
 
     assert completed.returncode == 1, completed.stdout + completed.stderr
     assert "no interpreter can run the suite" in completed.stderr
+
+
+def test_contract_runner_scrubs_provider_credentials_from_route_detection(tmp_path):
+    """The hermetic sweep must clear the non-MAC_-prefixed coding-agent
+    provider credentials that ``coding_agent`` route detection fingerprints.
+
+    A fleet worker / codex-runner host carries live provider secrets in its
+    environment. ``coding_agent._detect_codex`` honors ``OPENAI_API_KEY`` *and*
+    ``CODEX_API_KEY``; if either leaks past the sweep the codex route's
+    ``auth_source`` (and thus its route fingerprint) shifts and hermetic
+    detection tests that pass on tokenless hosts start failing on any host with
+    a configured coding route. Prove every provider knob the runner promises to
+    clear is actually ``<unset>`` by the time the pytest phase runs.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env_log = tmp_path / "provider-env.log"
+    fake_python = bin_dir / "python3"
+    # The runner still runs its preflight python calls first; only record the
+    # provider environment once, on the first real ``-m pytest`` invocation, and
+    # answer the cpu_count probe deterministically so worker sizing is stable.
+    fake_python.write_text(
+        """#!/bin/sh
+case "$*" in
+    *os.cpu_count*) printf '6\\n'; exit 0 ;;
+esac
+case "$*" in
+    *"-m pytest"*|*"-m coverage run -m pytest"*)
+        if [ ! -f "$PROVIDER_ENV_LOG" ]; then
+            for _v in OPENAI_BASE_URL OPENAI_API_KEY CODEX_API_KEY \\
+                      ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN CURSOR_API_KEY \\
+                      MAC_CODEX_TOKEN; do
+                eval "_val=\\${$_v-<unset>}"
+                printf '%s=%s\\n' "$_v" "$_val" >> "$PROVIDER_ENV_LOG"
+            done
+        fi
+        exit 0
+        ;;
+esac
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "MAC_CONTRACT_RUNTIME_VENV": str(tmp_path / "nonexistent-runtime-venv"),
+        "PROVIDER_ENV_LOG": str(env_log),
+        # Live provider secrets that a real fleet host would carry. None of
+        # these may survive into the route-detection tests.
+        "OPENAI_BASE_URL": "https://router.example/v1",
+        "OPENAI_API_KEY": "sk-openai-should-not-leak",
+        "CODEX_API_KEY": "sk-codex-should-not-leak",
+        "ANTHROPIC_API_KEY": "sk-anthropic-should-not-leak",
+        "CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth-should-not-leak",
+        "CURSOR_API_KEY": "cursor-should-not-leak",
+        "MAC_CODEX_TOKEN": "mac-codex-should-not-leak",
+    }
+    for marker in (
+        "PYTEST_CURRENT_TEST",
+        "PYTEST_XDIST_WORKER",
+        "PYTEST_XDIST_WORKER_COUNT",
+        "PYTEST_XDIST_TESTRUNUID",
+    ):
+        env.pop(marker, None)
+
+    completed = subprocess.run(
+        [str(RUNNER)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert env_log.exists(), completed.stdout + completed.stderr
+    recorded = dict(
+        line.split("=", 1)
+        for line in env_log.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+    for var in (
+        "OPENAI_BASE_URL",
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CURSOR_API_KEY",
+        "MAC_CODEX_TOKEN",
+    ):
+        assert recorded.get(var) == "<unset>", (var, recorded)
