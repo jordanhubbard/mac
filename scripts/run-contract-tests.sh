@@ -298,8 +298,31 @@ if [ "$#" -eq 0 ]; then
     case "$_MAC_TEST_JOBS" in
         '')
             # Unset: headroom-aware default (~2/3 of cores, min 2) so real
-            # subprocess/container work does not oversubscribe the host.
-            _MAC_TEST_JOBS="$("$PY" -c 'import os; print(max(2, (os.cpu_count() or 2) * 2 // 3))')"
+            # subprocess/container work does not oversubscribe the host. On the
+            # co-located hub host (control plane + worker) the hub load-shed cap
+            # narrows this to a fraction of cores so one gate run can never
+            # consume the whole box and starve the control plane; non-hub hosts
+            # print nothing and fall through to the default. (task_1bd5db4b)
+            _MAC_HUB_JOBS="$("$PY" - <<'PYCAP'
+import os, sys
+try:
+    from mac.hub_load_shed import resolve_hub_test_jobs
+    jobs = resolve_hub_test_jobs(
+        os.environ.get("MAC_AGENT_ID", ""),
+        os.environ.get("MAC_AGENT_NAME", ""),
+    )
+except Exception:
+    jobs = None
+if jobs:
+    sys.stdout.write(str(jobs))
+PYCAP
+)"
+            if [ -n "$_MAC_HUB_JOBS" ]; then
+                _MAC_TEST_JOBS="$_MAC_HUB_JOBS"
+                echo "run-contract-tests.sh: hub host load-shed cap: MAC_TEST_JOBS=$_MAC_TEST_JOBS" >&2
+            else
+                _MAC_TEST_JOBS="$("$PY" -c 'import os; print(max(2, (os.cpu_count() or 2) * 2 // 3))')"
+            fi
             ;;
         0|auto) ;;
         *[!0-9]*)

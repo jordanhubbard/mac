@@ -67,6 +67,13 @@ from mac.agentbus_control import (
     reflect_result_payload,
 )
 from mac.env_config import resolve_hub_agent
+from mac.hub_load_shed import (
+    BreakerState,
+    HubLoadShedConfig,
+    LoadShedBreaker,
+    default_control_plane_sampler,
+    is_hub_host,
+)
 from mac.codegraph_audit import (
     codegraph_audit_check,
     codegraph_audit_manifest_problems,
@@ -916,6 +923,26 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
         except (TypeError, ValueError):
             self.delivery_drain_interval_seconds = 20.0
+        # Bounded work on the co-located hub host (task_1bd5db4b): the hub runs
+        # BOTH the control plane and this worker. A load-shed circuit-breaker
+        # stops claiming and drains in-flight work when the control plane is
+        # under pressure, then resumes when it recovers (hysteresis). Non-hub
+        # workers get ``None`` here and are entirely unaffected.
+        self._hub_load_shed: Optional[LoadShedBreaker] = None
+        self._last_hub_shed_state: Optional[str] = None
+        try:
+            agent_name = str(
+                getattr(self, "agent_name", "")
+                or os.environ.get("MAC_AGENT_NAME", "")
+                or ""
+            )
+            if is_hub_host(self.agent_id, agent_name):
+                self._hub_load_shed = LoadShedBreaker(
+                    HubLoadShedConfig.from_env(),
+                    default_control_plane_sampler,
+                )
+        except Exception:  # noqa: BLE001 - breaker setup must never block startup.
+            self._hub_load_shed = None
 
     def stop(self) -> None:
         """Signal the run loop to exit after the current task."""
@@ -1006,6 +1033,54 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             )
         except Exception:  # noqa: BLE001 — shutdown is a boundary
             pass
+
+    def _maybe_hub_load_shed(self) -> Optional[WorkerRunResult]:
+        """Load-shed on the co-located hub host before claiming new work.
+
+        Returns a ``held`` result (so the caller skips the claim this tick) when
+        the breaker is shedding or draining, else ``None`` (claim as usual). The
+        breaker state and the triggering metric are logged/exposed so an operator
+        can see WHY the hub host is or isn't working. Non-hub workers have no
+        breaker and this is a no-op.
+        """
+        breaker = self._hub_load_shed
+        if breaker is None:
+            return None
+        try:
+            snapshot = breaker.snapshot()
+        except Exception:  # noqa: BLE001 - a sampler failure must not wedge the worker.
+            return None
+        state = snapshot.state
+        evidence = snapshot.to_dict()
+        evidence["agent_id"] = self.agent_id
+        if state is BreakerState.CLAIMING:
+            if self._last_hub_shed_state and self._last_hub_shed_state != state.value:
+                self._observe_log(
+                    "worker.hub_load_shed.resumed",
+                    level="info",
+                    subject_type="agent",
+                    subject_id=self.agent_id,
+                    detail=evidence,
+                )
+            self._last_hub_shed_state = state.value
+            return None
+        # SHEDDING or DRAINING: refuse to claim this tick.
+        if self._last_hub_shed_state != state.value:
+            self._observe_log(
+                "worker.hub_load_shed.shedding",
+                level="warning",
+                subject_type="agent",
+                subject_id=self.agent_id,
+                detail=evidence,
+            )
+            self._last_hub_shed_state = state.value
+        reason = "hub load-shed %s: %s=%.3f >= high %.3f" % (
+            state.value,
+            snapshot.metric,
+            snapshot.value,
+            snapshot.high,
+        )
+        return WorkerRunResult(status="held", evidence=evidence, error=reason)
 
     def run_once(self) -> WorkerRunResult:
         deployment_generation, deployment_barrier_active = _deployment_barrier_state()
@@ -1107,6 +1182,9 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
                 error=pending_update.get("summary"),
             )
         self._observe_policy_once()
+        shed_result = self._maybe_hub_load_shed()
+        if shed_result is not None:
+            return shed_result
         assignment = self._claim_next_for_agent()
         if assignment is None:
             hold = self._current_dispatch_hold()
