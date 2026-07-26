@@ -109,6 +109,10 @@ def _provenance(image_digest: str, repository: str) -> list[dict]:
     ]
 
 
+def plan_args(module) -> dict:
+    return dict(module.IMAGE_SPECS["openshell-runtime"]["build_args"])
+
+
 def test_frozen_contract_covers_every_copy_arg_and_base_digest_boundary() -> None:
     module = _load_module()
     mac = module.IMAGE_SPECS["mac"]
@@ -263,6 +267,44 @@ def test_publication_receipt_separates_requested_and_original_build_revision(
             "built",
             "github-attested",
         )
+
+
+def test_publication_receipt_binds_runtime_input_identity_independent_of_commit(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    root = _minimal_root(tmp_path, module, "openshell-runtime")
+    requested = "a" * 40
+    image_digest = "sha256:" + "b" * 64
+    plan = module.build_plan(
+        root,
+        "openshell-runtime",
+        requested,
+        [f"{name}={value}" for name, value in sorted(plan_args(module).items())],
+    )
+    verification = _verification(module, plan, requested, image_digest)
+
+    receipt = module.publication_receipt(
+        plan,
+        verification,
+        _provenance(image_digest, plan["repository"]),
+        "reused",
+        "github-attestation-verified",
+    )
+
+    # The deployment-facing receipt records BOTH the controller source commit and
+    # the runtime input identity, and the runtime identity (content tag + frozen
+    # digest) is keyed only on reviewed image inputs, never on the commit SHA.
+    assert receipt["requested_revision"] == requested
+    assert receipt["frozen_inputs_sha256"] == plan["frozen_inputs_sha256"]
+    assert receipt["content_tag"] == plan["content_tag"]
+    assert receipt["content_tag"].endswith(
+        receipt["frozen_inputs_sha256"].removeprefix("sha256:")
+    )
+    assert requested not in receipt["content_tag"]
+    # A reuse whose original build revision equals the current controller commit
+    # is still valid: decoupling permits equality, it does not require difference.
+    assert receipt["build_revision"] == requested
 
 
 def test_private_plan_validation_recomputes_the_frozen_digest(tmp_path: Path) -> None:
