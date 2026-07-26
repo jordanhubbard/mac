@@ -403,7 +403,7 @@ class LandingService:
                     self._fault(
                         "after_candidate_assignment", self._batch(batch.id), stream
                     )
-                self._assert_leases(stream, batch_lease)
+                self._renew_leases(stream, batch_lease)
                 self._stage_candidate(
                     endpoint,
                     checkout,
@@ -590,7 +590,7 @@ class LandingService:
                     )
             else:
                 attempt = self._create_landing_attempt(batch, intent, stream)
-                self._assert_leases(stream, batch_lease)
+                self._renew_leases(stream, batch_lease)
                 self._fault("after_attempt", batch, stream)
                 self._fault("before_push", batch, stream)
                 self._push_canonical_cas(endpoint, batch)
@@ -903,6 +903,71 @@ class LandingService:
             "WHERE id = ? AND lease_owner = ? AND lease_fence = ?",
             (self._iso_now(), lease.batch_id, lease.owner, lease.fence),
         )
+
+    def _renew_stream(self, lease: _StreamLease) -> None:
+        """Extend the stream lease deadline without disturbing the fence.
+
+        Renewal is a fenced compare-and-swap on the exact owner and monotonic
+        fence the caller holds.  It never advances the fence, so a healthy owner
+        keeps possession across a long side effect while a competing lander that
+        stole an expired lease (thereby advancing the fence) still evicts us.
+        Fail closed: if the exact fence is no longer held, the lease is lost.
+        """
+
+        expires = self._iso(
+            self._now_utc() + timedelta(seconds=self.config.lease_seconds)
+        )
+        result = self.store.execute(
+            "UPDATE work_package_landing_streams SET lease_expires_at = ?, "
+            "updated_at = ? WHERE repository_id = ? AND target_ref = ? "
+            "AND lease_owner = ? AND lease_fence = ?",
+            (
+                expires,
+                self._iso_now(),
+                lease.repository_id,
+                lease.target_ref,
+                lease.owner,
+                lease.fence,
+            ),
+        )
+        if result.rowcount != 1:
+            raise LandingLeaseLostError(
+                "repository stream fence is no longer held"
+            )
+
+    def _renew_batch(self, lease: _BatchLease) -> None:
+        """Extend the batch lease deadline without disturbing the fence."""
+
+        expires = self._iso(
+            self._now_utc() + timedelta(seconds=self.config.lease_seconds)
+        )
+        result = self.store.execute(
+            "UPDATE work_package_integration_batches SET lease_expires_at = ?, "
+            "updated_at = ? WHERE id = ? AND lease_owner = ? AND lease_fence = ?",
+            (
+                expires,
+                self._iso_now(),
+                lease.batch_id,
+                lease.owner,
+                lease.fence,
+            ),
+        )
+        if result.rowcount != 1:
+            raise LandingLeaseLostError(
+                "integration batch fence is no longer held"
+            )
+
+    def _renew_leases(self, stream: _StreamLease, batch: _BatchLease) -> None:
+        """Renew both fenced leases held for a landing, then re-assert them.
+
+        Called before a long-running canonical side effect so the deadlines do
+        not lapse mid-flight.  The trailing assertion keeps renewal fail-closed:
+        it re-reads the durable rows and raises if either fence was lost.
+        """
+
+        self._renew_stream(stream)
+        self._renew_batch(batch)
+        self._assert_leases(stream, batch)
 
     def _assert_leases(self, stream: _StreamLease, batch: _BatchLease) -> None:
         now = self._now_utc()

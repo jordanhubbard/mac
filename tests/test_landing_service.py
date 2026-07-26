@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from mac.landing_service import (
     LandingBusyError,
     LandingDisabledError,
     LandingError,
+    LandingLeaseLostError,
     LandingService,
     LandingServiceConfig,
     RepositoryEndpoint,
@@ -603,13 +605,16 @@ def _service(
     owner: str = "landing-a",
     git_runner=None,
     fault_hook=None,
+    lease_seconds: int = 30,
+    now=None,
 ) -> LandingService:
     return LandingService(
         store,
         owner=owner,
-        config=LandingServiceConfig(enabled=True, lease_seconds=30),
+        config=LandingServiceConfig(enabled=True, lease_seconds=lease_seconds),
         git_runner=git_runner,
         fault_hook=fault_hook,
+        now=now,
     )
 
 
@@ -1145,5 +1150,171 @@ def test_append_only_landing_records_reject_mutation_and_deletion(tmp_path: Path
                     CREATED_AT,
                 ),
             )
+    finally:
+        store.close()
+
+
+class _ManualClock:
+    """Deterministic, monotonic UTC clock for fenced-lease expiry coverage."""
+
+    def __init__(self, start: datetime | None = None) -> None:
+        self._now = start or datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def __call__(self) -> datetime:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now = self._now + timedelta(seconds=seconds)
+
+
+def _stream_row(store: SQLiteStore):
+    return store.query_one(
+        "SELECT lease_owner, lease_expires_at, lease_fence "
+        "FROM work_package_landing_streams "
+        "WHERE repository_id = 'repo_1' AND target_ref = ?",
+        (TARGET_REF,),
+    )
+
+
+def _batch_lease_row(store: SQLiteStore):
+    return store.query_one(
+        "SELECT lease_owner, lease_expires_at, lease_fence "
+        "FROM work_package_integration_batches WHERE id = 'batch_1'"
+    )
+
+
+def test_stream_lease_renewal_extends_deadline_without_advancing_fence(
+    tmp_path: Path,
+) -> None:
+    remote, _work, base_sha, candidate_sha = _repository(tmp_path)
+    store = SQLiteStore(str(tmp_path / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
+        )
+        clock = _ManualClock()
+        service = _service(store, owner="landing-a", lease_seconds=30, now=clock)
+        batch = service._batch("batch_1")
+
+        stream = service._acquire_stream(batch)
+        assert stream is not None
+        original_expiry = _stream_row(store)["lease_expires_at"]
+
+        # Advance almost to expiry, then renew: the deadline moves forward but
+        # the monotonic fence is unchanged, so possession is preserved.
+        clock.advance(25)
+        service._renew_stream(stream)
+        renewed = _stream_row(store)
+        assert renewed["lease_fence"] == stream.fence
+        assert renewed["lease_expires_at"] > original_expiry
+
+        # A competing lander must still be excluded because the renewed deadline
+        # has not yet elapsed on the deterministic clock.
+        contender = _service(store, owner="landing-b", lease_seconds=30, now=clock)
+        assert contender._acquire_stream(batch) is None
+    finally:
+        store.close()
+
+
+def test_stream_lease_expires_deterministically_and_transfers_with_new_fence(
+    tmp_path: Path,
+) -> None:
+    remote, _work, base_sha, candidate_sha = _repository(tmp_path)
+    store = SQLiteStore(str(tmp_path / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
+        )
+        clock = _ManualClock()
+        holder = _service(store, owner="landing-a", lease_seconds=30, now=clock)
+        batch = holder._batch("batch_1")
+        stream = holder._acquire_stream(batch)
+        assert stream is not None
+
+        contender = _service(store, owner="landing-b", lease_seconds=30, now=clock)
+
+        # Before the lease elapses the contender is refused.
+        clock.advance(29)
+        assert contender._acquire_stream(batch) is None
+
+        # Exactly at the deterministic expiry the contender takes over and the
+        # fence advances so the stale holder can no longer act.
+        clock.advance(1)
+        stolen = contender._acquire_stream(batch)
+        assert stolen is not None
+        assert stolen.fence == stream.fence + 1
+
+        # The evicted holder's fenced renewal fails closed.
+        with pytest.raises(LandingLeaseLostError):
+            holder._renew_stream(stream)
+    finally:
+        store.close()
+
+
+def test_batch_lease_renewal_and_deterministic_expiry(tmp_path: Path) -> None:
+    remote, _work, base_sha, candidate_sha = _repository(tmp_path)
+    store = SQLiteStore(str(tmp_path / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
+        )
+        clock = _ManualClock()
+        holder = _service(store, owner="landing-a", lease_seconds=30, now=clock)
+        lease = holder._acquire_batch("batch_1")
+        assert lease is not None
+        original_expiry = _batch_lease_row(store)["lease_expires_at"]
+
+        clock.advance(25)
+        holder._renew_batch(lease)
+        renewed = _batch_lease_row(store)
+        assert renewed["lease_fence"] == lease.fence
+        assert renewed["lease_expires_at"] > original_expiry
+
+        contender = _service(store, owner="landing-b", lease_seconds=30, now=clock)
+        # Renewed deadline has not elapsed yet: contender excluded.
+        assert contender._acquire_batch("batch_1") is None
+
+        # Advance past the renewed deadline; contender takes over with a bumped
+        # fence and the stale holder's renewal fails closed.
+        clock.advance(30)
+        stolen = contender._acquire_batch("batch_1")
+        assert stolen is not None
+        assert stolen.fence == lease.fence + 1
+        with pytest.raises(LandingLeaseLostError):
+            holder._renew_batch(lease)
+    finally:
+        store.close()
+
+
+def test_renew_leases_refreshes_both_fences_and_reasserts(tmp_path: Path) -> None:
+    remote, _work, base_sha, candidate_sha = _repository(tmp_path)
+    store = SQLiteStore(str(tmp_path / "mac.db"))
+    try:
+        _seed_certified_batch(
+            store, remote=remote, base_sha=base_sha, candidate_sha=candidate_sha
+        )
+        clock = _ManualClock()
+        service = _service(store, owner="landing-a", lease_seconds=30, now=clock)
+        batch = service._batch("batch_1")
+        stream = service._acquire_stream(batch)
+        assert stream is not None
+        batch_lease = service._acquire_batch("batch_1")
+        assert batch_lease is not None
+
+        stream_before = _stream_row(store)["lease_expires_at"]
+        batch_before = _batch_lease_row(store)["lease_expires_at"]
+
+        clock.advance(20)
+        service._renew_leases(stream, batch_lease)
+
+        assert _stream_row(store)["lease_expires_at"] > stream_before
+        assert _batch_lease_row(store)["lease_expires_at"] > batch_before
+
+        # If the batch fence is stolen, the combined renewal fails closed.
+        contender = _service(store, owner="landing-b", lease_seconds=30, now=clock)
+        clock.advance(40)
+        assert contender._acquire_batch("batch_1") is not None
+        with pytest.raises(LandingLeaseLostError):
+            service._renew_leases(stream, batch_lease)
     finally:
         store.close()
