@@ -62,15 +62,18 @@ def _parse_timestamp(value: Any) -> Optional[datetime]:
 
 
 def mac_home() -> Path:
+    """Return the MAC home directory."""
     return mac_paths.mac_home()
 
 
 def default_registry_path() -> Path:
+    """Return the default client-principals registry file path."""
     configured = os.environ.get("MAC_CLIENT_PRINCIPALS_FILE")
     return Path(configured).expanduser() if configured else mac_home() / "client-principals.json"
 
 
 def default_audit_path(registry_path: Path) -> Path:
+    """Return the default client-principals audit log path."""
     configured = os.environ.get("MAC_CLIENT_PRINCIPALS_AUDIT_FILE")
     return (
         Path(configured).expanduser()
@@ -108,6 +111,7 @@ def _validate_agent_id(value: str) -> str:
 def normalize_scopes(
     scopes: Optional[Iterable[str]], *, allow_elevated: bool = False
 ) -> List[str]:
+    """Validate and normalize a set of client scopes."""
     values = sorted({str(scope).strip().lower() for scope in (scopes or DEFAULT_SCOPES) if str(scope).strip()})
     if not values:
         raise ClientPrincipalError("at least one client scope is required")
@@ -476,6 +480,7 @@ def safe_record(record: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def enrollment_manifest(issued: IssuedCredential) -> Dict[str, Any]:
+    """Build a client enrollment manifest from an issued credential."""
     record = issued.record
     manifest = {
         "schema": MANIFEST_SCHEMA,

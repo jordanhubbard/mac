@@ -124,6 +124,7 @@ def _fleets_config_path(path: Optional[str] = None) -> Path:
 
 
 def load_fleets_config(path: Optional[str] = None) -> dict:
+    """Load and parse the fleets config mapping from disk."""
     p = _fleets_config_path(path)
     if not p.is_file():
         raise FleetCredsError("fleets config not found: %s" % p)
@@ -259,21 +260,25 @@ def normalize_registry(single_token: str, tokens_json: str) -> Dict[str, Dict]:
 
 
 def add_token(registry: Dict[str, Dict], token: str, scopes) -> Dict[str, Dict]:
+    """Return a copy of the registry with a token and scopes added."""
     out = {t: dict(v) for t, v in registry.items()}
     out[token] = {"scopes": list(scopes)}
     return out
 
 
 def prune_registry(registry: Dict[str, Dict], keep) -> Dict[str, Dict]:
+    """Return a copy of the registry keeping only the given tokens."""
     keep = set(keep)
     return {t: dict(v) for t, v in registry.items() if t in keep}
 
 
 def render_registry_json(registry: Dict[str, Dict]) -> str:
+    """Serialize a token registry to compact, sorted JSON."""
     return json.dumps(registry, separators=(",", ":"), sort_keys=True)
 
 
 def new_token() -> str:
+    """Generate a new URL-safe bearer token."""
     return secrets.token_urlsafe(32)
 
 

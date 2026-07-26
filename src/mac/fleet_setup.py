@@ -46,6 +46,7 @@ def resolve_gateway_model(model: str) -> str:
 
 
 def default_worker_capabilities() -> List[str]:
+    """Return the default set of worker capabilities."""
     return [
         "ops",
         "python",
@@ -59,6 +60,7 @@ def default_worker_capabilities() -> List[str]:
 
 
 def load_setup_spec(path: Path) -> Dict[str, Any]:
+    """Load a fleet setup spec from a JSON or YAML file."""
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".json":
         loaded = json.loads(text)
@@ -354,6 +356,7 @@ def build_setup_plan(
 
 
 def doctor_checks(plan: Mapping[str, Any], *, env: Optional[Mapping[str, str]] = None) -> List[Dict[str, Any]]:
+    """Run fleet setup doctor checks against a setup plan."""
     env_map = dict(os.environ if env is None else env)
     checks: List[Dict[str, Any]] = []
     errors = list(plan.get("errors") or [])

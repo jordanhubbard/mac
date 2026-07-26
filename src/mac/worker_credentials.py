@@ -183,6 +183,7 @@ def _worker_principal_id(agent_id: str, version: int) -> str:
 
 
 def default_policy_path() -> Path:
+    """Return the default worker-credential policy file path."""
     configured = os.environ.get("MAC_WORKER_CREDENTIAL_POLICY_FILE")
     if configured:
         return Path(configured).expanduser()
@@ -1052,6 +1053,7 @@ def _safe_record(record: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def installation_manifest(issue: WorkerCredentialIssue) -> Dict[str, Any]:
+    """Build a worker-credential installation manifest from an issue."""
     record = issue.record
     metadata = _metadata(record)
     return {
@@ -1191,6 +1193,7 @@ def install_vm_manifest(
 
 
 def kubernetes_secret_name(agent_id: str) -> str:
+    """Return the Kubernetes Secret name for a worker agent id."""
     value = _K8S_NAME.sub("-", agent_id.lower()).strip("-")
     digest = _worker_key(agent_id)[:8]
     prefix = (value or "worker")[:42].rstrip("-")
@@ -1204,6 +1207,7 @@ def build_kubernetes_secret(
     name: str = "",
     expected_agent_id: str = "",
 ) -> Dict[str, Any]:
+    """Build a Kubernetes Secret manifest from a worker install manifest."""
     agent_id, token = _validated_manifest(
         manifest, expected_agent_id, expected_environment="k8s"
     )
@@ -1580,6 +1584,7 @@ def build_readiness_inventory(
 
 
 def inventory_digest(inventory: Mapping[str, Any]) -> str:
+    """Return a stable sha256 digest of a worker inventory mapping."""
     canonical = json.dumps(inventory, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -1706,6 +1711,7 @@ def write_policy_state(
     path: Optional[Path] = None,
     actor: str = "operator",
 ) -> Dict[str, Any]:
+    """Persist the worker-credential policy state and return it."""
     if store is not None:
         with store.transaction() as conn:
             return write_policy_state_in_transaction(
@@ -1764,6 +1770,7 @@ def write_policy_state(
 def read_policy_state(
     path: Optional[Path] = None, *, store: Optional[Store] = None
 ) -> Dict[str, Any]:
+    """Read the current worker-credential policy state."""
     if store is not None:
         row = store.query_one(
             "SELECT * FROM worker_credential_policy_state WHERE singleton_key = ?",
@@ -1862,6 +1869,7 @@ def _package_worker_readiness_from_rows(
 def package_worker_readiness(
     store: Store, agent_id: str, *, now: Optional[datetime] = None
 ) -> Dict[str, Any]:
+    """Package a worker agent's credential readiness summary."""
     exact_agent = _validate_agent_id(agent_id)
     return _package_worker_readiness_from_rows(
         store.query_one("SELECT * FROM agents WHERE id = ?", (exact_agent,)),
@@ -2043,6 +2051,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Run the worker-credentials command-line interface."""
     args = _build_parser().parse_args(argv)
     store: Optional[Store] = None
     lifecycle: Optional[WorkerCredentialLifecycle] = None

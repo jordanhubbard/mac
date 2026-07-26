@@ -45,6 +45,7 @@ class CleanupPath:
 
 
 def parse_ssh_target(value: str, *, port: Optional[int] = None) -> SshTarget:
+    """Parse an SSH target string into a ``SshTarget``."""
     text = (value or "").strip()
     if not text:
         raise ValueError("SSH target is required")
@@ -63,6 +64,7 @@ def parse_ssh_target(value: str, *, port: Optional[int] = None) -> SshTarget:
 
 
 def normalize_ssh_target(value: str, *, port: Optional[int] = None) -> str:
+    """Normalize an SSH target string to its canonical form."""
     target = parse_ssh_target(value, port=port)
     return (
         "%s:%d" % (target.user_host, target.port)
@@ -181,6 +183,7 @@ def _mesh_ipv4_for_mdns_host(host: str, status: Mapping[str, Any]) -> str:
 
 
 def cleanup_retention_plan(home: Path, mac_home: Path) -> List[CleanupPath]:
+    """Return the deploy cleanup retention plan for the given homes."""
     return [
         CleanupPath(mac_home / "backups", "generated MAC deploy backups", 14),
         CleanupPath(mac_home / "logs", "generated MAC deploy logs and manifests", 30),
@@ -197,6 +200,7 @@ def cleanup_retention_plan(home: Path, mac_home: Path) -> List[CleanupPath]:
 
 
 def cleanup_path_strings(home: Path, mac_home: Path) -> List[str]:
+    """Return the cleanup retention plan as encoded path strings."""
     return [
         "%s|%s|%d" % (item.path, item.reason, item.retain_days)
         for item in cleanup_retention_plan(home, mac_home)
@@ -248,6 +252,7 @@ def is_cleanup_protected_path(
 
 
 def shell_words(items: Iterable[str]) -> str:
+    """Join the given items into a single space-separated string."""
     return " ".join(items)
 
 
