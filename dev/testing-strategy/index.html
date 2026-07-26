@@ -1620,6 +1620,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#test-suite-rationalization-backlog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test-suite rationalization backlog
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1749,6 +1760,26 @@ the percentage is prohibited.</p>
 while reducing maintenance size, duplicate execution, or wall time. It is
 acceptable for raw test count or aggregate line coverage to stay flat or fall
 when stronger evidence shows the portfolio is at least as effective.</p>
+<h2 id="test-suite-rationalization-backlog">Test-suite rationalization backlog<a class="headerlink" href="#test-suite-rationalization-backlog" title="Permanent link">&para;</a></h2>
+<p>The first tranche of contract-gate cost reduction folded the 15 <code>_edges</code>
+coverage-companion modules that had a same-named base twin into their base
+modules, relocating every case verbatim so that no exercised line or arc was
+lost (verified by branch-mode coverage diff: zero source lines and zero source
+arcs dropped across 230 source files, 463 collected cases preserved). The
+companions were deleted and the base modules absorbed their imports and helpers
+(colliding helpers were renamed with an <code>_edges</code> suffix rather than dropped).</p>
+<p>Remaining follow-up work, to be filed as tasks against this program:</p>
+<ul>
+<li><strong>Split <code>tests/test_control_plane.py</code> (14,278+ LOC) along service boundaries.</strong>
+  Track the ControlPlane decomposition happening in the sibling task and mirror
+  its new service seams as separate <code>test_control_plane_&lt;service&gt;.py</code> modules so
+  the monolith stops forcing a full-suite collection on every control-plane
+  change.</li>
+<li><strong>Handle the remaining non-twin <code>_edges</code> / <code>_edge_coverage</code> /
+  <code>_boundary_coverage</code> companions.</strong> ~22 companions have no clean same-named base
+  twin; each needs a target base module (existing or new) chosen before folding,
+  or promotion to a first-class behavioral module when it covers a distinct seam.</li>
+</ul>
 
 
 
