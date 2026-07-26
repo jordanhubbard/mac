@@ -158,7 +158,7 @@ The identity framework reflects that split:
 - `tenant`: an organization or isolated user deployment.
 - `user`: a human identity inside a tenant.
 - `persona`: a named Hermes personality with a `soul_ref` and `memory_scope`.
-- `hermes_instance`: a running or durable Hermes identity such as `worker-1`.
+- `persona_instance`: a running or durable persona identity such as `worker-1` (formerly `hermes_instance`).
 - `platform_binding`: a Slack workspace/channel, Telegram chat, or similar binding.
 - interaction task: a durable task created from a Hermes conversation with origin metadata, not copied private memory.
 
@@ -397,7 +397,7 @@ handle requests. It deliberately does not expose a casual secret reveal action.
 Key route groups:
 
 - `/tenants`, `/users`, `/personas`
-- `/hermes-instances`, `/hermes-instances/{id}/context`, `/hermes-instances/{id}/work-context`, `/platform-bindings`
+- `/persona-instances`, `/persona-instances/{id}/context`, `/persona-instances/{id}/work-context`, `/platform-bindings`
 - `/dashboard/state`, `/dashboard/agents/{id}`, `/dashboard/tasks/{id}/timeline`, `/dashboard/dispatch/explain`, `/dashboard/hermes/{id}/activity`, `/dashboard/hermes/fleets/{id}/config-surface`, `/dashboard/hermes/fleets/{id}/config-surface/apply`, `/dashboard/rollouts/{id}/status`
 - `/tasks`, `/tasks/{id}/evidence`, `/tasks/{id}/reviews`, `/reviews/default/tick`, `/publications`
 - `/machines`, `/agents`, `/agents/{id}/heartbeat`, `/agents/{id}/claim-next`, `/dispatch/tick`, `/dispatch/dead-letters`

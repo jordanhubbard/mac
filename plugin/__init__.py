@@ -7,7 +7,7 @@ from typing import Any
 from .client import (
     check_mac_available,
     get_client,
-    hermes_instance_id,
+    persona_instance_id,
 )
 from .manifest import REQUIRED_ENV, TOOLS, TOOLS_BY_NAME, ToolSpec
 from .schemas import schema_for
@@ -83,7 +83,7 @@ def _shape_create_task_body(args: dict) -> dict:
         metadata["domain_capabilities"] = domain
         body["metadata"] = metadata
 
-    body["hermes_instance_id"] = args.get("hermes_instance_id") or hermes_instance_id()
+    body["persona_instance_id"] = args.get("persona_instance_id") or persona_instance_id()
     return body
 
 
@@ -92,7 +92,7 @@ def _resolve_body_for(tool: ToolSpec, args: dict) -> dict:
     if tool.name == "mac_create_task":
         return _shape_create_task_body(args)
     if tool.name == "mac_work_brief":
-        args.setdefault("hermes_instance_id", hermes_instance_id())
+        args.setdefault("persona_instance_id", persona_instance_id())
     elif tool.name == "mac_cancel_task":
         args["target_state"] = "cancelled"
     elif tool.name == "mac_pending_notifications":
@@ -123,7 +123,7 @@ async def _handle_tool(tool: ToolSpec, args: Any, **_: object) -> str:
             timeout=tool.timeout,
             retry=tool.retry,
         )
-    except Exception as exc:  # noqa: BLE001 — Hermes tool boundary
+    except Exception as exc:  # noqa: BLE001 — persona instance tool boundary
         return _error_json(
             "service.internal_error",
             f"mac plugin failed: {exc}",
@@ -160,5 +160,5 @@ __all__ = [
     "schema_for",
     "check_mac_available",
     "get_client",
-    "hermes_instance_id",
+    "persona_instance_id",
 ]

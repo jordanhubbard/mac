@@ -1,12 +1,12 @@
 name: mac
 version: 0.1.0
-description: Hermes plugin exposing the mac task ledger as conversational tools.
+description: Persona-instance plugin exposing the mac task ledger as conversational tools.
 author: mac
 kind: standalone
 requires_env:
   - MAC_URL
   - MAC_WORKER_TOKEN
-  - MAC_HERMES_INSTANCE_ID
+  - MAC_PERSONA_INSTANCE_ID
 provides_tools:
   - mac_create_task
   - mac_list_tasks

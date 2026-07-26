@@ -665,7 +665,7 @@ look up `task.metadata.origin.tracker` and route through
 `get_tracker_for_origin`. Calling them on a beads-origin task returns
 422 (`tracker mismatch — task is beads-origin`).
 
-The existing `POST /hermes-instances/{id}/tasks` endpoint gains a
+The existing `POST /persona-instances/{id}/tasks` endpoint gains a
 Linear-routing branch: when the calling Hermes instance's tenant is
 Linear-backed, mac-api creates the Linear Issue first, then the mac
 task row, in one transaction. The response includes both ids.
@@ -747,7 +747,7 @@ the LLM at next session start.
 ### 13.2 mac_create_task routing
 
 Existing `mac_create_task` LLM-facing schema is unchanged. The
-mac-api endpoint behind it (`/hermes-instances/{id}/tasks`) gains a
+mac-api endpoint behind it (`/persona-instances/{id}/tasks`) gains a
 Linear-routing branch based on the calling Hermes instance's tenant
 `tracker_kind`:
 
