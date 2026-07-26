@@ -20,7 +20,7 @@ from mac.fleet_learning import (
     resolve_git_remote_access,
 )
 from mac.gitops import redact_git_remote_auth_in_text
-from mac.models import JsonDict, ValidationError, ensure_json_object
+from mac.models import EVIDENCE_KINDS, JsonDict, ValidationError, ensure_json_object
 
 
 GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -449,6 +449,21 @@ VALIDATORS: Dict[str, EvidenceValidator] = {
         PlanDecomposedValidator(),
     )
 }
+
+
+# The canonical evidence-kind registry (``mac.models.EVIDENCE_KINDS``) is the one
+# vocabulary every validation path consults. Every ``evidence_type`` the validator
+# registry advertises must therefore also be an addable kind through the public
+# CLI/API — otherwise ``ControlPlane.add_evidence`` would reject a request these
+# validators accept, the exact contradiction this module exists to prevent. Assert
+# the subset relationship at import time so a validator added here without a
+# matching canonical kind fails fast instead of drifting apart in production.
+_UNREGISTERED_VALIDATOR_KINDS = set(VALIDATORS) - EVIDENCE_KINDS
+assert not _UNREGISTERED_VALIDATOR_KINDS, (
+    "evidence validators advertise kinds missing from the canonical "
+    "mac.models.EVIDENCE_KINDS registry: %s"
+    % ", ".join(sorted(_UNREGISTERED_VALIDATOR_KINDS))
+)
 
 
 def registered_evidence_types() -> List[str]:
