@@ -4948,9 +4948,19 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
             current_resources = current_agent.get("resources")
             if isinstance(current_resources, Mapping):
                 command_resources = dict(current_resources)
-        command_resources = self._resources_with_live_report_executor_attestation(
-            command_resources
-        )
+        # A heartbeat that supplies ``resources`` is a full-document replacement:
+        # the hub swaps the stored resource map for exactly what we send.  When
+        # no prerequisite GET produced a base document (e.g. a first heartbeat
+        # that raced hub availability after a restart), ``command_resources`` is
+        # ``None`` and we MUST omit resources entirely -- otherwise the live
+        # report-executor attestation refresh would synthesise a partial,
+        # attestation-only map and erase hardware, media_routes, openclaw_runtime,
+        # chat_gateway, gateway_ownership, and representation.  Only refresh the
+        # attestation when we have a real base to refresh.
+        if command_resources is not None:
+            command_resources = self._resources_with_live_report_executor_attestation(
+                command_resources
+            )
         # Health is a worker observation, not a controller override. The hub
         # projects this request through sticky startup-self-test resources, so
         # asking for healthy can still correctly remain degraded.
