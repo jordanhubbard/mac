@@ -5772,3 +5772,32 @@ CREATE INDEX IF NOT EXISTS idx_human_groups_human
     ON human_groups (human_id);
 CREATE INDEX IF NOT EXISTS idx_human_groups_group
     ON human_groups (group_name);
+
+CREATE TABLE IF NOT EXISTS openclaw_conversation_executions (
+    id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    persona_instance_id TEXT NOT NULL,
+    persona_id TEXT,
+    agent_id TEXT,
+    human_id TEXT NOT NULL,
+    tenant_id TEXT,
+    slack TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    granted_capabilities TEXT NOT NULL DEFAULT '[]',
+    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+    worktree TEXT,
+    candidate_ref TEXT,
+    candidate_sha TEXT,
+    candidate_tree_digest TEXT,
+    review_target_sha TEXT,
+    gate_results TEXT NOT NULL DEFAULT '{}',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_openclaw_conv_exec_persona
+    ON openclaw_conversation_executions (persona_instance_id);
+CREATE INDEX IF NOT EXISTS idx_openclaw_conv_exec_task
+    ON openclaw_conversation_executions (task_id);
