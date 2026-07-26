@@ -1,3 +1,10 @@
+"""Task lifecycle and dispatch services.
+
+Implements the ledger and dispatch services that record task transitions and
+emit ordered outbox side effects, using a monotonic sequence so drained events
+preserve enqueue order.
+"""
+
 from __future__ import annotations
 
 import itertools

@@ -1,3 +1,10 @@
+"""Hermes runtime context construction.
+
+Builds the runtime context and session capability contracts consumed by the
+Hermes agent runtime, including stable identifier generation, connection-URL
+normalization, and environment-file updates.
+"""
+
 from __future__ import annotations
 
 import argparse

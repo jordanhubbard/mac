@@ -1,3 +1,9 @@
+"""Kubernetes controller configuration and reconciliation types.
+
+Defines the controller configuration dataclass and the label selectors and
+helpers used to reconcile MAC-managed Kubernetes resources.
+"""
+
 from __future__ import annotations
 
 import logging

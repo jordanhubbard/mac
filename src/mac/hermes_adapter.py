@@ -1,3 +1,10 @@
+"""Adapter bridging MAC tasks to the Hermes conversation runtime.
+
+Defines the platform-binding and conversation-input models and the adapter that
+translates MAC control-plane operations into Hermes API calls, redacting secrets
+from arguments and payloads along the way.
+"""
+
 from __future__ import annotations
 
 import argparse

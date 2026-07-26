@@ -1,3 +1,9 @@
+"""Operator notification delivery service.
+
+Builds and dispatches operator notifications and agent messages, sanitizing
+message values and routing them to the configured notifier channels.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

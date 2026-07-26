@@ -1,3 +1,10 @@
+"""Git operations and remote-URL handling for the control plane.
+
+Provides validation, host detection, credential redaction, and canonical
+publication/freshness helpers used when the control plane inspects or updates git
+remotes, refs, and pull requests.
+"""
+
 from __future__ import annotations
 
 import fcntl

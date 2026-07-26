@@ -1,3 +1,10 @@
+"""Migration utilities for the local MAC ledger.
+
+Provides helpers to migrate and reconcile the on-disk SQLite ledger, including
+checksum computation and atomic file replacement used when upgrading local
+control-plane state.
+"""
+
 from __future__ import annotations
 
 import hashlib

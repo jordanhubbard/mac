@@ -1,3 +1,9 @@
+"""Thin wrapper around the Kubernetes Python client.
+
+Imports and exposes the Kubernetes client and configuration used by the MAC
+runner, raising a clear error when the optional ``kubernetes`` dependency is not
+installed.
+"""
 
 from __future__ import annotations
 

@@ -1,3 +1,9 @@
+"""Kubernetes orchestration loops for the MAC runner.
+
+Drives the long-running controller and review loops that schedule and reconcile
+MAC task execution on Kubernetes, tracking loop failures and pacing iterations.
+"""
+
 from __future__ import annotations
 
 import logging

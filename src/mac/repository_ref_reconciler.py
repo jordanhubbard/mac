@@ -1,3 +1,10 @@
+"""Reconciliation of repository references across the fleet.
+
+Provides the configuration and protected-ref authority logic used to reconcile
+canonical repository references, resolving divergence between local, worktree,
+and canonical branch state.
+"""
+
 from __future__ import annotations
 
 import copy

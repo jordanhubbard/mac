@@ -1,3 +1,10 @@
+"""Validation of task evidence and verification manifests.
+
+Defines the dataclasses and checks that normalize and validate submitted
+evidence, including verification-manifest anchors, remote-ref resolution, and the
+CodeGraph and git-remote consistency rules enforced before publication.
+"""
+
 from __future__ import annotations
 
 import os

@@ -1,3 +1,10 @@
+"""MAC fleet worker runtime.
+
+Implements the long-running worker process that leases and executes tasks,
+managing git remotes, deployment barriers and heartbeats, subprocess execution,
+and evidence handoff back to the control plane.
+"""
+
 from __future__ import annotations
 
 import argparse

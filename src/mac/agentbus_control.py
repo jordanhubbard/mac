@@ -1,3 +1,10 @@
+"""AgentBus control-plane message schemas and payload builders.
+
+Defines the versioned schema identifiers, topics, and content types for the
+repository-update, artifact-publish, and agent-reflection AgentBus events, along
+with helpers that assemble their JSON payloads.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

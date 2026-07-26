@@ -1,3 +1,9 @@
+"""Kubernetes runner entry point for MAC.
+
+Wires the loaded configuration, controller, and job executor together into the
+runnable process that executes MAC tasks on a Kubernetes cluster.
+"""
+
 from __future__ import annotations
 
 import logging

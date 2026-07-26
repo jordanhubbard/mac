@@ -1,3 +1,9 @@
+"""Kubernetes bootstrap for the MAC control plane.
+
+Loads the MAC configuration file and provisions the initial cluster resources
+and notifier channels needed to bring a MAC deployment up on Kubernetes.
+"""
+
 from __future__ import annotations
 
 import base64

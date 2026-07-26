@@ -1,3 +1,10 @@
+"""Source convergence service.
+
+Coordinates convergence of registered source repositories by publishing repo
+update events over the AgentBus and reconciling the resulting source and
+worktree state.
+"""
+
 from __future__ import annotations
 
 import hashlib

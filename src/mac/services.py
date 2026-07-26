@@ -1,3 +1,10 @@
+"""Core control-plane services.
+
+Implements the control-plane service layer that coordinates tasks, agents,
+repositories, and verification manifests on top of the persistence store,
+including signing and publication helpers.
+"""
+
 from __future__ import annotations
 
 import base64

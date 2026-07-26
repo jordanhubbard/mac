@@ -1,3 +1,10 @@
+"""Persistence store abstractions for the control plane.
+
+Defines the store and connection protocols, the store error type, and the
+SQLite-backed implementation plus factory used to persist MAC control-plane
+state.
+"""
+
 from __future__ import annotations
 
 import os
