@@ -262,6 +262,60 @@ def test_task_show_wrapper_is_compact():
     assert "publication_lane: managed (managed_active) package=wp_fast_x" in out
 
 
+def test_task_show_wrapper_includes_activity_narrative():
+    detail = {
+        "task": {
+            "id": "task_x",
+            "state": "failed",
+            "project": "mac",
+            "title": "T",
+            "metadata": {
+                "activity": [
+                    {
+                        "phase": "worker",
+                        "actor": "agent_rocky",
+                        "at": "2026-07-26T10:12:00.104330+00:00",
+                        "summary": "No repository contract was attached.",
+                    },
+                    {
+                        "phase": "diagnosis",
+                        "actor": "dispatcher.tick",
+                        "at": "2026-07-26T10:56:57.923710+00:00",
+                        "summary": (
+                            "Problem: retry budget exhausted.\n"
+                            "Remediation: repair the contract, then reopen."
+                        ),
+                    },
+                ]
+            },
+        },
+        "evidence": [{"id": "ev_1"}],
+        "reviews": [{"status": "rejected"}],
+    }
+
+    out = cli._render_text(detail)
+
+    assert "Activity:" in out
+    assert "worker / agent_rocky @ 2026-07-26T10:12:00" in out
+    assert "No repository contract was attached." in out
+    assert "diagnosis / dispatcher.tick @ 2026-07-26T10:56:57" in out
+    assert "Problem: retry budget exhausted." in out
+    assert "Remediation: repair the contract, then reopen." in out
+
+
+def test_task_activity_renderer_handles_empty_and_partial_entries():
+    empty = cli._task_activity_lines(
+        {"metadata": "invalid"},
+        include_empty=True,
+    )
+    assert "no activity recorded" in "\n".join(empty)
+
+    partial = cli._task_activity_lines(
+        {"metadata": {"activity": [None, {}]}},
+    )
+    assert partial == ["", "Activity:", "  • note"]
+
+
 def test_task_show_wrapper_discloses_missing_model_attribution():
     detail = {
         "task": {"id": "task_x", "state": "running", "title": "T"},

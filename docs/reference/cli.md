@@ -322,9 +322,11 @@ positional arguments:
   {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
     list                list tasks (default: short ids; use --full-ids for
                         scripts)
-    summary             glanceable per-task activity narrative (what the
-                        worker did, what the reviewer found/fixed, env
-                        changes) — additive to `task show` logs
+    show                show task state, activity, diagnoses, and compact
+                        evidence counts (use --json for the complete
+                        structured record)
+    summary             activity-only task narrative (also included in `task
+                        show`)
     ready               list task-ready work and the number of currently
                         eligible fleet agents
     why-unclaimed       show the authoritative task and agent reasons

@@ -424,6 +424,41 @@ def _one_liner(value: Any) -> str:
     return line or _trunc(d, 120)
 
 
+def _task_activity_lines(
+    task: Dict[str, Any],
+    *,
+    include_empty: bool = False,
+) -> List[str]:
+    """Render the durable, human-authored task activity narrative."""
+
+    metadata = task.get("metadata")
+    activity = metadata.get("activity") if isinstance(metadata, dict) else None
+    entries = [entry for entry in activity or [] if isinstance(entry, dict)]
+    if not entries:
+        if not include_empty:
+            return []
+        return [
+            "",
+            "(no activity recorded yet — use `mac --json task show` for "
+            "structured evidence/logs)",
+        ]
+
+    lines = ["", "Activity:"]
+    for entry in entries:
+        phase = str(entry.get("phase") or "note")
+        actor = str(entry.get("actor") or "")
+        at = str(entry.get("at") or "")[:19]
+        label = (
+            phase
+            + ((" / " + actor) if actor else "")
+            + ((" @ " + at) if at else "")
+        )
+        lines.append("  • %s" % label)
+        for line in str(entry.get("summary") or "").splitlines():
+            lines.append("      %s" % line)
+    return lines
+
+
 def _render_text(value: Any) -> str:
     value = _unwrap(value)
     if value is None:
@@ -474,6 +509,7 @@ def _render_text(value: Any) -> str:
                     )
                 else:
                     lines.append("  llm: no attributed model calls recorded")
+            lines.extend(_task_activity_lines(t))
             return "\n".join(lines)
         if str(value.get("id", "")).startswith("task_") or "state" in value or (
             "status" in value and ("name" in value or "current_task_id" in value)
@@ -1735,29 +1771,12 @@ def cmd_task_summary(args: argparse.Namespace) -> None:
     detail = _plane(args).task_detail(args.task_id)
     data = detail.to_dict() if hasattr(detail, "to_dict") else detail
     task = (data.get("task") if isinstance(data, dict) else None) or data
-    metadata = (task.get("metadata") if isinstance(task, dict) else None) or {}
-    activity = metadata.get("activity") if isinstance(metadata, dict) else None
     out: List[str] = []
     out.append("Task %s  [%s]" % (task.get("id", args.task_id), task.get("state", "?")))
     title = str(task.get("title") or "").strip()
     if title:
         out.append("  %s" % title)
-    if not activity:
-        out.append("")
-        out.append("(no activity recorded yet — see `mac task show` for full evidence/logs)")
-    else:
-        out.append("")
-        out.append("Activity:")
-        for entry in activity:
-            if not isinstance(entry, dict):
-                continue
-            phase = str(entry.get("phase") or "note")
-            actor = str(entry.get("actor") or "")
-            at = str(entry.get("at") or "")[:19]
-            label = phase + ((" / " + actor) if actor else "") + ((" @ " + at) if at else "")
-            out.append("  • %s" % label)
-            for line in str(entry.get("summary") or "").splitlines():
-                out.append("      %s" % line)
+    out.extend(_task_activity_lines(task, include_empty=True))
     sys.stdout.write("\n".join(out) + "\n")
 
 
@@ -5868,14 +5887,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _set(cmd_task_list, list_tasks)
 
-    show = task.add_parser("show")
+    show = task.add_parser(
+        "show",
+        help="show task state, activity, diagnoses, and compact evidence counts "
+        "(use --json for the complete structured record)",
+    )
     show.add_argument("task_id")
     _set(cmd_task_show, show)
 
     summary = task.add_parser(
         "summary",
-        help="glanceable per-task activity narrative (what the worker did, what "
-        "the reviewer found/fixed, env changes) — additive to `task show` logs",
+        help="activity-only task narrative (also included in `task show`)",
     )
     summary.add_argument("task_id")
     _set(cmd_task_summary, summary)
