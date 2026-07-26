@@ -7174,7 +7174,11 @@ def preserve_managed_task_sandbox(record):
                 "sandbox",
                 "download",
                 name,
-                "/sandbox/task",
+                # OpenShell 0.0.72 can execute within /sandbox/task but its
+                # SSH-backed download probe cannot realpath that nested path.
+                # Download the transferable root; the CLI flattens its
+                # contents into this owner-private destination.
+                "/sandbox",
                 str(temporary / "workspace"),
             ],
             env=openshell_env(),
@@ -7185,9 +7189,7 @@ def preserve_managed_task_sandbox(record):
             raise QuiescenceFailure("OpenShell task preservation failed")
         downloaded_workspace = temporary / "workspace"
         if downloaded_workspace.is_symlink() or not downloaded_workspace.is_dir():
-            raise QuiescenceFailure(
-                "OpenShell task preservation produced no workspace"
-            )
+            raise QuiescenceFailure("OpenShell task preservation produced no workspace")
         atomic_write_certificate(temporary / "manifest.json", expected_manifest)
         os.replace(str(temporary), str(destination))
         directory = os.open(str(recovery_root), os.O_RDONLY)

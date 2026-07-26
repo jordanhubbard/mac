@@ -113,7 +113,7 @@ if len(args) >= 2 and args[0:2] == ["sandbox", "list"]:
 
 if len(args) >= 5 and args[0:2] == ["sandbox", "download"]:
     stale_names = {{row.get("name") for row in json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))}}
-    if args[2] not in stale_names or args[3] != "/sandbox/task":
+    if args[2] not in stale_names or args[3] != "/sandbox":
         raise SystemExit(65)
     if mode == "stale-download-nonzero":
         raise SystemExit(67)
@@ -1322,7 +1322,7 @@ def test_all_falsey_keep_spellings_are_reaped_and_dead_truthy_task_is_archived(
     } | {"openshell:sandbox delete mac-task-truthy-keep-fixture"}
     assert (
         "openshell:sandbox download mac-task-truthy-keep-fixture "
-        "/sandbox/task"
+        "/sandbox"
     ) in "\n".join(_call_lines(run))
     recovery_dirs = list((run.mac_home / "openshell-recovery").iterdir())
     assert len(recovery_dirs) == 1
@@ -1355,7 +1355,7 @@ def test_dead_protected_task_download_failure_fails_closed_without_delete(
     assert any(
         line.startswith(
             "openshell:sandbox download mac-task-preserve-failure-fixture "
-            "/sandbox/task"
+            "/sandbox"
         )
         for line in calls
     )
