@@ -4516,6 +4516,7 @@ mac_launchd_run_python_bounded() { verified_lifecycle_call mac_launchd_run_pytho
 mac_launchd_snapshot_file() { verified_lifecycle_call mac_launchd_snapshot_file "\$@"; }
 mac_launchd_atomic_restore() { verified_lifecycle_call mac_launchd_atomic_restore "\$@"; }
 mac_launchd_remove_file_and_fsync() { verified_lifecycle_call mac_launchd_remove_file_and_fsync "\$@"; }
+mac_launchd_remove_owned_absent_file() { verified_lifecycle_call mac_launchd_remove_owned_absent_file "\$@"; }
 mac_launchd_fsync_directory() { verified_lifecycle_call mac_launchd_fsync_directory "\$@"; }
 mac_run_bounded() { verified_lifecycle_call mac_run_bounded "\$@"; }
 
@@ -4532,7 +4533,7 @@ compensate_restored_artifacts() {
       mac_launchd_atomic_restore "\$current_backup" "\$destination" "\$mode" \
         || compensation_rc=1
     else
-      mac_launchd_remove_file_and_fsync "\$destination" "\$mode" \
+      mac_launchd_remove_owned_absent_file "\$destination" "\$mode" \
         || compensation_rc=1
     fi
     index=\$(( index - 1 ))
@@ -4805,7 +4806,7 @@ restore_file_or_remove() {
   if [ -n "\$backup" ] && [ -f "\$backup" ] && [ ! -L "\$backup" ]; then
     mac_launchd_atomic_restore "\$backup" "\$destination" "\$mode"
   else
-    mac_launchd_remove_file_and_fsync "\$destination" "\$mode"
+    mac_launchd_remove_owned_absent_file "\$destination" "\$mode"
   fi
 }
 

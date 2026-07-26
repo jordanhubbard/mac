@@ -1245,6 +1245,122 @@ finally:
     "$mode" "$(mac_launchd_artifact_timeout)" "$program" "$path"
 }
 
+mac_launchd_remove_owned_absent_file() {
+  # Restore an exact prior-absent supervisor artifact by removing ONLY the
+  # transaction-owned current file at the exact recorded path.  Absence is a
+  # first-class prior state: the prior generation had no file here, so a
+  # correct rollback proves the path absent again without provisioning any
+  # placeholder.  The removal is fail-closed and refuses to touch anything the
+  # transaction does not own:
+  #   * an already-absent path is a satisfied contract (idempotent);
+  #   * a symlink or directory at the path is never followed or unlinked;
+  #   * a non-regular file (socket, fifo, device) is refused;
+  #   * an ownership drift or a foreign-owned conflicting successor is refused
+  #     rather than silently deleted.
+  # ``mode`` selects the expected owner: ``system`` artifacts must be
+  # root-owned, ``user`` artifacts must be owned by this rollback's euid.
+  local path="$1" mode="${2:-user}" program=""
+  case "$mode" in
+    user|system) ;;
+    *)
+      mac_launchd_error "invalid owned-absent removal mode: $mode"
+      return 1
+      ;;
+  esac
+  program='
+import os
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+
+
+def identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+try:
+    initial = path.lstat()
+except FileNotFoundError:
+    # Prior-absent state already holds: nothing to remove.
+    raise SystemExit(0)
+if stat.S_ISLNK(initial.st_mode):
+    raise SystemExit(
+        "refusing to remove symlink while restoring prior-absent artifact: %s" % path
+    )
+if stat.S_ISDIR(initial.st_mode):
+    raise SystemExit(
+        "refusing to remove directory while restoring prior-absent artifact: %s" % path
+    )
+if not stat.S_ISREG(initial.st_mode):
+    raise SystemExit(
+        "refusing to remove non-regular prior-absent artifact: %s" % path
+    )
+# The removal runs under the transaction own effective identity: a system
+# artifact is unlinked under the privileged bounded runner (euid 0 owns the
+# root-owned file) and a user artifact under the deploying user.  Binding the
+# expected owner to this euid refuses a foreign-owned conflicting successor
+# without demanding a hard-coded uid.
+expected_uid = os.geteuid()
+if initial.st_uid != expected_uid:
+    raise SystemExit(
+        "refusing to remove foreign-owned artifact while restoring prior "
+        "absence: %s" % path
+    )
+flags = os.O_RDONLY
+if hasattr(os, "O_NOFOLLOW"):
+    flags |= os.O_NOFOLLOW
+try:
+    handle = os.open(str(path), flags)
+except FileNotFoundError:
+    raise SystemExit(0)
+except OSError as error:
+    raise SystemExit(
+        "could not open prior-absent artifact for exact removal: %s (%s)"
+        % (path, error)
+    )
+try:
+    opened = os.fstat(handle)
+    if not stat.S_ISREG(opened.st_mode):
+        raise SystemExit(
+            "prior-absent artifact changed to a non-regular file: %s" % path
+        )
+    if identity(initial) != identity(opened):
+        raise SystemExit(
+            "prior-absent artifact changed before exact removal: %s" % path
+        )
+    if opened.st_uid != expected_uid:
+        raise SystemExit(
+            "prior-absent artifact ownership drifted before removal: %s" % path
+        )
+finally:
+    os.close(handle)
+path.unlink()
+try:
+    residue = path.lstat()
+except FileNotFoundError:
+    residue = None
+if residue is not None:
+    raise SystemExit(
+        "prior-absent artifact reappeared immediately after removal: %s" % path
+    )
+directory_fd = os.open(str(path.parent), os.O_RDONLY)
+try:
+    os.fsync(directory_fd)
+finally:
+    os.close(directory_fd)
+'
+  mac_launchd_run_python_bounded \
+    "$mode" "$(mac_launchd_artifact_timeout)" "$program" "$path" "$mode"
+}
+
 mac_launchd_fsync_directory() {
   local path="$1" mode="${2:-user}" program=""
   program='
@@ -1634,7 +1750,7 @@ mac_launchd_transaction_rollback() {
           "${MAC_LAUNCHD_TX_BACKUPS[$index]}" "$path" \
           "$MAC_LAUNCHD_TX_MODE" || restore_rc=$?
       else
-        mac_launchd_remove_file_and_fsync \
+        mac_launchd_remove_owned_absent_file \
           "$path" "$MAC_LAUNCHD_TX_MODE" || restore_rc=$?
       fi
       [ "$restore_rc" -eq 0 ] || rollback_rc=1
