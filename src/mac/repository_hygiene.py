@@ -1,3 +1,10 @@
+"""Repository hygiene auditing and reference cleanup.
+
+Defines the schemas, audits, and helpers that detect and remediate stale or
+unwanted git references and enforce repository cleanliness policies before and
+after task publication.
+"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,10 @@
+"""Core domain models and errors for the MAC control plane.
+
+Defines the exception hierarchy, enums, and dataclasses (tasks, agents,
+messages, notifications, and related records) plus the JSON and time helpers
+shared across the control-plane services.
+"""
+
 from __future__ import annotations
 
 import json

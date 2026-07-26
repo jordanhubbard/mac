@@ -1,3 +1,10 @@
+"""Firecrawl-compatible web search and scrape gateway.
+
+Provides a small FastAPI application that performs web search, single-page
+scraping, and shallow crawling with SSRF-aware URL handling, exposing a
+Firecrawl-style interface for agent tooling.
+"""
+
 from __future__ import annotations
 
 import argparse

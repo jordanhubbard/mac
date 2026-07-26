@@ -1,3 +1,10 @@
+"""Minimal WebDAV server for publishing task artifacts.
+
+Implements the threading HTTP server and request handler that expose task
+artifacts over WebDAV, including path normalization and an authenticated command
+-line entry point.
+"""
+
 from __future__ import annotations
 
 import argparse

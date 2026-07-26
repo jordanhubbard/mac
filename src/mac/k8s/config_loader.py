@@ -1,3 +1,10 @@
+"""Loader for the MAC Kubernetes configuration file.
+
+Defines the configuration dataclasses (roles, notifier channels, and related
+settings) and parses the deployment YAML into typed objects for the Kubernetes
+runner and controller.
+"""
+
 from __future__ import annotations
 
 import os

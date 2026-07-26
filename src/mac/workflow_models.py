@@ -1,3 +1,9 @@
+"""Workflow graph models.
+
+Defines the workflow node and edge dataclasses and the node-type and
+edge-condition vocabularies used to describe and validate MAC task workflows.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field

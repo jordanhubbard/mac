@@ -1,3 +1,9 @@
+"""Kubernetes Job executor for MAC task attempts.
+
+Builds and launches Kubernetes Jobs that run individual task attempts, tracking
+their identifiers and results for the orchestrator.
+"""
+
 from __future__ import annotations
 
 import hashlib

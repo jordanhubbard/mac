@@ -1,3 +1,10 @@
+"""CodeGraph audit helpers.
+
+Determines which changed files are relevant to CodeGraph analysis, resolves the
+``codegraph`` binary, and builds the audit manifest used to verify that
+source-affecting changes were accompanied by the required CodeGraph run.
+"""
+
 from __future__ import annotations
 
 import os

@@ -1,3 +1,10 @@
+"""Hermes startup orchestration.
+
+Resolves environment flags, expands filesystem paths, and assembles the file and
+capability references required to launch the Hermes runtime for a MAC agent
+session.
+"""
+
 from __future__ import annotations
 
 import json

@@ -1,3 +1,10 @@
+"""Command-line interface for the MAC control plane.
+
+Parses arguments and dispatches the ``mac`` subcommands that operate on tasks,
+agents, repositories, and local ledger state, wiring terminal input to the
+underlying services and store.
+"""
+
 from __future__ import annotations
 
 import argparse

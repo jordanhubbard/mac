@@ -1,3 +1,10 @@
+"""Fleet deployment helpers over SSH.
+
+Models SSH targets and cleanup paths and provides parsing, normalization, and
+Tailscale-mesh canonicalization utilities used to deploy and manage MAC fleet
+nodes across remote hosts.
+"""
+
 from __future__ import annotations
 
 import ipaddress

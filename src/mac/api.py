@@ -1,3 +1,10 @@
+"""MAC control-plane HTTP API.
+
+Implements the FastAPI application and request handling that expose the MAC
+control plane over HTTP, including authentication, task and agent endpoints, and
+the serialization glue between the persistence layer and API clients.
+"""
+
 from __future__ import annotations
 
 import asyncio

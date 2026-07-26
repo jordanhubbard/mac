@@ -1,3 +1,10 @@
+"""Project inception proof workflow.
+
+Drives the end-to-end proof that stands up a sample project, registers its
+agents, and creates the initial plan and implementation tasks against the
+control plane.
+"""
+
 from __future__ import annotations
 
 import subprocess

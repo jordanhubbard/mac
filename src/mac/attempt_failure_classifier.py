@@ -1,3 +1,10 @@
+"""Classification of task attempt failures.
+
+Provides the enum, named-tuple result type, and heuristics used to categorize a
+failed task attempt (for example work, environment, scope, or superseded) from
+its recorded events so the control plane can decide how to retry.
+"""
+
 from __future__ import annotations
 
 import json
