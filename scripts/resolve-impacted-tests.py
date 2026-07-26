@@ -93,6 +93,9 @@ PATH_TEST_CONTRACTS: dict[str, tuple[str, ...]] = {
     "deploy/fleet-node-rollback-supervisor.py": (
         "tests/test_fleet_node_rollback_supervisor.py",
     ),
+    "deploy/fleet-node-substrate-adopt.py": (
+        "tests/test_fleet_node_substrate_adopt.py",
+    ),
     "docs/env-config-reference.md": ("tests/test_env_config.py",),
     "scripts/generate-env-config-registry.py": ("tests/test_env_config.py",),
     "scripts/resolve-impacted-tests.py": ("tests/test_resolve_impacted_tests.py",),
