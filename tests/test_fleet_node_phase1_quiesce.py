@@ -131,6 +131,14 @@ payload = {
     },
     "container_runtimes": identities,
     "legacy_nemoclaw": {"retained_stopped": [], "final_state": "inactive"},
+    "openshell_task_sandboxes": {
+        "final_state": "quiescent",
+        "stable_inactive_observations": 2,
+        "reconciled": [],
+        "reconciled_count": 0,
+        "scanned": 0,
+        "managed": 0,
+    },
     "proofs": {
         "pre_source": {
             "recorded_at": "2026-07-19T00:00:00Z",
