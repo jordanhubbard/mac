@@ -110,6 +110,12 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_COMMAND_AUDIT_RETENTION_SECONDS` | int | consumer-defined | core | Core setting: command audit retention seconds. |
 | `MAC_COMMAND_ID` | str | consumer-defined | core | Core setting: command id. |
 | `MAC_CONFIG_FILE` | str | consumer-defined | core | Core setting: config file. |
+| `MAC_CONTINUITY_BUS_CHUNK_SCAN` | str | consumer-defined | core | Core setting: continuity bus chunk scan. |
+| `MAC_CONTINUITY_BUS_STREAM_SCAN` | str | consumer-defined | core | Core setting: continuity bus stream scan. |
+| `MAC_CONTINUITY_MAX_ITEMS` | str | consumer-defined | core | Core setting: continuity max items. |
+| `MAC_CONTINUITY_MAX_LOW_VALUE_MEMORIES` | str | consumer-defined | core | Core setting: continuity max low value memories. |
+| `MAC_CONTINUITY_MIN_SCORE` | str | consumer-defined | core | Core setting: continuity min score. |
+| `MAC_CONTINUITY_TOKEN_BUDGET` | str | consumer-defined | core | Core setting: continuity token budget. |
 | `MAC_CONTRACT_DESCRIPTION` | str | consumer-defined | core | Core setting: contract description. |
 | `MAC_CONTRACT_MARKER` | str | consumer-defined | core | Core setting: contract marker. |
 | `MAC_CONTRACT_RUNTIME_VENV` | str | consumer-defined | core | Core setting: contract runtime venv. |

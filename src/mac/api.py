@@ -8974,23 +8974,27 @@ def create_app(
             raise AuthorizationError("agent token cannot read a peer agent's continuity context")
         cp.get_agent(agent_id)
         mood = cp.get_current_mood(agent_id)
+        from mac.openclaw_continuity import ContinuityMetrics, recall_continuity
+
         memories: List[Dict[str, Any]] = []
+        metrics = ContinuityMetrics()
         if q.strip() and limit:
-            for tier in ("medium", "long"):
-                for memory in cp.recall_memory(
-                    q,
-                    tier=tier,
-                    limit=limit,
-                    agent_id=agent_id,
-                ):
-                    memories.append({**memory, "tier": tier})
-            memories.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
-            memories = memories[:limit]
+            # Selective, provenance-rich recall: a calibrated score floor keeps
+            # low-value filler out, and bounded AgentBus recall lets a prior
+            # peer conversation resurface labelled with its source and score.
+            memories, metrics = recall_continuity(
+                agent_id=agent_id,
+                query=q,
+                limit=limit,
+                recall=cp.recall_memory,
+                agentbus=getattr(cp, "agentbus", None),
+            )
         from mac.mood_policy import render_mood_overlay
 
         mood_dict = mood.to_dict() if mood is not None else None
         # The learning read-bridge failing silently is how a dead loop went
-        # unnoticed for weeks — every serve is now an observable event.
+        # unnoticed for weeks — every serve is now an observable event.  Query
+        # contents are never logged; only counts and the source mix are.
         cp.record_log(
             "continuity.context_served",
             subject_type="agent",
@@ -8999,7 +9003,16 @@ def create_app(
                 "memory_count": len(memories),
                 "query_length": len(q.strip()),
                 "has_mood": mood_dict is not None,
+                **metrics.to_dict(),
             },
+        )
+        cp.record_metric(
+            "continuity.selected_results",
+            float(metrics.selected),
+            unit="items",
+            subject_type="agent",
+            subject_id=agent_id,
+            detail=metrics.to_dict(),
         )
         return {
             "schema": "mac.openclaw_continuity_context.v1",
@@ -9010,6 +9023,7 @@ def create_app(
                 reason=(mood_dict or {}).get("reason"),
             ),
             "memories": memories,
+            "recall_metrics": metrics.to_dict(),
         }
 
     @app.post("/v1/agents/{agent_id}/mood")

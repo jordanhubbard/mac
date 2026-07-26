@@ -37,10 +37,20 @@ def test_bound_agent_reads_own_mood_and_scoped_memory(monkeypatch) -> None:
     assert payload["mood"]["mode"] == "warm"
     assert "Current mood: **warm**" in payload["mood_prompt"]
     assert payload["memories"][0]["summary"] == "remember the test"
-    assert captured == [
-        {"query": "what matters", "tier": "medium", "limit": 3, "agent_id": agent.id},
-        {"query": "what matters", "tier": "long", "limit": 3, "agent_id": agent.id},
-    ]
+    # Provenance + score are attached so OpenClaw can label the item.
+    assert payload["memories"][0]["source"] == "memory"
+    assert payload["memories"][0]["score"] == 0.9
+    # A calibrated minimum-relevance floor is now pushed into recall so the
+    # vector store never returns filler to reach the limit.
+    assert len(captured) == 2
+    assert captured[0]["query"] == "what matters"
+    assert captured[0]["tier"] == "medium"
+    assert captured[0]["limit"] == 3
+    assert captured[0]["agent_id"] == agent.id
+    assert captured[0]["min_score"] is not None and captured[0]["min_score"] > 0.0
+    assert captured[1]["tier"] == "long"
+    # Observability now carries a source mix without query contents.
+    assert payload["recall_metrics"]["source_memory"] == 1
     assert refused.status_code == 403
 
 
