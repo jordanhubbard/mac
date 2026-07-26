@@ -10,27 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/archive/field-notes/mac-task-bd-parity-audit/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/hub-active-passive-design/">
       
       
+        <link rel="prev" href="../hub-ha-audit/">
+      
+      
+        <link rel="next" href="../break-glass-host-recovery/">
       
       
         
       
       
-      <link rel="icon" href="../../../assets/images/favicon.png">
+      <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
     
     
       
-        <title>Mac task bd parity audit - MAC Documentation</title>
+        <title>Hub active-passive design - MAC Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +53,9 @@
       
     
     
-      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#mac-task-bd-beads-functional-parity-audit" class="md-skip">
+        <a href="#hub-active-passive-design-minimal-standby" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +100,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-header__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Mac task bd parity audit
+              Hub active-passive design
             
           </span>
         </div>
@@ -234,7 +238,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
+    <a href=".." title="MAC Documentation" class="md-nav__button md-logo" aria-label="MAC Documentation" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -264,7 +268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -343,7 +347,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/01-system/" class="md-nav__link">
+      <a href="../book/01-system/" class="md-nav__link">
         
   
   
@@ -371,7 +375,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/02-local-start/" class="md-nav__link">
+      <a href="../book/02-local-start/" class="md-nav__link">
         
   
   
@@ -399,7 +403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/03-projects-and-tasks/" class="md-nav__link">
+      <a href="../book/03-projects-and-tasks/" class="md-nav__link">
         
   
   
@@ -427,7 +431,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/04-machines-and-agents/" class="md-nav__link">
+      <a href="../book/04-machines-and-agents/" class="md-nav__link">
         
   
   
@@ -455,7 +459,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/05-evidence-review-completion/" class="md-nav__link">
+      <a href="../book/05-evidence-review-completion/" class="md-nav__link">
         
   
   
@@ -483,7 +487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/06-hermes-and-ide/" class="md-nav__link">
+      <a href="../book/06-hermes-and-ide/" class="md-nav__link">
         
   
   
@@ -511,7 +515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/07-repository-contracts/" class="md-nav__link">
+      <a href="../book/07-repository-contracts/" class="md-nav__link">
         
   
   
@@ -539,7 +543,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/08-plans-and-dags/" class="md-nav__link">
+      <a href="../book/08-plans-and-dags/" class="md-nav__link">
         
   
   
@@ -567,7 +571,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/09-fleet-onboarding/" class="md-nav__link">
+      <a href="../book/09-fleet-onboarding/" class="md-nav__link">
         
   
   
@@ -595,7 +599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/10-identity-and-secrets/" class="md-nav__link">
+      <a href="../book/10-identity-and-secrets/" class="md-nav__link">
         
   
   
@@ -623,7 +627,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/11-publication-and-refs/" class="md-nav__link">
+      <a href="../book/11-publication-and-refs/" class="md-nav__link">
         
   
   
@@ -651,7 +655,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/12-operations/" class="md-nav__link">
+      <a href="../book/12-operations/" class="md-nav__link">
         
   
   
@@ -679,7 +683,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/13-deployment-topologies/" class="md-nav__link">
+      <a href="../book/13-deployment-topologies/" class="md-nav__link">
         
   
   
@@ -707,7 +711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/14-images-and-cutover/" class="md-nav__link">
+      <a href="../book/14-images-and-cutover/" class="md-nav__link">
         
   
   
@@ -735,7 +739,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/15-sandboxed-runtimes/" class="md-nav__link">
+      <a href="../book/15-sandboxed-runtimes/" class="md-nav__link">
         
   
   
@@ -763,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/16-apis-and-integrations/" class="md-nav__link">
+      <a href="../book/16-apis-and-integrations/" class="md-nav__link">
         
   
   
@@ -791,7 +795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/17-learning-evals-scaling/" class="md-nav__link">
+      <a href="../book/17-learning-evals-scaling/" class="md-nav__link">
         
   
   
@@ -819,7 +823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../book/18-capstone/" class="md-nav__link">
+      <a href="../book/18-capstone/" class="md-nav__link">
         
   
   
@@ -906,7 +910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/cli/" class="md-nav__link">
+      <a href="../reference/cli/" class="md-nav__link">
         
   
   
@@ -934,7 +938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/openapi/" class="md-nav__link">
+      <a href="../reference/openapi/" class="md-nav__link">
         
   
   
@@ -962,7 +966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../env-config-reference/" class="md-nav__link">
+      <a href="../env-config-reference/" class="md-nav__link">
         
   
   
@@ -990,7 +994,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../fleet-directives/" class="md-nav__link">
+      <a href="../fleet-directives/" class="md-nav__link">
         
   
   
@@ -1018,7 +1022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../repository-runtime-contract/" class="md-nav__link">
+      <a href="../repository-runtime-contract/" class="md-nav__link">
         
   
   
@@ -1046,7 +1050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../repository-cicd-monitor/" class="md-nav__link">
+      <a href="../repository-cicd-monitor/" class="md-nav__link">
         
   
   
@@ -1074,7 +1078,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../fleet-registry-schema/" class="md-nav__link">
+      <a href="../fleet-registry-schema/" class="md-nav__link">
         
   
   
@@ -1102,7 +1106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/documentation-inventory/" class="md-nav__link">
+      <a href="../reference/documentation-inventory/" class="md-nav__link">
         
   
   
@@ -1134,8 +1138,10 @@
       
   
   
+    
   
   
+  
     
     
     
@@ -1146,11 +1152,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
           <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
@@ -1171,7 +1177,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1189,7 +1195,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../production-deployment/" class="md-nav__link">
+      <a href="../production-deployment/" class="md-nav__link">
         
   
   
@@ -1217,7 +1223,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../fleet-node-onboarding-checklist/" class="md-nav__link">
+      <a href="../fleet-node-onboarding-checklist/" class="md-nav__link">
         
   
   
@@ -1245,7 +1251,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../synchronized-fleet-cutover/" class="md-nav__link">
+      <a href="../synchronized-fleet-cutover/" class="md-nav__link">
         
   
   
@@ -1273,7 +1279,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../hub-availability/" class="md-nav__link">
+      <a href="../hub-availability/" class="md-nav__link">
         
   
   
@@ -1301,7 +1307,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../hub-ha-audit/" class="md-nav__link">
+      <a href="../hub-ha-audit/" class="md-nav__link">
         
   
   
@@ -1326,10 +1332,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../hub-active-passive-design/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub active-passive design
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1345,6 +1378,131 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-the-standby-reuses-no-new-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What the standby reuses (no new services)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-replication-path-per-tier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Replication path per tier
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Replication path per tier">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tier-a-postgres-recommended-where-rpo-must-be-small" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier A — Postgres (recommended where RPO must be small)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tier-b-sqlite-verified-snapshots-evidence-blob-rsync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier B — SQLite verified snapshots + evidence-blob rsync
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-fencing-split-brain-guarantee-resolves-audit-gap-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Fencing / split-brain guarantee (resolves audit gap 1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-stable-repoint-strategy-resolves-audit-gap-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Stable repoint strategy (resolves audit gap 3)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-promote-runbook-deltas-vs-docshub-availabilitymd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Promote runbook deltas vs docs/hub-availability.md
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-new-surface-introduced-do-not-gold-plate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. New surface introduced (do not gold-plate)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-what-is-deliberately-not-built-and-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. What is deliberately NOT built (and why)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1357,7 +1515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../break-glass-host-recovery/" class="md-nav__link">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
         
   
   
@@ -1444,7 +1602,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../work-graph-control-plane/" class="md-nav__link">
+      <a href="../work-graph-control-plane/" class="md-nav__link">
         
   
   
@@ -1472,7 +1630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../changeset-adoption-core-spec/" class="md-nav__link">
+      <a href="../changeset-adoption-core-spec/" class="md-nav__link">
         
   
   
@@ -1500,7 +1658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../hermes-boundary/" class="md-nav__link">
+      <a href="../hermes-boundary/" class="md-nav__link">
         
   
   
@@ -1528,7 +1686,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../openshell-sandbox/" class="md-nav__link">
+      <a href="../openshell-sandbox/" class="md-nav__link">
         
   
   
@@ -1556,7 +1714,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../" class="md-nav__link">
+      <a href="../archive/" class="md-nav__link">
         
   
   
@@ -1611,10 +1769,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-bd-provided-evidence-in-repo" class="md-nav__link">
+  <a href="#1-what-the-standby-reuses-no-new-services" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What bd provided (evidence in-repo)
+        1. What the standby reuses (no new services)
       
     </span>
   </a>
@@ -1622,10 +1780,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#mac-task-surface-today-srcmacclipy" class="md-nav__link">
+  <a href="#2-replication-path-per-tier" class="md-nav__link">
     <span class="md-ellipsis">
       
-        mac task surface today (src/mac/cli.py)
+        2. Replication path per tier
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Replication path per tier">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tier-a-postgres-recommended-where-rpo-must-be-small" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier A — Postgres (recommended where RPO must be small)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tier-b-sqlite-verified-snapshots-evidence-blob-rsync" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier B — SQLite verified snapshots + evidence-blob rsync
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-fencing-split-brain-guarantee-resolves-audit-gap-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Fencing / split-brain guarantee (resolves audit gap 1)
       
     </span>
   </a>
@@ -1633,10 +1830,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#parity-table" class="md-nav__link">
+  <a href="#4-stable-repoint-strategy-resolves-audit-gap-3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Parity table
+        4. Stable repoint strategy (resolves audit gap 3)
       
     </span>
   </a>
@@ -1644,10 +1841,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#remaining-gaps-actionable" class="md-nav__link">
+  <a href="#5-promote-runbook-deltas-vs-docshub-availabilitymd" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Remaining gaps (actionable)
+        5. Promote runbook deltas vs docs/hub-availability.md
       
     </span>
   </a>
@@ -1655,10 +1852,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#deliberately-not-parity-recorded-so-they-arent-re-opened-as-gaps" class="md-nav__link">
+  <a href="#6-new-surface-introduced-do-not-gold-plate" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Deliberately not parity (recorded so they aren't re-opened as "gaps")
+        6. New surface introduced (do not gold-plate)
       
     </span>
   </a>
@@ -1666,10 +1863,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verdict" class="md-nav__link">
+  <a href="#7-what-is-deliberately-not-built-and-why" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verdict
+        7. What is deliberately NOT built (and why)
       
     </span>
   </a>
@@ -1693,7 +1890,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/archive/field-notes/mac-task-bd-parity-audit.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/hub-active-passive-design.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1701,158 +1898,172 @@
   
 
 
-<div class="admonition warning">
-<p class="admonition-title">Historical field note</p>
-<p>This record preserves prior investigation or planning evidence. It is not a current operating contract; use the numbered book and current runbooks for instructions.</p>
-</div>
-<h1 id="mac-task-bd-beads-functional-parity-audit"><code>mac task</code> ↔ <code>bd</code> (beads) functional-parity audit<a class="headerlink" href="#mac-task-bd-beads-functional-parity-audit" title="Permanent link">&para;</a></h1>
+<h1 id="hub-active-passive-design-minimal-standby">Hub Active-Passive Design (Minimal Standby)<a class="headerlink" href="#hub-active-passive-design-minimal-standby" title="Permanent link">&para;</a></h1>
+<p>This design specifies the <strong>smallest</strong> active-passive high-availability posture
+for the fleet hub. It is a <em>reuse</em> design: it adds the minimum new mechanism on
+top of the primitives the ground-truth audit (<code>docs/hub-ha-audit.md</code>) verified
+and the operator narrative (<code>docs/hub-availability.md</code>) already documents. It
+resolves the six gaps the audit left to the design child (audit section 6) —
+chiefly fencing, standby promotion, and repointing — while preserving the
+single-authority invariant.</p>
+<p>Scope: <strong>one</strong> warm standby hub, operator-assisted promotion, tighter than the
+current "operator promises the old hub is down" runbook. It does <strong>not</strong>
+introduce hub-to-hub replication or auto-failover for the SQLite tier; see
+"What is deliberately NOT built".</p>
+<h2 id="1-what-the-standby-reuses-no-new-services">1. What the standby reuses (no new services)<a class="headerlink" href="#1-what-the-standby-reuses-no-new-services" title="Permanent link">&para;</a></h2>
+<p>The standby is an <em>ordinary hub deployment that is not yet the authority</em>. It
+reuses, unchanged:</p>
 <ul>
-<li>Date: 2026-06-09</li>
-<li>Scope: does <code>mac task</code> match the <code>bd</code> workflow it replaced? (the stated goal
-  of the <code>mac task</code> subcommand). Grounded in this repo's beads migration/bridge
-  code + docs — not external memory of <code>bd</code>.</li>
+<li><strong>Control-plane role invariant.</strong> <code>MAC_CONTROL_PLANE_ROLE</code> selects <code>hub</code> vs
+  <code>client</code>; the store factory refuses to let a <code>client</code> own a database. While
+  passive the standby runs as <code>client</code> (or offline), so it can never silently
+  become a second authority.</li>
+<li><strong>Router decoupling.</strong> The standby runs <code>mac-router</code>
+  (<code>MAC_DEPLOY_ROUTER_BACKEND=standalone</code>, <code>MAC_DEPLOY_ROUTER_PORT</code>, default
+  8790) exactly like any hub. Because inference is active-active and holds no
+  write state, the standby's router may serve traffic <em>before</em> promotion with
+  no split-brain risk — only the ledger authority is single.</li>
+<li><strong>Evidence-blob externalization.</strong> <code>MAC_EVIDENCE_BLOB_DIR</code> /
+  <code>MAC_EVIDENCE_INLINE_MAX_BYTES</code> keep artifact bytes out of the DB. Blob URIs
+  are location-independent (<code>evidence-blob:</code>), so a restored ledger on the
+  standby resolves rows against the standby's own blob root.</li>
+<li><strong>Ledger tiers.</strong> Tier A Postgres (<code>MAC_DATABASE_URL</code>, stateless
+  <code>replicas: 2</code> hub processes) and Tier B SQLite verified snapshots
+  (<code>mac-ledger-backup</code>, <code>MAC_LEDGER_BACKUP_SYNC_CMD</code>, <code>--verify</code>).</li>
+<li><strong>Backup scheduler role gate.</strong> The snapshot scheduler is default-ON but
+  hub-only (<code>MAC_LEDGER_BACKUP_ENABLED</code> truthy <strong>and</strong> role != <code>client</code>), so a
+  passive standby does not itself take snapshots of a stale copy.</li>
+<li><strong>Promote/fence procedure.</strong> The existing <code>docs/hub-availability.md</code> promote
+  steps remain the backbone; this design tightens steps 1, 2, and 4.</li>
 </ul>
-<h2 id="what-bd-provided-evidence-in-repo">What <code>bd</code> provided (evidence in-repo)<a class="headerlink" href="#what-bd-provided-evidence-in-repo" title="Permanent link">&para;</a></h2>
-<p>Data model — from <code>src/mac/beads_migrator.py</code> (<code>_create_task_from_bead</code>,
-<code>_render_ticket</code>): <code>id</code>, <code>status</code> (open/closed/blocked/deferred/in_progress),
-<code>title</code>, <code>description</code>, <code>issue_type</code>, <code>priority</code> (numeric), <code>assignee</code>, <code>owner</code>,
-<code>dependencies</code> (typed: <code>blocks</code> → deps, <code>related</code> → links, <code>parent-child</code> →
-parent), <code>design</code>, <code>acceptance_criteria</code>, <code>notes</code>, <code>close_reason</code>,
-<code>external_ref</code>, timestamps.</p>
-<p><code>bd</code> commands referenced in-repo (only these appear — no broader CLI is
-documented here):
-- <code>bd ready --json</code> — historical canonical ready queue for Beads.
-- <code>bd memories --json</code> — persistent memories export (<code>beads_migrator.py:228</code>).
-- <code>bd update &lt;id&gt; --claim</code>, <code>bd close &lt;id&gt;</code> — historical claim/close writeback.
-- <code>bd dolt push/pull</code> — cross-machine sync of the embedded Dolt DB + <code>.beads/issues.jsonl</code> mirror (<code>docs/linear-bridge-spec.md</code>, <code>docs/metadata-sync-assessment.md:27</code>).
-- Project tagging tied to the repo a bead was filed from (<code>docs/hermes-integration.md:169</code>).</p>
-<h2 id="mac-task-surface-today-srcmacclipy"><code>mac task</code> surface today (<code>src/mac/cli.py</code>)<a class="headerlink" href="#mac-task-surface-today-srcmacclipy" title="Permanent link">&para;</a></h2>
-<p><code>create, list, show, ready, claim, close, reopen, force-complete, search, stats,
-start, release, submit-review, evidence, detect-beads, migrate-beads,
-detect-ticketing, convert-ticketing</code>. <code>ready</code>, <code>search</code>, and <code>stats</code> work in hub
-mode through <code>/tasks/ready</code>, <code>/tasks/search</code>, and <code>/tasks/stats</code>, with the
-direct SQLite path still available under <code>--db</code>.</p>
-<p><code>.tickets/&lt;id&gt;.md</code> mirror frontmatter (<code>beads_migrator._render_ticket</code>):
-<code>id, status, deps, links, created, type, priority</code> (+ optional <code>assignee</code>,
-<code>external-ref</code>, <code>parent</code>, <code>mac-task-id</code>) and body sections Design / Acceptance
-Criteria / Notes / Close Reason — a faithful superset of the bead fields. The
-mirror is optional local compatibility output: <code>tickets_mirror.py</code> writes it
-only when a <code>.tickets/</code> directory already exists, and this repo ignores
-<code>.tickets/</code> instead of checking it into git.</p>
-<h2 id="parity-table">Parity table<a class="headerlink" href="#parity-table" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th><code>bd</code> capability</th>
-<th><code>mac task</code> equivalent</th>
-<th>Status</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Project from the repo you file in</td>
-<td><code>create</code> defaults <code>--project</code> from cwd (git top-level / cwd basename)</td>
-<td><strong>Present</strong> (PR #124)</td>
-</tr>
-<tr>
-<td>Scope reads to current project</td>
-<td><code>list</code>/<code>ready</code>/<code>search</code> default to cwd project; <code>--all</code> / <code>--project</code> widen</td>
-<td><strong>Present</strong> (this PR)</td>
-</tr>
-<tr>
-<td>Ready queue (<code>bd ready --json</code>)</td>
-<td><code>mac task ready</code> (open + deps satisfied + unclaimed)</td>
-<td><strong>Present</strong> — served over the hub (parity-ready-http-01)</td>
-</tr>
-<tr>
-<td>Keyword search</td>
-<td><code>mac task search</code></td>
-<td><strong>Present</strong> — served over the hub</td>
-</tr>
-<tr>
-<td>Stats / counts</td>
-<td><code>mac task stats</code></td>
-<td><strong>Present</strong> — served over the hub</td>
-</tr>
-<tr>
-<td>Dependencies / blockers</td>
-<td><code>--dependencies</code> on create; <code>.tickets</code> <code>deps:</code>/<code>links:</code>/<code>parent:</code></td>
-<td>Present</td>
-</tr>
-<tr>
-<td>Status lifecycle</td>
-<td>TaskState transitions; <code>close --cancelled</code></td>
-<td>Present</td>
-</tr>
-<tr>
-<td>Priority</td>
-<td><code>--priority</code> (numeric)</td>
-<td>Present</td>
-</tr>
-<tr>
-<td>Body sections (design/acceptance/notes)</td>
-<td><code>.tickets</code> body + metadata</td>
-<td>Present</td>
-</tr>
-<tr>
-<td>Assignment (assignee/owner)</td>
-<td>metadata + <code>.tickets</code> <code>assignee</code></td>
-<td>Present</td>
-</tr>
-<tr>
-<td>External refs</td>
-<td>metadata + <code>.tickets</code> <code>external-ref</code></td>
-<td>Present</td>
-</tr>
-<tr>
-<td>Memories</td>
-<td><code>mac memory remember/list/forget</code></td>
-<td>Present in local and hub modes</td>
-</tr>
-<tr>
-<td><code>.tickets</code> markdown mirror <strong>auto-emitted when a local <code>.tickets/</code> directory exists</strong></td>
-<td><code>mac task create</code>/<code>close</code> write <code>.tickets/&lt;id&gt;.md</code> (<code>tickets_mirror.py</code>) and otherwise no-op</td>
-<td><strong>Present</strong> as local compatibility output (parity-tickets-autoemit-01)</td>
-</tr>
-<tr>
-<td><code>bd dolt push/pull</code> cross-machine sync</td>
-<td>—</td>
-<td>Removed by design (mac hub is the store)</td>
-</tr>
-<tr>
-<td>Two-way <code>bd update/close</code> writeback</td>
-<td>—</td>
-<td>Removed by design; legacy Beads state is one-way migration only</td>
-</tr>
-</tbody>
-</table>
-<h2 id="remaining-gaps-actionable">Remaining gaps (actionable)<a class="headerlink" href="#remaining-gaps-actionable" title="Permanent link">&para;</a></h2>
-<p>Both gaps are now closed:</p>
-<ol>
-<li>~~<strong><code>ready</code> / <code>search</code> / <code>stats</code> are SQLite-only.</strong>~~ <strong>DONE</strong> —
-   <code>GET /tasks/ready|search|stats</code> now serve these from the hub; the CLI uses
-   them in hub mode and keeps the direct-SQL path under <code>--db</code>
-   (<code>parity-ready-http-01</code>).</li>
-<li>~~<strong>No <code>.tickets</code> auto-emit.</strong>~~ <strong>DONE</strong> — <code>mac task create</code>/<code>close</code> now
-   write/update <code>.tickets/&lt;id&gt;.md</code> via <code>src/mac/tickets_mirror.py</code> when a local
-   <code>.tickets/</code> directory already exists (reusing the migrator's renderer),
-   idempotent and opt-out via <code>--no-ticket</code> / <code>MAC_NO_TICKET_MIRROR</code>
-   (<code>parity-tickets-autoemit-01</code>). It deliberately does not create <code>.tickets/</code>
-   or make that mirror authoritative.</li>
-</ol>
-<h2 id="deliberately-not-parity-recorded-so-they-arent-re-opened-as-gaps">Deliberately not parity (recorded so they aren't re-opened as "gaps")<a class="headerlink" href="#deliberately-not-parity-recorded-so-they-arent-re-opened-as-gaps" title="Permanent link">&para;</a></h2>
+<p>No new service or daemon is introduced. Every knob above already exists.</p>
+<h2 id="2-replication-path-per-tier">2. Replication path per tier<a class="headerlink" href="#2-replication-path-per-tier" title="Permanent link">&para;</a></h2>
+<h3 id="tier-a-postgres-recommended-where-rpo-must-be-small">Tier A — Postgres (recommended where RPO must be small)<a class="headerlink" href="#tier-a-postgres-recommended-where-rpo-must-be-small" title="Permanent link">&para;</a></h3>
+<p>The standby hub processes are stateless; replication is delegated to the
+Postgres product (streaming replica + managed failover: CloudNativePG, Patroni,
+RDS/Cloud SQL). The standby carries <strong>no</strong> SQLite authority in this tier. RPO
+and RTO are the Postgres replica's, typically seconds. This is unchanged from
+the audit's Tier A and needs no new mechanism.</p>
+<h3 id="tier-b-sqlite-verified-snapshots-evidence-blob-rsync">Tier B — SQLite verified snapshots + evidence-blob rsync<a class="headerlink" href="#tier-b-sqlite-verified-snapshots-evidence-blob-rsync" title="Permanent link">&para;</a></h3>
+<p>The active hub already ships each verified snapshot through
+<code>MAC_LEDGER_BACKUP_SYNC_CMD</code>. This design makes that one hook ship <strong>both</strong> the
+snapshot and the evidence-blob directory as a single atomic operator step, so
+the two backups can never drift (resolves audit gap 5):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">MAC_LEDGER_BACKUP_SYNC_CMD=&#39;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">  set -e</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">  rsync -a &quot;$MAC_LEDGER_SNAPSHOT_PATH&quot;* standby:~/.mac/backups/ledger/</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">  rsync -a --delete ~/.mac/evidence-blobs/ standby:~/.mac/evidence-blobs/</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="go">&#39; mac-ledger-backup --db ~/.mac/mac.db --out ~/.mac/backups</span>
+</code></pre></div>
+<p>The hook already exits non-zero on failure, so a ledger snapshot that ships
+without its blobs (or vice versa) is a loud error, not a silent gap. RPO for
+Tier B is the snapshot cadence (<code>MAC_LEDGER_BACKUP_INTERVAL_SECONDS</code>, default
+900 s / 15 min).</p>
+<p><strong>Standby freshness (resolves audit gap 4).</strong> The standby runs a small periodic
+check — a cron/timer, not a new daemon — that calls the existing verifier over
+the newest shipped snapshot and alarms on staleness:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac-ledger-backup --verify &quot;$(ls -t ~/.mac/backups/ledger/*.db | head -1)&quot;</span>
+</code></pre></div>
+<p>The check treats "no snapshot newer than N intervals" or a failed <code>--verify</code>
+as staleness and surfaces it through the host's normal alerting. This reuses
+<code>mac-ledger-backup --verify</code>; it adds no new code path, only a schedule on the
+standby.</p>
+<h2 id="3-fencing-split-brain-guarantee-resolves-audit-gap-1">3. Fencing / split-brain guarantee (resolves audit gap 1)<a class="headerlink" href="#3-fencing-split-brain-guarantee-resolves-audit-gap-1" title="Permanent link">&para;</a></h2>
+<p>The invariant is unchanged: <strong>the old hub must be fenced before the standby
+serves a single write.</strong> This design makes the fence <em>checkable</em> instead of a
+verbal promise, using only existing config surface — a single-holder promote
+lease file:</p>
 <ul>
-<li>Dolt push/pull and two-way <code>bd</code> writeback are intentionally gone: the mac hub
-  is the single authoritative store (see <code>metadata-sync-assessment.md</code>,
-  <code>CLAUDE.md</code>). <code>bd</code> must not be run.</li>
+<li>A promote lease is a small file at a well-known path on shared/standby-visible
+  storage (e.g. <code>~/.mac/ha/promote.lease</code>) recording the fenced generation and
+  the identity of the hub that currently holds write authority.</li>
+<li><strong>Promotion refuses to start unless the operator has recorded the fence</strong> in
+  the lease (old hub generation marked stopped). The standby's promote runbook
+  step reads the lease and aborts if the old hub still claims the live
+  generation.</li>
+<li>Fencing itself remains an operator action — <code>systemctl stop</code> /
+  <code>launchctl bootout</code>, or a tailnet ACL / node shutdown when the host is
+  unreachable — because a standby cannot safely infer "the old hub is down"
+  from "I can't reach the hub." The lease only makes the human's fence explicit
+  and machine-verifiable, closing the "operator promises" gap without adding an
+  unsafe automatic STONITH.</li>
 </ul>
-<h2 id="verdict">Verdict<a class="headerlink" href="#verdict" title="Permanent link">&para;</a></h2>
-<p>Core issue-tracking parity is <strong>achieved</strong> (fields, dependencies, lifecycle,
-priority, sections, project-from-cwd for both create and read). The two
-operational gaps that remained — read commands not working over the hub, and the
-<code>.tickets</code> mirror not being auto-emitted — are now <strong>both closed</strong>
-(<code>parity-ready-http-01</code>, <code>parity-tickets-autoemit-01</code>). Everything else either
-matches <code>bd</code> or was dropped on purpose.</p>
+<p>This is the minimum new mechanism: a single lease file and a promote-time check,
+not a distributed lock service or leader election.</p>
+<h2 id="4-stable-repoint-strategy-resolves-audit-gap-3">4. Stable repoint strategy (resolves audit gap 3)<a class="headerlink" href="#4-stable-repoint-strategy-resolves-audit-gap-3" title="Permanent link">&para;</a></h2>
+<p>Agents must not need a per-agent env change on failover. The canonical
+mechanism is a <strong>stable hub DNS / tailnet name</strong> bound to the hub from day one:</p>
+<ul>
+<li>Give the hub a stable tailnet DNS name (e.g. <code>hub.&lt;tailnet&gt;</code>) and set every
+  agent's <code>hub_url</code> to that name, never to a raw IP. <code>hub_url</code> accepts a DNS
+  name anywhere an IP works today.</li>
+<li>On promotion, <strong>rebind the name</strong> to the standby (tailnet MagicDNS / DNS
+  record update). No agent env changes, no fleet-wide redeploy.</li>
+<li>The <code>~/.mac/fleets.yaml</code> <code>hub_url</code> + <code>MAC_DEPLOY_NEW_HUB_URL</code> redeploy path
+  remains the <strong>fallback</strong> for fleets that did not adopt the stable name, but
+  the stable-name rebind is the recommended default.</li>
+<li>The standby advertises readiness through its own <code>/healthz</code> (already served
+  by the hub API and <code>mac-router</code>), so the operator confirms the standby is up
+  before rebinding the name.</li>
+</ul>
+<h2 id="5-promote-runbook-deltas-vs-docshub-availabilitymd">5. Promote runbook deltas vs <code>docs/hub-availability.md</code><a class="headerlink" href="#5-promote-runbook-deltas-vs-docshub-availabilitymd" title="Permanent link">&para;</a></h2>
+<p>The existing five-step promote procedure stands; this design changes three
+steps and adds one pre-check:</p>
+<ul>
+<li><strong>Step 1 (Fence) — tightened.</strong> After stopping the old hub, record the fence
+  in the promote lease (mark the old generation stopped). Promotion tooling
+  reads the lease and refuses to proceed if the old hub still holds it.</li>
+<li><strong>Step 2 (Restore) — atomic blobs.</strong> Because the ship hook now rsyncs the
+  evidence-blob directory alongside every snapshot, the standby already holds a
+  matching blob set; restore is <code>--verify</code> newest snapshot → install as
+  <code>~/.mac/mac.db</code> (no <code>-wal</code>/<code>-shm</code> leftovers). No separate blob-fetch step.</li>
+<li><strong>Step 4 (Repoint) — stable name.</strong> Rebind the stable hub DNS/tailnet name to
+  the standby instead of editing <code>hub_url</code> per fleet. The redeploy path stays as
+  fallback only.</li>
+<li><strong>New pre-check (freshness).</strong> Before fencing, confirm the standby's freshness
+  check is green (latest snapshot within cadence, <code>--verify</code> passing) so the
+  operator is not promoting a stale copy.</li>
+</ul>
+<p>Steps 3 (make standby the hub: <code>MAC_CONTROL_PLANE_ROLE=hub</code>, restore
+<code>mac.env</code> token material) and 5 (old hub returns as a <code>client</code> spoke; local
+divergence rescued via the local-ledger migration path) are unchanged.</p>
+<h2 id="6-new-surface-introduced-do-not-gold-plate">6. New surface introduced (do not gold-plate)<a class="headerlink" href="#6-new-surface-introduced-do-not-gold-plate" title="Permanent link">&para;</a></h2>
+<p>The entire new footprint is:</p>
+<ul>
+<li><strong>One promote lease file</strong> at a well-known path (e.g. <code>~/.mac/ha/promote.lease</code>)
+  and a promote-time check that reads it. No new service, no new network
+  protocol.</li>
+<li><strong>One standby freshness schedule</strong> (cron/timer) that calls the existing
+  <code>mac-ledger-backup --verify</code>. No new code path.</li>
+<li><strong>One convention</strong> that the Tier B ship hook rsyncs the evidence-blob
+  directory with the snapshot. Pure <code>MAC_LEDGER_BACKUP_SYNC_CMD</code> content — no
+  code change.</li>
+</ul>
+<p>If a fleet wants the lease and freshness wrapped in a <code>mac</code> subcommand later,
+that is an additive convenience over these primitives, not a prerequisite for
+this posture. This design deliberately stops here.</p>
+<h2 id="7-what-is-deliberately-not-built-and-why">7. What is deliberately NOT built (and why)<a class="headerlink" href="#7-what-is-deliberately-not-built-and-why" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No hub-to-hub replication protocol.</strong> Tier A delegates replication to
+  Postgres; Tier B ships verified snapshots. Building a bespoke replication
+  protocol would create a second write path and threaten the single-authority
+  invariant that dispatch guards, task authority, and attestation depend on.</li>
+<li><strong>No auto-failover for the SQLite tier.</strong> Promotion stays an operator action
+  because fencing cannot be safely inferred by a standby from "I can't reach the
+  hub." An automatic promoter would risk two live authorities that silently
+  diverge with nothing to reconcile them.</li>
+<li><strong>No leader election / consensus service.</strong> A single warm standby with an
+  operator-verified fence lease is the minimum that makes promotion safe; a
+  quorum system is unjustified for one standby and would add operational
+  surface without changing the RPO/RTO envelope.</li>
+<li><strong>No automatic old-hub reintegration merge.</strong> Tasks written to a fenced hub's
+  ledger while partitioned are rescued deliberately via the local-ledger
+  migration tooling; they never merge automatically, preserving one authority.</li>
+</ul>
+<p>The result is one warm standby, an explicit and checkable fence, an atomic
+snapshot+blob replication step, a freshness guard, and a stable-name repoint —
+reusing every existing primitive and adding only a lease file, a verify
+schedule, and a ship-hook convention.</p>
 
 
 
@@ -1884,6 +2095,44 @@ matches <code>bd</code> or was dropped on purpose.</p>
         <footer class="md-footer">
   
     
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../hub-ha-audit/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Hub HA audit">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Hub HA audit
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../break-glass-host-recovery/" class="md-footer__link md-footer__link--next" aria-label="Next: Break-glass recovery">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Break-glass recovery
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
   
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
@@ -1909,10 +2158,10 @@ matches <code>bd</code> or was dropped on purpose.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
