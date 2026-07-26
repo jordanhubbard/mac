@@ -46,6 +46,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md` | Disposition: skill environment-prerequisite finding — smallest repair applied |
 | historical archive | `archive/field-notes/disposition-task-9c83aa5b-skill.md` | Disposition: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — not actionable |
 | historical archive | `archive/field-notes/dream-finding-3dc2cf.md` | Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88 |
+| historical archive | `archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md` | Dream-Finding Assessment: dreamrepair:58afe279d34e186ee4d6d6125532371c |
 | historical archive | `archive/field-notes/dream-finding-6d1b5b.md` | Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119 |
 | historical archive | `archive/field-notes/dream-finding-805aed7.md` | Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce |
 | historical archive | `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md` | Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948) |
