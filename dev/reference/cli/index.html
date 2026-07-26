@@ -3352,57 +3352,59 @@ The book uses executable <code>bash</code> blocks; reference usage is rendered a
 <h2 id="mac-fleet">mac fleet<a class="headerlink" href="#mac-fleet" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="gp">$ </span>mac<span class="w"> </span>fleet<span class="w"> </span>--help
 <a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="go">usage: mac fleet [-h]</span>
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="go">                 {build-distribution,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="go">                 {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}</span>
 <a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="go">                 ...</span>
 <a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>
 <a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="go">positional arguments:</span>
-<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="go">  {build-distribution,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="go">  {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}</span>
 <a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="go">    build-distribution  aggregate live agents by running_digest</span>
-<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="go">    backlog-groom       autonomous backlog grooming: status, manual run, per-</span>
-<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="go">                        project opt-in</span>
-<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="go">    model-selection     dynamic powerhouse-model selection: status, refresh,</span>
-<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="go">                        promote a pending swap</span>
-<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a><span class="go">    ssh-spec            resolve the canonical secret-free SSH route for one</span>
-<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="go">                        fleet agent</span>
-<a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a><span class="go">    refresh-source (refresh)</span>
-<a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a><span class="go">                        ask fleet agents to pull their self-update repo and</span>
-<a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a><span class="go">                        restart themselves if HEAD changes</span>
-<a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a><span class="go">    snapshot            compact view of the fleet: who&#39;s online + what each</span>
-<a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a><span class="go">                        agent is working on</span>
-<a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a><span class="go">    soul-pull           pull each agent&#39;s editable soul text</span>
-<a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a><span class="go">                        (SOUL/USER/MEMORY.md) into a local tree</span>
-<a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a><span class="go">    soul-push           diff an edited soul snapshot vs live and write changes</span>
-<a id="__codelineno-22-23" name="__codelineno-22-23" href="#__codelineno-22-23"></a><span class="go">                        (backup-before-replace)</span>
-<a id="__codelineno-22-24" name="__codelineno-22-24" href="#__codelineno-22-24"></a><span class="go">    soul-audit          audit the remote ~/.hermes directory for a named agent</span>
-<a id="__codelineno-22-25" name="__codelineno-22-25" href="#__codelineno-22-25"></a><span class="go">    memory-export       export Qdrant vector memory to greppable JSONL for</span>
-<a id="__codelineno-22-26" name="__codelineno-22-26" href="#__codelineno-22-26"></a><span class="go">                        vetting</span>
-<a id="__codelineno-22-27" name="__codelineno-22-27" href="#__codelineno-22-27"></a><span class="go">    memory-prune        DELETE vetted Qdrant point ids from a collection</span>
-<a id="__codelineno-22-28" name="__codelineno-22-28" href="#__codelineno-22-28"></a><span class="go">                        (destructive)</span>
-<a id="__codelineno-22-29" name="__codelineno-22-29" href="#__codelineno-22-29"></a><span class="go">    refresh-context     refresh the live Fleet section in this agent&#39;s</span>
-<a id="__codelineno-22-30" name="__codelineno-22-30" href="#__codelineno-22-30"></a><span class="go">                        runtime-context markdown (what the nap-tick-style</span>
-<a id="__codelineno-22-31" name="__codelineno-22-31" href="#__codelineno-22-31"></a><span class="go">                        timer calls so each session knows its teammates)</span>
-<a id="__codelineno-22-32" name="__codelineno-22-32" href="#__codelineno-22-32"></a><span class="go">    validate            validate a declarative mac.fleet_setup.v1 setup spec</span>
-<a id="__codelineno-22-33" name="__codelineno-22-33" href="#__codelineno-22-33"></a><span class="go">    doctor              run setup doctor checks for a declarative fleet spec</span>
-<a id="__codelineno-22-34" name="__codelineno-22-34" href="#__codelineno-22-34"></a><span class="go">    sync-token          pull the hub&#39;s current MAC_API_TOKEN into ~/.mac/.env</span>
-<a id="__codelineno-22-35" name="__codelineno-22-35" href="#__codelineno-22-35"></a><span class="go">                        as MAC_API_TOKEN__&lt;FLEET&gt; (fixes 403 &#39;unknown bearer</span>
-<a id="__codelineno-22-36" name="__codelineno-22-36" href="#__codelineno-22-36"></a><span class="go">                        token&#39; drift)</span>
-<a id="__codelineno-22-37" name="__codelineno-22-37" href="#__codelineno-22-37"></a><span class="go">    creds-status        per-agent coding-CLI (claude/codex/cursor) auth</span>
-<a id="__codelineno-22-38" name="__codelineno-22-38" href="#__codelineno-22-38"></a><span class="go">                        status, from the agents&#39; own heartbeat reports; flags</span>
-<a id="__codelineno-22-39" name="__codelineno-22-39" href="#__codelineno-22-39"></a><span class="go">                        who needs a credential sync</span>
-<a id="__codelineno-22-40" name="__codelineno-22-40" href="#__codelineno-22-40"></a><span class="go">    creds-sync          push THIS workstation&#39;s coding-CLI credentials to</span>
-<a id="__codelineno-22-41" name="__codelineno-22-41" href="#__codelineno-22-41"></a><span class="go">                        fleet workers over their SSH routes (stdin-only</span>
-<a id="__codelineno-22-42" name="__codelineno-22-42" href="#__codelineno-22-42"></a><span class="go">                        transfer; verified on arrival)</span>
-<a id="__codelineno-22-43" name="__codelineno-22-43" href="#__codelineno-22-43"></a><span class="go">    github-ingest       GitHub-issue work generator: status, manual run, and</span>
-<a id="__codelineno-22-44" name="__codelineno-22-44" href="#__codelineno-22-44"></a><span class="go">                        per-project opt-in</span>
-<a id="__codelineno-22-45" name="__codelineno-22-45" href="#__codelineno-22-45"></a><span class="go">    rotate-token        rotate the hub bearer token with an overlap window</span>
-<a id="__codelineno-22-46" name="__codelineno-22-46" href="#__codelineno-22-46"></a><span class="go">                        (dry-run unless --apply)</span>
-<a id="__codelineno-22-47" name="__codelineno-22-47" href="#__codelineno-22-47"></a><span class="go">    move-agent          move an agent between fleets: rewrite fleets.yaml</span>
-<a id="__codelineno-22-48" name="__codelineno-22-48" href="#__codelineno-22-48"></a><span class="go">                        entry, print redeploy command, and emit DB reconcile</span>
-<a id="__codelineno-22-49" name="__codelineno-22-49" href="#__codelineno-22-49"></a><span class="go">                        commands. Dry-run by default; pass --execute to mutate</span>
-<a id="__codelineno-22-50" name="__codelineno-22-50" href="#__codelineno-22-50"></a><span class="go">                        fleets.yaml.</span>
-<a id="__codelineno-22-51" name="__codelineno-22-51" href="#__codelineno-22-51"></a>
-<a id="__codelineno-22-52" name="__codelineno-22-52" href="#__codelineno-22-52"></a><span class="go">options:</span>
-<a id="__codelineno-22-53" name="__codelineno-22-53" href="#__codelineno-22-53"></a><span class="go">  -h, --help            show this help message and exit</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="go">    target              authoritative per-role fleet version pin (source rev +</span>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="go">                        OpenClaw VERSION/REVISION)</span>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="go">    backlog-groom       autonomous backlog grooming: status, manual run, per-</span>
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="go">                        project opt-in</span>
+<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a><span class="go">    model-selection     dynamic powerhouse-model selection: status, refresh,</span>
+<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="go">                        promote a pending swap</span>
+<a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a><span class="go">    ssh-spec            resolve the canonical secret-free SSH route for one</span>
+<a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a><span class="go">                        fleet agent</span>
+<a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a><span class="go">    refresh-source (refresh)</span>
+<a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a><span class="go">                        ask fleet agents to pull their self-update repo and</span>
+<a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a><span class="go">                        restart themselves if HEAD changes</span>
+<a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a><span class="go">    snapshot            compact view of the fleet: who&#39;s online + what each</span>
+<a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a><span class="go">                        agent is working on</span>
+<a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a><span class="go">    soul-pull           pull each agent&#39;s editable soul text</span>
+<a id="__codelineno-22-23" name="__codelineno-22-23" href="#__codelineno-22-23"></a><span class="go">                        (SOUL/USER/MEMORY.md) into a local tree</span>
+<a id="__codelineno-22-24" name="__codelineno-22-24" href="#__codelineno-22-24"></a><span class="go">    soul-push           diff an edited soul snapshot vs live and write changes</span>
+<a id="__codelineno-22-25" name="__codelineno-22-25" href="#__codelineno-22-25"></a><span class="go">                        (backup-before-replace)</span>
+<a id="__codelineno-22-26" name="__codelineno-22-26" href="#__codelineno-22-26"></a><span class="go">    soul-audit          audit the remote ~/.hermes directory for a named agent</span>
+<a id="__codelineno-22-27" name="__codelineno-22-27" href="#__codelineno-22-27"></a><span class="go">    memory-export       export Qdrant vector memory to greppable JSONL for</span>
+<a id="__codelineno-22-28" name="__codelineno-22-28" href="#__codelineno-22-28"></a><span class="go">                        vetting</span>
+<a id="__codelineno-22-29" name="__codelineno-22-29" href="#__codelineno-22-29"></a><span class="go">    memory-prune        DELETE vetted Qdrant point ids from a collection</span>
+<a id="__codelineno-22-30" name="__codelineno-22-30" href="#__codelineno-22-30"></a><span class="go">                        (destructive)</span>
+<a id="__codelineno-22-31" name="__codelineno-22-31" href="#__codelineno-22-31"></a><span class="go">    refresh-context     refresh the live Fleet section in this agent&#39;s</span>
+<a id="__codelineno-22-32" name="__codelineno-22-32" href="#__codelineno-22-32"></a><span class="go">                        runtime-context markdown (what the nap-tick-style</span>
+<a id="__codelineno-22-33" name="__codelineno-22-33" href="#__codelineno-22-33"></a><span class="go">                        timer calls so each session knows its teammates)</span>
+<a id="__codelineno-22-34" name="__codelineno-22-34" href="#__codelineno-22-34"></a><span class="go">    validate            validate a declarative mac.fleet_setup.v1 setup spec</span>
+<a id="__codelineno-22-35" name="__codelineno-22-35" href="#__codelineno-22-35"></a><span class="go">    doctor              run setup doctor checks for a declarative fleet spec</span>
+<a id="__codelineno-22-36" name="__codelineno-22-36" href="#__codelineno-22-36"></a><span class="go">    sync-token          pull the hub&#39;s current MAC_API_TOKEN into ~/.mac/.env</span>
+<a id="__codelineno-22-37" name="__codelineno-22-37" href="#__codelineno-22-37"></a><span class="go">                        as MAC_API_TOKEN__&lt;FLEET&gt; (fixes 403 &#39;unknown bearer</span>
+<a id="__codelineno-22-38" name="__codelineno-22-38" href="#__codelineno-22-38"></a><span class="go">                        token&#39; drift)</span>
+<a id="__codelineno-22-39" name="__codelineno-22-39" href="#__codelineno-22-39"></a><span class="go">    creds-status        per-agent coding-CLI (claude/codex/cursor) auth</span>
+<a id="__codelineno-22-40" name="__codelineno-22-40" href="#__codelineno-22-40"></a><span class="go">                        status, from the agents&#39; own heartbeat reports; flags</span>
+<a id="__codelineno-22-41" name="__codelineno-22-41" href="#__codelineno-22-41"></a><span class="go">                        who needs a credential sync</span>
+<a id="__codelineno-22-42" name="__codelineno-22-42" href="#__codelineno-22-42"></a><span class="go">    creds-sync          push THIS workstation&#39;s coding-CLI credentials to</span>
+<a id="__codelineno-22-43" name="__codelineno-22-43" href="#__codelineno-22-43"></a><span class="go">                        fleet workers over their SSH routes (stdin-only</span>
+<a id="__codelineno-22-44" name="__codelineno-22-44" href="#__codelineno-22-44"></a><span class="go">                        transfer; verified on arrival)</span>
+<a id="__codelineno-22-45" name="__codelineno-22-45" href="#__codelineno-22-45"></a><span class="go">    github-ingest       GitHub-issue work generator: status, manual run, and</span>
+<a id="__codelineno-22-46" name="__codelineno-22-46" href="#__codelineno-22-46"></a><span class="go">                        per-project opt-in</span>
+<a id="__codelineno-22-47" name="__codelineno-22-47" href="#__codelineno-22-47"></a><span class="go">    rotate-token        rotate the hub bearer token with an overlap window</span>
+<a id="__codelineno-22-48" name="__codelineno-22-48" href="#__codelineno-22-48"></a><span class="go">                        (dry-run unless --apply)</span>
+<a id="__codelineno-22-49" name="__codelineno-22-49" href="#__codelineno-22-49"></a><span class="go">    move-agent          move an agent between fleets: rewrite fleets.yaml</span>
+<a id="__codelineno-22-50" name="__codelineno-22-50" href="#__codelineno-22-50"></a><span class="go">                        entry, print redeploy command, and emit DB reconcile</span>
+<a id="__codelineno-22-51" name="__codelineno-22-51" href="#__codelineno-22-51"></a><span class="go">                        commands. Dry-run by default; pass --execute to mutate</span>
+<a id="__codelineno-22-52" name="__codelineno-22-52" href="#__codelineno-22-52"></a><span class="go">                        fleets.yaml.</span>
+<a id="__codelineno-22-53" name="__codelineno-22-53" href="#__codelineno-22-53"></a>
+<a id="__codelineno-22-54" name="__codelineno-22-54" href="#__codelineno-22-54"></a><span class="go">options:</span>
+<a id="__codelineno-22-55" name="__codelineno-22-55" href="#__codelineno-22-55"></a><span class="go">  -h, --help            show this help message and exit</span>
 </code></pre></div>
 <h2 id="mac-journal">mac journal<a class="headerlink" href="#mac-journal" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="gp">$ </span>mac<span class="w"> </span>journal<span class="w"> </span>--help
