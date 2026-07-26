@@ -41,6 +41,7 @@ def test_detect_nvidia_single_gpu_reports_structured_discrete_memory(monkeypatch
             "index": 0,
             "accelerator": "cuda",
             "name": "NVIDIA GeForce RTX 5090",
+            "flavor": "pcie",
             "vram_mb": 32576,
             "memory": {"type": "dedicated", "vram_mb": 32576},
         }
@@ -98,6 +99,7 @@ def test_detect_nvidia_unified_memory_reports_shared_capacity(monkeypatch):
             "index": 0,
             "accelerator": "cuda",
             "name": "NVIDIA GB10",
+            "flavor": "unified",
             "shared": True,
             "memory": {"type": "unified", "shared_mb": 131072},
             "vram_mb": 131072,
@@ -187,6 +189,7 @@ def test_detect_apple_metal_reports_unified_memory(monkeypatch):
         "index": 0,
         "accelerator": "metal",
         "name": "Apple M4 Pro",
+        "flavor": "unified",
         "shared": True,
         "memory": {"type": "unified", "shared_mb": 65536},
         "vram_mb": 65536,
@@ -196,6 +199,7 @@ def test_detect_apple_metal_reports_unified_memory(monkeypatch):
                 "index": 0,
                 "accelerator": "metal",
                 "name": "Apple M4 Pro",
+                "flavor": "unified",
                 "shared": True,
                 "memory": {"type": "unified", "shared_mb": 65536},
                 "vram_mb": 65536,
@@ -352,3 +356,123 @@ def test_is_unified_memory_gpu():
     assert hw._is_unified_memory_gpu("nvidia gb10") is True
     assert hw._is_unified_memory_gpu("NVIDIA GeForce RTX 5090") is False
     assert hw._is_unified_memory_gpu("NVIDIA RTX PRO 6000 Blackwell") is False
+
+
+# --- HGX flavor + confinement topology (fungible onboarding) --------------
+
+_FIXTURE_H100_HGX = "0, 81559, NVIDIA H100 80GB HGX"
+_FIXTURE_H100_HGX_X8 = "\n".join(
+    "%d, 81559, NVIDIA H100 80GB HGX" % index for index in range(8)
+)
+_FIXTURE_H100_PCIE = "0, 81559, NVIDIA H100 PCIe"
+_FIXTURE_A100_SXM = "0, 81920, NVIDIA A100-SXM4-80GB"
+
+
+def test_gpu_flavor_classifies_hgx_pcie_and_unified():
+    assert hw._gpu_flavor("NVIDIA H100 80GB HGX", unified=False) == "hgx"
+    assert hw._gpu_flavor("NVIDIA A100-SXM4-80GB", unified=False) == "hgx"
+    assert hw._gpu_flavor("NVIDIA H200", unified=False) == "hgx"
+    assert hw._gpu_flavor("NVIDIA H100 PCIe", unified=False) == "pcie"
+    assert hw._gpu_flavor("NVIDIA GeForce RTX 5090", unified=False) == "pcie"
+    # Unified parts (GB10, Apple) are their own flavor regardless of the name.
+    assert hw._gpu_flavor("NVIDIA GB10", unified=True) == "unified"
+
+
+def test_detect_nvidia_carries_hgx_flavor(monkeypatch):
+    monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: _FIXTURE_H100_HGX)
+
+    gpu = hw.detect_nvidia()
+
+    assert gpu is not None
+    assert gpu["flavor"] == "hgx"
+    assert gpu["gpus"][0]["flavor"] == "hgx"
+
+
+def test_detect_nvidia_pcie_h100_is_not_hgx(monkeypatch):
+    monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: _FIXTURE_H100_PCIE)
+
+    gpu = hw.detect_nvidia()
+
+    assert gpu is not None
+    assert gpu["flavor"] == "pcie"
+    assert gpu["gpus"][0]["flavor"] == "pcie"
+
+
+def test_detect_nvidia_sxm_family_is_hgx(monkeypatch):
+    monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: _FIXTURE_A100_SXM)
+
+    gpu = hw.detect_nvidia()
+
+    assert gpu is not None
+    assert gpu["flavor"] == "hgx"
+
+
+def test_confinement_topology_hgx_baseboard():
+    gpus = [
+        {"index": i, "accelerator": "cuda", "name": "NVIDIA H100 80GB HGX", "flavor": "hgx"}
+        for i in range(8)
+    ]
+    topology = hw._confinement_topology(gpus)
+    assert topology == {"kind": "hgx-baseboard", "gpus": 8, "flavors": ["hgx"]}
+
+
+def test_confinement_topology_discrete_and_unified_and_none():
+    discrete = hw._confinement_topology(
+        [{"index": 0, "flavor": "pcie"}]
+    )
+    assert discrete == {"kind": "discrete", "gpus": 1, "flavors": ["pcie"]}
+
+    unified = hw._confinement_topology(
+        [{"index": 0, "flavor": "unified", "shared": True}]
+    )
+    assert unified == {"kind": "unified", "gpus": 1, "flavors": ["unified"]}
+
+    assert hw._confinement_topology([]) == {"kind": "none", "gpus": 0}
+
+
+def test_detect_hardware_carries_topology_and_flavor_through_onboarding(monkeypatch):
+    monkeypatch.setattr(hw.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(hw.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(hw.os, "cpu_count", lambda: 128)
+    monkeypatch.setattr(hw, "_memory_mb", lambda: 1048576)
+    monkeypatch.setattr(hw, "_run", lambda cmd, timeout=5.0: _FIXTURE_H100_HGX_X8)
+
+    info = hw.detect_hardware()
+
+    assert info["accelerator"] == "cuda"
+    assert info["topology"] == {"kind": "hgx-baseboard", "gpus": 8, "flavors": ["hgx"]}
+    assert info["flavor"] == "hgx"
+    assert all(gpu["flavor"] == "hgx" for gpu in info["gpus"])
+
+
+def test_detect_hardware_no_accelerator_reports_none_topology(monkeypatch):
+    monkeypatch.setattr(hw, "detect_nvidia", lambda: None)
+    monkeypatch.setattr(hw, "detect_apple_metal", lambda: None)
+
+    info = hw.detect_hardware()
+
+    assert info["topology"] == {"kind": "none", "gpus": 0}
+    assert "flavor" not in info
+
+
+def test_summarize_surfaces_hgx_baseboard():
+    summary = hw.summarize(
+        {
+            "accelerator": "cuda",
+            "os": "linux",
+            "arch": "x86_64",
+            "cpu_count": 128,
+            "memory_mb": 1048576,
+            "flavor": "hgx",
+            "topology": {"kind": "hgx-baseboard", "gpus": 8, "flavors": ["hgx"]},
+            "gpu": {
+                "accelerator": "cuda",
+                "name": "NVIDIA H100 80GB HGX",
+                "count": 8,
+                "vram_mb": 81559,
+                "memory": {"type": "dedicated", "vram_mb": 81559},
+            },
+        }
+    )
+    assert "hgx-baseboard" in summary
+    assert "NVIDIA H100 80GB HGX x8" in summary

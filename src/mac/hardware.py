@@ -38,6 +38,20 @@ SCHEMA = "mac.hardware.v1"
 _UNIFIED_MEMORY_SUBSTRINGS = ("GB10",)
 _NVIDIA_UNAVAILABLE_MEMORY_VALUES = ("", "N/A", "[N/A]")
 
+# HGX "flavor": NVIDIA HGX baseboards host multiple SXM GPUs on one carrier
+# (e.g. "NVIDIA H100 80GB HGX", "NVIDIA H200", "NVIDIA A100-SXM4-80GB"). These
+# parts are onboarded as a *fungible* pool — the fleet treats their GPUs as
+# interchangeable baseboard slices — so the snapshot carries a coarse ``flavor``
+# ("hgx" | "pcie" | "unified") that survives onboarding for pool placement.
+# nvidia-smi does not expose the flavor directly, so it is derived from the
+# product name: SXM/HGX marketing strings, or an explicit "HGX" token.
+_HGX_NAME_SUBSTRINGS = ("HGX", "SXM")
+# Known HGX-class SXM product families whose marketing name omits SXM/HGX in
+# some driver builds (nvidia-smi shortens "NVIDIA H100 80GB HGX" to "NVIDIA
+# H100"). Matched as whole product tokens so a PCIe "H100 PCIe" never matches.
+_HGX_PRODUCT_TOKENS = ("H100", "H200", "H800", "GH200", "B200", "GB200")
+_HGX_PCIE_MARKER = "PCIE"
+
 
 def _run(cmd: list, timeout: float = 5.0) -> Optional[str]:
     """Run a probe command, returning stdout on success or None on any failure
@@ -72,6 +86,59 @@ def _is_unified_memory_gpu(name: str) -> bool:
     """Return True for GPUs that use unified / shared system memory (no VRAM)."""
     name_upper = name.upper()
     return any(s.upper() in name_upper for s in _UNIFIED_MEMORY_SUBSTRINGS)
+
+
+def _gpu_flavor(name: str, *, unified: bool) -> str:
+    """Coarse onboarding flavor for a GPU: ``unified`` | ``hgx`` | ``pcie``.
+
+    The flavor is what the fungible-onboarding path carries into the registry so
+    the fleet can pool HGX baseboard slices as interchangeable capacity. It is a
+    best-effort classification of the *part*, derived from the product name only
+    (nvidia-smi has no flavor query), and defaults to ``pcie`` when unknown so a
+    discrete card is never mis-pooled as an HGX slice.
+    """
+    if unified:
+        return "unified"
+    name_upper = name.upper()
+    if _HGX_PCIE_MARKER in name_upper:
+        return "pcie"
+    if any(marker in name_upper for marker in _HGX_NAME_SUBSTRINGS):
+        return "hgx"
+    tokens = set(name_upper.replace("-", " ").split())
+    if any(token in tokens for token in _HGX_PRODUCT_TOKENS):
+        return "hgx"
+    return "pcie"
+
+
+def _confinement_topology(gpus: list[Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarize how the host's accelerators are confined for onboarding.
+
+    The confinement topology travels with the fungible-onboarding snapshot so a
+    scheduler can reason about interchangeable capacity without re-probing the
+    node. ``kind`` is:
+
+      - ``none``            no accelerator detected
+      - ``unified``         unified/shared-memory accelerator(s) (GB10, Apple)
+      - ``hgx-baseboard``   one or more HGX/SXM GPUs sharing a baseboard
+      - ``discrete``        one or more discrete PCIe GPUs
+
+    ``gpus`` is the confined GPU count and ``flavors`` lists the distinct flavors
+    present (a mixed host reports every flavor it carries).
+    """
+    if not gpus:
+        return {"kind": "none", "gpus": 0}
+    flavors = sorted({str(g.get("flavor")) for g in gpus if g.get("flavor")})
+    count = len(gpus)
+    if any(g.get("flavor") == "hgx" for g in gpus):
+        kind = "hgx-baseboard"
+    elif all(g.get("shared") for g in gpus):
+        kind = "unified"
+    else:
+        kind = "discrete"
+    topology: Dict[str, Any] = {"kind": kind, "gpus": count}
+    if flavors:
+        topology["flavors"] = flavors
+    return topology
 
 
 def _parse_nvidia_vram_mb(value: str) -> Optional[int]:
@@ -137,7 +204,12 @@ def _parse_nvidia_gpu_row(row: str, fallback_index: int) -> Optional[Dict[str, A
     # *unknown* memory configuration — fabricating a shared_mb from system RAM would
     # be incorrect and misleading.
     unified = _is_unified_memory_gpu(name)
-    gpu: Dict[str, Any] = {"index": index, "accelerator": "cuda", "name": name}
+    gpu: Dict[str, Any] = {
+        "index": index,
+        "accelerator": "cuda",
+        "name": name,
+        "flavor": _gpu_flavor(name, unified=unified),
+    }
     if unified:
         shared_memory_mb = _memory_mb()
         gpu["shared"] = True
@@ -196,6 +268,7 @@ def detect_apple_metal() -> Optional[Dict[str, Any]]:
         "index": 0,
         "accelerator": "metal",
         "name": chip,
+        "flavor": "unified",
         "shared": True,
         "memory": _unified_memory(memory_mb),
     }
@@ -225,6 +298,15 @@ def detect_hardware() -> Dict[str, Any]:
         if isinstance(gpu.get("gpus"), list):
             info["gpus"] = gpu["gpus"]
         info["accelerator"] = gpu.get("accelerator", "none")
+    # Carry the confinement topology (and, for a homogeneous host, the single
+    # onboarding flavor) so the fungible-onboarding snapshot the fleet stores is
+    # self-describing — the scheduler pools HGX baseboard slices without having
+    # to re-probe the node.
+    gpu_list = info.get("gpus") if isinstance(info.get("gpus"), list) else []
+    info["topology"] = _confinement_topology(gpu_list)
+    flavors = info["topology"].get("flavors") or []
+    if len(flavors) == 1:
+        info["flavor"] = flavors[0]
     return info
 
 
@@ -242,6 +324,11 @@ def summarize(hardware: Optional[Dict[str, Any]]) -> str:
         label = "%s x%d" % (gpu.get("name", "GPU"), count) if count > 1 else str(gpu.get("name", "GPU"))
         vram_label = (" %dGB%s" % (vram / 1024, " shared" if shared else "")) if vram else ""
         parts.append("%s [%s%s]" % (label, accel, vram_label))
+        # Surface the HGX baseboard confinement so `mac agent hardware` shows the
+        # fungible-pool flavor at a glance.
+        topology = hardware.get("topology") if isinstance(hardware.get("topology"), dict) else None
+        if topology and topology.get("kind") == "hgx-baseboard":
+            parts.append("hgx-baseboard")
     else:
         parts.append("accelerator=%s" % accel)
     parts.append("%s/%s" % (hardware.get("os", "?"), hardware.get("arch", "?")))
