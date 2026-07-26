@@ -273,6 +273,12 @@ remove. **Checking each against the reference graph and git history overturned t
 > abandoned one doesn't hide among the merely-not-yet-wired. (Contrast `ide_launcher.py` /
 > `hermes_chat_config.py`, un-imported yet invoked via `python -m mac.<mod>` — also not dead.)
 
+> **Tracking follow-up (done):** the per-module integration classification called for above is
+> recorded in `docs/reference/staged-module-integration-audit.md`. A regenerated enumeration
+> found 19 candidates — 10 `keep-wired` (entrypoint/script-deploy), 9 `stage-with-tracking`
+> (tested, design-traced, not yet called at runtime), and **0 abandoned**. No deletion is
+> warranted; the only action is lightweight wiring-tracking for the staged modules.
+
 ### 6.2 Beads-removal residue — mostly a live mechanism with a legacy name
 
 The legacy beads *dolt-sync* bridge is genuinely gone (removal markers at `dispatch.py:2144`,
