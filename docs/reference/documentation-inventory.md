@@ -126,6 +126,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `home-consolidation.md` | Home-Directory Consolidation: Analysis & Plan |
 | runbook | `hub-availability.md` | Hub Availability |
 | supplemental reference | `hub-ha-audit.md` | Ground-Truth Audit: Hub High-Availability Primitives |
+| supplemental reference | `hub-host-saturation-remediation.md` | Hub-Host Saturation Remediation |
 | supplemental reference | `image-publication-and-qualification.md` | Image Publication and Pre-Publication Qualification |
 | landing page | `index.md` | MAC: trustworthy work across an agent fleet |
 | supplemental reference | `integration-authority-contract.md` | Integration Authority Contract |
