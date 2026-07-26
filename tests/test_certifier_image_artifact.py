@@ -492,6 +492,39 @@ def test_cutover_canary_is_plan_only_without_three_live_authorizations(capsys) -
     assert "--confirm-exclusive-main-window" in error
 
 
+def test_cutover_canary_plan_mode_ignores_ambient_hub_url(
+    monkeypatch, capsys
+) -> None:
+    # When both --repository-id and --canonical-remote are supplied, the plan
+    # is built entirely offline. An ambient MAC_URL (the --hub-url default)
+    # must NOT trigger a live hub request in read-only plan mode; otherwise the
+    # documented "print both plans" mode silently depends on a reachable,
+    # authorized hub.
+    monkeypatch.setenv("MAC_URL", "https://hub.invalid")
+
+    def fail_request(*args, **kwargs):  # pragma: no cover - must never run
+        raise AssertionError("plan mode must not contact the hub")
+
+    monkeypatch.setattr(canary, "_request", fail_request)
+
+    common = [
+        "--repository-id",
+        "projectrepo_mac",
+        "--canonical-remote",
+        "git@example.invalid:owner/repo.git",
+        "--base-sha",
+        "e" * 40,
+        "--run-id",
+        "pilot_guard",
+        "--case",
+        "negative",
+    ]
+    assert canary.main(common) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["mode"] == "plan"
+    assert "receipts" not in output
+
+
 def test_repository_discovery_passes_read_token_without_recording_it(
     monkeypatch,
 ) -> None:
