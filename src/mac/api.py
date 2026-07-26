@@ -4277,11 +4277,21 @@ def create_app(
         status_code = 500
         error_name = ""
         try:
+            # Public liveness/discovery routes do not need a principal. Avoid
+            # consulting the dynamic worker-principal registry for them: that
+            # registry is SQLite-backed, so a legitimate long maintenance
+            # transaction could otherwise make /health wait on the store lock
+            # and provoke the supervisor into killing a busy-but-live hub.
+            auth_tokens_for_request = (
+                {}
+                if _required_scope(request.method, request.url.path) is None
+                else _current_auth_tokens()
+            )
             principal = _authorize_request(
                 request.method,
                 request.url.path,
                 request.headers.get("authorization"),
-                _current_auth_tokens(),
+                auth_tokens_for_request,
             )
             if principal is not None:
                 principal = replace(

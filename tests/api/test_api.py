@@ -58,6 +58,21 @@ def test_hub_tick_loop_gated_by_env(monkeypatch):
     assert getattr(app2.state, "hub_tick_thread", None) is None
 
 
+def test_health_does_not_wait_on_dynamic_principal_store(monkeypatch):
+    app = create_app(control_plane=ControlPlane.in_memory())
+
+    def _principal_store_must_not_be_read():
+        raise AssertionError("public health route consulted worker principals")
+
+    monkeypatch.setattr(
+        app.state.worker_principals,
+        "tokens",
+        _principal_store_must_not_be_read,
+    )
+    with TestClient(app) as client:
+        assert client.get("/health").json() == {"status": "ok"}
+
+
 def test_repository_ref_reconciler_follows_app_lifecycle(monkeypatch):
     monkeypatch.setenv("MAC_REPOSITORY_REF_RECONCILER_MODE", "audit")
     monkeypatch.setenv("MAC_REPOSITORY_REF_RECONCILER_INTERVAL_SECONDS", "999")

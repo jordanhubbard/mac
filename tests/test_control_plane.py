@@ -13842,6 +13842,28 @@ def test_hub_review_verification_approves_and_publishes(cp, monkeypatch):
     assert "workflow.default_review.published" in names
 
 
+def test_periodic_review_sweep_defers_blocking_hub_verification(cp, monkeypatch):
+    monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
+    runner_calls = []
+    worker, reviewer, task, evidence = _setup_hubverify_task(
+        cp,
+        lambda *args: (runner_calls.append(args) or (0, "all passed")),
+    )
+    nudged = []
+    cp._nudge_review_workflow = nudged.append
+
+    result = cp.advance_default_review_workflows(
+        limit=10,
+        allow_blocking_hub_verify=False,
+    )
+
+    task_result = next(item for item in result["results"] if item["task_id"] == task.id)
+    assert task_result["status"] == "waiting_for_hub_verify"
+    assert nudged == [task.id]
+    assert runner_calls == []
+    assert cp.get_task(task.id).state == TaskState.REVIEWING.value
+
+
 def test_hub_review_verification_rejects_on_failing_contract_test(cp, monkeypatch):
     monkeypatch.setenv("MAC_REVIEW_HUB_VERIFY", "1")
     worker, reviewer, task, evidence = _setup_hubverify_task(

@@ -18472,6 +18472,7 @@ class ControlPlane:
             limit=limit_value,
             actor="default-review-workflow",
             tenant_id=None,
+            allow_blocking_hub_verify=False,
         )
         # Desired-source holds must land before dispatch.  Otherwise a stale
         # idle node can acquire new work in the same tick that notices drift.
@@ -20260,6 +20261,7 @@ class ControlPlane:
         limit: int,
         actor: str,
         tenant_id: Optional[str],
+        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         """Advance one database-coordinated cursor page for autonomous callers."""
         claim = self.reconciliation.claim("default-review-sweep")
@@ -20277,6 +20279,7 @@ class ControlPlane:
                 actor=actor,
                 tenant_id=tenant_id,
                 cursor=claim.cursor,
+                allow_blocking_hub_verify=allow_blocking_hub_verify,
             )
         except Exception:
             self.reconciliation.abandon(claim)
@@ -20293,6 +20296,7 @@ class ControlPlane:
         actor: str = "default-review-workflow",
         tenant_id: Optional[str] = None,
         cursor: Optional[str] = None,
+        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         """Sweep one bounded, state-filtered page of reviewable tasks.
 
@@ -20338,9 +20342,18 @@ class ControlPlane:
             # must not abort the tick and starve dispatch. The self-driver never
             # crashes the hub; it records the failure and moves on.
             try:
-                results.append(
-                    self.advance_default_review_workflow(task.id, actor=actor)
-                )
+                if allow_blocking_hub_verify:
+                    result = self.advance_default_review_workflow(
+                        task.id,
+                        actor=actor,
+                    )
+                else:
+                    result = self.advance_default_review_workflow(
+                        task.id,
+                        actor=actor,
+                        allow_blocking_hub_verify=False,
+                    )
+                results.append(result)
             except Exception as exc:  # noqa: BLE001 - one row must not stop the sweep
                 try:
                     self._record_default_review_observation(
@@ -20409,6 +20422,8 @@ class ControlPlane:
         self,
         task_id: str,
         actor: str = "default-review-workflow",
+        *,
+        allow_blocking_hub_verify: bool = True,
     ) -> JsonDict:
         task = self.get_task(task_id)
         if task.state == TaskState.COMPLETED.value:
@@ -20720,7 +20735,15 @@ class ControlPlane:
             # holds (the verdict is signed by a non-author agent); the fragile
             # N-node verification collapses to one controlled environment.
             if verdict_evidence is None and _hub_review_verify_enabled():
-                self._run_hub_review_verification(task, review, evidence, actor)
+                if allow_blocking_hub_verify:
+                    self._run_hub_review_verification(task, review, evidence, actor)
+                else:
+                    # The periodic tick owns lease expiry, dependency
+                    # unblocking, and dispatch. Never make that clock wait for
+                    # Git/OpenShell/tests; the dedicated event consumer retains
+                    # the same fail-closed verifier and per-review in-flight
+                    # guard.
+                    self._nudge_review_workflow(task.id)
                 verdict_evidence, verdict_problems = self._find_review_verdict_evidence(
                     task_id,
                     review.reviewer_agent_id,
