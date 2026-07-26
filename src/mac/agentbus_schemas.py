@@ -49,6 +49,15 @@ AGENTBUS_SCHEMA_REGISTRY: Dict[str, SchemaSpec] = {
             "from_agent_id": str,
             "to_agent_id": str,
             "status": str,
+            # Structured turn-execution outcome (mac.agentbus_outcomes.TURN_*).
+            # Distinct from ``status``: it names WHY a non-ok status was chosen
+            # (turn_timeout / output_truncated / tool_failed / model_failed /
+            # refused / error) so a consumer never parses ``reply`` prose.
+            "turn_outcome": str,
+            # True when this reply arrived after the caller's wait budget; it
+            # stays correlated to the original stream and is surfaced as late,
+            # not lost or duplicated.
+            "late": bool,
             "reply": str,
         },
     },
@@ -76,7 +85,20 @@ AGENTBUS_SCHEMA_REGISTRY: Dict[str, SchemaSpec] = {
     },
     "mac.fleet_conversation_mirror.v1": {
         "required": ["schema"],
-        "fields": {"schema": str, "stream_id": str, "sender_agent_id": str},
+        "fields": {
+            "schema": str,
+            "stream_id": str,
+            "sender_agent_id": str,
+            # Provenance (task_60be7f29): the rendered Slack text is a
+            # model-written summary, never verbatim or execution evidence.
+            "summary_is_model_generated": bool,
+            "is_execution_evidence": bool,
+            "source_stream_id": str,
+            "source_status": str,
+            "reply_status": str,
+            "turn_binding": str,
+            "summarizer_model": str,
+        },
     },
     "mac.human.directive.v1": {
         "required": ["schema", "message"],

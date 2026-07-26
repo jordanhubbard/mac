@@ -996,6 +996,119 @@ def test_mac_peer_bridge_turns_authenticated_inbound_stream_into_correlated_repl
     assert state["processed"] == ["bus_in"]
 
 
+def test_peer_bridge_signs_embedded_turn_failure_as_non_ok(tmp_path: Path) -> None:
+    """Honest outcome (task_7f2ce5e4, incident task_60be7f29): an embedded turn
+    that returns "LLM request failed / timed out" as reply text must be signed
+    with a non-ok peer.reply status and a structured turn_outcome — never ok —
+    and its Slack mirror must carry provenance (model-generated, not execution
+    evidence). Drives the real module against a scripted hub."""
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").as_uri()
+    state_dir = tmp_path / "state"
+    agent_dir = tmp_path / "agent"
+    workspace = tmp_path / "workspace"
+    script = f"""
+      const mod = await import({json.dumps(plugin)});
+      let service = null;
+      const posts = [];
+      const deliveries = [];
+      const incoming = {{
+        id: "bus_in", sender_agent_id: "agent_rocky", recipient_agent_id: "agent_natasha",
+        topic: "peer.message.v1", status: "closed", created_at: "2026-07-12T00:00:00Z",
+        headers: {{correlation_id: "corr-1"}},
+      }};
+      globalThis.fetch = async (url, opts = {{}}) => {{
+        const parsed = new URL(String(url));
+        if (parsed.pathname === "/agentbus/streams") return {{ok: true, json: async () => [incoming]}};
+        if (parsed.pathname === "/agentbus/streams/bus_in/chunks") return {{ok: true, json: async () => [{{payload: {{
+          schema: "mac.agent.peer_message.v1", correlation_id: "corr-1",
+          from_agent_id: "agent_rocky", to_agent_id: "agent_natasha", message: "Please run the build.",
+        }}}}]}};
+        if (parsed.pathname.endsWith("/config-flags")) return {{ok: true, json: async () => ({{flags: [{{flag: "mirror_fleet_conversation", value: true}}]}})}};
+        if (parsed.pathname === "/agents") return {{ok: true, json: async () => [
+          {{id: "agent_rocky", name: "Rocky"}}, {{id: "agent_natasha", name: "Natasha"}},
+        ]}};
+        if (parsed.pathname === "/communication/deliveries" && (opts.method || "GET") === "POST") {{
+          deliveries.push(JSON.parse(opts.body));
+          return {{ok: true, json: async () => ({{}})}};
+        }}
+        if (parsed.pathname === "/agentbus" && (opts.method || "GET") === "POST") {{
+          posts.push(JSON.parse(opts.body));
+          return {{ok: true, json: async () => ({{stream: {{id: "bus_reply"}}}})}};
+        }}
+        // Mirror summarizer chat-completion (control URL /v1/chat/completions).
+        if (parsed.pathname.endsWith("/v1/chat/completions")) return {{ok: true, json: async () => ({{choices: [{{message: {{content: "Rocky asked Natasha to run the build."}}}}]}})}};
+        throw new Error(`unexpected URL ${{url}}`);
+      }};
+      const api = {{
+        pluginConfig: {{peerPollIntervalMs: 250, peerMaxAttempts: 2}},
+        config: {{}},
+        logger: {{warn: () => {{}}, info: () => {{}}}},
+        on: () => {{}}, registerTool: () => {{}}, registerService: (value) => {{service = value;}},
+        runtime: {{
+          config: {{current: () => ({{}})}},
+          agent: {{
+            ensureAgentWorkspace: async () => {{}},
+            resolveAgentDir: () => {json.dumps(str(agent_dir))},
+            resolveAgentWorkspaceDir: () => {json.dumps(str(workspace))},
+            resolveAgentTimeoutMs: () => 1000,
+            runEmbeddedAgent: async () => ({{
+              stop_reason: "turn_limit",
+              payloads: [{{text: "LLM request failed / timed out after 300 seconds."}}],
+            }}),
+          }},
+        }},
+      }};
+      mod.default.register(api);
+      service.start();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      service.stop();
+      const reply = posts.find((p) => p.topic === "peer.reply.v1");
+      if (!reply) process.exit(2);
+      if (reply.payload.status === "ok") process.exit(3);          // never ok
+      if (!reply.payload.turn_outcome) process.exit(4);            // structured
+      if (reply.payload.status !== "timeout" && reply.payload.status !== "failed") process.exit(5);
+      const mirror = deliveries.find((d) => d.metadata && d.metadata.schema === "mac.fleet_conversation_mirror.v1");
+      if (!mirror) process.exit(6);
+      if (mirror.metadata.summary_is_model_generated !== true) process.exit(7);
+      if (mirror.metadata.is_execution_evidence !== false) process.exit(8);
+      if (mirror.metadata.reply_status === "ok") process.exit(9);  // reflects failure
+      if (mirror.metadata.turn_binding !== "persona") process.exit(10);
+    """
+    env = {
+        **os.environ,
+        "OPENCLAW_STATE_DIR": str(state_dir),
+        "MAC_OPENCLAW_AGENT_ID": "agent_natasha",
+        "MAC_OPENCLAW_CONTROL_URL": "http://hub:8789",
+        "MAC_OPENCLAW_ROUTER_API_KEY": "bound-agent-token",
+        "MAC_OPENCLAW_HOME_CHANNEL": "slack:home",
+    }
+    subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+
+
+def test_peer_bridge_reply_and_mirror_expose_honest_semantics_source() -> None:
+    """Static contract: the plugin classifies turn outcomes, signs the honest
+    status, and stamps mirror provenance (mirrors src/mac/agentbus_outcomes.py)."""
+    plugin = (OPENCLAW_DIR / "plugins" / "mac-continuity" / "index.js").read_text(
+        encoding="utf-8"
+    )
+    assert "classifyTurnOutcome" in plugin
+    assert "replyStatusForOutcome" in plugin
+    assert "deliveryOutcome" in plugin
+    assert "mirrorProvenance" in plugin
+    # The honest-status seam is threaded into publishPeerReply and the mirror.
+    assert "turn_outcome" in plugin
+    assert "summary_is_model_generated" in plugin
+    assert "is_execution_evidence" in plugin
+    assert "turn_binding" in plugin
+
+
 def test_mac_image_generate_posts_to_hub_media_router_and_writes_png() -> None:
     # 1x1 PNG, base64 — what the hub /v1/media/image.generate returns.
     png_b64 = (

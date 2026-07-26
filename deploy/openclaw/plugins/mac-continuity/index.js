@@ -58,6 +58,123 @@ const MIRROR_SYSTEM_PROMPT = [
   "No preamble, no quotes, no commentary, no markdown. Never invent facts beyond the exchange.",
 ].join(" ");
 
+// --------------------------------------------------------------------------- //
+// Honest, structured turn-outcome + provenance semantics (task_60be7f29).
+// These MIRROR src/mac/agentbus_outcomes.py exactly — same names, same rules —
+// so the directable worker (Python) and this gateway plugin (JS) sign identical
+// peer.reply.v1 and mirror provenance. Error text is NEVER signed status "ok".
+// --------------------------------------------------------------------------- //
+const TURN_COMPLETED = "completed";
+const TURN_TIMEOUT = "turn_timeout";
+const TURN_OUTPUT_TRUNCATED = "output_truncated";
+const TURN_TOOL_FAILED = "tool_failed";
+const TURN_MODEL_FAILED = "model_failed";
+const TURN_REFUSED = "refused";
+const TURN_ERROR = "error";
+
+const OUTCOME_TO_REPLY_STATUS = {
+  [TURN_COMPLETED]: "ok",
+  [TURN_TIMEOUT]: "timeout",
+  [TURN_OUTPUT_TRUNCATED]: "truncated",
+  [TURN_TOOL_FAILED]: "failed",
+  [TURN_MODEL_FAILED]: "failed",
+  [TURN_REFUSED]: "refused",
+  [TURN_ERROR]: "error",
+};
+
+function replyStatusForOutcome(outcome) {
+  return OUTCOME_TO_REPLY_STATUS[String(outcome || "")] || "error";
+}
+
+const TIMEOUT_TEXT = /\b(turn limit|max(?:imum)? turns?|step limit|timed?\s*out|timeout|deadline (?:exceeded|elapsed)|exceeded the (?:turn|time) )/i;
+const MODEL_FAIL_TEXT = /\b(llm request failed|model (?:request )?failed|completion failed|inference (?:request )?failed|request to the model failed)\b/i;
+const TOOL_FAIL_TEXT = /\b(tool (?:call )?(?:failed|error)|find(?:-| )tool (?:failed|error)|command (?:failed|not found)|no such tool|tool .* (?:failed|errored))\b/i;
+const TRUNCATED_TEXT = /\b(output (?:length|limit)|max(?:imum)?[_ ]?(?:output[_ ]?)?tokens|length limit|response truncated|truncated (?:output|response))\b/i;
+
+function normOutcomeToken(value) {
+  return String(value || "").trim().toLowerCase().replace(/-/g, "_").replace(/ /g, "_");
+}
+
+function classifyOutcomeText(text) {
+  if (!text) return null;
+  if (MODEL_FAIL_TEXT.test(text)) return TURN_MODEL_FAILED;
+  if (TIMEOUT_TEXT.test(text)) return TURN_TIMEOUT;
+  if (TRUNCATED_TEXT.test(text)) return TURN_OUTPUT_TRUNCATED;
+  if (TOOL_FAIL_TEXT.test(text)) return TURN_TOOL_FAILED;
+  return null;
+}
+
+function stopReasonOutcome(reason) {
+  const r = normOutcomeToken(reason);
+  if (!r) return null;
+  if (["length", "max_tokens", "output_limit", "max_output_tokens", "token_limit"].includes(r)) return TURN_OUTPUT_TRUNCATED;
+  if (["turn_limit", "max_turns", "step_limit", "max_steps", "timeout", "timed_out", "deadline", "deadline_exceeded"].includes(r)) return TURN_TIMEOUT;
+  if (["tool_error", "tool_failed", "tool_failure"].includes(r)) return TURN_TOOL_FAILED;
+  if (["model_error", "model_failed", "llm_error", "provider_error"].includes(r)) return TURN_MODEL_FAILED;
+  if (["refused", "declined", "policy", "safety"].includes(r)) return TURN_REFUSED;
+  if (["stop", "end_turn", "complete", "completed", "done", "eos"].includes(r)) return TURN_COMPLETED;
+  return null;
+}
+
+// Classify a runtime result (+ its reply text) into a TURN_* outcome. Mirrors
+// mac.agentbus_outcomes.classify_turn_result: hard timeout wins, then
+// structured result fields, then the reply prose fingerprints.
+function classifyTurnOutcome(result, replyText = "", {timedOut = false} = {}) {
+  if (timedOut) return TURN_TIMEOUT;
+  const text = String(replyText || "");
+  if (result && typeof result === "object") {
+    for (const key of ["turn_outcome", "outcome", "stop_reason", "finish_reason", "stopReason", "finishReason"]) {
+      const mapped = stopReasonOutcome(result[key]);
+      if (mapped && mapped !== TURN_COMPLETED) return mapped;
+    }
+    const errorObj = result.error || result.failure;
+    if (errorObj) {
+      let kind = "";
+      let detail = "";
+      if (errorObj && typeof errorObj === "object") {
+        kind = normOutcomeToken(errorObj.kind || errorObj.type || errorObj.code);
+        detail = String(errorObj.message || errorObj.detail || "");
+      } else {
+        detail = String(errorObj);
+      }
+      if (kind.includes("timeout") || kind.includes("turn_limit") || kind.includes("deadline")) return TURN_TIMEOUT;
+      if (kind.includes("tool")) return TURN_TOOL_FAILED;
+      if (kind.includes("model") || kind.includes("llm") || kind.includes("provider")) return TURN_MODEL_FAILED;
+      return classifyOutcomeText(detail || text) || TURN_ERROR;
+    }
+    const toolStatus = normOutcomeToken(result.tool_status || result.toolStatus);
+    if (result.tool_error || result.toolError || ["failed", "error", "not_found"].includes(toolStatus)) return TURN_TOOL_FAILED;
+    if (result.timed_out || result.timedOut) return TURN_TIMEOUT;
+  }
+  return classifyOutcomeText(text) || TURN_COMPLETED;
+}
+
+// Transport-level outcome, distinct from the turn outcome (task_60be7f29):
+// acknowledged delivery vs. sync wait-budget expiry vs. a late async reply that
+// arrived after the budget (correlated, not lost) vs. a reply within budget.
+function deliveryOutcome({waitBudgetSeconds, replyPresent, replyWithinBudget}) {
+  if (!(waitBudgetSeconds > 0)) return "acknowledged";
+  if (replyPresent && replyWithinBudget) return "replied";
+  if (replyPresent && !replyWithinBudget) return "late";
+  return "wait_expired";
+}
+
+// Concise provenance for every mac.fleet_conversation_mirror.v1 record: the
+// visible Slack text is a model-written summary, never verbatim or execution
+// evidence; and turn_binding records persona-only vs. task-executor-bound.
+function mirrorProvenance({sourceStreamId, sourceStatus = "ok", replyStatus = "ok", taskExecutorBound = false, summarizerModel = ""}) {
+  const provenance = {
+    summary_is_model_generated: true,
+    is_execution_evidence: false,
+    source_stream_id: String(sourceStreamId || ""),
+    source_status: String(sourceStatus || "ok"),
+    reply_status: String(replyStatus || "ok"),
+    turn_binding: taskExecutorBound ? "task_executor" : "persona",
+  };
+  if (summarizerModel) provenance.summarizer_model = String(summarizerModel);
+  return provenance;
+}
+
 function peerStatePath() {
   const root = String(process.env.OPENCLAW_STATE_DIR || "/sandbox/state");
   return join(root, "mac-continuity", "peer-bridge.json");
@@ -272,8 +389,22 @@ async function publishPeerMessage(api, recipientId, message, correlationId) {
   });
 }
 
-async function publishPeerReply(api, requestStream, correlationId, reply, status = "ok") {
+async function publishPeerReply(api, requestStream, correlationId, reply, status = "ok", opts = {}) {
   const cfg = settings(api);
+  const payload = {
+    schema: PEER_REPLY_SCHEMA,
+    correlation_id: correlationId,
+    in_reply_to: requestStream.id,
+    from_agent_id: cfg.agentId,
+    to_agent_id: requestStream.sender_agent_id,
+    status,
+    reply: String(reply || "").slice(0, 32000),
+  };
+  // Structured turn-execution outcome so a consumer never parses reply prose to
+  // learn WHY a non-ok status was chosen; and a late marker for a reply that
+  // arrived after the caller's wait budget (still correlated, not lost).
+  if (opts.turnOutcome) payload.turn_outcome = String(opts.turnOutcome);
+  if (opts.late) payload.late = true;
   return hubApi(api, "POST", "/agentbus", {
     body: {
       sender_agent_id: cfg.agentId,
@@ -287,15 +418,7 @@ async function publishPeerReply(api, requestStream, correlationId, reply, status
         authenticated_by: "mac-agentbus",
       },
       payload_encoding: "json",
-      payload: {
-        schema: PEER_REPLY_SCHEMA,
-        correlation_id: correlationId,
-        in_reply_to: requestStream.id,
-        from_agent_id: cfg.agentId,
-        to_agent_id: requestStream.sender_agent_id,
-        status,
-        reply: String(reply || "").slice(0, 32000),
-      },
+      payload,
     },
   });
 }
@@ -431,6 +554,20 @@ async function mirrorExchangeToHomeChannel(api, stream, message, reply, nameCach
   const recipientName = await agentDisplayName(api, cfg.agentId, nameCache);
   const summary = await summarizeExchange(api, senderName, recipientName, message, reply);
   if (!summary) return;
+  // Provenance (task_60be7f29): the rendered Slack text is a MODEL-GENERATED
+  // summary, never verbatim messages or execution evidence. Stamp the source
+  // stream id, source/reply status, and whether the turn was persona-only or
+  // task-executor-bound so a mirror can never be accepted as task-execution
+  // evidence.
+  const mirrorModel =
+    String(process.env.MAC_OPENCLAW_MIRROR_MODEL || process.env.MAC_OPENCLAW_MODEL || "").trim();
+  const provenance = mirrorProvenance({
+    sourceStreamId: stream.id,
+    sourceStatus: opts.sourceStatus || "ok",
+    replyStatus: opts.replyStatus || "ok",
+    taskExecutorBound: opts.taskExecutorBound === true,
+    summarizerModel: mirrorModel,
+  });
   // No account_id: the hub resolves the delivery account from origin_agent_id's
   // communication representation (same as the notifier). MAC_OPENCLAW_SLACK_ACCOUNT_ID
   // is a Slack account NAME, not a communication account id, so passing it 404s.
@@ -444,6 +581,7 @@ async function mirrorExchangeToHomeChannel(api, stream, message, reply, nameCach
         schema: MIRROR_SCHEMA,
         stream_id: stream.id,
         sender_agent_id: speakerId,
+        ...provenance,
       },
     },
   });
@@ -497,7 +635,16 @@ async function runPeerTurn(api, stream, payload) {
     trigger: "manual",
     disableMessageTool: true,
   });
-  return embeddedReplyText(result) || "Acknowledged; no textual response was produced.";
+  // Honest outcome (task_60be7f29): an embedded turn can hit its turn limit,
+  // truncate on output length, fail a tool, or fail the model and STILL return
+  // text via payloads[].text. Classify from the structured result AND the reply
+  // prose so error text is never signed status "ok" by the caller.
+  const replyText = embeddedReplyText(result);
+  const turnOutcome = classifyTurnOutcome(result, replyText);
+  return {
+    reply: replyText || "Acknowledged; no textual response was produced.",
+    turnOutcome,
+  };
 }
 
 async function pollPeerMessages(api, state) {
@@ -538,10 +685,16 @@ async function pollPeerMessages(api, state) {
       persistPeerState(api, state);
       continue;
     }
+    const isHumanDirective = stream?.topic === HUMAN_DIRECTIVE_TOPIC;
     try {
-      const reply = await runPeerTurn(api, stream, payload);
-      await publishPeerReply(api, stream, correlationId, reply);
-      await mirrorExchangeToHomeChannel(api, stream, payload.message, reply, nameCache).catch(
+      const {reply, turnOutcome} = await runPeerTurn(api, stream, payload);
+      const replyStatus = replyStatusForOutcome(turnOutcome);
+      await publishPeerReply(api, stream, correlationId, reply, replyStatus, {turnOutcome});
+      await mirrorExchangeToHomeChannel(api, stream, payload.message, reply, nameCache, {
+        sourceStatus: "ok",
+        replyStatus,
+        taskExecutorBound: isHumanDirective,
+      }).catch(
         (error) =>
           api.logger.warn?.(
             `mac-continuity: conversation mirror failed for ${stream.id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -560,6 +713,7 @@ async function pollPeerMessages(api, state) {
           correlationId,
           `Peer turn failed after ${attempt} attempts: ${error instanceof Error ? error.message : String(error)}`,
           "error",
+          {turnOutcome: TURN_ERROR},
         ).catch(() => undefined);
         state.processed.push(stream.id);
         delete state.attempts[stream.id];
@@ -701,19 +855,27 @@ async function receiveMediaShare(api, stream, state, nameCache) {
     note ? `Sender's note: ${note}` : "",
     "Open or analyze the file from that path if useful, then reply to the sender briefly.",
   ].filter(Boolean).join("\n");
-  const reply = await runPeerTurn(
+  const {reply, turnOutcome} = await runPeerTurn(
     api,
     {...stream, sender_agent_id: sender},
     {message},
   );
-  await publishPeerReply(api, {...stream, sender_agent_id: sender}, String(stream.id), reply);
+  const replyStatus = replyStatusForOutcome(turnOutcome);
+  await publishPeerReply(
+    api,
+    {...stream, sender_agent_id: sender},
+    String(stream.id),
+    reply,
+    replyStatus,
+    {turnOutcome},
+  );
   await mirrorExchangeToHomeChannel(
     api,
     stream,
     `[shared a file: ${filename} (${headers.mime || "file"}, ${data.length} bytes)]${note ? ` ${note}` : ""}`,
     reply,
     nameCache,
-    {senderId: sender, dedupeKey: `${stream.id}:media`},
+    {senderId: sender, dedupeKey: `${stream.id}:media`, sourceStatus: "ok", replyStatus},
   ).catch(() => undefined);
   return target;
 }
@@ -890,19 +1052,23 @@ async function pollGroupMessages(api, state, nameCache) {
       if (!isFreshGroupMessage) continue;
       const correlationId = String(payload.correlation_id || stream?.headers?.correlation_id || stream.id);
       try {
-        const reply = await runPeerTurn(api, {...stream, sender_agent_id: author}, payload);
+        const {reply, turnOutcome} = await runPeerTurn(api, {...stream, sender_agent_id: author}, payload);
+        const replyStatus = replyStatusForOutcome(turnOutcome);
         await appendGroupChunk(api, stream.id, {
           schema: PEER_REPLY_SCHEMA,
           correlation_id: correlationId,
           in_reply_to_sequence: sequence,
           from_agent_id: cfg.agentId,
           to_agent_id: author,
-          status: "ok",
+          status: replyStatus,
+          ...(turnOutcome === TURN_COMPLETED ? {} : {turn_outcome: turnOutcome}),
           reply: String(reply || "").slice(0, 32000),
         });
         await mirrorExchangeToHomeChannel(api, stream, payload.message, reply, nameCache, {
           senderId: author,
           dedupeKey: `${stream.id}:${sequence}:${cfg.agentId}`,
+          sourceStatus: "ok",
+          replyStatus,
         }).catch((error) =>
           api.logger.warn?.(
             `mac-continuity: group mirror failed for ${stream.id}#${sequence}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1216,12 +1382,35 @@ export default {
                 },
               },
             });
+            // Separate the transport view from the peer-turn view: a reply
+            // that only arrives via the client-side wait (after the hub budget
+            // elapsed) is LATE, not lost — still correlated to this stream.
             let reply = result?.status === "replied" ? result.reply : null;
+            let replyPayload = result?.status === "replied" ? (result.reply_payload || null) : null;
+            let late = false;
             if (!reply && timeoutSeconds > deadline) {
-              reply = await waitForPeerReply(api, correlationId, timeoutSeconds - deadline);
+              const latePayload = await waitForPeerReply(api, correlationId, timeoutSeconds - deadline);
+              if (latePayload) {
+                replyPayload = latePayload;
+                reply = typeof latePayload === "object" ? latePayload.reply : latePayload;
+                late = true;
+              }
             }
+            const delivery = deliveryOutcome({
+              waitBudgetSeconds: timeoutSeconds,
+              replyPresent: Boolean(reply),
+              replyWithinBudget: Boolean(reply) && !late,
+            });
+            // The peer's own turn outcome/status rides on the reply payload,
+            // distinct from delivery: a delivered reply can still be a non-ok
+            // turn (timeout / truncated / tool_failed / model_failed).
+            const peerStatus = replyPayload && typeof replyPayload === "object" ? (replyPayload.status || null) : null;
+            const peerTurnOutcome = replyPayload && typeof replyPayload === "object" ? (replyPayload.turn_outcome || null) : null;
             return peerTextResult({
-              status: reply ? "replied" : "timeout",
+              status: delivery,
+              late,
+              peer_status: peerStatus,
+              peer_turn_outcome: peerTurnOutcome,
               recipient_agent_id: peers[0].id,
               recipient_name: peers[0].name,
               correlation_id: correlationId,

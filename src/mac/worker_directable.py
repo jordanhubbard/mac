@@ -35,6 +35,14 @@ from mac.agentbus_control import (
     PEER_REPLY_TOPIC,
     peer_reply_payload,
 )
+from mac.agentbus_outcomes import (
+    TURN_COMPLETED,
+    TURN_ERROR,
+    TURN_MODEL_FAILED,
+    TURN_TIMEOUT,
+    classify_turn_result,
+    reply_status_for_outcome,
+)
 
 # Imported (not redefined) from the canonical source so the worker and hub
 # agree on the human-directive contract.
@@ -101,21 +109,37 @@ class DirectableMixin:
             return {"status": "invalid", "summary": "malformed peer message", "stream_id": stream_id}
 
         prompt = self._directable_peer_prompt(stream, message)
-        reply_text = self._run_directable_turn(prompt, stream_id=stream_id, sender=sender)
+        reply_text, turn_outcome = self._directable_turn_outcome(
+            prompt, stream_id=stream_id, sender=sender
+        )
+        reply_status = reply_status_for_outcome(turn_outcome)
         self._publish_peer_reply(
-            stream, reply_text, status="ok", correlation_id=correlation_id
+            stream,
+            reply_text,
+            status=reply_status,
+            correlation_id=correlation_id,
+            turn_outcome=turn_outcome,
         )
         self._observe_log(
-            "worker.agentbus.peer.completed",
-            level="info",
+            "worker.agentbus.peer.completed" if turn_outcome == TURN_COMPLETED
+            else "worker.agentbus.peer.turn_failed",
+            level="info" if turn_outcome == TURN_COMPLETED else "warning",
             detail={
                 "stream_id": stream_id,
                 "sender": sender,
                 "message_len": len(message),
                 "reply_len": len(reply_text),
+                "turn_outcome": turn_outcome,
+                "reply_status": reply_status,
             },
         )
-        return {"status": "completed", "summary": "peer message handled", "stream_id": stream_id}
+        return {
+            "status": "completed" if turn_outcome == TURN_COMPLETED else "turn_failed",
+            "summary": "peer message handled",
+            "turn_outcome": turn_outcome,
+            "reply_status": reply_status,
+            "stream_id": stream_id,
+        }
 
     # ------------------------------------------------------------------ #
     # Human directive handling
@@ -170,21 +194,37 @@ class DirectableMixin:
             )
 
         prompt = self._directable_directive_prompt(stream, message)
-        reply_text = self._run_directable_turn(prompt, stream_id=stream_id, sender=sender)
+        reply_text, turn_outcome = self._directable_turn_outcome(
+            prompt, stream_id=stream_id, sender=sender
+        )
+        reply_status = reply_status_for_outcome(turn_outcome)
         self._publish_peer_reply(
-            stream, reply_text, status="ok", correlation_id=correlation_id
+            stream,
+            reply_text,
+            status=reply_status,
+            correlation_id=correlation_id,
+            turn_outcome=turn_outcome,
         )
         self._observe_log(
-            "worker.agentbus.directive.completed",
-            level="info",
+            "worker.agentbus.directive.completed" if turn_outcome == TURN_COMPLETED
+            else "worker.agentbus.directive.turn_failed",
+            level="info" if turn_outcome == TURN_COMPLETED else "warning",
             detail={
                 "stream_id": stream_id,
                 "sender": sender,
                 "message_len": len(message),
                 "reply_len": len(reply_text),
+                "turn_outcome": turn_outcome,
+                "reply_status": reply_status,
             },
         )
-        return {"status": "completed", "summary": "directive handled", "stream_id": stream_id}
+        return {
+            "status": "completed" if turn_outcome == TURN_COMPLETED else "turn_failed",
+            "summary": "directive handled",
+            "turn_outcome": turn_outcome,
+            "reply_status": reply_status,
+            "stream_id": stream_id,
+        }
 
     # ------------------------------------------------------------------ #
     # Executor-scoped directive handling (task_60be)
@@ -492,10 +532,35 @@ class DirectableMixin:
     # ------------------------------------------------------------------ #
     # Bounded turn — same mechanism as ReflectMixin._run_reflect_query
     # ------------------------------------------------------------------ #
+    def _directable_turn_outcome(
+        self, prompt: str, *, stream_id: str = "", sender: str = ""
+    ) -> "tuple[str, str]":
+        """Call _run_directable_turn and normalize its result to (text, outcome).
+
+        _run_directable_turn returns a ``(text, outcome)`` tuple, but callers
+        (and test doubles) may still hand back a bare string; in that case the
+        text is re-classified so an embedded failure is never silently signed
+        as a successful ``ok`` reply.
+        """
+        result = self._run_directable_turn(prompt, stream_id=stream_id, sender=sender)
+        if isinstance(result, tuple) and len(result) == 2:
+            text, outcome = result
+            text = str(text or "")
+            outcome = str(outcome or "") or classify_turn_result(None, text)
+            return text, outcome
+        text = str(result or "")
+        return text, classify_turn_result(None, text)
+
     def _run_directable_turn(
         self, prompt: str, *, stream_id: str = "", sender: str = ""
-    ) -> str:
+    ) -> "tuple[str, str]":
         """Run *prompt* through this agent's OpenClaw/OpenShell runtime.
+
+        Returns ``(reply_text, turn_outcome)`` where ``turn_outcome`` is a
+        structured ``mac.agentbus_outcomes.TURN_*`` code — completed, or one of
+        the failure kinds (turn_timeout / output_truncated / tool_failed /
+        model_failed / error). The caller signs the reply with the honest
+        status derived from this outcome; error text is NEVER signed ``ok``.
 
         Bounded by MAC_DIRECTABLE_TIMEOUT (default 120s) so a slow turn cannot
         starve the loop; and this method is itself invoked off the poll thread
@@ -532,14 +597,17 @@ class DirectableMixin:
             output = (result.stdout or "").strip()
             if result.returncode != 0 or not output:
                 stderr_summary = (result.stderr or "").strip()[:500]
-                return (
-                    "Acknowledged; turn completed with returncode %d. %s"
+                text = (
+                    "Turn failed with returncode %d. %s"
                     % (result.returncode, stderr_summary)
                 ).strip()
+                return text, TURN_ERROR
             try:
                 payload = json.loads(output)
             except (TypeError, ValueError):
-                return output
+                # Non-JSON stdout is opaque; still scan it for embedded failure
+                # fingerprints so a text-only failure is not signed as ok.
+                return output, classify_turn_result(None, output)
 
             def response_text(value: Any) -> str:
                 if isinstance(value, dict):
@@ -561,21 +629,26 @@ class DirectableMixin:
                             return nested
                 return ""
 
-            return response_text(payload) or output
+            reply_text = response_text(payload) or output
+            outcome = classify_turn_result(payload, reply_text)
+            return reply_text, outcome
         except subprocess.TimeoutExpired:
             self._observe_log(
                 "worker.agentbus.directable.error",
                 level="warning",
                 detail={"stream_id": stream_id, "reason": "timeout", "timeout_s": timeout_s},
             )
-            return "Directable turn timed out after %d seconds." % int(timeout_s)
+            return (
+                "Directable turn timed out after %d seconds." % int(timeout_s),
+                TURN_TIMEOUT,
+            )
         except Exception as exc:  # noqa: BLE001 - directable turn must not crash the loop
             self._observe_log(
                 "worker.agentbus.directable.error",
                 level="warning",
                 detail={"stream_id": stream_id, "reason": "subprocess_error", "error": str(exc)},
             )
-            return "Directable turn failed: %s" % exc
+            return "Directable turn failed: %s" % exc, TURN_ERROR
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -638,8 +711,15 @@ class DirectableMixin:
         status: str = "ok",
         *,
         correlation_id: Optional[str] = None,
+        turn_outcome: Optional[str] = None,
+        late: bool = False,
     ) -> None:
-        """Publish a peer.reply.v1 chunk back to the original sender."""
+        """Publish a peer.reply.v1 chunk back to the original sender.
+
+        ``turn_outcome`` carries the structured mac.agentbus_outcomes.TURN_*
+        code so a consumer never parses ``reply`` prose to learn why a non-ok
+        status was chosen.
+        """
         sender = str(stream.get("sender_agent_id") or "")
         if not sender:
             return
@@ -651,6 +731,8 @@ class DirectableMixin:
             status=status,
             correlation_id=correlation_id,
             in_reply_to=stream_id,
+            turn_outcome=turn_outcome,
+            late=late,
         )
         try:
             self.client.post(
