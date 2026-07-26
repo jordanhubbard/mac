@@ -2087,6 +2087,17 @@
   },
   {
     "default": null,
+    "description": "Deployment setting: deploy daemon preservation timeout seconds.",
+    "family": "deployment",
+    "name": "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS",
+    "retired": false,
+    "sources": [
+      "deploy/fleet-node-install.sh"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
     "description": "Deployment setting: deploy daemon quiescence poll seconds.",
     "family": "deployment",
     "name": "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS",

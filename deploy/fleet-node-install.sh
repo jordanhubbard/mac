@@ -6440,6 +6440,7 @@ daemon_resource_quiescence_gate() {
     CONTAINERS_CONF CONTAINERS_STORAGE_CONF CONTAINERS_REGISTRIES_CONF \
     CONTAINER_HOST CONTAINER_CONNECTION PODMAN_HOST PODMAN_CONNECTION \
     MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS \
+    MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS \
     MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS \
     MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS \
     MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS \
@@ -6534,10 +6535,11 @@ def sleep_for_poll():
         remaining_time()
 
 
-def run_bounded(argv, env=None):
+def run_bounded(argv, env=None, timeout=None):
     if not argv or not os.path.isabs(str(argv[0])):
         raise QuiescenceFailure("daemon command is not an absolute executable")
-    effective_timeout = min(command_timeout, remaining_time())
+    requested_timeout = command_timeout if timeout is None else timeout
+    effective_timeout = min(requested_timeout, remaining_time())
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         try:
             process = subprocess.Popen(
@@ -7182,6 +7184,7 @@ def preserve_managed_task_sandbox(record):
                 str(temporary / "workspace"),
             ],
             env=openshell_env(),
+            timeout=preservation_timeout,
         )
         if downloaded.timed_out:
             raise QuiescenceFailure("OpenShell task preservation timed out")
@@ -7255,6 +7258,7 @@ def reconcile_managed_task_sandboxes():
         candidates = orphan_task_sandbox_candidates(sandboxes)
         if candidates:
             stable_observations = 0
+            made_progress = False
             for record in candidates:
                 name = record["name"]
                 if record["preserve"]:
@@ -7265,6 +7269,15 @@ def reconcile_managed_task_sandboxes():
                 if name not in seen:
                     seen.add(name)
                     reconciled.append(name)
+                    made_progress = True
+            # Archiving a protected workspace is positive reconciliation
+            # progress, not time spent waiting for a daemon to disappear.
+            # Give the two stable post-delete observations their full bounded
+            # quiescence window after the last archive/delete completes.
+            if made_progress:
+                deadline = min(
+                    gate_deadline, time.monotonic() + quiescence_timeout
+                )
         else:
             stable_observations += 1
         if stable_observations >= 2:
@@ -8375,6 +8388,9 @@ try:
     command_timeout = bounded_number(
         "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS", 20, 0.01, 300
     )
+    preservation_timeout = bounded_number(
+        "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS", 180, 0.01, 600
+    )
     quiescence_timeout = bounded_number(
         "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS", 45, 0.01, 600
     )
@@ -8382,7 +8398,7 @@ try:
         "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS", 1, 0.1, 30
     )
     total_timeout = bounded_number(
-        "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS", 120, 0.01, 900
+        "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS", 900, 0.01, 900
     )
     gate_deadline = time.monotonic() + total_timeout
     if mode == "prepare-restore":

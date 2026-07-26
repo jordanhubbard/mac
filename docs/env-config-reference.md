@@ -177,6 +177,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_DEPLOY_CONTROL_PORT` | int | consumer-defined | deployment | Deployment setting: deploy control port. |
 | `MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy daemon command timeout seconds. |
 | `MAC_DEPLOY_DAEMON_INJECT_RECEIPT_POST_REPLACE_FAILURE` | str | consumer-defined | deployment | Deployment setting: deploy daemon inject receipt post replace failure. |
+| `MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy daemon preservation timeout seconds. |
 | `MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy daemon quiescence poll seconds. |
 | `MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS` | int | consumer-defined | deployment | Deployment setting: deploy daemon quiescence timeout seconds. |
 | `MAC_DEPLOY_DAEMON_RUNTIME_PATHS` | str | consumer-defined | deployment | Deployment setting: deploy daemon runtime paths. |

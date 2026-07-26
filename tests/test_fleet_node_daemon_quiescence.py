@@ -117,6 +117,8 @@ if len(args) >= 5 and args[0:2] == ["sandbox", "download"]:
         raise SystemExit(65)
     if mode == "stale-download-nonzero":
         raise SystemExit(67)
+    if mode == "stale-download-slow":
+        time.sleep(1.25)
     destination = Path(args[4])
     destination.mkdir(parents=True)
     (destination / "task.json").write_text(
@@ -894,6 +896,7 @@ def test_openshell_inventory_paginates_before_deciding_absence(
     "variable",
     [
         "MAC_DEPLOY_DAEMON_COMMAND_TIMEOUT_SECONDS",
+        "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS",
         "MAC_DEPLOY_DAEMON_QUIESCENCE_TIMEOUT_SECONDS",
         "MAC_DEPLOY_DAEMON_QUIESCENCE_POLL_SECONDS",
         "MAC_DEPLOY_DAEMON_TOTAL_TIMEOUT_SECONDS",
@@ -1332,6 +1335,32 @@ def test_all_falsey_keep_spellings_are_reaped_and_dead_truthy_task_is_archived(
     assert manifest["schema"] == "mac.openshell.task_preservation.v1"
     assert manifest["sandbox"] == "mac-task-truthy-keep-fixture"
     assert (recovery_dirs[0] / "workspace" / "task.json").is_file()
+    _assert_no_secret(run)
+
+
+def test_protected_task_archive_has_a_separate_bounded_transfer_window(
+    tmp_path: Path,
+) -> None:
+    protected = _managed_task_sandbox(
+        "mac-task-slow-preserve-fixture", keep="true", pid=_dead_pid()
+    )
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        openshell_mode="stale-download-slow",
+        extra_env={
+            "FAKE_STALE_SANDBOXES": json.dumps([protected]),
+            # The ordinary command budget in the harness is one second. A
+            # workspace transfer gets its own finite budget because archive
+            # duration scales with workspace size.
+            "MAC_DEPLOY_DAEMON_PRESERVATION_TIMEOUT_SECONDS": "2",
+        },
+    )
+    receipt = _assert_success_marker(run)
+    assert receipt["openshell_task_sandboxes"]["preserved"] == [
+        "mac-task-slow-preserve-fixture"
+    ]
     _assert_no_secret(run)
 
 
