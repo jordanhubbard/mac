@@ -185,6 +185,29 @@ def _class_from_history(events: Iterable[Any]) -> str:
             or str(detail.get("failure_class") or "").strip().lower() == "superseded"
         ):
             return AttemptFailureClass.SUPERSEDED.value
+        shared_control_plane_transport = (
+            (
+                "mac api" in blob
+                or "/evidence" in blob
+                or "evidence post failed" in blob
+            )
+            and any(
+                _has_marker(blob, marker)
+                for marker in (
+                    "timed out",
+                    "timeout",
+                    "connection reset",
+                    "connection refused",
+                    "service unavailable",
+                    "bad gateway",
+                    "gateway timeout",
+                    "temporary failure",
+                )
+            )
+        )
+        if shared_control_plane_transport:
+            saw_environment = True
+            continue
         if any(
             _has_marker(blob, marker)
             for marker in (

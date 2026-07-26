@@ -9,6 +9,7 @@ test bodies will run against PostgresStore once it lands in Phase 3.2.
 from __future__ import annotations
 
 import sqlite3
+import threading
 
 import pytest
 
@@ -183,6 +184,63 @@ def test_sqlite_existing_open_refuses_to_create_database(tmp_path) -> None:
         SQLiteStore(str(database), initialize_schema=False)
 
     assert not database.exists()
+
+
+def test_file_backed_reader_does_not_wait_for_writer_transaction(tmp_path) -> None:
+    database = tmp_path / "reader-writer.sqlite"
+    store = SQLiteStore(str(database))
+    store.execute("CREATE TABLE reader_probe (id TEXT PRIMARY KEY, value TEXT)")
+    store.execute(
+        "INSERT INTO reader_probe (id, value) VALUES (?, ?)",
+        ("probe", "before"),
+    )
+    writer_started = threading.Event()
+    release_writer = threading.Event()
+
+    def writer() -> None:
+        with store.transaction() as conn:
+            conn.execute(
+                "UPDATE reader_probe SET value = ? WHERE id = ?",
+                ("after", "probe"),
+            )
+            writer_started.set()
+            assert release_writer.wait(timeout=5)
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    assert writer_started.wait(timeout=5)
+    try:
+        row = store.query_one(
+            "SELECT value FROM reader_probe WHERE id = ?",
+            ("probe",),
+        )
+        assert row["value"] == "before"
+    finally:
+        release_writer.set()
+        thread.join(timeout=5)
+        assert store.query_one(
+            "SELECT value FROM reader_probe WHERE id = ?",
+            ("probe",),
+        )["value"] == "after"
+        store.close()
+    assert not thread.is_alive()
+
+
+def test_observability_subject_query_has_covering_order_index(tmp_path) -> None:
+    store = SQLiteStore(str(tmp_path / "observability-index.sqlite"))
+    try:
+        plan = store.query_all(
+            "EXPLAIN QUERY PLAN "
+            "SELECT sequence FROM observability_events "
+            "WHERE kind = ? AND name = ? AND subject_type = ? AND subject_id = ? "
+            "ORDER BY sequence DESC LIMIT ?",
+            ("log", "llm.route", "task", "task_probe", 1000),
+        )
+        detail = " ".join(str(row["detail"]) for row in plan)
+        assert "idx_observability_events_subject_sequence" in detail
+        assert "USE TEMP B-TREE" not in detail
+    finally:
+        store.close()
 
 
 def test_pipeline_cursor_roundtrip_and_default() -> None:

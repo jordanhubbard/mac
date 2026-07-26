@@ -7108,7 +7108,7 @@ def _worker_verification_contract_problems(
         problems.extend(codegraph_audit_manifest_problems(manifest))
         return problems
     if evidence_type == "no_change":
-        problems = _worker_require_pushed_repo_anchor(manifest)
+        problems = _worker_require_clean_repo_anchor(manifest)
         if not str(manifest.get("reason") or manifest.get("no_change_reason") or "").strip():
             problems.append("no_change evidence requires a reason")
         if _worker_passed_verification_check_count(manifest) < 1:
@@ -7203,7 +7203,7 @@ def _worker_allows_empty_repo_change_evidence(task: JsonDict, evidence_type: str
     return origin_type == "beads_source_remediation" or remediation_type == "beads_source_refresh"
 
 
-def _worker_require_pushed_repo_anchor(manifest: JsonDict) -> List[str]:
+def _worker_require_clean_repo_anchor(manifest: JsonDict) -> List[str]:
     repo = manifest.get("repo")
     if not isinstance(repo, dict):
         return ["repo evidence requires verification.repo object"]
@@ -7214,6 +7214,14 @@ def _worker_require_pushed_repo_anchor(manifest: JsonDict) -> List[str]:
     dirty = repo.get("dirty")
     if dirty not in {False, "false", "False", 0, "0"}:
         problems.append("repo evidence must declare dirty=false")
+    return problems
+
+
+def _worker_require_pushed_repo_anchor(manifest: JsonDict) -> List[str]:
+    problems = _worker_require_clean_repo_anchor(manifest)
+    repo = manifest.get("repo")
+    if not isinstance(repo, dict):
+        return problems
     pushed = repo.get("pushed") is True or str(repo.get("pushed") or "").lower() == "true"
     remote_ref = str(repo.get("remote_ref") or "").strip()
     pr_url = str(repo.get("pr_url") or "").strip()

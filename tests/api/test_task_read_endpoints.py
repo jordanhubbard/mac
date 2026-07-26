@@ -74,6 +74,27 @@ def test_ready_and_task_dispatch_explain_routes_share_authoritative_reasons():
     assert direct.json()["unclaimed_reasons"] == item["unclaimed_reasons"]
 
 
+def test_ready_explain_reuses_one_bounded_agent_snapshot():
+    cp = ControlPlane.in_memory()
+    client = TestClient(create_app(control_plane=cp))
+    for index in range(3):
+        _make(client, "explain-%d" % index, project="p")
+    calls = 0
+    original = cp.list_agents
+
+    def counted_list_agents(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    cp.list_agents = counted_list_agents
+    response = client.get("/tasks/ready/explain", params={"limit": 3})
+
+    assert response.status_code == 200
+    assert len(response.json()) == 3
+    assert calls == 1
+
+
 def test_search_endpoint_matches_title_and_filters_project():
     client = _client()
     _make(client, "searchable alpha thing", project="alpha")

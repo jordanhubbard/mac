@@ -1101,9 +1101,9 @@ quality, rework, latency, tokens, and cost. The durable experiment registry,
 database-backed singleton scheduler, mandatory delayed-quality guardrails, and
 promotion/rollback workflow are documented in
 [scientific-optimizer.md](scientific-optimizer.md). New systemd deployments
-enable the scheduler in `mac.env.example`; set
-`MAC_SCIENTIFIC_OPTIMIZER_ENABLED=0` during a staged rollout if the hub should
-collect no new experiment assignments.
+leave the scheduler disabled in `mac.env.example`. Enable
+`MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1` only after a manual optimizer tick and
+ordinary task-flow queries have both met the deployment's latency budget.
 
 ## Known limitations
 

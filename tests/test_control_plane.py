@@ -10054,13 +10054,140 @@ def test_tick_auto_reopens_blocked_attempt_after_backoff_and_records_audit(cp):
         if event.event_type == "task.auto_reopened"
     ]
     assert len(auto_history) == 1
-    assert auto_history[0].detail["backoff_seconds"] == 600
+    assert auto_history[0].detail["backoff_seconds"] == 60
     observations = cp.list_observability(
         subject_type="task",
         subject_id=task.id,
         limit=50,
     )
     assert any(event.name == "task.auto_reopened" for event in observations)
+
+
+def test_transient_retry_excludes_the_failed_worker_and_repeated_failure_stops(cp):
+    task = cp.create_task(
+        "bounded transient retry",
+        required_capabilities=["python"],
+        max_attempts=3,
+    )
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "agent_first",
+        {"reason": "heartbeat_offline"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (1, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    first = cp.tick(limit=0)
+
+    reopened = cp.get_task(task.id)
+    assert reopened.state == TaskState.OPEN.value
+    assert reopened.metadata["retry_excluded_agent_ids"] == ["agent_first"]
+    assert [item["id"] for item in first["auto_reopened"]] == [task.id]
+
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "agent_second",
+        {"reason": "heartbeat_offline"},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+        (2, "2000-01-01T00:00:00+00:00", task.id),
+    )
+
+    second = cp.tick(limit=0)
+
+    failed = cp.get_task(task.id)
+    assert failed.state == TaskState.FAILED.value
+    assert [item["id"] for item in second["auto_retry_exhausted"]] == [task.id]
+    terminal = [
+        event
+        for event in cp.task_history(task.id)
+        if event.to_state == TaskState.FAILED.value
+    ][-1]
+    assert terminal.detail["reason"] == "repeated_identical_attempt_failure"
+
+
+def test_shared_transport_failures_deduplicate_to_one_fleet_incident(cp):
+    incident_ids = []
+    for index in range(2):
+        task = cp.create_task(
+            "shared failure victim %d" % index,
+            project="demo",
+            max_attempts=3,
+        )
+        failure = {
+            "reason": "executor_failed",
+            "error": "MAC API /evidence POST failed: gateway timeout",
+        }
+        cp._transition_task_internal(
+            task.id,
+            TaskState.BLOCKED.value,
+            "agent_first",
+            failure,
+        )
+        cp.store.execute(
+            "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+            (1, "2000-01-01T00:00:00+00:00", task.id),
+        )
+        cp.tick(limit=0)
+        assert cp.get_task(task.id).state == TaskState.OPEN.value
+
+        cp._transition_task_internal(
+            task.id,
+            TaskState.BLOCKED.value,
+            "agent_second",
+            failure,
+        )
+        cp.store.execute(
+            "UPDATE tasks SET attempt_count = ?, updated_at = ? WHERE id = ?",
+            (2, "2000-01-01T00:00:00+00:00", task.id),
+        )
+        cp.tick(limit=0)
+
+        failed = cp.get_task(task.id)
+        assert failed.state == TaskState.FAILED.value
+        incident_ids.append(failed.metadata["shared_failure_incident_task_id"])
+
+    assert incident_ids[0] == incident_ids[1]
+    incident = cp.get_task(incident_ids[0])
+    assert incident.project == "mac"
+    assert incident.metadata["origin"]["type"] == "shared_environment_incident"
+    assert len(incident.metadata["affected_task_ids"]) == 2
+    assert cp.store.query_one(
+        "SELECT COUNT(*) AS n FROM tasks WHERE id LIKE 'task_incident_%'"
+    )["n"] == 1
+
+
+def test_deterministic_contract_failure_stops_without_waiting_or_repair_child(cp):
+    task = cp.create_task(
+        "deterministic contract failure",
+        max_attempts=3,
+    )
+    cp._transition_task_internal(
+        task.id,
+        TaskState.BLOCKED.value,
+        "agent_first",
+        {
+            "reason": "verification_contract_failed",
+            "problems": ["repo evidence requires changed files"],
+        },
+    )
+    cp.store.execute(
+        "UPDATE tasks SET attempt_count = ? WHERE id = ?",
+        (1, task.id),
+    )
+
+    result = cp.tick(limit=0)
+
+    failed = cp.get_task(task.id)
+    assert failed.state == TaskState.FAILED.value
+    assert failed.dependencies == []
+    assert "contract_repair_task_id" not in failed.metadata
+    assert [item["id"] for item in result["auto_retry_exhausted"]] == [task.id]
 
 
 def test_tick_fails_exhausted_blocked_attempt_without_reopening(cp):
@@ -10143,6 +10270,7 @@ def test_tick_exhausted_blocked_attempt_records_failure_class_and_salvage(cp):
         "exhausted blocked attempt with salvage",
         required_capabilities=["python"],
         max_attempts=2,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10179,6 +10307,7 @@ def test_tick_exhausted_environment_failure_repair_task_has_environment_prerequi
         "exhausted environment blocked attempt",
         required_capabilities=["python"],
         max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10318,6 +10447,7 @@ def test_tick_exhausted_executor_failed_creates_environment_repair_task(cp):
         "exhausted executor_failed attempt",
         required_capabilities=["python"],
         max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10351,6 +10481,7 @@ def test_tick_exhausted_worker_exception_creates_environment_repair_task(cp):
         "exhausted worker_exception attempt",
         required_capabilities=["python"],
         max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10383,6 +10514,7 @@ def test_tick_exhausted_environment_failure_resets_attempt_count_to_zero(cp):
         "exhausted environment failure resets attempt count",
         required_capabilities=["python"],
         max_attempts=2,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10407,6 +10539,7 @@ def test_tick_exhausted_environment_failure_transition_detail_and_metadata(cp):
         "exhausted environment failure detail check",
         required_capabilities=["python"],
         max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10439,6 +10572,7 @@ def test_tick_exhausted_environment_repair_task_title_and_description(cp):
         "my important task needing repair",
         required_capabilities=["python"],
         max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10466,6 +10600,7 @@ def test_tick_exhausted_environment_repair_task_idempotent(cp):
         "exhausted environment repair idempotency",
         required_capabilities=["python"],
         max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10588,6 +10723,7 @@ def test_tick_exhausted_environment_failure_does_not_set_contract_repair_status(
         "exhausted environment failure no contract_repair_status",
         required_capabilities=["python"],
         max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
     )
     cp._transition_task_internal(
         task.id,
@@ -10620,7 +10756,7 @@ def test_tick_exhausted_environment_failure_does_not_set_contract_repair_status(
         "dependency-on-external",
     ],
 )
-def test_tick_skips_non_retryable_blocked_attempt_diagnoses(cp, diagnosis):
+def test_tick_fails_non_retryable_blocked_attempt_diagnoses(cp, diagnosis):
     task = cp.create_task(
         "non retryable blocked attempt",
         required_capabilities=["python"],
@@ -10638,7 +10774,7 @@ def test_tick_skips_non_retryable_blocked_attempt_diagnoses(cp, diagnosis):
 
     result = cp.tick(limit=0)
 
-    assert cp.get_task(task.id).state == TaskState.BLOCKED.value
+    assert cp.get_task(task.id).state == TaskState.FAILED.value
     assert result["auto_reopened"] == []
     assert not [
         event for event in cp.task_history(task.id)
@@ -11175,7 +11311,12 @@ def test_expire_leases_exhausted_environment_failure_creates_repair_task(cp):
     behaviour already implemented for the BLOCKED-attempt auto-retry path.
     """
     worker = register_agent(cp, "w2", ["python"])
-    task = cp.create_task("env work", required_capabilities=["python"], max_attempts=1)
+    task = cp.create_task(
+        "env work",
+        required_capabilities=["python"],
+        max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
+    )
     _, lease = cp.claim_task(task.id, worker.id)
     cp.transition_task(
         task.id,
@@ -14513,7 +14654,7 @@ def test_tick_injects_plan_first_on_timeout_blocked_attempt(cp, timeout_reason):
     assert any(event.name == "task.auto_reopened" for event in observations)
 
 
-def test_tick_does_not_inject_plan_first_for_non_timeout_blocked_attempt(cp):
+def test_tick_stops_non_timeout_executor_failure_without_plan_first(cp):
     """Non-timeout block reasons (executor_failed, etc.) must NOT set plan_first —
     only agent-run-timeout failures trigger the decomposition redirect."""
     task = cp.create_task("executor-failed task", required_capabilities=["python"])
@@ -14530,10 +14671,12 @@ def test_tick_does_not_inject_plan_first_for_non_timeout_blocked_attempt(cp):
 
     cp.tick(limit=0)
 
-    reopened = cp.get_task(task.id)
-    assert reopened.state == TaskState.OPEN.value
+    stopped = cp.get_task(task.id)
+    assert stopped.state == TaskState.FAILED.value
+    assert stopped.dependencies == []
+    assert "environment_repair_task_id" not in stopped.metadata
     from mac.models import ensure_json_object
-    meta = ensure_json_object(reopened.metadata)
+    meta = ensure_json_object(stopped.metadata)
     assert not meta.get("plan_first"), (
         "plan_first must NOT be set for non-timeout block reasons"
     )

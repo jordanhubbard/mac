@@ -179,7 +179,7 @@ class EvidenceValidator:
     ) -> List[str]:
         raise NotImplementedError
 
-    def require_pushed_repo_anchor(self, manifest: VerificationManifest) -> List[str]:
+    def require_clean_repo_anchor(self, manifest: VerificationManifest) -> List[str]:
         repo = manifest.repo
         if repo is None:
             return ["repo evidence requires verification.repo object"]
@@ -188,6 +188,13 @@ class EvidenceValidator:
             problems.append("repo.head_sha must be a git SHA")
         if repo.dirty not in {False, "false", "False", 0, "0"}:
             problems.append("repo evidence must declare dirty=false")
+        return problems
+
+    def require_pushed_repo_anchor(self, manifest: VerificationManifest) -> List[str]:
+        problems = self.require_clean_repo_anchor(manifest)
+        repo = manifest.repo
+        if repo is None:
+            return problems
         if not (repo.pushed and repo.remote_ref) and not repo.pr_url:
             problems.append("repo evidence requires pushed=true with remote_ref, or pr_url")
         # mem-13: when the manifest claims pushed=true with a remote_url
@@ -322,7 +329,10 @@ class NoChangeValidator(EvidenceValidator):
         manifest: VerificationManifest,
         context: EvidenceValidationContext,
     ) -> List[str]:
-        problems = self.require_pushed_repo_anchor(manifest)
+        # A genuine no-change result must identify the clean commit that was
+        # inspected, but requiring a newly pushed ref contradicts the evidence
+        # type and turned correct investigations into deterministic retries.
+        problems = self.require_clean_repo_anchor(manifest)
         if not str(manifest.raw.get("reason") or manifest.raw.get("no_change_reason") or "").strip():
             problems.append("no_change evidence requires a reason")
         if self.passed_checks(manifest, context) < 1:

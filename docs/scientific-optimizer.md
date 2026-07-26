@@ -63,10 +63,11 @@ exhausted and are then rejected, never promoted on a tie.
 
 ## Enable and inspect
 
-The scheduler is explicit at deployment time:
+The scheduler is opt-in at deployment time. Leave it disabled until ordinary
+task-flow latency is healthy:
 
 ```console
-MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1
+MAC_SCIENTIFIC_OPTIMIZER_ENABLED=0
 MAC_SCIENTIFIC_OPTIMIZER_INTERVAL_SECONDS=300
 MAC_SCIENTIFIC_OPTIMIZER_INITIAL_DELAY_SECONDS=60
 MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROPOSE=1
@@ -80,6 +81,11 @@ Inspect or run one cycle:
 mac optimizer status
 mac optimizer tick
 ```
+
+After a manual tick and ordinary `task ready`/`task stats` calls remain within
+the deployment's latency budget, set `MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1` to
+run it periodically. Baseline analysis is bounded, indexed, and cached, but it
+is still background work.
 
 Automatic hypothesis generation currently makes conservative, one-variable
 changes: lower a named strength rung when cost is measurable, reduce an

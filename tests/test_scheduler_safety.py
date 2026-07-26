@@ -1028,7 +1028,11 @@ def test_concurrent_expiry_sweepers_finalize_one_repair_and_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     worker = _register_agent(cp, "expiry-finalizer-worker")
-    task = cp.create_task("repairable expired work", max_attempts=1)
+    task = cp.create_task(
+        "repairable expired work",
+        max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
+    )
     _claimed, lease = cp.claim_task(task.id, worker.id, sync_beads=False)
     cp.transition_task(
         task.id,
@@ -1103,7 +1107,11 @@ def test_expiry_repair_finalization_recovers_without_duplicate_or_early_reset(
     crash_point: str,
 ) -> None:
     worker = _register_agent(cp, "expiry-crash-%s" % crash_point)
-    task = cp.create_task("crash-safe repair", max_attempts=1)
+    task = cp.create_task(
+        "crash-safe repair",
+        max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
+    )
     _claimed, lease = cp.claim_task(task.id, worker.id, sync_beads=False)
     cp.transition_task(
         task.id,

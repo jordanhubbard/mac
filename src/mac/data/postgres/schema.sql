@@ -820,6 +820,10 @@ CREATE INDEX IF NOT EXISTS idx_observability_events_kind_layer
     ON observability_events (kind, layer, created_at);
 CREATE INDEX IF NOT EXISTS idx_observability_events_name_created
     ON observability_events (name, created_at);
+CREATE INDEX IF NOT EXISTS idx_observability_events_subject_sequence
+    ON observability_events (
+        kind, name, subject_type, subject_id, sequence DESC
+    );
 
 CREATE TABLE IF NOT EXISTS operator_notifications (
     id TEXT PRIMARY KEY,

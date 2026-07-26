@@ -52,7 +52,12 @@ def _drive_to_exhausted_environment_failure(cp, task, worker):
 def test_ordinary_task_still_gets_a_repair_child(cp):
     """The repair mechanism itself is preserved for first-level failures."""
     worker = _register_agent(cp, "w1")
-    task = cp.create_task("real work", required_capabilities=["python"], max_attempts=1)
+    task = cp.create_task(
+        "real work",
+        required_capabilities=["python"],
+        max_attempts=1,
+        metadata={"repair_policy": {"environment_prerequisite": True}},
+    )
     refreshed = _drive_to_exhausted_environment_failure(cp, task, worker)
     assert refreshed.state == TaskState.WAITING.value
     assert refreshed.metadata.get("environment_repair_task_id")

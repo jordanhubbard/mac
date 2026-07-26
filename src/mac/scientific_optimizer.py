@@ -19,6 +19,7 @@ import hashlib
 import math
 import os
 import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import (
@@ -50,6 +51,7 @@ ASSIGNMENT_SCHEMA = "mac.scientific_assignment.v1"
 OBSERVATION_SCHEMA = "mac.scientific_observation.v1"
 DECISION_SCHEMA = "mac.scientific_decision.v1"
 SERVICE_SCHEMA = "mac.scientific_optimizer_service.v1"
+BASELINE_CACHE_SECONDS = 900.0
 
 POLICY_STATUSES = frozenset({"candidate", "active", "retired"})
 EXPERIMENT_STATES = frozenset(
@@ -584,6 +586,9 @@ class ScientificOptimizerService:
         self._thread: Optional[threading.Thread] = None
         self._last_report: Optional[Dict[str, Any]] = None
         self._owner_id = new_id("optimizer")
+        self._baseline_cache: Dict[
+            str, Tuple[Tuple[Tuple[str, str], ...], float, List[Dict[str, Any]]]
+        ] = {}
 
     # Policies ---------------------------------------------------------
 
@@ -1389,11 +1394,18 @@ class ScientificOptimizerService:
                     )
                 ]
                 for project in projects:
-                    proposal = self.propose_next_experiment(project)
+                    baseline: Optional[List[Dict[str, Any]]] = None
+                    if not self._project_has_active_experiment(project):
+                        baseline = self._project_baseline(project)
+                    proposal = self.propose_next_experiment(
+                        project, baseline=baseline
+                    )
                     if proposal is not None:
                         proposals.append(proposal)
                     elif self.config.auto_improve:
-                        improvement = self.propose_improvement_task(project)
+                        improvement = self.propose_improvement_task(
+                            project, baseline=baseline
+                        )
                         if improvement is not None:
                             proposals.append(improvement)
             report = {
@@ -1420,15 +1432,23 @@ class ScientificOptimizerService:
         finally:
             self._run_lock.release()
 
-    def propose_next_experiment(self, project: str) -> Optional[Dict[str, Any]]:
-        active_row = self.store.query_one(
+    def _project_has_active_experiment(self, project: str) -> bool:
+        return self.store.query_one(
             "SELECT id FROM scientific_experiments WHERE project = ? AND state IN ('running', 'candidate', 'monitoring') LIMIT 1",
             (project,),
-        )
-        if active_row is not None:
+        ) is not None
+
+    def propose_next_experiment(
+        self,
+        project: str,
+        *,
+        baseline: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if self._project_has_active_experiment(project):
             return None
         policy = self.ensure_baseline_policy(project)
-        baseline = self._project_baseline(project)
+        if baseline is None:
+            baseline = self._project_baseline(project)
         if len(baseline) < self.config.min_baseline_tasks:
             return None
         params = dict(policy["parameters"])
@@ -1498,18 +1518,19 @@ class ScientificOptimizerService:
         )
         return self.start_experiment(experiment["id"], actor="scientific-optimizer")
 
-    def propose_improvement_task(self, project: str) -> Optional[Dict[str, Any]]:
+    def propose_improvement_task(
+        self,
+        project: str,
+        *,
+        baseline: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """File normal reviewed work when measured friction needs a code change."""
         if self._create_task is None:
             return None
-        active = self.store.query_one(
-            "SELECT id FROM scientific_experiments WHERE project = ? "
-            "AND state IN ('running', 'candidate', 'monitoring') LIMIT 1",
-            (project,),
-        )
-        if active is not None:
+        if self._project_has_active_experiment(project):
             return None
-        baseline = self._project_baseline(project)
+        if baseline is None:
+            baseline = self._project_baseline(project)
         if len(baseline) < self.config.min_baseline_tasks:
             return None
         means = {
@@ -1783,12 +1804,30 @@ class ScientificOptimizerService:
         return routes
 
     def _project_baseline(self, project: str) -> List[Dict[str, Any]]:
-        rows = self.store.query_all(
-            "SELECT id FROM tasks WHERE project = ? "
-            "AND state IN ('completed', 'failed', 'cancelled') "
-            "ORDER BY completed_at DESC LIMIT ?",
-            (project, max(self.config.min_baseline_tasks * 5, 50)),
+        sample_limit = min(
+            50,
+            max(self.config.min_baseline_tasks * 2, 20),
         )
+        rows = self.store.query_all(
+            "SELECT id, updated_at FROM tasks WHERE project = ? "
+            "AND state IN ('completed', 'failed', 'cancelled') "
+            "AND json_extract(metadata, '$.execution_contract.type') = 'repository' "
+            "AND COALESCE(json_extract(metadata, '$.optimizer_exempt'), 0) != 1 "
+            "AND COALESCE(json_extract(metadata, '$.origin.type'), '') "
+            "NOT IN ('scientific_optimizer', 'backlog_grooming') "
+            "ORDER BY COALESCE(completed_at, updated_at) DESC, id LIMIT ?",
+            (project, sample_limit),
+        )
+        cursor = tuple(
+            (str(row["id"]), str(row["updated_at"] or "")) for row in rows
+        )
+        cached = self._baseline_cache.get(project)
+        if (
+            cached is not None
+            and cached[0] == cursor
+            and time.monotonic() < cached[1]
+        ):
+            return copy.deepcopy(cached[2])
         baseline: List[Dict[str, Any]] = []
         for row in rows:
             try:
@@ -1814,6 +1853,9 @@ class ScientificOptimizerService:
                     if isinstance(metadata.get("origin"), Mapping)
                     else {}
                 )
+                # Keep the Python guard as a compatibility check for stores
+                # whose JSON query implementation is less strict than
+                # SQLite's. The SQL predicate above is the hot-path filter.
                 if (
                     str(execution.get("type") or "") != "repository"
                     or bool(metadata.get("optimizer_exempt"))
@@ -1830,6 +1872,11 @@ class ScientificOptimizerService:
                 )
             except Exception:
                 continue
+        self._baseline_cache[project] = (
+            cursor,
+            time.monotonic() + BASELINE_CACHE_SECONDS,
+            copy.deepcopy(baseline),
+        )
         return baseline
 
     def _improvement_in_cooldown(self, project: str, hypothesis_key: str) -> bool:

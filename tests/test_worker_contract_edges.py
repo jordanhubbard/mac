@@ -69,6 +69,20 @@ def test_verification_contract_dispatches_all_evidence_types(monkeypatch) -> Non
     assert "artifact evidence requires artifacts" in artifact
     no_change = worker._worker_verification_contract_problems({}, "no_change")
     assert "no_change evidence requires a reason" in no_change
+    local_no_change = {
+        "reason": "The requested behavior is already present.",
+        "repo": {
+            "head_sha": sha,
+            "dirty": False,
+            "pushed": False,
+            "files_changed": [],
+        },
+        "tests": [{"returncode": 0}],
+    }
+    assert (
+        worker._worker_verification_contract_problems(local_no_change, "no_change")
+        == ["cg"]
+    )
     assert worker._worker_verification_contract_problems({}, "review_verdict") == ["cg"]
     assert worker._worker_verification_contract_problems({}, "unknown") == [
         "unsupported verification.evidence_type: unknown"

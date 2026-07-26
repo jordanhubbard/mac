@@ -153,6 +153,9 @@ class SQLiteStore:
         self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._transaction_state = threading.local()
+        self._read_connections_lock = threading.Lock()
+        self._read_connections: dict[int, sqlite3.Connection] = {}
         self._conn.execute("PRAGMA busy_timeout = 5000")
         self._conn.execute("PRAGMA foreign_keys = ON")
         if initialize_schema and path != ":memory:":
@@ -162,6 +165,11 @@ class SQLiteStore:
             self._initialize()
 
     def close(self) -> None:
+        with self._read_connections_lock:
+            read_connections = list(self._read_connections.values())
+            self._read_connections.clear()
+        for connection in read_connections:
+            connection.close()
         with self._lock:
             self._conn.close()
 
@@ -169,6 +177,7 @@ class SQLiteStore:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
+            self._transaction_state.active = True
             try:
                 yield self._conn
                 self._conn.execute("COMMIT")
@@ -181,6 +190,43 @@ class SQLiteStore:
                 if self._conn.in_transaction:
                     self._conn.execute("ROLLBACK")
                 raise
+            finally:
+                self._transaction_state.active = False
+
+    def _query_connection(self) -> Optional[sqlite3.Connection]:
+        """Return a thread-local WAL reader outside explicit transactions.
+
+        The hub has many background controllers but historically routed every
+        read and write through one connection protected by ``self._lock``.
+        One analytical read could therefore stall health-adjacent API reads,
+        credential lookup, dispatch, CI monitoring, and repository
+        reconciliation together. File-backed SQLite in WAL mode supports
+        concurrent readers safely, so give each calling thread a query-only
+        connection. Queries made from an explicit transaction continue using
+        the writer connection so they observe that transaction's uncommitted
+        state. In-memory stores necessarily retain the original single
+        connection behavior.
+        """
+
+        if self.path == ":memory:" or bool(
+            getattr(self._transaction_state, "active", False)
+        ):
+            return None
+        thread_id = threading.get_ident()
+        with self._read_connections_lock:
+            connection = self._read_connections.get(thread_id)
+            if connection is None:
+                connection = sqlite3.connect(
+                    self.path,
+                    check_same_thread=False,
+                    isolation_level=None,
+                )
+                connection.row_factory = sqlite3.Row
+                connection.execute("PRAGMA busy_timeout = 5000")
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute("PRAGMA query_only = ON")
+                self._read_connections[thread_id] = connection
+            return connection
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Cursor:
         # Autocommit semantics: SQLite commits a single statement on its own.
@@ -194,10 +240,16 @@ class SQLiteStore:
             return self._conn.executemany(sql, params)
 
     def query_one(self, sql: str, params: Sequence[Any] = ()) -> Optional[sqlite3.Row]:
+        connection = self._query_connection()
+        if connection is not None:
+            return connection.execute(sql, params).fetchone()
         with self._lock:
             return self._conn.execute(sql, params).fetchone()
 
     def query_all(self, sql: str, params: Sequence[Any] = ()) -> list:
+        connection = self._query_connection()
+        if connection is not None:
+            return connection.execute(sql, params).fetchall()
         with self._lock:
             return self._conn.execute(sql, params).fetchall()
 
@@ -1572,6 +1624,10 @@ class SQLiteStore:
                     ON observability_events (kind, layer, created_at);
                 CREATE INDEX IF NOT EXISTS idx_observability_events_name_created
                     ON observability_events (name, created_at);
+                CREATE INDEX IF NOT EXISTS idx_observability_events_subject_sequence
+                    ON observability_events (
+                        kind, name, subject_type, subject_id, sequence DESC
+                    );
 
                 CREATE TABLE IF NOT EXISTS operator_notifications (
                     id TEXT PRIMARY KEY,

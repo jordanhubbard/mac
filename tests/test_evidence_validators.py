@@ -488,6 +488,22 @@ def test_non_code_validators_keep_type_specific_requirements():
         passed_check_count=_passed_check_count,
     ) == []
 
+    local_no_change = _repo_manifest(
+        evidence_type="no_change",
+        repo={
+            "head_sha": "abcdef1234567890",
+            "dirty": False,
+            "pushed": False,
+            "files_changed": [],
+        },
+        reason="The requested behavior is already present at the inspected commit.",
+    )
+    assert validate_evidence_type(
+        "no_change",
+        local_no_change,
+        passed_check_count=_passed_check_count,
+    ) == []
+
 
 def test_review_verdict_validator_requires_verdict_anchor_and_digest():
     manifest = _repo_manifest(

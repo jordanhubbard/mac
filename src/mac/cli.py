@@ -5940,7 +5940,12 @@ def build_parser() -> argparse.ArgumentParser:
         "ready",
         help="list task-ready work and the number of currently eligible fleet agents",
     )
-    ready.add_argument("--limit", type=int, default=0)
+    ready.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="maximum ready tasks to explain (default: 20; server maximum: 100)",
+    )
     ready.add_argument("--project", help="filter to this project (default: the cwd's project)")
     ready.add_argument("--all", action="store_true", help="every project (disable cwd scoping)")
     _set(cmd_task_ready, ready)

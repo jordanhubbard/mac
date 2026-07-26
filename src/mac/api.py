@@ -5387,9 +5387,18 @@ def create_app(
         tenant_id: Optional[str] = Query(default=None),
         limit: Optional[int] = Query(default=None),
     ) -> List[Dict[str, Any]]:
+        # This is an operator overview, not the dispatcher's claim loop. Bound
+        # its working set and reuse one fleet snapshot; previously every task
+        # reloaded and deserialized every agent plus repeated the task lookup.
+        limit_value = min(max(1, int(limit or 100)), 100)
+        agents = cp.list_agents()
         return [
-            cp.explain_task_dispatch(task.id)
-            for task in cp.ready_tasks(project=project, tenant_id=tenant_id, limit=limit)
+            cp.explain_task_dispatch(task, agents=agents)
+            for task in cp.ready_tasks(
+                project=project,
+                tenant_id=tenant_id,
+                limit=limit_value,
+            )
         ]
 
     @app.get("/tasks/search")

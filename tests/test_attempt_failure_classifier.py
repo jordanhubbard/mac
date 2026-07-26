@@ -57,6 +57,22 @@ def test_attempt_failure_classifier_classifies_scope_from_object_history():
     assert result.failure_class == "scope"
 
 
+def test_mac_evidence_api_timeout_is_shared_environment_not_task_scope():
+    result = classify_attempt_failure(
+        [
+            {
+                "event_type": "task.transitioned",
+                "detail": {
+                    "reason": "executor_failed",
+                    "error": "MAC API /evidence POST failed: request timed out",
+                },
+            }
+        ]
+    )
+
+    assert result.failure_class == "environment"
+
+
 def test_attempt_failure_classifier_superseded_preempts_environment():
     result = classify_attempt_failure(
         [

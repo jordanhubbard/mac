@@ -977,7 +977,7 @@ def test_tick_discovers_projects_and_improvement_early_exits(monkeypatch) -> Non
     monkeypatch.setattr(
         service,
         "propose_next_experiment",
-        lambda project: {"project": project, "status": "proposed"},
+        lambda project, **_kwargs: {"project": project, "status": "proposed"},
     )
     report = service.tick()
     assert report["proposals"] == [{"project": "demo", "status": "proposed"}]
@@ -1007,6 +1007,44 @@ def test_tick_discovers_projects_and_improvement_early_exits(monkeypatch) -> Non
         with_callback, "_project_baseline", lambda _project: [low_cycle, low_cycle]
     )
     assert with_callback.propose_improvement_task("demo") is None
+
+
+def test_project_baseline_cache_avoids_reloading_unchanged_task_details() -> None:
+    cp = ControlPlane.in_memory()
+    task = cp.create_task(
+        "cached optimizer baseline",
+        project="demo",
+        metadata={"execution_contract": {"type": "repository"}},
+    )
+    cp.store.execute(
+        "UPDATE tasks SET state = 'completed', completed_at = ?, updated_at = ? "
+        "WHERE id = ?",
+        (utcnow(), utcnow(), task.id),
+    )
+    detail_calls = 0
+
+    def counted_task_detail(task_id):
+        nonlocal detail_calls
+        detail_calls += 1
+        return cp.task_detail(task_id)
+
+    service = ScientificOptimizerService(
+        cp.store,
+        cp.observability,
+        get_task=cp.get_task,
+        task_detail=counted_task_detail,
+        list_observability=cp.list_observability,
+        config=ScientificOptimizerConfig(min_baseline_tasks=1),
+    )
+
+    first = service._project_baseline("demo")
+    first_call_count = detail_calls
+    second = service._project_baseline("demo")
+
+    assert first
+    assert second == first
+    assert first_call_count == 1
+    assert detail_calls == first_call_count
 
 
 def test_strength_ladder_readiness_uses_active_selection(monkeypatch) -> None:

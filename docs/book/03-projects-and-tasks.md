@@ -114,10 +114,20 @@ Scheduling remains work-conserving but supports an optional
 These are routing hints, not correctness gates. `task show` and the dispatch
 explanation expose the resolved class and bonuses.
 
+Retries are intentionally narrow. A transient worker or transport failure gets
+one retry after a short backoff and excludes the worker that just failed. A
+timeout gets the same single retry with `plan_first=true`. Deterministic
+contract/work failures, and the same failure fingerprint seen twice, stop
+instead of consuming the remaining attempt budget. Repeated shared
+control-plane failures create one fingerprinted fleet incident rather than one
+repair child per victim.
+
 An exhausted environment attempt creates a separate recovery prerequisite only
-when its history contains a concrete output, preserved-work record, or explicit
-failure/remediation diagnosis. Bare lease expiries with no telemetry fail
-visibly instead of creating an unactionable repair task. Verification-contract
-failures stay with the original task by default; a repository with a genuinely
-independent repair workflow may opt in with
+when the task explicitly opts in with
+`metadata.repair_policy.environment_prerequisite=true` and its history contains
+a concrete output, preserved-work record, or explicit failure/remediation
+diagnosis. Bare lease expiries with no telemetry fail visibly instead of
+creating an unactionable repair task. Verification-contract failures stay with
+the original task by default; a repository with a genuinely independent repair
+workflow may opt in with
 `metadata.repair_policy.contract_prerequisite=true`.

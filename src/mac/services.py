@@ -517,7 +517,7 @@ def _int_env(name: str, default: int, *, minimum: int = 1) -> int:
 DEFAULT_MAX_CHILD_TASKS_PER_PARENT = 10
 DEFAULT_MAX_DECOMPOSE_DEPTH = 2
 
-DEFAULT_BLOCKED_ATTEMPT_RETRY_BACKOFF_SECONDS = 10 * 60
+DEFAULT_BLOCKED_ATTEMPT_RETRY_BACKOFF_SECONDS = 60
 BLOCKED_ATTEMPT_NON_RETRYABLE_DIAGNOSES = (
     "needs-operator",
     "wrong-host self-release",
@@ -526,12 +526,89 @@ BLOCKED_ATTEMPT_NON_RETRYABLE_DIAGNOSES = (
 
 
 _TIMEOUT_BLOB_MARKERS = ("timed out", "timeout", "rc=124", "returncode 124", "code: 124")
+_SHARED_TRANSIENT_FAILURE_MARKERS = (
+    "transient transport error",
+    "connection reset",
+    "connection refused",
+    "no route to host",
+    "temporary failure",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "rate limit",
+)
+_DETERMINISTIC_FAILURE_MARKERS = (
+    "verification_contract_failed",
+    "verification contract failed",
+    "repo evidence requires",
+    "required changed files",
+    "test failures",
+    "tests failed",
+    "review rejected after max attempts",
+)
+_FAILURE_ID_RE = re.compile(
+    r"\b(?:task|agent|lease|ev|review|pub|obs)_[A-Za-z0-9_-]{8,}\b",
+    re.IGNORECASE,
+)
 
 
 def _is_timeout_blob(text: str) -> bool:
     """Return True when *text* contains a recognisable agent-run-timeout signal."""
     lowered = text.lower()
     return any(marker in lowered for marker in _TIMEOUT_BLOB_MARKERS)
+
+
+def _blocked_attempt_retry_kind(value: Any) -> str:
+    """Classify the latest block for retry policy, not root-cause analytics.
+
+    Values are intentionally coarse: only failures likely to change when run
+    again are retried. Contract/work failures stop; shared control-plane
+    transport errors get one cross-worker retry and then one deduplicated
+    incident; task-scope timeouts get one plan/decompose retry.
+    """
+
+    detail = ensure_json_object(value) if isinstance(value, Mapping) else {}
+    blob = json_dumps(detail).lower() if detail else str(value or "").lower()
+    if not blob.strip():
+        return "legacy_transient"
+    if any(marker in blob for marker in _DETERMINISTIC_FAILURE_MARKERS):
+        return "non_retryable"
+    shared_transport = any(
+        marker in blob for marker in _SHARED_TRANSIENT_FAILURE_MARKERS
+    )
+    if shared_transport or (
+        ("mac api" in blob or "/evidence" in blob)
+        and _is_timeout_blob(blob)
+    ):
+        return "shared_transient"
+    if _is_timeout_blob(blob) or detail.get("returncode") == 124:
+        return "timeout"
+    reason = str(detail.get("reason") or "").strip().lower()
+    if reason in {"heartbeat_offline", "lease_expired", "lease expired"}:
+        return "transient"
+    if detail.get("manual_repair_required") is True:
+        return "non_retryable"
+    return "non_retryable"
+
+
+def _blocked_attempt_failure_fingerprint(value: Any) -> str:
+    detail = ensure_json_object(value) if isinstance(value, Mapping) else {}
+    selected = {
+        key: detail.get(key)
+        for key in (
+            "reason",
+            "failure",
+            "error",
+            "problems",
+            "returncode",
+            "status_code",
+        )
+        if detail.get(key) not in (None, "", [], {})
+    }
+    normalized = json_dumps(selected or {"detail": str(value or "")}).lower()
+    normalized = _FAILURE_ID_RE.sub("<id>", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return "sha256:%s" % hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _non_retryable_blocked_attempt_marker(value: Any) -> Optional[str]:
@@ -21994,6 +22071,9 @@ class ControlPlane:
         defer_attempt_reset = bool(
             transition_detail.pop("_defer_attempt_reset", False)
         )
+        suppress_environment_repair = bool(
+            transition_detail.pop("_suppress_environment_repair", False)
+        )
         transition_detail["failure_class"] = failure_class
         output_tail, unavailable = self._attempt_failure_output(task)
         if output_tail:
@@ -22020,6 +22100,8 @@ class ControlPlane:
         )
         environment_repair = bool(
             failure_class == "environment"
+            and not suppress_environment_repair
+            and repair_policy.get("environment_prerequisite") is True
             and self._has_actionable_environment_repair_evidence(
                 task,
                 output_tail=output_tail,
@@ -22162,7 +22244,10 @@ class ControlPlane:
             transition_detail["reason"] = "verification_contract_failed"
             transition_detail["manual_repair_required"] = True
         elif failure_class == "environment" and not environment_repair:
-            transition_detail["reason"] = "environment_failure_without_actionable_evidence"
+            if transition_detail.get("reason") in (None, "", "max attempts"):
+                transition_detail["reason"] = (
+                    "environment_failure_without_actionable_evidence"
+                )
             transition_detail["manual_repair_required"] = True
         return TaskState.FAILED.value, transition_detail
 
@@ -22213,39 +22298,114 @@ class ControlPlane:
                 return marker
         return None
 
-    def _is_timeout_blocked_attempt(self, task: Task) -> bool:
-        """Return True when the most recent block on *task* looks like an agent-run timeout.
-
-        Checks (in order, stopping at the first conclusive signal):
-        1. The last BLOCKED history event's detail (reason/error/problems fields).
-        2. The most recent ``diagnosis`` entry in ``metadata.activity``.
-
-        Mirrors the ``_blocked_attempt_non_retryable_marker`` inspection pattern so
-        both helpers stay consistent about how they read block evidence.
-        """
+    def _latest_blocked_attempt_event(self, task: Task) -> Optional[HistoryEvent]:
         if task.state != TaskState.BLOCKED.value:
-            return False
-        for event in reversed(self.task_history(task.id, limit=20)):
-            if event.to_state != TaskState.BLOCKED.value:
-                continue
-            detail = ensure_json_object(event.detail)
-            blob = " ".join(
-                str(detail.get(k) or "") for k in ("reason", "error", "problems")
-            )
-            if blob.strip():
-                return _is_timeout_blob(blob)
-            break
+            return None
+        for event in reversed(self.task_history(task.id, limit=100)):
+            if event.to_state == TaskState.BLOCKED.value:
+                return event
+        return None
+
+    def _blocked_attempt_failure_count(self, task: Task, fingerprint: str) -> int:
+        return sum(
+            1
+            for event in self.task_history(task.id, limit=100)
+            if event.to_state == TaskState.BLOCKED.value
+            and _blocked_attempt_failure_fingerprint(event.detail) == fingerprint
+        )
+
+    def _record_retry_worker_exclusion(
+        self,
+        task: Task,
+        *,
+        agent_id: str,
+        fingerprint: str,
+        retry_kind: str,
+        now: str,
+    ) -> None:
         metadata = ensure_json_object(task.metadata)
-        activity = metadata.get("activity")
-        if isinstance(activity, list):
-            for entry in reversed(activity):
-                entry_dict = ensure_json_object(entry) if isinstance(entry, dict) else {}
-                phase = str(entry_dict.get("phase") or "").strip().lower()
-                if phase != "diagnosis":
-                    continue
-                summary = str(entry_dict.get("summary") or "")
-                return _is_timeout_blob(summary)
-        return False
+        excluded = _metadata_string_list(metadata.get("retry_excluded_agent_ids"))
+        if agent_id.startswith("agent_") and agent_id not in excluded:
+            excluded.append(agent_id)
+        if excluded:
+            metadata["retry_excluded_agent_ids"] = excluded
+        metadata["retry_failure_fingerprint"] = fingerprint
+        metadata["retry_failure_kind"] = retry_kind
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(metadata), now, task.id),
+        )
+
+    def _ensure_shared_failure_incident(
+        self,
+        task: Task,
+        *,
+        fingerprint: str,
+        detail: Mapping[str, Any],
+    ) -> Task:
+        """Create one fleet incident for a repeated shared-infrastructure failure."""
+        incident_id = "task_incident_%s" % fingerprint.removeprefix("sha256:")[:24]
+        try:
+            incident = self.get_task(incident_id)
+        except NotFoundError:
+            summary = str(
+                detail.get("reason")
+                or detail.get("failure")
+                or detail.get("error")
+                or "shared control-plane transport failure"
+            ).strip()
+            incident = self.create_task(
+                "Investigate shared fleet failure %s" % incident_id[-8:],
+                description=(
+                    "Investigate and repair the shared fleet/control-plane failure "
+                    "identified by fingerprint %s. Affected task %s reported: %s. "
+                    "This incident is deliberately shared across affected tasks; do "
+                    "not create per-task repair children."
+                )
+                % (fingerprint, task.id, summary[:1000]),
+                project="mac",
+                priority=min(int(task.priority), 1),
+                required_capabilities=["ops"],
+                metadata={
+                    "dispatch_class": "recovery",
+                    "due_at": utcnow(),
+                    "failure_fingerprint": fingerprint,
+                    "affected_task_ids": [task.id],
+                    "origin": {
+                        "type": "shared_environment_incident",
+                        "representative_task_id": task.id,
+                    },
+                },
+                actor="dispatcher.tick",
+                _task_id=incident_id,
+            )
+        incident_fingerprint = str(
+            ensure_json_object(incident.metadata).get("failure_fingerprint") or ""
+        )
+        if incident_fingerprint != fingerprint:
+            raise ValidationError(
+                "deterministic shared incident id collides with unrelated task"
+            )
+        incident_metadata = ensure_json_object(incident.metadata)
+        affected = _metadata_string_list(
+            incident_metadata.get("affected_task_ids")
+        )
+        if task.id not in affected:
+            affected.append(task.id)
+            incident_metadata["affected_task_ids"] = affected
+            self.store.execute(
+                "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+                (json_dumps(incident_metadata), utcnow(), incident.id),
+            )
+            incident = self.get_task(incident.id)
+        metadata = ensure_json_object(task.metadata)
+        metadata["shared_failure_incident_task_id"] = incident.id
+        metadata["retry_failure_fingerprint"] = fingerprint
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(metadata), utcnow(), task.id),
+        )
+        return incident
 
     def _auto_retry_blocked_attempt_task(
         self,
@@ -22259,16 +22419,19 @@ class ControlPlane:
             return None, None
         if task.dependencies and not self._dependencies_satisfied(task):
             return None, None
-        non_retryable = self._blocked_attempt_non_retryable_marker(task)
-        if non_retryable:
-            return None, None
+        latest_event = self._latest_blocked_attempt_event(task)
+        latest_detail = (
+            ensure_json_object(latest_event.detail) if latest_event is not None else {}
+        )
+        retry_kind = _blocked_attempt_retry_kind(latest_detail)
+        fingerprint = _blocked_attempt_failure_fingerprint(latest_detail)
+        same_failure_count = self._blocked_attempt_failure_count(task, fingerprint)
+        prior_agent_id = str(latest_event.actor if latest_event is not None else "")
         backoff_seconds = self._blocked_attempt_retry_backoff_seconds(task)
         ready_at = self._blocked_attempt_retry_ready_at(
             task,
             backoff_seconds=backoff_seconds,
         )
-        if parse_time(now) < parse_time(ready_at):
-            return None, None
         base_detail: JsonDict = {
             "via": "auto_retry",
             "attempt_count": task.attempt_count,
@@ -22276,28 +22439,72 @@ class ControlPlane:
             "backoff_seconds": backoff_seconds,
             "blocked_since": task.updated_at,
             "ready_at": ready_at,
+            "retry_kind": retry_kind,
+            "failure_fingerprint": fingerprint,
+            "same_failure_count": same_failure_count,
         }
-        if task.attempt_count >= task.max_attempts:
+        non_retryable = self._blocked_attempt_non_retryable_marker(task)
+        repeated_failure = same_failure_count >= 2
+        exhausted = task.attempt_count >= task.max_attempts
+        must_stop = bool(
+            non_retryable
+            or retry_kind == "non_retryable"
+            or repeated_failure
+            or exhausted
+        )
+        if must_stop:
+            incident: Optional[Task] = None
+            if retry_kind == "shared_transient" and (repeated_failure or exhausted):
+                incident = self._ensure_shared_failure_incident(
+                    task,
+                    fingerprint=fingerprint,
+                    detail=latest_detail,
+                )
+                base_detail["shared_failure_incident_task_id"] = incident.id
+                # The incident helper durably links the victim in metadata.
+                # Reload so failure classification cannot overwrite that link
+                # with the stale task object supplied to this sweep.
+                task = self.get_task(task.id)
+            reason = (
+                "non_retryable_attempt_failure"
+                if non_retryable or retry_kind == "non_retryable"
+                else "repeated_identical_attempt_failure"
+                if repeated_failure
+                else "max attempts"
+            )
             target_state, exhausted_detail = self._exhausted_attempt_terminal_transition(
                 task,
                 {
                     **base_detail,
                     "via": "auto_retry_exhausted",
-                    "reason": "max attempts",
+                    "reason": reason,
+                    "manual_repair_required": True,
+                    "_suppress_environment_repair": (
+                        retry_kind == "shared_transient" or repeated_failure
+                    ),
                 },
             )
-            exhausted = self._transition_task_internal(
+            stopped = self._transition_task_internal(
                 task.id,
                 target_state,
                 "dispatcher.tick",
                 exhausted_detail,
             )
-            return None, exhausted
+            return None, stopped
+        if parse_time(now) < parse_time(ready_at):
+            return None, None
         detail = {
             **base_detail,
-            "reason": "blocked attempt retry backoff elapsed",
+            "reason": "one bounded cross-worker retry after transient failure",
         }
-        is_timeout = self._is_timeout_blocked_attempt(task)
+        self._record_retry_worker_exclusion(
+            task,
+            agent_id=prior_agent_id,
+            fingerprint=fingerprint,
+            retry_kind=retry_kind,
+            now=now,
+        )
+        is_timeout = retry_kind == "timeout"
         if is_timeout and not ensure_json_object(task.metadata).get("plan_first"):
             # mac-timeout-plan: a timed-out task is likely too large for a
             # monolithic run. Instead of retrying blindly, inject plan_first=True
@@ -23417,11 +23624,11 @@ class ControlPlane:
         # Unlike cooperative distinctness this is not relaxed when the pool is
         # exhausted; the repair waits for an unaffected healthy peer.
         task_metadata = ensure_json_object(task.metadata)
-        explicit_excluded = {
-            str(value)
-            for value in task_metadata.get("excluded_agent_ids", [])
-            if str(value)
-        } if isinstance(task_metadata.get("excluded_agent_ids"), list) else set()
+        explicit_excluded: set[str] = set()
+        for key in ("excluded_agent_ids", "retry_excluded_agent_ids"):
+            values = task_metadata.get(key)
+            if isinstance(values, list):
+                explicit_excluded.update(str(value) for value in values if str(value))
         if agent.id in explicit_excluded:
             return False, "explicit_agent_excluded"
         # Distinct-executor separation is a *preference*, not a hard rule: when
