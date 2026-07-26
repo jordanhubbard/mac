@@ -653,9 +653,9 @@ class HgxElasticCapacityController:
             if item.session_id not in tracked_ids
         )
         onboarded_ids = sorted(
-            item.session_id
-            for item in live
-            if _is_onboarded(state_sessions.get(item.session_id))
+            str(session_id)
+            for session_id, record in state_sessions.items()
+            if isinstance(record, Mapping) and _is_onboarded(record)
         )
         create_gap = max(0, gap - len(unattested))
         return {

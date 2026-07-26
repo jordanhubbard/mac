@@ -495,6 +495,36 @@ def test_mark_onboarded_consumes_supply_and_new_pending_demand_creates_again(
         controller.mark_onboarded("sess-1", agent_id="agent_other")
 
 
+def test_onboarded_supply_survives_provider_dropping_the_live_session(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider()
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(
+            max_sessions=2,
+            cooldown_seconds=0,
+        ),
+    )
+    controller.execute(pending_request_count=1)
+    controller.mark_onboarded("sess-1", agent_id="agent_worker_1")
+
+    # The provider drops/terminates the onboarded session so it no longer
+    # appears in the live inventory, but the durable receipt still records it
+    # as onboarded supply.
+    provider.sessions = []
+
+    plan = controller.plan(pending_request_count=1)
+    assert plan["onboarded_session_ids"] == ["sess-1"]
+    assert plan["live_provider_session_count"] == 0
+
+    status = controller.status(pending_request_count=1)
+    assert status["onboarded_session_ids"] == ["sess-1"]
+
+
 def test_execute_fails_fast_when_another_capacity_mutation_holds_the_lock(
     tmp_path: Path,
 ) -> None:
