@@ -750,6 +750,31 @@ NAP_DEFAULT_DURATION_MINUTES = 15
 
 
 EVIDENCE_KINDS = {"test", "review", "artifact", "publication", "log", "eval"}
+# Deterministic, sorted view of the canonical evidence kinds. This is the single
+# source of truth shared by the CLI (argparse ``choices`` + help), the runtime
+# service (``ControlPlane.add_evidence``), and any other caller, so a new kind is
+# added in exactly one place.
+EVIDENCE_KIND_CHOICES = tuple(sorted(EVIDENCE_KINDS))
+
+
+def normalize_evidence_kind(value: Any) -> str:
+    """Canonicalize an evidence-kind token and validate it against the single
+    source of truth.
+
+    Trims surrounding whitespace and lowercases so callers accept the same
+    forgiving input everywhere. Raises :class:`ValueError` for a blank or
+    unsupported kind, with a message that lists the canonical choices; callers
+    translate that into their surface's error type (``ValidationError`` in the
+    runtime, an argparse error in the CLI)."""
+    text = str(value or "").strip().lower()
+    if not text:
+        raise ValueError("evidence kind is required")
+    if text not in EVIDENCE_KINDS:
+        raise ValueError(
+            "unsupported evidence kind: %s (choose one of %s)"
+            % (value, ", ".join(EVIDENCE_KIND_CHOICES))
+        )
+    return text
 
 
 class EvalScoringDirection(StrEnum):

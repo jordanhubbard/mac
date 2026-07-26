@@ -19,7 +19,15 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 from mac import mac_paths
 from mac.migration import import_jsonl, migrate_acc_sqlite
-from mac.models import MACError, REPORT_DELIVERABLE, normalize_deliverable_kind, parse_time, utcnow
+from mac.models import (
+    EVIDENCE_KIND_CHOICES,
+    MACError,
+    REPORT_DELIVERABLE,
+    normalize_deliverable_kind,
+    normalize_evidence_kind,
+    parse_time,
+    utcnow,
+)
 from mac.repository_hygiene import (
     CANCELLATION_DISPOSITIONS,
     REPOSITORY_REF_CLEANUP_SCHEMA,
@@ -2552,10 +2560,17 @@ def cmd_task_submit(args: argparse.Namespace) -> None:
 
 
 def cmd_task_evidence(args: argparse.Namespace) -> None:
+    # Validate against the same single source of truth the runtime uses so an
+    # unsupported --kind fails fast at the CLI with a consistent message instead
+    # of only after a round trip to the control plane.
+    try:
+        kind = normalize_evidence_kind(args.kind)
+    except ValueError as exc:
+        raise MACError(str(exc)) from exc
     _print(
         _plane(args).add_evidence(
             args.task_id,
-            args.kind,
+            kind,
             args.uri,
             args.summary,
             args.created_by,
@@ -6071,7 +6086,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     evidence = task.add_parser("evidence")
     evidence.add_argument("task_id")
-    evidence.add_argument("--kind", required=True)
+    evidence.add_argument(
+        "--kind",
+        required=True,
+        help="evidence kind (one of: %s)" % ", ".join(EVIDENCE_KIND_CHOICES),
+    )
     evidence.add_argument("--uri", required=True)
     evidence.add_argument("--summary", required=True)
     evidence.add_argument("--created-by", required=True)

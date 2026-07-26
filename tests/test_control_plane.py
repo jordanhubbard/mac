@@ -291,6 +291,39 @@ def test_add_evidence_rejects_invalid_and_oversized_artifacts(cp, monkeypatch):
         )
 
 
+def test_add_evidence_rejects_unsupported_kind(cp):
+    """Runtime evidence validation shares the CLI/models source of truth: an
+    unsupported kind is rejected with the choices-listing message."""
+    task = cp.create_task("unsupported evidence kind")
+
+    with pytest.raises(ValidationError, match="unsupported evidence kind: bogus"):
+        cp.add_evidence(
+            task.id,
+            "bogus",
+            "file:///tmp/result.json",
+            "bad kind",
+            "agent",
+            _trusted_internal=True,
+        )
+
+
+def test_add_evidence_normalizes_kind_case_and_whitespace(cp):
+    """A forgiving (case-insensitive, trimmed) kind is normalized to the
+    canonical token before it is persisted, matching normalize_evidence_kind."""
+    task = cp.create_task("normalized evidence kind")
+
+    evidence = cp.add_evidence(
+        task.id,
+        "  LOG ",
+        "file:///tmp/result.json",
+        "case-insensitive kind",
+        "agent",
+        _trusted_internal=True,
+    )
+
+    assert evidence.kind == "log"
+
+
 def create_runtime(cp, name="runtime"):
     return cp.create_runtime(
         name,
