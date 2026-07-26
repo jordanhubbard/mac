@@ -585,6 +585,145 @@ def test_systemd_restore_keeps_indirect_auxiliary_media_safely_inactive(
     assert restored["enabled"] == "indirect"
 
 
+def test_systemd_quiesce_records_prior_absent_auxiliary_as_absent(
+    tmp_path: Path,
+) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    # The prior-absent unit is deliberately not present in manager state, so the
+    # fake ``show`` reports the systemd ``not-found`` load state.
+    _write_state(tmp_path, _loaded_systemd_state())
+    media = "mac-gen-server.service"
+    command, receipt = _base_command(
+        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
+    )
+    command.extend(
+        ["--systemctl", str(systemctl), "--absent-auxiliary-service", media]
+    )
+
+    result = _run(command)
+
+    assert result.returncode == 0, result.stderr
+    payload = _assert_passed_receipt(receipt, "quiesce", "systemd")
+    assert payload["services"]["absent_auxiliary_0"] == {
+        "identity": media,
+        "expected": "absent",
+        "observed": "absent",
+    }
+
+
+def test_systemd_quiesce_rejects_present_prior_absent_auxiliary(
+    tmp_path: Path,
+) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    state = _loaded_systemd_state()
+    media = "mac-gen-server.service"
+    # A supervisor artifact the prior generation never owned is still loaded and
+    # can be stopped, so it is present rather than absent; the rollback contract
+    # must fail closed instead of silently downgrading it to inactive.
+    state["services"][media] = {
+        "load": "loaded",
+        "active": "inactive",
+        "sub": "dead",
+        "pid": 0,
+        "restarts": 0,
+        "enabled": "disabled",
+    }
+    _write_state(tmp_path, state)
+    command, receipt = _base_command(
+        tmp_path, "quiesce", "systemd", _closed_port(), SYSTEMD_NAMES
+    )
+    command.extend(
+        ["--systemctl", str(systemctl), "--absent-auxiliary-service", media]
+    )
+
+    result = _run(command)
+
+    assert result.returncode == 1
+    assert not receipt.exists()
+    assert "still present" in result.stderr
+
+
+def test_systemd_restore_proves_prior_absent_auxiliary_absent(
+    tmp_path: Path,
+) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    # Prior-absent unit is absent from manager state throughout the restore.
+    _write_state(tmp_path, _stopped_systemd_state())
+    media = "mac-gen-server.service"
+    with _healthy_server() as port:
+        command, receipt = _base_command(
+            tmp_path, "restore", "systemd", port, SYSTEMD_NAMES
+        )
+        command.extend(
+            ["--systemctl", str(systemctl), "--absent-auxiliary-service", media]
+        )
+        result = _run(command)
+
+    assert result.returncode == 0, result.stderr
+    payload = _assert_passed_receipt(receipt, "restore", "systemd")
+    assert payload["services"]["absent_auxiliary_0"] == {
+        "identity": media,
+        "expected": "absent",
+        "observed": "absent",
+        "stable_observations": 2,
+    }
+    assert media not in _read_state(tmp_path)["services"]
+
+
+def test_systemd_restore_rejects_prior_absent_auxiliary_that_remains_defined(
+    tmp_path: Path,
+) -> None:
+    systemctl = _write_manager(tmp_path, "systemctl")
+    state = _stopped_systemd_state()
+    media = "mac-gen-server.service"
+    # The successor generation left a loaded definition the prior generation
+    # never owned. Disabling it does not remove the unit file, so is-enabled
+    # never becomes ``not-found`` and the contract must refuse the restore.
+    state["services"][media] = {
+        "load": "loaded",
+        "active": "inactive",
+        "sub": "dead",
+        "pid": 0,
+        "restarts": 0,
+        "enabled": "disabled",
+    }
+    _write_state(tmp_path, state)
+    with _healthy_server() as port:
+        command, receipt = _base_command(
+            tmp_path, "restore", "systemd", port, SYSTEMD_NAMES
+        )
+        command.extend(
+            ["--systemctl", str(systemctl), "--absent-auxiliary-service", media]
+        )
+        result = _run(command)
+
+    assert result.returncode == 1
+    assert not receipt.exists()
+    assert "remained present" in result.stderr
+
+
+def test_absent_auxiliary_rollback_service_is_systemd_only(tmp_path: Path) -> None:
+    supervisorctl = _write_manager(tmp_path, "supervisorctl")
+    _write_state(tmp_path, {"programs": {}})
+    command, receipt = _base_command(
+        tmp_path, "quiesce", "supervisord", _closed_port(), SUPERVISORD_NAMES
+    )
+    command.extend(
+        [
+            "--supervisorctl",
+            str(supervisorctl),
+            "--absent-auxiliary-service",
+            "mac-gen-server",
+        ]
+    )
+
+    result = _run(command)
+
+    assert result.returncode == 1
+    assert not receipt.exists()
+    assert "systemd-only" in result.stderr
+
+
 def test_systemd_restore_requiesces_a_partial_start_failure(tmp_path: Path) -> None:
     systemctl = _write_manager(tmp_path, "systemctl")
     state = _stopped_systemd_state()

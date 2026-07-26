@@ -7,9 +7,10 @@ owns the two supervisor boundaries around that mutation:
 * ``quiesce`` stops every MAC service identity and proves that the control
   plane port is closed before artifacts or service definitions are changed.
 * ``restore`` starts the explicitly supplied prior control-plane, gateway, and
-  agent topology, keeps every non-owner identity inactive, and proves both
-  exact manager state and the control-plane HTTP health endpoint before issuing
-  a receipt.
+  agent topology, keeps every non-owner identity inactive, proves every
+  prior-absent auxiliary artifact absent rather than merely inactive, and
+  proves both exact manager state and the control-plane HTTP health endpoint
+  before issuing a receipt.
 
 Only a successful proof is written to ``--receipt`` or stdout.  Manager output
 is used for exact parsing in memory, but is never copied into durable evidence
@@ -84,6 +85,7 @@ class ServiceNames:
     nemoclaw_gateway: str
     agent: str
     auxiliary: Tuple[str, ...] = ()
+    absent_auxiliary: Tuple[str, ...] = ()
 
     def items(self) -> Tuple[Tuple[str, str], ...]:
         primary = (
@@ -93,9 +95,22 @@ class ServiceNames:
             ("nemoclaw_gateway", self.nemoclaw_gateway),
             ("agent", self.agent),
         )
-        return primary + tuple(
-            (f"auxiliary_{index}", identity)
-            for index, identity in enumerate(self.auxiliary)
+        return (
+            primary
+            + tuple(
+                (f"auxiliary_{index}", identity)
+                for index, identity in enumerate(self.auxiliary)
+            )
+            + tuple(
+                (f"absent_auxiliary_{index}", identity)
+                for index, identity in enumerate(self.absent_auxiliary)
+            )
+        )
+
+    def absent_logicals(self) -> Tuple[str, ...]:
+        return tuple(
+            f"absent_auxiliary_{index}"
+            for index in range(len(self.absent_auxiliary))
         )
 
 
@@ -365,9 +380,12 @@ class BaseSupervisor:
             active_logicals.add(self.active_gateway + "_gateway")
         if self.agent_active:
             active_logicals.add("agent")
+        absent_logicals = set(self.names.absent_logicals())
         active: List[Tuple[str, str]] = []
         inactive: List[Tuple[str, str]] = []
         for logical, identity in self.names.items():
+            if logical in absent_logicals:
+                continue
             (active if logical in active_logicals else inactive).append(
                 (logical, identity)
             )
@@ -476,9 +494,21 @@ class SystemdSupervisor(BaseSupervisor):
         )  # type: ignore[return-value]
 
     def quiesce(self) -> Dict[str, object]:
+        absent_logicals = set(self.names.absent_logicals())
         observations: Dict[str, object] = {}
         for logical, identity in reversed(self.names.items()):
             state = self._stop_and_prove(identity)
+            if logical in absent_logicals:
+                if state.present:
+                    raise ProtocolError(
+                        "prior-absent auxiliary service is still present"
+                    )
+                observations[logical] = {
+                    "identity": identity,
+                    "expected": "absent",
+                    "observed": "absent",
+                }
+                continue
             observations[logical] = {
                 "identity": identity,
                 "expected": "inactive",
@@ -509,11 +539,32 @@ class SystemdSupervisor(BaseSupervisor):
         if self._run(args, context).returncode != 0:
             raise ProtocolError(context + " failed")
 
+    def _prove_absent(self, identity: str) -> None:
+        # A prior-absent supervisor artifact must remain absent after restore.
+        # Disable ``--now`` idempotently to stop any successor-started instance,
+        # then require the definition itself to be unloaded (``not-found``) with
+        # no running unit.  A unit that merely stops but keeps its definition is
+        # one the prior generation never owned, so the contract fails closed.
+        self._run(["disable", "--now", identity], "removing prior-absent service")
+        state = self.inspect(identity)
+        if state.present:
+            raise ProtocolError("prior-absent auxiliary service remained present")
+        if self._enabled_state(identity) != "not-found":
+            raise ProtocolError("prior-absent auxiliary service remained defined")
+
     def restore(self) -> Dict[str, object]:
         self._require_ok(["daemon-reload"], "reloading systemd definitions")
         active, inactive = self.desired_service_items(
             control_plane_active=self.control_plane_active
         )
+        absent_logicals = self.names.absent_logicals()
+        absent_items = [
+            (logical, identity)
+            for logical, identity in self.names.items()
+            if logical in set(absent_logicals)
+        ]
+        for _logical, identity in absent_items:
+            self._prove_absent(identity)
         for _logical, identity in inactive:
             result = self._run(
                 ["disable", "--now", identity],
@@ -564,6 +615,13 @@ class SystemdSupervisor(BaseSupervisor):
                         "successor gateway became active during restore"
                     )
                 sample[logical] = state
+            for logical, identity in absent_items:
+                state = self.inspect(identity)
+                if state.present:
+                    raise ProtocolError(
+                        "prior-absent auxiliary service reappeared during restore"
+                    )
+                sample[logical] = state
             samples.append(sample)
             if index + 1 < self.stable_observations:
                 self.deadline.pause(
@@ -578,11 +636,18 @@ class SystemdSupervisor(BaseSupervisor):
                 ):
                     raise ProtocolError("restored systemd service was unstable")
         active_names = {logical for logical, _identity in active}
+        absent_names = set(absent_logicals)
+
+        def _state_word(logical: str) -> str:
+            if logical in absent_names:
+                return "absent"
+            return "running" if logical in active_names else "inactive"
+
         return {
             logical: {
                 "identity": identity,
-                "expected": ("running" if logical in active_names else "inactive"),
-                "observed": ("running" if logical in active_names else "inactive"),
+                "expected": _state_word(logical),
+                "observed": _state_word(logical),
                 "stable_observations": self.stable_observations,
             }
             for logical, identity in self.names.items()
@@ -1180,6 +1245,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="additional systemd identity to keep quiescent across artifact restore",
     )
     parser.add_argument(
+        "--absent-auxiliary-service",
+        action="append",
+        default=[],
+        help=(
+            "systemd identity that was absent in the prior generation; the "
+            "rollback contract proves it absent instead of merely inactive"
+        ),
+    )
+    parser.add_argument(
         "--active-gateway",
         choices=("hermes", "openclaw", "nemoclaw", "none"),
         help="gateway owner in the prior generation; required for restore",
@@ -1262,13 +1336,19 @@ def validate_args(args: argparse.Namespace) -> ServiceNames:
         receipt.unlink()
     except FileNotFoundError:
         pass
-    if args.auxiliary_service and args.supervisor != "systemd":
+    if (
+        args.auxiliary_service or args.absent_auxiliary_service
+    ) and args.supervisor != "systemd":
         raise ProtocolError("auxiliary rollback services are systemd-only")
-    if len(args.auxiliary_service) > 16:
+    if len(args.auxiliary_service) + len(args.absent_auxiliary_service) > 16:
         raise ProtocolError("too many auxiliary rollback services")
     auxiliary = tuple(
         validate_identity(value, "auxiliary service")
         for value in args.auxiliary_service
+    )
+    absent_auxiliary = tuple(
+        validate_identity(value, "prior-absent auxiliary service")
+        for value in args.absent_auxiliary_service
     )
     names = ServiceNames(
         validate_identity(args.control_plane, "control-plane"),
@@ -1277,6 +1357,7 @@ def validate_args(args: argparse.Namespace) -> ServiceNames:
         validate_identity(args.nemoclaw_gateway, "NemoClaw gateway"),
         validate_identity(args.agent, "agent"),
         auxiliary,
+        absent_auxiliary,
     )
     identities = [identity for _logical, identity in names.items()]
     if len(set(identities)) != len(identities):
