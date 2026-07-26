@@ -2104,13 +2104,134 @@ def cmd_project_create(args: argparse.Namespace) -> None:
     )
 
 
+_PROJECT_REGISTER_REMOTE_PREFIXES = ("https://", "git@", "ssh://", "git://")
+
+
+def _project_register_git(
+    checkout: Path,
+    *git_args: str,
+    required: bool = True,
+) -> Optional[str]:
+    git = shutil.which("git")
+    if git is None:
+        raise MACError("git is required to register a local checkout")
+    try:
+        result = subprocess.run(
+            [git, "-C", str(checkout), *git_args],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise MACError(
+            "timed out while inspecting Git checkout %s" % checkout
+        ) from exc
+    except OSError as exc:
+        raise MACError(
+            "failed to inspect Git checkout %s: %s" % (checkout, exc)
+        ) from exc
+    value = result.stdout.strip()
+    if result.returncode == 0 and value:
+        return value
+    if not required:
+        return None
+    detail = result.stderr.strip()
+    suffix = ": %s" % detail if detail else ""
+    raise MACError(
+        "cannot inspect Git checkout %s with `git %s`%s"
+        % (checkout, " ".join(git_args), suffix)
+    )
+
+
+def _local_project_registration(
+    target: str,
+    *,
+    default_branch: Optional[str],
+) -> tuple[str, str, Path]:
+    checkout = Path(target or ".").expanduser()
+    if not checkout.exists():
+        raise MACError("project checkout path does not exist: %s" % checkout)
+    if not checkout.is_dir():
+        raise MACError("project checkout path is not a directory: %s" % checkout)
+    checkout = checkout.resolve()
+    root_value = _project_register_git(checkout, "rev-parse", "--show-toplevel")
+    assert root_value is not None
+    root = Path(root_value).resolve()
+
+    repository_url = _project_register_git(root, "remote", "get-url", "origin")
+    assert repository_url is not None
+    from mac.repository_contract import canonical_git_remote_identity
+
+    try:
+        canonical_git_remote_identity(repository_url)
+    except ValueError as exc:
+        raise MACError(
+            "checkout origin is not a supported secret-free Git remote: %s" % exc
+        ) from exc
+
+    branch = str(default_branch or "").strip()
+    if not branch:
+        origin_head = _project_register_git(
+            root,
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+            required=False,
+        )
+        if origin_head and origin_head.startswith("origin/"):
+            branch = origin_head[len("origin/") :]
+        if not branch:
+            branch = (
+                _project_register_git(
+                    root,
+                    "symbolic-ref",
+                    "--quiet",
+                    "--short",
+                    "HEAD",
+                    required=False,
+                )
+                or ""
+            )
+    if not branch:
+        raise MACError(
+            "cannot infer a branch from checkout %s; pass --branch BRANCH" % root
+        )
+    return repository_url, branch, root
+
+
+def _resolve_project_registration_target(
+    target: Optional[str],
+    *,
+    default_branch: Optional[str],
+) -> tuple[str, Optional[str], Optional[Path]]:
+    value = str(target or "").strip()
+    if value.startswith(_PROJECT_REGISTER_REMOTE_PREFIXES):
+        return value, default_branch, None
+    repository_url, branch, root = _local_project_registration(
+        value or ".",
+        default_branch=default_branch,
+    )
+    return repository_url, branch, root
+
+
 def cmd_project_register(args: argparse.Namespace) -> None:
+    repository_url, default_branch, checkout = _resolve_project_registration_target(
+        args.repository_url,
+        default_branch=args.default_branch,
+    )
+    if checkout is not None:
+        print(
+            "mac: registering checkout %s (branch %s)"
+            % (checkout, default_branch),
+            file=sys.stderr,
+        )
     capabilities = list(_csv(args.required_capabilities)) or None
     _print(
         _plane(args).register_project(
-            args.repository_url,
+            repository_url,
             project=args.project,
-            default_branch=args.default_branch,
+            default_branch=default_branch,
             title=args.title,
             priority=args.priority,
             required_capabilities=capabilities,
@@ -6035,14 +6156,15 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_project_create, project_create)
     project_register = project.add_parser(
         "register",
-        help="register GIT_URL[#BRANCH] as a project and create its "
-        "contract-authoring task (#main is implied)",
+        help="register the current checkout, a local path, or GIT_URL[#BRANCH] "
+        "as a project and create its contract-authoring task",
     )
     project_register.add_argument(
         "repository_url",
-        metavar="GIT_URL[#BRANCH]",
-        help="git remote plus optional working branch, for example "
-        "git@github.com:org/repo.git#feature-x",
+        nargs="?",
+        metavar="PATH|GIT_URL[#BRANCH]",
+        help="checkout path or git remote plus optional working branch; "
+        "defaults to the current checkout",
     )
     project_register.add_argument(
         "--project",
@@ -6052,7 +6174,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--branch",
         "--default-branch",
         dest="default_branch",
-        help="working branch when the URL has no #BRANCH suffix (default: main)",
+        help="working branch override; local checkouts otherwise use origin/HEAD "
+        "then the current branch, while URLs default to main",
     )
     project_register.add_argument(
         "--title", help="override the contract-authoring task title"

@@ -510,11 +510,13 @@ assignment, use `mac task claim <task_id> <agent_id>` followed by
 
 For repository-backed work, the production path is:
 
-1. A project's git repository is registered — e.g. via `mac project register
-   <git-url>[#branch]`, which creates the contract-authoring onboarding task, followed
-   by `mac bridge repository register <name> <path> --project <project>` once
-   `.mac/project.yaml` exists in a hub-visible checkout. The mac task ledger is
-   canonical; ready work is `mac task ready`.
+1. A project's git repository is registered — run `mac project register` from
+   a checkout, pass another local checkout path, or use `mac project register
+   <git-url>[#branch]` for remote-first onboarding. Registration creates the
+   contract-authoring onboarding task. Follow it with `mac bridge repository
+   register <name> <path> --project <project>` once `.mac/project.yaml` exists
+   in a hub-visible checkout. The mac task ledger is canonical; ready work is
+   `mac task ready`.
 2. Each task for a registered-repository project carries a repository contract,
    execution contract, and origin metadata, so the executor gets a real checkout.
 3. A healthy worker claims the task, works only in a task-owned git worktree,

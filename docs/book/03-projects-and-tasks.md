@@ -28,7 +28,23 @@ mac --db "$DOCS_DB" task release "$task_id"
 mac --db "$DOCS_DB" task ready --project tutorial --limit 10
 ```
 
-Repository-backed projects use one branch-qualified registration string:
+From inside an existing checkout, the shortest repository-backed onboarding
+command is:
+
+```console
+mac project register
+```
+
+Pass `.` explicitly or provide another checkout path when useful:
+
+```console
+mac project register .
+mac project register ~/Src/widget
+```
+
+Local registration reads the `origin` remote and prefers `origin/HEAD` for the
+branch, falling back to the current branch. `--branch` overrides discovery.
+Remote-first onboarding uses one branch-qualified registration string,
 `GIT_URL#BRANCH`. The fragment defaults to `main`, so these are equivalent:
 
 ```console

@@ -43,7 +43,9 @@ mac task search <keyword>                    # title/description match
 
 # Projects
 mac project create <project> --active        # manual project, immediately dispatchable
-mac project register <git-url>[#branch] --project=<project>  # defaults to #main
+mac project register                         # onboard the current Git checkout
+mac project register <path>                  # onboard another local checkout
+mac project register <git-url>[#branch]      # remote-first; defaults to #main
 mac project update <project> --branch=<branch>
 mac project unregister <project> --force
 mac bridge repository register <name> <path> --project=<project>

@@ -392,8 +392,9 @@ usage: mac project [-h]
 
 positional arguments:
   {create,register,pause,activate,list,show,update,unregister}
-    register            register GIT_URL[#BRANCH] as a project and create its
-                        contract-authoring task (#main is implied)
+    register            register the current checkout, a local path, or
+                        GIT_URL[#BRANCH] as a project and create its contract-
+                        authoring task
     pause               hold a project's tickets from autonomous dispatch
     activate            open a project to autonomous dispatch
     update              update project fields or its branch-qualified

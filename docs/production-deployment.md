@@ -771,7 +771,8 @@ legacy bridge poller. Register or onboard repositories through the current
 project/repository commands:
 
 ```console
-mac project register <git-url>[#branch]                # #main by default; creates contract task
+mac project register                                  # current checkout; creates contract task
+mac project register <path-or-git-url>[#branch]       # local or remote-first onboarding
 mac project update <project> --branch <branch>         # move the internal project fork
 mac project unregister <project> --force               # detach history; disable checkout registration
 mac bridge repository register <name> <path> --project <project>  # after .mac/project.yaml exists

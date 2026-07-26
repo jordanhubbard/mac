@@ -27,10 +27,10 @@ mac --db "$DOCS_DB" bridge repository register mac "$DOCS_ROOT" \
 mac --db "$DOCS_DB" bridge repository repos
 ```
 
-For a new Git-backed project, use `mac project register GIT_URL[#BRANCH]`
-first. Its contract-authoring
-task should inspect the real build rather than guessing from filenames. Register
-the checkout only after the contract exists.
+For a new Git-backed project, run `mac project register` from its checkout or
+use `mac project register GIT_URL[#BRANCH]` for remote-first onboarding. Its
+contract-authoring task should inspect the real build rather than guessing from
+filenames. Register the checkout only after the contract exists.
 
 Code executors must run the repository's mandatory tests and a CodeGraph audit
 before pushing. A missing test command is a review condition, not permission to
