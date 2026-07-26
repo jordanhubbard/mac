@@ -40,6 +40,7 @@ their retained sources.
 - [Disposition: skill environment-prerequisite finding — smallest repair applied](../archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md) — `archive/field-notes/disposition-task-46eb6c-skill-env-prereqs.md`
 - [Disposition: low-confidence dream finding `skill` (parent `task_9c83aa5b`) — not actionable](../archive/field-notes/disposition-task-9c83aa5b-skill.md) — `archive/field-notes/disposition-task-9c83aa5b-skill.md`
 - [Dream-Finding Assessment: dreamrepair:3dc2cf317ea21e032952a355c3550f88](../archive/field-notes/dream-finding-3dc2cf.md) — `archive/field-notes/dream-finding-3dc2cf.md`
+- [Dream-Finding Assessment: dreamrepair:58afe279d34e186ee4d6d6125532371c](../archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md) — `archive/field-notes/dream-finding-58afe2-openclaw-entrypoint-ready-token.md`
 - [Dream-Finding Assessment: dreamrepair:6d1b5bbe0a13515fef0bd061ef001119](../archive/field-notes/dream-finding-6d1b5b.md) — `archive/field-notes/dream-finding-6d1b5b.md`
 - [Dream-Finding Assessment: dreamrepair:805aed758e12f0f95cf0c3dbf39811ce](../archive/field-notes/dream-finding-805aed7.md) — `archive/field-notes/dream-finding-805aed7.md`
 - [Findings: startup self-test attestation-gap crash (crash_1fc349e109ed4ff9885acf1c8ba99948)](../archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md) — `archive/field-notes/findings-crash-1fc349e1-startup-selftest-attestation-gap.md`
