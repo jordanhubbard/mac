@@ -365,7 +365,17 @@ def main(argv: list[str] | None = None) -> int:
         hub_url = str(args.hub_url or "").strip()
         read_token = str(os.environ.get(args.token_env) or "")
         repository: dict[str, Any] = {}
-        if hub_url:
+        # Only consult the hub when the repository identity was not fully
+        # supplied on the command line. When both --repository-id and
+        # --canonical-remote are given the plan is built entirely offline, so
+        # an ambient MAC_URL (the --hub-url default) must NOT trigger a live
+        # hub request. Otherwise the documented read-only "print both plans"
+        # mode would silently depend on a reachable, authorized hub.
+        needs_hub_discovery = not (
+            str(args.repository_id or "").strip()
+            and str(args.canonical_remote or "").strip()
+        )
+        if hub_url and needs_hub_discovery:
             repository = _registered_repository(
                 hub_url,
                 args.repository_name,
