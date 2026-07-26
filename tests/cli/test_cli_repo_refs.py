@@ -99,6 +99,24 @@ def test_task_close_cli_requires_cancellation_reason(tmp_path):
     assert "--reason is required with --cancelled" in error
 
 
+def test_task_cancel_cli_uses_active_cancellation_defaults(tmp_path):
+    rc, task, _error = _run(tmp_path, "task", "create", "stop this work")
+    assert rc == 0
+
+    rc, cancelled, error = _run(
+        tmp_path,
+        "task",
+        "cancel",
+        task["id"],
+    )
+
+    assert rc == 0, error
+    assert cancelled["state"] == "cancelled"
+    lifecycle = cancelled["metadata"]["repository_ref_lifecycle"]
+    assert lifecycle["reason"] == "operator requested cancellation"
+    assert lifecycle["disposition"] == "preserve"
+
+
 def test_task_close_cli_refuses_unlinked_duplicate(tmp_path):
     rc, task, _error = _run(tmp_path, "task", "create", "duplicate work")
     assert rc == 0

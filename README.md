@@ -349,6 +349,10 @@ default remains `off` for standalone API processes and stateless replicas.
 mac task close task_old --cancelled --disposition superseded \
   --replacement-task task_new --reason "replacement published"
 
+# Immediate operator stop: revoke the live lease and make the owning loop
+# worker terminate its active executor tree on the next cancellation poll.
+mac task cancel task_running --reason "operator stopped obsolete work"
+
 git fetch --prune origin
 mac --json repo refs audit --repo .
 mac --json repo refs prune --repo .          # dry-run

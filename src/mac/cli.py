@@ -1869,6 +1869,37 @@ def cmd_task_close(args: argparse.Namespace) -> None:
     _print(result)
 
 
+def cmd_task_cancel(args: argparse.Namespace) -> None:
+    """Actively cancel a task and revoke any live worker assignment.
+
+    The hub transition clears the task's lease immediately. Loop workers poll
+    assignment authority while an executor is running and terminate the active
+    subprocess tree when that lease is no longer current.
+    """
+
+    cp = _plane(args)
+    from mac.models import TaskState
+
+    reason = str(args.reason or "").strip() or "operator requested cancellation"
+    detail = {
+        "reason": reason,
+        "disposition": args.disposition or "preserve",
+        "cleanup_grace_seconds": int(
+            max(0.0, float(args.cleanup_grace_days)) * 24 * 60 * 60
+        ),
+    }
+    if args.replacement_task:
+        detail["replacement_task_id"] = args.replacement_task
+    result = cp.close_task(
+        args.task_id,
+        TaskState.CANCELLED.value,
+        args.actor,
+        detail,
+    )
+    _maybe_emit_ticket(result, args, close_reason=reason)
+    _print(result)
+
+
 def cmd_task_reopen(args: argparse.Namespace) -> None:
     # Recovery: return a stuck/terminal task to OPEN (failed/cancelled reset
     # attempt_count so the requeue isn't immediately re-exhausted).
@@ -6028,6 +6059,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     close.set_defaults(success=True)
     _set(cmd_task_close, close)
+
+    cancel = task.add_parser(
+        "cancel",
+        help="actively cancel a task, revoke its lease, and abort a running worker executor",
+    )
+    cancel.add_argument("task_id")
+    cancel.add_argument(
+        "--reason",
+        default="operator requested cancellation",
+        help="audit reason (default: operator requested cancellation)",
+    )
+    cancel.add_argument("--actor", default="human")
+    cancel.add_argument(
+        "--no-ticket",
+        dest="no_ticket",
+        action="store_true",
+        help="don't update the .tickets/<id>.md compatibility mirror",
+    )
+    cancel.add_argument(
+        "--disposition",
+        choices=CANCELLATION_DISPOSITIONS,
+        help="why cancelled work should be preserved or eventually cleaned up "
+        "(default: preserve)",
+    )
+    cancel.add_argument(
+        "--replacement-task",
+        help="replacement task required for duplicate or superseded cancellations",
+    )
+    cancel.add_argument(
+        "--cleanup-grace-days",
+        type=float,
+        default=7.0,
+        help="delay before an eligible managed ref may be pruned (default: 7)",
+    )
+    _set(cmd_task_cancel, cancel)
 
     reopen = task.add_parser(
         "reopen",

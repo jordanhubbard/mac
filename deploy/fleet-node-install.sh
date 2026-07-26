@@ -57,6 +57,7 @@ DEPLOY_LOCK_DIR="${MAC_HOME:-$HOME/.mac}/deploy-controller.lock"
 deployment_lock_assert_and_renew() {
   MAC_DEPLOY_LOCK_DIR="$DEPLOY_LOCK_DIR" \
     MAC_DEPLOY_LOCK_ID="$DEPLOY_GENERATION" python3 - <<'PY'
+import hashlib
 import json
 import os
 import tempfile
@@ -6469,6 +6470,7 @@ daemon_resource_quiescence_gate() {
   fi
   /usr/bin/env -i "${gate_env[@]}" \
     "$PY" -I -S - "$mode" "$phase" "$MAC_HOME" "$DEPLOY_GENERATION" "$DEPLOY_REV" <<'PY'
+import hashlib
 import json
 import math
 import os
@@ -6971,6 +6973,7 @@ managed_task_sandbox_kinds = frozenset(
     {"task", "hubverify", "codingcap", "runtime-smoke", "security-probe"}
 )
 falsey_keep_values = frozenset({"0", "false", "no", "off"})
+truthy_keep_values = frozenset({"1", "true", "yes", "on"})
 
 
 def sandbox_pid_is_alive(pid):
@@ -7007,6 +7010,7 @@ def classify_orphan_task_sandbox(sandbox):
         "owner": owner,
         "kind": kind,
         "keep": keep,
+        "preserve": False,
         "reap": False,
     }
 
@@ -7015,9 +7019,6 @@ def classify_orphan_task_sandbox(sandbox):
     if owner != "mac":
         return record
     if kind not in managed_task_sandbox_kinds:
-        return record
-    if keep not in falsey_keep_values:
-        # Missing, blank, or truthy mac.keep is protective: fail closed.
         return record
     if not pid_raw:
         return record
@@ -7030,7 +7031,13 @@ def classify_orphan_task_sandbox(sandbox):
     if sandbox_pid_is_alive(pid):
         return record
 
-    record["reap"] = True
+    if keep in falsey_keep_values:
+        record["reap"] = True
+    elif kind == "task" and keep in truthy_keep_values:
+        # A dead task executor may leave unpublished work in /sandbox/task.
+        # Preserve that tree durably before treating the sandbox as disposable.
+        record["preserve"] = True
+    # Missing, blank, or unknown mac.keep remains protective: fail closed.
     return record
 
 
@@ -7096,8 +7103,102 @@ def orphan_task_sandbox_candidates(sandboxes):
     return [
         record
         for record in (classify_orphan_task_sandbox(row) for row in sandboxes)
-        if record["reap"]
+        if record["reap"] or record["preserve"]
     ]
+
+
+def require_private_directory(path):
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise QuiescenceFailure("OpenShell recovery directory is unreadable")
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+    ):
+        raise QuiescenceFailure("OpenShell recovery directory is not owner-controlled")
+    if metadata.st_mode & 0o077:
+        try:
+            path.chmod(0o700)
+        except OSError:
+            raise QuiescenceFailure("OpenShell recovery directory is not owner-private")
+
+
+def preserve_managed_task_sandbox(record):
+    """Download a dead protected task tree into an owner-private durable path."""
+
+    name = record["name"]
+    recovery_root = mac_home / "openshell-recovery"
+    try:
+        recovery_root.mkdir(mode=0o700, exist_ok=True)
+    except OSError:
+        raise QuiescenceFailure("OpenShell recovery root could not be created")
+    require_private_directory(recovery_root)
+
+    recovery_id = hashlib.sha256(
+        ("%s\0%s\0%s" % (name, generation, revision)).encode("utf-8")
+    ).hexdigest()[:20]
+    destination = recovery_root / ("%s-%s" % (name, recovery_id))
+    manifest = destination / "manifest.json"
+    workspace = destination / "workspace"
+    expected_manifest = {
+        "schema": "mac.openshell.task_preservation.v1",
+        "sandbox": name,
+        "generation": generation,
+        "revision": revision,
+        "recovery_id": recovery_id,
+    }
+
+    if destination.exists():
+        require_private_directory(destination)
+        require_private_regular(manifest)
+        try:
+            prior = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise QuiescenceFailure("OpenShell recovery manifest is malformed")
+        if prior != expected_manifest:
+            raise QuiescenceFailure("OpenShell recovery manifest identity changed")
+        if workspace.is_symlink() or not workspace.is_dir():
+            raise QuiescenceFailure("OpenShell preserved task workspace is missing")
+        return recovery_id
+
+    temporary = Path(
+        tempfile.mkdtemp(prefix=".preserve-%s-" % recovery_id, dir=str(recovery_root))
+    )
+    temporary.chmod(0o700)
+    try:
+        downloaded = run_bounded(
+            [
+                str(resolve_owned_executable(openshell)),
+                "sandbox",
+                "download",
+                name,
+                "/sandbox/task",
+                str(temporary / "workspace"),
+            ],
+            env=openshell_env(),
+        )
+        if downloaded.timed_out:
+            raise QuiescenceFailure("OpenShell task preservation timed out")
+        if downloaded.returncode != 0:
+            raise QuiescenceFailure("OpenShell task preservation failed")
+        downloaded_workspace = temporary / "workspace"
+        if downloaded_workspace.is_symlink() or not downloaded_workspace.is_dir():
+            raise QuiescenceFailure(
+                "OpenShell task preservation produced no workspace"
+            )
+        atomic_write_certificate(temporary / "manifest.json", expected_manifest)
+        os.replace(str(temporary), str(destination))
+        directory = os.open(str(recovery_root), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except Exception:
+        shutil.rmtree(str(temporary), ignore_errors=True)
+        raise
+    return recovery_id
 
 
 def delete_managed_task_sandbox(name):
@@ -7137,6 +7238,8 @@ def reconcile_managed_task_sandboxes():
     count, and the names reconciled plus scanned/managed counts.
     """
 
+    preserved = []
+    preservation_ids = {}
     reconciled = []
     seen = set()
     stable_observations = 0
@@ -7152,6 +7255,10 @@ def reconcile_managed_task_sandboxes():
             stable_observations = 0
             for record in candidates:
                 name = record["name"]
+                if record["preserve"]:
+                    preservation_ids[name] = preserve_managed_task_sandbox(record)
+                    if name not in preserved:
+                        preserved.append(name)
                 delete_managed_task_sandbox(name)
                 if name not in seen:
                     seen.add(name)
@@ -7170,6 +7277,11 @@ def reconcile_managed_task_sandboxes():
         "stable_inactive_observations": stable_observations,
         "reconciled": sorted(reconciled),
         "reconciled_count": len(reconciled),
+        "preserved": sorted(preserved),
+        "preserved_count": len(preserved),
+        "preservation_ids": {
+            name: preservation_ids[name] for name in sorted(preservation_ids)
+        },
         "scanned": scanned,
         "managed": managed,
     }
@@ -8338,8 +8450,8 @@ try:
         runtimes = discover_working_runtimes()
         retained = prove_legacy_nemoclaw_inactive(runtimes)
         sandbox = quiesce_openclaw_sandbox()
-        openshell_managed = prove_managed_openshell_inactive(runtimes)
         openshell_task_sandboxes = reconcile_managed_task_sandboxes()
+        openshell_managed = prove_managed_openshell_inactive(runtimes)
         write_pre_source_certificate(
             certificate,
             sandbox,

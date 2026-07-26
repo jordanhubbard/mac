@@ -61,6 +61,7 @@ mac task break-glass-list <task_id>          # inspect durable recovery authoriz
 mac task break-glass-revoke <auth_id> --reason="..."
 mac task claim <task_id> <agent_id>
 mac task start <task_id> <agent_id>
+mac task cancel <task_id>                    # revoke lease + abort a running executor
 mac task show <task_id>                      # detail + history
 mac task close <task_id> --reason="..."
 mac dispatch tick --limit 10                 # ask dispatcher to assign ready work now

@@ -2181,10 +2181,13 @@ def _hub_receipt_evidence(
         "committed": frozenset({"proof_sha256", "proved_at", "committed_at"}),
     }
     if expected_status == "aborted":
+        abort_fields = {"aborted_at", "abort_reason"}
+        proved_abort_fields = abort_fields | {"proof_sha256", "proved_at"}
         allowed = {
-            HUB_RECEIPT_BASE_KEYS | {"aborted_at", "abort_reason"},
-            HUB_RECEIPT_BASE_KEYS
-            | {"proof_sha256", "proved_at", "aborted_at", "abort_reason"},
+            HUB_RECEIPT_BASE_KEYS | abort_fields,
+            HUB_RECEIPT_BASE_KEYS | abort_fields | {"abort_disposition"},
+            HUB_RECEIPT_BASE_KEYS | proved_abort_fields,
+            HUB_RECEIPT_BASE_KEYS | proved_abort_fields | {"abort_disposition"},
         }
         if frozenset(parsed) not in allowed:
             raise JournalError(
@@ -2266,6 +2269,14 @@ def _hub_receipt_evidence(
             _text(parsed[timestamp], f"hub {timestamp}", max_bytes=128)
     if "abort_reason" in parsed:
         _text(parsed["abort_reason"], "hub abort reason", max_bytes=1024)
+    if "abort_disposition" in parsed and parsed["abort_disposition"] not in {
+        "auto",
+        "retain_installed",
+        "discard_installed",
+    }:
+        raise JournalError(
+            "invalid_evidence", "hub abort disposition is invalid"
+        )
     agents = parsed["agents"]
     if not isinstance(agents, list) or len(agents) != len(journal["cohort"]):
         raise JournalError("evidence_binding_conflict", "hub receipt agents differ")

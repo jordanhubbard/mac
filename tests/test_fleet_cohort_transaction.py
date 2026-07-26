@@ -324,6 +324,7 @@ class Scenario:
         if status == "aborted":
             value["aborted_at"] = "2026-07-19T06:05:00.000000+00:00"
             value["abort_reason"] = "coordinator rollback"
+            value["abort_disposition"] = "auto"
         return write_json(self.tmp_path / f"hub-receipt-{label or status}.json", value)
 
     def release_plan(self, *, epoch_id: str = RELEASE_EPOCH) -> Path:
@@ -1187,6 +1188,26 @@ def test_exact_abort_receipt_resolves_durable_prove_intent(tmp_path: Path) -> No
     assert scenario.journal["hub_state"] == "aborted"
     assert scenario.journal["state"] == "aborting"
     assert scenario.journal["hub_abort_evidence"] is not None
+
+
+def test_abort_receipt_rejects_unknown_disposition(tmp_path: Path) -> None:
+    scenario = Scenario(tmp_path)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    receipt = scenario.hub_receipt("aborted", label="invalid-disposition")
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["abort_disposition"] = "erase_everything"
+    write_json(receipt, payload)
+
+    rejected = scenario.call(
+        "hub-aborted",
+        evidence_file=receipt,
+        check=False,
+    )
+
+    assert rejected["error"]["code"] == "invalid_evidence"
+    assert "abort disposition" in rejected["error"]["message"]
 
 
 def test_quiesce_and_phase2_start_intents_close_both_mutation_kill_windows(

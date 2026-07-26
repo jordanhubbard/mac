@@ -315,11 +315,11 @@ options:
 ```console
 $ mac task --help
 usage: mac task [-h]
-                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+                {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
                 ...
 
 positional arguments:
-  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
+  {create,list,show,summary,ready,why-unclaimed,claim,break-glass,break-glass-list,break-glass-revoke,close,cancel,reopen,recover-finalizer,recover-stalled-finalizer,force-complete,search,stats,audit,start,release,submit-review,evidence,detect-beads,migrate-beads,detect-ticketing,convert-ticketing}
     list                list tasks (default: short ids; use --full-ids for
                         scripts)
     show                show task state, activity, diagnoses, and compact
@@ -338,6 +338,8 @@ positional arguments:
     break-glass-revoke  admin-only: revoke an unclaimed host authorization
     close               transition a task to completed/cancelled; cancellation
                         requires a reason
+    cancel              actively cancel a task, revoke its lease, and abort a
+                        running worker executor
     reopen              recovery: return a stuck/terminal task
                         (failed/cancelled/blocked) to OPEN for retry or
                         reconciliation

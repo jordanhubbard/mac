@@ -111,6 +111,23 @@ if len(args) >= 2 and args[0:2] == ["sandbox", "list"]:
     print(json.dumps(listing))
     raise SystemExit(0)
 
+if len(args) >= 5 and args[0:2] == ["sandbox", "download"]:
+    stale_names = {{row.get("name") for row in json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))}}
+    if args[2] not in stale_names or args[3] != "/sandbox/task":
+        raise SystemExit(65)
+    if mode == "stale-download-nonzero":
+        raise SystemExit(67)
+    destination = Path(args[4])
+    destination.mkdir(parents=True)
+    (destination / "task.json").write_text(
+        json.dumps({{"sandbox": args[2]}}), encoding="utf-8"
+    )
+    state["downloaded_stale"] = sorted(
+        set(state.get("downloaded_stale", [])) | {{args[2]}}
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    raise SystemExit(0)
+
 if len(args) >= 3 and args[0:2] == ["sandbox", "delete"]:
     stale_names = {{row.get("name") for row in json.loads(os.environ.get("FAKE_STALE_SANDBOXES", "[]"))}}
     if args[2] in stale_names:
@@ -681,6 +698,7 @@ def test_block_interface_and_main_call_order_are_stable() -> None:
     assert "OPENSHELL_GATEWAY_ENDPOINT" in block
     assert "http://127.0.0.1:17670" in block
     assert "sandbox" in block and "list" in block and "delete" in block
+    assert "download" in block
     assert SCHEMA in block
     assert "/usr/bin/env -i" in block
     assert '"$PY" -I -S -' in block
@@ -695,6 +713,13 @@ def test_block_interface_and_main_call_order_are_stable() -> None:
     backup = main.index("backup_existing_artifacts\n", quiesce)
     install = main.index('log "installing mac source"', backup)
     assert stop < quiesce < backup < install
+
+    gate_main = block.split('elif mode == "quiesce":', 1)[1].split(
+        "\n    else:", 1
+    )[0]
+    assert gate_main.index("reconcile_managed_task_sandboxes()") < gate_main.index(
+        "prove_managed_openshell_inactive(runtimes)"
+    )
 
     verify_function = _installer_text().split("verify_openclaw_gateway() {", 1)[1]
     verify_function = verify_function.split("\n}\n", 1)[0]
@@ -1254,7 +1279,7 @@ def test_each_managed_kind_is_reaped_when_its_recorded_pid_is_dead(
     _assert_no_secret(run)
 
 
-def test_all_falsey_keep_spellings_are_reaped_and_truthy_keep_is_preserved(
+def test_all_falsey_keep_spellings_are_reaped_and_dead_truthy_task_is_archived(
     tmp_path: Path,
 ) -> None:
     falsey = ["0", "false", "no", "off", "FALSE", "Off", "No"]
@@ -1277,14 +1302,15 @@ def test_all_falsey_keep_spellings_are_reaped_and_truthy_keep_is_preserved(
     proof = receipt["openshell_task_sandboxes"]
     assert proof["final_state"] == "quiescent"
     assert proof["stable_inactive_observations"] == 2
-    assert proof["reconciled"] == sorted(
+    expected_reconciled = {
         f"mac-task-falsey-{index}-fixture" for index in range(len(falsey))
-    )
-    assert proof["reconciled_count"] == len(falsey)
-    # The truthy-keep sandbox is protective: it is never reaped and remains the
-    # only managed sandbox left in the final quiescent observation.
-    assert proof["scanned"] == 1
-    assert proof["managed"] == 1
+    } | {"mac-task-truthy-keep-fixture"}
+    assert proof["reconciled"] == sorted(expected_reconciled)
+    assert proof["reconciled_count"] == len(expected_reconciled)
+    assert proof["preserved"] == ["mac-task-truthy-keep-fixture"]
+    assert proof["preserved_count"] == 1
+    assert proof["scanned"] == 0
+    assert proof["managed"] == 0
     delete_calls = {
         line
         for line in _call_lines(run)
@@ -1293,9 +1319,49 @@ def test_all_falsey_keep_spellings_are_reaped_and_truthy_keep_is_preserved(
     assert delete_calls == {
         f"openshell:sandbox delete mac-task-falsey-{index}-fixture"
         for index in range(len(falsey))
-    }
-    assert "openshell:sandbox delete mac-task-truthy-keep-fixture" not in (
-        _call_lines(run)
+    } | {"openshell:sandbox delete mac-task-truthy-keep-fixture"}
+    assert (
+        "openshell:sandbox download mac-task-truthy-keep-fixture "
+        "/sandbox/task"
+    ) in "\n".join(_call_lines(run))
+    recovery_dirs = list((run.mac_home / "openshell-recovery").iterdir())
+    assert len(recovery_dirs) == 1
+    manifest = json.loads(
+        (recovery_dirs[0] / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["schema"] == "mac.openshell.task_preservation.v1"
+    assert manifest["sandbox"] == "mac-task-truthy-keep-fixture"
+    assert (recovery_dirs[0] / "workspace" / "task.json").is_file()
+    _assert_no_secret(run)
+
+
+def test_dead_protected_task_download_failure_fails_closed_without_delete(
+    tmp_path: Path,
+) -> None:
+    protected = _managed_task_sandbox(
+        "mac-task-preserve-failure-fixture", keep="true", pid=_dead_pid()
+    )
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        seed_marker=True,
+        openshell_mode="stale-download-nonzero",
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([protected])},
+    )
+    assert run.result.returncode != 0
+    assert not run.marker.exists()
+    calls = _call_lines(run)
+    assert any(
+        line.startswith(
+            "openshell:sandbox download mac-task-preserve-failure-fixture "
+            "/sandbox/task"
+        )
+        for line in calls
+    )
+    assert not any(
+        line == "openshell:sandbox delete mac-task-preserve-failure-fixture"
+        for line in calls
     )
     _assert_no_secret(run)
 
