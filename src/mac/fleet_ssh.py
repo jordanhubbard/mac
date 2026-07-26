@@ -102,6 +102,7 @@ def fleet_entries(config: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 
 def resolve_fleet_key(config: Mapping[str, Any], requested: Optional[str]) -> str:
+    """Resolve a requested fleet name or alias to its registry key."""
     fleets = fleet_entries(config)
     if not fleets:
         raise FleetSshError("fleet registry contains no fleets")
@@ -281,6 +282,7 @@ def resolve_fleet_ssh(
 
 
 def load_fleet_config(path: Optional[str] = None) -> Dict[str, Any]:
+    """Load and parse the fleets config mapping from disk."""
     target = Path(
         path
         or os.environ.get("MAC_FLEETS_CONFIG")
@@ -362,6 +364,7 @@ def ssh_argv(
     batch_mode: bool = True,
     connect_timeout: int = 10,
 ) -> List[str]:
+    """Build the ``ssh`` argv for the given fleet SSH spec."""
     argv = ["ssh"] + _route_options(
         spec,
         kind="ssh",
@@ -384,6 +387,7 @@ def scp_argv(
     batch_mode: bool = True,
     connect_timeout: int = 10,
 ) -> List[str]:
+    """Build the ``scp`` argv for the given fleet SSH spec."""
     argv = ["scp"] + _route_options(
         spec,
         kind="scp",
@@ -409,6 +413,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Run the fleet-ssh command-line interface."""
     args = _build_parser().parse_args(argv)
     try:
         spec = resolve_fleet_ssh(

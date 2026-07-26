@@ -181,6 +181,7 @@ def load_handoff_connection(path: Path, *, api_url_override: str = "") -> IdeCon
 
 
 def resolve_ide_connection(env: Optional[Mapping[str, str]] = None) -> IdeConnection:
+    """Resolve IDE connection settings from the environment."""
     values = os.environ if env is None else env
     auth_mode = _value(values, "IDE_AUTH") or "auto"
     if auth_mode not in _AUTH_MODES:
@@ -428,6 +429,7 @@ def build_vite_environment(
     connection: IdeConnection,
     env: Optional[Mapping[str, str]] = None,
 ) -> MutableMapping[str, str]:
+    """Build the child environment used to launch the Vite dev server."""
     child = dict(os.environ if env is None else env)
     child["MAC_API_URL"] = connection.api_url
 
@@ -460,6 +462,7 @@ def build_vite_environment(
 
 
 def vite_command(env: Mapping[str, str]) -> Sequence[str]:
+    """Build the ``npm``/Vite dev-server command from the environment."""
     npm = shlex.split(_value(env, "NPM") or "npm")
     host = _value(env, "IDE_HOST") or "127.0.0.1"
     port = _value(env, "IDE_PORT") or "5273"
@@ -470,6 +473,7 @@ def vite_command(env: Mapping[str, str]) -> Sequence[str]:
 
 
 def run(env: Optional[Mapping[str, str]] = None) -> int:
+    """Launch the Fleet IDE dev server and return its exit code."""
     values = dict(os.environ if env is None else env)
     connection = resolve_ide_connection(values)
     connection = prompt_for_ide_connection(connection, values)
@@ -501,6 +505,7 @@ def run(env: Optional[Mapping[str, str]] = None) -> int:
 
 
 def main() -> None:
+    """Run the IDE launcher entry point."""
     try:
         raise SystemExit(run())
     except KeyboardInterrupt:

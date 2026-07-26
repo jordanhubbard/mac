@@ -60,12 +60,14 @@ def _timestamp() -> str:
 
 
 def default_client_id() -> str:
+    """Derive a default client id from the current user and hostname."""
     raw = "%s-%s" % (getpass.getuser(), socket.gethostname().split(".", 1)[0])
     value = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip(".-_").lower()
     return (value or "mac-client")[:64]
 
 
 def sessions_root() -> Path:
+    """Return the directory that stores per-profile session state."""
     return mac_home() / "sessions"
 
 
@@ -74,6 +76,7 @@ def _state_path(profile: str) -> Path:
 
 
 def managed_known_hosts_path(profile: str) -> Path:
+    """Return the managed known_hosts path for the given profile."""
     return mac_home() / "ssh" / ("%s.known_hosts" % _name(profile))
 
 
@@ -308,6 +311,7 @@ def resolve_login_spec(
     host_ca: Optional[str],
     remote_port: Optional[int],
 ) -> FleetSshSpec:
+    """Resolve login options into an SSH connection spec."""
     if ssh_target:
         try:
             parsed = parse_ssh_target(ssh_target, port=ssh_port)
@@ -368,6 +372,7 @@ def _port_open(port: int, *, timeout: float = 0.2) -> bool:
 
 
 def choose_local_port(requested: Optional[int] = None) -> int:
+    """Return a bindable local port, defaulting to an OS-assigned one."""
     port = int(requested or 0)
     if port < 0 or port > 65535:
         raise ClientLoginError("local port must be between 1 and 65535")
@@ -708,6 +713,7 @@ def login(
     remote_mac: str = "mac",
     connect_timeout: int = 10,
 ) -> Dict[str, Any]:
+    """Log in through the resolved SSH spec and persist the client profile."""
     profile = _name(profile)
     created_pin: Optional[Path] = None
     process = None
@@ -889,12 +895,14 @@ def _ensure_session_unlocked(profile_name: str) -> Dict[str, Any]:
 
 
 def ensure_session(profile: str) -> Dict[str, Any]:
+    """Ensure a live SSH-tunnel session exists for the profile."""
     profile = _name(profile)
     with _session_lock(profile):
         return _ensure_session_unlocked(profile)
 
 
 def login_status(profile: Optional[str] = None) -> Dict[str, Any]:
+    """Report connection and authentication status for a login profile."""
     selected = _name(profile) if profile else active_profile_name()
     if not selected:
         raise ClientLoginError("no active login profile")
@@ -940,6 +948,7 @@ def renew_login(
     remote_mac: str = "mac",
     connect_timeout: int = 10,
 ) -> Dict[str, Any]:
+    """Renew the credential for the named (or active) login profile."""
     selected = _name(profile) if profile else active_profile_name()
     if not selected:
         raise ClientLoginError("no active login profile")
@@ -1013,6 +1022,7 @@ def logout(
     remote_mac: str = "mac",
     connect_timeout: int = 10,
 ) -> Dict[str, Any]:
+    """Tear down the session for the named (or active) login profile."""
     selected = _name(profile) if profile else active_profile_name()
     if not selected:
         raise ClientLoginError("no active login profile")

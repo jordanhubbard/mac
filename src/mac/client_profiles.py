@@ -72,11 +72,13 @@ class ClientProfileError(ValueError):
 
 
 def clients_root() -> Path:
+    """Return the directory that stores client profile YAML files."""
     configured = os.environ.get("MAC_CLIENT_PROFILES_DIR")
     return Path(configured).expanduser() if configured else mac_home() / "clients"
 
 
 def credentials_root() -> Path:
+    """Return the directory that stores client credential records."""
     configured = os.environ.get("MAC_CLIENT_CREDENTIALS_DIR")
     return (
         Path(configured).expanduser()
@@ -187,6 +189,7 @@ def _credential_filename(credential_id: str) -> str:
 def validate_enrollment_manifest(
     raw: Mapping[str, Any], *, profile_override: Optional[str] = None
 ) -> Dict[str, Any]:
+    """Validate a raw enrollment manifest and return its normalized form."""
     if not isinstance(raw, Mapping):
         raise ClientProfileError("enrollment manifest must be an object")
     manifest = dict(raw)
@@ -326,6 +329,7 @@ def install_enrollment_manifest(
     profile_override: Optional[str] = None,
     activate: bool = True,
 ) -> Dict[str, Any]:
+    """Install a validated enrollment manifest as a local client profile."""
     validated = validate_enrollment_manifest(raw, profile_override=profile_override)
     profile = validated["profile"]
     name = validated["profile_name"]
@@ -396,6 +400,7 @@ def install_enrollment_manifest(
 
 
 def active_profile_name() -> Optional[str]:
+    """Return the name of the currently active client profile, if any."""
     path = clients_root() / "current"
     if not path.is_file():
         return None
@@ -405,6 +410,7 @@ def active_profile_name() -> Optional[str]:
 
 
 def activate_profile(name: str) -> Dict[str, Any]:
+    """Mark the named client profile as the active one."""
     name = _name(name)
     if not _profile_path(name).is_file():
         raise ClientProfileError("client profile %r does not exist" % name)
@@ -413,6 +419,7 @@ def activate_profile(name: str) -> Dict[str, Any]:
 
 
 def list_profiles() -> List[Dict[str, Any]]:
+    """Return summary metadata for every stored client profile."""
     root = clients_root()
     active = active_profile_name()
     if not root.is_dir():
@@ -437,6 +444,7 @@ def list_profiles() -> List[Dict[str, Any]]:
 def load_profile(
     name: Optional[str] = None, *, include_token: bool = False
 ) -> Dict[str, Any]:
+    """Load the named (or active) client profile, optionally including its token."""
     selected = _name(name) if name else active_profile_name()
     if selected is None:
         profiles = list_profiles()
@@ -458,6 +466,7 @@ def load_profile(
 
 
 def show_profile(name: Optional[str] = None) -> Dict[str, Any]:
+    """Return the named (or active) profile with its secret token omitted."""
     profile = load_profile(name, include_token=False)
     result = json.loads(json.dumps(profile))
     result["active"] = active_profile_name() == result.get("profile")
@@ -467,6 +476,7 @@ def show_profile(name: Optional[str] = None) -> Dict[str, Any]:
 
 
 def remove_profile(name: str) -> Dict[str, Any]:
+    """Delete the named client profile and its credential record."""
     name = _name(name)
     profile = load_profile(name)
     credential_path = _credential_path_from_profile(profile)
@@ -483,6 +493,7 @@ def remove_profile(name: str) -> Dict[str, Any]:
 
 
 def read_manifest(path: str) -> Dict[str, Any]:
+    """Read and parse a JSON enrollment manifest from a path or stdin."""
     if path == "-":
         import sys
 

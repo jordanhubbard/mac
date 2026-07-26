@@ -71,6 +71,7 @@ def repository_host(remote: str) -> str:
 
 
 def repository_transport(remote: str) -> str:
+    """Classify a git remote string by its transport scheme."""
     value = str(remote or "").strip()
     if not value:
         return "unknown"
@@ -229,6 +230,7 @@ def build_repository_access_learning(
     failure_class: Optional[str] = None,
     at: Optional[str] = None,
 ) -> dict[str, Any]:
+    """Build a repository-access learning record from access details."""
     outcome_value = "success" if outcome == "success" else "failure"
     safe_error = redact_git_remote_auth_in_text(str(error or "")).strip()[:500]
     failure_value = (
@@ -268,6 +270,7 @@ def build_repository_access_learning(
 def build_repository_access_memory_payload(
     learning: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """Build the memory payload for a repository-access learning record."""
     agent_id = str(learning.get("agent_id") or "").strip()
     if not agent_id:
         raise ValueError("repository access learning requires agent_id")
@@ -283,6 +286,7 @@ def build_repository_access_memory_payload(
 
 
 def parse_repository_access_learning(content: Any) -> Optional[dict[str, Any]]:
+    """Parse content into a repository-access learning, or None if invalid."""
     if isinstance(content, Mapping):
         parsed: Any = dict(content)
     else:

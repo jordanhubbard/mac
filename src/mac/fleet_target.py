@@ -202,6 +202,7 @@ def _repo_root() -> Path:
 
 
 def default_manifest_path() -> Path:
+    """Return the default fleet-target manifest path."""
     return _repo_root() / DEFAULT_MANIFEST_RELPATH
 
 
