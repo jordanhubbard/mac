@@ -125,6 +125,7 @@ TOP_LEVEL_KEYS = frozenset(
         "hub_proved_evidence",
         "hub_commit_evidence",
         "hub_abort_evidence",
+        "hub_orphan_evidence",
         "release_plan",
         "commit_not_applied_evidence",
         "state",
@@ -234,6 +235,49 @@ HUB_STATES = frozenset(
         "proved",
         "aborted",
         "committed",
+    }
+)
+# The hub states in which the controller believes a durable epoch barrier
+# exists.  Only these can strand an orphan hold/journal when the hub loses
+# authority and the epoch row disappears (e.g. an HA failover to a replica
+# that never received the epoch).
+ORPHAN_ELIGIBLE_HUB_STATES = frozenset({"open", "prove_intent", "proved"})
+# Exact schema of the read-only ``absent`` status receipt the loopback epoch
+# client writes.  ``absent`` means the hub authority proved the epoch is gone;
+# a transport failure never produces this receipt.
+HUB_STATUS_ABSENT_SCHEMA = "mac.fleet_release_epoch_status.v1"
+HUB_STATUS_ABSENT_KEYS = frozenset(
+    {"schema", "status", "epoch_id", "hub_authority_id", "identity_sha256"}
+)
+# Node quiescence attestation the controller collects before it will retire an
+# orphan barrier: every cohort node proves its exact generation, deployment
+# lock, startup identity, idle/healthy state, and the absence of active work.
+ORPHAN_QUIESCENCE_SCHEMA = "mac.fleet_orphan_quiescence.v1"
+ORPHAN_QUIESCENCE_KEYS = frozenset({"schema", "epoch_id", "nodes"})
+ORPHAN_QUIESCENCE_NODE_KEYS = frozenset(
+    {
+        "stable_id",
+        "generation",
+        "deployment_lock_held",
+        "startup_attestation_sha256",
+        "idle",
+        "healthy",
+        "active_work",
+    }
+)
+# Durable record written into ``hub_orphan_evidence`` when a proven-absent hub
+# barrier is retired.  It binds the absence receipt and node quiescence bundle
+# but never carries or reconstructs any credential.
+ORPHAN_ABORT_EVIDENCE_SCHEMA = "mac.fleet_hub_orphan_abort_evidence.v1"
+ORPHAN_ABORT_EVIDENCE_KEYS = frozenset(
+    {
+        "schema",
+        "epoch_id",
+        "hub_authority_id_sha256",
+        "identity_sha256",
+        "from_hub_state",
+        "absence_sha256",
+        "quiescence_sha256",
     }
 )
 OPERATION_KEYS = frozenset({"operation_id", "action", "fingerprint", "revision", "at"})
@@ -706,11 +750,37 @@ def _validate_hub_receipt_evidence(value: Any, context: str) -> None:
         _digest(value["release_plan_sha256"], f"{context} release plan")
 
 
+def _validate_hub_orphan_evidence(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise JournalError(
+            "invalid_schema", "hub orphan evidence must be an object or null"
+        )
+    _require_exact_keys(value, ORPHAN_ABORT_EVIDENCE_KEYS, "hub orphan")
+    if value["schema"] != ORPHAN_ABORT_EVIDENCE_SCHEMA:
+        raise JournalError("invalid_schema", "hub orphan evidence schema is invalid")
+    _epoch(value["epoch_id"])
+    _digest(value["hub_authority_id_sha256"], "hub orphan authority")
+    _hub_digest(value["identity_sha256"], "hub orphan identity")
+    if value["from_hub_state"] not in ORPHAN_ELIGIBLE_HUB_STATES:
+        raise JournalError(
+            "invalid_schema", "hub orphan evidence from-state is invalid"
+        )
+    _digest(value["absence_sha256"], "hub orphan absence receipt")
+    _digest(value["quiescence_sha256"], "hub orphan quiescence bundle")
+
+
 def _validate_journal(
     journal: Any, *, expected_epoch: str | None = None
 ) -> dict[str, Any]:
     if not isinstance(journal, dict):
         raise JournalError("invalid_schema", "journal root must be an object")
+    # Backward-compatible default: journals written before orphan-authority
+    # recovery existed have no ``hub_orphan_evidence`` slot.  Inject the empty
+    # default so an in-flight epoch stays readable without a schema bump.
+    if isinstance(journal, dict) and "hub_orphan_evidence" not in journal:
+        journal["hub_orphan_evidence"] = None
     _require_exact_keys(journal, TOP_LEVEL_KEYS, "journal")
     if journal["schema"] != SCHEMA or journal["version"] != VERSION:
         raise JournalError("invalid_schema", "journal schema or version is unsupported")
@@ -742,6 +812,7 @@ def _validate_journal(
     _validate_hub_receipt_evidence(journal["hub_proved_evidence"], "hub proved")
     _validate_hub_receipt_evidence(journal["hub_commit_evidence"], "hub commit")
     _validate_hub_receipt_evidence(journal["hub_abort_evidence"], "hub abort")
+    _validate_hub_orphan_evidence(journal["hub_orphan_evidence"])
     _validate_release_plan_metadata(journal["release_plan"], epoch_id)
     _validate_hub_receipt_evidence(
         journal["commit_not_applied_evidence"], "commit not applied"
@@ -1022,6 +1093,7 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
     proved = journal["hub_proved_evidence"]
     committed = journal["hub_commit_evidence"]
     hub_aborted = journal["hub_abort_evidence"]
+    orphaned = journal["hub_orphan_evidence"]
 
     if hub_state == "unopened":
         valid_hub = (
@@ -1073,7 +1145,13 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
             open_plan is not None
             and opened is not None
             and committed is None
-            and hub_aborted is not None
+            # A normal abort binds an exact hub abort receipt; a proven-orphan
+            # abort has no receipt (the epoch is gone) and binds an orphan
+            # record instead.  Exactly one of the two is present.
+            and (
+                (hub_aborted is not None and orphaned is None)
+                or (hub_aborted is None and orphaned is not None)
+            )
             # An exact abort receipt can resolve an interrupted prove intent,
             # so the durable prove plan may exist without proved evidence.
             and (proved is None or prove_plan is not None)
@@ -1091,6 +1169,26 @@ def _validate_state_consistency(journal: dict[str, Any]) -> None:
         raise JournalError("invalid_schema", "hub participant state is inconsistent")
     if open_plan is not None and journal["hub_route_identity"] is None:
         raise JournalError("invalid_schema", "hub open intent lacks route identity")
+    if orphaned is not None:
+        # Orphan evidence only ever exists on a retired-orphan hub barrier, and
+        # its from-state must be one the controller could have believed durable.
+        if hub_state != "aborted" or hub_aborted is not None:
+            raise JournalError(
+                "invalid_schema", "hub orphan evidence requires a proven-orphan abort"
+            )
+        if orphaned["from_hub_state"] not in ORPHAN_ELIGIBLE_HUB_STATES:
+            raise JournalError(
+                "invalid_schema", "hub orphan evidence from-state is invalid"
+            )
+        if isinstance(opened, dict) and (
+            orphaned["epoch_id"] != opened["epoch_id"]
+            or orphaned["hub_authority_id_sha256"]
+            != opened["hub_authority_id_sha256"]
+            or orphaned["identity_sha256"] != opened["identity_sha256"]
+        ):
+            raise JournalError(
+                "invalid_schema", "hub orphan evidence identity changed"
+            )
 
     for evidence, expected_status in (
         (opened, "open"),
@@ -2569,6 +2667,7 @@ def _summary(journal: dict[str, Any]) -> dict[str, Any]:
         "hub_prove_plan": journal["hub_prove_plan"],
         "release_plan": journal["release_plan"],
         "commit_not_applied_evidence": journal["commit_not_applied_evidence"],
+        "hub_orphan_evidence": journal["hub_orphan_evidence"],
         "updated_at": journal["updated_at"],
     }
 
@@ -2598,6 +2697,7 @@ def command_init(
         "hub_proved_evidence": None,
         "hub_commit_evidence": None,
         "hub_abort_evidence": None,
+        "hub_orphan_evidence": None,
         "release_plan": None,
         "commit_not_applied_evidence": None,
         "state": "preparing",
@@ -3229,6 +3329,239 @@ def command_hub_aborted(
     )
 
 
+def _absence_receipt(path: str, journal: dict[str, Any]) -> dict[str, Any]:
+    """Validate the loopback client's read-only ``absent`` status receipt.
+
+    The receipt proves the hub *authority* itself reports the epoch gone.  A
+    transport failure never produces this receipt (the client raises instead),
+    and ``mismatch`` -- a different epoch under the same id -- is refused here.
+    The absence is bound to this exact journal's epoch, hub authority, and the
+    identity digest recorded when the epoch opened.
+    """
+
+    opened = journal["hub_open_evidence"]
+    if not isinstance(opened, dict):
+        raise JournalError(
+            "invalid_transition", "orphan recovery requires a recorded open epoch"
+        )
+    raw = _read_secure_file(Path(path), MAX_EVIDENCE_BYTES, "hub absence receipt")
+    try:
+        parsed = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise JournalError(
+            "invalid_evidence", "hub absence receipt is not valid UTF-8 JSON"
+        ) from exc
+    if not isinstance(parsed, dict) or frozenset(parsed) != HUB_STATUS_ABSENT_KEYS:
+        raise JournalError(
+            "invalid_evidence", "hub absence receipt schema is not exact"
+        )
+    if parsed["schema"] != HUB_STATUS_ABSENT_SCHEMA:
+        raise JournalError(
+            "invalid_evidence", "hub absence receipt schema is unsupported"
+        )
+    if parsed["status"] != "absent":
+        # ``mismatch`` and every other status is a live, contradicting epoch and
+        # is never orphan evidence.  Only a proven absence retires the barrier.
+        raise JournalError(
+            "evidence_binding_conflict",
+            "hub status receipt does not prove epoch absence",
+        )
+    if parsed["epoch_id"] != journal["epoch_id"]:
+        raise JournalError(
+            "evidence_binding_conflict", "hub absence receipt is for another epoch"
+        )
+    try:
+        authority_id = str(uuid.UUID(str(parsed["hub_authority_id"])))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise JournalError(
+            "invalid_evidence", "hub absence authority id is not a UUID"
+        ) from exc
+    authority_digest = hashlib.sha256(authority_id.lower().encode()).hexdigest()
+    if authority_digest != opened["hub_authority_id_sha256"]:
+        raise JournalError(
+            "evidence_binding_conflict",
+            "hub absence receipt belongs to another authority",
+        )
+    route = journal["hub_route_identity"]
+    if (
+        not isinstance(route, dict)
+        or route["authority"].get("durable_store_uuid_sha256") != authority_digest
+    ):
+        raise JournalError(
+            "evidence_binding_conflict",
+            "hub absence receipt authority is not the journalled route",
+        )
+    identity_sha256 = _hub_digest(parsed["identity_sha256"], "hub absence identity")
+    if identity_sha256 != opened["identity_sha256"]:
+        raise JournalError(
+            "evidence_binding_conflict", "hub absence receipt identity changed"
+        )
+    return {
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "hub_authority_id_sha256": authority_digest,
+        "identity_sha256": identity_sha256,
+    }
+
+
+def _quiescence_attestation(path: str, journal: dict[str, Any]) -> dict[str, Any]:
+    """Prove every cohort node is quiescent before any barrier is retired.
+
+    Each node proves its exact generation, that its deployment lock is held by
+    this generation, its startup identity, an idle *and* healthy state, and the
+    absence of any active work.  A single non-idle, unhealthy, or busy node --
+    or a generation that does not match the journal -- fails the whole recovery
+    closed, because a barrier must never be released under a live cohort.
+    """
+
+    raw = _read_secure_file(
+        Path(path), MAX_EVIDENCE_BYTES, "orphan quiescence bundle"
+    )
+    try:
+        parsed = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise JournalError(
+            "invalid_evidence", "orphan quiescence bundle is not valid UTF-8 JSON"
+        ) from exc
+    if not isinstance(parsed, dict) or frozenset(parsed) != ORPHAN_QUIESCENCE_KEYS:
+        raise JournalError(
+            "invalid_evidence", "orphan quiescence bundle schema is not exact"
+        )
+    if parsed["schema"] != ORPHAN_QUIESCENCE_SCHEMA:
+        raise JournalError(
+            "invalid_evidence", "orphan quiescence bundle schema is unsupported"
+        )
+    if parsed["epoch_id"] != journal["epoch_id"]:
+        raise JournalError(
+            "evidence_binding_conflict", "orphan quiescence bundle is for another epoch"
+        )
+    nodes = parsed["nodes"]
+    if not isinstance(nodes, list) or len(nodes) != len(journal["cohort"]):
+        raise JournalError(
+            "evidence_binding_conflict", "orphan quiescence bundle cohort differs"
+        )
+    expected = {node["stable_id"]: node["generation"] for node in journal["cohort"]}
+    observed: dict[str, str] = {}
+    for item in nodes:
+        if (
+            not isinstance(item, dict)
+            or frozenset(item) != ORPHAN_QUIESCENCE_NODE_KEYS
+        ):
+            raise JournalError(
+                "invalid_evidence", "orphan quiescence node schema is not exact"
+            )
+        stable_id = _text(item["stable_id"], "quiescence node stable id")
+        generation = _text(item["generation"], "quiescence node generation")
+        if stable_id in observed:
+            raise JournalError(
+                "invalid_evidence", "orphan quiescence node id is duplicated"
+            )
+        observed[stable_id] = generation
+        _digest(item["startup_attestation_sha256"], "quiescence startup attestation")
+        for flag in ("deployment_lock_held", "idle", "healthy", "active_work"):
+            if not isinstance(item[flag], bool):
+                raise JournalError(
+                    "invalid_evidence", f"quiescence node {flag} is not boolean"
+                )
+        if not item["deployment_lock_held"]:
+            raise JournalError(
+                "invalid_transition", "quiescence node does not hold its deployment lock"
+            )
+        if not item["idle"] or not item["healthy"]:
+            raise JournalError(
+                "invalid_transition", "quiescence node is not idle and healthy"
+            )
+        if item["active_work"]:
+            raise JournalError(
+                "invalid_transition", "quiescence node still has active work"
+            )
+    if observed != expected:
+        raise JournalError(
+            "evidence_binding_conflict", "orphan quiescence generation differs"
+        )
+    return {"sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def command_hub_orphaned(
+    directory: JournalDirectory, args: argparse.Namespace
+) -> tuple[Any, bool]:
+    """Retire only a proven-orphan hub barrier after hub authority loss.
+
+    The controller believed the hub epoch durable, but the hub returned an
+    exact ``absent`` status and no longer holds the pending credential row.
+    This records the admin-audited absence and node quiescence proof, then
+    moves the *hub* barrier to ``aborted`` so the existing rollback/abort path
+    can retire the matching journal.  It never reconstructs a credential and
+    never releases the successor/operator hold.
+    """
+
+    current = directory.read_epoch(_epoch(args.epoch_id))
+    absence = _absence_receipt(args.absence_file, current)
+    quiescence = _quiescence_attestation(args.quiescence_file, current)
+    orphan_record = {
+        "schema": ORPHAN_ABORT_EVIDENCE_SCHEMA,
+        "epoch_id": current["epoch_id"],
+        "hub_authority_id_sha256": absence["hub_authority_id_sha256"],
+        "identity_sha256": absence["identity_sha256"],
+        "from_hub_state": current["hub_state"],
+        "absence_sha256": absence["sha256"],
+        "quiescence_sha256": quiescence["sha256"],
+    }
+
+    def transition(journal: dict[str, Any]) -> bool:
+        existing = journal["hub_orphan_evidence"]
+        if journal["hub_state"] == "aborted" and existing is not None:
+            # Idempotent replay: the durable orphan record already retired this
+            # barrier.  Compare only the stable bindings -- the recomputed
+            # ``from_hub_state`` is now ``aborted`` and must not be re-checked.
+            if (
+                existing["epoch_id"] != orphan_record["epoch_id"]
+                or existing["hub_authority_id_sha256"]
+                != orphan_record["hub_authority_id_sha256"]
+                or existing["identity_sha256"] != orphan_record["identity_sha256"]
+                or existing["absence_sha256"] != orphan_record["absence_sha256"]
+                or existing["quiescence_sha256"] != orphan_record["quiescence_sha256"]
+            ):
+                raise JournalError(
+                    "evidence_binding_conflict", "hub orphan proof changed"
+                )
+            return False
+        _require_nonterminal(journal)
+        if journal["state"] in {"commit_intent", "hub_committed"}:
+            raise JournalError(
+                "invalid_transition",
+                "committed epochs finalize; they are never orphaned",
+            )
+        if journal["hub_state"] not in ORPHAN_ELIGIBLE_HUB_STATES:
+            raise JournalError(
+                "invalid_transition",
+                "hub barrier is not in an orphan-eligible state",
+            )
+        # The absence and quiescence proofs bind the exact live journal; the
+        # from-state must match what was proved so a stale controller cannot
+        # replay an orphan record against a different barrier.
+        if orphan_record["from_hub_state"] != journal["hub_state"]:
+            raise JournalError(
+                "evidence_binding_conflict", "hub orphan proof from-state changed"
+            )
+        journal["hub_orphan_evidence"] = orphan_record
+        journal["hub_abort_evidence"] = None
+        journal["hub_state"] = "aborted"
+        journal["state"] = "aborting"
+        _refresh_phase(journal)
+        return True
+
+    return _mutate(
+        directory,
+        args,
+        "hub-orphaned",
+        {
+            "absence_sha256": absence["sha256"],
+            "quiescence_sha256": quiescence["sha256"],
+        },
+        transition,
+    )
+
+
 def command_commit_start(
     directory: JournalDirectory, args: argparse.Namespace
 ) -> tuple[Any, bool]:
@@ -3605,6 +3938,10 @@ def command_recovery(
         "release_plan_path": verified_plan_path if commit_intent else None,
         "hub_recovery": {
             "action": hub_action,
+            "orphan_recoverable": (
+                journal["hub_state"] in ORPHAN_ELIGIBLE_HUB_STATES
+                and direction in {"rollback", "retain_forward"}
+            ),
             "agent_name": journal["hub_agent"],
             "route_identity": journal["hub_route_identity"],
             "open_plan_path": hub_open_plan_path,
@@ -3783,6 +4120,12 @@ def build_parser() -> argparse.ArgumentParser:
     hub_aborted.add_argument("--evidence-file", required=True)
     hub_aborted.set_defaults(handler=command_hub_aborted)
 
+    hub_orphaned = commands.add_parser("hub-orphaned")
+    _add_operation(hub_orphaned)
+    hub_orphaned.add_argument("--absence-file", required=True)
+    hub_orphaned.add_argument("--quiescence-file", required=True)
+    hub_orphaned.set_defaults(handler=command_hub_orphaned)
+
     commit_start = commands.add_parser("commit-start")
     _add_operation(commit_start)
     commit_start.add_argument("--release-plan-file", required=True)
@@ -3871,6 +4214,7 @@ def main(argv: list[str] | None = None) -> int:
             "abort-start",
             "aborted-node",
             "hub-aborted",
+            "hub-orphaned",
             "commit-start",
             "commit-not-applied",
             "commit",
