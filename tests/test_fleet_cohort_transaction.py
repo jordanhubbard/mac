@@ -475,6 +475,80 @@ class Scenario:
     def commit_hub(self) -> None:
         self.call("commit", evidence_file=self.hub_receipt("committed"))
 
+    def absence_receipt(
+        self,
+        *,
+        status: str = "absent",
+        epoch: str = EPOCH,
+        hub_authority_id: str = HUB_AUTHORITY_ID,
+        identity_sha256: str = HUB_IDENTITY_SHA256,
+        label: str = "absence",
+    ) -> Path:
+        return write_json(
+            self.tmp_path / f"hub-{label}.json",
+            {
+                "schema": "mac.fleet_release_epoch_status.v1",
+                "status": status,
+                "epoch_id": epoch,
+                "hub_authority_id": hub_authority_id,
+                "identity_sha256": identity_sha256,
+            },
+        )
+
+    def quiescence_bundle(
+        self,
+        *,
+        epoch: str = EPOCH,
+        idle: bool = True,
+        healthy: bool = True,
+        active_work: bool = False,
+        deployment_lock_held: bool = True,
+        generations: dict[str, str] | None = None,
+        label: str = "quiescence",
+    ) -> Path:
+        generations = generations or {}
+        return write_json(
+            self.tmp_path / f"orphan-{label}.json",
+            {
+                "schema": "mac.fleet_orphan_quiescence.v1",
+                "epoch_id": epoch,
+                "nodes": [
+                    {
+                        "stable_id": node["stable_id"],
+                        "generation": generations.get(
+                            node["stable_id"], node["generation"]
+                        ),
+                        "deployment_lock_held": deployment_lock_held,
+                        "startup_attestation_sha256": digest(
+                            f"startup:{node['stable_id']}"
+                        ),
+                        "idle": idle,
+                        "healthy": healthy,
+                        "active_work": active_work,
+                    }
+                    for node in self.nodes
+                ],
+            },
+        )
+
+    def orphan(
+        self,
+        *,
+        absence_file: Path | None = None,
+        quiescence_file: Path | None = None,
+        check: bool = True,
+    ) -> dict[str, Any]:
+        self.sequence += 1
+        op_id = f"op-{self.sequence}-hub-orphaned"
+        args = operation("hub-orphaned", self.revision, op_id, owner_nonce=self.owner_nonce)
+        args += ["--absence-file", str(absence_file or self.absence_receipt())]
+        args += ["--quiescence-file", str(quiescence_file or self.quiescence_bundle())]
+        _result, payload = run_cli(self.directory, *args, check=check)
+        if check:
+            self.journal = payload["journal"]
+            self.revision = self.journal["revision"]
+        return payload
+
 
 def recovery(
     scenario: Scenario, *, policy: str = "retain-forward"
@@ -1553,3 +1627,218 @@ def test_pre_route_classifier_rejects_any_hub_or_node_mutation(
     scenario.bind_routes()
     routed = scenario.journal
     assert journal_module._is_unmutated_pre_route(routed) is False
+
+
+# ---------------------------------------------------------------------------
+# Orphan-authority recovery: retire only a proven-absent hub barrier after the
+# hub loses authority (404 for the release epoch, no pending credential row).
+# ---------------------------------------------------------------------------
+
+
+def _open_epoch(tmp_path: Path, **kwargs: Any) -> Scenario:
+    scenario = Scenario(tmp_path, **kwargs)
+    scenario.bind_routes()
+    scenario.arm_phase1()
+    scenario.open_hub()
+    return scenario
+
+
+def test_orphan_recovery_retires_absent_barrier_then_abort_closes_journal(
+    tmp_path: Path,
+) -> None:
+    scenario = _open_epoch(tmp_path)
+    assert scenario.journal["hub_state"] == "open"
+    successor_hold = scenario.journal["successor_hold"]
+
+    payload = scenario.orphan()
+    journal = payload["journal"]
+    assert journal["hub_state"] == "aborted"
+    assert journal["state"] == "aborting"
+    record = journal["hub_orphan_evidence"]
+    assert record is not None
+    assert record["schema"] == "mac.fleet_hub_orphan_abort_evidence.v1"
+    assert record["from_hub_state"] == "open"
+    assert record["identity_sha256"] == HUB_IDENTITY_SHA256
+    # The unrelated successor/operator hold is never touched.
+    assert journal["successor_hold"] == successor_hold
+
+    # No pending credential row is reconstructed: the retired-orphan journal
+    # carries no principal identity, fingerprint, or version anywhere.
+    serialized = json.dumps(journal)
+    assert "principal_id" not in serialized
+    assert "principal_fingerprint" not in serialized
+    assert "principal_version" not in serialized
+
+    # The existing rollback path now retires the matching cohort nodes and
+    # closes the journal -- orphan recovery only unblocked the hub barrier.
+    report = recovery(scenario)
+    for candidate in report["candidates"]:
+        node = next(
+            item for item in scenario.nodes if item["name"] == candidate["agent_name"]
+        )
+        scenario.call(
+            "abort-start", node=node, recovery_action=candidate["recovery_action"]
+        )
+        scenario.call(
+            "aborted-node",
+            node=node,
+            evidence_file=scenario.evidence(f"aborted-{node['name']}"),
+        )
+    abort = scenario.call("abort")
+    assert abort["journal"]["state"] == "aborted"
+
+
+def test_orphan_recovery_is_idempotent(tmp_path: Path) -> None:
+    scenario = _open_epoch(tmp_path)
+    first = scenario.orphan()
+    revision = first["journal"]["revision"]
+    record = first["journal"]["hub_orphan_evidence"]
+
+    replay = scenario.orphan(
+        absence_file=scenario.absence_receipt(label="replay"),
+        quiescence_file=scenario.quiescence_bundle(label="replay"),
+    )
+    assert replay["changed"] is False
+    assert replay["journal"]["revision"] == revision
+    assert replay["journal"]["hub_orphan_evidence"] == record
+
+
+def test_orphan_recovery_works_after_prove(tmp_path: Path) -> None:
+    scenario = _open_epoch(tmp_path)
+    scenario.quiesce()
+    scenario.arm_phase2()
+    scenario.deploy()
+    scenario.prove_hub()
+    assert scenario.journal["hub_state"] == "proved"
+
+    payload = scenario.orphan()
+    assert payload["journal"]["hub_state"] == "aborted"
+    assert payload["journal"]["hub_orphan_evidence"]["from_hub_state"] == "proved"
+
+
+def test_orphan_recovery_rejects_transport_or_mismatch_status(tmp_path: Path) -> None:
+    scenario = _open_epoch(tmp_path)
+    # A mismatch is a live, contradicting epoch -- never an orphan.
+    payload = scenario.orphan(
+        absence_file=scenario.absence_receipt(status="mismatch", label="mismatch"),
+        check=False,
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "evidence_binding_conflict"
+    assert scenario.journal["hub_state"] == "open"
+
+
+def test_orphan_recovery_binds_absence_to_this_authority_and_identity(
+    tmp_path: Path,
+) -> None:
+    scenario = _open_epoch(tmp_path)
+    other_authority = "00000000-0000-4000-8000-000000000000"
+    wrong_authority = scenario.orphan(
+        absence_file=scenario.absence_receipt(
+            hub_authority_id=other_authority, label="other-authority"
+        ),
+        check=False,
+    )
+    assert wrong_authority["ok"] is False
+    assert wrong_authority["error"]["code"] == "evidence_binding_conflict"
+
+    wrong_identity = scenario.orphan(
+        absence_file=scenario.absence_receipt(
+            identity_sha256="sha256:" + ("0" * 64), label="other-identity"
+        ),
+        check=False,
+    )
+    assert wrong_identity["ok"] is False
+    assert wrong_identity["error"]["code"] == "evidence_binding_conflict"
+    assert scenario.journal["hub_state"] == "open"
+
+
+def test_orphan_recovery_binds_absence_to_this_epoch(tmp_path: Path) -> None:
+    scenario = _open_epoch(tmp_path)
+    payload = scenario.orphan(
+        absence_file=scenario.absence_receipt(
+            epoch=f"{SOURCE_COMMIT}:20260719:other", label="other-epoch"
+        ),
+        check=False,
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "evidence_binding_conflict"
+
+
+def test_orphan_recovery_requires_full_cohort_quiescence(tmp_path: Path) -> None:
+    scenario = _open_epoch(tmp_path, node_count=2)
+
+    busy = scenario.orphan(
+        quiescence_file=scenario.quiescence_bundle(active_work=True, label="busy"),
+        check=False,
+    )
+    assert busy["ok"] is False
+    assert busy["error"]["code"] == "invalid_transition"
+
+    not_idle = scenario.orphan(
+        quiescence_file=scenario.quiescence_bundle(idle=False, label="not-idle"),
+        check=False,
+    )
+    assert not_idle["ok"] is False
+    assert not_idle["error"]["code"] == "invalid_transition"
+
+    unhealthy = scenario.orphan(
+        quiescence_file=scenario.quiescence_bundle(healthy=False, label="unhealthy"),
+        check=False,
+    )
+    assert unhealthy["ok"] is False
+
+    no_lock = scenario.orphan(
+        quiescence_file=scenario.quiescence_bundle(
+            deployment_lock_held=False, label="no-lock"
+        ),
+        check=False,
+    )
+    assert no_lock["ok"] is False
+    assert no_lock["error"]["code"] == "invalid_transition"
+    assert scenario.journal["hub_state"] == "open"
+
+
+def test_orphan_recovery_rejects_wrong_generation(tmp_path: Path) -> None:
+    scenario = _open_epoch(tmp_path)
+    stable_id = scenario.nodes[0]["stable_id"]
+    payload = scenario.orphan(
+        quiescence_file=scenario.quiescence_bundle(
+            generations={stable_id: "generation-rogue"}, label="rogue-gen"
+        ),
+        check=False,
+    )
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "evidence_binding_conflict"
+
+
+def test_orphan_recovery_refused_before_open_and_after_commit(tmp_path: Path) -> None:
+    (tmp_path / "unopened").mkdir()
+    unopened = Scenario(tmp_path / "unopened")
+    unopened.bind_routes()
+    assert unopened.journal["hub_state"] == "unopened"
+    payload = unopened.orphan(check=False)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_transition"
+
+    (tmp_path / "committed").mkdir()
+    committed = Scenario(tmp_path / "committed")
+    committed.reach_prepared()
+    committed.begin_commit()
+    committed.commit_hub()
+    assert committed.journal["hub_state"] == "committed"
+    blocked = committed.orphan(check=False)
+    assert blocked["ok"] is False
+    assert blocked["error"]["code"] == "invalid_transition"
+
+
+def test_recovery_classifier_flags_orphan_recoverable_barrier(tmp_path: Path) -> None:
+    scenario = _open_epoch(tmp_path)
+    report = recovery(scenario)
+    assert report["hub_recovery"]["action"] == "abort_epoch"
+    assert report["hub_recovery"]["orphan_recoverable"] is True
+
+    scenario.orphan()
+    resolved = recovery(scenario)
+    assert resolved["hub_recovery"]["action"] == "none"
+    assert resolved["hub_recovery"]["orphan_recoverable"] is False

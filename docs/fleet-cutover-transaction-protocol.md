@@ -229,6 +229,44 @@ Journal ownership binds controller nonce, boot identity, PID, and process start
 time. PID liveness alone is insufficient because PID reuse after reboot can
 impersonate the previous owner.
 
+## Orphan-authority recovery
+
+Hub HA failover (or any authority loss) can leave the controller holding a
+durable journal whose hub barrier -- `open`, `prove_intent`, or `proved` -- no
+longer exists at the hub: the epoch id returns exact `absent` and the pending
+credential row is gone. There is no abort receipt to journal, because the epoch
+that would emit one is gone. The controller must not assume the hub epoch is
+durable; it retires only the matching orphan barrier after an admin-audited
+proof, using the `hub-orphaned` operation.
+
+`hub-orphaned` requires two owner-private inputs, both bound to the exact
+journal:
+
+1. an `absent` status receipt (`mac.fleet_release_epoch_status.v1`) written by
+   the loopback epoch client. Only status `absent` is accepted: the client
+   raises on transport failure, so absence is proven by the live hub authority
+   and never inferred from a timeout. `mismatch` -- a different epoch under the
+   same id -- is refused. The receipt's epoch, hub authority UUID, and identity
+   digest must equal the values journalled when the epoch opened.
+
+2. a node quiescence bundle (`mac.fleet_orphan_quiescence.v1`) proving, for the
+   exact cohort and generations, that every node holds its deployment lock,
+   presents a startup attestation digest, is both `idle` and `healthy`, and has
+   `active_work=false`. A single non-idle, unhealthy, lock-less, busy, or
+   wrong-generation node fails the whole operation closed.
+
+On success the operation records a durable
+`mac.fleet_hub_orphan_abort_evidence.v1` marker (binding the absence and
+quiescence digests, not any credential), moves the hub barrier to `aborted`,
+and moves the journal to `aborting`. It reconstructs no credential and never
+touches the successor or any operator hold. Normal reverse-order node recovery
+and `abort` then retire the matching journal exactly as for a receipt-backed
+abort. Committed and finalized epochs are never orphaned -- they finalize.
+
+`recovery` surfaces `hub_recovery.orphan_recoverable=true` on an
+orphan-eligible barrier so an operator can distinguish this admin path from a
+normal receipt-backed abort.
+
 ## Coordinator constraints
 
 The coordinator advances durable participant transitions; it does not directly
@@ -259,6 +297,8 @@ The following are release blockers, not optional coverage:
 - pending credential or attestation proof followed by abort;
 - commit request applied with its response lost;
 - hub status timeout, exact absence, exact commit, and mismatch;
+- hub authority loss that orphans an open/proved barrier (exact absence plus
+  full-cohort quiescence retires only the matching journal);
 - finalizer failure on any node after hub commit; and
 - coordinator owner PID reuse across a reboot.
 
