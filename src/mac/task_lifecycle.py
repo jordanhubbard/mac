@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import itertools
 import threading
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from mac.executor_scope import compute_scope_estimate_from_lessons
 from mac.models import (
@@ -780,4 +780,3 @@ class DispatchService:
             },
         )
         return None
-
