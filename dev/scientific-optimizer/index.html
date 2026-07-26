@@ -1745,8 +1745,9 @@ defect severity are mandatory guardrails; a caller can tighten them but cannot
 remove them. Small or inconclusive runs continue until their sample budget is
 exhausted and are then rejected, never promoted on a tie.</p>
 <h2 id="enable-and-inspect">Enable and inspect<a class="headerlink" href="#enable-and-inspect" title="Permanent link">&para;</a></h2>
-<p>The scheduler is explicit at deployment time:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1</span>
+<p>The scheduler is opt-in at deployment time. Leave it disabled until ordinary
+task-flow latency is healthy:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_ENABLED=0</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_INTERVAL_SECONDS=300</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_INITIAL_DELAY_SECONDS=60</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="go">MAC_SCIENTIFIC_OPTIMIZER_AUTO_PROPOSE=1</span>
@@ -1757,6 +1758,10 @@ exhausted and are then rejected, never promoted on a tie.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac optimizer status</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">mac optimizer tick</span>
 </code></pre></div>
+<p>After a manual tick and ordinary <code>task ready</code>/<code>task stats</code> calls remain within
+the deployment's latency budget, set <code>MAC_SCIENTIFIC_OPTIMIZER_ENABLED=1</code> to
+run it periodically. Baseline analysis is bounded, indexed, and cached, but it
+is still background work.</p>
 <p>Automatic hypothesis generation currently makes conservative, one-variable
 changes: lower a named strength rung when cost is measurable, reduce an
 explicitly oversized reviewer turn budget, or enable plan-first execution when

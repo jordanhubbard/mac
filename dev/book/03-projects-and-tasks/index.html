@@ -1723,12 +1723,21 @@ explicitly non-decomposable tasks retain their own admission policy.</p>
 </ul>
 <p>These are routing hints, not correctness gates. <code>task show</code> and the dispatch
 explanation expose the resolved class and bonuses.</p>
+<p>Retries are intentionally narrow. A transient worker or transport failure gets
+one retry after a short backoff and excludes the worker that just failed. A
+timeout gets the same single retry with <code>plan_first=true</code>. Deterministic
+contract/work failures, and the same failure fingerprint seen twice, stop
+instead of consuming the remaining attempt budget. Repeated shared
+control-plane failures create one fingerprinted fleet incident rather than one
+repair child per victim.</p>
 <p>An exhausted environment attempt creates a separate recovery prerequisite only
-when its history contains a concrete output, preserved-work record, or explicit
-failure/remediation diagnosis. Bare lease expiries with no telemetry fail
-visibly instead of creating an unactionable repair task. Verification-contract
-failures stay with the original task by default; a repository with a genuinely
-independent repair workflow may opt in with
+when the task explicitly opts in with
+<code>metadata.repair_policy.environment_prerequisite=true</code> and its history contains
+a concrete output, preserved-work record, or explicit failure/remediation
+diagnosis. Bare lease expiries with no telemetry fail visibly instead of
+creating an unactionable repair task. Verification-contract failures stay with
+the original task by default; a repository with a genuinely independent repair
+workflow may opt in with
 <code>metadata.repair_policy.contract_prerequisite=true</code>.</p>
 
 
