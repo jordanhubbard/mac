@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/break-glass-host-recovery/">
+        <link rel="canonical" href="https://jordanhubbard.github.io/mac/dev/hub-ha-audit/">
       
       
-        <link rel="prev" href="../hub-ha-audit/">
+        <link rel="prev" href="../hub-availability/">
       
       
-        <link rel="next" href="../work-graph-control-plane/">
+        <link rel="next" href="../break-glass-host-recovery/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Break-glass recovery - MAC Documentation</title>
+        <title>Hub HA audit - MAC Documentation</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#break-glass-host-recovery" class="md-skip">
+        <a href="#ground-truth-audit-hub-high-availability-primitives" class="md-skip">
           Skip to content
         </a>
       
@@ -120,7 +120,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Break-glass recovery
+              Hub HA audit
             
           </span>
         </div>
@@ -1304,34 +1304,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../hub-ha-audit/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Hub HA audit
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -1351,7 +1323,7 @@
   <span class="md-ellipsis">
     
   
-    Break-glass recovery
+    Hub HA audit
   
 
     
@@ -1369,7 +1341,7 @@
   <span class="md-ellipsis">
     
   
-    Break-glass recovery
+    Hub HA audit
   
 
     
@@ -1395,10 +1367,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#safety-contract" class="md-nav__link">
+  <a href="#summary-verdict" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Safety contract
+        Summary Verdict
       
     </span>
   </a>
@@ -1406,10 +1378,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#operator-workflow" class="md-nav__link">
+  <a href="#1-inference-router-decoupling" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Operator workflow
+        1. Inference / Router Decoupling
       
     </span>
   </a>
@@ -1417,10 +1389,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#referencing-host-work-from-sandboxed-work" class="md-nav__link">
+  <a href="#2-evidence-blob-externalization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Referencing host work from sandboxed work
+        2. Evidence-Blob Externalization
       
     </span>
   </a>
@@ -1428,10 +1400,65 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#recovery-invariant" class="md-nav__link">
+  <a href="#3-ledger-availability-tier-a-postgres" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Recovery invariant
+        3. Ledger Availability — Tier A (Postgres)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-ledger-availability-tier-b-sqlite-verified-snapshots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Ledger Availability — Tier B (SQLite Verified Snapshots)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-operator-promote-fence-procedure-and-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Operator Promote / Fence Procedure and Invariants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-gaps-decisions-for-the-active-passive-design-child" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Gaps / Decisions for the Active-Passive Design Child
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-verification-performed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Verification Performed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-conclusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Conclusion
       
     </span>
   </a>
@@ -1442,6 +1469,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../break-glass-host-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Break-glass recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1680,10 +1735,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#safety-contract" class="md-nav__link">
+  <a href="#summary-verdict" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Safety contract
+        Summary Verdict
       
     </span>
   </a>
@@ -1691,10 +1746,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#operator-workflow" class="md-nav__link">
+  <a href="#1-inference-router-decoupling" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Operator workflow
+        1. Inference / Router Decoupling
       
     </span>
   </a>
@@ -1702,10 +1757,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#referencing-host-work-from-sandboxed-work" class="md-nav__link">
+  <a href="#2-evidence-blob-externalization" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Referencing host work from sandboxed work
+        2. Evidence-Blob Externalization
       
     </span>
   </a>
@@ -1713,10 +1768,65 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#recovery-invariant" class="md-nav__link">
+  <a href="#3-ledger-availability-tier-a-postgres" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Recovery invariant
+        3. Ledger Availability — Tier A (Postgres)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-ledger-availability-tier-b-sqlite-verified-snapshots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Ledger Availability — Tier B (SQLite Verified Snapshots)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-operator-promote-fence-procedure-and-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Operator Promote / Fence Procedure and Invariants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-gaps-decisions-for-the-active-passive-design-child" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Gaps / Decisions for the Active-Passive Design Child
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-verification-performed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Verification Performed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-conclusion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Conclusion
       
     </span>
   </a>
@@ -1740,7 +1850,7 @@
 
 
   
-    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/break-glass-host-recovery.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/jordanhubbard/mac/edit/main/docs/hub-ha-audit.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1748,61 +1858,349 @@
   
 
 
-<h1 id="break-glass-host-recovery">Break-glass host recovery<a class="headerlink" href="#break-glass-host-recovery" title="Permanent link">&para;</a></h1>
-<p>Some infrastructure tasks cannot repair the environment from inside that same
-environment's sandbox. Examples include repairing OpenShell itself, replacing a
-broken worker launcher, correcting host-only routing or credential projection,
-and deploying a fix to the executor that would otherwise run the fix.</p>
-<p>MAC represents these as normal ledger tasks with a separate, durable
-<code>mac.break_glass_authorization.v1</code> record. Ordinary task metadata cannot select
-host execution.</p>
-<h2 id="safety-contract">Safety contract<a class="headerlink" href="#safety-contract" title="Permanent link">&para;</a></h2>
+<h1 id="ground-truth-audit-hub-high-availability-primitives">Ground-Truth Audit: Hub High-Availability Primitives<a class="headerlink" href="#ground-truth-audit-hub-high-availability-primitives" title="Permanent link">&para;</a></h1>
+<p>Read-only audit for the parent task
+<code>task_repair_7b70a5264dbdf0cde89fdecb</code> (title: "Repair environment prerequisites:
+Audit existing HA primitives and produce the smallest active-passive reuse
+design"). This document records ground truth <strong>only</strong>: it changed <strong>no</strong> source
+or test logic. It enumerates exactly what the fleet's high-availability
+primitives are today, how they behave, their RPO/RTO character, and their
+current test coverage, with exact <code>file:line</code> references. It closes by listing
+the gaps a design child must resolve to reach a minimal active-passive posture.</p>
+<p>The companion runbook <code>docs/hub-availability.md</code> is the operator-facing
+narrative; this audit is the verified inventory behind it.</p>
+<h2 id="summary-verdict">Summary Verdict<a class="headerlink" href="#summary-verdict" title="Permanent link">&para;</a></h2>
+<p>The fleet already has four cooperating HA primitives, all in-tree with live
+tests:</p>
+<ol>
+<li><strong>Inference/router decoupling</strong> — the LLM router can run as its own process
+   or a per-site replica, so ledger restarts and network pathologies stop
+   killing model traffic. <strong>Active-active</strong> for inference reads (multiple
+   routers may serve concurrently); no shared write authority is involved.</li>
+<li><strong>Evidence-blob externalization</strong> — large artifact bytes move out of the
+   ledger DB into a content-addressed, integrity-verified blob store, bounding
+   DB growth and making ledger snapshots small. A <strong>supporting</strong> primitive
+   (makes the tiers below cheaper), not itself a failover mechanism.</li>
+<li><strong>Ledger availability, two tiers</strong> — Tier A Postgres (stateless hub
+   processes, <code>replicas: 2</code>) and Tier B SQLite verified snapshots (scheduled,
+   shipped off-box). Tier A is <strong>active-active</strong> at the process layer over one
+   DB authority; Tier B is <strong>active-passive / operator-driven</strong> (RPO = snapshot
+   cadence).</li>
+<li><strong>Operator promote/fence procedure</strong> — a documented, manual standby
+   takeover built on the single-authority and control-plane-role (hub/client)
+   invariants. <strong>Operator-driven</strong> today.</li>
+</ol>
+<p>No automatic failover, leader election, or hub-to-hub replication protocol
+exists for the SQLite tier; promotion is deliberately an operator action
+(fencing cannot be safely inferred by a standby). The remaining gaps for a
+minimal active-passive posture are enumerated in section 6.</p>
+<h2 id="1-inference-router-decoupling">1. Inference / Router Decoupling<a class="headerlink" href="#1-inference-router-decoupling" title="Permanent link">&para;</a></h2>
+<p><strong>What exists.</strong> The standalone router service is <code>src/mac/router_service.py</code>.
+Its module docstring (src/mac/router_service.py:1) states the motivation: the
+router historically only existed mounted <em>inside</em> the hub ledger API
+(<code>MAC_ROUTER_BACKEND=inproc</code>), coupling inference to coordination so that a hub
+API restart drops every in-flight LLM stream.</p>
 <ul>
-<li>The authorization API requires an explicitly admin-scoped principal.</li>
-<li>One authorization binds one open task to one exact healthy agent on a trusted
-  machine.</li>
-<li>The unclaimed authorization expires after 60–3600 seconds and is single-use.</li>
-<li>Claiming atomically binds the authorization to the exact lease. Replays with a
-  different task, agent, or lease fail closed in the executor.</li>
-<li>The authorization may bypass a task hold, project pause, worker claim lane,
-  agent dispatch hold, normal task/agent compatibility checks, and OpenShell
-  only for that task/agent pair. Host trust, health, capacity, tenant isolation,
-  evidence, review, and push gates remain.</li>
-<li>Authorization, claim, revocation, command execution, and final evidence are
-  auditable. Secrets must never be placed in the reason or task description.</li>
+<li>Entry point <code>build_router_app</code> (src/mac/router_service.py:122) builds a
+  FastAPI app carrying only the router routes, bearer auth, and <code>/healthz</code>. It
+  forces the mount gate open for its own process by setting a local copy's
+  <code>MAC_ROUTER_BACKEND=inproc</code> (src/mac/router_service.py:133) without mutating
+  the real environment, then calls <code>mount_router</code> (src/mac/router_service.py:174).</li>
+<li><code>main</code> (src/mac/router_service.py:189) runs it under uvicorn, defaulting the
+  port to <code>DEFAULT_PORT = 8790</code> (src/mac/router_service.py:42) via
+  <code>MAC_ROUTER_PORT</code> (src/mac/router_service.py:43) and binding
+  <code>127.0.0.1</code> by default (src/mac/router_service.py:193).</li>
+<li>The in-process mount is gated in <code>mount_router</code> (src/mac/router_app.py:1242):
+  it is a <strong>no-op</strong> unless <code>MAC_ROUTER_BACKEND</code> normalizes to <code>inproc</code>, so the
+  hub API and a standalone router can never both serve <code>/v1</code>.</li>
 </ul>
-<h2 id="operator-workflow">Operator workflow<a class="headerlink" href="#operator-workflow" title="Permanent link">&para;</a></h2>
-<p>Create or identify the recovery task, leaving it staged if desired:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">mac task create &quot;Repair the OpenShell worker launcher&quot; --project=mac --no-dispatch</span>
-</code></pre></div>
-<p>Verify the target host and its coding route outside the broken sandbox, then
-authorize the exact pair:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">mac task break-glass &lt;task_id&gt; &lt;agent_id&gt; \</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">  --reason=&quot;OpenShell launcher must be repaired from its trusted host&quot; \</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">  --ttl-seconds=900</span>
-</code></pre></div>
-<p>The loop worker can claim that task even while the task and agent remain held.
-No broad <code>mac agent resume</code> is required. Inspect or revoke before claim with:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">mac task break-glass-list &lt;task_id&gt;</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">mac task break-glass-revoke &lt;authorization_id&gt; --reason=&quot;Recovery no longer required&quot;</span>
-</code></pre></div>
-<p>Once claimed, the authorization is bound to the running lease and cannot be
-revoked as if it had never started. Use the normal task cancellation and worker
-containment controls if an executing recovery must be stopped.</p>
-<p>After a claim, the task runs through the normal host task executor but OpenShell
-wrapping is disabled for that lease. The prompt explicitly identifies the host
-recovery boundary. Normal deterministic evidence and review still apply.</p>
-<h2 id="referencing-host-work-from-sandboxed-work">Referencing host work from sandboxed work<a class="headerlink" href="#referencing-host-work-from-sandboxed-work" title="Permanent link">&para;</a></h2>
-<p>A host recovery task remains an ordinary MAC task, so sandboxed tasks can depend
-on it through normal task dependencies. A downstream task stays blocked until
-the host task is reviewed and completed; it then executes under the ordinary
-sandbox boundary. The privileged execution boundary is not inherited through
-dependencies.</p>
-<h2 id="recovery-invariant">Recovery invariant<a class="headerlink" href="#recovery-invariant" title="Permanent link">&para;</a></h2>
-<p>Never clear every fleet hold merely to repair the hold mechanism. Verify one
-host, authorize only the recovery task on that host, repair and validate the
-execution environment, and clear ordinary holds only after end-to-end probes
-pass.</p>
+<p><strong><code>MAC_DEPLOY_ROUTER_BACKEND</code> / <code>MAC_DEPLOY_ROUTER_URL</code>.</strong> These are the
+deploy-time inputs, resolved in <code>src/mac/deploy_env.py</code>:</p>
+<ul>
+<li><code>_deploy_router_config</code> (src/mac/deploy_env.py:712) reads
+  <code>MAC_DEPLOY_ROUTER_BACKEND</code> into <code>backend</code> (src/mac/deploy_env.py:714),
+  <code>MAC_DEPLOY_ROUTER_PORT</code> (default <code>8790</code>) into <code>port</code>
+  (src/mac/deploy_env.py:721), and <code>MAC_DEPLOY_ROUTER_URL</code> into <code>url</code>
+  (src/mac/deploy_env.py:725).</li>
+<li><code>_apply_router</code> (src/mac/deploy_env.py:902) treats <code>inproc</code> and <code>standalone</code>
+  identically for hub validation, spoke wiring, and credential centralization —
+  "only where the router listens differs" (src/mac/deploy_env.py:903). Any
+  other backend value flows to <code>_apply_non_inproc_router</code>
+  (src/mac/deploy_env.py:890).</li>
+<li>Hub wiring <code>_apply_inproc_router_hub</code> (src/mac/deploy_env.py:763): when
+  <code>backend == "standalone"</code> it sets <code>MAC_ROUTER_PORT</code> and points the hub's own
+  gateway base URLs at <code>http://127.0.0.1:&lt;port&gt;/v1</code>
+  (src/mac/deploy_env.py:779) so the hub API (backend != inproc) does not mount
+  <code>/v1</code> and ledger/inference stop sharing fate.</li>
+</ul>
+<p><strong>Per-site replica behavior.</strong> <code>_apply_inproc_router_spoke</code>
+(src/mac/deploy_env.py:810) sets the routing base to <code>MAC_DEPLOY_ROUTER_URL</code>
+when present, else the hub base: <code>route_base = (router["url"] or hub_base)</code>
+(src/mac/deploy_env.py:821). The spoke authenticates with a hub-facing bearer
+token and holds <strong>no upstream keys</strong> (src/mac/deploy_env.py:814). The router
+service confirms the credential posture in code: <code>_store_backed_secret_resolver</code>
+(src/mac/router_service.py:71) resolves <code>secret:</code> refs <strong>only</strong> when the process
+can legitimately own the store (hub host with <code>MAC_DB</code>/<code>MAC_DATABASE_URL</code>,
+src/mac/router_service.py:82); elsewhere the resolver is <code>None</code> and providers
+must use env keys or <code>key=none</code> private endpoints — hub vault material is never
+shipped to a worker node (src/mac/router_service.py:20). Caller auth uses
+constant-time bearer comparison against <code>MAC_ROUTER_TOKENS</code> plus the node's own
+<code>MAC_API_TOKEN</code>/<code>MAC_WORKER_TOKEN</code> (<code>_configured_tokens</code>,
+src/mac/router_service.py:49; <code>_token_matches</code>, src/mac/router_service.py:62).</p>
+<p><strong>Posture / RPO / RTO.</strong> <strong>Active-active for inference.</strong> Multiple routers (hub
+plus per-site replicas) can serve model traffic concurrently; there is no shared
+write state, so there is no RPO to bound and no promote step — a failed router is
+replaced by restarting the process or repointing a wing to another <code>/v1</code>. Route
+observations are best-effort (<code>_route_observer_for</code>, src/mac/router_service.py:99;
+failures are swallowed so observability never breaks routing,
+src/mac/router_service.py:116).</p>
+<p><strong>Test coverage.</strong> <code>tests/test_router_service.py</code> (6 tests):
+- Token requirement: <code>test_requires_at_least_one_bearer_token</code>
+  (tests/test_router_service.py:24).
+- Auth boundary: <code>test_healthz_is_open_and_v1_requires_bearer</code>
+  (tests/test_router_service.py:31), <code>test_accepts_any_configured_token</code>
+  (tests/test_router_service.py:47).
+- Mount exclusivity: <code>test_hub_api_does_not_mount_v1_when_backend_standalone</code>
+  (tests/test_router_service.py:63).
+- Fail-closed with no providers: <code>test_no_providers_fails_closed</code>
+  (tests/test_router_service.py:78).
+- Observation subject/source: <code>test_route_observer_prefers_task_subject_and_keeps_agent_source</code>
+  (tests/test_router_service.py:85).</p>
+<p>Gap: no direct test of the <code>MAC_DEPLOY_ROUTER_URL</code> spoke-repoint path or the
+per-site <code>secret:</code>-resolver-disabled posture at the <code>router_service</code> layer
+(the deploy-env wiring is exercised in <code>deploy_env</code> tests, not here).</p>
+<h2 id="2-evidence-blob-externalization">2. Evidence-Blob Externalization<a class="headerlink" href="#2-evidence-blob-externalization" title="Permanent link">&para;</a></h2>
+<p><strong>What exists.</strong> <code>src/mac/evidence_blobs.py</code> is a hub-local content-addressed
+blob store for evidence artifact bytes. Its docstring (src/mac/evidence_blobs.py:1)
+explains the coupling it removes: artifacts historically rode inside the ledger
+as base64 rows, tying DB growth to artifact volume.</p>
+<ul>
+<li><code>MAC_EVIDENCE_BLOB_DIR</code> (<code>BLOB_DIR_ENV</code>, src/mac/evidence_blobs.py:45) is the
+  opt-in switch. <code>blob_root</code> (src/mac/evidence_blobs.py:60) returns <code>None</code> when
+  unset, so the ledger inlines bytes exactly as before (zero-config default,
+  src/mac/evidence_blobs.py:12).</li>
+<li><code>MAC_EVIDENCE_INLINE_MAX_BYTES</code> (<code>INLINE_MAX_ENV</code>,
+  src/mac/evidence_blobs.py:46) sets the inline threshold via <code>inline_max_bytes</code>
+  (src/mac/evidence_blobs.py:68); an empty or unparseable value falls back to
+  <code>DEFAULT_INLINE_MAX_BYTES = 65536</code> (64 KiB, src/mac/evidence_blobs.py:51),
+  and a negative value is floored to 0 (src/mac/evidence_blobs.py:77). Bytes at
+  or below the threshold stay inline even when a blob root is configured.</li>
+<li>Storage is content-addressed and integrity-verified: <code>store_blob</code>
+  (src/mac/evidence_blobs.py:106) writes to <code>&lt;root&gt;/&lt;aa&gt;/&lt;sha256hex&gt;</code> atomically
+  (tmp + <code>os.replace</code>), deduplicates by digest, and enforces mode <code>0600</code> on
+  both the new-blob and dedup paths (src/mac/evidence_blobs.py:120,
+  src/mac/evidence_blobs.py:129). <code>read_blob</code> (src/mac/evidence_blobs.py:135)
+  re-hashes on read and raises <code>BlobIntegrityError</code>
+  (src/mac/evidence_blobs.py:56) on any digest mismatch — it never returns
+  unverified bytes. <code>blob_uri</code> (src/mac/evidence_blobs.py:95) is a
+  location-independent <code>evidence-blob:</code> URI so the root can move (or a ledger
+  can be restored on a standby with a different layout) without invalidating
+  rows.</li>
+</ul>
+<p><strong>Posture / RPO / RTO.</strong> A <strong>supporting</strong> primitive, not a failover mechanism.
+It has no active/passive character of its own; its role is to keep ledger
+snapshots small so Tier B replication is fast and Tier A DB size stays bounded.
+It does add a recovery obligation: the blob directory must be backed up
+alongside ledger snapshots (see section 4, step 2 of the promote procedure).</p>
+<p><strong>Test coverage.</strong> <code>tests/test_evidence_blobs.py</code> (18 tests) covers roundtrip,
+mode-0600 on new and dedup paths, corruption fail-closed, large-vs-small
+inline/externalize selection, unconfigured-store inline fallback, missing-blob
+fail-closed, cross-evidence dedup, <code>inline_max_bytes</code> default on unset and on
+non-integer, invalid-digest and wrong-URI-scheme rejection, expected-sha256
+mismatch, and write-error cleanup — e.g.
+<code>test_large_artifact_externalizes_and_reads_back</code>
+(tests/test_evidence_blobs.py:98), <code>test_small_artifact_stays_inline</code>
+(tests/test_evidence_blobs.py:126), <code>test_unconfigured_blob_store_keeps_inline_behavior</code>
+(tests/test_evidence_blobs.py:145), <code>test_read_blob_fails_closed_on_corruption</code>
+(tests/test_evidence_blobs.py:87).</p>
+<h2 id="3-ledger-availability-tier-a-postgres">3. Ledger Availability — Tier A (Postgres)<a class="headerlink" href="#3-ledger-availability-tier-a-postgres" title="Permanent link">&para;</a></h2>
+<p><strong>What exists.</strong> Postgres is a first-class store backend selected by
+<code>MAC_DATABASE_URL</code> in <code>make_store_from_env</code> (src/mac/store.py:80). A DSN with a
+<code>postgres://</code>/<code>postgresql://</code> scheme constructs a <code>PostgresStore</code> with the
+bundled schema auto-applied (src/mac/store.py:102); any other scheme is rejected
+(src/mac/store.py:105). The k8s manifest runs stateless hub processes against
+one shared DB: <code>deploy/k8s/mac-api/deployment.yaml:3</code> documents "N replicas with
+the same shared <code>MAC_DATABASE_URL</code>" and <code>deploy/k8s/mac-api/deployment.yaml:17</code>
+sets <code>replicas: 2</code>, with <code>MAC_DATABASE_URL</code> injected from the <code>mac-api-config</code>
+secret (deploy/k8s/mac-api/deployment.yaml:62). The runbook records that this
+turns availability into "a database problem with off-the-shelf answers"
+(docs/hub-availability.md:61).</p>
+<p><strong>Posture / RPO / RTO.</strong> <strong>Active-active at the process layer over a single DB
+authority.</strong> Hub processes are stateless in this mode, so failover is "start the
+API pointing at the same DSN" (docs/hub-availability.md:69). RPO/RTO are
+delegated to the chosen Postgres HA product (streaming replica + managed
+failover: CloudNativePG, Patroni, RDS/Cloud SQL) — this is the smaller-RPO tier.</p>
+<p><strong>Test coverage.</strong> Backend selection and schema handling are covered by the
+store tests (SQLite/Postgres translation, live Postgres in
+<code>tests/test_postgres_live.py</code>, referenced by the docs CI gate at
+tests/test_documentation_book.py:99). This audit did not run the live-Postgres
+suite (requires a database); it verified the selection logic and the manifest
+statically.</p>
+<h2 id="4-ledger-availability-tier-b-sqlite-verified-snapshots">4. Ledger Availability — Tier B (SQLite Verified Snapshots)<a class="headerlink" href="#4-ledger-availability-tier-b-sqlite-verified-snapshots" title="Permanent link">&para;</a></h2>
+<p><strong>What exists — the snapshot primitive.</strong> <code>src/mac/ledger_backup.py</code> produces
+verified, shippable snapshots. <code>snapshot</code> (src/mac/ledger_backup.py:86):
+1. <code>_verified_backup</code> (src/mac/ledger_backup.py:62): <code>PRAGMA wal_checkpoint</code> +
+   SQLite online backup API + <code>PRAGMA integrity_check</code>, deleting the copy on any
+   failure (src/mac/ledger_backup.py:72).
+2. Writes a sha256 sidecar manifest (<code>mac.ledger_snapshot.v1</code>,
+   src/mac/ledger_backup.py:45) at mode 0600 (src/mac/ledger_backup.py:124).
+3. Prunes to <code>--keep-last</code> (default <code>DEFAULT_KEEP_LAST = 14</code>,
+   src/mac/ledger_backup.py:47; <code>prune</code>, src/mac/ledger_backup.py:144).
+4. Runs the ship hook <code>MAC_LEDGER_BACKUP_SYNC_CMD</code> (<code>SYNC_CMD_ENV</code>,
+   src/mac/ledger_backup.py:46) with <code>MAC_LEDGER_SNAPSHOT_PATH</code>/<code>_SHA256</code>/
+   <code>_MANIFEST</code> in the environment (src/mac/ledger_backup.py:130); a <strong>non-zero
+   hook exit is raised as an error</strong> (src/mac/ledger_backup.py:137) so a broken
+   standby sync is loud, not silent.</p>
+<p><code>verify</code> (src/mac/ledger_backup.py:158) re-checks a snapshot against its
+manifest sha256 and <code>integrity_check</code> on the standby side; <code>--verify</code> is exposed
+on the CLI (src/mac/ledger_backup.py:189). <code>main</code>
+(src/mac/ledger_backup.py:176) is the <code>mac-ledger-backup</code> /
+<code>python -m mac.ledger_backup</code> entry point.</p>
+<p><strong>What exists — the scheduler.</strong> <code>src/mac/ledger_backup_scheduler.py</code> is the
+daemon that actually runs the primitive; its docstring
+(src/mac/ledger_backup_scheduler.py:1) notes that before it, "nothing ever ran"
+the backup command. It is a threaded daemon (<code>LedgerBackupScheduler</code>,
+src/mac/ledger_backup_scheduler.py:90) started from the API lifespan
+(src/mac/api.py:4121) and:</p>
+<ul>
+<li>Is <strong>default-ON but hub-only</strong>: <code>LedgerBackupConfig.from_env</code>
+  (src/mac/ledger_backup_scheduler.py:62) enables when
+  <code>MAC_LEDGER_BACKUP_ENABLED</code> is truthy (default <code>1</code>) <strong>and</strong>
+  <code>MAC_CONTROL_PLANE_ROLE</code> is not <code>client</code>
+  (src/mac/ledger_backup_scheduler.py:76). <code>start</code>
+  (src/mac/ledger_backup_scheduler.py:107) is a no-op when disabled.</li>
+<li>Snapshots every <code>MAC_LEDGER_BACKUP_INTERVAL_SECONDS</code> (default
+  <code>DEFAULT_INTERVAL_SECONDS = 900.0</code> = 15 min, min 60 s,
+  src/mac/ledger_backup_scheduler.py:34) after an initial delay (default 120 s,
+  src/mac/ledger_backup_scheduler.py:36), via <code>_loop</code>
+  (src/mac/ledger_backup_scheduler.py:140) → <code>run_once</code>
+  (src/mac/ledger_backup_scheduler.py:150).</li>
+<li><code>run_once</code> <strong>never raises</strong> (src/mac/ledger_backup_scheduler.py:170): a backup
+  failure is loud in telemetry/notifications (<code>_observe</code>,
+  src/mac/ledger_backup_scheduler.py:176; <code>_notify_failure</code>,
+  src/mac/ledger_backup_scheduler.py:187) but must not crash the hub.</li>
+</ul>
+<p><strong>Posture / RPO / RTO.</strong> <strong>Active-passive / operator-driven.</strong> Exactly one node
+takes snapshots (the hub); the standby holds shipped copies and does not serve
+until an operator promotes it. <strong>RPO = the snapshot/ship cadence</strong> (default 15
+min, bounded by the interval and ship-hook success). <strong>RTO</strong> is the manual
+promote procedure below — verify, install, redeploy, repoint — i.e. minutes-plus
+of operator work, not automatic. The scheduler's own docstring frames this as
+"the RPO-bounding half of hub availability … automated leader
+election/replication is the RTO half" (src/mac/ledger_backup_scheduler.py:14).</p>
+<p><strong>Test coverage.</strong>
+- <code>tests/test_ledger_backup.py</code> (5 tests): verified+restorable snapshot
+  (tests/test_ledger_backup.py:27), keep-last pruning
+  (tests/test_ledger_backup.py:40), ship-hook env + loud failure
+  (tests/test_ledger_backup.py:57), tampered-snapshot rejection
+  (tests/test_ledger_backup.py:76), missing-DB fail-closed
+  (tests/test_ledger_backup.py:86).
+- <code>tests/test_ledger_backup_scheduler.py</code> (7 tests): default-on-hub/off-client
+  gate (tests/test_ledger_backup_scheduler.py:41), env config paths/interval
+  (tests/test_ledger_backup_scheduler.py:47), verified snapshot via <code>run_once</code>
+  (tests/test_ledger_backup_scheduler.py:60), ship hook env
+  (tests/test_ledger_backup_scheduler.py:80), keep-last pruning
+  (tests/test_ledger_backup_scheduler.py:92), loud-but-non-raising failure
+  (tests/test_ledger_backup_scheduler.py:106), disabled-scheduler no-op start
+  (tests/test_ledger_backup_scheduler.py:117).</p>
+<h2 id="5-operator-promote-fence-procedure-and-invariants">5. Operator Promote / Fence Procedure and Invariants<a class="headerlink" href="#5-operator-promote-fence-procedure-and-invariants" title="Permanent link">&para;</a></h2>
+<p><strong>What exists.</strong> <code>docs/hub-availability.md</code> documents the standby takeover
+(docs/hub-availability.md:89). The controlling rule is stated first:
+"<strong>the old hub must be fenced before the standby serves a single write</strong>"
+(docs/hub-availability.md:91) because two live authorities silently diverge and
+nothing reconciles them after the fact. The five steps:</p>
+<ol>
+<li><strong>Fence the old hub</strong> — stop its service, or make it unreachable (tailnet
+   ACL / shut the node) if it cannot be stopped (docs/hub-availability.md:95).</li>
+<li><strong>Restore the ledger on the standby</strong> — Tier A promotes the Postgres replica;
+   Tier B verifies and installs the newest shipped snapshot as <code>mac.db</code> and
+   restores the evidence-blob directory alongside it (docs/hub-availability.md:98).</li>
+<li><strong>Make the standby the hub</strong> — deploy with <code>MAC_CONTROL_PLANE_ROLE=hub</code> and
+   the same token material (docs/hub-availability.md:104).</li>
+<li><strong>Repoint the fleet</strong> — update <code>hub_url</code> (or, better, rebind a stable DNS
+   name) and redeploy agents (docs/hub-availability.md:108).</li>
+<li><strong>Old hub stays fenced</strong> — when it returns, redeploy it as a spoke
+   (<code>MAC_CONTROL_PLANE_ROLE=client</code>), and the store factory refuses to let a
+   client own a DB (docs/hub-availability.md:114).</li>
+</ol>
+<p><strong>Single-authority + control-plane-role invariants (verified in code).</strong>
+- The store factory <code>make_store_from_env</code> (src/mac/store.py:80) enforces exactly
+  one durable authority per node: <code>MAC_CONTROL_PLANE_ROLE=client</code> <strong>cannot own a
+  database</strong> and raises <code>StoreError</code> (src/mac/store.py:98); there is
+  deliberately no home-directory fallback (src/mac/store.py:86), so a client
+  cannot silently acquire a private <code>~/.mac/mac.db</code>. A node declares Postgres
+  (<code>MAC_DATABASE_URL</code>) or SQLite (<code>MAC_DB</code>), never both implicitly.
+- <code>MAC_CONTROL_PLANE_ROLE</code> is written by the deploy as <code>hub</code> for the hub and
+  <code>client</code> for spokes (src/mac/deploy_env.py:423), and it is the same flag that
+  gates the backup scheduler (section 4) and hub-only dispatch
+  (src/mac/dispatch.py:2855).</p>
+<p><strong>Posture / RPO / RTO.</strong> <strong>Operator-driven.</strong> Fencing is intentionally manual —
+the runbook's "what this deliberately does not do" section states a standby
+cannot safely infer fencing from "I can't reach the hub"
+(docs/hub-availability.md:122), and there is no hub-to-hub replication protocol
+(docs/hub-availability.md:125).</p>
+<p><strong>Test coverage.</strong> The invariants are covered indirectly by the store-role tests
+(client-cannot-own-DB) and the scheduler role gate
+(<code>test_default_on_for_hub_off_for_client</code>,
+tests/test_ledger_backup_scheduler.py:41). The promote <em>procedure itself</em> is a
+documented runbook, not an automated code path, so it has no dedicated test —
+consistent with its operator-driven nature.</p>
+<h2 id="6-gaps-decisions-for-the-active-passive-design-child">6. Gaps / Decisions for the Active-Passive Design Child<a class="headerlink" href="#6-gaps-decisions-for-the-active-passive-design-child" title="Permanent link">&para;</a></h2>
+<p>To reach a <strong>minimal active-passive</strong> posture (single standby, operator-assisted
+but tighter), the design child must resolve — not this audit:</p>
+<ol>
+<li><strong>Fencing.</strong> There is no programmatic fence today: step 1 is entirely manual
+   (stop service / tailnet ACL, docs/hub-availability.md:95). Decide whether the
+   standby gets a fencing primitive (e.g. a lease/token the old hub must hold to
+   accept writes, or an external STONITH-style action) so promotion can be
+   safer than "operator promises the old hub is down."</li>
+<li><strong>Standby promotion.</strong> For Tier B there is no automated "install newest
+   verified snapshot + flip role" action — it is manual (docs/hub-availability.md:98).
+   Decide whether to add a promote command that wraps
+   <code>ledger_backup.verify</code> (src/mac/ledger_backup.py:158) + install +
+   <code>MAC_CONTROL_PLANE_ROLE=hub</code>, keeping the fence as the human gate.</li>
+<li><strong>Repointing.</strong> Fleet repoint is manual <code>hub_url</code> editing/redeploy
+   (docs/hub-availability.md:108). Decide the canonical mechanism (stable
+   tailnet DNS rebind vs. <code>MAC_DEPLOY_NEW_HUB_URL</code> redeploy) and whether the
+   standby advertises readiness.</li>
+<li><strong>Standby freshness / liveness.</strong> Nothing on the standby currently verifies
+   that shipped snapshots are arriving on cadence or that the standby copy is
+   restorable before a real failover. Decide whether the standby runs a
+   continuous <code>--verify</code> and surfaces staleness (the ship hook is loud on the
+   <em>sender</em> side only, src/mac/ledger_backup.py:137).</li>
+<li><strong>Evidence-blob co-recovery.</strong> The blob directory must be restored alongside
+   the ledger (docs/hub-availability.md:103) but nothing binds the two backups
+   together. Decide whether snapshot + blob-dir shipping become one atomic
+   operator step.</li>
+<li><strong>RPO target.</strong> Default cadence is 15 min (src/mac/ledger_backup_scheduler.py:34).
+   Decide the fleet's acceptable RPO and whether Tier A (Postgres, section 3) is
+   the answer where the SQLite cadence is too coarse.</li>
+</ol>
+<p>None of these are implemented here; this audit only establishes the verified
+ground truth they build on.</p>
+<h2 id="7-verification-performed">7. Verification Performed<a class="headerlink" href="#7-verification-performed" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Static ground-truth read of every referenced primitive with <code>file:line</code>
+  citations (sections 1–5); no source or test file was modified.</li>
+<li>Confirmed the four test modules exist and enumerated their cases:
+  <code>tests/test_router_service.py</code> (6), <code>tests/test_evidence_blobs.py</code> (18),
+  <code>tests/test_ledger_backup.py</code> (5), <code>tests/test_ledger_backup_scheduler.py</code> (7).</li>
+<li>Confirmed <code>deploy/k8s/mac-api/deployment.yaml:17</code> sets <code>replicas: 2</code> against a
+  shared <code>MAC_DATABASE_URL</code>.</li>
+<li>Ran the docs contract to confirm this new page does not break it (the page is
+  added to <code>mkdocs.yml</code> nav under Runbooks; it uses generic role names /
+  <code>&lt;placeholder&gt;</code> tokens only, so <code>tests/test_docs_no_operator_identity.py</code> and
+  <code>tests/test_documentation_book.py</code> stay green).</li>
+</ul>
+<h2 id="8-conclusion">8. Conclusion<a class="headerlink" href="#8-conclusion" title="Permanent link">&para;</a></h2>
+<p>The fleet's HA story is real and tested: inference is decoupled (active-active),
+ledger bytes are bounded (supporting), the ledger has a Postgres active-active
+tier and a SQLite verified-snapshot active-passive tier, and a documented
+operator promote/fence procedure rests on enforced single-authority and
+control-plane-role invariants. The minimal-active-passive design child should
+resolve the six items in section 6 — chiefly fencing, standby promotion, and
+repointing — reusing these primitives rather than designing new replication.
+This audit changed no source or test logic.</p>
 
 
 
@@ -1838,7 +2236,7 @@ pass.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../hub-ha-audit/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Hub HA audit">
+          <a href="../hub-availability/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Hub availability">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1848,20 +2246,20 @@ pass.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Hub HA audit
+                Hub availability
               </div>
             </div>
           </a>
         
         
           
-          <a href="../work-graph-control-plane/" class="md-footer__link md-footer__link--next" aria-label="Next: Work-graph control plane">
+          <a href="../break-glass-host-recovery/" class="md-footer__link md-footer__link--next" aria-label="Next: Break-glass recovery">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Work-graph control plane
+                Break-glass recovery
               </div>
             </div>
             <div class="md-footer__button md-icon">
