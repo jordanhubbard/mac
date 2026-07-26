@@ -736,14 +736,36 @@ class RepoPrepMixin:
         return True
 
     def _resolve_repository_source_path(self, origin: JsonDict) -> Path:
-        from mac.worker import (  # noqa: PLC0415
-            _repository_source_candidates,
+        # Share the single source-resolution surface with the worktree
+        # preservation primitive so a replaced/relocated source stays resolvable
+        # across the same candidate locations (declared path, .mac-home
+        # relative, mac_home/src/<name>, self_update_repo).
+        from mac.worktree_preservation import resolve_source_path  # noqa: PLC0415
+
+        return resolve_source_path(origin, self.self_update_repo)
+
+    def _decide_source_worktree_preservation(
+        self,
+        origin: JsonDict,
+        *,
+        previous_source: Optional[Path] = None,
+    ):
+        """Decide whether linked worktrees must be preserved for this source.
+
+        Thin wrapper over the injectable
+        :func:`mac.worktree_preservation.decide_source_worktree_preservation`
+        primitive so callers keep worktrees usable when the resolved source path
+        changes.  Fail-closed on missing/unresolvable source.
+        """
+        from mac.worktree_preservation import (  # noqa: PLC0415
+            decide_source_worktree_preservation,
         )
 
-        for candidate in _repository_source_candidates(origin, self.self_update_repo):
-            if candidate.exists():
-                return candidate
-        return Path(str(origin.get("repository_path") or "")).expanduser()
+        return decide_source_worktree_preservation(
+            origin,
+            self.self_update_repo,
+            previous_source=previous_source,
+        )
 
     def _resolve_repository_remote_url(self, task: JsonDict, origin: JsonDict) -> str:
         """Return the remote clone URL for a worker without a local source.
