@@ -1694,6 +1694,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#orphan-authority-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Orphan-authority recovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#coordinator-constraints" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2011,6 +2022,43 @@ deliberately does not mean dispatchable.</p>
 <p>Journal ownership binds controller nonce, boot identity, PID, and process start
 time. PID liveness alone is insufficient because PID reuse after reboot can
 impersonate the previous owner.</p>
+<h2 id="orphan-authority-recovery">Orphan-authority recovery<a class="headerlink" href="#orphan-authority-recovery" title="Permanent link">&para;</a></h2>
+<p>Hub HA failover (or any authority loss) can leave the controller holding a
+durable journal whose hub barrier -- <code>open</code>, <code>prove_intent</code>, or <code>proved</code> -- no
+longer exists at the hub: the epoch id returns exact <code>absent</code> and the pending
+credential row is gone. There is no abort receipt to journal, because the epoch
+that would emit one is gone. The controller must not assume the hub epoch is
+durable; it retires only the matching orphan barrier after an admin-audited
+proof, using the <code>hub-orphaned</code> operation.</p>
+<p><code>hub-orphaned</code> requires two owner-private inputs, both bound to the exact
+journal:</p>
+<ol>
+<li>
+<p>an <code>absent</code> status receipt (<code>mac.fleet_release_epoch_status.v1</code>) written by
+   the loopback epoch client. Only status <code>absent</code> is accepted: the client
+   raises on transport failure, so absence is proven by the live hub authority
+   and never inferred from a timeout. <code>mismatch</code> -- a different epoch under the
+   same id -- is refused. The receipt's epoch, hub authority UUID, and identity
+   digest must equal the values journalled when the epoch opened.</p>
+</li>
+<li>
+<p>a node quiescence bundle (<code>mac.fleet_orphan_quiescence.v1</code>) proving, for the
+   exact cohort and generations, that every node holds its deployment lock,
+   presents a startup attestation digest, is both <code>idle</code> and <code>healthy</code>, and has
+   <code>active_work=false</code>. A single non-idle, unhealthy, lock-less, busy, or
+   wrong-generation node fails the whole operation closed.</p>
+</li>
+</ol>
+<p>On success the operation records a durable
+<code>mac.fleet_hub_orphan_abort_evidence.v1</code> marker (binding the absence and
+quiescence digests, not any credential), moves the hub barrier to <code>aborted</code>,
+and moves the journal to <code>aborting</code>. It reconstructs no credential and never
+touches the successor or any operator hold. Normal reverse-order node recovery
+and <code>abort</code> then retire the matching journal exactly as for a receipt-backed
+abort. Committed and finalized epochs are never orphaned -- they finalize.</p>
+<p><code>recovery</code> surfaces <code>hub_recovery.orphan_recoverable=true</code> on an
+orphan-eligible barrier so an operator can distinguish this admin path from a
+normal receipt-backed abort.</p>
 <h2 id="coordinator-constraints">Coordinator constraints<a class="headerlink" href="#coordinator-constraints" title="Permanent link">&para;</a></h2>
 <p>The coordinator advances durable participant transitions; it does not directly
 edit credentials, service definitions, tunnels, policies, or holds. For every
@@ -2038,6 +2086,8 @@ uses the exact retained executable recorded before mutation.</p>
 <li>pending credential or attestation proof followed by abort;</li>
 <li>commit request applied with its response lost;</li>
 <li>hub status timeout, exact absence, exact commit, and mismatch;</li>
+<li>hub authority loss that orphans an open/proved barrier (exact absence plus
+  full-cohort quiescence retires only the matching journal);</li>
 <li>finalizer failure on any node after hub commit; and</li>
 <li>coordinator owner PID reuse across a reboot.</li>
 </ul>
