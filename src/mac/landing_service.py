@@ -335,7 +335,9 @@ class LandingService:
                 raise LandingError("integration batch has no reviewed inputs")
             with tempfile.TemporaryDirectory(prefix="mac-landing-assemble-") as raw:
                 checkout = Path(raw) / "repo"
+                self._renew_leases(stream, batch_lease)
                 self._clone(endpoint, checkout)
+                self._renew_leases(stream, batch_lease)
                 self._fetch_exact(endpoint, checkout, batch.target_ref, batch.landing_base_sha)
                 self._git_checked(
                     ["checkout", "--detach", batch.assembly_base_sha],
@@ -346,6 +348,7 @@ class LandingService:
                 )
                 commit_env = self._deterministic_commit_environment(batch)
                 for item in inputs:
+                    self._renew_leases(stream, batch_lease)
                     self._fetch_exact(
                         endpoint, checkout, item.protected_ref, item.reviewed_sha
                     )
