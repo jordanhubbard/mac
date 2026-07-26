@@ -116,3 +116,25 @@ A successful rationalization keeps or improves fault and contract detection
 while reducing maintenance size, duplicate execution, or wall time. It is
 acceptable for raw test count or aggregate line coverage to stay flat or fall
 when stronger evidence shows the portfolio is at least as effective.
+
+## Test-suite rationalization backlog
+
+The first tranche of contract-gate cost reduction folded the 15 `_edges`
+coverage-companion modules that had a same-named base twin into their base
+modules, relocating every case verbatim so that no exercised line or arc was
+lost (verified by branch-mode coverage diff: zero source lines and zero source
+arcs dropped across 230 source files, 463 collected cases preserved). The
+companions were deleted and the base modules absorbed their imports and helpers
+(colliding helpers were renamed with an `_edges` suffix rather than dropped).
+
+Remaining follow-up work, to be filed as tasks against this program:
+
+- **Split `tests/test_control_plane.py` (14,278+ LOC) along service boundaries.**
+  Track the ControlPlane decomposition happening in the sibling task and mirror
+  its new service seams as separate `test_control_plane_<service>.py` modules so
+  the monolith stops forcing a full-suite collection on every control-plane
+  change.
+- **Handle the remaining non-twin `_edges` / `_edge_coverage` /
+  `_boundary_coverage` companions.** ~22 companions have no clean same-named base
+  twin; each needs a target base module (existing or new) chosen before folding,
+  or promotion to a first-class behavioral module when it covers a distinct seam.
