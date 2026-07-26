@@ -1,149 +1,105 @@
-# Ground-Truth Audit: Dispatch Starvation-Boost / Priority-Aging Behavior
+# Actionability Audit: Low-Confidence "skill" Dream Finding
 
-Read-only audit for the contract-repair of parent audit task
-`task_00f23013f3c349ccac2e1e7474584c86` (title: "Audit dispatch starvation-boost /
-priority-aging behavior and its contract-test coverage"). This document records ground
-truth only; the audit changed **no** dispatch source or test logic. It confirms which
-behaviors are correct and covered, and enumerates the coverage/correctness gaps the
-remediation child should close, with exact `file:line` references.
+Read-only investigation for the contract-repair of parent audit task
+`task_18832f86e4864f0fbab7bf13bf6123b9` (title: "Investigate low-confidence dream
+finding: skill"). This document records ground truth only. The audit changed **no**
+`src/`, `tests/`, `skills/`, or `deploy/` file. It establishes whether the
+dream-repair finding fingerprint `dreamrepair:25a0fdad55bbcbb229620b6f2ee99af6`
+names a concrete, fixable defect or is a low-signal evidence gap.
 
 ## Summary Verdict
 
-The dispatch starvation-boost / priority-aging behavior in `src/mac/services.py` is
-**correct** and the primary paths are **well covered** by contract tests. However, the
-coverage is **not complete**: several branches called out in the parent task are only
-exercised indirectly or not at all, and one helper contains an effectively **dead
-defensive branch** (`page_cursor`) that no live `Task` can reach. These are enumerated in
-section 4 as actionable gaps.
+**NOT ACTIONABLE — evidence gap.** The finding is a low-confidence, generic,
+self-referential `failure_pattern` with no named skill, tool, provider, or repo
+area, backed by a single record that is itself the closure of an equivalent prior
+finding. There is no concrete, reproducible defect for a code or skill change to
+fix. The correct disposition is to close it as NOT ACTIONABLE and hand the closure
+to the disposition child.
 
-## 1. Behaviors Confirmed Correct (src/mac/services.py)
+## 1. The Finding's Claim (from parent `metadata.dream_repair`)
 
-Starvation protection is layered across three cooperating mechanisms on `ControlPlane`,
-plus a bounded candidate window.
+- fingerprint: `dreamrepair:25a0fdad55bbcbb229620b6f2ee99af6`
+- kind: `failure_pattern`
+- scope: project `mac`
+- confidence: `low` (overall_confidence_score = 0.35)
+- affected skills: `['skill']` — a **bare generic label**, not a skill name
+- affected tools / providers / repo_areas: **none**
+- evidence_count: `1`
+- signals: `['\\bskill[s]?\\b']` — a plain word-boundary match on the token
+  "skill"/"skills"
 
-- Priority aging ("starvation boost"):
-  - `_dispatch_priority_age_bonus` (src/mac/services.py:22834) converts age into whole
-    aging steps via `max(0, int(age_seconds // step_seconds))` — monotonic non-decreasing
-    in age, floored at 0. Correct.
-  - `_dispatch_task_sort_key` (src/mac/services.py:22821) folds the bonus into
-    `(-effective_priority, -order_signal, created_at, id)`. Correct precedence.
-  - Step size `_DISPATCH_PRIORITY_AGING_SECONDS = 24h` (src/mac/services.py:22632),
-    overridable via `MAC_DISPATCH_PRIORITY_AGING_SECONDS` through
-    `_int_env(..., minimum=60)`. Correct.
-  - Corrupt `created_at` is caught (bare `except`) and returns bonus `0` instead of
-    raising (src/mac/services.py:22838-22842). Correct — dispatch is never aborted by bad
-    data.
+Every discriminating field is either empty or a generic placeholder. The only
+"target" is the English word "skill", which matches any log line mentioning a
+skill in passing. A `failure_pattern` with support = 1 and a bare-token signal is
+exactly the shape the source heuristics assign the lowest confidence to; the
+0.35 score reflects support < 2, not a diagnosed fault.
 
-- Tenant -> project -> page-prefix round-robin interleave:
-  - `_dispatch_ordered_tasks` (src/mac/services.py:22646) groups candidates by
-    `_task_tenant_id` and round-robins tenants.
-  - `_interleave_tasks_by_project` (src/mac/services.py:22678) round-robins projects within
-    a tenant.
-  - `_rotate_by_page_prefix` / `_page_prefix_key` (src/mac/services.py:22737 /
-    src/mac/services.py:22726) round-robin page-prefix buckets within a project, preserve
-    `(priority, age)` order inside a bucket, are a no-op for a single bucket, and never
-    mutate the input list. Correct — no group can starve its siblings.
+## 2. The Single Supporting Evidence Record
 
-- Bounded working set:
-  - `_dispatch_candidate_tasks` (src/mac/services.py:22790) unions a priority-ordered and
-    an oldest-first window, each capped at `_DISPATCH_TASK_WINDOW = 500`, so the oldest
-    tasks stay visible to the aging boost under backlog. Correct.
+- record: `mem_6236b86f03b24dc48dd938a276cb509d`
+  (kind `deployment_learning:mac`), from task `task_repair_35b1286a659dd98d345756f0`.
+- Content of that record: it is a **FAILED repair task** whose action was to close
+  a *prior* low-confidence "skill" dream finding (for parent `task_9c83aa5b`) as
+  NOT ACTIONABLE via a disposition note.
 
-## 2. Important Semantic Clarification (correctness, not a bug)
+So the sole evidence for this finding is a **meta / self-referential closure** of an
+equivalent finding — not an observation of a broken skill or tool. Treating a
+"this was already judged not actionable" note as fresh failure evidence is a
+feedback loop: the pattern re-derives itself from its own prior dismissal. It adds
+zero new signal about any real defect.
 
-The parent task phrases the env overrides as "minimum floors / minimum clamp". The actual
-semantics of `_int_env` (src/mac/services.py:471) are **fall-back-to-default**, NOT
-clamp-to-floor: an empty, unparseable, or below-`minimum` value returns the **default**,
-not the floor. Verified empirically:
+## 3. Actual Skill Surface (read-only inspection)
 
-- `MAC_DISPATCH_PAGE_PREFIX_WIDTH=0` -> width `2` (default), not `1` (floor).
-- `MAC_DISPATCH_PAGE_PREFIX_WIDTH=-5` -> width `2` (default).
-- `MAC_DISPATCH_PRIORITY_AGING_SECONDS=0` -> `86400` (default), not `60` (floor).
+The repo's entire skill surface is two files, both healthy:
 
-This is safe (a misconfigured knob can never DISABLE the cap) and is the intended design,
-but any test or doc describing it as a "clamp to the minimum" is inaccurate; it is a
-"reject and use the safe default". The remediation child should keep this wording precise.
+- `skills/mac-agent-terminal-timeout/SKILL.md` — 137 lines, valid YAML frontmatter
+  (`name`, `description`, `version 1.1.0`, `platforms`, `metadata.hermes.tags`,
+  `related_skills`), coherent "when to use / root cause / fix" body about the
+  `terminal:timeout` tool_error. No broken directives, no dangling references.
+- `skills/setup-mac-fleet/SKILL.md` — 224 lines, valid frontmatter (`name`,
+  `description`), coherent setup/deploy workflow. No broken directives.
 
-## 3. Behaviors Confirmed Covered by Contract Tests
+`git status --porcelain` on the task worktree is **clean** (no dirty tracked
+files). No specific skill, tool, provider, or repo area is named anywhere in the
+finding beyond the generic token "skill". There is no failing behavior, broken
+skill, or tool defect implicated by the finding to reproduce.
 
-`tests/test_control_plane.py`:
-- Starvation boost end-to-end: `test_dispatch_priority_aging_prevents_low_priority_starvation`.
-- Sort key: `test_dispatch_task_sort_key_orders_priority_then_signal_then_age`,
-  `test_dispatch_task_sort_key_breaks_priority_ties_on_order_signal`,
-  `test_dispatch_task_sort_key_age_bonus_lifts_effective_priority`.
-- Age-bonus arithmetic + env override + corrupt timestamp:
-  `test_dispatch_priority_age_bonus_counts_whole_aging_steps`,
-  `test_dispatch_priority_age_bonus_env_override_shrinks_step` (covers below-floor `"1"` and
-  unparseable `"not-an-int"` both falling back to the 24h default),
-  `test_dispatch_priority_age_bonus_tolerates_corrupt_timestamp`.
-- Candidate window: `test_dispatch_candidate_tasks_unions_priority_and_oldest_windows`.
-- Tenant round-robin (via tick): `test_dispatch_tick_round_robins_between_tenants`.
-- Project round-robin: `test_dispatch_round_robins_between_projects_within_tenant`.
-- Page-prefix rotation: `test_rotate_by_page_prefix_round_robins_across_prefix_buckets`,
-  `test_rotate_by_page_prefix_is_noop_for_single_bucket`,
-  `test_rotate_by_page_prefix_preserves_priority_within_bucket`,
-  `test_rotate_by_page_prefix_does_not_mutate_input`,
-  `test_rotate_by_page_prefix_width_env_gated` (widths 1/2 + unparseable fallback),
-  `test_dispatch_ordered_tasks_single_prefix_bucket_is_noop`,
-  `test_dispatch_ordered_tasks_rotates_page_prefixes_within_project`,
-  `test_ready_tasks_consume_page_prefix_rotation`.
+## 4. Actionability Decision
 
-`tests/test_work_package_assignment.py`:
-- `test_ordinary_task_order_falls_back_to_priority_aging_and_age`.
+Against the acceptance criterion — *is there a concrete, reproducible defect in a
+skill or tool that a code/skill change would fix?* — the answer is **no**:
 
-Targeted run of these 42 tests: **42 passed** (exit 0).
+- No named target: `affected_skills=['skill']` is a placeholder; tools, providers,
+  and repo_areas are empty.
+- No reproducible failure: the signal is a bare-token text match, not a stack
+  trace, error signature, or failing test.
+- Self-referential evidence: the lone record is the closure of an equivalent prior
+  finding, so support is effectively zero net-new.
+- Low confidence by construction: 0.35 stems from support < 2, not from a diagnosed
+  fault; both live SKILL.md files are healthy and the tree is clean.
 
-## 4. Coverage / Correctness Gaps (for the remediation child)
+There is nothing to fix. Fabricating a "repair" here would edit a healthy skill on
+the basis of a non-defect and is explicitly out of scope for this read-only child.
 
-1. Dead / untested `page_cursor` branch in `_page_prefix_key`
-   (src/mac/services.py:22734). The line
-   `source = getattr(task, "page_cursor", None) or task.id or ""` reads a `page_cursor`
-   attribute, but `Task` (src/mac/models.py:930) has **no** `page_cursor` field
-   (verified: `"page_cursor" in Task.__dataclass_fields__` is `False`). So for every real
-   `Task` the `getattr` returns `None` and the branch falls through to `task.id`. The
-   `page_cursor` path is therefore **unreachable dead code** and has **no test**. The
-   docstrings/comments in `_rotate_by_page_prefix` and `_interleave_tasks_by_project`
-   ("id/page-cursor prefix") advertise a behavior that cannot occur. Remediation options:
-   (a) add `page_cursor` to the `Task` model and add a test that keys on it, or
-   (b) simplify the helper to key on `task.id` only and drop the misleading page-cursor
-   wording. Either way add an explicit test asserting the chosen behavior.
+## 5. Deliverable to the Disposition Child
 
-2. No **direct** unit test for `_page_prefix_key` (src/mac/services.py:22726). It is only
-   exercised transitively through `_rotate_by_page_prefix`. A direct test (empty id,
-   `width` larger than the key, `width=1`, and — if kept — the `page_cursor` branch) would
-   pin the bucketing contract.
+- **Decision:** NOT ACTIONABLE (close finding
+  `dreamrepair:25a0fdad55bbcbb229620b6f2ee99af6` as such).
+- **Evidence gap (state in the disposition note):** a single low-confidence,
+  self-referential evidence record; a generic `'skill'` label with no named
+  skill/tool/provider/repo-area; and no reproducible failure. Confidence 0.35
+  reflects support < 2, not a diagnosed defect.
+- **Reopen criteria:** reopen only if a *named* skill or tool acquires a
+  reproducible failure signature (a real error/stack/failing test) with at least
+  two independent, non-self-referential evidence records.
+- **No repo change** is warranted in the source: both `SKILL.md` files are healthy
+  and the worktree is clean. This audit note is the only artifact.
 
-3. No **direct** test of `_interleave_tasks_by_project` or of tenant-level interleave
-   ordering in `_dispatch_ordered_tasks` (src/mac/services.py:22646). Tenant round-robin is
-   covered only indirectly via `test_dispatch_tick_round_robins_between_tenants` (which
-   routes through `tick`/capability matching). A direct `_dispatch_ordered_tasks` test with
-   multiple tenants (asserting cross-tenant round-robin ordering independent of the tick
-   machinery) is missing.
+## 6. Verification Performed
 
-4. No test of `_task_tenant_id`'s two branches (src/mac/services.py:26275): the
-   `origin.tenant_id` branch vs. the top-level `tenant_id` branch vs. the `None` fallback.
-   These drive tenant grouping in `_dispatch_ordered_tasks` and are only covered
-   incidentally.
-
-5. Env-override **below-floor** clamp for `MAC_DISPATCH_PAGE_PREFIX_WIDTH` is untested.
-   `test_rotate_by_page_prefix_width_env_gated` covers `"1"`, `"2"`, and `"not-an-int"` but
-   not a below-floor numeric value (`"0"` / `"-1"`). Given the fall-back-to-default
-   semantics noted in section 2, a test asserting that `MAC_DISPATCH_PAGE_PREFIX_WIDTH=0`
-   yields the default width (2), not the floor (1), would lock in the intended behavior and
-   guard against a future accidental clamp-to-floor change.
-
-## 5. Verification Performed
-
-- Targeted contract slice (not the full gate, per the parent task): the 42 dispatch /
-  aging / rotation tests listed in section 3 — **42 passed**, exit 0.
-- Empirical confirmation of the section-2 fall-back semantics and the section-4 gap #1
-  dead branch via a short `_int_env` / `Task.__dataclass_fields__` probe.
-
-## 6. Conclusion
-
-The starvation-boost / priority-aging behavior is correct and its main paths are covered.
-The remediation child should (a) resolve the dead `page_cursor` branch (model it or remove
-it) and align the docstrings, and (b) add direct tests for `_page_prefix_key`,
-tenant-level `_dispatch_ordered_tasks`/`_interleave_tasks_by_project` round-robin,
-`_task_tenant_id` branch selection, and the below-floor `MAC_DISPATCH_PAGE_PREFIX_WIDTH`
-override. No source or test change was made by this audit.
+- Read the finding's claim fields from the parent `metadata.dream_repair` block
+  (section 1) and the single evidence record's provenance (section 2).
+- Inspected both `SKILL.md` files (frontmatter + body) for defects: none found.
+- Confirmed `git status --porcelain` on the worktree is clean and that no skill or
+  tool is named beyond the generic token "skill".
+- No `src/`, `tests/`, `skills/`, or `deploy/` file was edited by this audit.
