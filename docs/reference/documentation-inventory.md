@@ -108,6 +108,7 @@ for provenance and is not a current operating contract.
 | supplemental reference | `dashboard-connection.md` | Dashboard Connection Contract |
 | supplemental reference | `deploy-prerequisite-vs-phase1-audit.md` | Audit: prove deploy prerequisites before phase-1 mutation, preserve Python diagnostics |
 | supplemental reference | `dispatch-priority-bias-audit.md` | Dispatch priority bias ordering audit |
+| supplemental reference | `dream-finding-965c6e89.md` | Ground Truth: dream finding `dreamrepair:965c6e89c762d29f07df25aafd3ac96f` (openclaw_fleet_rollout deliverable) |
 | runbook | `dream-stalled-finalizer-recovery-finding.md` | Dream-repair review finding: stalled-finalizer recovery |
 | supplemental reference | `env-config-reference.md` | MAC environment configuration reference |
 | runbook | `fleet-cutover-transaction-protocol.md` | Fleet Cut-over Transaction Protocol |
