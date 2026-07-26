@@ -1320,3 +1320,124 @@ def test_system_transaction_rolls_back_control_and_root_artifacts_via_sudo(
     ).splitlines()
     assert len(artifact_calls) >= 9
     assert all(call.startswith("-n|") and call.endswith("|-c") for call in artifact_calls)
+
+
+def _remove_owned_absent(
+    path: Path, mode: str = "user", *, geteuid: int | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run mac_launchd_remove_owned_absent_file against ``path``.
+
+    When ``geteuid`` is provided the lifecycle's Python bounded runner is
+    shimmed to report that effective uid, which lets the ownership contract be
+    exercised without a second real identity.
+    """
+
+    env = os.environ.copy()
+    if geteuid is None:
+        script = 'set -euo pipefail; . "$1"; mac_launchd_remove_owned_absent_file "$2" "$3"'
+    else:
+        # Shim the lifecycle's bounded Python runner so os.geteuid() reports a
+        # chosen effective uid, exercising the ownership contract without a
+        # second real identity.  The forced-euid prelude is prepended to the
+        # exact program bytes the function would otherwise have executed.
+        env["MAC_TEST_FORCE_EUID"] = str(geteuid)
+        prelude = (
+            "import os as _os; "
+            "_os.geteuid = lambda: int(_os.environ['MAC_TEST_FORCE_EUID']); "
+        )
+        script = (
+            'set -euo pipefail; . "$1"\n'
+            "mac_launchd_run_python_bounded() {\n"
+            '  local mode="$1" timeout="$2" program="$3"; shift 3\n'
+            '  : "$mode" "$timeout"\n'
+            f'  command python3 -c "{prelude}$program" "$@"\n'
+            "}\n"
+            'mac_launchd_remove_owned_absent_file "$2" "$3"'
+        )
+    return subprocess.run(
+        ["/bin/bash", "-c", script, "bash", str(LAUNCHD_LIFECYCLE), str(path), mode],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_remove_owned_absent_is_idempotent_for_an_already_absent_path(
+    tmp_path: Path,
+) -> None:
+    result = _remove_owned_absent(tmp_path / "mac-fleet.conf")
+    assert result.returncode == 0, result.stderr
+
+
+def test_remove_owned_absent_removes_an_empty_transaction_owned_file(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "mac-fleet.conf"
+    artifact.write_text("", encoding="utf-8")
+    result = _remove_owned_absent(artifact)
+    assert result.returncode == 0, result.stderr
+    assert not artifact.exists()
+
+
+def test_remove_owned_absent_removes_a_present_transaction_owned_file(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "mac-fleet.conf"
+    artifact.write_text("[program:mac-worker]\n", encoding="utf-8")
+    result = _remove_owned_absent(artifact)
+    assert result.returncode == 0, result.stderr
+    assert not artifact.exists()
+
+
+def test_remove_owned_absent_refuses_a_symlink_and_keeps_its_target(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "successor.conf"
+    target.write_text("successor definition\n", encoding="utf-8")
+    link = tmp_path / "mac-fleet.conf"
+    link.symlink_to(target)
+    result = _remove_owned_absent(link)
+    assert result.returncode != 0
+    assert "symlink" in result.stderr
+    assert link.is_symlink()
+    assert target.read_text(encoding="utf-8") == "successor definition\n"
+
+
+def test_remove_owned_absent_refuses_a_directory(tmp_path: Path) -> None:
+    directory = tmp_path / "mac-fleet.conf"
+    directory.mkdir()
+    result = _remove_owned_absent(directory)
+    assert result.returncode != 0
+    assert "directory" in result.stderr
+    assert directory.is_dir()
+
+
+def test_remove_owned_absent_refuses_a_non_regular_artifact(tmp_path: Path) -> None:
+    fifo = tmp_path / "mac-fleet.conf"
+    os.mkfifo(fifo)
+    result = _remove_owned_absent(fifo)
+    assert result.returncode != 0
+    assert "non-regular" in result.stderr
+    assert fifo.exists()
+
+
+def test_remove_owned_absent_refuses_a_foreign_owned_conflicting_successor(
+    tmp_path: Path,
+) -> None:
+    successor = tmp_path / "mac-fleet.conf"
+    successor.write_text("foreign successor\n", encoding="utf-8")
+    foreign_uid = os.geteuid() + 4096
+    result = _remove_owned_absent(successor, geteuid=foreign_uid)
+    assert result.returncode != 0
+    assert "foreign-owned" in result.stderr
+    assert successor.read_text(encoding="utf-8") == "foreign successor\n"
+
+
+def test_remove_owned_absent_removes_a_matching_owner_under_shimmed_euid(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "mac-fleet.conf"
+    artifact.write_text("owned\n", encoding="utf-8")
+    result = _remove_owned_absent(artifact, geteuid=os.geteuid())
+    assert result.returncode == 0, result.stderr
+    assert not artifact.exists()

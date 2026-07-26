@@ -170,6 +170,10 @@ mac_run_bounded() {
 mac_launchd_snapshot_file() {
   local source="$1" backup="$2" mode="${3:-user}"
   : "$mode"
+  if [ -L "$source" ]; then
+    echo "refusing non-regular or symlink lifecycle artifact: $source" >&2
+    return 1
+  fi
   if [ -f "$source" ]; then
     command cp -f "$source" "$backup"
     printf '%s\n' 1
@@ -201,6 +205,37 @@ mac_launchd_remove_file_and_fsync() {
     return 74
   fi
   rm -f "$destination"
+}
+
+mac_launchd_remove_owned_absent_file() {
+  local destination="$1" mode="${2:-user}"
+  if [ "${ROLLBACK_TEST_FAIL_CLEANUP:-}" = absent ] \
+      && [[ "$destination" == *rollback-current-file.* ]]; then
+    return 74
+  fi
+  command python3 - "$destination" "$mode" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+mode = sys.argv[2]
+try:
+    metadata = path.lstat()
+except FileNotFoundError:
+    raise SystemExit(0)
+if stat.S_ISLNK(metadata.st_mode):
+    raise SystemExit("refusing to remove symlink while restoring prior-absent artifact: %s" % path)
+if stat.S_ISDIR(metadata.st_mode):
+    raise SystemExit("refusing to remove directory while restoring prior-absent artifact: %s" % path)
+if not stat.S_ISREG(metadata.st_mode):
+    raise SystemExit("refusing to remove non-regular prior-absent artifact: %s" % path)
+expected_uid = os.geteuid()
+if metadata.st_uid != expected_uid:
+    raise SystemExit("refusing to remove foreign-owned artifact while restoring prior absence: %s" % path)
+path.unlink()
+PY
 }
 
 mac_launchd_fsync_directory() {
@@ -1279,6 +1314,69 @@ def test_generated_rollback_removes_supervisord_config_absent_from_prior_generat
     ]
     assert not paths["config"].exists()
     assert not paths["config_backup"].exists()
+
+
+def test_generated_rollback_refuses_a_symlink_where_prior_generation_was_absent(
+    tmp_path: Path,
+) -> None:
+    rollback, paths = _generate_rollback(
+        tmp_path,
+        control_active=False,
+        config_existed=False,
+    )
+    # A conflicting successor swapped a symlink in at the prior-absent config
+    # path.  Restoring prior absence must refuse to follow or unlink the
+    # symlink instead of silently deleting a foreign artifact.
+    target = tmp_path / "successor-target.conf"
+    target.write_text("current", encoding="utf-8")
+    paths["config"].unlink()
+    paths["config"].symlink_to(target)
+    env = _rollback_env(paths)
+    env["ROLLBACK_TEST_RESTORE_CONFIG_STATE"] = "absent"
+
+    result = subprocess.run(
+        ["/bin/bash", str(rollback)],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert paths["config"].is_symlink()
+    assert target.read_text(encoding="utf-8") == "current"
+
+
+def test_generated_rollback_keeps_a_foreign_conflicting_successor_at_absent_path(
+    tmp_path: Path,
+) -> None:
+    rollback, paths = _generate_rollback(
+        tmp_path,
+        control_active=False,
+        config_existed=False,
+    )
+    # A foreign-owned successor definition (simulated by a directory, which the
+    # removal contract refuses) occupies the prior-absent config path.  The
+    # rollback must not delete an artifact it does not own.
+    paths["config"].unlink()
+    paths["config"].mkdir()
+    (paths["config"] / "keep").write_text("successor payload\n", encoding="utf-8")
+    env = _rollback_env(paths)
+    env["ROLLBACK_TEST_RESTORE_CONFIG_STATE"] = "absent"
+
+    result = subprocess.run(
+        ["/bin/bash", str(rollback)],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert paths["config"].is_dir()
+    assert (paths["config"] / "keep").read_text(encoding="utf-8") == "successor payload\n"
 
 
 def test_completed_generated_rollback_replay_returns_same_receipt_without_mutation(
