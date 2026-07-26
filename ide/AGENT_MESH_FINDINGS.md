@@ -139,3 +139,36 @@ or advertisement-string mismatch exists in the current source. `npm ci` and
 `npm run typecheck` pass; `npm run test:ui` could not be executed because Playwright browser
 downloads are blocked by network policy, so the two named tests' outcomes were established by
 static trace against the mocked fixtures rather than live execution.
+
+## Remediation / finalize decision (parent contract-repair)
+
+Acting on the investigation above, the remediation child made **no source change**:
+both reported defects are already-correct against their contract-test assertions, so
+forcing an edit would be an unwarranted change. The load-bearing rules were re-verified
+directly:
+
+- Defect 1 (clipped Agent Mesh strip): `.mesh-agent-strip button` is pinned to a fixed
+  `44x44` click target with `flex:0 0 44px` and `place-items:center`
+  (ide/src/styles.css:333); the strip scrolls horizontally (`overflow-x:auto;
+  overflow-y:hidden`, ide/src/styles.css:332); `.agent-inspector` is the shrink/scroll
+  region (ide/src/styles.css:336) and `.mesh-composer` stays inside the full-height mesh
+  column (ide/src/styles.css:327). No clip, shrink, avatar escape, or composer overflow.
+- Defect 2 (Slack advertisement projection): `chatGatewayLabel`
+  (ide/src/components/agentFacts.ts:52) composes the enabled channels with `" + "` and the
+  fields with `" · "`, yielding exactly
+  `openclaw · gateway · delegate for MAC Hive · openshell · slack + telegram · verified`,
+  byte-for-byte matching the contract expectation in
+  ide/tests/workbench-project-tree.spec.ts:216.
+
+Verification performed by the remediation child:
+
+- `ide/`: `npm ci` (57 packages) and `npm run typecheck` (`tsc --noEmit`) both pass with no
+  diagnostics.
+- `ide/` `npm run test:ui`: the two named Playwright tests could **not** be executed —
+  `npx playwright install chromium` is blocked by network policy and no system Chromium is
+  present, so both fail only with `browserType.launch: Executable doesn't exist`, i.e. an
+  environment limitation, not an assertion failure. Their expected outcomes were confirmed
+  by static trace against the mocked fixtures.
+- Repository contract gate: `python3 scripts/bootstrap-project.py` and
+  `scripts/run-contract-tests.sh` both pass (9216 passed / 4 skipped in the bulk slice and
+  4 passed / 39 skipped in the second slice; exit 0).
