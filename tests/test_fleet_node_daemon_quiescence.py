@@ -1144,6 +1144,172 @@ def test_live_and_partially_labeled_task_sandboxes_are_never_reaped(
     _assert_no_secret(run)
 
 
+def test_multiple_stale_task_sandboxes_are_reaped_in_one_gate_pass(
+    tmp_path: Path,
+) -> None:
+    stale = [
+        _managed_task_sandbox("mac-task-alpha-fixture", pid=_dead_pid()),
+        _managed_task_sandbox(
+            "mac-hubverify-beta-fixture", kind="hubverify", pid=_dead_pid()
+        ),
+        _managed_task_sandbox(
+            "mac-security-probe-gamma-fixture",
+            kind="security-probe",
+            pid=_dead_pid(),
+        ),
+    ]
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps(stale)},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["stable_inactive_observations"] == 2
+    assert proof["reconciled"] == [
+        "mac-hubverify-beta-fixture",
+        "mac-security-probe-gamma-fixture",
+        "mac-task-alpha-fixture",
+    ]
+    assert proof["reconciled_count"] == 3
+    # Every listed sandbox was managed and each managed sandbox was reaped, so
+    # the final quiescent observation sees an empty inventory.
+    assert proof["scanned"] == 0
+    assert proof["managed"] == 0
+    delete_calls = [
+        line
+        for line in _call_lines(run)
+        if line.startswith("openshell:sandbox delete ")
+    ]
+    assert sorted(delete_calls) == [
+        "openshell:sandbox delete mac-hubverify-beta-fixture",
+        "openshell:sandbox delete mac-security-probe-gamma-fixture",
+        "openshell:sandbox delete mac-task-alpha-fixture",
+    ]
+    _assert_no_secret(run)
+
+
+def test_each_managed_kind_is_reaped_when_its_recorded_pid_is_dead(
+    tmp_path: Path,
+) -> None:
+    kinds = ("task", "hubverify", "codingcap", "runtime-smoke", "security-probe")
+    stale = [
+        _managed_task_sandbox(
+            f"mac-{kind}-deadpid-fixture", kind=kind, pid=_dead_pid()
+        )
+        for kind in kinds
+    ]
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps(stale)},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["stable_inactive_observations"] == 2
+    assert proof["reconciled"] == sorted(
+        f"mac-{kind}-deadpid-fixture" for kind in kinds
+    )
+    assert proof["reconciled_count"] == len(kinds)
+    assert proof["scanned"] == 0
+    assert proof["managed"] == 0
+    delete_calls = {
+        line
+        for line in _call_lines(run)
+        if line.startswith("openshell:sandbox delete ")
+    }
+    assert delete_calls == {
+        f"openshell:sandbox delete mac-{kind}-deadpid-fixture" for kind in kinds
+    }
+    _assert_no_secret(run)
+
+
+def test_all_falsey_keep_spellings_are_reaped_and_truthy_keep_is_preserved(
+    tmp_path: Path,
+) -> None:
+    falsey = ["0", "false", "no", "off", "FALSE", "Off", "No"]
+    reapable = [
+        _managed_task_sandbox(
+            f"mac-task-falsey-{index}-fixture", keep=value, pid=_dead_pid()
+        )
+        for index, value in enumerate(falsey)
+    ]
+    preserved = _managed_task_sandbox(
+        "mac-task-truthy-keep-fixture", keep="true", pid=_dead_pid()
+    )
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([*reapable, preserved])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["stable_inactive_observations"] == 2
+    assert proof["reconciled"] == sorted(
+        f"mac-task-falsey-{index}-fixture" for index in range(len(falsey))
+    )
+    assert proof["reconciled_count"] == len(falsey)
+    # The truthy-keep sandbox is protective: it is never reaped and remains the
+    # only managed sandbox left in the final quiescent observation.
+    assert proof["scanned"] == 1
+    assert proof["managed"] == 1
+    delete_calls = {
+        line
+        for line in _call_lines(run)
+        if line.startswith("openshell:sandbox delete ")
+    }
+    assert delete_calls == {
+        f"openshell:sandbox delete mac-task-falsey-{index}-fixture"
+        for index in range(len(falsey))
+    }
+    assert "openshell:sandbox delete mac-task-truthy-keep-fixture" not in (
+        _call_lines(run)
+    )
+    _assert_no_secret(run)
+
+
+def test_task_sandbox_reconciliation_runs_when_primary_sandbox_is_absent(
+    tmp_path: Path,
+) -> None:
+    stale = _managed_task_sandbox("mac-task-no-openclaw-fixture", pid=_dead_pid())
+    run = _run_quiescence(
+        tmp_path,
+        sandbox_source="none",
+        sandbox_present=False,
+        extra_env={"FAKE_STALE_SANDBOXES": json.dumps([stale])},
+    )
+    receipt = _assert_success_marker(run)
+    proof = receipt["openshell_task_sandboxes"]
+    assert proof["final_state"] == "quiescent"
+    assert proof["stable_inactive_observations"] == 2
+    assert proof["reconciled"] == ["mac-task-no-openclaw-fixture"]
+    assert proof["reconciled_count"] == 1
+    assert proof["scanned"] == 0
+    assert proof["managed"] == 0
+    # The primary OpenClaw sandbox is absent (no authoritative artifact), so its
+    # quiescence proof is a no-op while task-sandbox reconciliation still runs
+    # and executes a real delete.
+    openclaw = receipt["openclaw"]
+    assert openclaw["sandbox"] is None
+    assert openclaw["initial_state"] == "not_managed"
+    assert openclaw["final_state"] == "absent"
+    assert openclaw["stop_wrapper_invoked"] is False
+    assert openclaw["delete_invoked"] is False
+    delete_calls = [
+        line
+        for line in _call_lines(run)
+        if line.startswith("openshell:sandbox delete ")
+    ]
+    assert delete_calls == ["openshell:sandbox delete mac-task-no-openclaw-fixture"]
+    _assert_no_secret(run)
+
+
 def test_all_local_docker_context_endpoints_are_certified(tmp_path: Path) -> None:
     run = _run_quiescence(
         tmp_path,
