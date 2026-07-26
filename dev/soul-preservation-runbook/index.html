@@ -1671,7 +1671,7 @@ registered against <code>mac</code>:</p>
    instance — the natural key <code>(tenant_id, name)</code> is what we match against.</li>
 <li><code>platform_bindings</code> for the instance remain attached as long as the
    <code>(tenant_id, platform, external_id)</code> triple stays stable.</li>
-<li><code>GET /hermes-instances/{id}/context</code> returns a single recovery payload
+<li><code>GET /persona-instances/{id}/context</code> returns a single recovery payload
    containing tenant, instance, persona, all bindings, and the memory contract.</li>
 <li>Every identity write produces an <code>events</code> row, so the audit stream shows
    when an instance was last registered, when its bindings changed, and which
@@ -1691,7 +1691,7 @@ operator killed the daemon). <code>mac</code> is still up.</p>
 <ol>
 <li><strong>Fetch the recovery payload.</strong></li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">curl $MAC_URL/hermes-instances/&lt;instance_id&gt;/context</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">curl $MAC_URL/persona-instances/&lt;instance_id&gt;/context</span>
 </code></pre></div>
 <p>Response shape:
    <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
