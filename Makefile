@@ -30,7 +30,7 @@ CONSOLE_SCRIPTS = mac mac-hermes mac-agent mac-firecrawl-gateway mac-k8s-orchest
 	clean clean-cli clean-gui distclean run-gui \
 	install-hooks setup deploy test coverage test-api test-cli test-ui cli-coverage lint lint-fix \
 	test-portfolio fault-replay sanity-test compatibility-test \
-	docs docs-install docs-serve docs-test docs-build docs-check docs-lab docs-reference \
+	docs docs-install docs-serve docs-test docs-build docs-check docs-accessibility docs-lab docs-reference \
 	ide-install ide-run ide-dev ide-check ide-build ide-preview ide-package \
 	desktop-install desktop-check desktop-package desktop-dist link-cli
 
@@ -273,7 +273,10 @@ docs-build: docs-install ## Build strict production HTML.
 	$(UV) run --extra docs python scripts/generate-docs-reference.py --check
 	$(UV) run --extra docs mkdocs build --strict --site-dir build/docs-site
 
-docs-check: docs-test docs-build ## Run executable examples, reference drift, and strict HTML gates.
+docs-accessibility: ## Validate documentation links, image alt text, and nav/redirect targets.
+	$(UV) run --extra docs python scripts/check-docs-accessibility.py
+
+docs-check: docs-test docs-accessibility docs-build ## Run executable examples, accessibility/link, reference drift, and strict HTML gates.
 
 docs-lab: docs-install ## Execute one chapter in the isolated docs lab (CHAPTER=1..18).
 	@test -n "$(CHAPTER)" || { echo "usage: make docs-lab CHAPTER=1" >&2; exit 2; }

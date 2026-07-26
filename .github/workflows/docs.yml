@@ -60,6 +60,8 @@ jobs:
         run: uv sync --extra docs --python 3.11
       - name: Reject stale generated references
         run: uv run --extra docs python scripts/generate-docs-reference.py --check
+      - name: Validate documentation links and accessibility
+        run: uv run --extra docs python scripts/check-docs-accessibility.py
       - name: Build strict HTML
         run: uv run --extra docs mkdocs build --strict --site-dir build/docs-site
       - name: Upload rendered site
