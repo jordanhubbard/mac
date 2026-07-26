@@ -562,6 +562,7 @@ def _plane(args: argparse.Namespace) -> Any:
 
 
 def cmd_init(args: argparse.Namespace) -> None:
+    """Initialize the local mac control-plane database."""
     _plane(args)
     _print({"status": "initialized", "db": args.db})
 
@@ -619,6 +620,7 @@ def _local_ledger_notice_payload() -> Optional[Dict[str, Any]]:
 
 
 def cmd_login(args: argparse.Namespace) -> None:
+    """Authenticate a client and manage its login session."""
     from mac.client_login import (
         ClientLoginError,
         default_client_id,
@@ -681,6 +683,7 @@ def cmd_login(args: argparse.Namespace) -> None:
 
 
 def cmd_logout(args: argparse.Namespace) -> None:
+    """Log out the active client and clear its session."""
     from mac.client_login import ClientLoginError, logout
     from mac.client_profiles import ClientProfileError
 
@@ -735,6 +738,7 @@ def cmd_client_enroll(args: argparse.Namespace) -> None:
 
 
 def cmd_client_renew(args: argparse.Namespace) -> None:
+    """Renew a client credential and emit its one-time manifest."""
     if not _OUTPUT_JSON:
         raise MACError(
             "client renew returns a one-time credential; pass --json and pipe "
@@ -757,6 +761,7 @@ def cmd_client_renew(args: argparse.Namespace) -> None:
 
 
 def cmd_client_revoke(args: argparse.Namespace) -> None:
+    """Revoke a registered client principal."""
     from mac.client_principals import ClientPrincipalError, ClientPrincipalStore
 
     try:
@@ -769,6 +774,7 @@ def cmd_client_revoke(args: argparse.Namespace) -> None:
 
 
 def cmd_client_list(args: argparse.Namespace) -> None:
+    """List registered client principals."""
     from mac.client_principals import ClientPrincipalError, ClientPrincipalStore
 
     try:
@@ -781,6 +787,7 @@ def cmd_client_list(args: argparse.Namespace) -> None:
 
 
 def cmd_client_profile_install(args: argparse.Namespace) -> None:
+    """Install a client enrollment manifest as a local profile."""
     from mac.client_profiles import (
         ClientProfileError,
         install_enrollment_manifest,
@@ -799,6 +806,7 @@ def cmd_client_profile_install(args: argparse.Namespace) -> None:
 
 
 def cmd_client_profile_list(args: argparse.Namespace) -> None:
+    """List installed client profiles."""
     from mac.client_profiles import ClientProfileError, list_profiles
 
     try:
@@ -809,6 +817,7 @@ def cmd_client_profile_list(args: argparse.Namespace) -> None:
 
 
 def cmd_client_profile_show(args: argparse.Namespace) -> None:
+    """Show details for a named client profile."""
     from mac.client_profiles import ClientProfileError, show_profile
 
     try:
@@ -819,6 +828,7 @@ def cmd_client_profile_show(args: argparse.Namespace) -> None:
 
 
 def cmd_client_profile_activate(args: argparse.Namespace) -> None:
+    """Activate the named client profile."""
     from mac.client_profiles import ClientProfileError, activate_profile
 
     try:
@@ -829,6 +839,7 @@ def cmd_client_profile_activate(args: argparse.Namespace) -> None:
 
 
 def cmd_client_profile_remove(args: argparse.Namespace) -> None:
+    """Remove the named client profile."""
     from mac.client_profiles import ClientProfileError, remove_profile
 
     try:
@@ -839,6 +850,7 @@ def cmd_client_profile_remove(args: argparse.Namespace) -> None:
 
 
 def cmd_client_profile_migrate_legacy(args: argparse.Namespace) -> None:
+    """Migrate a legacy client profile into the current format."""
     from mac.client_profiles import ClientProfileError, migrate_legacy_profile
 
     try:
@@ -856,6 +868,7 @@ def cmd_client_profile_migrate_legacy(args: argparse.Namespace) -> None:
 
 
 def cmd_fleet_ssh_spec(args: argparse.Namespace) -> None:
+    """Resolve and print the SSH connection spec for a fleet."""
     from mac.fleet_ssh import FleetSshError, load_fleet_config, resolve_fleet_ssh
 
     try:
@@ -955,14 +968,17 @@ def cmd_fleet_model_selection_promote(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_status(args: argparse.Namespace) -> None:
+    """Print the optimizer status."""
     _print(_plane(args).optimizer_status())
 
 
 def cmd_optimizer_tick(args: argparse.Namespace) -> None:
+    """Advance the optimizer by one processing tick."""
     _print(_plane(args).optimizer_tick())
 
 
 def cmd_optimizer_policy_create(args: argparse.Namespace) -> None:
+    """Create a scientific optimizer policy."""
     parameters = _read_json_arg(
         args.parameters,
         args.parameters_file,
@@ -988,6 +1004,7 @@ def cmd_optimizer_policy_create(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_policy_list(args: argparse.Namespace) -> None:
+    """List scientific optimizer policies."""
     _print(
         _plane(args).list_scientific_policies(
             project=args.project,
@@ -997,6 +1014,7 @@ def cmd_optimizer_policy_list(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_policy_show(args: argparse.Namespace) -> None:
+    """Show a scientific optimizer policy."""
     _print(_plane(args).get_scientific_policy(args.policy_id))
 
 
@@ -1009,6 +1027,7 @@ def _optimizer_action_reason(args: argparse.Namespace) -> str:
 
 
 def cmd_optimizer_policy_promote(args: argparse.Namespace) -> None:
+    """Promote a scientific optimizer policy."""
     _print(
         _plane(args).promote_scientific_policy(
             args.policy_id,
@@ -1019,6 +1038,7 @@ def cmd_optimizer_policy_promote(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_policy_rollback(args: argparse.Namespace) -> None:
+    """Roll back a scientific optimizer policy."""
     _print(
         _plane(args).rollback_scientific_policy(
             args.project,
@@ -1030,6 +1050,7 @@ def cmd_optimizer_policy_rollback(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_experiment_create(args: argparse.Namespace) -> None:
+    """Create a scientific optimizer experiment."""
     hypothesis = _read_text_arg(
         args.hypothesis,
         args.hypothesis_file,
@@ -1073,6 +1094,7 @@ def cmd_optimizer_experiment_create(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_experiment_list(args: argparse.Namespace) -> None:
+    """List scientific optimizer experiments."""
     _print(
         _plane(args).list_scientific_experiments(
             project=args.project,
@@ -1082,10 +1104,12 @@ def cmd_optimizer_experiment_list(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_experiment_show(args: argparse.Namespace) -> None:
+    """Show a scientific optimizer experiment."""
     _print(_plane(args).get_scientific_experiment(args.experiment_id))
 
 
 def cmd_optimizer_experiment_evidence(args: argparse.Namespace) -> None:
+    """Show evidence recorded for a scientific experiment."""
     _print(
         _plane(args).scientific_experiment_evidence(
             args.experiment_id,
@@ -1095,6 +1119,7 @@ def cmd_optimizer_experiment_evidence(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_experiment_start(args: argparse.Namespace) -> None:
+    """Start a scientific optimizer experiment."""
     _print(
         _plane(args).start_scientific_experiment(
             args.experiment_id,
@@ -1104,6 +1129,7 @@ def cmd_optimizer_experiment_start(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_experiment_pause(args: argparse.Namespace) -> None:
+    """Pause a scientific optimizer experiment."""
     _print(
         _plane(args).pause_scientific_experiment(
             args.experiment_id,
@@ -1114,6 +1140,7 @@ def cmd_optimizer_experiment_pause(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_experiment_promote(args: argparse.Namespace) -> None:
+    """Promote a scientific optimizer experiment."""
     _print(
         _plane(args).promote_scientific_experiment(
             args.experiment_id,
@@ -1124,6 +1151,7 @@ def cmd_optimizer_experiment_promote(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_experiment_observe(args: argparse.Namespace) -> None:
+    """Record an observation for a scientific experiment."""
     _print(
         _plane(args).observe_scientific_task(
             args.experiment_id,
@@ -1133,6 +1161,7 @@ def cmd_optimizer_experiment_observe(args: argparse.Namespace) -> None:
 
 
 def cmd_optimizer_experiment_analyze(args: argparse.Namespace) -> None:
+    """Analyze a scientific optimizer experiment."""
     _print(_plane(args).analyze_scientific_experiment(args.experiment_id))
 
 
@@ -1377,6 +1406,7 @@ def cmd_fleet_rotate_token(args: argparse.Namespace) -> None:
 
 
 def cmd_tenant_register(args: argparse.Namespace) -> None:
+    """Register a new tenant."""
     _print(
         _plane(args).register_tenant(
             args.name,
@@ -1387,10 +1417,12 @@ def cmd_tenant_register(args: argparse.Namespace) -> None:
 
 
 def cmd_tenant_list(args: argparse.Namespace) -> None:
+    """List registered tenants."""
     _print([tenant.to_dict() for tenant in _plane(args).list_tenants()])
 
 
 def cmd_user_register(args: argparse.Namespace) -> None:
+    """Register a user within a tenant."""
     _print(
         _plane(args).register_user(
             args.tenant_id,
@@ -1403,6 +1435,7 @@ def cmd_user_register(args: argparse.Namespace) -> None:
 
 
 def cmd_persona_register(args: argparse.Namespace) -> None:
+    """Register a persona for a tenant."""
     _print(
         _plane(args).register_persona(
             args.tenant_id,
@@ -1416,6 +1449,7 @@ def cmd_persona_register(args: argparse.Namespace) -> None:
 
 
 def cmd_hermes_register(args: argparse.Namespace) -> None:
+    """Register a Hermes persona instance for a tenant."""
     _print(
         _plane(args).register_persona_instance(
             args.tenant_id,
@@ -1430,10 +1464,12 @@ def cmd_hermes_register(args: argparse.Namespace) -> None:
 
 
 def cmd_hermes_context(args: argparse.Namespace) -> None:
+    """Show the context for a persona instance."""
     _print(_plane(args).persona_context(args.instance_id))
 
 
 def cmd_hermes_work_context(args: argparse.Namespace) -> None:
+    """Show the work context for a persona instance."""
     _print(
         _plane(args).persona_work_context(
             args.instance_id,
@@ -1444,6 +1480,7 @@ def cmd_hermes_work_context(args: argparse.Namespace) -> None:
 
 
 def cmd_hermes_runtime_proof(args: argparse.Namespace) -> None:
+    """Print Hermes runtime proof and startup diagnostics."""
     startup = None
     if not args.skip_startup_report:
         from mac.hermes_startup import build_hermes_startup_report
@@ -1453,6 +1490,7 @@ def cmd_hermes_runtime_proof(args: argparse.Namespace) -> None:
 
 
 def cmd_binding_register(args: argparse.Namespace) -> None:
+    """Register a platform binding for a persona instance."""
     _print(
         _plane(args).register_platform_binding(
             args.tenant_id,
@@ -1468,6 +1506,7 @@ def cmd_binding_register(args: argparse.Namespace) -> None:
 
 
 def cmd_interaction_task(args: argparse.Namespace) -> None:
+    """Create an interaction task for a persona instance."""
     _print(
         _plane(args).create_interaction_task(
             args.persona_instance_id,
@@ -1488,6 +1527,7 @@ def cmd_interaction_task(args: argparse.Namespace) -> None:
 
 
 def cmd_task_migrate_beads(args: argparse.Namespace) -> None:
+    """Migrate legacy Beads memories and tickets into tasks."""
     from pathlib import Path as _Path
     from mac.beads_migrator import migrate, read_beads_memories_via_cli
 
@@ -1512,6 +1552,7 @@ def cmd_task_migrate_beads(args: argparse.Namespace) -> None:
 
 
 def cmd_task_detect_beads(args: argparse.Namespace) -> None:
+    """Detect Beads artifacts in a repository."""
     from pathlib import Path as _Path
     from dataclasses import asdict
     from mac.beads_migrator import detect
@@ -1609,6 +1650,7 @@ def _maybe_emit_ticket(
 
 
 def cmd_task_create(args: argparse.Namespace) -> None:
+    """Create a task."""
     cp = _plane(args)
     description = _read_text_arg(
         args.description,
@@ -1725,6 +1767,7 @@ def cmd_task_create(args: argparse.Namespace) -> None:
 
 
 def cmd_task_list(args: argparse.Namespace) -> None:
+    """List tasks for the effective project."""
     cp = _plane(args)
     project = _effective_read_project(args)
     limit = getattr(args, "limit", None) or None
@@ -1761,6 +1804,7 @@ def cmd_task_list(args: argparse.Namespace) -> None:
 
 
 def cmd_task_show(args: argparse.Namespace) -> None:
+    """Show details for a task."""
     _print(_plane(args).task_detail(args.task_id))
 
 
@@ -1811,6 +1855,7 @@ def cmd_task_why_unclaimed(args: argparse.Namespace) -> None:
 
 
 def cmd_task_claim(args: argparse.Namespace) -> None:
+    """Claim a task for an agent."""
     cp = _plane(args)
     task, lease = cp.claim_task(args.task_id, args.agent_id)
     _print({"task": task.to_dict(), "lease_id": lease.id if lease else None})
@@ -1831,6 +1876,7 @@ def cmd_task_break_glass_authorize(args: argparse.Namespace) -> None:
 
 
 def cmd_task_break_glass_list(args: argparse.Namespace) -> None:
+    """List break-glass authorizations for a task."""
     _print(
         _plane(args).list_task_break_glass_authorizations(
             task_id=args.task_id,
@@ -1840,6 +1886,7 @@ def cmd_task_break_glass_list(args: argparse.Namespace) -> None:
 
 
 def cmd_task_break_glass_revoke(args: argparse.Namespace) -> None:
+    """Revoke a task break-glass authorization."""
     _print(
         _plane(args).revoke_task_break_glass(
             args.authorization_id,
@@ -1850,6 +1897,7 @@ def cmd_task_break_glass_revoke(args: argparse.Namespace) -> None:
 
 
 def cmd_task_close(args: argparse.Namespace) -> None:
+    """Close a task as succeeded or cancelled."""
     cp = _plane(args)
     from mac.models import TaskState, ValidationError
 
@@ -1903,6 +1951,7 @@ def cmd_task_cancel(args: argparse.Namespace) -> None:
 def cmd_task_reopen(args: argparse.Namespace) -> None:
     # Recovery: return a stuck/terminal task to OPEN (failed/cancelled reset
     # attempt_count so the requeue isn't immediately re-exhausted).
+    """Reopen a stuck or terminal task back to OPEN."""
     _print(_plane(args).reopen_task(args.task_id, args.actor, args.reason or None))
 
 
@@ -1949,6 +1998,7 @@ def cmd_task_recover_stalled_finalizer(args: argparse.Namespace) -> None:
 def cmd_task_force_complete(args: argparse.Namespace) -> None:
     # Operator override: mark a task COMPLETED regardless of state/review, for
     # reconciling work done out-of-band or recovering a stranded terminal task.
+    """Force a task to COMPLETED regardless of its state."""
     _print(_plane(args).force_complete_task(args.task_id, args.actor, args.reason or None))
 
 
@@ -2007,6 +2057,7 @@ def _repository_ref_report(
 
 
 def cmd_repo_refs_audit(args: argparse.Namespace) -> None:
+    """Audit repository refs and report their status."""
     _cp, audits, warning, timed_out = _repository_ref_audit(args)
     _print(
         _repository_ref_report(
@@ -2016,6 +2067,7 @@ def cmd_repo_refs_audit(args: argparse.Namespace) -> None:
 
 
 def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
+    """Prune stale repository refs."""
     cp, audits, warning, timed_out = _repository_ref_audit(args)
     if args.execute and warning:
         raise RepositoryHygieneError(
@@ -2049,10 +2101,12 @@ def cmd_repo_refs_prune(args: argparse.Namespace) -> None:
 
 
 def cmd_repo_refs_status(args: argparse.Namespace) -> None:
+    """Show the repository ref reconciler status."""
     _print(_plane(args).repository_ref_reconciler_status())
 
 
 def cmd_repo_refs_reconcile(args: argparse.Namespace) -> None:
+    """Reconcile repository refs."""
     _print(
         _plane(args).reconcile_repository_refs(
             mode=args.mode,
@@ -2062,12 +2116,14 @@ def cmd_repo_refs_reconcile(args: argparse.Namespace) -> None:
 
 
 def cmd_task_search(args: argparse.Namespace) -> None:
+    """Search tasks matching a query."""
     cp = _plane(args)
     project = _effective_read_project(args)
     _print([t.to_dict() for t in cp.search_tasks(args.query, project=project, limit=int(args.limit))])
 
 
 def cmd_diagnostics(args: argparse.Namespace) -> None:
+    """Print control-plane diagnostics."""
     cp = _plane(args)
     from mac import diagnostics
 
@@ -2081,6 +2137,7 @@ def cmd_diagnostics(args: argparse.Namespace) -> None:
 
 
 def cmd_task_stats(args: argparse.Namespace) -> None:
+    """Print task statistics for the effective project."""
     cp = _plane(args)
     project = _effective_read_project(args)
     _print(cp.task_stats(project=project))
@@ -2142,6 +2199,7 @@ def cmd_task_audit(args: argparse.Namespace) -> None:
 
 
 def cmd_project_list(args: argparse.Namespace) -> None:
+    """List registered projects."""
     _print(_plane(args).list_projects())
 
 
@@ -2149,6 +2207,7 @@ def cmd_project_create(args: argparse.Namespace) -> None:
     # New projects default to dispatch-PAUSED so a freshly-onboarded backlog
     # does not auto-claim before an operator activates the project. Pass
     # --active to opt straight into autonomous dispatch.
+    """Create a project, dispatch-paused by default."""
     _print(
         _plane(args).create_project(
             args.name,
@@ -2274,6 +2333,7 @@ def _resolve_project_registration_target(
 
 
 def cmd_project_register(args: argparse.Namespace) -> None:
+    """Register an existing repository as a project."""
     repository_url, default_branch, checkout = _resolve_project_registration_target(
         args.repository_url,
         default_branch=args.default_branch,
@@ -2299,6 +2359,7 @@ def cmd_project_register(args: argparse.Namespace) -> None:
 
 
 def cmd_project_update(args: argparse.Namespace) -> None:
+    """Update a project's metadata."""
     if not any(
         value is not None
         for value in (
@@ -2330,6 +2391,7 @@ def cmd_project_update(args: argparse.Namespace) -> None:
 
 
 def cmd_project_unregister(args: argparse.Namespace) -> None:
+    """Unregister and delete a project."""
     result = _plane(args).delete_project(
         args.project,
         force=args.force,
@@ -2339,18 +2401,22 @@ def cmd_project_unregister(args: argparse.Namespace) -> None:
 
 
 def cmd_project_pause(args: argparse.Namespace) -> None:
+    """Pause dispatch for a project."""
     _print(_plane(args).set_project_dispatch(args.project, paused=True, actor=args.actor))
 
 
 def cmd_project_activate(args: argparse.Namespace) -> None:
+    """Activate dispatch for a project."""
     _print(_plane(args).set_project_dispatch(args.project, paused=False, actor=args.actor))
 
 
 def cmd_project_show(args: argparse.Namespace) -> None:
+    """Show details for a project."""
     _print(_plane(args).get_project(args.project))
 
 
 def cmd_work_package_list(args: argparse.Namespace) -> None:
+    """List work packages."""
     _print(
         _plane(args).list_work_packages(
             state=args.state,
@@ -2361,6 +2427,7 @@ def cmd_work_package_list(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_admit(args: argparse.Namespace) -> None:
+    """Admit a work package with an optional plan."""
     plan = _read_json_arg(
         args.plan,
         args.plan_file,
@@ -2381,14 +2448,17 @@ def cmd_work_package_admit(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_show(args: argparse.Namespace) -> None:
+    """Show details for a work package."""
     _print(_plane(args).describe_work_package(args.package_id))
 
 
 def cmd_work_package_readiness(args: argparse.Namespace) -> None:
+    """Show activation readiness for a work package."""
     _print(_plane(args).work_package_activation_readiness(args.package_id))
 
 
 def cmd_work_package_activate(args: argparse.Namespace) -> None:
+    """Activate a work package."""
     _print(
         _plane(args).activate_work_package(
             args.package_id,
@@ -2412,6 +2482,7 @@ def _work_package_replan_plan(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def cmd_work_package_replan_preview(args: argparse.Namespace) -> None:
+    """Preview a work-package replan."""
     _print(
         _plane(args).preview_work_package_replan(
             args.package_id,
@@ -2425,6 +2496,7 @@ def cmd_work_package_replan_preview(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_pause(args: argparse.Namespace) -> None:
+    """Pause a work package."""
     _print(
         _plane(args).pause_work_package(
             args.package_id,
@@ -2437,6 +2509,7 @@ def cmd_work_package_pause(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_replan(args: argparse.Namespace) -> None:
+    """Replan a work package."""
     _print(
         _plane(args).replan_work_package(
             args.package_id,
@@ -2450,6 +2523,7 @@ def cmd_work_package_replan(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_verify_output(args: argparse.Namespace) -> None:
+    """Verify a work-package output evidence record."""
     _print(
         _plane(args).verify_work_package_output(
             args.evidence_id,
@@ -2459,6 +2533,7 @@ def cmd_work_package_verify_output(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_accept_candidate(args: argparse.Namespace) -> None:
+    """Accept a work-package candidate."""
     _print(
         _plane(args).accept_work_package_candidate(
             args.candidate_id,
@@ -2468,6 +2543,7 @@ def cmd_work_package_accept_candidate(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_reject_candidate(args: argparse.Namespace) -> None:
+    """Reject a work-package candidate."""
     _print(
         _plane(args).reject_work_package_candidate(
             args.candidate_id,
@@ -2478,6 +2554,7 @@ def cmd_work_package_reject_candidate(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_assemble(args: argparse.Namespace) -> None:
+    """Assemble a work package at an integration node."""
     _print(
         _plane(args).assemble_work_package(
             args.package_id,
@@ -2488,18 +2565,22 @@ def cmd_work_package_assemble(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_assembly_status(args: argparse.Namespace) -> None:
+    """Show work-package integration batch status."""
     _print(_plane(args).work_package_integration_status(args.batch_id))
 
 
 def cmd_work_package_assembly_claim(args: argparse.Namespace) -> None:
+    """Claim a work-package integration batch."""
     _print(_plane(args).claim_work_package_integration_batch(args.batch_id))
 
 
 def cmd_work_package_assemble_batch(args: argparse.Namespace) -> None:
+    """Assemble a work-package integration batch."""
     _print(_plane(args).assemble_work_package_integration_batch(args.batch_id))
 
 
 def cmd_work_package_certification_prepare(args: argparse.Namespace) -> None:
+    """Prepare a work-package certification job."""
     _print(
         _plane(args).prepare_work_package_certification_job(
             args.batch_id,
@@ -2510,10 +2591,12 @@ def cmd_work_package_certification_prepare(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_certification_status(args: argparse.Namespace) -> None:
+    """Show a work-package certification job status."""
     _print(_plane(args).work_package_certification_status(args.job_id))
 
 
 def cmd_work_package_certification_claim(args: argparse.Namespace) -> None:
+    """Claim a work-package certification job."""
     _print(
         _plane(args).claim_work_package_certification_job(
             args.job_id,
@@ -2523,6 +2606,7 @@ def cmd_work_package_certification_claim(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_certification_ingest(args: argparse.Namespace) -> None:
+    """Ingest a work-package certification result."""
     result = _read_json_arg(
         args.result,
         args.result_file,
@@ -2542,6 +2626,7 @@ def cmd_work_package_certification_ingest(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_certification_run(args: argparse.Namespace) -> None:
+    """Run a work-package certification job."""
     _print(
         _plane(args).run_work_package_certification_job(
             args.job_id,
@@ -2553,6 +2638,7 @@ def cmd_work_package_certification_run(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_reject_failed_certification(args: argparse.Namespace) -> None:
+    """Reject a failed work-package certification."""
     _print(
         _plane(args).reject_failed_work_package_certification(
             args.batch_id,
@@ -2563,6 +2649,7 @@ def cmd_work_package_reject_failed_certification(args: argparse.Namespace) -> No
 
 
 def cmd_work_package_accept_certification(args: argparse.Namespace) -> None:
+    """Accept a work-package certification."""
     _print(
         _plane(args).accept_work_package_certification(
             args.batch_id,
@@ -2572,10 +2659,12 @@ def cmd_work_package_accept_certification(args: argparse.Namespace) -> None:
 
 
 def cmd_work_package_land(args: argparse.Namespace) -> None:
+    """Land a work-package integration batch."""
     _print(_plane(args).land_work_package(args.batch_id))
 
 
 def cmd_work_package_finalize_publication(args: argparse.Namespace) -> None:
+    """Finalize publication of a work-package batch."""
     _print(
         _plane(args).finalize_work_package_publication(
             args.batch_id,
@@ -2586,6 +2675,7 @@ def cmd_work_package_finalize_publication(args: argparse.Namespace) -> None:
 
 
 def cmd_task_start(args: argparse.Namespace) -> None:
+    """Start a claimed task for an agent."""
     _print(
         _plane(args).start_task(
             args.task_id,
@@ -2596,10 +2686,12 @@ def cmd_task_start(args: argparse.Namespace) -> None:
 
 
 def cmd_task_release(args: argparse.Namespace) -> None:
+    """Release a task back to the pool."""
     _print(_plane(args).release_task(args.task_id, actor=args.actor))
 
 
 def cmd_task_submit(args: argparse.Namespace) -> None:
+    """Submit a task for review."""
     _print(
         _plane(args).submit_for_review(
             args.task_id,
@@ -2613,6 +2705,7 @@ def cmd_task_evidence(args: argparse.Namespace) -> None:
     # Validate against the same single source of truth the runtime uses so an
     # unsupported --kind fails fast at the CLI with a consistent message instead
     # of only after a round trip to the control plane.
+    """Attach evidence to a task."""
     try:
         kind = normalize_evidence_kind(args.kind)
     except ValueError as exc:
@@ -2632,6 +2725,7 @@ def cmd_task_evidence(args: argparse.Namespace) -> None:
 
 
 def cmd_machine_register(args: argparse.Namespace) -> None:
+    """Register a machine."""
     _print(
         _plane(args).register_machine(
             hostname=args.hostname,
@@ -2658,6 +2752,7 @@ def _machine_hw_summary(d: dict) -> str:
 
 
 def cmd_machine_list(args: argparse.Namespace) -> None:
+    """List registered machines."""
     machines = _plane(args).list_machines()
     if _OUTPUT_JSON:
         _print([m.to_dict() if hasattr(m, "to_dict") else m for m in machines])
@@ -2677,10 +2772,12 @@ def cmd_machine_list(args: argparse.Namespace) -> None:
 
 
 def cmd_machine_show(args: argparse.Namespace) -> None:
+    """Show details for a machine."""
     _print(_plane(args).get_machine(args.machine_id))
 
 
 def cmd_agent_register(args: argparse.Namespace) -> None:
+    """Register an agent on a machine."""
     _print(
         _plane(args).register_agent(
             machine_id=args.machine_id,
