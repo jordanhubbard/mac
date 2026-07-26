@@ -89,18 +89,21 @@ import threading
 import queue
 
 def CanonicalUsage(*args, **kwargs):
+    """Construct a CanonicalUsage instance (lazy-imported from agent.usage_pricing)."""
     from agent.usage_pricing import CanonicalUsage as _CanonicalUsage
 
     return _CanonicalUsage(*args, **kwargs)
 
 
 def estimate_usage_cost(*args, **kwargs):
+    """Estimate usage cost (lazy-imported from agent.usage_pricing)."""
     from agent.usage_pricing import estimate_usage_cost as _estimate_usage_cost
 
     return _estimate_usage_cost(*args, **kwargs)
 
 
 def format_duration_compact(*args, **kwargs):
+    """Format a duration in seconds as a compact human-readable string."""
     seconds = float(args[0] if args else kwargs.get("seconds", 0.0))
     if seconds < 60:
         return f"{seconds:.0f}s"
@@ -116,6 +119,7 @@ def format_duration_compact(*args, **kwargs):
 
 
 def format_token_count_compact(*args, **kwargs):
+    """Format a token count as a compact human-readable string."""
     value = int(args[0] if args else kwargs.get("value", 0))
     abs_value = abs(value)
     if abs_value < 1_000:
@@ -140,18 +144,21 @@ def format_token_count_compact(*args, **kwargs):
 
 
 def is_table_divider(*args, **kwargs):
+    """Return whether a line is a Markdown table divider (lazy-imported)."""
     from agent.markdown_tables import is_table_divider as _is_table_divider
 
     return _is_table_divider(*args, **kwargs)
 
 
 def looks_like_table_row(*args, **kwargs):
+    """Return whether a line looks like a Markdown table row (lazy-imported)."""
     from agent.markdown_tables import looks_like_table_row as _looks_like_table_row
 
     return _looks_like_table_row(*args, **kwargs)
 
 
 def realign_markdown_tables(*args, **kwargs):
+    """Realign Markdown tables in text (lazy-imported from agent.markdown_tables)."""
     from agent.markdown_tables import realign_markdown_tables as _realign_markdown_tables
 
     return _realign_markdown_tables(*args, **kwargs)
@@ -781,12 +788,14 @@ from rich.text import Text as _RichText
 # Import agent and tool systems lazily. Bare interactive startup only needs the
 # prompt; the full agent/tool registry is initialized on first use.
 def AIAgent(*args, **kwargs):
+    """Construct an AIAgent (lazy-imported from run_agent)."""
     from run_agent import AIAgent as _AIAgent
 
     return _AIAgent(*args, **kwargs)
 
 
 def get_tool_definitions(*args, **kwargs):
+    """Return tool definitions after MCP discovery completes (lazy-imported)."""
     from hermes_cli.mcp_startup import wait_for_mcp_discovery
     from model_tools import get_tool_definitions as _get_tool_definitions
 
@@ -795,6 +804,7 @@ def get_tool_definitions(*args, **kwargs):
 
 
 def get_toolset_for_tool(*args, **kwargs):
+    """Return the toolset owning a tool (lazy-imported from model_tools)."""
     from model_tools import get_toolset_for_tool as _get_toolset_for_tool
 
     return _get_toolset_for_tool(*args, **kwargs)
@@ -805,18 +815,21 @@ from hermes_cli.commands import SlashCommandCompleter, SlashCommandAutoSuggest
 
 
 def get_all_toolsets(*args, **kwargs):
+    """Return all toolsets (lazy-imported from toolsets)."""
     from toolsets import get_all_toolsets as _get_all_toolsets
 
     return _get_all_toolsets(*args, **kwargs)
 
 
 def get_toolset_info(*args, **kwargs):
+    """Return metadata for a toolset (lazy-imported from toolsets)."""
     from toolsets import get_toolset_info as _get_toolset_info
 
     return _get_toolset_info(*args, **kwargs)
 
 
 def validate_toolset(*args, **kwargs):
+    """Validate a toolset (lazy-imported from toolsets)."""
     from toolsets import validate_toolset as _validate_toolset
 
     return _validate_toolset(*args, **kwargs)
@@ -830,6 +843,7 @@ def _sync_process_session_id(session_id: str) -> None:
 
 # Cron job system for scheduled tasks (execution is handled by the gateway)
 def get_job(*args, **kwargs):
+    """Return a scheduled cron job by identifier (lazy-imported from cron)."""
     from cron import get_job as _get_job
 
     return _get_job(*args, **kwargs)
@@ -845,18 +859,21 @@ def _cleanup_all_terminals(*args, **kwargs):
 
 
 def set_sudo_password_callback(*args, **kwargs):
+    """Set the terminal-tool sudo-password callback (lazy-imported)."""
     from tools.terminal_tool import set_sudo_password_callback as _set_sudo_password_callback
 
     return _set_sudo_password_callback(*args, **kwargs)
 
 
 def set_approval_callback(*args, **kwargs):
+    """Set the terminal-tool approval callback (lazy-imported)."""
     from tools.terminal_tool import set_approval_callback as _set_approval_callback
 
     return _set_approval_callback(*args, **kwargs)
 
 
 def set_secret_capture_callback(*args, **kwargs):
+    """Set the skills-tool secret-capture callback (lazy-imported)."""
     from tools.skills_tool import set_secret_capture_callback as _set_secret_capture_callback
 
     return _set_secret_capture_callback(*args, **kwargs)
@@ -2802,22 +2819,26 @@ def _ensure_skill_commands() -> dict:
 
 
 def get_skill_commands() -> dict:
+    """Return the mapping of available skill commands."""
     return _ensure_skill_commands()
 
 
 def build_skill_invocation_message(*args, **kwargs):
+    """Build a skill invocation message (lazy-imported from agent.skill_commands)."""
     from agent.skill_commands import build_skill_invocation_message as _impl
 
     return _impl(*args, **kwargs)
 
 
 def build_preloaded_skills_prompt(*args, **kwargs):
+    """Build the preloaded-skills prompt (lazy-imported from agent.skill_commands)."""
     from agent.skill_commands import build_preloaded_skills_prompt as _impl
 
     return _impl(*args, **kwargs)
 
 
 def get_skill_bundles() -> dict:
+    """Return the mapping of available skill bundles."""
     global _skill_bundles
     if _skill_bundles is None:
         from agent.skill_bundles import get_skill_bundles as _impl
@@ -2827,6 +2848,7 @@ def get_skill_bundles() -> dict:
 
 
 def build_bundle_invocation_message(*args, **kwargs):
+    """Build a bundle invocation message (lazy-imported from agent.skill_bundles)."""
     from agent.skill_bundles import build_bundle_invocation_message as _impl
 
     return _impl(*args, **kwargs)

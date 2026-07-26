@@ -80,6 +80,7 @@ def _default_state() -> Dict[str, Any]:
 
 
 def load_state() -> Dict[str, Any]:
+    """Load persisted curator state, falling back to defaults on error."""
     path = _state_file()
     if not path.exists():
         return _default_state()
@@ -95,6 +96,7 @@ def load_state() -> Dict[str, Any]:
 
 
 def save_state(data: Dict[str, Any]) -> None:
+    """Atomically persist curator state to disk."""
     path = _state_file()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,12 +118,14 @@ def save_state(data: Dict[str, Any]) -> None:
 
 
 def set_paused(paused: bool) -> None:
+    """Set the curator's paused flag and persist it."""
     state = load_state()
     state["paused"] = bool(paused)
     save_state(state)
 
 
 def is_paused() -> bool:
+    """Return whether the curator is currently paused."""
     return bool(load_state().get("paused"))
 
 
@@ -152,6 +156,7 @@ def is_enabled() -> bool:
 
 
 def get_interval_hours() -> int:
+    """Return the configured curator run interval in hours."""
     cfg = _load_config()
     try:
         return int(cfg.get("interval_hours", DEFAULT_INTERVAL_HOURS))
@@ -160,6 +165,7 @@ def get_interval_hours() -> int:
 
 
 def get_min_idle_hours() -> float:
+    """Return the configured minimum idle hours before a curator run."""
     cfg = _load_config()
     try:
         return float(cfg.get("min_idle_hours", DEFAULT_MIN_IDLE_HOURS))
@@ -168,6 +174,7 @@ def get_min_idle_hours() -> float:
 
 
 def get_stale_after_days() -> int:
+    """Return the configured age in days after which a skill is stale."""
     cfg = _load_config()
     try:
         return int(cfg.get("stale_after_days", DEFAULT_STALE_AFTER_DAYS))
@@ -176,6 +183,7 @@ def get_stale_after_days() -> int:
 
 
 def get_archive_after_days() -> int:
+    """Return the configured age in days after which a skill is archived."""
     cfg = _load_config()
     try:
         return int(cfg.get("archive_after_days", DEFAULT_ARCHIVE_AFTER_DAYS))

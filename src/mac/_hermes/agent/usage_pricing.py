@@ -557,6 +557,7 @@ def resolve_billing_route(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
 ) -> BillingRoute:
+    """Resolve the billing route for a model/provider/base-url combination."""
     provider_name = (provider or "").strip().lower()
     base = (base_url or "").strip().lower()
     model = (model_name or "").strip()
@@ -673,6 +674,7 @@ def get_pricing_entry(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
 ) -> Optional[PricingEntry]:
+    """Return the pricing entry for a model, or None if unavailable."""
     route = resolve_billing_route(model_name, provider=provider, base_url=base_url)
     if route.billing_mode == "subscription_included":
         return PricingEntry(
@@ -778,6 +780,7 @@ def estimate_usage_cost(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
 ) -> CostResult:
+    """Estimate the cost of token usage for a model."""
     route = resolve_billing_route(model_name, provider=provider, base_url=base_url)
     if route.billing_mode == "subscription_included":
         return CostResult(
@@ -869,6 +872,7 @@ def has_known_pricing(
 
 
 def format_duration_compact(seconds: float) -> str:
+    """Format a duration in seconds as a compact human-readable string."""
     if seconds < 60:
         return f"{seconds:.0f}s"
     minutes = seconds / 60
@@ -883,6 +887,7 @@ def format_duration_compact(seconds: float) -> str:
 
 
 def format_token_count_compact(value: int) -> str:
+    """Format a token count as a compact human-readable string."""
     abs_value = abs(int(value))
     if abs_value < 1_000:
         return str(int(value))

@@ -396,6 +396,7 @@ def build_gemini_request(
     stop: Any = None,
     thinking_config: Any = None,
 ) -> Dict[str, Any]:
+    """Build a native Gemini request body from OpenAI-style parameters."""
     contents, system_instruction = _build_gemini_contents(messages)
     request: Dict[str, Any] = {"contents": contents}
     if system_instruction:
@@ -472,6 +473,7 @@ def _empty_response(model: str) -> SimpleNamespace:
 
 
 def translate_gemini_response(resp: Dict[str, Any], model: str) -> SimpleNamespace:
+    """Translate a native Gemini response into an OpenAI-style object."""
     candidates = resp.get("candidates") or []
     if not isinstance(candidates, list) or not candidates:
         return _empty_response(model)
@@ -616,6 +618,7 @@ def _iter_sse_events(response: httpx.Response) -> Iterator[Dict[str, Any]]:
 
 
 def translate_stream_event(event: Dict[str, Any], model: str, tool_call_indices: Dict[str, Dict[str, Any]]) -> List[_GeminiStreamChunk]:
+    """Translate a Gemini stream event into OpenAI-style stream chunks."""
     candidates = event.get("candidates") or []
     if not candidates:
         return []
@@ -698,6 +701,7 @@ def translate_stream_event(event: Dict[str, Any], model: str, tool_call_indices:
 
 
 def gemini_http_error(response: httpx.Response) -> GeminiAPIError:
+    """Build a GeminiAPIError from an HTTP error response."""
     status = response.status_code
     body_text = ""
     body_json: Dict[str, Any] = {}

@@ -228,6 +228,7 @@ class PooledCredential:
 
 
 def label_from_token(token: str, fallback: str) -> str:
+    """Derive a human-readable account label from a token, or return the fallback."""
     claims = _decode_jwt_claims(token)
     for key in ("email", "preferred_username", "upn"):
         value = claims.get(key)
@@ -2153,6 +2154,7 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential]) -> Tuple[b
 
 
 def load_pool(provider: str) -> CredentialPool:
+    """Load and seed the credential pool for a provider."""
     provider = (provider or "").strip().lower()
     raw_entries = read_credential_pool(provider)
     raw_needs_sanitization = any(
