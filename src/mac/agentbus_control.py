@@ -290,12 +290,20 @@ def peer_reply_payload(
     status: str = "ok",
     correlation_id: Optional[str] = None,
     in_reply_to: Optional[str] = None,
+    turn_outcome: Optional[str] = None,
+    late: bool = False,
 ) -> JsonDict:
     """Build a peer.reply.v1 payload (mac.agent.peer_reply.v1).
 
     Mirrors the shape produced by the OpenClaw mac-continuity plugin's
     publishPeerReply so consumers see an identical wire contract regardless of
     which side (gateway plugin or directable worker) produced the reply.
+
+    ``turn_outcome`` (mac.agentbus_outcomes.TURN_*) names the structured
+    turn-execution outcome so a consumer distinguishes turn-timeout, output
+    truncation, tool failure, model failure, refusal, and ordinary completion
+    without parsing ``reply`` prose. ``late`` marks a reply that arrived after
+    the caller's wait budget; it stays correlated to the original stream.
     """
     payload: JsonDict = {
         "schema": PEER_REPLY_SCHEMA,
@@ -304,6 +312,10 @@ def peer_reply_payload(
         "status": status,
         "reply": str(reply or "")[:32000],
     }
+    if turn_outcome:
+        payload["turn_outcome"] = str(turn_outcome)
+    if late:
+        payload["late"] = True
     if correlation_id:
         payload["correlation_id"] = correlation_id
     if in_reply_to:
