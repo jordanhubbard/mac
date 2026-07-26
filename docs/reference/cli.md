@@ -594,12 +594,14 @@ options:
 ```console
 $ mac fleet --help
 usage: mac fleet [-h]
-                 {build-distribution,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}
+                 {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}
                  ...
 
 positional arguments:
-  {build-distribution,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}
+  {build-distribution,target,backlog-groom,model-selection,ssh-spec,refresh-source,refresh,snapshot,soul-pull,soul-push,soul-audit,memory-export,memory-prune,refresh-context,validate,doctor,sync-token,creds-status,creds-sync,github-ingest,rotate-token,move-agent}
     build-distribution  aggregate live agents by running_digest
+    target              authoritative per-role fleet version pin (source rev +
+                        OpenClaw VERSION/REVISION)
     backlog-groom       autonomous backlog grooming: status, manual run, per-
                         project opt-in
     model-selection     dynamic powerhouse-model selection: status, refresh,

@@ -2982,6 +2982,69 @@ def cmd_fleet_build_distribution(args: argparse.Namespace) -> None:
     _print(_plane(args).fleet_build_distribution())
 
 
+def _fleet_target_path(args: argparse.Namespace) -> Optional[Path]:
+    manifest = getattr(args, "manifest", None)
+    return Path(manifest) if manifest else None
+
+
+def cmd_fleet_target_set(args: argparse.Namespace) -> None:
+    """Pin the target of record for a role, then print the stored role target."""
+    from mac import fleet_target as ft
+
+    path = _fleet_target_path(args)
+    try:
+        manifest = ft.load_manifest(path)
+    except ft.FleetTargetError:
+        # First write establishes the manifest.
+        manifest = ft.FleetTargetManifest()
+    openclaw = None
+    if args.openclaw_version or args.openclaw_revision:
+        if not (args.openclaw_version and args.openclaw_revision):
+            raise MACError(
+                "--openclaw-version and --openclaw-revision must be set together"
+            )
+        openclaw = ft.OpenClawTrack(
+            version=args.openclaw_version, revision=args.openclaw_revision
+        )
+    manifest.set_role(
+        args.role,
+        ft.RoleTarget(
+            source=ft.normalize_commit(args.source), openclaw=openclaw
+        ),
+    )
+    ft.save_manifest(manifest, path)
+    _print({"role": args.role, "target": manifest.get_role(args.role).to_dict()})
+
+
+def cmd_fleet_target_get(args: argparse.Namespace) -> None:
+    """Print the pinned target for a single role."""
+    from mac import fleet_target as ft
+
+    manifest = ft.load_manifest(_fleet_target_path(args))
+    _print({"role": args.role, "target": manifest.get_role(args.role).to_dict()})
+
+
+def cmd_fleet_target_show(args: argparse.Namespace) -> None:
+    """Print the full fleet target-of-record manifest."""
+    from mac import fleet_target as ft
+
+    _print(ft.load_manifest(_fleet_target_path(args)).to_dict())
+
+
+def cmd_fleet_target_list(args: argparse.Namespace) -> None:
+    """List every pinned role target (never empty once the manifest is populated)."""
+    from mac import fleet_target as ft
+
+    manifest = ft.load_manifest(_fleet_target_path(args))
+    _print(
+        [
+            {"role": name, "target": manifest.roles[name].to_dict()}
+            for name in sorted(manifest.roles)
+        ]
+    )
+
+
+
 def cmd_fleet_move_agent(args: argparse.Namespace) -> None:
     """Move an agent between fleets: rewrite fleets.yaml + optionally redeploy.
 
@@ -7040,6 +7103,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="aggregate live agents by running_digest",
     )
     _set(cmd_fleet_build_distribution, fleet_build)
+
+    # mac-fleet-target: authoritative per-role version pin (target of record).
+    # Backed by the checked-in deploy/openclaw/fleet-target.json manifest
+    # (schema mac.fleet_target.v1), not the hub DB, so deploy hosts, canaries,
+    # and CI can read the pin without a populated control plane.
+    fleet_target = fleet.add_parser(
+        "target",
+        help="authoritative per-role fleet version pin (source rev + OpenClaw VERSION/REVISION)",
+    ).add_subparsers(dest="fleet_target_command")
+    fleet_target.required = True
+
+    ft_set = fleet_target.add_parser("set", help="pin the target of record for a role")
+    ft_set.add_argument("role", help="fleet role name (e.g. gateway, worker)")
+    ft_set.add_argument("source", help="MAC source revision (git commit) to pin")
+    ft_set.add_argument(
+        "--openclaw-version", help="OpenClaw gateway VERSION (roles that run the gateway)"
+    )
+    ft_set.add_argument(
+        "--openclaw-revision", help="OpenClaw image REVISION (numeric build id or commit hash)"
+    )
+    ft_set.add_argument("--manifest", help="override manifest path (defaults to the checked-in file)")
+    _set(cmd_fleet_target_set, ft_set)
+
+    ft_get = fleet_target.add_parser("get", help="show the pinned target for one role")
+    ft_get.add_argument("role", help="fleet role name")
+    ft_get.add_argument("--manifest", help="override manifest path")
+    _set(cmd_fleet_target_get, ft_get)
+
+    ft_show = fleet_target.add_parser("show", help="show the full target-of-record manifest")
+    ft_show.add_argument("--manifest", help="override manifest path")
+    _set(cmd_fleet_target_show, ft_show)
+
+    ft_list = fleet_target.add_parser("list", help="list every pinned role target")
+    ft_list.add_argument("--manifest", help="override manifest path")
+    _set(cmd_fleet_target_list, ft_list)
 
     # mac-backlog-groom: autonomous per-repo backlog grooming — status, manual
     # run, and per-project opt-in.

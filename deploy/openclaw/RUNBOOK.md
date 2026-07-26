@@ -12,9 +12,23 @@ host `openclaw-agent` wrapper; no path falls back to Hermes chat.
 ## Pinned runtime
 
 - OpenClaw: `2026.6.11`
+
+The authoritative, machine-readable target of record for every fleet role
+lives in `deploy/openclaw/fleet-target.json` (schema `mac.fleet_target.v1`).
+Read or update it with `mac fleet target show|get|list|set` (see
+`src/mac/fleet_target.py`). It pins, per role, the MAC source revision (git
+commit) and — for the gateway role — the OpenClaw `version` and image
+`revision`. Prefer the manifest over hardcoded numbers below; the values
+here are illustrative of the current pin.
+
 - Source image: `ghcr.io/openclaw/openclaw:2026.6.11`
 - Manifest digest: `sha256:3814fb1f62f9cfc5944de088c5817c68c88b5d721feebe36420b666a90a61ce7`
-- Local image: `localhost/mac-openclaw:2026.6.11-mac.10`
+- Local image: built from the pinned OpenClaw `version` + image `revision`
+  recorded in the authoritative target of record
+  (`deploy/openclaw/fleet-target.json`, role `gateway`), e.g.
+  `localhost/mac-openclaw:<version>-mac.<revision>`. Live hosts carry
+  commit-hash image revisions; the manifest records the numeric build
+  `revision` that produced the pinned image.
 - OpenShell: the MAC fleet pin installed by `deploy/openshell/bootstrap-openshell.sh`
 
 The official image is extended only with OpenShell's required non-root
@@ -253,11 +267,14 @@ corrected retry.
 
 ## Updating OpenClaw
 
-Update all three pins together:
+Update all pins together:
 
 1. official tag and manifest digest in `OpenClaw.Containerfile`;
 2. `OPENCLAW_VERSION` in `install-openclaw-gateway.sh`;
-3. this runbook.
+3. the authoritative target of record via
+   `mac fleet target set gateway <source-commit> --openclaw-version <v> --openclaw-revision <r>`
+   (writes `deploy/openclaw/fleet-target.json`);
+4. this runbook.
 
 Run the focused deployment tests, stock OpenClaw config validation, a canary,
 and the full repository contract before fleet promotion. Never replace the
