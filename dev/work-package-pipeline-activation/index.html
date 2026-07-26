@@ -1610,6 +1610,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#6-pilot-canary-activation-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Pilot canary activation checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#kubernetes-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1942,6 +1953,58 @@ receipt; the positive docs-only case requires the landing read-back and final
 publication receipts, with remote SHA equal to <code>observed_sha</code>. Run them in that
 order during an ingress freeze so unrelated writers cannot invalidate the
 before/after proof.</p>
+<h2 id="6-pilot-canary-activation-checklist">6. Pilot canary activation checklist<a class="headerlink" href="#6-pilot-canary-activation-checklist" title="Permanent link">&para;</a></h2>
+<p>Before releasing real work under a new pilot revision, walk this ordered gate
+checklist. Each row is a hard precondition for the next; do not proceed on a
+partial pass. This consolidates the proofs above into the exact operator
+sequence and the read-only-versus-live boundary of <code>scripts/work-package-canary.py</code>.</p>
+<ol>
+<li>Hub runtime proven: OpenShell bootstrapped and confinement probe passed
+   while both switches were still off (section 1).</li>
+<li>Certifier and policy pinned: <code>.mac/project.yaml</code> carries the atomic
+   <code>work_package_certification</code> extension with an <code>name@sha256:&lt;64 hex&gt;</code>
+   <code>image_ref</code>, the policy and phase-profile checksums recomputed, and the
+   contract validated through <code>mac.services._load_repository_contract</code>
+   (section 2).</li>
+<li>Controller Git authority proven: the registered <code>canonical_remote_url</code> is
+   secret-free, read access is non-interactive, and the reviewed write path is
+   in place (section 3).</li>
+<li>Durable bundle storage present: the configured bundle directory exists as a
+   non-symlink <code>0700</code> directory owned by the service user (section 4).</li>
+<li>Pipeline and landing enabled together in a second deployment, with the pilot
+   seed and cohort allocation supplied exactly once and retained in the
+   owner-only secret store (section 5).</li>
+<li>Status healthy: <code>/work-package-pipeline/status</code> reports <code>enabled: true</code> with
+   no configuration error.</li>
+</ol>
+<p>Only after all six pass, review the two cut-over plans in the helper's default
+read-only mode, then admit the live canaries during an ingress freeze:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="gp"># </span>Read-only:<span class="w"> </span>resolve<span class="w"> </span>the<span class="w"> </span>repository<span class="w"> </span>and<span class="w"> </span>print<span class="w"> </span>both<span class="w"> </span>plans,<span class="w"> </span>no<span class="w"> </span>admission.
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">scripts/work-package-canary.py --hub-url &quot;$MAC_URL&quot;</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="gp"># </span>Live:<span class="w"> </span>requires<span class="w"> </span>all<span class="w"> </span>three<span class="w"> </span>explicit<span class="w"> </span>flags<span class="w"> </span>plus<span class="w"> </span>an<span class="w"> </span>admin<span class="w"> </span>token<span class="w"> </span><span class="k">in</span><span class="w"> </span>MAC_API_TOKEN.
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="go">MAC_API_TOKEN=&lt;admin-token&gt; scripts/work-package-canary.py \</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="go">  --hub-url &quot;$MAC_URL&quot; \</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="go">  --execute --confirm-live --confirm-exclusive-main-window \</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="go">  --receipt-file pilot-canary-receipts.json</span>
+</code></pre></div>
+<p>The helper emits a <code>mac.work_package.cutover_canary_plan.v1</code> document and, in
+live mode, refuses to run without both <code>--confirm-live</code> and
+<code>--confirm-exclusive-main-window</code>, without <code>--hub-url</code>, or without the admin
+token in <code>MAC_API_TOKEN</code>. Restrict the case with <code>--case negative</code> or
+<code>--case positive</code> only to re-run a single leg; the default <code>both</code> runs the
+negative leg first. The recorded assertions are the acceptance criteria:</p>
+<ul>
+<li>Negative leg: a certification rejection/station receipt exists and the
+  canonical SHA is unchanged (no Git movement, no publication receipt).</li>
+<li>Positive leg: publication/finalization receipts exist and the remote SHA
+  equals <code>observed_sha</code>.</li>
+</ul>
+<p>Treat activation as complete only when both legs record those receipts against
+a stable before/after canonical SHA. A missing receipt, any unexpected Git
+movement on the negative leg, or a remote SHA mismatch on the positive leg is a
+failed activation: disable both switches and re-run the gate checklist from the
+first failing row.</p>
 <h2 id="kubernetes-boundary">Kubernetes boundary<a class="headerlink" href="#kubernetes-boundary" title="Permanent link">&para;</a></h2>
 <p><code>deploy/k8s/mac-api/deployment.yaml</code> keeps both switches explicitly false. The
 stock image has no OpenShell CLI/runtime, no controller Git credential, and no
