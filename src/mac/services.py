@@ -97,7 +97,7 @@ from mac.models import (
     ConversationThread,
     Deployment,
     Environment,
-    EVIDENCE_KINDS,
+    normalize_evidence_kind,
     EvalRun,
     EvalSet,
     Evidence,
@@ -12120,8 +12120,10 @@ class ControlPlane:
     ) -> Evidence:
         if not kind or not uri or not summary:
             raise ValidationError("evidence requires kind, uri, and summary")
-        if kind not in EVIDENCE_KINDS:
-            raise ValidationError("unsupported evidence kind: %s" % kind)
+        try:
+            kind = normalize_evidence_kind(kind)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
         if kind == "publication" and not checksum:
             raise ValidationError("publication evidence requires a checksum")
         task = self.get_task(task_id)
