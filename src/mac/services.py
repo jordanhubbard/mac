@@ -6412,6 +6412,47 @@ class ControlPlane:
             )
         return self.get_task(task_id)
 
+    def _persist_task_metadata_narrow(
+        self,
+        task_id: str,
+        metadata: Dict[str, Any],
+        *,
+        actor: str = "human",
+        detail: Optional[Dict[str, Any]] = None,
+    ) -> Task:
+        """Persist a task's metadata exactly as supplied (trusted internal).
+
+        This is a narrow, control-plane-authorized metadata write for callers
+        that have already computed the authoritative metadata object and must
+        preserve control-plane-owned fields (e.g. ``publication_route``,
+        ``publication_lane``, ``managed_fast_lane``, ``work_package``)
+        byte-for-byte.  Unlike :meth:`update_task`, it does NOT run the
+        user-input guard (:meth:`_reject_reserved_break_glass_metadata`) or
+        re-run project-default/execution-contract/capability reconciliation,
+        so it never mutates or rejects controller-owned routing metadata.
+        Only the ``metadata`` column and ``updated_at`` are touched.
+        """
+        task = self.get_task(task_id)
+        new_metadata = ensure_json_object(metadata)
+        now = utcnow()
+        self.store.execute(
+            "UPDATE tasks SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json_dumps(new_metadata), now, task_id),
+        )
+        history_detail: JsonDict = {"metadata_changed": True}
+        if detail:
+            history_detail.update(ensure_json_object(dict(detail)))
+        updated = self.get_task(task_id)
+        self._record_history(
+            task_id,
+            "task.updated",
+            actor,
+            task.state,
+            updated.state,
+            history_detail,
+        )
+        return updated
+
     def release_task(self, task_id: str, *, actor: str = "human") -> Task:
         """Clear a per-task dispatch hold (``no_dispatch``), un-staging it.
 
@@ -6455,7 +6496,21 @@ class ControlPlane:
         md = ensure_json_object(task.metadata)
         if not md.pop("no_dispatch", None):
             return task
-        return self.update_task(task_id, metadata=md, actor=actor)
+        # Releasing a staged task is a narrow, control-plane-authorized
+        # mutation: remove the ``no_dispatch`` hold while preserving every
+        # other field byte-for-byte.  Routing metadata such as
+        # ``publication_route``/``publication_lane``/``managed_fast_lane``/
+        # ``work_package`` is control-plane-owned and may have been attached
+        # after creation; it must NOT be routed through the user-input guard
+        # (``_reject_reserved_break_glass_metadata``) or re-normalized via
+        # project-default/execution-contract/capability reconciliation on
+        # release.  Persist the exact metadata directly instead.
+        return self._persist_task_metadata_narrow(
+            task_id,
+            md,
+            actor=actor,
+            detail={"released": True},
+        )
 
     def _task_decompose_depth(self, task: Task, *, _max_walk: int = 64) -> int:
         """Count ancestors above *task* via the parent_task_id chain.

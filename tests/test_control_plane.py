@@ -6696,6 +6696,82 @@ def test_managed_fast_lane_holds_without_downgrading_and_releases_normally(
     assert cp.task_publication_route(task.id)["route_state"] == "managed_active"
 
 
+def test_release_preserves_control_plane_publication_routing_metadata(cp):
+    """`release_task` removes only `no_dispatch`, preserving controller-owned
+    routing metadata byte-for-byte.
+
+    Reproduces the failure where routing metadata (`publication_route`,
+    `publication_lane`, `managed_fast_lane`, `work_package`) attached to a
+    staged task after creation caused release to raise HTTP 400 via the
+    user-input guard.
+    """
+    task = cp.create_task("Staged with routing", metadata={"no_dispatch": True})
+
+    # Simulate the control plane attaching routing metadata after creation by
+    # writing directly to the stored row (bypassing the user-input guard, as
+    # the real control plane does).
+    row = cp.store.query_one("SELECT metadata FROM tasks WHERE id = ?", (task.id,))
+    md = json.loads(row["metadata"])
+    md["publication_route"] = {"lane": "managed", "schema": "mac.route.v1"}
+    md["publication_lane"] = "managed"
+    md["managed_fast_lane"] = {
+        "schema": "mac.managed_single_task.route.v1",
+        "activation": "legacy_compatibility",
+    }
+    md["work_package"] = {"id": "pkg_abc"}
+    cp.store.execute(
+        "UPDATE tasks SET metadata = ? WHERE id = ?",
+        (json.dumps(md), task.id),
+    )
+
+    before = json.loads(
+        cp.store.query_one(
+            "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
+        )["metadata"]
+    )
+
+    released = cp.release_task(task.id, actor="operator")
+
+    after = json.loads(
+        cp.store.query_one(
+            "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
+        )["metadata"]
+    )
+
+    assert released.metadata.get("no_dispatch") is None
+    assert "no_dispatch" not in after
+
+    # The persisted metadata differs from the pre-release metadata only by the
+    # removal of `no_dispatch`; every controller-owned field is byte-identical.
+    expected = dict(before)
+    expected.pop("no_dispatch", None)
+    assert after == expected
+    for key in (
+        "publication_route",
+        "publication_lane",
+        "managed_fast_lane",
+        "work_package",
+    ):
+        assert after[key] == before[key]
+
+
+def test_release_is_noop_when_not_held(cp):
+    task = cp.create_task("Not held")
+    before = json.loads(
+        cp.store.query_one(
+            "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
+        )["metadata"]
+    )
+    released = cp.release_task(task.id, actor="operator")
+    after = json.loads(
+        cp.store.query_one(
+            "SELECT metadata FROM tasks WHERE id = ?", (task.id,)
+        )["metadata"]
+    )
+    assert released.id == task.id
+    assert after == before
+
+
 def test_atomic_repository_task_falls_back_to_explicit_legacy_when_disabled(
     cp, tmp_path
 ):
