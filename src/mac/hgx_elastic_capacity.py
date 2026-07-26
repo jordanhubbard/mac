@@ -184,6 +184,66 @@ def count_pending_provisioning_requests(requests: Iterable[Any]) -> int:
     return len(identifiers) + anonymous
 
 
+def normalize_registered_fungible_agents(
+    registered_agents: Optional[Any],
+) -> Dict[str, str]:
+    """Index registered fungible agents by their immutable HGX session ID.
+
+    Elastic capacity planning must not mistake an already-onboarded HGX session
+    for spare provider quota.  The fleet registry is the durable record of which
+    immutable ``hgx`` session backs which registered fungible MAC agent, so the
+    controller reconciles that mapping against live provider inventory *by
+    immutable session identity* before it proposes any new capacity.
+
+    Accepts either a mapping of ``session_id -> agent_id`` or an iterable of
+    records exposing ``session_id`` and ``agent_id`` (mapping keys or
+    attributes).  Blank identities are ignored; a single immutable session may
+    not claim two different registered agents.
+    """
+
+    if registered_agents is None:
+        return {}
+    if isinstance(registered_agents, Mapping):
+        pairs: Iterable[tuple[Any, Any]] = registered_agents.items()
+    else:
+        pairs = _iter_registered_agent_records(registered_agents)
+    indexed: Dict[str, str] = {}
+    for raw_session_id, raw_agent_id in pairs:
+        session_id = str(raw_session_id or "").strip()
+        agent_id = str(raw_agent_id or "").strip()
+        if not session_id or not agent_id:
+            continue
+        existing = indexed.get(session_id)
+        if existing is not None and existing != agent_id:
+            raise ValidationError(
+                "session %s is claimed by two registered agents (%s, %s)"
+                % (session_id, existing, agent_id)
+            )
+        indexed[session_id] = agent_id
+    return indexed
+
+
+def _iter_registered_agent_records(
+    records: Any,
+) -> Iterator[tuple[Any, Any]]:
+    if isinstance(records, (str, bytes)):
+        raise ValidationError("registered_agents must not be a bare string")
+    for record in records:
+        if isinstance(record, Mapping):
+            session_id = record.get("session_id") or record.get("hgx_session_id")
+            agent_id = record.get("agent_id") or record.get("agent")
+        elif isinstance(record, (tuple, list)) and len(record) == 2:
+            session_id, agent_id = record
+        else:
+            session_id = getattr(record, "session_id", None) or getattr(
+                record, "hgx_session_id", None
+            )
+            agent_id = getattr(record, "agent_id", None) or getattr(
+                record, "agent", None
+            )
+        yield session_id, agent_id
+
+
 class HgxElasticCapacityController:
     """Inspect or explicitly add bounded, nonce-attested HGX capacity."""
 
@@ -216,28 +276,48 @@ class HgxElasticCapacityController:
 
     # Read-only surfaces -------------------------------------------------
 
-    def status(self, *, pending_request_count: int = 0) -> Dict[str, Any]:
+    def status(
+        self,
+        *,
+        pending_request_count: int = 0,
+        registered_agents: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         """Return current provider/state inventory without changing either."""
 
         return self._inspect(
             mode="status",
             pending_request_count=pending_request_count,
+            registered_agents=registered_agents,
         )
 
-    def plan(self, *, pending_request_count: int = 0) -> Dict[str, Any]:
+    def plan(
+        self,
+        *,
+        pending_request_count: int = 0,
+        registered_agents: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         """Return the bounded next action without changing provider or state."""
 
         return self._inspect(
             mode="plan",
             pending_request_count=pending_request_count,
+            registered_agents=registered_agents,
         )
 
     def _inspect(
-        self, *, mode: str, pending_request_count: int
+        self,
+        *,
+        mode: str,
+        pending_request_count: int,
+        registered_agents: Optional[Any] = None,
     ) -> Dict[str, Any]:
         pending = _pending_count(pending_request_count)
+        indexed_agents = normalize_registered_fungible_agents(registered_agents)
         state = self._load_state()
         inventory = self._list_sessions()
+        reconciled = self._reconcile_registered_agents(
+            inventory=inventory, state=state, registered_agents=indexed_agents
+        )
         now = self._clock()
         snapshot = self._snapshot(
             inventory=inventory,
@@ -245,6 +325,7 @@ class HgxElasticCapacityController:
             pending_request_count=pending,
             now=now,
         )
+        snapshot["reconciled_onboarded_session_ids"] = reconciled
         actions: List[Dict[str, Any]] = []
         if snapshot["unattested_session_ids"]:
             actions.append(
@@ -286,12 +367,19 @@ class HgxElasticCapacityController:
 
     # Explicit mutation surface -----------------------------------------
 
-    def execute(self, *, pending_request_count: int = 0) -> Dict[str, Any]:
+    def execute(
+        self,
+        *,
+        pending_request_count: int = 0,
+        registered_agents: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         """Attest existing capacity, then create within the configured bounds."""
 
+        indexed_agents = normalize_registered_fungible_agents(registered_agents)
         with self._execution_lock():
             return self._execute_locked(
-                pending_request_count=pending_request_count
+                pending_request_count=pending_request_count,
+                registered_agents=indexed_agents,
             )
 
     def mark_onboarded(
@@ -348,12 +436,25 @@ class HgxElasticCapacityController:
             }
 
     def _execute_locked(
-        self, *, pending_request_count: int = 0
+        self,
+        *,
+        pending_request_count: int = 0,
+        registered_agents: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, Any]:
         pending = _pending_count(pending_request_count)
         state = self._load_state()
         inventory = self._list_sessions()
         inventory_by_id = {session.session_id: session for session in inventory}
+        reconciled = self._reconcile_registered_agents(
+            inventory=inventory,
+            state=state,
+            registered_agents=registered_agents or {},
+        )
+        if reconciled:
+            # Persist the identity reconciliation before any provider mutation so
+            # an already-onboarded session is durably counted as healthy supply
+            # and never re-attested or double-created on the next invocation.
+            self._write_state(state)
         attested: List[str] = []
         failed_attestations: List[str] = []
         created: List[str] = []
@@ -378,6 +479,16 @@ class HgxElasticCapacityController:
         self._write_state(state)
 
         desired = self.policy.desired_ready(pending)
+        live_ids = {
+            session.session_id
+            for session in inventory_by_id.values()
+            if self._session_is_live(session, state)
+        }
+        healthy_onboarded = self._registry_onboarded_live_ids(state, live_ids)
+        # Already-onboarded, healthy sessions matched to registered fungible
+        # agents are counted as satisfied capacity, so the controller stops
+        # short of proposing (and quota-exhausting on) redundant new sessions.
+        target = max(0, desired - len(healthy_onboarded))
         ready_ids = set(attested)
         cooldown_remaining = self._cooldown_remaining(state, self._clock())
         create_failure_class: Optional[str] = None
@@ -391,7 +502,7 @@ class HgxElasticCapacityController:
         # Cooldown limits independent scale-up invocations, not the bounded
         # batch within a single explicit execute command.
         if cooldown_remaining <= 0:
-            while len(ready_ids) < desired and len(created) < create_budget:
+            while len(ready_ids) < target and len(created) < create_budget:
                 live_count = sum(
                     1
                     for session in inventory_by_id.values()
@@ -450,7 +561,7 @@ class HgxElasticCapacityController:
                     failed_attestations.append(session.session_id)
                 self._write_state(state)
 
-        desired_gap = max(0, desired - len(ready_ids))
+        desired_gap = max(0, target - len(ready_ids))
         final_live_count = sum(
             1
             for session in inventory_by_id.values()
@@ -500,6 +611,7 @@ class HgxElasticCapacityController:
             "desired_ready": desired,
             "attested_session_ids": sorted(ready_ids),
             "created_session_ids": created,
+            "reconciled_onboarded_session_ids": reconciled,
             "failed_attestation_session_ids": sorted(set(failed_attestations)),
             "provider_create_failure_class": create_failure_class,
             "ready_gap": desired_gap,
@@ -611,6 +723,82 @@ class HgxElasticCapacityController:
         )
         return False
 
+    def _reconcile_registered_agents(
+        self,
+        *,
+        inventory: List[HgxSession],
+        state: Dict[str, Any],
+        registered_agents: Mapping[str, str],
+    ) -> List[str]:
+        """Match live HGX sessions to registered fungible agents by identity.
+
+        Live capacity planning previously classified every session without a
+        local controller receipt as *untracked* and, seeing no counted supply,
+        tried to create more — only stopping at ``provider_quota_exhausted``.
+        The fleet registry already knows which immutable ``hgx`` session backs
+        which registered fungible MAC agent, so reconcile that mapping onto the
+        durable receipt store: an already-onboarded, healthy session becomes
+        counted onboarded supply instead of phantom untracked capacity.
+
+        Only live (non-terminal) provider sessions are reconciled; a registered
+        agent whose session the provider has dropped or terminated is not
+        counted as healthy onboarded capacity here. Returns the immutable IDs
+        reconciled during this call.
+        """
+
+        if not registered_agents:
+            return []
+        sessions = state.setdefault("sessions", {})
+        reconciled: List[str] = []
+        for session in inventory:
+            session_id = session.session_id
+            agent_id = registered_agents.get(session_id)
+            if not agent_id:
+                continue
+            if _is_terminal(session.state):
+                continue
+            record = sessions.get(session_id)
+            if not isinstance(record, dict):
+                record = {"session_id": session_id}
+                sessions[session_id] = record
+            already = (
+                _is_onboarded(record)
+                and str(record.get("onboarded_agent_id") or "").strip() == agent_id
+            )
+            record["session_id"] = session_id
+            record["created_by_controller"] = True
+            record["provider_state"] = session.state or record.get("provider_state")
+            record.setdefault("provider_flavor", session.flavor or None)
+            record["onboarding_status"] = "onboarded"
+            record["onboarded_agent_id"] = agent_id
+            record["reconciled_from_registry"] = True
+            record.setdefault("onboarded_at", _timestamp(self._clock()))
+            record["next_action"] = None
+            if not already:
+                reconciled.append(session_id)
+        return sorted(reconciled)
+
+    @staticmethod
+    def _registry_onboarded_live_ids(
+        state: Mapping[str, Any], live_ids: set[str]
+    ) -> List[str]:
+        """Immutable IDs of healthy, registry-reconciled onboarded sessions.
+
+        Only sessions still present in live provider inventory count as healthy
+        capacity; a registry receipt whose provider session has terminated does
+        not offset new demand.
+        """
+
+        sessions = state.get("sessions", {})
+        return sorted(
+            str(session_id)
+            for session_id, record in sessions.items()
+            if isinstance(record, Mapping)
+            and _is_onboarded(record)
+            and bool(record.get("reconciled_from_registry"))
+            and str(session_id) in live_ids
+        )
+
     def _snapshot(
         self,
         *,
@@ -632,8 +820,11 @@ class HgxElasticCapacityController:
             if isinstance(state_sessions.get(item.session_id), Mapping)
             and state_sessions[item.session_id].get("attestation_status") == "passed"
         ]
+        live_ids = {item.session_id for item in live}
+        registry_onboarded = self._registry_onboarded_live_ids(state, live_ids)
         desired = self.policy.desired_ready(pending_request_count)
-        gap = max(0, desired - len(known_attested))
+        healthy_supply = len(known_attested) + len(registry_onboarded)
+        gap = max(0, desired - healthy_supply)
         slots = max(0, self.policy.max_sessions - len(live))
         cooldown = self._cooldown_remaining(state, now)
         unattested = sorted(
@@ -663,6 +854,7 @@ class HgxElasticCapacityController:
             "known_attested_session_ids": sorted(known_attested),
             "unattested_session_ids": unattested,
             "onboarded_session_ids": onboarded_ids,
+            "registry_onboarded_session_ids": registry_onboarded,
             "untracked_live_session_ids": untracked_live_ids,
             "live_provider_session_count": len(live),
             "available_capacity_session_count": len(available_capacity),

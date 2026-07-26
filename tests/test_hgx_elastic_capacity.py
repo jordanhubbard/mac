@@ -15,6 +15,7 @@ from mac.hgx_elastic_capacity import (
     HgxCapacityPolicy,
     HgxElasticCapacityController,
     count_pending_provisioning_requests,
+    normalize_registered_fungible_agents,
 )
 from mac.hgx_provider import (
     STANDARD_DIND_FLAVOR,
@@ -588,3 +589,230 @@ def test_cli_registers_explicit_execute_separately_from_read_only_commands() -> 
     assert mark_onboarded.func.__name__ == "cmd_hgx_capacity_mark_onboarded"
     assert mark_onboarded.session_id == "session-immutable"
     assert mark_onboarded.agent_id == "agent-real"
+
+
+def _running_dind(session_id: str, name: str = "") -> HgxSession:
+    return HgxSession(
+        session_id=session_id,
+        name=name or session_id,
+        flavor=STANDARD_DIND_FLAVOR,
+        state="running",
+    )
+
+
+def test_normalize_registered_fungible_agents_accepts_maps_and_records() -> None:
+    assert normalize_registered_fungible_agents(None) == {}
+    assert normalize_registered_fungible_agents(
+        {"sess-a": "agent_a", "sess-b": " "}
+    ) == {"sess-a": "agent_a"}
+    assert normalize_registered_fungible_agents(
+        [
+            {"session_id": "sess-a", "agent_id": "agent_a"},
+            ("sess-b", "agent_b"),
+            {"hgx_session_id": "sess-c", "agent": "agent_c"},
+            {"session_id": "", "agent_id": "agent_x"},
+        ]
+    ) == {"sess-a": "agent_a", "sess-b": "agent_b", "sess-c": "agent_c"}
+    with pytest.raises(ValidationError):
+        normalize_registered_fungible_agents("sess-a")
+    with pytest.raises(ValidationError, match="two registered agents"):
+        normalize_registered_fungible_agents(
+            [("sess-a", "agent_a"), ("sess-a", "agent_b")]
+        )
+
+
+def test_onboarded_sessions_are_reconciled_by_identity_and_block_creation(
+    tmp_path: Path,
+) -> None:
+    # The exact live-capacity incident: five running, already-onboarded DIND
+    # sessions with no local receipts. Matching immutable identity to the fleet
+    # registry counts them as healthy supply instead of untracked quota.
+    sessions = [_running_dind("hgx-%d" % index) for index in range(5)]
+    registered = {
+        "hgx-%d" % index: "agent_worker_%d" % index for index in range(5)
+    }
+    provider = FakeProvider(sessions)
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(max_sessions=6),
+    )
+
+    plan = controller.plan(pending_request_count=1, registered_agents=registered)
+
+    assert plan["onboarded_session_ids"] == sorted(registered)
+    assert plan["untracked_live_session_ids"] == []
+    assert plan["reconciled_onboarded_session_ids"] == sorted(registered)
+    assert plan["create_count"] == 0
+    assert plan["actions"] == []
+    assert provider.status_ids == []
+    assert provider.attest_ids == []
+    # plan/status stay read-only: no receipt is persisted.
+    assert not (tmp_path / "capacity.json").exists()
+
+
+def test_execute_no_op_when_registry_already_satisfies_demand(
+    tmp_path: Path,
+) -> None:
+    sessions = [_running_dind("hgx-%d" % index) for index in range(5)]
+    registered = {
+        "hgx-%d" % index: "agent_worker_%d" % index for index in range(5)
+    }
+    provider = FakeProvider(
+        sessions,
+        create_error=HgxCommandError(
+            "hgx create failed",
+            argv=["hgx", "--json", "create"],
+            returncode=1,
+            stderr="HTTP 429 resource exhausted",
+        ),
+    )
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(max_sessions=6),
+    )
+
+    result = controller.execute(
+        pending_request_count=1, registered_agents=registered
+    )
+
+    assert result["outcome"] == "capacity_satisfied"
+    assert result["created_session_ids"] == []
+    assert result["provider_create_failure_class"] is None
+    assert result["ready_gap"] == 0
+    assert result["reconciled_onboarded_session_ids"] == sorted(registered)
+    # No create was attempted, so the provider quota is never touched.
+    assert provider.created == []
+    assert provider.status_ids == []
+    persisted = json.loads((tmp_path / "capacity.json").read_text())
+    record = persisted["sessions"]["hgx-0"]
+    assert record["onboarding_status"] == "onboarded"
+    assert record["onboarded_agent_id"] == "agent_worker_0"
+    assert record["reconciled_from_registry"] is True
+
+
+def test_replacement_session_reconciles_new_identity_and_ignores_old(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider([_running_dind("hgx-old")])
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(max_sessions=2, cooldown_seconds=0),
+    )
+
+    first = controller.execute(
+        pending_request_count=1,
+        registered_agents={"hgx-old": "agent_worker_1"},
+    )
+    assert first["reconciled_onboarded_session_ids"] == ["hgx-old"]
+    assert first["outcome"] == "capacity_satisfied"
+    assert provider.created == []
+
+    # The provider recreates the worker under a fresh immutable session ID; the
+    # fleet registry now binds the same agent slot to the replacement session.
+    provider.sessions = [_running_dind("hgx-new")]
+
+    plan = controller.plan(
+        pending_request_count=1,
+        registered_agents={"hgx-new": "agent_worker_1"},
+    )
+    # Only the live replacement session counts as healthy onboarded capacity;
+    # the stale hgx-old receipt lingers durably but is no longer live supply.
+    assert plan["registry_onboarded_session_ids"] == ["hgx-new"]
+    assert "hgx-new" in plan["reconciled_onboarded_session_ids"]
+    assert "hgx-old" not in plan["registry_onboarded_session_ids"]
+    assert plan["untracked_live_session_ids"] == []
+    assert plan["create_count"] == 0
+
+
+def test_terminated_registered_session_is_not_counted_as_healthy_supply(
+    tmp_path: Path,
+) -> None:
+    dead = HgxSession(
+        session_id="hgx-dead",
+        name="worker",
+        flavor=STANDARD_DIND_FLAVOR,
+        state="terminated",
+    )
+    provider = FakeProvider([dead])
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(max_sessions=2, cooldown_seconds=0),
+    )
+
+    result = controller.execute(
+        pending_request_count=1,
+        registered_agents={"hgx-dead": "agent_worker_1"},
+    )
+
+    # A terminated session is not reconciled as healthy onboarded capacity, so
+    # the controller still creates the missing supply within its bounds.
+    assert result["reconciled_onboarded_session_ids"] == []
+    assert result["created_session_ids"] == ["sess-1"]
+    assert result["attested_session_ids"] == ["sess-1"]
+    persisted = json.loads((tmp_path / "capacity.json").read_text())
+    assert "hgx-dead" not in persisted.get("sessions", {}) or (
+        persisted["sessions"]["hgx-dead"].get("onboarding_status")
+        != "onboarded"
+    )
+
+
+def test_registered_agents_without_matching_live_session_are_ignored(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider([])
+    clock = FakeClock()
+    controller = _controller(
+        tmp_path,
+        provider,
+        clock,
+        policy=HgxCapacityPolicy(max_sessions=2, cooldown_seconds=0),
+    )
+
+    result = controller.execute(
+        pending_request_count=1,
+        registered_agents={"hgx-ghost": "agent_worker_1"},
+    )
+
+    assert result["reconciled_onboarded_session_ids"] == []
+    assert result["created_session_ids"] == ["sess-1"]
+
+
+def test_cli_accepts_registered_agents_file_for_capacity_commands() -> None:
+    parser = build_parser()
+
+    plan = parser.parse_args(
+        [
+            "hgx",
+            "capacity",
+            "plan",
+            "--registered-agents-file",
+            "/tmp/registered.json",
+        ]
+    )
+    execute = parser.parse_args(
+        [
+            "hgx",
+            "capacity",
+            "execute",
+            "--registered-agents-file",
+            "/tmp/registered.json",
+        ]
+    )
+
+    assert plan.registered_agents_file == "/tmp/registered.json"
+    assert execute.registered_agents_file == "/tmp/registered.json"
+    assert parser.parse_args(
+        ["hgx", "capacity", "status"]
+    ).registered_agents_file is None
