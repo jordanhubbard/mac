@@ -1,0 +1,15 @@
+{
+  "schema": "mac.fleet_target.v1",
+  "roles": {
+    "gateway": {
+      "source": "0f55d49b1faf1fd2e6a884fc8b4f80f625ca7031",
+      "openclaw": {
+        "version": "2026.6.11",
+        "revision": "19"
+      }
+    },
+    "worker": {
+      "source": "0f55d49b1faf1fd2e6a884fc8b4f80f625ca7031"
+    }
+  }
+}
