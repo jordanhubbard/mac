@@ -3927,6 +3927,10 @@ def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
         interval = 0.0
     if interval <= 0:
         return
+    existing = getattr(app.state, "hub_tick_thread", None)
+    if existing is not None and existing.is_alive():
+        return
+
     # Event-driven review advancement rides the same gate as the tick: on the
     # hub, review-stage transitions fire the moment their triggering event
     # lands (submit_for_review, hub verdict) instead of waiting for the next
@@ -3937,11 +3941,12 @@ def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
     except ValueError:
         stale_after = 300
 
+    stop_event = threading.Event()
+
     def _loop() -> None:
         # Sleep-first so app construction returns immediately and a process that
         # never lives a full interval (e.g. a unit test) does no tick work.
-        while True:
-            time.sleep(interval)
+        while not stop_event.wait(interval):
             try:
                 cp.tick(stale_after_seconds=stale_after)
             except Exception:  # noqa: BLE001 - the self-driver must never crash the hub
@@ -3949,7 +3954,20 @@ def _start_hub_tick_loop(app: FastAPI, cp: ControlPlane) -> None:
 
     thread = threading.Thread(target=_loop, name="mac-hub-tick", daemon=True)
     thread.start()
+    app.state.hub_tick_stop_event = stop_event
     app.state.hub_tick_thread = thread
+
+
+def _stop_hub_tick_loop(app: FastAPI) -> None:
+    """Stop the lifespan-owned hub ticker without leaking it across restarts."""
+    stop_event = getattr(app.state, "hub_tick_stop_event", None)
+    thread = getattr(app.state, "hub_tick_thread", None)
+    if stop_event is not None:
+        stop_event.set()
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=5.0)
+    app.state.hub_tick_stop_event = None
+    app.state.hub_tick_thread = None
 
 
 def create_app(
@@ -4101,6 +4119,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # Start all autonomous services from the ASGI lifecycle, never while
+        # merely importing or constructing the application. Uvicorn factory
+        # mode imports the module and then calls create_app(); starting the
+        # ticker during construction made a legacy module-level app plus the
+        # factory app run competing tick/review threads against one SQLite
+        # authority, convoying its process-wide lock and stalling /health.
+        _start_hub_tick_loop(_app, cp)
         repository_ref_reconciler.start()
         github_ingestor.start()
         cicd_monitor.start()
@@ -4115,6 +4140,7 @@ def create_app(
         try:
             yield
         finally:
+            _stop_hub_tick_loop(_app)
             work_package_pipeline.stop()
             ledger_backup_scheduler.stop()
             self_healing_sentinel.stop()
@@ -4148,9 +4174,6 @@ def create_app(
     app.state.curiosity_reviewer = curiosity_reviewer
     app.state.self_healing_sentinel = self_healing_sentinel
     app.state.work_package_pipeline = work_package_pipeline
-    # mac-selfdrive: the hub drives its own tick (dispatch -> review -> merge ->
-    # reconcile -> lease expiry) so the autonomous loop needs no external clock.
-    _start_hub_tick_loop(app, cp)
     # th-merge-07: TokenHub is retired; its decision-feed consumer (hu-05) and
     # wildcard-ladder refresh are removed with the rest of the standalone-TokenHub
     # integration. Routing decisions now come from the in-mac router.
@@ -9464,11 +9487,3 @@ def create_app(
         _log.warning("in-mac model router not mounted: %s", exc)
 
     return app
-
-
-# Only build the default app when a secret key is present, so importing the
-# module (e.g. from tests) does not require MAC_SECRET_KEY. Run uvicorn with
-# `mac.api:create_app --factory` to be explicit, or set MAC_SECRET_KEY before
-# `mac.api:app`.
-if os.environ.get("MAC_SECRET_KEY"):
-    app = create_app()

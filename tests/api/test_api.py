@@ -41,7 +41,7 @@ def _write_repository_contract(repo_path: Path, project: str) -> None:
 
 def test_hub_tick_loop_gated_by_env(monkeypatch):
     # mac-selfdrive: the hub self-drives tick() only when the interval env is
-    # set (>0), so the CLI/tests/replicas don't each spawn a competing ticker.
+    # set (>0), and only while the ASGI lifespan is active.
     monkeypatch.delenv("MAC_HUB_TICK_INTERVAL_SECONDS", raising=False)
     app = create_app(control_plane=ControlPlane.in_memory())
     assert getattr(app.state, "hub_tick_thread", None) is None
@@ -50,8 +50,12 @@ def test_hub_tick_loop_gated_by_env(monkeypatch):
     # it spawns but never fires tick() here — validates wiring without flakiness.
     monkeypatch.setenv("MAC_HUB_TICK_INTERVAL_SECONDS", "999")
     app2 = create_app(control_plane=ControlPlane.in_memory())
-    thread = getattr(app2.state, "hub_tick_thread", None)
-    assert thread is not None and thread.daemon is True and thread.is_alive()
+    assert getattr(app2.state, "hub_tick_thread", None) is None
+    with TestClient(app2) as client:
+        assert client.get("/health").status_code == 200
+        thread = getattr(app2.state, "hub_tick_thread", None)
+        assert thread is not None and thread.daemon is True and thread.is_alive()
+    assert getattr(app2.state, "hub_tick_thread", None) is None
 
 
 def test_repository_ref_reconciler_follows_app_lifecycle(monkeypatch):
@@ -3448,11 +3452,15 @@ def test_create_app_via_env_only_works_with_real_secret_key(monkeypatch, tmp_pat
     monkeypatch.setenv("MAC_DB", str(db_path))
     monkeypatch.delenv("MAC_API_TOKEN", raising=False)
     monkeypatch.delenv("MAC_API_TOKENS", raising=False)
-    # Reload so the conditional `if MAC_SECRET_KEY: app = create_app()` re-runs.
+    # Factory mode imports this module before calling create_app(). Importing it
+    # must not eagerly manufacture a second application and a duplicate set of
+    # autonomous threads.
+    api_module.__dict__.pop("app", None)
     importlib.reload(api_module)
+    assert "app" not in api_module.__dict__
 
-    client = TestClient(api_module.app)
-    assert client.get("/health").json() == {"status": "ok"}
+    with TestClient(api_module.create_app()) as client:
+        assert client.get("/health").json() == {"status": "ok"}
     # The DB file was created on first connect.
     assert db_path.exists()
 

@@ -11064,7 +11064,6 @@
       "scripts/setup-fleet.py",
       "scripts/test-docs.py",
       "src/mac/agent_migrate.py",
-      "src/mac/api.py",
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/fleet_setup.py",
