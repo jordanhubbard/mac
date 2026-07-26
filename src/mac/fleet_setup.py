@@ -185,8 +185,26 @@ def build_setup_plan(
     )
 
     network = _network_config(spec, defaults_block, errors)
-    hermes_defaults = _mapping(defaults_block.get("hermes"))
+    # OpenClaw is the persona/Slack chat-gateway runtime. Read its defaults from
+    # the ``openclaw:`` block, falling back to the legacy ``hermes:`` key so
+    # existing fleet configs and registries keep loading (backward-compatible
+    # READ only; new configs should use ``openclaw:``).
+    openclaw_defaults = _mapping(
+        defaults_block.get("openclaw") or defaults_block.get("hermes")
+    )
     worker_defaults = _mapping(defaults_block.get("worker"))
+
+    # Persona/Slack runtime selector: only OpenClaw (a chat-gateway host) or
+    # ``none`` (a pure worker) are supported. Mirror the network.provider
+    # allow-list pattern so an unknown runtime fails validation loudly instead
+    # of silently deploying an unsupported gateway.
+    gateway_impl = _str(
+        spec.get("gateway_impl")
+        or defaults_block.get("gateway_impl")
+        or fleet_block.get("gateway_impl")
+    ).lower()
+    if gateway_impl and gateway_impl not in {"openclaw", "none"}:
+        errors.append("gateway_impl must be openclaw or none")
 
     agents = _agent_configs(
         spec,
@@ -194,7 +212,7 @@ def build_setup_plan(
         supervisor=supervisor,
         network_provider=network["provider"],
         errors=errors,
-        hermes_defaults=hermes_defaults,
+        openclaw_defaults=openclaw_defaults,
         worker_defaults=worker_defaults,
     )
     if hub_name and not any(agent.get("name") == hub_name for agent in agents):
@@ -264,13 +282,16 @@ def build_setup_plan(
             "ssh_known_hosts_file": ssh_known_hosts_file,
             "ssh_host_key_fingerprint": ssh_host_key_fingerprint,
             "ssh_host_ca": ssh_host_ca,
+            # Emitted under the legacy ``hermes`` key for backward-compatible
+            # reads by the fleet registry / config surface; values come from the
+            # OpenClaw defaults resolved above.
             "hermes": {
                 "slack_home_channel_name": _str(
-                    hermes_defaults.get("slack_home_channel_name")
-                    or hermes_defaults.get("home_channel")
+                    openclaw_defaults.get("slack_home_channel_name")
+                    or openclaw_defaults.get("home_channel")
                 ),
-                "gateway_provider": _str(hermes_defaults.get("gateway_provider")) or "custom",
-                "gateway_base_url": _str(hermes_defaults.get("gateway_base_url")),
+                "gateway_provider": _str(openclaw_defaults.get("gateway_provider")) or "custom",
+                "gateway_base_url": _str(openclaw_defaults.get("gateway_base_url")),
             },
             "worker": {
                 "mode": _str(worker_defaults.get("mode")) or "heartbeat",
@@ -417,7 +438,7 @@ def _agent_configs(
     hub_name: str,
     supervisor: str,
     errors: List[str],
-    hermes_defaults: Mapping[str, Any],
+    openclaw_defaults: Mapping[str, Any],
     worker_defaults: Mapping[str, Any],
     network_provider: str = "none",
 ) -> List[Dict[str, Any]]:
@@ -458,7 +479,9 @@ def _agent_configs(
         agent_supervisor = _str(item.get("supervisor")) or supervisor
         if agent_supervisor not in {"auto", "systemd", "launchd", "supervisord"}:
             errors.append("agent %s supervisor invalid" % name)
-        hermes = _mapping(item.get("hermes"))
+        # Per-agent OpenClaw overrides; legacy ``hermes`` key still read for
+        # backward compatibility.
+        openclaw = _mapping(item.get("openclaw") or item.get("hermes"))
         worker = _mapping(item.get("worker"))
         config: Dict[str, Any] = {
             "name": name,
@@ -466,12 +489,14 @@ def _agent_configs(
             "target": target,
             "os": os_kind,
             "supervisor": agent_supervisor,
+            # Emitted under the legacy ``hermes`` key for backward-compatible
+            # reads; sourced from the OpenClaw override/default resolution above.
             "hermes": {
                 "gateway_model": resolve_gateway_model(
                     _str(
                         item.get("model")
-                        or hermes.get("gateway_model")
-                        or hermes_defaults.get("gateway_model")
+                        or openclaw.get("gateway_model")
+                        or openclaw_defaults.get("gateway_model")
                     )
                 ),
             },

@@ -379,6 +379,33 @@ def test_bad_spec_collects_validation_errors_and_router_warning(tmp_path: Path) 
     assert plan['warnings'] == ['unknown router provider skipped: unknown']
 
 
+def test_gateway_impl_runtime_selector_allowlist(tmp_path: Path) -> None:
+    """The persona/Slack runtime selector accepts only openclaw or none;
+    anything else is a validation error (mirrors network.provider)."""
+    ok = _base_spec()
+    ok['gateway_impl'] = 'openclaw'
+    assert not any('gateway_impl' in e for e in _build(tmp_path, ok)['errors'])
+    none_ok = _base_spec()
+    none_ok['gateway_impl'] = 'none'
+    assert not any('gateway_impl' in e for e in _build(tmp_path, none_ok)['errors'])
+    bad = _base_spec()
+    bad['gateway_impl'] = 'hermes'
+    assert any('gateway_impl must be openclaw or none' in e for e in _build(tmp_path, bad)['errors'])
+
+
+def test_openclaw_defaults_block_read_with_hermes_fallback(tmp_path: Path) -> None:
+    """Runtime defaults read from the OpenClaw block, and the legacy hermes key
+    still resolves for backward compatibility."""
+    spec = _base_spec()
+    spec['defaults'] = {'openclaw': {'gateway_provider': 'newclaw', 'slack_home_channel_name': 'chan'}}
+    defaults = _build(tmp_path, spec)['fleet_config']['defaults']['hermes']
+    assert defaults['gateway_provider'] == 'newclaw'
+    assert defaults['slack_home_channel_name'] == 'chan'
+    legacy = _base_spec()
+    legacy['defaults'] = {'hermes': {'gateway_provider': 'legacyclaw'}}
+    assert _build(tmp_path, legacy)['fleet_config']['defaults']['hermes']['gateway_provider'] == 'legacyclaw'
+
+
 def test_tailscale_and_headscale_secret_branches(tmp_path: Path) -> None:
     tailscale = _base_spec()
     tailscale['network'] = {'provider': 'tailscale', 'tailscale': {'auth_key_env': 'TS_AUTH'}}
@@ -404,7 +431,7 @@ def test_agent_config_validation_edges(monkeypatch: pytest.MonkeyPatch) -> None:
             raise ValueError('invalid target')
         return target
     monkeypatch.setattr(fleet_setup, 'normalize_ssh_target', normalize)
-    agents = fleet_setup._agent_configs({'agents': [{}, {'name': 'dup', 'target': 'host'}, {'name': 'dup', 'target': 'host'}, {'name': 'invalid', 'target': 'bad-target', 'os': 'windows', 'supervisor': 'bad'}]}, hub_name='hub', supervisor='auto', errors=errors, hermes_defaults={}, worker_defaults={})
+    agents = fleet_setup._agent_configs({'agents': [{}, {'name': 'dup', 'target': 'host'}, {'name': 'dup', 'target': 'host'}, {'name': 'invalid', 'target': 'bad-target', 'os': 'windows', 'supervisor': 'bad'}]}, hub_name='hub', supervisor='auto', errors=errors, openclaw_defaults={}, worker_defaults={})
     assert len(agents) == 2
     joined = '; '.join(errors)
     assert 'needs a name' in joined
