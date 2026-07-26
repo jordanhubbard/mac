@@ -267,6 +267,39 @@ def _seed_route_state(client: TestClient, cp: ControlPlane, tmp_path) -> Dict[st
     )
     ctx["platform_binding_id"] = binding["id"]
 
+    # Seed one OpenClaw conversation execution to back GET
+    # /openclaw-executions/{execution_id}. Materialize no MAC task for the seed
+    # so it cannot perturb the reviewer-availability state later routes assert
+    # on; the POST route's own coverage case exercises task materialization.
+    from mac.openclaw_direct_execution import (
+        HumanDirective as _OpenClawDirective,
+        RepositoryTarget as _OpenClawRepo,
+        SlackProvenance as _OpenClawSlack,
+    )
+
+    _openclaw_seed_svc = cp.openclaw_direct_execution
+    _saved_materialize = _openclaw_seed_svc._materialize_task
+    _openclaw_seed_svc._materialize_task = None
+    try:
+        openclaw_execution = _openclaw_seed_svc.begin_conversation_execution(
+            persona_instance_id=hermes["id"],
+            directive=_OpenClawDirective(
+                human_id="route-human",
+                authenticated=True,
+                text="route coverage deferred request",
+            ),
+            slack=_OpenClawSlack(
+                workspace_id="W-route",
+                channel_id="C-route",
+                thread_ts="1700000000.0001",
+            ),
+            repository=_OpenClawRepo("projectrepo_route", "mac", "a" * 40),
+            deferred=True,
+        )
+    finally:
+        _openclaw_seed_svc._materialize_task = _saved_materialize
+    ctx["openclaw_execution_id"] = openclaw_execution.id
+
     project = _ok(
         client.post(
             "/projects",
@@ -1399,6 +1432,7 @@ def _path_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> str:
         "flag": "show_reasoning",
         "fleet_id_or_name": ctx["fleet_id"],
         "instance_id": ctx["instance_id"],
+        "execution_id": ctx["openclaw_execution_id"],
         "artifact_id": ctx["evidence_artifact_id"],
         "identity_id_or_name": ctx["communication_identity_id"],
         "account_id": ctx["communication_account_id"],
@@ -1597,6 +1631,21 @@ def _case_for(method: str, path_template: str, ctx: Mapping[str, Any]) -> Reques
             "project": ctx["project_name"],
             "platform_binding_id": ctx["platform_binding_id"],
             "conversation_ref": "slack://C-route/123",
+        },
+        ("POST", "/persona-instances/{instance_id}/openclaw-executions"): {
+            "human_id": "route-human",
+            "authenticated": True,
+            "directive_text": "route coverage direct-vs-deferred case",
+            "slack_workspace_id": "W-route",
+            "slack_channel_id": "C-route",
+            "slack_thread_ts": "1700000000.0001",
+            "repository_id": "projectrepo_route",
+            "repository_name": "mac",
+            "base_sha": "a" * 40,
+            # No worktree provisioner in the route-coverage app, so a direct
+            # request would fail closed (409). File deferred work instead: a
+            # schema-valid 200 that exercises the route end to end.
+            "deferred": True,
         },
         ("POST", "/platform-bindings"): {
             "tenant_id": ctx["tenant_id"],

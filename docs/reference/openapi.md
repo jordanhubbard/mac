@@ -233,6 +233,7 @@ request and response definitions.
 | `POST` | `/observability/prune` | Prune Observability |
 | `GET` | `/observability/stream` | Observability Stream |
 | `GET` | `/observability/summary` | Observability Summary |
+| `GET` | `/openclaw-executions/{execution_id}` | Get Openclaw Execution |
 | `GET` | `/openshell/policies` | List Openshell Policies |
 | `POST` | `/openshell/policies` | Create Openshell Policy |
 | `DELETE` | `/openshell/policies/{policy_id}` | Delete Openshell Policy |
@@ -261,6 +262,7 @@ request and response definitions.
 | `GET` | `/persona-instances` | List Persona Instances |
 | `POST` | `/persona-instances` | Register Persona Instance |
 | `GET` | `/persona-instances/{instance_id}/context` | Persona Context |
+| `POST` | `/persona-instances/{instance_id}/openclaw-executions` | Begin Openclaw Execution |
 | `GET` | `/persona-instances/{instance_id}/runtime-proof` | Persona Runtime Proof |
 | `POST` | `/persona-instances/{instance_id}/runtime-proof` | Persona Runtime Proof With Startup |
 | `POST` | `/persona-instances/{instance_id}/tasks` | Create Interaction Task |

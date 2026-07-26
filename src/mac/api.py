@@ -822,6 +822,35 @@ class InteractionTaskCreate(TaskCreate):
     actor: str = "hermes"
 
 
+class OpenClawDirectExecutionBegin(BaseModel):
+    """Begin a direct human-driven OpenClaw Slack code execution.
+
+    A direct, hub-authenticated human request may begin the requested code
+    change immediately. The human does not have to file a task first, and the
+    persona does not have to reply with a newly filed task before acting. When
+    the request is deferred/delegated/follow-up, a visible MAC task is filed
+    instead of executing inline.
+    """
+
+    human_id: str
+    authenticated: bool = True
+    directive_text: str = ""
+    slack_workspace_id: str
+    slack_channel_id: str
+    slack_thread_ts: str
+    slack_message_ts: str = ""
+    repository_id: str
+    repository_name: str = ""
+    base_sha: str
+    agent_id: Optional[str] = None
+    deferred: bool = False
+    delegated: bool = False
+    autonomous_followup: bool = False
+    requested_followup: bool = False
+    requested_capabilities: Optional[List[str]] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class PersonaRuntimeProofCreate(BaseModel):
     hermes_startup: Dict[str, Any] = Field(default_factory=dict)
 
@@ -5178,6 +5207,70 @@ def create_app(
             ),
             **data,
         ).to_dict()
+
+    @app.post("/persona-instances/{instance_id}/openclaw-executions")
+    def begin_openclaw_execution(
+        instance_id: str,
+        body: OpenClawDirectExecutionBegin,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Any:
+        from mac.openclaw_direct_execution import (
+            Capability,
+            HumanDirective,
+            MissingCapabilityError,
+            RepositoryTarget,
+            SlackProvenance,
+        )
+
+        instance = cp.get_persona_instance(instance_id)
+        principal.assert_tenant(instance.tenant_id)
+        requested = None
+        if body.requested_capabilities is not None:
+            try:
+                requested = [Capability(c) for c in body.requested_capabilities]
+            except ValueError as exc:
+                return JSONResponse(status_code=400, content={"detail": str(exc)})
+        try:
+            execution = cp.openclaw_direct_execution.begin_conversation_execution(
+                persona_instance_id=instance_id,
+                directive=HumanDirective(
+                    human_id=body.human_id,
+                    authenticated=body.authenticated,
+                    text=body.directive_text,
+                ),
+                slack=SlackProvenance(
+                    workspace_id=body.slack_workspace_id,
+                    channel_id=body.slack_channel_id,
+                    thread_ts=body.slack_thread_ts,
+                    message_ts=body.slack_message_ts,
+                ),
+                repository=RepositoryTarget(
+                    repository_id=body.repository_id,
+                    repository_name=body.repository_name,
+                    base_sha=body.base_sha,
+                ),
+                agent_id=body.agent_id,
+                requested_capabilities=requested,
+                deferred=body.deferred,
+                delegated=body.delegated,
+                autonomous_followup=body.autonomous_followup,
+                requested_followup=body.requested_followup,
+                metadata=body.metadata,
+            )
+        except MissingCapabilityError as exc:
+            # Fail closed: report the missing capability accurately with a 409,
+            # never a fabricated success.
+            return JSONResponse(status_code=409, content={"detail": exc.to_dict()})
+        return execution.to_dict()
+
+    @app.get("/openclaw-executions/{execution_id}")
+    def get_openclaw_execution(
+        execution_id: str,
+        principal: TokenPrincipal = Depends(_get_principal),
+    ) -> Dict[str, Any]:
+        execution = cp.openclaw_direct_execution.get_execution(execution_id)
+        principal.assert_tenant(execution.tenant_id)
+        return execution.to_dict()
 
     @app.post("/platform-bindings")
     def register_platform_binding(
