@@ -137,6 +137,7 @@ nav:
       - Synchronized cutover: synchronized-fleet-cutover.md
       - Hub availability: hub-availability.md
       - Hub HA audit: hub-ha-audit.md
+      - Hub active-passive design: hub-active-passive-design.md
       - Break-glass recovery: break-glass-host-recovery.md
   - Architecture:
       - Work-graph control plane: work-graph-control-plane.md
