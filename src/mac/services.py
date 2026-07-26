@@ -865,6 +865,246 @@ def _generate_attestation_key() -> str:
     return base64.urlsafe_b64encode(_secrets.token_bytes(ATTESTATION_KEY_BYTES)).decode("ascii").rstrip("=")
 
 
+# ---------------------------------------------------------------------------
+# Legacy single-task publication: conflict-to-integration context payload.
+#
+# When the merge-gate (``mac.merge_queue.validate_projected_merge``) reports a
+# textual conflict for an approved single-task publication, the task cannot
+# fast-forward onto the moving canonical ``main`` tip. Rather than silently
+# abort, the legacy publisher hands the conflict to an *integration executor*
+# (rebase / resolve / re-verify). That executor needs context: which task was
+# approved, the reviewed head it approved, the evidence receipt, the current
+# canonical baseline, the attempt base it diverged from, exactly which paths
+# conflict, and — the expensive part — which already-landed commits/tasks
+# touched those same paths between the attempt base and current ``main``.
+#
+# ``build_conflict_integration_payload`` assembles that context as a pure,
+# unit-testable function returning a ``JsonDict``. It is deliberately isolated
+# from ControlPlane state: the only I/O it performs is through an injected
+# ``git_runner`` shaped exactly like ``ControlPlane._git_output`` (returns a
+# dict with ``returncode``/``stdout``/``stderr``), so it can be exercised
+# against a real temporary repo without a database or a full control plane.
+#
+# It records *raw intent/evidence pointers* and leaves the semantic
+# supersession decision to the integration executor as an explicit field
+# (``supersession.decision`` defaults to ``"undecided"``); precedence is NEVER
+# inferred from commit timestamps here. Current ``main`` is always preserved as
+# the canonical baseline of the payload.
+# ---------------------------------------------------------------------------
+
+# Optional commit trailer an integration executor may read to correlate a
+# landed commit back to the MAC task that produced it. Absent by default; when
+# present it is surfaced as a raw pointer only (never used to infer precedence).
+_MAC_TASK_TRAILER_RE = re.compile(
+    r"^\s*Mac-Task-Id:\s*(?P<task_id>\S+)\s*$", re.MULTILINE
+)
+
+
+def _landed_commits_touching_paths(
+    git_runner: "Callable[[List[str], int], JsonDict]",
+    base_sha: str,
+    main_sha: str,
+    conflicted_paths: Sequence[str],
+) -> List[JsonDict]:
+    """Return raw commit pointers for commits in ``base_sha..main_sha`` that
+    touched any of ``conflicted_paths``.
+
+    Uses ``git log`` restricted to the conflicted paths (path-restricted
+    ``rev-list`` semantics). Each entry carries only raw pointers — sha,
+    subject, author, author-date, and any ``Mac-Task-Id`` trailer — so callers
+    can present provenance without inferring precedence. Returns ``[]`` when
+    the range or paths cannot be resolved; the builder records the failure
+    separately rather than raising, so a conflict payload is always producible.
+    """
+    if not base_sha or not main_sha:
+        return []
+    paths = [str(path) for path in conflicted_paths if str(path).strip()]
+    if not paths:
+        return []
+    # Record separator keeps commit records unambiguous even if a subject or
+    # body contains newlines; %x1f (unit separator) delimits fields.
+    record_sep = "\x1e"
+    field_sep = "%x1f"
+    fmt = field_sep.join(["%H", "%an", "%aI", "%s", "%b"])
+    args = [
+        "log",
+        "%s..%s" % (base_sha, main_sha),
+        "--no-merges",
+        "--format=%s%s" % (record_sep, fmt),
+        "--",
+        *paths,
+    ]
+    result = git_runner(args, 60)
+    if int(result.get("returncode", 1)) != 0:
+        return []
+    stdout = str(result.get("stdout") or "")
+    commits: List[JsonDict] = []
+    for raw in stdout.split(record_sep):
+        raw = raw.strip("\n")
+        if not raw:
+            continue
+        fields = raw.split("\x1f")
+        if len(fields) < 4:
+            continue
+        sha, author, author_date, subject = fields[0], fields[1], fields[2], fields[3]
+        body = fields[4] if len(fields) > 4 else ""
+        trailer = _MAC_TASK_TRAILER_RE.search(body)
+        commits.append(
+            {
+                "sha": sha.strip(),
+                "author": author.strip(),
+                "author_date": author_date.strip(),
+                "subject": subject.strip(),
+                "task_id": trailer.group("task_id").strip() if trailer else None,
+            }
+        )
+    return commits
+
+
+def build_conflict_integration_payload(
+    *,
+    approved_task_id: str,
+    accepted_evidence_id: str,
+    reviewed_head_sha: str,
+    current_main_sha: str,
+    attempt_base_sha: str,
+    conflicted_paths: Sequence[str],
+    depends_on: Optional[Sequence[str]] = None,
+    git_runner: "Optional[Callable[[List[str], int], JsonDict]]" = None,
+    supersession_decision: str = "undecided",
+    superseded_task_id: Optional[str] = None,
+    superseded_by_task_id: Optional[str] = None,
+) -> JsonDict:
+    """Assemble the context-rich integration payload for an approved-but-
+    conflicting *legacy single-task* publication.
+
+    This is a pure builder (aside from the optional injected ``git_runner``):
+    it captures raw pointers and computed provenance and returns a ``JsonDict``.
+    It does NOT mutate the repository, the database, or the REVIEWING flow, and
+    it makes no semantic precedence decision.
+
+    The payload records:
+
+    * ``approved_task`` — the approved task id, its accepted evidence id, and
+      the reviewed head SHA the reviewer approved.
+    * ``canonical_baseline`` — the current canonical ``main`` tip, always
+      preserved as the baseline the integration must land on.
+    * ``attempt_base_sha`` — the base the attempt diverged from
+      (``runtime.repository_base_sha``).
+    * ``conflicted_paths`` — the conflicted paths from
+      ``MergeGateVerdict.conflicted_files``.
+    * ``landed_since_base`` — the set of commits (and any correlated task ids)
+      between the attempt base and current ``main`` that touched the conflicted
+      paths, computed via a path-restricted ``git log``.
+    * ``dependencies`` — explicit ``depends_on`` metadata (the integration task
+      depends on the approved task; recorded, not inferred).
+    * ``supersession`` — an explicit decision field the integration executor
+      sets. Defaults to ``"undecided"``; timestamps are never used to infer
+      precedence here.
+
+    ``git_runner`` is shaped like ``ControlPlane._git_output`` — called as
+    ``git_runner(args, timeout)`` and returning a dict with
+    ``returncode``/``stdout``/``stderr``. When omitted, provenance is left
+    empty and flagged as uncomputed, keeping the builder usable in contexts
+    without repository access.
+    """
+    if not approved_task_id or not str(approved_task_id).strip():
+        raise ValidationError("conflict integration payload requires approved_task_id")
+    if not accepted_evidence_id or not str(accepted_evidence_id).strip():
+        raise ValidationError(
+            "conflict integration payload requires accepted_evidence_id"
+        )
+    if not _GIT_SHA_RE.match(str(reviewed_head_sha).strip()):
+        raise ValidationError(
+            "conflict integration payload requires a git reviewed_head_sha"
+        )
+    if not _GIT_SHA_RE.match(str(current_main_sha).strip()):
+        raise ValidationError(
+            "conflict integration payload requires a git current_main_sha"
+        )
+    if not _GIT_SHA_RE.match(str(attempt_base_sha).strip()):
+        raise ValidationError(
+            "conflict integration payload requires a git attempt_base_sha"
+        )
+
+    normalized_paths = coerce_list(
+        str(path).strip() for path in (conflicted_paths or []) if str(path).strip()
+    )
+    if not normalized_paths:
+        raise ValidationError(
+            "conflict integration payload requires at least one conflicted path"
+        )
+
+    supersession = ensure_json_object(None)
+    decision = str(supersession_decision or "undecided").strip() or "undecided"
+    if decision not in {"undecided", "supersede", "coexist", "abandon"}:
+        raise ValidationError(
+            "conflict integration payload supersession decision must be one of "
+            "undecided/supersede/coexist/abandon"
+        )
+    supersession = {
+        # Explicit, integration-executor-owned decision. Never inferred from
+        # commit timestamps in this builder.
+        "decision": decision,
+        "superseded_task_id": (
+            str(superseded_task_id).strip() if superseded_task_id else None
+        ),
+        "superseded_by_task_id": (
+            str(superseded_by_task_id).strip() if superseded_by_task_id else None
+        ),
+        "decided": decision != "undecided",
+        "policy": "explicit_only_no_timestamp_inference",
+    }
+
+    provenance_computed = git_runner is not None
+    landed = (
+        _landed_commits_touching_paths(
+            git_runner,
+            str(attempt_base_sha).strip(),
+            str(current_main_sha).strip(),
+            normalized_paths,
+        )
+        if git_runner is not None
+        else []
+    )
+    landed_task_ids = coerce_list(
+        commit["task_id"] for commit in landed if commit.get("task_id")
+    )
+
+    payload: JsonDict = {
+        "schema": "mac.conflict_integration_payload.v1",
+        "kind": "legacy_single_task_publication_conflict",
+        "approved_task": {
+            "task_id": str(approved_task_id).strip(),
+            "accepted_evidence_id": str(accepted_evidence_id).strip(),
+            "reviewed_head_sha": str(reviewed_head_sha).strip(),
+        },
+        # Current main is ALWAYS the canonical baseline the integration lands on.
+        "canonical_baseline": {
+            "ref": "main",
+            "main_sha": str(current_main_sha).strip(),
+        },
+        "attempt_base_sha": str(attempt_base_sha).strip(),
+        "conflicted_paths": normalized_paths,
+        "landed_since_base": {
+            "computed": provenance_computed,
+            "base_sha": str(attempt_base_sha).strip(),
+            "main_sha": str(current_main_sha).strip(),
+            "commits": landed,
+            "task_ids": landed_task_ids,
+        },
+        "dependencies": {
+            # The integration task depends on the approved task (explicit, not
+            # inferred). The approved task id is always in depends_on.
+            "depends_on": coerce_list(
+                [str(approved_task_id).strip(), *(depends_on or [])]
+            ),
+        },
+        "supersession": supersession,
+    }
+    return payload
+
+
 def _contract_mapping(value: Any, field: str) -> JsonDict:
     if not isinstance(value, dict):
         raise ValidationError("%s must be an object" % field)
@@ -19750,6 +19990,52 @@ class ControlPlane:
             "publication_mode": publication_mode,
             "commands": commands,
         }
+
+    def _build_conflict_integration_payload(
+        self,
+        *,
+        approved_task_id: str,
+        accepted_evidence_id: str,
+        reviewed_head_sha: str,
+        current_main_sha: str,
+        attempt_base_sha: str,
+        conflicted_paths: Sequence[str],
+        repo_path: Path,
+        depends_on: Optional[Sequence[str]] = None,
+    ) -> JsonDict:
+        """Thin ControlPlane wrapper over ``build_conflict_integration_payload``.
+
+        Binds ``self._git_output`` (scoped to ``repo_path``) as the pure
+        builder's ``git_runner`` so path-restricted landed-commit provenance is
+        computed against the real canonical checkout. This legacy compatibility
+        path is for *single-task* publication conflicts only — work-package
+        (plan-DAG) tasks route through the managed integration surface, so this
+        refuses a work-package-linked task rather than fabricating a
+        single-task payload for it.
+
+        Returns the ``JsonDict`` payload; it does not persist anything or touch
+        the REVIEWING flow.
+        """
+        if self._task_is_work_package_linked(approved_task_id):
+            raise ValidationError(
+                "conflict integration payload is legacy single-task only; "
+                "work-package task %s must use the managed integration surface"
+                % approved_task_id
+            )
+
+        def git_runner(args: List[str], timeout: int = 60) -> JsonDict:
+            return self._git_output(repo_path, list(args), timeout=timeout)
+
+        return build_conflict_integration_payload(
+            approved_task_id=approved_task_id,
+            accepted_evidence_id=accepted_evidence_id,
+            reviewed_head_sha=reviewed_head_sha,
+            current_main_sha=current_main_sha,
+            attempt_base_sha=attempt_base_sha,
+            conflicted_paths=conflicted_paths,
+            depends_on=depends_on,
+            git_runner=git_runner,
+        )
 
     def _validate_publication_evidence(self, task_id: str, evidence_id: Optional[str]) -> None:
         if evidence_id is None:
