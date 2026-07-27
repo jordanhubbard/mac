@@ -226,7 +226,11 @@ from mac.review_service import (
 from mac.roles_service import RolesService
 from mac.rollout_service import RolloutService
 from mac.secrets_service import SecretsService
-from mac.scientific_optimizer import ScientificOptimizerConfig, ScientificOptimizerService
+from mac.scientific_optimizer import (
+    ScientificOptimizerConfig,
+    ScientificOptimizerService,
+    derive_task_kpis,
+)
 from mac.store import SQLiteStore, Store, make_store_from_env
 from mac.task_lifecycle import DispatchService, TaskLedgerService
 from mac.task_transition_service import TaskTransitionService
@@ -7705,7 +7709,7 @@ class ControlPlane:
         task_payload = task.to_dict()
         task_payload["publication_lane"] = publication_route["lane"]
         task_payload["publication_route"] = publication_route
-        return {
+        detail = {
             "task": task_payload,
             "publication_route": publication_route,
             "history": [
@@ -7727,6 +7731,170 @@ class ControlPlane:
                 )
             ],
             "llm_usage": self.observability.task_llm_usage(resolved_task_id),
+        }
+        detail["profile"] = self._task_execution_profile(detail)
+        return detail
+
+    def _task_execution_profile(self, detail: Mapping[str, Any]) -> JsonDict:
+        """Derive a bounded, read-only task cost and progress profile.
+
+        This intentionally uses only task-attributed ledger records. It never
+        calls a model and never executes an overview query, so operators can
+        inspect an over-thinking task without adding more work to it.
+        """
+        task = (
+            detail.get("task")
+            if isinstance(detail.get("task"), Mapping)
+            else {}
+        )
+        task_id = str(task.get("id") or "")
+        llm_usage = (
+            detail.get("llm_usage")
+            if isinstance(detail.get("llm_usage"), Mapping)
+            else {}
+        )
+        routes = [
+            item
+            for item in llm_usage.get("routes", [])
+            if isinstance(item, Mapping)
+        ]
+        kpis = derive_task_kpis(
+            detail,
+            routes,
+            outcome_horizon_seconds=0.0,
+        )
+
+        rows = self.store.query_all(
+            """
+            SELECT phase, command_id, duration_ms, returncode,
+                   stdout_bytes, stderr_bytes
+            FROM command_audit
+            WHERE task_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1001
+            """,
+            (task_id,),
+        )
+        truncated = len(rows) > 1000
+        rows = rows[:1000]
+        terminal_rows = [
+            row
+            for row in rows
+            if str(row["phase"] or "") in {"completed", "failed", "timeout", "error"}
+        ]
+        command_duration_ms = sum(
+            float(row["duration_ms"] or 0.0) for row in terminal_rows
+        )
+        command_failures = sum(
+            1
+            for row in terminal_rows
+            if str(row["phase"] or "") != "completed"
+            or (
+                row["returncode"] is not None
+                and int(row["returncode"]) != 0
+            )
+        )
+        command_output_bytes = sum(
+            int(row["stdout_bytes"] or 0) + int(row["stderr_bytes"] or 0)
+            for row in terminal_rows
+        )
+
+        state_dwell_ms: Dict[str, float] = {}
+        history = [
+            item
+            for item in detail.get("history", [])
+            if isinstance(item, Mapping)
+        ]
+        current_state = "open"
+        cursor = parse_time(str(task.get("created_at") or utcnow()))
+        for event in history:
+            observed_at = parse_time(str(event.get("created_at") or cursor.isoformat()))
+            if observed_at >= cursor:
+                state_dwell_ms[current_state] = (
+                    state_dwell_ms.get(current_state, 0.0)
+                    + (observed_at - cursor).total_seconds() * 1000.0
+                )
+            next_state = str(event.get("to_state") or "")
+            if next_state:
+                current_state = next_state
+            cursor = max(cursor, observed_at)
+        terminal_at = task.get("completed_at")
+        end = parse_time(str(terminal_at or utcnow()))
+        if end >= cursor:
+            state_dwell_ms[current_state] = (
+                state_dwell_ms.get(current_state, 0.0)
+                + (end - cursor).total_seconds() * 1000.0
+            )
+
+        evidence_count = len(detail.get("evidence", []))
+        publication_count = len(detail.get("publications", []))
+        review_count = len(detail.get("reviews", []))
+        route_count = int(kpis.get("route_count") or 0)
+        total_tokens = int(kpis.get("total_tokens") or 0)
+        provider_attempts = sum(
+            int(item.get("upstream_attempt_count") or 0) for item in routes
+        )
+        signals: List[JsonDict] = []
+        if route_count >= 10 and evidence_count + publication_count == 0:
+            signals.append(
+                {
+                    "code": "model_work_without_durable_output",
+                    "severity": "warning",
+                    "detail": (
+                        "%d model routes produced no evidence or publication"
+                        % route_count
+                    ),
+                }
+            )
+        if provider_attempts > route_count:
+            signals.append(
+                {
+                    "code": "provider_retry_churn",
+                    "severity": "warning",
+                    "detail": "%d upstream attempts across %d model routes"
+                    % (provider_attempts, route_count),
+                }
+            )
+        if command_failures >= 3:
+            signals.append(
+                {
+                    "code": "command_failure_churn",
+                    "severity": "warning",
+                    "detail": "%d failed terminal command records"
+                    % command_failures,
+                }
+            )
+        if total_tokens >= 250_000 and publication_count == 0:
+            signals.append(
+                {
+                    "code": "high_token_work_without_publication",
+                    "severity": "warning",
+                    "detail": "%d tokens with no publication" % total_tokens,
+                }
+            )
+
+        return {
+            "schema": "mac.task_execution_profile.v1",
+            "task_id": task_id,
+            "kpis": kpis,
+            "commands": {
+                "terminal_count": len(terminal_rows),
+                "failure_count": command_failures,
+                "duration_ms": round(command_duration_ms, 3),
+                "output_bytes": command_output_bytes,
+                "truncated": truncated,
+            },
+            "provider_attempt_count": provider_attempts,
+            "state_dwell_ms": {
+                key: round(value, 3)
+                for key, value in sorted(state_dwell_ms.items())
+            },
+            "progress": {
+                "evidence_count": evidence_count,
+                "review_count": review_count,
+                "publication_count": publication_count,
+            },
+            "signals": signals,
         }
 
     def task_publication_routes(

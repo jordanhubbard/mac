@@ -314,6 +314,11 @@ def collect_bus_candidates(
                 stream.id,
                 after_sequence=0,
                 limit=config.bus_chunk_scan,
+                # This is a bounded historical search, not consumption of new
+                # messages.  It intentionally starts at sequence zero and must
+                # not advance the delivery cursor or emit one durable read event
+                # per stream on every prompt.
+                record_observation=False,
             )
         except Exception:
             # Not authorized / vanished stream: skip, never leak.

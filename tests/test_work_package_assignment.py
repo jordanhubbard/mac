@@ -424,7 +424,10 @@ def test_dispatch_snapshots_batch_queries_and_bound_learning_per_agent(
         store.close()
 
 
-def test_no_eligible_agent_records_intentional_absence_of_assignment_audit() -> None:
+def test_no_eligible_agent_records_intentional_absence_of_assignment_audit(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
     store = SQLiteStore(":memory:")
     try:
         cp = ControlPlane(

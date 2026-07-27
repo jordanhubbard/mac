@@ -1293,8 +1293,18 @@ def test_record_log_suppresses_verbose_poll_names_by_default(cp):
         "worker.no_task", level="debug", source="worker-1"
     )
     assert result is None
+    assert cp.record_log("agentbus.chunks.read", source="agent-1") is None
+    assert (
+        cp.record_log(
+            "dispatcher.assignment.unclaimed",
+            source="deterministic-dispatch",
+        )
+        is None
+    )
     names = {e.name for e in cp.list_observability(limit=50)}
     assert "worker.no_task" not in names
+    assert "agentbus.chunks.read" not in names
+    assert "dispatcher.assignment.unclaimed" not in names
     # A non-suppressed name still records as normal.
     cp.record_log("task.evidence_added", level="info", source="control")
     names = {e.name for e in cp.list_observability(limit=50)}
@@ -12636,7 +12646,10 @@ def test_events_task_detail_includes_from_to_states(cp):
     assert latest["detail"].get("from_state") == "claimed"
 
 
-def test_agentbus_streams_typed_content_without_weakening_control_messages(cp):
+def test_agentbus_streams_typed_content_without_weakening_control_messages(
+    cp, monkeypatch
+):
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
     sender = register_agent(cp, "sender", ["python"])
     recipient = register_agent(cp, "recipient", ["python"])
     outsider = register_agent(cp, "outsider", ["python"])

@@ -253,12 +253,25 @@ def test_task_show_wrapper_is_compact():
             "providers": ["nvidia"],
             "total_tokens": 321,
         },
+        "profile": {
+            "kpis": {"model_latency_ms": 120000},
+            "commands": {"duration_ms": 60000, "failure_count": 3},
+            "provider_attempt_count": 4,
+            "signals": [
+                {
+                    "code": "command_failure_churn",
+                    "detail": "3 failed terminal command records",
+                }
+            ],
+        },
     }
     out = cli._render_text(detail)
     assert out.splitlines()[0].startswith("task_x")
     assert "evidence: 2" in out and "reviews: 1" in out  # counts, not the full blob
     assert "claude-sonnet-4-6 via nvidia" in out
     assert "2 routes, 321 tokens" in out
+    assert "profile: 2.0m model, 1.0m commands, 4 provider attempts" in out
+    assert "signal: command_failure_churn" in out
     assert "publication_lane: managed (managed_active) package=wp_fast_x" in out
 
 

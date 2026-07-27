@@ -183,6 +183,24 @@ def test_postgres_store_exposes_initialize_and_ensure_column() -> None:
     assert params == ["self", "table", "column", "definition"]
 
 
+def test_additive_sqlite_columns_are_present_in_postgres_schema(
+    schema_sql: str,
+) -> None:
+    """Guard the columns that exposed drift during the live migration rehearsal."""
+    for table, column in (
+        ("fleet_release_epochs", "abort_disposition"),
+        ("tasks", "human_assignees"),
+        ("tasks", "created_by_human"),
+        ("tasks", "idempotency_key"),
+    ):
+        assert re.search(
+            r"ALTER TABLE %s\s+ADD COLUMN IF NOT EXISTS\s+%s"
+            % (table, column),
+            schema_sql,
+        ), "%s.%s lacks a Postgres additive migration" % (table, column)
+    assert "idx_tasks_idempotency_key" in schema_sql
+
+
 def test_execution_cohort_backfill_is_versioned_and_receipt_strict(
     schema_sql: str,
 ) -> None:

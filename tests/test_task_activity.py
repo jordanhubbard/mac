@@ -66,6 +66,8 @@ def test_task_detail_includes_attributed_resolved_llm_usage():
             "input_tokens": 100,
             "output_tokens": 25,
             "total_tokens": 125,
+            "duration_ms": 2500,
+            "attempts": [{"provider": "nvidia"}, {"provider": "nvidia"}],
         },
     )
     cp.record_log(
@@ -93,7 +95,16 @@ def test_task_detail_includes_attributed_resolved_llm_usage():
     assert usage["input_tokens"] == 100
     assert usage["output_tokens"] == 25
     assert usage["total_tokens"] == 125
+    assert usage["model_latency_ms"] == 2500
+    assert usage["upstream_attempt_count"] == 2
+    assert usage["routes"][0]["schema"] == "mac.llm_route.v1"
     assert usage["routes"][0]["agent_id"] == "agent_rocky"
+    profile = cp.task_detail(task.id)["profile"]
+    assert profile["schema"] == "mac.task_execution_profile.v1"
+    assert profile["kpis"]["route_count"] == 1
+    assert profile["kpis"]["model_latency_ms"] == 2500
+    assert profile["provider_attempt_count"] == 2
+    assert profile["signals"][0]["code"] == "provider_retry_churn"
 
 
 def test_prose_tail_prefers_agent_prose_over_diff_noise():

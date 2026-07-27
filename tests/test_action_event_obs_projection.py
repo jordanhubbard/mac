@@ -1,11 +1,9 @@
-"""The observability -> action_events projection must store only a REFERENCE
-to the source observability row, not a re-embedded copy of its `detail` blob.
+"""The exceptional observability -> action_events projection stores a reference.
 
-Re-embedding `detail` made action_events a duplicate superset of
-observability_events and was the write firehose that grew the hub mac.db to
-16GB. These tests pin the deduplicated contract: the projected action event
-keeps `observability_id` (so the detail is recoverable by join) but drops the
-blob, and the source detail still lives in observability_events.
+Ordinary info logs and metrics stay only in observability_events. Mirroring
+every telemetry row made action_events a duplicate indexed firehose. Warnings
+and failures remain visible in the action feed, but carry only a reference to
+their source detail.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ def test_projection_stores_reference_not_reembedded_detail() -> None:
         name="worker.test",
         layer="worker",
         source="worker-1",
-        level="info",
+        level="warning",
         detail={"secret_shaped": "x" * 512, "phase": "gate"},
     )
 
@@ -42,7 +40,7 @@ def test_projection_stores_reference_not_reembedded_detail() -> None:
     assert action.attributes.get("kind") == "log"
 
 
-def test_source_detail_remains_recoverable_via_observability_row() -> None:
+def test_metric_stays_only_in_observability_row() -> None:
     cp = ControlPlane.in_memory()
     obs = cp.record_observation(
         kind="metric",
@@ -54,13 +52,30 @@ def test_source_detail_remains_recoverable_via_observability_row() -> None:
         detail={"clone_ms": 1200, "test_ms": 45000},
     )
 
-    action = _project(cp, obs)
-    ref = action.attributes["observability_id"]
+    actions = cp.list_action_events(action_type="observability", limit=50)
+    assert not any(
+        event.attributes.get("observability_id") == obs.id for event in actions
+    )
 
-    # Joining back on the reference recovers the full detail — nothing lost.
-    source = [o for o in cp.list_observability(limit=50) if o.id == ref]
+    source = [o for o in cp.list_observability(limit=50) if o.id == obs.id]
     assert len(source) == 1
     assert source[0].detail == {"clone_ms": 1200, "test_ms": 45000}
+
+
+def test_info_log_stays_only_in_observability_row() -> None:
+    cp = ControlPlane.in_memory()
+    obs = cp.record_observation(
+        kind="log",
+        name="worker.poll",
+        layer="worker",
+        source="worker-2",
+        level="info",
+    )
+
+    actions = cp.list_action_events(action_type="observability", limit=50)
+    assert not any(
+        event.attributes.get("observability_id") == obs.id for event in actions
+    )
 
 
 def test_error_level_projects_failure_outcome_without_detail() -> None:

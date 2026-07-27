@@ -509,6 +509,32 @@ def _render_text(value: Any) -> str:
                     )
                 else:
                     lines.append("  llm: no attributed model calls recorded")
+            profile = value.get("profile")
+            if isinstance(profile, dict):
+                kpis = profile.get("kpis")
+                commands = profile.get("commands")
+                if isinstance(kpis, dict) and isinstance(commands, dict):
+                    lines.append(
+                        "  profile: %.1fm model, %.1fm commands, %d provider "
+                        "attempts, %d command failures"
+                        % (
+                            float(kpis.get("model_latency_ms") or 0.0) / 60000.0,
+                            float(commands.get("duration_ms") or 0.0) / 60000.0,
+                            int(profile.get("provider_attempt_count") or 0),
+                            int(commands.get("failure_count") or 0),
+                        )
+                    )
+                signals = profile.get("signals")
+                if isinstance(signals, list):
+                    for signal in signals:
+                        if isinstance(signal, dict):
+                            lines.append(
+                                "  signal: %s — %s"
+                                % (
+                                    signal.get("code") or "unknown",
+                                    signal.get("detail") or "",
+                                )
+                            )
             lines.extend(_task_activity_lines(t))
             return "\n".join(lines)
         if str(value.get("id", "")).startswith("task_") or "state" in value or (
@@ -1806,6 +1832,51 @@ def cmd_task_list(args: argparse.Namespace) -> None:
 def cmd_task_show(args: argparse.Namespace) -> None:
     """Show details for a task."""
     _print(_plane(args).task_detail(args.task_id))
+
+
+def cmd_database_migrate_sqlite_postgres(args: argparse.Namespace) -> None:
+    """Perform an offline, fully verified authority migration."""
+    if not args.hub_stopped:
+        raise MACError(
+            "offline authority migration requires --hub-stopped after every "
+            "hub writer and worker supervisor has been stopped"
+        )
+    dsn = str(args.postgres_url or "").strip()
+    if args.postgres_url_file:
+        dsn = (
+            Path(args.postgres_url_file)
+            .expanduser()
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+    if not dsn:
+        dsn = (
+            os.environ.get("MAC_MIGRATION_DATABASE_URL", "").strip()
+            or os.environ.get("MAC_DATABASE_URL", "").strip()
+        )
+    if not dsn:
+        raise MACError(
+            "PostgreSQL target is required via --postgres-url, "
+            "--postgres-url-file, MAC_MIGRATION_DATABASE_URL, or MAC_DATABASE_URL"
+        )
+    report = args.report or (str(Path(args.sqlite).expanduser()) + ".postgres.json")
+    from mac.sqlite_postgres_migration import migrate_sqlite_to_postgres
+
+    def progress(message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+
+    _print(
+        migrate_sqlite_to_postgres(
+            args.sqlite,
+            dsn,
+            report_path=report,
+            batch_size=args.batch_size,
+            resume=args.resume,
+            restart=args.restart,
+            verify_only=args.verify_only,
+            progress=progress,
+        )
+    )
 
 
 def cmd_task_summary(args: argparse.Namespace) -> None:
@@ -5710,6 +5781,61 @@ def build_parser() -> argparse.ArgumentParser:
     _set(cmd_diagnostics, diagnostics_parser)
 
     _set(cmd_init, sub.add_parser("init", help="initialize the SQLite store"))
+
+    database = sub.add_parser(
+        "database",
+        help="offline durable-authority maintenance and migration",
+    ).add_subparsers(dest="database_command", required=True)
+    sqlite_to_postgres = database.add_parser(
+        "migrate-sqlite-to-postgres",
+        help="copy every SQLite row to PostgreSQL and verify full-row digests",
+    )
+    sqlite_to_postgres.add_argument(
+        "--sqlite",
+        required=True,
+        help="stopped hub's authoritative SQLite database",
+    )
+    target = sqlite_to_postgres.add_mutually_exclusive_group()
+    target.add_argument(
+        "--postgres-url",
+        help="PostgreSQL DSN; prefer an environment variable/file for secret DSNs",
+    )
+    target.add_argument(
+        "--postgres-url-file",
+        help="owner-readable file containing only the PostgreSQL DSN",
+    )
+    sqlite_to_postgres.add_argument(
+        "--report",
+        help="durable resumable receipt (default: <sqlite>.postgres.json)",
+    )
+    sqlite_to_postgres.add_argument(
+        "--batch-size",
+        type=int,
+        default=10_000,
+        help="COPY fetch batch size, 1..100000 (default: 10000)",
+    )
+    sqlite_to_postgres.add_argument(
+        "--hub-stopped",
+        action="store_true",
+        help="assert every process capable of writing the SQLite authority is stopped",
+    )
+    mode = sqlite_to_postgres.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume only tables proved by the existing receipt",
+    )
+    mode.add_argument(
+        "--restart",
+        action="store_true",
+        help="destructively clear the target and restart this migration",
+    )
+    mode.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="re-verify every receipted table without copying",
+    )
+    _set(cmd_database_migrate_sqlite_postgres, sqlite_to_postgres)
 
     # mac config migrate-env-namespace --fleet <name> [--env-file ...]
     config = sub.add_parser("config", help="configuration helpers").add_subparsers(

@@ -66,6 +66,28 @@ def test_command_audit_and_footprint_reporting_are_best_effort(tmp_path) -> None
     instance._report_footprint({})
 
 
+def test_observation_delivery_failures_are_counted_and_rate_limited(
+    tmp_path, caplog
+) -> None:
+    client = _Client()
+    client.fail = True
+    instance = _worker(tmp_path, client)
+
+    with caplog.at_level("WARNING", logger="mac.worker"):
+        instance._post_observation("/observability/logs", {"name": "one"})
+        instance._post_observation("/observability/logs", {"name": "two"})
+
+    assert instance._observation_post_failures == 2
+    messages = [
+        record.message
+        for record in caplog.records
+        if "observation delivery failed" in record.message
+    ]
+    assert len(messages) == 1
+    assert "dropped=1" in messages[0]
+    assert "RuntimeError" in messages[0]
+
+
 def test_pip_and_npm_inventory_parsing_and_failures(monkeypatch, tmp_path) -> None:
     instance = _worker(tmp_path)
     monkeypatch.setattr(
@@ -490,4 +512,3 @@ def test_sandbox_verification_item_hub_verify_non_dict_json_returns_deferred(tmp
     item = worker._sandbox_repository_verification_item(tmp_path, "cmd", hub_verify=True)
     assert item is not None
     assert worker._is_hub_verify_deferred_item(item)
-

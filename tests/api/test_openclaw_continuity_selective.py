@@ -52,6 +52,9 @@ def _seed_reto_conversation(cp, agent_id, peer_id):
 
 
 def test_prior_reto_bus_exchange_outranks_task_import_filler(monkeypatch):
+    # Even with verbose poll telemetry explicitly enabled, historical
+    # continuity search is analytical recall rather than a new-message read.
+    monkeypatch.setenv("MAC_OBSERVABILITY_VERBOSE_POLL", "1")
     cp = ControlPlane.in_memory()
     machine = cp.register_machine("reto-host")
     agent = cp.register_agent(machine.id, "reto-agent")
@@ -93,6 +96,7 @@ def test_prior_reto_bus_exchange_outranks_task_import_filler(monkeypatch):
     metrics = resp.json()["recall_metrics"]
     assert metrics["source_bus"] == 1
     assert metrics["threshold_drops"] >= 3
+    assert cp.list_observability(name="agentbus.chunks.read", limit=10) == []
 
 
 def test_no_match_omits_low_scoring_filler(monkeypatch):

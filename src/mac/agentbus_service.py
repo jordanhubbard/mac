@@ -390,6 +390,8 @@ class AgentBusService:
         stream_id: str,
         after_sequence: int = 0,
         limit: int = 100,
+        *,
+        record_observation: bool = True,
     ) -> List[AgentBusChunk]:
         stream = self.assert_authorized(agent_id, stream_id)
         if (
@@ -411,7 +413,7 @@ class AgentBusService:
             ),
         )
         chunks = [self._chunk_from_row(row) for row in rows]
-        if chunks:
+        if chunks and record_observation:
             self.observability.record_log(
                 "agentbus.chunks.read",
                 layer="agentbus",

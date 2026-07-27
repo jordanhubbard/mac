@@ -197,14 +197,22 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     workflow_run_id TEXT,
-    workflow_node_key TEXT
+    workflow_node_key TEXT,
+    human_assignees TEXT,
+    created_by_human TEXT,
+    idempotency_key TEXT
 );
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS human_assignees TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS created_by_human TEXT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 CREATE INDEX IF NOT EXISTS idx_tasks_state_priority ON tasks (state, priority DESC, created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_review_queue
     ON tasks (priority DESC, created_at, id)
     WHERE state IN ('needs_review', 'reviewing');
 CREATE INDEX IF NOT EXISTS idx_tasks_state_updated ON tasks (state, updated_at, id);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks (owner_agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_idempotency_key
+    ON tasks (idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- mac-1hnt: enforce the task state machine at the DB layer. SQLite did
 -- this with two CHECK triggers using RAISE(ABORT, ...); the same intent
@@ -476,8 +484,11 @@ CREATE TABLE IF NOT EXISTS fleet_release_epochs (
     proved_at TEXT,
     committed_at TEXT,
     aborted_at TEXT,
-    abort_reason TEXT
+    abort_reason TEXT,
+    abort_disposition TEXT
 );
+ALTER TABLE fleet_release_epochs
+    ADD COLUMN IF NOT EXISTS abort_disposition TEXT;
 
 CREATE TABLE IF NOT EXISTS fleet_release_epoch_agents (
     epoch_id TEXT NOT NULL REFERENCES fleet_release_epochs(epoch_id) ON DELETE RESTRICT,

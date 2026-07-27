@@ -582,6 +582,7 @@ Defaults shown as `consumer-defined` are intentionally owned by the calling subs
 | `MAC_MEMORY_EMBED_INPUT_TYPE` | str | consumer-defined | memory | Memory setting: memory embed input type. |
 | `MAC_MEMORY_EMBED_MODEL` | str | consumer-defined | memory | Memory setting: memory embed model. |
 | `MAC_MEMORY_TOPOLOGY_FILE` | str | consumer-defined | memory | Memory setting: memory topology file. |
+| `MAC_MIGRATION_DATABASE_URL` | str | consumer-defined | core | Core setting: migration database url. |
 | `MAC_MODELS_DEV_CACHE_FILE` | str | consumer-defined | core | Core setting: models dev cache file. |
 | `MAC_MODEL_SELECTION_FILE` | str | consumer-defined | core | Core setting: model selection file. |
 | `MAC_MODEL_SELECT_ENABLED` | bool | consumer-defined | core | Core setting: model select enabled. |

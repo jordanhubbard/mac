@@ -564,6 +564,7 @@ class TestHardExclusions:
 class TestAuditEvents:
     def test_live_prune_emits_audit_observation(self, store, retention_with_obs):
         svc = retention_with_obs
+        _insert_obs(store)
         pol = RetentionPolicy("observability_events", enabled=True, max_rows=0)
         svc.set_policy(pol)
         svc.prune("observability_events")
@@ -584,12 +585,20 @@ class TestAuditEvents:
 
     def test_audit_via_control_plane_observability(self, store, cp):
         """A live prune emits into the observability stream."""
+        cp.record_log("retention.fixture")
         pol = RetentionPolicy("observability_events", enabled=True, max_rows=0)
         cp.retention.set_policy(pol)
         cp.retention_prune("observability_events")
         # Audit record name is "retention.prune"
         events = cp.list_observability(name="retention.prune", limit=10)
         assert len(events) >= 1
+
+    def test_noop_live_prune_does_not_emit_audit(self, retention_with_obs):
+        svc = retention_with_obs
+        pol = RetentionPolicy("observability_events", enabled=True, max_rows=10)
+        svc.set_policy(pol)
+        svc.prune("observability_events")
+        svc._mock_recorder.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

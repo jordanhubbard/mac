@@ -188,6 +188,16 @@ class ActionEventService:
         conn: Any,
         event: ObservabilityEvent,
     ) -> Optional[ActionEvent]:
+        # `action_events` is an audit/action feed, not a second copy of the
+        # telemetry firehose.  Metrics and successful informational logs remain
+        # queryable in `observability_events`; mirroring every one created a
+        # second row plus indexes for every poll, route, renewal, and duration.
+        # Exceptional observations are still projected so the action feed keeps
+        # warning/failure visibility.  Callers that represent a real successful
+        # action should record that action explicitly (as command audit already
+        # does) instead of relying on an implicit observability mirror.
+        if event.kind == "metric" or event.level == "info":
+            return None
         actor = str(event.source or "mac")
         outcome = "success"
         if event.level in {"error", "critical"}:

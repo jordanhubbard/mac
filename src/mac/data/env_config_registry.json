@@ -1559,6 +1559,7 @@
       "deploy/k8s/mac-api/deployment.yaml",
       "deploy/k8s/mac-api/secret.example.yaml",
       "deploy/systemd/mac.service",
+      "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/ledger_backup.py",
       "src/mac/router_service.py",
@@ -6937,6 +6938,17 @@
       "deploy/fleet-node-install.sh",
       "src/mac/deploy_env.py",
       "src/mac/hermes_startup.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: migration database url.",
+    "family": "core",
+    "name": "MAC_MIGRATION_DATABASE_URL",
+    "retired": false,
+    "sources": [
+      "src/mac/cli.py"
     ],
     "type": "str"
   },

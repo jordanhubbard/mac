@@ -272,6 +272,14 @@ class PostgresStore:
             "prior_report_executor_projection_sha256",
             "prior_report_executor_projection_sha256 TEXT",
         )
+        self.ensure_column(
+            "fleet_release_epochs",
+            "abort_disposition",
+            "abort_disposition TEXT",
+        )
+        self.ensure_column("tasks", "human_assignees", "human_assignees TEXT")
+        self.ensure_column("tasks", "created_by_human", "created_by_human TEXT")
+        self.ensure_column("tasks", "idempotency_key", "idempotency_key TEXT")
         # schema_dispatch_hold: per-agent dispatch hold + zombie-detection counters.
         self.ensure_column(
             "agents", "dispatch_hold", "dispatch_hold INTEGER NOT NULL DEFAULT 0"

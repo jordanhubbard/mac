@@ -9,15 +9,16 @@ The book uses executable `bash` blocks; reference usage is rendered as output.
 $ mac --help
 usage: mac [-h] [--db DB] [--local-authority] [--hub-url HUB_URL]
            [--token TOKEN] [--fleet FLEET] [--profile PROFILE] [--json]
-           {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+           {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
            ...
 
 Multi-agent coordinator control plane
 
 positional arguments:
-  {diagnostics,init,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
+  {diagnostics,init,database,config,login,logout,client,tenant,user,persona,hermes,binding,interaction,task,repo,project,work-package,directive,hgx,openshell,machine,agent,fleet,journal,optimizer,mood,dream,nap,dispatch,message,agentbus,review,publish,pull-request,secret,runtime,artifact,env,bridge,integrations,memory,rollout,events,action-events,command-audit,observability,communication,comm,notifier,migrate,workflow,eval,plan}
     diagnostics         run read-only control-plane health checks
     init                initialize the SQLite store
+    database            offline durable-authority maintenance and migration
     config              configuration helpers
     login               bootstrap or inspect a scoped client login over
                         verified SSH
@@ -128,6 +129,22 @@ usage: mac init [-h]
 
 options:
   -h, --help  show this help message and exit
+```
+
+## mac database
+
+```console
+$ mac database --help
+usage: mac database [-h] {migrate-sqlite-to-postgres} ...
+
+positional arguments:
+  {migrate-sqlite-to-postgres}
+    migrate-sqlite-to-postgres
+                        copy every SQLite row to PostgreSQL and verify full-
+                        row digests
+
+options:
+  -h, --help            show this help message and exit
 ```
 
 ## mac config

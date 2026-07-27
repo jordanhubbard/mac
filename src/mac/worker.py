@@ -906,6 +906,8 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
         self._last_workspace_gc_at = 0.0
         self._last_gateway_lease_renew_at = 0.0
         self._last_dispatch_hold_reason: Optional[str] = None
+        self._observation_post_failures = 0
+        self._last_observation_failure_log_at = 0.0
         self.debug_terminal_enabled = _env_bool("MAC_DEBUG_TERMINAL_ENABLED", True)
         self._debug_terminal_sessions: Dict[str, DebugTerminalSession] = {}
         self._delivery_drain_lock = threading.Lock()
@@ -5229,8 +5231,24 @@ class MacWorker(DebugTerminalMixin, ReflectMixin, DirectableMixin, WorkspaceGCMi
     def _post_observation(self, path: str, payload: JsonDict) -> None:
         try:
             self.client.post(path, payload)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - telemetry cannot block work.
+            self._observation_post_failures += 1
+            now = time.monotonic()
+            # The old blanket `pass` made a broken telemetry path invisible.
+            # Log the first drop immediately and then at most once per minute;
+            # this remains best-effort without turning an outage into another
+            # unbounded event stream.
+            if (
+                self._observation_post_failures == 1
+                or now - self._last_observation_failure_log_at >= 60.0
+            ):
+                self._last_observation_failure_log_at = now
+                logger.warning(
+                    "observation delivery failed path=%s dropped=%d error=%s",
+                    path,
+                    self._observation_post_failures,
+                    type(exc).__name__,
+                )
 
     def _emit_recovery_observability(
         self,

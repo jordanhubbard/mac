@@ -768,6 +768,17 @@ class RetentionService:
         """Emit an observability audit record for a live prune run."""
         if self._obs is None:
             return
+        # The periodic ticker commonly has nothing to do.  Persist a prune event
+        # only when it describes work, exclusions, or a capped batch; otherwise
+        # the audit row becomes the retained data it was invoked to control.
+        if not (
+            report.eligible_rows
+            or report.deleted_rows
+            or report.deleted_bytes
+            or report.excluded_rows
+            or report.batch_capped
+        ):
+            return
         try:
             self._obs(
                 "retention.prune",

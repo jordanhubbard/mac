@@ -1118,8 +1118,26 @@ ordinary task-flow queries have both met the deployment's latency budget.
   during autonomous review. General executor, sandbox, and verdict-production
   failures are bounded and visible but are not yet learned as reviewer-routing
   exclusions.
-- Live SQLite → Postgres data migration tool is not yet shipped (K8s
-  Phase 3.7 — pending). Greenfield Postgres deploys start with an
-  empty schema applied automatically by `PostgresStore.initialize()`;
-  existing SQLite deployments upgrading to the K8s topology must
-  currently re-create state.
+- Existing SQLite authorities migrate offline with
+  `mac database migrate-sqlite-to-postgres`. Stop every hub writer and worker
+  supervisor first, then pass `--hub-stopped`; the command checkpoints WAL,
+  holds an exclusive SQLite snapshot, requires an empty PostgreSQL target,
+  copies each table atomically, and writes a resumable owner-only receipt.
+  Completion requires matching deterministic full-row hashes for every table,
+  a clean source integrity/FK check, clean destination FK checks, and reset
+  PostgreSQL sequences. A count-only copy is never reported as successful.
+  Example:
+
+  ```console
+  $ export MAC_MIGRATION_DATABASE_URL='postgresql:///mac'
+  $ mac database migrate-sqlite-to-postgres \
+      --sqlite ~/.mac/mac.db \
+      --report ~/.mac/migrations/sqlite-to-postgres.json \
+      --hub-stopped
+  ```
+
+  Use `--resume` only with that same receipt/source/target, or `--verify-only`
+  for a later full verification. `--restart` explicitly truncates the target
+  and is the only supported way to abandon a partial target. After a verified
+  receipt, set `MAC_DATABASE_URL`, remove `MAC_DB`, restart the hub, and retain
+  the SQLite file only as an immutable rollback/export artifact.

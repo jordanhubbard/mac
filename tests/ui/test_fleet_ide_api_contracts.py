@@ -146,8 +146,13 @@ def test_get_task_returns_200_with_task_detail_wrapper():
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
+        "cached_input_tokens": 0,
+        "model_latency_ms": 0,
+        "upstream_attempt_count": 0,
         "routes": [],
     }
+    assert body["profile"]["schema"] == "mac.task_execution_profile.v1"
+    assert body["profile"]["task_id"] == task_id
 
 
 def test_get_task_returns_evidence_collection():

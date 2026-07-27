@@ -52,6 +52,8 @@ _VERBOSE_POLL_LOG_NAMES = frozenset(
         # switch; durable hold state and the aggregate held status remain visible.
         "worker.routing.task_skipped",
         "dispatcher.routing.task_skipped",
+        "agentbus.chunks.read",
+        "dispatcher.assignment.unclaimed",
         "workflow.default_review.waiting",
         "workflow.default_review.waiting_for_verdict",
         "workflow.default_review.heartbeat_tick",
@@ -276,13 +278,39 @@ class ObservabilityService:
                 if isinstance(value, (int, float)) and not isinstance(value, bool)
             )
 
+        def numeric_total(key: str) -> float:
+            return sum(
+                float(value)
+                for event in events
+                for value in [event.detail.get(key)]
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            )
+
+        def cached_tokens(detail: Dict[str, Any]) -> int:
+            usage = detail.get("usage")
+            if not isinstance(usage, dict):
+                return 0
+            for path in (
+                ("cached_tokens",),
+                ("prompt_tokens_details", "cached_tokens"),
+                ("input_tokens_details", "cached_tokens"),
+            ):
+                value: Any = usage
+                for part in path:
+                    value = value.get(part) if isinstance(value, dict) else None
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return int(value)
+            return 0
+
         routes = []
         for event in events:
             detail = event.detail
+            attempts = detail.get("attempts")
             routes.append(
                 {
                     "id": event.id,
                     "created_at": event.created_at,
+                    "schema": detail.get("schema"),
                     "agent_id": detail.get("agent_id"),
                     "lease_id": detail.get("lease_id"),
                     "requested_model": detail.get("requested_model"),
@@ -294,6 +322,17 @@ class ObservabilityService:
                     "input_tokens": detail.get("input_tokens"),
                     "output_tokens": detail.get("output_tokens"),
                     "total_tokens": detail.get("total_tokens"),
+                    "cached_input_tokens": cached_tokens(detail),
+                    "duration_ms": detail.get("duration_ms"),
+                    "cost_usd": detail.get("cost_usd"),
+                    "usage": (
+                        dict(detail.get("usage"))
+                        if isinstance(detail.get("usage"), dict)
+                        else {}
+                    ),
+                    "upstream_attempt_count": (
+                        len(attempts) if isinstance(attempts, list) else 0
+                    ),
                 }
             )
         return {
@@ -307,6 +346,14 @@ class ObservabilityService:
             "input_tokens": token_total("input_tokens"),
             "output_tokens": token_total("output_tokens"),
             "total_tokens": token_total("total_tokens"),
+            "cached_input_tokens": sum(cached_tokens(event.detail) for event in events),
+            "model_latency_ms": numeric_total("duration_ms"),
+            "upstream_attempt_count": sum(
+                len(attempts)
+                for event in events
+                for attempts in [event.detail.get("attempts")]
+                if isinstance(attempts, list)
+            ),
             "routes": routes,
         }
 
