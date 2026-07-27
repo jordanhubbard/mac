@@ -65,6 +65,7 @@ for provenance and is not a current operating contract.
 | historical archive | `archive/field-notes/investigation-dreamrepair-4c4429b-scripts-openclaw.md` | Investigation: dream finding `dreamrepair:4c4429bc` (scripts / openclaw_fleet_rollout audit) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-5404b15-skill.md` | Investigation: dream finding `dreamrepair:5404b15fffa355d739c21e138c5cc122` (skill subsystem) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-c8dd8037-skill.md` | Investigation: dream finding `dreamrepair:c8dd80378a16692ba4e0cd5ef57f2bf1` (skill subsystem) |
+| historical archive | `archive/field-notes/investigation-dreamrepair-d94ad78-skill.md` | Investigation: dream finding `dreamrepair:d94ad78027c32d4825923f0ba91e9497` (skill) |
 | historical archive | `archive/field-notes/investigation-dreamrepair-ffbc63f8-skill.md` | Investigation: dream finding `dreamrepair:ffbc63f8695e9316b064bb1f6d3566cb` (skill) |
 | historical archive | `archive/field-notes/investigation-predispatch-conflict-5a43ad.md` | Investigation: `predispatch_conflict.py` failure-pattern (dream finding) |
 | historical archive | `archive/field-notes/investigation-review-finalize-verify-prerequisite.md` | Investigation: dream-finding review finalize/verify prerequisite ground truth |
