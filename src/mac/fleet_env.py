@@ -120,11 +120,18 @@ def _resolve_legacy(
         key = (base_name, active_fleet or "")
         if key not in _DEPRECATION_SEEN:
             _DEPRECATION_SEEN.add(key)
+            if active_fleet:
+                try:
+                    scoped_hint = scoped_var(base_name, active_fleet)
+                except ValueError:
+                    scoped_hint = "%s__<FLEET>" % base_name
+            else:
+                scoped_hint = "<base>__<FLEET>"
             _LOG.warning(
                 "using legacy flat env var %s; switch to %s to avoid cross-fleet collisions "
                 "(see mac-g55y; run `mac config migrate-env-namespace` to migrate)",
                 base_name,
-                scoped_var(base_name, active_fleet) if active_fleet else "<base>__<FLEET>",
+                scoped_hint,
             )
     return legacy
 
