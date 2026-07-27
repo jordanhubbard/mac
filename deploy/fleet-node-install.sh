@@ -11343,6 +11343,48 @@ export PATH="$HOME/.mac/bin:$HOME/.mac/venv/bin:$HOME/.mac/node_modules/.bin:$HO
 export PYTHONFAULTHANDLER=1
 export PYTHONUNBUFFERED=1
 
+# Resolve the hub bearer fleet-aware, mirroring mac.fleet_env (mac-g55y). A node
+# migrated to fleet-scoped credentials keeps the correct token in
+# MAC_WORKER_TOKEN__<FLEET> while the legacy flat MAC_WORKER_TOKEN is stale or
+# absent; without this the wrapper's `Bearer $MAC_WORKER_TOKEN` heartbeat 403s.
+# Prefer the scoped form across the whole chain (MAC_WORKER_TOKEN, MAC_TOKEN,
+# MAC_API_TOKEN) before any flat form so a stale flat token cannot shadow the
+# correct scoped one; a scoped var that is *set* wins even when its value is
+# empty (matching mac.fleet_env). Export the result as MAC_WORKER_TOKEN so
+# downstream uses (the :? guard, the Bearer header, and the sourced self-test)
+# all agree. Un-migrated nodes fall back to the flat token for one deprecation
+# cycle. Inlined (no shell function) so the wrapper body carries no top-level `}`.
+mac_token_value=""
+mac_token_found=""
+mac_token_fleet="${MAC_FLEET:-${MAC_FLEET_NAME:-}}"
+mac_token_suffix=""
+if [ -n "$mac_token_fleet" ]; then
+  mac_token_suffix="$(printf '%s' "$mac_token_fleet" \
+    | LC_ALL=C sed -e 's/[^A-Za-z0-9]\{1,\}/_/g' -e 's/^_//' -e 's/_$//' \
+    | LC_ALL=C tr 'a-z' 'A-Z')"
+fi
+if [ -n "$mac_token_suffix" ]; then
+  for mac_token_base in MAC_WORKER_TOKEN MAC_TOKEN MAC_API_TOKEN; do
+    if eval "[ \"\${${mac_token_base}__${mac_token_suffix}+set}\" = set ]"; then
+      eval "mac_token_value=\${${mac_token_base}__${mac_token_suffix}}"
+      mac_token_found=1
+      break
+    fi
+  done
+fi
+if [ -z "$mac_token_found" ]; then
+  for mac_token_base in MAC_WORKER_TOKEN MAC_TOKEN MAC_API_TOKEN; do
+    if eval "[ \"\${${mac_token_base}+set}\" = set ]"; then
+      eval "mac_token_value=\${${mac_token_base}}"
+      mac_token_found=1
+      break
+    fi
+  done
+fi
+MAC_WORKER_TOKEN="$mac_token_value"
+export MAC_WORKER_TOKEN
+unset mac_token_value mac_token_found mac_token_fleet mac_token_suffix mac_token_base 2>/dev/null || true
+
 : "${MAC_HUB_URL:?MAC_HUB_URL is required}"
 : "${MAC_WORKER_TOKEN:?MAC_WORKER_TOKEN is required}"
 
@@ -12000,7 +12042,36 @@ except Exception as exc:
     raise SystemExit(1)
 
 hub_url = str(os.environ.get("MAC_HUB_URL") or "").rstrip("/")
-token = os.environ.get("MAC_WORKER_TOKEN") or ""
+# Resolve the hub bearer fleet-aware, mirroring mac.fleet_env (mac-g55y): a node
+# migrated to fleet-scoped credentials keeps the correct token in
+# MAC_WORKER_TOKEN__<FLEET> while the legacy flat MAC_WORKER_TOKEN is stale or
+# absent. Prefer the scoped form across the whole chain before any flat form so
+# a stale flat token cannot shadow the correct scoped one and 403 the heartbeat.
+# Un-migrated nodes still fall back to the flat token for one deprecation cycle.
+def _resolve_hub_token() -> str:
+    import re as _re
+
+    fleet = (
+        os.environ.get("MAC_FLEET")
+        or os.environ.get("MAC_FLEET_NAME")
+        or ""
+    ).strip()
+    chain = ("MAC_WORKER_TOKEN", "MAC_TOKEN", "MAC_API_TOKEN")
+    if fleet:
+        suffix = _re.sub(r"[^A-Za-z0-9]+", "_", fleet).strip("_").upper()
+        if suffix:
+            for base in chain:
+                scoped = os.environ.get("%s__%s" % (base, suffix))
+                if scoped is not None:
+                    return scoped
+    for base in chain:
+        flat = os.environ.get(base)
+        if flat is not None:
+            return flat
+    return ""
+
+
+token = _resolve_hub_token()
 if hub_url and token and agent_id:
     payload = {"resources": {"startup_self_test": report}}
     if blocking_problems:

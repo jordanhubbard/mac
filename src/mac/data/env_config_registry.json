@@ -4989,6 +4989,7 @@
     "name": "MAC_FLEET",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "src/mac/cli.py",
       "src/mac/coding_agent.py",
       "src/mac/dispatch.py",
@@ -5042,6 +5043,7 @@
     "name": "MAC_FLEET_NAME",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/openclaw/install-openclaw-gateway.sh",
       "src/mac/_hermes/agent/agent_init.py",
       "src/mac/api.py",
@@ -12340,6 +12342,7 @@
     "name": "MAC_TOKEN",
     "retired": false,
     "sources": [
+      "deploy/fleet-node-install.sh",
       "deploy/hermes/overlay/tools/fleet_tool.py",
       "src/mac/_hermes/tools/fleet_tool.py",
       "src/mac/executor_hub_io.py",
