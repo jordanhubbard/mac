@@ -3494,12 +3494,27 @@ ordinary task-flow queries have both met the deployment's latency budget.</p>
   during autonomous review. General executor, sandbox, and verdict-production
   failures are bounded and visible but are not yet learned as reviewer-routing
   exclusions.</li>
-<li>Live SQLite → Postgres data migration tool is not yet shipped (K8s
-  Phase 3.7 — pending). Greenfield Postgres deploys start with an
-  empty schema applied automatically by <code>PostgresStore.initialize()</code>;
-  existing SQLite deployments upgrading to the K8s topology must
-  currently re-create state.</li>
+<li>Existing SQLite authorities migrate offline with
+  <code>mac database migrate-sqlite-to-postgres</code>. Stop every hub writer and worker
+  supervisor first, then pass <code>--hub-stopped</code>; the command checkpoints WAL,
+  holds an exclusive SQLite snapshot, requires an empty PostgreSQL target,
+  copies each table atomically, and writes a resumable owner-only receipt.
+  Completion requires matching deterministic full-row hashes for every table,
+  a clean source integrity/FK check, clean destination FK checks, and reset
+  PostgreSQL sequences. A count-only copy is never reported as successful.
+  Example:</li>
 </ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="gp">$ </span><span class="nb">export</span><span class="w"> </span><span class="nv">MAC_MIGRATION_DATABASE_URL</span><span class="o">=</span><span class="s1">&#39;postgresql:///mac&#39;</span>
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="gp">$ </span>mac<span class="w"> </span>database<span class="w"> </span>migrate-sqlite-to-postgres<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a><span class="w">    </span>--sqlite<span class="w"> </span>~/.mac/mac.db<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="w">    </span>--report<span class="w"> </span>~/.mac/migrations/sqlite-to-postgres.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a><span class="w">    </span>--hub-stopped
+</code></pre></div>
+<p>Use <code>--resume</code> only with that same receipt/source/target, or <code>--verify-only</code>
+  for a later full verification. <code>--restart</code> explicitly truncates the target
+  and is the only supported way to abandon a partial target. After a verified
+  receipt, set <code>MAC_DATABASE_URL</code>, remove <code>MAC_DB</code>, restart the hub, and retain
+  the SQLite file only as an immutable rollback/export artifact.</p>
 
 
 
