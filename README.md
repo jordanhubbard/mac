@@ -3,8 +3,7 @@
 Multi-agent coordinator control plane.
 
 `mac` is a clean-room control plane for fleets of AI agents. It is designed to
-sit underneath a human-facing agent runtime such as
-`NousResearch/hermes-agent`, OpenClaw, or a compatible system.
+sit underneath a human-facing agent runtime such as OpenClaw under OpenShell, NemoClaw Hermes, or a compatible system.
 
 The human-facing runtime owns conversation, personality, adaptive memory,
 skills, and messaging gateways. `mac` owns durable operational truth: tasks,
@@ -12,7 +11,7 @@ leases, routing, reviews, evidence, secrets, runtime manifests, rollout state,
 and audit trails. Fleet deployments use stock OpenClaw in OpenShell for the
 human-channel role; internal agents may share a stable public identity.
 
-The goal is to let a user talk to a persistent Hermes agent with a real
+The goal is to let a user talk to an agent with a real
 personality and memory, then let that agent create durable work that a broader
 fleet can execute, review, publish, and recover.
 
