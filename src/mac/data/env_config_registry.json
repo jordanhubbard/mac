@@ -1440,6 +1440,7 @@
       "src/mac/dispatch.py",
       "src/mac/ledger_backup.py",
       "src/mac/ledger_backup_scheduler.py",
+      "src/mac/pg_backup_scheduler.py",
       "src/mac/store.py",
       "src/mac/worker.py"
     ],
@@ -1562,6 +1563,8 @@
       "src/mac/cli.py",
       "src/mac/deploy_env.py",
       "src/mac/ledger_backup.py",
+      "src/mac/pg_backup.py",
+      "src/mac/pg_backup_scheduler.py",
       "src/mac/router_service.py",
       "src/mac/store.py",
       "src/mac/worker.py",
@@ -5600,6 +5603,7 @@
       "src/mac/mac_paths.py",
       "src/mac/model_selection.py",
       "src/mac/models_catalog.py",
+      "src/mac/pg_backup_scheduler.py",
       "src/mac/services.py"
     ],
     "type": "str"
@@ -6531,7 +6535,9 @@
     "retired": false,
     "sources": [
       "src/mac/ledger_backup.py",
-      "src/mac/ledger_backup_scheduler.py"
+      "src/mac/ledger_backup_scheduler.py",
+      "src/mac/pg_backup.py",
+      "src/mac/pg_backup_scheduler.py"
     ],
     "type": "str"
   },
@@ -8417,6 +8423,129 @@
       "src/mac/deploy_env.py",
       "src/mac/hermes_runtime.py",
       "src/mac/router_app.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup dir.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_DIR",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup.py",
+      "src/mac/pg_backup_scheduler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup enabled.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_ENABLED",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup_scheduler.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup initial delay seconds.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_INITIAL_DELAY_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup_scheduler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup interval seconds.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_INTERVAL_SECONDS",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup_scheduler.py"
+    ],
+    "type": "int"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup keep last.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_KEEP_LAST",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup_scheduler.py"
+    ],
+    "type": "bool"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup manifest.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_MANIFEST",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup path.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_PATH",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup sha256.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_SHA256",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup sync cmd.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_SYNC_CMD",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup url.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_URL",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup.py",
+      "src/mac/pg_backup_scheduler.py"
+    ],
+    "type": "str"
+  },
+  {
+    "default": null,
+    "description": "Core setting: pg backup verify every.",
+    "family": "core",
+    "name": "MAC_PG_BACKUP_VERIFY_EVERY",
+    "retired": false,
+    "sources": [
+      "src/mac/pg_backup_scheduler.py"
     ],
     "type": "str"
   },

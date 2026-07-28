@@ -63,6 +63,7 @@ from mac.backlog_groomer import BacklogGroomer, BacklogGroomerConfig
 from mac.curiosity_reviewer import CuriosityReviewer, CuriosityReviewerConfig
 from mac.cicd_monitor import CICDMonitor, CICDMonitorConfig
 from mac.ledger_backup_scheduler import LedgerBackupConfig, LedgerBackupScheduler
+from mac.pg_backup_scheduler import PgBackupConfig, PgBackupScheduler
 from mac.nap_ticker import NapTicker, NapTickerConfig
 from mac.self_healing import SelfHealingConfig, SelfHealingSentinel
 from mac.model_selection import ModelSelectionConfig, ModelSelectionService
@@ -4149,6 +4150,13 @@ def create_app(
     # when the hub node dropped off the network). Default-ON for authoritative
     # hubs; no-op on clients or with MAC_LEDGER_BACKUP_ENABLED=0.
     ledger_backup_scheduler = LedgerBackupScheduler(cp, LedgerBackupConfig.from_env())
+    # mac-pg-backup: scheduled, restore-verified PostgreSQL authority
+    # backups for the hub — consistent pg_dump, owner-only artifacts,
+    # retention, failure telemetry, and a periodic restore-to-scratch drill.
+    # Default-ON only when the authority is PostgreSQL (MAC_DATABASE_URL);
+    # a no-op on the SQLite tier and with MAC_PG_BACKUP_ENABLED=0. A
+    # PostgreSQL backup failure is surfaced loudly, never downgraded to SQLite.
+    pg_backup_scheduler = PgBackupScheduler(cp, PgBackupConfig.from_env())
     # The heavy integration/certification line is independent of request
     # handling and default-off. Its trigger only wakes a bounded background
     # controller; Git and OpenShell work never runs on an HTTP thread.
@@ -4173,12 +4181,14 @@ def create_app(
         curiosity_reviewer.start()
         self_healing_sentinel.start()
         ledger_backup_scheduler.start()
+        pg_backup_scheduler.start()
         work_package_pipeline.start()
         try:
             yield
         finally:
             _stop_hub_tick_loop(_app)
             work_package_pipeline.stop()
+            pg_backup_scheduler.stop()
             ledger_backup_scheduler.stop()
             self_healing_sentinel.stop()
             curiosity_reviewer.stop()

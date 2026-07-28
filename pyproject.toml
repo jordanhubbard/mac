@@ -95,6 +95,7 @@ mac-webdav-server = "mac.webdav_server:main"
 mac-router = "mac.router_service:main"
 # Verified hub-ledger snapshots for warm-standby recovery (SQLite hubs).
 mac-ledger-backup = "mac.ledger_backup:main"
+mac-pg-backup = "mac.pg_backup:main"
 # Thin CLI shared by host-mode workers and the Job-pod codex stubs to
 # sign worker_evidence manifests without re-implementing the canonical
 # HMAC in bash heredocs (see deploy/codex-runner/mac-task-executor-*).
